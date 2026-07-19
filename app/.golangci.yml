@@ -1,0 +1,79 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: 2026 SoundTap contributors
+
+# golangci-lint v2. `make lint-go` runs it on what changed since main: code that is
+# touched must pass, code that is not waits for its refactor.
+version: "2"
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    # Bug classes.
+    - bodyclose
+    - copyloopvar
+    - durationcheck
+    - errchkjson
+    - errname
+    - errorlint
+    - forcetypeassert
+    - gosec
+    - makezero
+    - mirror
+    - nilerr
+    - noctx
+    - reassign
+    - thelper
+    - unparam
+    - wastedassign
+    # Readability: small, plain, self-explaining code.
+    - cyclop
+    - dupl
+    - funlen
+    - gocognit
+    - goconst
+    - gocritic
+    - intrange
+    - misspell
+    - nakedret
+    - nestif
+    - nolintlint
+    - predeclared
+    - revive
+    - unconvert
+    - usestdlibvars
+  settings:
+    cyclop: { max-complexity: 15 }
+    dupl: { threshold: 120 }
+    funlen: { lines: 80, statements: 50 }
+    gocognit: { min-complexity: 20 }
+    nestif: { min-complexity: 5 }
+    goconst:
+      # JSON keys and URL schemes read better spelled out.
+      ignore-string-values: ["^(name|status|error|event|source|volume|current|updatable|unavailable|http|pause|host)$"]
+    gosec:
+      excludes:
+        - G103 # unsafe: the ALSA and evdev ioctls need it
+        - G204 # subprocess with arguments: the daemon drives system tools by design
+        - G301 # directory permissions are set per path on the speaker
+        - G304 # file paths from variables: the speaker reads its own files
+        - G306 # file permissions are set per file on the speaker
+  exclusions:
+    presets: [comments, std-error-handling]
+    rules:
+      # Tests may be long and repeat literals; table tests read better that way.
+      - path: _test\.go
+        linters: [cyclop, dupl, funlen, gocognit, goconst, nestif, gosec, forcetypeassert]
+      # PCM samples are bit patterns: these conversions are the point, and the range is
+      # clamped where it matters.
+      - path: internal/audio/
+        text: G115
+      # The D-Bus wire codec converts between Go integers and their wire bit patterns,
+      # and its encode/decode switches are one case per type code.
+      - path: internal/dbus/
+        text: G115
+      - path: internal/dbus/wire\.go
+        linters: [cyclop, funlen, gocognit]
+      # Host-side tools write where their operator points them; that path is the input.
+      - path: cmd/bcoflash/
+        text: G703
+formatters:
+  enable: [gofmt]

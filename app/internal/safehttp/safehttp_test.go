@@ -1,0 +1,130 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 SoundTap contributors
+
+package safehttp
+
+import (
+	"context"
+	"crypto/x509"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+func TestDoRetriesCertificateErrorAfterClockBecomesSane(t *testing.T) {
+	oldNow, oldPoll, oldLimit := now, clockPollInterval, clockWaitLimit
+	t.Cleanup(func() {
+		now, clockPollInterval, clockWaitLimit = oldNow, oldPoll, oldLimit
+	})
+	var clockReads atomic.Int32
+	now = func() time.Time {
+		if clockReads.Add(1) > 1 {
+			return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		}
+		return time.Unix(0, 0)
+	}
+	clockPollInterval, clockWaitLimit = time.Millisecond, time.Second
+
+	var requests int
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		requests++
+		if requests == 1 {
+			return nil, x509.CertificateInvalidError{
+				Cert:   &x509.Certificate{NotBefore: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
+				Reason: x509.Expired,
+			}
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+	})}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.test", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := Do(context.Background(), client, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2", requests)
+	}
+}
+
+func TestDownloadAndGetJSON(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/bin":
+			_, _ = w.Write([]byte("BINARY"))
+		case "/json":
+			_, _ = w.Write([]byte(`{"tag_name":"v9"}`))
+		default:
+			http.Error(w, "no", http.StatusNotFound)
+		}
+	}))
+	defer ts.Close()
+
+	dst := filepath.Join(t.TempDir(), "out")
+	if err := Download(context.Background(), ts.Client(), "test", ts.URL+"/bin", dst, 0o755); err != nil {
+		t.Fatalf("Download: %v", err)
+	}
+	if b, _ := os.ReadFile(dst); string(b) != "BINARY" {
+		t.Fatalf("downloaded %q, want BINARY", b)
+	}
+	if err := Download(context.Background(), ts.Client(), "test", ts.URL+"/nope", dst, 0o755); err == nil {
+		t.Fatal("Download of a 404 should fail")
+	}
+
+	var rel struct {
+		TagName string `json:"tag_name"`
+	}
+	if err := GetJSON(context.Background(), ts.Client(), "test", ts.URL+"/json", &rel); err != nil {
+		t.Fatalf("GetJSON: %v", err)
+	}
+	if rel.TagName != "v9" {
+		t.Fatalf("GetJSON tag = %q, want v9", rel.TagName)
+	}
+}
+
+func TestDownloadRemovesPartialFile(t *testing.T) {
+	// An upstream that dies mid-body (Content-Length says 10, sends 5) must not
+	// leave a truncated file behind.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "10")
+		_, _ = w.Write([]byte("short"))
+	}))
+	defer ts.Close()
+
+	dst := filepath.Join(t.TempDir(), "out")
+	if err := Download(context.Background(), ts.Client(), "test", ts.URL, dst, 0o755); err == nil {
+		t.Fatal("Download succeeded, want error")
+	}
+	if _, err := os.Stat(dst); !os.IsNotExist(err) {
+		t.Fatalf("partial file exists after failed download: %v", err)
+	}
+}
+
+func TestPublicIP(t *testing.T) {
+	for addr, want := range map[string]bool{
+		"1.1.1.1": true, "8.8.8.8": true, "2606:4700:4700::1111": true, "192.0.0.9": true,
+		"2001:4:112::1": true, "100.63.255.255": true, "100.128.0.0": true,
+		"100.64.0.1": false, "100.100.100.200": false, "100.127.255.254": false,
+		"203.0.113.1": false, "203.0.113.2": false, "::ffff:203.0.113.2": false,
+		"192.0.2.1": false, "198.51.100.7": false, "198.18.0.1": false, "240.0.0.1": false,
+		"255.255.255.255": false, "0.1.2.3": false, "10.0.0.1": false, "127.0.0.1": false,
+		"169.254.1.1": false, "::1": false, "fd00::1": false, "fe80::1": false,
+		"2001:db8::1": false, "3fff::1": false, "64:ff9b:1::1": false, "100::1": false,
+	} {
+		if got := PublicIP(net.ParseIP(addr)); got != want {
+			t.Errorf("PublicIP(%s) = %v, want %v", addr, got, want)
+		}
+	}
+}

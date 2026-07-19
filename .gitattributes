@@ -1,0 +1,2 @@
+*.patch whitespace=-blank-at-eol
+os/bootloader/uboot/wla-am335x-bringup.patch whitespace=-blank-at-eol,-space-before-tab

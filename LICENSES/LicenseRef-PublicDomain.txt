@@ -1,0 +1,10 @@
+Public domain
+
+The files under this identifier are in the public domain: their authors placed them there,
+and no copyright licence applies to them. They may be used, copied, modified and distributed
+for any purpose without restriction.
+
+In this repository: TweetNaCl 20140427 (os/bootloader/uboot/tweetnacl.c and tweetnacl.h), by
+Daniel J. Bernstein, Bernard van Gastel, Wesley Janssen, Tanja Lange, Peter Schwabe and Sjaak
+Smetsers, as published at https://tweetnacl.cr.yp.to/, which states that TweetNaCl is public
+domain.

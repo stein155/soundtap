@@ -1,0 +1,37 @@
+__pycache__/
+*.pyc
+/output/
+/artifacts/
+/dl/
+/.cache/
+/.local/
+/.DS_Store
+/local-inputs/
+**/.gocache/
+**/node_modules/
+**/coverage/
+**/dist/
+!app/internal/web/dist/
+app/internal/web/dist/*
+!app/internal/web/dist/.gitkeep
+# The built STUs. Anchored: an unanchored `dist/` also matched the generated web UI
+# at app/internal/web/dist, and excluding that DIRECTORY made it impossible to
+# re-include the .gitkeep that keeps `//go:embed all:dist` compiling on a fresh clone.
+/dist/
+*.stu
+os/rootfs/
+os/bootloader/build/
+app/frontend/node_modules/
+app/**/*-armhf
+app/soundtapd*
+# Binaries built by tools/recovery/rom-usb-loader/Makefile; never committed.
+tools/recovery/rom-usb-loader/rom-usb-loader
+tools/recovery/rom-usb-loader/test_protocol
+tools/recovery/rom-usb-loader/test_stage
+tools/recovery/rom-usb-loader/*.o
+os/installer/module/build/
+
+# Stock Bose/BridgeCo images: owner supplies them locally, never committed
+bco/stock/stock/*.bcd
+/site/
+*.tsbuildinfo
