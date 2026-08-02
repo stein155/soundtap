@@ -1,0 +1,33 @@
+From: SoundTap <noreply@example.invalid>
+Subject: [PATCH] ASoC: davinci-mcasp: let DIT run at 46875 Hz, labelled 48 kHz
+
+The SoundTouch 300 sends its audio to the soundbar's DSP over S/PDIF from
+McASP0, clocked from AUXCLK: 24 MHz / 2 / 2 = 6 MHz of biphase clock, 128 x
+46875 Hz. That is the only rate the link can make, it is where stock runs the
+same registers (read off a running stock unit on 2026-11-06), and the machine
+driver constrains the link to it.
+
+mcasp_dit_hw_param() picks the channel-status sample-rate code from a list of
+standard rates and refuses anything else, so every open of the ST300's card
+failed:
+
+  davinci-mcasp 48038000.mcasp: unsupported sampling rate: 46875
+
+46875 Hz is 48 kHz running 2.3 % slow, well inside what an S/PDIF receiver's
+PLL follows, so label it 48 kHz.
+
+--- a/sound/soc/ti/davinci-mcasp.c
++++ b/sound/soc/ti/davinci-mcasp.c
+@@ -1106,6 +1106,12 @@
+ 	case 44100:
+ 		cs_bytes[3] |= IEC958_AES3_CON_FS_44100;
+ 		break;
++	/*
++	 * 46875 Hz: 24 MHz AUXCLK / 2 / 2 / 128, the one rate an S/PDIF link
++	 * clocked from AUXCLK reaches. It is 48 kHz running 2.3 % slow, so it
++	 * carries the 48 kHz code.
++	 */
++	case 46875:
+ 	case 48000:
+ 		cs_bytes[3] |= IEC958_AES3_CON_FS_48000;
+ 		break;

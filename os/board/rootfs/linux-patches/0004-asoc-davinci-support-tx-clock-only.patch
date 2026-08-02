@@ -1,0 +1,55 @@
+From 4f2bd37280aed04112e76aed33dff8b3abf5e249 Mon Sep 17 00:00:00 2001
+From: Stein Milder <info@steinmilder.nl>
+Date: Sat, 15 Aug 2026 12:00:00 +0200
+Subject: [PATCH] ASoC: davinci-mcasp: support TX-clock-only operation
+
+The ST10 uses the McASP transmit clocks while its receive clock and frame
+sync pins are connected as inputs.  A clock-provider DAI format otherwise
+marks both transmit and receive clock pins as outputs, which can cause pin
+contention on this transmit-only link.
+
+Add a ti,tx-clock-only property that keeps ACLKR, AHCLKR, and AFSR configured
+as inputs while retaining the requested transmit clock outputs.
+
+Upstream: Not applicable (SoundTap hardware support)
+Signed-off-by: Stein Milder <info@steinmilder.nl>
+---
+ sound/soc/ti/davinci-mcasp.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/sound/soc/ti/davinci-mcasp.c b/sound/soc/ti/davinci-mcasp.c
+index a0b8cca31cba..f48f4f6df503 100644
+--- a/sound/soc/ti/davinci-mcasp.c
++++ b/sound/soc/ti/davinci-mcasp.c
+@@ -102,6 +102,7 @@ struct davinci_mcasp {
+ 	int	sysclk_freq;
+ 	bool	bclk_master;
+ 	u32	auxclk_fs_ratio;
++	bool	tx_clock_only;
+ 
+ 	unsigned long pdir; /* Pin direction bitfield */
+ 
+@@ -565,6 +566,12 @@ static int davinci_mcasp_set_dai_fmt(struct snd_soc_dai *cpu_dai,
+ 		goto out;
+ 	}
+ 
++	if (mcasp->tx_clock_only) {
++		clear_bit(PIN_BIT_ACLKR, &mcasp->pdir);
++		clear_bit(PIN_BIT_AHCLKR, &mcasp->pdir);
++		clear_bit(PIN_BIT_AFSR, &mcasp->pdir);
++	}
++
+ 	switch (fmt & SND_SOC_DAIFMT_INV_MASK) {
+ 	case SND_SOC_DAIFMT_IB_NF:
+ 		mcasp_clr_bits(mcasp, DAVINCI_MCASP_ACLKXCTL_REG, ACLKXPOL);
+@@ -1952,6 +1959,8 @@ static int davinci_mcasp_get_config(struct davinci_mcasp *mcasp,
+ 	if (of_property_read_u32(np, "auxclk-fs-ratio", &val) == 0)
+ 		mcasp->auxclk_fs_ratio = val;
+ 
++	mcasp->tx_clock_only = of_property_read_bool(np, "ti,tx-clock-only");
++
+ 	if (of_property_read_u32(np, "dismod", &val) == 0) {
+ 		if (val == 0 || val == 2 || val == 3) {
+ 			pdata->dismod = DISMOD_VAL(val);
+-- 
+2.50.1

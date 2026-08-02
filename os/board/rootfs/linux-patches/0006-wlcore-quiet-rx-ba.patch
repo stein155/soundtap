@@ -1,0 +1,20 @@
+From: SoundTap <noreply@soundtap.invalid>
+Subject: [PATCH] wlcore: log a refused RX block-ack session at debug level
+
+The wl18xx firmware refuses an RX block-ack session whenever it has no free
+slot, and access points retry ADDBA for as long as the link is up. Each
+refusal printed a warning: 1158 lines in four days on a Wireless Link, which
+pushed everything else out of the kernel log. The refusal is handled (the
+session is simply not set up), so it is debug information.
+---
+--- a/drivers/net/wireless/ti/wlcore/acx.c	2026-09-29 14:32:08.312096107 +0200
++++ b/drivers/net/wireless/ti/wlcore/acx.c	2026-09-29 14:32:08.316096085 +0200
+@@ -1434,7 +1434,7 @@
+ 
+ 	/* sometimes we can't start the session */
+ 	if (ret == CMD_STATUS_NO_RX_BA_SESSION) {
+-		wl1271_warning("no fw rx ba on tid %d", tid_index);
++		wl1271_debug(DEBUG_ACX, "no fw rx ba on tid %d", tid_index);
+ 		ret = -EBUSY;
+ 		goto out;
+ 	}

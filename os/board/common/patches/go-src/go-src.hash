@@ -1,0 +1,3 @@
+# Go above the pinned Buildroot's 1.26.3 (see SOUNDTAP_GO_VERSION in the top Makefile).
+# sha256 from https://go.dev/dl/, as published in the go.dev/dl JSON on 2026-11-11.
+sha256  d44101b0ff27ed2a4c75ad46c17b9c74359209e2eb2ca7c9df6cb4fdb68e1969  go1.26.11.src.tar.gz

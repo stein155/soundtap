@@ -1,0 +1,704 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: 2026 SoundTap contributors
+/dts-v1/;
+
+#include "am33xx.dtsi"
+#include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/pinctrl/am33xx.h>
+#include "am335x-soundtap-ramoops.dtsi"
+
+/ {
+	model = "Bose SoundTouch 10 (SoundTap rescue)";
+	compatible = "bose,rhino-sm2", "ti,am33xx";
+
+	aliases {
+		serial3 = &uart3;
+	};
+
+	chosen {
+		stdout-path = "serial3:115200n8";
+		bootargs = "console=ttyS3,115200n8 root=ubi0:rootfs ro rootfstype=ubifs ubi.mtd=9,2048 rootwait init=/init mem=128M cma=8M panic=10 omap_wdt.early_enable=1 variant=rhino module_type=sm2 country=GB region=GB soundtap.nandroot=1 soundtap.watchdog=90";
+	};
+
+	memory@80000000 {
+		device_type = "memory";
+		reg = <0x80000000 0x08000000>;
+	};
+
+	/*
+	 * Seven lamps, not nine. Bose's driver exposes uledw, uledy and rled2..rled8, and the
+	 * first version of this node inherited that count along with labels inferred from the
+	 * channel names. Lighting each channel in turn on hardware
+	 * (lighting each channel by hand) showed four of those labels sat on the
+	 * wrong lamp and two channels drive no lamp at all: rled2 (gpio2_1) and rled8
+	 * (gpio2_16). Both are dropped here — Bose leaves gpio2_16 in LCD mode on a board
+	 * with no LCD, which is what an unwired pad looks like.
+	 *
+	 * These labels become the /sys/class/leds names soundtapd writes, so they must stay in
+	 * step with ledChannels() in app/cmd/soundtapd/led.go. A rename on one side alone
+	 * sends every write to the stock /dev path and the whole panel goes dark.
+	 */
+	leds {
+		compatible = "gpio-leds";
+		pinctrl-names = "default";
+		pinctrl-0 = <&led_pins>;
+
+		wifi-amber {
+			label = "wifi-amber";
+			gpios = <&gpio2 17 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+
+		bt-white {
+			label = "bt-white";
+			gpios = <&gpio0 4 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+
+		soundtouch-white {
+			label = "soundtouch-white";
+			gpios = <&gpio0 12 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+
+		soundtouch-amber {
+			label = "soundtouch-amber";
+			gpios = <&gpio2 12 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+
+		bt-blue {
+			label = "bt-blue";
+			gpios = <&gpio2 9 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+
+		/*
+		 * gpio2_23 (lcd_hsync) is the AUX lamp, Bose's rled7. Bose's tree also names it in
+		 * ncp6922_pins_default, as the NCP6922's enable line, and for a while this tree
+		 * held it high for the analog supply, which kept the AUX lamp lit in standby.
+		 * The rails do not need it: aic3256-loader turns them on over I2C, and the
+		 * codec answers with the line low (ST10, 2026-09-23). Stock drives it as a lamp.
+		 */
+		aux-white {
+			label = "aux-white";
+			gpios = <&gpio2 23 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+	};
+
+	/*
+	 * The Wi-Fi white lamp is the one stock dims: in standby it is the only lamp lit, at
+	 * low brightness. Bose drives it from DM timer 4, whose output is this lamp's pad in
+	 * mode 2 (timer4_pins_default in the stock tree), so it is a PWM lamp here too and
+	 * not a gpio-leds one, which can only be on or off. Same label, so soundtapd and the
+	 * rescue init write it the same way; brightness 0..255.
+	 */
+	wifi_pwm: dmtimer-pwm {
+		compatible = "ti,omap-dmtimer-pwm";
+		#pwm-cells = <3>;
+		ti,timers = <&timer4>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&wifi_pwm_pins>;
+	};
+
+	pwm-leds {
+		compatible = "pwm-leds";
+
+		wifi-white {
+			label = "wifi-white";
+			pwms = <&wifi_pwm 0 1000000 0>;
+			max-brightness = <255>;
+			/* A dark speaker reads as a dead one, and soundtapd takes this lamp over later. */
+			default-state = "on";
+		};
+	};
+
+	wlan_en_reg: regulator-wlan {
+		compatible = "regulator-fixed";
+		regulator-name = "wlan-en-regulator";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		gpio = <&gpio1 30 GPIO_ACTIVE_HIGH>;
+		startup-delay-us = <70000>;
+		enable-active-high;
+	};
+
+	audio_codec: audio-codec {
+		compatible = "linux,spdif-dit";
+		#sound-dai-cells = <0>;
+	};
+
+	/*
+	 * The infrared receiver. Bose's ir.ko claims UART0's register block and interrupt and
+	 * decodes edges itself ("Infrared receiver sysfs driver", ir_decoding.c, previous_edge,
+	 * bits_acc) -- a private driver mainline does not have; a node naming those resources
+	 * at the root stops this board booting.
+	 *
+	 * The demodulator output is on uart0_rxd, which is gpio1_10 in mode 7, so mainline's own
+	 * gpio-ir-receiver can have it: rc-core times the edges and its decoders turn them into
+	 * key events, with no driver of ours in the path. Idle high, pulses low, which is what
+	 * every three-pin demodulator does and what GPIO_ACTIVE_LOW says here.
+	 *
+	 * Measured 2026-09-22: the driver binds (rc0, /dev/lirc0, gpio_ir_recv on this pin) and
+	 * the line is quiet at rest -- eight seconds of reads returned nothing, so the pad is
+	 * not floating or oscillating. Whether a remote actually reaches it is still open: it
+	 * needs one button press in front of the speaker.
+	 */
+	ir-receiver {
+		compatible = "gpio-ir-receiver";
+		gpios = <&gpio1 10 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&ir_pins>;
+		linux,autosuspend-period = <125>;
+	};
+
+	sound {
+		compatible = "bose,soundtap-mcasp-audio";
+		pinctrl-names = "default";
+		pinctrl-0 = <&audio_control_pins>;
+		audio-cpu = <&mcasp0>;
+		audio-codec = <&audio_codec>;
+	};
+};
+
+&am33xx_pinmux {
+	ir_pins: pinmux-ir-pins {
+		pinctrl-single,pins = <
+			/* uart0_rxd as gpio1_10: the receiver's output, read by rc-core. */
+			AM33XX_PADCONF(0x970, PIN_INPUT_PULLUP, MUX_MODE7)
+			/*
+			 * uart0_txd as gpio1_11, driven high by the hog below.
+			 *
+			 * Stock muxes this pad too, as UART0's transmit line, which idles high --
+			 * and Bose's ir.ko never sends anything, so what that pin is for is being
+			 * high while the receiver is meant to work. Dropping it when this moved to
+			 * gpio-ir-receiver left it floating, and 30 seconds of button presses
+			 * produced zero bytes on /dev/lirc0 with the decoders enabled and the line
+			 * otherwise quiet. Measured on the ST10 on 2026-09-22.
+			 */
+			AM33XX_PADCONF(0x974, PIN_OUTPUT, MUX_MODE7)
+		>;
+	};
+
+	/*
+	 * UART2, which is where the WL1835's Bluetooth side hangs. Stock's
+	 * uart2_pins_default is <0x188 0x32  0x18c 0x02  0x150 0x31  0x154 0x01>, and these
+	 * are the same four pads with the same modes and directions: rxd and txd on the SPI0
+	 * pads in mode 1, ctsn and rtsn on the I2C0 pads in mode 2. Hardware flow control on
+	 * both lines, which the controller needs.
+	 */
+	uart2_pins: pinmux-uart2-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(0x950, PIN_INPUT_PULLUP, MUX_MODE1) /* spi0_sclk: uart2_rxd */
+			AM33XX_PADCONF(0x954, PIN_OUTPUT_PULLDOWN, MUX_MODE1) /* spi0_d0: uart2_txd */
+			AM33XX_PADCONF(0x988, PIN_INPUT_PULLUP, MUX_MODE2) /* i2c0_sda:  uart2_ctsn */
+			AM33XX_PADCONF(0x98c, PIN_OUTPUT_PULLDOWN, MUX_MODE2) /* i2c0_scl: uart2_rtsn */
+		>;
+	};
+
+	/*
+	 * bt_enable, the controller's nSHUTDOWN. Stock's gpiodev table calls it flat number
+	 * 0x3F -- gpio1_31, which is the GPMC_CSN2 pad -- and muxes it as a GPIO in
+	 * gpiodev_pins_default. Without this group the pad stays in its GPMC function, so
+	 * hci_ll toggles a line that reaches nothing: the chip never leaves reset and the
+	 * driver reports "Reading TI version information failed (-110)" on every retry.
+	 * Measured on the ST10 on 2026-09-22, with hci0 present and the firmware download
+	 * failing exactly that way.
+	 */
+	bt_enable_pins: pinmux-bt-enable-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_GPMC_CSN2, PIN_OUTPUT_PULLDOWN, MUX_MODE7)
+		>;
+	};
+
+	uart3_pins: pinmux-uart3-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_MII1_RXD2, PIN_OUTPUT_PULLDOWN, MUX_MODE1)
+			AM33XX_PADCONF(AM335X_PIN_SPI0_CS1, PIN_INPUT_PULLUP, MUX_MODE1)
+		>;
+	};
+
+	usb0_pins: pinmux-usb0-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_USB0_DRVVBUS, PIN_OUTPUT, MUX_MODE0)
+		>;
+	};
+
+	/*
+	 * Exactly the pads the leds node drives, in the same order. gpmc_clk (gpio2_1) and
+	 * lcd_data10 (gpio2_16) are gone with their lamps: stock muxes the first for a lamp
+	 * this board does not have and leaves the second in LCD mode, and neither lights
+	 * anything here.
+	 */
+	wifi_pwm_pins: pinmux-wifi-pwm-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_XDMA_EVENT_INTR0, PIN_OUTPUT, MUX_MODE2) /* timer4, wifi white */
+		>;
+	};
+
+	led_pins: pinmux-led-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_LCD_DATA11, PIN_OUTPUT_PULLDOWN, MUX_MODE7) /* gpio2_17 wifi amber */
+			AM33XX_PADCONF(AM335X_PIN_SPI0_D1, PIN_OUTPUT, MUX_MODE7) /* gpio0_4  bluetooth white */
+			AM33XX_PADCONF(AM335X_PIN_UART1_CTSN, PIN_OUTPUT, MUX_MODE7) /* gpio0_12 soundtouch white */
+			AM33XX_PADCONF(AM335X_PIN_LCD_DATA6, PIN_OUTPUT, MUX_MODE7) /* gpio2_12 soundtouch amber */
+			AM33XX_PADCONF(AM335X_PIN_LCD_DATA3, PIN_OUTPUT, MUX_MODE7) /* gpio2_9  bluetooth blue  */
+			AM33XX_PADCONF(AM335X_PIN_LCD_HSYNC, PIN_OUTPUT, MUX_MODE7) /* gpio2_23 aux white */
+		>;
+	};
+
+	mmc1_pins: pinmux-mmc1-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_MMC0_DAT3, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_MMC0_DAT2, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_MMC0_DAT1, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_MMC0_DAT0, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_MMC0_CLK, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_MMC0_CMD, PIN_INPUT_PULLUP, MUX_MODE0)
+		>;
+	};
+
+	wlan_pins: pinmux-wlan-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_GPMC_CSN1, PIN_OUTPUT_PULLDOWN, MUX_MODE7)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_WPN, PIN_INPUT, MUX_MODE7)
+		>;
+	};
+
+	nand_pins: pinmux-nand-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_GPMC_AD0, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_AD1, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_AD2, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_AD3, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_AD4, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_AD5, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_AD6, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_AD7, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_WAIT0, PIN_INPUT_PULLDOWN, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_CSN0, PIN_OUTPUT, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_ADVN_ALE, PIN_OUTPUT, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_OEN_REN, PIN_OUTPUT, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_WEN, PIN_OUTPUT, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_BEN0_CLE, PIN_OUTPUT, MUX_MODE0)
+		>;
+	};
+
+	spi1_pins: pinmux-spi1-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(0x964, 0x30, MUX_MODE4)
+			AM33XX_PADCONF(0x968, 0x30, MUX_MODE4)
+			AM33XX_PADCONF(0x96c, 0x30, MUX_MODE4)
+			AM33XX_PADCONF(0x97c, 0x30, MUX_MODE4)
+		>;
+	};
+
+	mcasp0_pins: pinmux-mcasp0-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(0x8d0, 0x20, MUX_MODE3)
+			AM33XX_PADCONF(0x8d4, 0x20, MUX_MODE3)
+			AM33XX_PADCONF(0x8d8, 0x20, MUX_MODE3)
+			AM33XX_PADCONF(0x8dc, 0x08, MUX_MODE3)
+			AM33XX_PADCONF(0x908, 0x20, MUX_MODE6)
+			AM33XX_PADCONF(0x92c, 0x08, MUX_MODE6)
+			AM33XX_PADCONF(0x930, 0x08, MUX_MODE6)
+			AM33XX_PADCONF(0x934, 0x20, MUX_MODE6)
+		>;
+	};
+
+	/*
+	 * Front-panel keypad: a 3x3 strobed matrix plus one directly wired key. Values
+	 * are the stock rhino_sm2.dtb keypad_pins_default group, translated to this
+	 * file's 0x800-based offsets — 0x2f is PIN_INPUT | MUX_MODE7 and 0x17 is
+	 * PIN_OUTPUT_PULLUP | MUX_MODE7.
+	 *
+	 * There is deliberately no keypad driver node behind this group. Every in-kernel
+	 * variant we tried (gpio-keys, gpio-matrix-keypad, a custom scanner) prevented
+	 * Wi-Fi from booting, and they all request GPIO interrupts on the switch-ins —
+	 * which live on gpio0, the same bank and parent interrupt as the WL1835's own
+	 * IRQ at gpio0_31 — while an unstrobed switch-in floats. The stock driver does
+	 * not use interrupts for scanning either; it polls on a timer. So this group
+	 * only muxes the pads, and soundtapd scans them from userspace over sysfs GPIO
+	 * (app/cmd/soundtapd/keypad_gpio.go).
+	 */
+	keypad_pins: pinmux-keypad-pins {
+		pinctrl-single,pins = <
+			/* Switch-ins, sampled while a strobe is asserted. Pull-disabled on
+			 * purpose: the pull-ups are on the board, behind the strobe FETs.
+			 */
+			AM33XX_PADCONF(0x820, PIN_INPUT, MUX_MODE7) /* gpmc_ad8  -> gpio0_22 */
+			AM33XX_PADCONF(0x824, PIN_INPUT, MUX_MODE7) /* gpmc_ad9  -> gpio0_23 */
+			AM33XX_PADCONF(0x828, PIN_INPUT, MUX_MODE7) /* gpmc_ad10 -> gpio0_26 */
+			AM33XX_PADCONF(0x82c, PIN_INPUT, MUX_MODE7) /* gpmc_ad11 -> gpio0_27 */
+			/* Strobes, asserted high one at a time (has-fets = <1>). */
+			AM33XX_PADCONF(0x878, PIN_OUTPUT_PULLUP, MUX_MODE7) /* gpmc_be1n -> gpio1_28 */
+			AM33XX_PADCONF(0x830, PIN_OUTPUT_PULLUP, MUX_MODE7) /* gpmc_ad12 -> gpio1_12 */
+			AM33XX_PADCONF(0x834, PIN_OUTPUT_PULLUP, MUX_MODE7) /* gpmc_ad13 -> gpio1_13 */
+		>;
+	};
+
+	/*
+	 * I2C1 and the regulator that feeds the analog output, straight out of Bose's own
+	 * rhino_sm2.dtb: i2c@4802a000 status okay on the two mcasp0_axr pads at 0x980/0x984
+	 * with value 0x6b, an "onsemi,ncp6922" at address 0x18 carrying dcdc1, dcdc2, ldo3
+	 * and ldo4, and an ncp6922_pins_default claiming pad 0xe4 -- lcd_hsync -- as a GPIO
+	 * output for the chip's enable line. That pad is the AUX lamp here (see the leds node);
+	 * the rails are on without it.
+	 *
+	 * Mainline has no ncp6922 driver, so the bus is opened here and the rails are brought
+	 * up from userspace, exactly as the Wireless Link does it.
+	 */
+	i2c1_pins: pinmux-i2c1-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(0x980, 0x68, MUX_MODE3) /* i2c1_sda */
+			AM33XX_PADCONF(0x984, 0x68, MUX_MODE3) /* i2c1_scl */
+		>;
+	};
+
+	audio_control_pins: pinmux-audio-control-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(0x8a8, 0x00, MUX_MODE7) /* mute */
+			AM33XX_PADCONF(0x8b0, 0x00, MUX_MODE7) /* DAC/ADC reset */
+			AM33XX_PADCONF(0x8b4, 0x00, MUX_MODE7) /* amplifier standby */
+			AM33XX_PADCONF(0x8e0, 0x00, MUX_MODE7) /* DSP reset */
+			AM33XX_PADCONF(0x8e8, 0x30, MUX_MODE7) /* amplifier fault */
+			AM33XX_PADCONF(0x8bc, 0x00, MUX_MODE7) /* power-save disable */
+		>;
+	};
+};
+
+/*
+ * psm_disable, held high for as long as the speaker is on.
+ *
+ * Bose's gpiodev table gives it flat number 0x4D -- gpio2_13, lcd_data7 -- as an output
+ * with initial = 1, and scmmond opens /dev/gpiodev/psm_disable by name. This tree never
+ * mentioned the line at all, so it sat wherever the pad's pull left it, which is the
+ * opposite of what stock boots with.
+ *
+ * A hog rather than a driver: nothing here has a reason to change it, and a line that must
+ * be high before the amplifier is used should not wait for userspace. Read out of the stock
+ * device tree on 2026-09-22; whether it is what makes stock louder at maximum volume is the
+ * listening test that has not happened yet. See docs/hardware/st10/stock-audio-path.md.
+ */
+&gpio1 {
+	/* What stock leaves high through UART0's idle transmit line; see ir_pins. */
+	ir-power-hog {
+		gpio-hog;
+		gpios = <11 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "ir_power";
+	};
+};
+
+&gpio2 {
+	psm-disable-hog {
+		gpio-hog;
+		gpios = <13 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "psm_disable";
+	};
+};
+
+/*
+ * The Bluetooth half of the WL1835, over TI's own HCI protocol on UART2.
+ *
+ * Stock runs the 3.14-era shared transport -- st_kim plus the uim daemon -- whose platform
+ * data lives in Bose board code, which is why the stock device tree has this UART and no
+ * controller. Mainline's hci_ll does the same job from a serdev child, so the node says
+ * what stock tells uim: which UART, which enable line, and how fast to go after the
+ * firmware is loaded.
+ *
+ * enable-gpios is gpio1_31, read out of stock's gpiodev table on 2026-09-22: bt_enable,
+ * flat number 0x3F, output, initial 0. The controller's firmware, TIInit_11.8.32.bts, is
+ * already in this root filesystem under /lib/firmware/ti-connectivity.
+ *
+ * Not yet measured: no ST10 has been seen to enumerate an hci device. A serdev child that
+ * does not probe logs and goes away, which is why this is safe to carry before that.
+ */
+&uart2 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart2_pins &bt_enable_pins>;
+	status = "okay";
+
+	/*
+	 * No EDMA on this port, for the reason the Wireless Link found first: with RX DMA
+	 * the radio's answers reach hci_ll late and more than once. The ST10 shows the same
+	 * signature -- "unexpected event for opcode 0x0010" right after "Reading TI version
+	 * information failed (-110)", on a board whose radio demonstrably answers -- and
+	 * am335x-soundtap-wla.dts has the capture. Polled RX carries a few kB of init script
+	 * without trouble. The two output pads above take the vendor's pulldown for the same
+	 * alignment reason given there.
+	 */
+	/delete-property/ dmas;
+	/delete-property/ dma-names;
+
+	bluetooth {
+		compatible = "ti,wl1835-st";
+		enable-gpios = <&gpio1 31 GPIO_ACTIVE_HIGH>;
+		max-speed = <921600>;
+	};
+};
+
+&uart3 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart3_pins>;
+	status = "okay";
+};
+
+/*
+ * Somebody has to apply keypad_pins, and pinctrl-single writes pad registers regardless
+ * of which node asks — the group covers gpio0 and gpio1 lines either way. It hangs off
+ * gpio2, the one bank nothing in the Wi-Fi path depends on (gpio0 carries the WL1835
+ * interrupt, gpio1 the WLAN_EN regulator), so a problem muxing the keypad can never
+ * delay or disturb a bank the radio needs.
+ */
+&gpio2 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&keypad_pins>;
+};
+
+&elm {
+	status = "okay";
+};
+
+&gpmc {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&nand_pins>;
+	ranges = <0 0 0x08000000 0x01000000>;
+
+	nand@0,0 {
+		compatible = "ti,omap2-nand";
+		reg = <0 0 4>;
+		rb-gpios = <&gpmc 0 GPIO_ACTIVE_HIGH>;
+		nand-bus-width = <8>;
+		gpmc,device-width = <1>;
+		gpmc,cs-rd-off-ns = <30>;
+		gpmc,cs-wr-off-ns = <30>;
+		gpmc,adv-rd-off-ns = <30>;
+		gpmc,adv-wr-off-ns = <30>;
+		gpmc,we-off-ns = <20>;
+		gpmc,oe-off-ns = <20>;
+		gpmc,access-ns = <30>;
+		gpmc,rd-cycle-ns = <30>;
+		gpmc,wr-cycle-ns = <30>;
+		gpmc,wr-access-ns = <30>;
+		ti,nand-ecc-opt = "bch8";
+		ti,elm-id = <&elm>;
+
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			partition@0 {
+				label = "NAND.SPL";
+				reg = <0x00000000 0x00020000>;
+				soundtap,writable;
+			};
+
+			partition@20000 {
+				label = "NAND.SPL.backup1";
+				reg = <0x00020000 0x00020000>;
+				soundtap,writable;
+			};
+
+			partition@40000 {
+				label = "NAND.SPL.backup2";
+				reg = <0x00040000 0x00020000>;
+				soundtap,writable;
+			};
+
+			partition@60000 {
+				label = "NAND.SPL.backup3";
+				reg = <0x00060000 0x00020000>;
+				soundtap,writable;
+			};
+
+			partition@80000 {
+				label = "NAND.U-Boot";
+				reg = <0x00080000 0x001e0000>;
+				soundtap,writable;
+			};
+
+			/*
+			 * Open, because this entry is the slot selector. bootcmd runs
+			 * nand_boot or nand_boot2 and nothing else decides which half of
+			 * the A/B pair the speaker starts, so an install that writes the
+			 * other slot and cannot write this partition installs firmware
+			 * nobody boots: with mtd5 read-only, flash_erase answers EACCES
+			 * and the board comes back on the old slot (measured).
+			 *
+			 * The boot chain above it stays shut: SPL, its three backups and
+			 * U-Boot are the one-way door on a model with no proven mask-ROM
+			 * recovery, and internal/ubootenv refuses a partition whose CRC
+			 * does not check out, so a half-written environment still falls
+			 * back to U-Boot's built-in default.
+			 */
+			partition@260000 {
+				label = "NAND.U-Boot-Env";
+				reg = <0x00260000 0x00020000>;
+				soundtap,writable;
+			};
+
+			partition@280000 {
+				label = "NAND.Kernel-Ping";
+				reg = <0x00280000 0x00500000>;
+				soundtap,writable;
+			};
+
+			partition@780000 {
+				label = "NAND.Kernel-Pong";
+				reg = <0x00780000 0x00500000>;
+				soundtap,writable;
+			};
+
+			partition@c80000 {
+				label = "NAND.File-System-Ping";
+				reg = <0x00c80000 0x06000000>;
+				soundtap,writable;
+			};
+
+			partition@6c80000 {
+				label = "NAND.File-System-Pong";
+				reg = <0x06c80000 0x06000000>;
+				soundtap,writable;
+			};
+
+			partition@cc80000 {
+				label = "NAND.Persistent-Storage";
+				reg = <0x0cc80000 0x02600000>;
+				soundtap,writable;
+			};
+
+			partition@f280000 {
+				label = "NAND.Update-Staging";
+				reg = <0x0f280000 0x00b80000>;
+				read-only;
+			};
+
+			partition@fe00000 {
+				label = "NAND.Manufacturing-Data";
+				reg = <0x0fe00000 0x00040000>;
+				read-only;
+			};
+		};
+	};
+};
+
+&usb0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&usb0_pins>;
+	/*
+	 * Peripheral, which is the shape the Wireless Link has proven: a gadget on usb0,
+	 * giving a console and a network link that do not depend on Wi-Fi. This board has
+	 * one controller -- stock disables usb1 -- so it is one role at a time, and the
+	 * role this firmware needs is the gadget.
+	 *
+	 * It was "host" for the RAM/USB deploy path, which read a root filesystem from a
+	 * stick; NAND boot replaced that. Recovery still reads a stick, but stock U-Boot
+	 * does that at power-on, before Linux exists, so nothing we rely on needs host.
+	 *
+	 * Not "otg", although that is what stock rhino_sm2.dtb says. Choosing by the ID pin
+	 * only works if the ID pin is wired, and nothing here has ever shown that it is
+	 * (docs/hardware/st10/usb-recovery-and-rom.md). An unwired ID would leave the port in
+	 * host mode and the gadget would simply never appear.
+	 */
+	dr_mode = "peripheral";
+	status = "okay";
+};
+
+&usb0_phy {
+	status = "okay";
+};
+
+&mmc1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&mmc1_pins &wlan_pins>;
+	vmmc-supply = <&wlan_en_reg>;
+	bus-width = <4>;
+	non-removable;
+	cap-power-off-card;
+	keep-power-in-suspend;
+	status = "okay";
+
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	wifi@2 {
+		compatible = "ti,wl1835";
+		reg = <2>;
+		interrupt-parent = <&gpio0>;
+		interrupts = <31 IRQ_TYPE_EDGE_RISING>;
+	};
+};
+
+&i2c1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c1_pins>;
+	clock-frequency = <100000>;
+	status = "okay";
+	/* No node for the NCP6922 itself: mainline has no driver for it, and userspace
+	 * writes its enable register over /dev/i2c-1. */
+};
+
+&spi1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&spi1_pins>;
+	ti,pindir-d0-out-d1-in;
+	status = "okay";
+
+	codec@1 {
+		compatible = "rohm,dh2228fv";
+		reg = <1>;
+		spi-max-frequency = <3000000>;
+		spi-cpha;
+	};
+
+	/*
+	 * Bose puts the AIC3256 at reg = <1>, and this tree copies that -- but the codec
+	 * answers 0xff on every register there, with its rails on and its enable line high,
+	 * so which chip select actually reaches it is not established. The second node makes
+	 * the question answerable on hardware instead of from the pad table: both /dev/spidev
+	 * nodes exist and aic3256-loader --device probes either.
+	 *
+	 * Bose's own CS0 device is a display controller that is status = "disabled" on this
+	 * variant, so nothing else wants it.
+	 */
+	codec-alt@0 {
+		compatible = "rohm,dh2228fv";
+		reg = <0>;
+		spi-max-frequency = <3000000>;
+		spi-cpha;
+	};
+};
+
+&mcasp0 {
+	#sound-dai-cells = <0>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&mcasp0_pins>;
+	status = "okay";
+	op-mode = <0>;
+	tdm-slots = <2>;
+	serial-dir = <2 1 0 0>;
+	/*
+	 * AHCLKX stays off the pin, and that is a measurement overruling a reading.
+	 *
+	 * Stock's snd-shelby.ko writes McASP0 PDIR 0x1C000003, which has the AHCLKX bit
+	 * set, against snd-binky.ko's 0x14000002 on the Wireless Link. Without this
+	 * property the speaker is silent while the stream flows normally, mute released
+	 * and the amplifier on; with it, it plays (measured).
+	 *
+	 * The pad is in this tree's mcasp0 group as 0x934 in mode 6, which stock also
+	 * configures with its input buffer enabled (0x26) -- a pin something else drives is
+	 * what that looks like, whatever PDIR says about it.
+	 *
+	 * The rest of stock's transmit setup this node already matches: AHCLKXCTL 0x8001,
+	 * ACLKXCTL 0xA3, AFSXCTL 0x112, XFMT 0x80F0.
+	 */
+	ti,ahclkx-not-driven;
+	ti,tx-clock-only;
+	tx-num-evt = <1>;
+	rx-num-evt = <1>;
+};

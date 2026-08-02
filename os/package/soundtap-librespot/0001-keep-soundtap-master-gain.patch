@@ -1,0 +1,24 @@
+From: SoundTap contributors <soundtap@localhost>
+Subject: [PATCH] Keep SoundTap as the single master gain
+
+Keep librespot's volume state and Spotify Connect events, but do not
+attenuate PCM a second time. SoundTap applies the single master gain.
+
+Upstream: Not applicable (SoundTap-specific volume policy)
+Signed-off-by: Stein Milder <info@steinmilder.nl>
+
+---
+ playback/src/mixer/softmixer.rs | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/playback/src/mixer/softmixer.rs b/playback/src/mixer/softmixer.rs
+index b003a42..f4400e1 100644
+--- a/playback/src/mixer/softmixer.rs
++++ b/playback/src/mixer/softmixer.rs
+@@ -51,5 +51,5 @@ impl VolumeGetter for SoftVolume {
+     #[inline]
+     fn attenuation_factor(&self) -> f64 {
+-        f64::from_bits(self.0.load(Ordering::Relaxed))
++        1.0
+     }
+ }

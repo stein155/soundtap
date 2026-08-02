@@ -1,0 +1,113 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: 2026 SoundTap contributors
+
+/* Shared stock-confirmed Ping/Pong NAND geometry for ST20 and binky. */
+
+/*
+ * Every partition is read-only, because nothing in a normal boot has any
+ * business writing flash. A variant that must write — restoring a backup —
+ * defines this to something harmless before including the file.
+ */
+#ifndef SOUNDTAP_NAND_RO
+#define SOUNDTAP_NAND_RO read-only
+#endif
+
+/* Normal WLA firmware may update only its Ping/Pong slot pairs. */
+#ifndef SOUNDTAP_NAND_SLOT_RW
+#define SOUNDTAP_NAND_SLOT_RW SOUNDTAP_NAND_RO
+#endif
+
+/* Native WLA installs replace the boot chain only after recovery proof. */
+#ifndef SOUNDTAP_NAND_BOOT_RW
+#define SOUNDTAP_NAND_BOOT_RW SOUNDTAP_NAND_RO
+#endif
+
+/* Capture rescue may write only the temporary remote-services marker. */
+#ifndef SOUNDTAP_NAND_PERSISTENT_RW
+#define SOUNDTAP_NAND_PERSISTENT_RW SOUNDTAP_NAND_RO
+#endif
+
+/*
+ * Which slot this board boots is decided by one entry in the U-Boot environment
+ * -- bootcmd runs nand_boot or nand_boot2 -- so firmware that installs into the
+ * other slot has to be able to write this partition or the install is never
+ * booted: a read-only mtd5 answers flash_erase with EACCES and the speaker keeps
+ * booting the old slot. Still opt-in, and still guarded above it: internal/ubootenv
+ * refuses a partition whose CRC does not check out, because a corrupt environment
+ * at least still falls back to U-Boot's built-in default.
+ */
+#ifndef SOUNDTAP_NAND_ENV_RW
+#define SOUNDTAP_NAND_ENV_RW SOUNDTAP_NAND_RO
+#endif
+
+&am33xx_pinmux {
+	nand_pins: pinmux-nand-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_GPMC_AD0, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_AD1, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_AD2, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_AD3, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_AD4, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_AD5, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_AD6, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_AD7, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_WAIT0, PIN_INPUT_PULLDOWN, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_CSN0, PIN_OUTPUT, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_ADVN_ALE, PIN_OUTPUT, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_OEN_REN, PIN_OUTPUT, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_WEN, PIN_OUTPUT, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_BEN0_CLE, PIN_OUTPUT, MUX_MODE0)
+		>;
+	};
+};
+
+&elm {
+	status = "okay";
+};
+
+&gpmc {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&nand_pins>;
+	ranges = <0 0 0x08000000 0x01000000>;
+
+	nand@0,0 {
+		compatible = "ti,omap2-nand";
+		reg = <0 0 4>;
+		rb-gpios = <&gpmc 0 GPIO_ACTIVE_HIGH>;
+		nand-bus-width = <8>;
+		gpmc,device-width = <1>;
+		gpmc,cs-rd-off-ns = <30>;
+		gpmc,cs-wr-off-ns = <30>;
+		gpmc,adv-rd-off-ns = <30>;
+		gpmc,adv-wr-off-ns = <30>;
+		gpmc,we-off-ns = <20>;
+		gpmc,oe-off-ns = <20>;
+		gpmc,access-ns = <30>;
+		gpmc,rd-cycle-ns = <30>;
+		gpmc,wr-cycle-ns = <30>;
+		gpmc,wr-access-ns = <30>;
+		ti,nand-ecc-opt = "bch8";
+		ti,elm-id = <&elm>;
+
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			partition@0 { label = "NAND.SPL"; reg = <0x00000000 0x00020000>; SOUNDTAP_NAND_BOOT_RW; };
+			partition@20000 { label = "NAND.SPL.backup1"; reg = <0x00020000 0x00020000>; SOUNDTAP_NAND_BOOT_RW; };
+			partition@40000 { label = "NAND.SPL.backup2"; reg = <0x00040000 0x00020000>; SOUNDTAP_NAND_BOOT_RW; };
+			partition@60000 { label = "NAND.SPL.backup3"; reg = <0x00060000 0x00020000>; SOUNDTAP_NAND_BOOT_RW; };
+			partition@80000 { label = "NAND.U-Boot"; reg = <0x00080000 0x001e0000>; SOUNDTAP_NAND_BOOT_RW; };
+			partition@260000 { label = "NAND.U-Boot-Env"; reg = <0x00260000 0x00020000>; SOUNDTAP_NAND_ENV_RW; };
+			partition@280000 { label = "NAND.Kernel-Ping"; reg = <0x00280000 0x00500000>; SOUNDTAP_NAND_SLOT_RW; };
+			partition@780000 { label = "NAND.Kernel-Pong"; reg = <0x00780000 0x00500000>; SOUNDTAP_NAND_SLOT_RW; };
+			partition@c80000 { label = "NAND.File-System-Ping"; reg = <0x00c80000 0x06000000>; SOUNDTAP_NAND_SLOT_RW; };
+			partition@6c80000 { label = "NAND.File-System-Pong"; reg = <0x06c80000 0x06000000>; SOUNDTAP_NAND_SLOT_RW; };
+			partition@cc80000 { label = "NAND.Persistent-Storage"; reg = <0x0cc80000 0x02600000>; SOUNDTAP_NAND_PERSISTENT_RW; };
+			partition@f280000 { label = "NAND.Update-Staging"; reg = <0x0f280000 0x00b80000>; SOUNDTAP_NAND_RO; };
+			partition@fe00000 { label = "NAND.Manufacturing-Data"; reg = <0x0fe00000 0x00040000>; SOUNDTAP_NAND_RO; };
+		};
+	};
+};

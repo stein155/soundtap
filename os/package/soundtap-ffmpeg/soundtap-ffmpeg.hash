@@ -1,0 +1,5 @@
+# Tarball: Buildroot master's package/ffmpeg/ffmpeg.hash, checked against a download from
+# ffmpeg.org on 2026-11-12. Licence files: locally calculated from that tarball.
+sha256  8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e  ffmpeg-9.0.2.tar.xz
+sha256  246041b6ecf9bc32d718a62c57877c78b5eb397b6467e74ed7ae2626ab189c30  COPYING.LGPLv2.1
+sha256  2e1d16c72fd74e12063776371da757322f8b77589386532f4fd8634bde7de1af  LICENSE.md

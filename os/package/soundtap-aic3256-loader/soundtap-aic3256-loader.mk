@@ -1,0 +1,71 @@
+################################################################################
+#
+# soundtap-aic3256-loader
+#
+################################################################################
+
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: 2026 SoundTap contributors
+
+SOUNDTAP_AIC3256_LOADER_VERSION = 1
+SOUNDTAP_AIC3256_LOADER_SITE = $(BR2_EXTERNAL_SOUNDTAP_PATH)/package/soundtap-aic3256-loader
+SOUNDTAP_AIC3256_LOADER_SITE_METHOD = local
+SOUNDTAP_AIC3256_LOADER_LICENSE = GPL-2.0-only
+SOUNDTAP_AIC3256_LOADER_LICENSE_FILES = aic3256-loader.c
+
+SOUNDTAP_AIC3256_LOADER_SOURCE_FILE = \
+	$(BR2_EXTERNAL_SOUNDTAP_PATH)/drivers/aic3256-loader.c
+
+define SOUNDTAP_AIC3256_LOADER_VERIFY_SOURCE
+	$(BR2_EXTERNAL_SOUNDTAP_PATH)/../buildroot/support/download/check-hash \
+		$(SOUNDTAP_AIC3256_LOADER_SOURCE_FILE) aic3256-loader.c \
+		$(BR2_EXTERNAL_SOUNDTAP_PATH)/package/soundtap-aic3256-loader/soundtap-aic3256-loader.hash
+endef
+
+ifeq ($(BR2_PACKAGE_SOUNDTAP_AIC3256_LOADER_BITBANG),y)
+SOUNDTAP_AIC3256_LOADER_BITBANG_SOURCE_FILE = \
+	$(BR2_EXTERNAL_SOUNDTAP_PATH)/drivers/aic3256-bitbang.c
+
+define SOUNDTAP_AIC3256_LOADER_BITBANG_COPY_SOURCE
+	$(BR2_EXTERNAL_SOUNDTAP_PATH)/../buildroot/support/download/check-hash \
+		$(SOUNDTAP_AIC3256_LOADER_BITBANG_SOURCE_FILE) aic3256-bitbang.c \
+		$(BR2_EXTERNAL_SOUNDTAP_PATH)/package/soundtap-aic3256-loader/soundtap-aic3256-loader.hash
+	cp $(SOUNDTAP_AIC3256_LOADER_BITBANG_SOURCE_FILE) $(@D)/aic3256-bitbang.c
+endef
+SOUNDTAP_AIC3256_LOADER_POST_RSYNC_HOOKS += SOUNDTAP_AIC3256_LOADER_BITBANG_COPY_SOURCE
+
+define SOUNDTAP_AIC3256_LOADER_BITBANG_BUILD
+	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) \
+		-o $(@D)/aic3256-bitbang $(@D)/aic3256-bitbang.c
+endef
+
+define SOUNDTAP_AIC3256_LOADER_BITBANG_INSTALL
+	$(INSTALL) -D -m 0755 $(@D)/aic3256-bitbang \
+		$(TARGET_DIR)/usr/sbin/aic3256-bitbang
+endef
+endif
+
+define SOUNDTAP_AIC3256_LOADER_COPY_SOURCE
+	cp $(SOUNDTAP_AIC3256_LOADER_SOURCE_FILE) $(@D)/aic3256-loader.c
+endef
+SOUNDTAP_AIC3256_LOADER_POST_RSYNC_HOOKS += \
+	SOUNDTAP_AIC3256_LOADER_VERIFY_SOURCE \
+	SOUNDTAP_AIC3256_LOADER_COPY_SOURCE
+
+define SOUNDTAP_AIC3256_LOADER_BUILD_CMDS
+	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) \
+		-o $(@D)/aic3256-loader $(@D)/aic3256-loader.c
+	$(SOUNDTAP_AIC3256_LOADER_BITBANG_BUILD)
+endef
+
+define SOUNDTAP_AIC3256_LOADER_INSTALL_TARGET_CMDS
+	$(INSTALL) -D -m 0755 $(@D)/aic3256-loader \
+		$(TARGET_DIR)/usr/sbin/aic3256-loader
+	touch $(TARGET_DIR)/etc/soundtap-mainline-nand
+	$(SOUNDTAP_AIC3256_LOADER_BITBANG_INSTALL)
+endef
+
+$(eval $(generic-package))
+
+$(SOUNDTAP_AIC3256_LOADER_TARGET_RSYNC): $(SOUNDTAP_AIC3256_LOADER_SOURCE_FILE)
+$(SOUNDTAP_AIC3256_LOADER_TARGET_RSYNC): $(SOUNDTAP_AIC3256_LOADER_BITBANG_SOURCE_FILE)

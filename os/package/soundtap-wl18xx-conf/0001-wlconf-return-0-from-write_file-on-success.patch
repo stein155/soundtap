@@ -1,0 +1,19 @@
+From: SoundTap contributors <soundtap@localhost>
+Subject: [PATCH] wlconf: return 0 from write_file on success
+
+write_file returned an uninitialised ret after a successful write, so
+wlconf -C exited non-zero (255 on arm64) although the output was written.
+
+Upstream: not sent, 18xx-ti-utils is no longer developed
+Signed-off-by: Stein Milder <info@steinmilder.nl>
+---
+--- a/wlconf/main.c
++++ b/wlconf/main.c
+@@ -575,6 +575,7 @@
+ 	}
+ 
+ 	fclose(file);
++	ret = 0;
+ out:
+ 	return ret;
+ }

@@ -1,0 +1,34 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: 2026 SoundTap contributors
+
+# Buildroot's /usr/share/udhcpc/default.script sets the address, the default route and
+# resolv.conf on bound and renew (a rebind reports as renew) and clears them on deconfig;
+# then it runs every hook in this directory with the event as $1. This one only logs, so a
+# renewal is visible on the speaker: with -q udhcpc exited once bound and never
+# renewed. soundtapd notices a changed address within 15 s (maintainIP).
+#
+# It also opens resolv.conf to everyone: udhcpc inherits the umask of whoever started it
+# (077 under the old wifi.sh), and the default script writes resolv.conf afresh on every
+# lease, so it could come out 0600.
+# The media daemons run as their own users (ADR 0083); musl then falls back to a resolver
+# on 127.0.0.1, and Spotify and every radio stream lost DNS.
+# a+r, not 0644: init makes it root's and writable for soundtapd's DHCP as well (ADR 0066),
+# and the wired DHCP runs as root.
+#
+# And it keeps the lease's NTP servers (option 42, asked for with -O ntpsrv) for clock.sh,
+# and the lease's subnet in the production filter's lan_nets (lan-allow.sh).
+set -eu
+LAN_ALLOW=${SOUNDTAP_LAN_ALLOW:-/opt/soundtap/lan-allow.sh}
+case "${1:-}" in
+bound | renew)
+	chmod a+r /etc/resolv.conf 2>/dev/null || true  # no resolv.conf (no DNS in the lease), or root's and already 0664 (ADR 0066): nothing to do
+	[ -z "${ntpsrv:-}" ] || { mkdir -p /run/soundtap && echo "$ntpsrv" >/run/soundtap/ntp-servers; } || true  # lost: clock.sh asks the default servers
+	"$LAN_ALLOW" add "${interface:-}" "${ip:-}" "${subnet:-}" || true ;;  # logs its own failure
+deconfig)
+	"$LAN_ALLOW" del "${interface:-}" || true ;;
+esac
+LOG=/run/soundtap/log.fifo
+[ -p "$LOG" ] || LOG=/tmp/soundtap.log
+echo "[dhcp] ${1:-?} ${interface:-?} ${ip:-no address}${lease:+ lease ${lease}s}" >>"$LOG" 2>&1
+exit 0

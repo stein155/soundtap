@@ -1,0 +1,44 @@
+From: SoundTap <noreply@example.invalid>
+Subject: [PATCH] ASoC: davinci-mcasp: allow rates that are not on the standard list
+
+The McASP can clock any rate its divider chain reaches, and on this board that
+rate is 46875 Hz: AUXCLK 24 MHz halved to AHCLKX and quartered to a 3 MHz bit
+clock, two 32-bit slots, 3 MHz / 64. It is what Bose's own APConfig declares for
+the ANALOG output of this product, and the machine driver constrains the link to
+it exactly.
+
+SNDRV_PCM_RATE_8000_192000 is a mask of the standard rates and 46875 is not one
+of them. snd_pcm_hw_constraints_complete() turns that mask into a rule unless the
+mask says KNOT or CONTINUOUS, and the rule then rejects every rate that is not a
+listed one -- so the link's own constraint produced an empty parameter space and
+every open of the card failed:
+
+  aplay: set_params:1364: Broken configuration for this PCM: no configurations
+                          available
+
+with --dump-hw-params printing no table at all, because the refine failed before
+there was one. Measured on the board on 2026-09-18.
+
+KNOT says only that this driver may support rates outside the list; the rates it
+actually supports are still decided by rate_min, rate_max and whatever the
+machine driver constrains. Nothing that asks for a standard rate is affected.
+
+--- a/sound/soc/ti/davinci-mcasp.c
++++ b/sound/soc/ti/davinci-mcasp.c
+@@ -1727,7 +1727,15 @@
+ 	.set_tdm_slot	= davinci_mcasp_set_tdm_slot,
+ };
+ 
+-#define DAVINCI_MCASP_RATES	SNDRV_PCM_RATE_8000_192000
++/*
++ * KNOT, because this device's rate is whatever its divider chain reaches and not
++ * every such rate is on the standard list. Without it
++ * snd_pcm_hw_constraints_complete() adds a rule built from the list, and a link
++ * constrained to a rate that is not on it -- 46875 Hz on the AM335x board this
++ * tree targets -- gets an empty parameter space and cannot be opened at all.
++ */
++#define DAVINCI_MCASP_RATES	(SNDRV_PCM_RATE_8000_192000 | \
++				 SNDRV_PCM_RATE_KNOT)
+ 
+ #define DAVINCI_MCASP_PCM_FMTS (SNDRV_PCM_FMTBIT_S8 | \
+ 				SNDRV_PCM_FMTBIT_U8 | \

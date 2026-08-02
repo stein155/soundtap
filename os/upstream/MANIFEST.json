@@ -1,0 +1,115 @@
+[
+ {
+  "origin": "upstream",
+  "source": "https://github.com/TI-ECS/bt-firmware (TIInit_11.8.32.bts)",
+  "version": "fetched 2026-09-16, ROM 8.0.32 script of 17-Sep-2014",
+  "license": "Texas Instruments Text File License (LICENCE in that repository)",
+  "files": {
+   "os/upstream/ti-connectivity/TIInit_11.8.32.bts": "f7dfa9d8072eacf492414fabd35fb6287b18eb0c40bad8022d4aa0802dedfb78",
+   "/lib/firmware/ti-connectivity/TIInit_11.8.32.bts": "f7dfa9d8072eacf492414fabd35fb6287b18eb0c40bad8022d4aa0802dedfb78"
+  }
+ },
+ {
+  "origin": "upstream",
+  "source": "https://mirrors.edge.kernel.org/pub/linux/kernel/firmware/linux-firmware-20260410.tar.xz (ti-connectivity/wl18xx-fw-4.bin, via Buildroot linux-firmware)",
+  "version": "linux-firmware 20260410, wl18xx firmware 8.9.0.0.79",
+  "license": "Redistributable, LICENCE.ti-connectivity in linux-firmware",
+  "files": {
+   "/lib/firmware/ti-connectivity/wl18xx-fw-4.bin": "95f04731257febabc358b95ff06dbb2025d047c6ad3ae0239c8afb92dedc7c5c"
+  }
+ },
+ {
+  "origin": "upstream",
+  "source": "https://www.kernel.org/pub/software/network/wireless-regdb/wireless-regdb-2026.09.03.tar.xz (via Buildroot wireless-regdb)",
+  "version": "2026.09.03",
+  "license": "ISC (LICENSE in wireless-regdb)",
+  "files": {
+   "/lib/firmware/regulatory.db": "7e236caecd939c8ec98be4870bf30422f28ffef2565a38aaaa2d9ddabd0c2641",
+   "/lib/firmware/regulatory.db.p7s": "50332f0db09b8bcc719235ec4985c27377f2cc2f42abb7b5dcf951866c5a888a"
+  }
+ },
+ {
+  "origin": "generated",
+  "source": "built at image time by TI wlconf (18xx-ti-utils R8.8) from os/package/soundtap-wl18xx-conf/board.conf",
+  "version": "18xx-ti-utils R8.8",
+  "license": "BSD-3-Clause (18xx-ti-utils); the generated configuration is ours",
+  "files": {
+   "/lib/firmware/ti-connectivity/wl18xx-conf.binDF": "1326032ca9a960aff65950d8e7ab51d264ba67b6a2517a11d8e82e3a1a52d9cf",
+   "/lib/firmware/ti-connectivity/wl18xx-conf.binJP": "71f5d9036761965319571faf1dcc2068f63745b311b822c688dfe32a6f6ed0f6",
+   "/lib/firmware/ti-connectivity/wl18xx-conf.binKR": "0809731c8ef122b029402f6c0292f9c49d1cca83e0600fadd2a97eb3abcf4c0f",
+   "/lib/firmware/ti-connectivity/wl18xx-conf.binUS": "0809731c8ef122b029402f6c0292f9c49d1cca83e0600fadd2a97eb3abcf4c0f"
+  }
+ },
+ {
+  "origin": "generated",
+  "source": "app/oled/design/atlas.py, glyphs rasterised from Plus Jakarta Sans (https://github.com/tokotype/PlusJakartaSans), Silkscreen, Manrope and Noto Sans fonts",
+  "version": "see app/oled/design/atlas.py",
+  "license": "SIL OFL 1.1 (app/oled/screen/assets/OFL.txt)",
+  "files": {
+   "app/oled/screen/assets/st20-atlas.png": "b99f3662b3d7aa08d28ce480928f1279c3938fc21dfcf832f04048fc0f5d382a",
+   "app/oled/screen/assets/st20-atlas.txt.gz": "63a1f903a8cb97bac9ff89403e3c0db07b59dfaf795e5af41c1afee921be8a8e"
+  }
+ },
+ {
+  "origin": "original",
+  "source": "drawn for this project",
+  "version": "n/a",
+  "license": "SoundTap project (GPL-3.0-or-later, see LICENSE)",
+  "files": {
+   "app/frontend/public/apple-touch-icon.png": "05b3511938fcba8ae7a7f95a3fc973d510c7826e8a91ea5093a3e7109f1982a8",
+   "app/frontend/public/badge.png": "11944ff5325aecc12d93e5896e9f2c1c9b8140b6368d26f2ddd11ebe71452d91",
+   "app/frontend/public/favicon-32.png": "ec835a715e61ba813adb3d658b825f8e0c2e70aa030834be39c04de55cc02892",
+   "app/frontend/public/icon-192.png": "b4e2566e3ce6e2d243972de8ded6100d5bcf6b02ccbf5f80a628123ec6d78ed6",
+   "app/frontend/public/icon-512.png": "05ece525ab4edb92cc97540babe2d74e7479915b1d3274e5a0af00b9834424e1",
+   "app/frontend/public/splash/375x667@2-dark.png": "dd164f002c08e586951f7f5bea093ab51f6c5bd44d8a6a7878d65201e5b6a6c7",
+   "app/frontend/public/splash/375x667@2-light.png": "bdece24aa5a2f6a321947f0e333b0c2152c2d644b050c68c44786b225147cf6b",
+   "app/frontend/public/splash/375x812@3-dark.png": "14b5021529cc9156f1b1f4f32667f7eb4231c07c567c17392fbb75c22b6fbfce",
+   "app/frontend/public/splash/375x812@3-light.png": "0fef4c13b1f9b076e984f1ccbe1178e842c04c1d8cc88c43563332d9cdf79f9f",
+   "app/frontend/public/splash/390x844@3-dark.png": "04d32a24e086a97a72e32a819e4f9b3a238a1713ca8b536334c8aef37ed541e9",
+   "app/frontend/public/splash/390x844@3-light.png": "85cd9d0e5891805e727f076be62c2448ecd468bd659199f820386eb6d30f1ed1",
+   "app/frontend/public/splash/393x852@3-dark.png": "08fa862a3fa61c06f994867e3c01e421c6cd0e4fba3a4b31c7adbab32386a91f",
+   "app/frontend/public/splash/393x852@3-light.png": "0f9bfbc3e6a81182fd534f2be5f25bc7425517438f46798b122dc7157de8a88a",
+   "app/frontend/public/splash/402x874@3-dark.png": "d2f41b2e5f78f3548c1aeb515b8af6312fd67d57113479693b3df22f71242a44",
+   "app/frontend/public/splash/402x874@3-light.png": "0e59319c52fb7ff21ca29be169ca743adfbef3b6811f256e411f2ec11994b762",
+   "app/frontend/public/splash/414x896@2-dark.png": "8eed98ad107d860e8f5f18c983979a2e506953c2f9652212205d0ca00d277db5",
+   "app/frontend/public/splash/414x896@2-light.png": "ba2a66528080b2709d562cd2fada5eb78d513c77a4c484c714ab835db403825e",
+   "app/frontend/public/splash/414x896@3-dark.png": "2f758b6eab6c13879166a7519b36e60fbead7854e74551fdbef24db7d6ee9a57",
+   "app/frontend/public/splash/414x896@3-light.png": "e6aa3c1d32b1f6a0aae9e34624dfbc5a19d98bd94fabdc2dda65291af6521c2a",
+   "app/frontend/public/splash/428x926@3-dark.png": "5cdfff317f64e7beb7b670019b782dcef0876cdf8487b6e928bd30f3aabaf916",
+   "app/frontend/public/splash/428x926@3-light.png": "a317ce1c0caa949a328a064fcb3e19f3dc787406d211e1c53f61eb3b1c4d57e0",
+   "app/frontend/public/splash/430x932@3-dark.png": "43e27b509300ce447e5d86fa4ed278fe2260b7cdb7614950354f560a92cdb137",
+   "app/frontend/public/splash/430x932@3-light.png": "702b5ba455348afb9bd9a482276dc406c9bbe840c5ad3653fbb42ac7ce3fac8f",
+   "app/frontend/public/splash/440x956@3-dark.png": "c7ccbc411987e862387b8494b6c2969f98c5003a6184c9c76ad9753442f507ff",
+   "app/frontend/public/splash/440x956@3-light.png": "e37cbb6c6e469b6ef115247871a4e6a4ddb70d05fa1384af538af9bd74c49e1b"
+  }
+ },
+ {
+  "origin": "generated",
+  "source": "rendered from the design in Chromium by app/oled/design/golden.sh",
+  "version": "n/a",
+  "license": "SoundTap project (GPL-3.0-or-later, see LICENSE)",
+  "globs": [
+   "app/oled/screen/testdata/*.png"
+  ]
+ },
+ {
+  "origin": "generated",
+  "source": "photographed from the web UI in Chromium by make screenshots (docs/tools)",
+  "version": "n/a",
+  "license": "SoundTap project (GPL-3.0-or-later, see LICENSE)",
+  "globs": [
+   "docs/assets/hero-*.png",
+   "docs/assets/screens.png",
+   "docs/assets/social-preview.png"
+  ]
+ },
+ {
+  "origin": "upstream",
+  "source": "https://github.com/fontsource/font-files (@fontsource-variable/montserrat, files/montserrat-latin-wght-normal.woff2)",
+  "version": "5.3.0",
+  "license": "SIL Open Font License 1.1 (docs/assets/fonts/montserrat-OFL.txt)",
+  "files": {
+   "docs/assets/fonts/montserrat-latin-wght.woff2": "06b16db7a969135d48d38c49183be7fb88d4452e2a3011957c7851941f4e4879"
+  }
+ }
+]

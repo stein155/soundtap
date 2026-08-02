@@ -1,0 +1,11 @@
+{
+  "partition_pebs": 768,
+  "chip_pebs": 2048,
+  "layout_pebs": 2,
+  "wear_leveling_pebs": 1,
+  "atomic_leb_change_pebs": 1,
+  "beb_limit_per_1024": 20,
+  "bad_peb_reserve": 40,
+  "volume_lebs": 724,
+  "space_fixup": true
+}

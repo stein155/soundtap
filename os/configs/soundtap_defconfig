@@ -1,0 +1,85 @@
+# One image for every speaker: the ST10 (rhino), the Wireless Link (binky) and the ST20
+# (spotty). This is the Buildroot counterpart of os/bootloader's single rootfs, the one
+# the tri package ships: one kernel, every model's device tree and uImage in /boot, and each
+# speaker's U-Boot picks its own by variant. os/board/image/README.md has the details.
+BR2_arm=y
+BR2_cortex_a8=y
+BR2_ARM_FPU_VFPV3=y
+# The toolchain soundtap_toolchain_defconfig builds, at the path `make toolchain` exports.
+BR2_TOOLCHAIN_EXTERNAL=y
+BR2_TOOLCHAIN_EXTERNAL_CUSTOM=y
+BR2_TOOLCHAIN_EXTERNAL_PREINSTALLED=y
+BR2_TOOLCHAIN_EXTERNAL_PATH="$(SOUNDTAP_TOOLCHAIN)/sdk"
+BR2_TOOLCHAIN_EXTERNAL_CUSTOM_PREFIX="arm-buildroot-linux-musleabihf"
+BR2_TOOLCHAIN_EXTERNAL_GCC_13=y
+BR2_TOOLCHAIN_EXTERNAL_HEADERS_6_12=y
+BR2_TOOLCHAIN_EXTERNAL_CUSTOM_MUSL=y
+BR2_TOOLCHAIN_EXTERNAL_CXX=y
+BR2_GLOBAL_PATCH_DIR="$(BR2_EXTERNAL_SOUNDTAP_PATH)/board/common/patches"
+BR2_DOWNLOAD_FORCE_CHECK_HASHES=y
+BR2_CCACHE=y
+BR2_PER_PACKAGE_DIRECTORIES=y
+# Off, and with per-package directories it has to be: ccache then rewrites --sysroot into a
+# path relative to CMake's try-compile directory, CMake resolves it from another one, and
+# every cmake package gets -isystem on a sysroot that does not exist (snapcast: cstdlib
+# cannot find stdlib.h, run 37663625291). CI always builds in /work, so hits do not need it.
+# BR2_CCACHE_USE_BASEDIR is not set
+BR2_REPRODUCIBLE=y
+BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_MDEV=y
+BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_SOUNDTAP_PATH)/board/rootfs/busybox.fragment"
+BR2_ROOTFS_DEVICE_TABLE="system/device_table.txt $(BR2_EXTERNAL_SOUNDTAP_PATH)/board/rootfs/device-table.txt"
+BR2_ROOTFS_USERS_TABLES="$(BR2_EXTERNAL_SOUNDTAP_PATH)/board/rootfs/users.txt"
+BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_SOUNDTAP_PATH)/board/rootfs/rootfs-overlay"
+BR2_ROOTFS_POST_BUILD_SCRIPT="$(BR2_EXTERNAL_SOUNDTAP_PATH)/board/rootfs/post-build.sh $(BR2_EXTERNAL_SOUNDTAP_PATH)/board/image/post-build.sh"
+BR2_ROOTFS_POST_FAKEROOT_SCRIPT="$(BR2_EXTERNAL_SOUNDTAP_PATH)/board/rootfs/preserve-rootfs-tree.sh"
+BR2_ROOTFS_POST_IMAGE_SCRIPT="$(BR2_EXTERNAL_SOUNDTAP_PATH)/board/image/post-image.sh"
+BR2_TARGET_GENERIC_HOSTNAME="soundtap"
+BR2_TARGET_GENERIC_ISSUE="SoundTap Buildroot rootfs candidate"
+BR2_TARGET_GENERIC_GETTY_PORT="ttyS3"
+BR2_PACKAGE_DROPBEAR=y
+BR2_PACKAGE_ALSA_LIB_PCM_PLUGINS="plug file null ioplug rate linear route"
+# BR2_PACKAGE_ALSA_UTILS_ALSAMIXER is not set
+BR2_PACKAGE_SOUNDTAP_AIC3256_LOADER=y
+BR2_PACKAGE_SOUNDTAP_AIC3256_LOADER_BITBANG=y
+BR2_PACKAGE_SOUNDTAP_WL18XX_CONF=y
+# WiLink8 firmware from linux-firmware, not Bose's copy (ADR 0047).
+BR2_PACKAGE_LINUX_FIRMWARE=y
+BR2_PACKAGE_LINUX_FIRMWARE_TI_WL18XX=y
+BR2_PACKAGE_SOUNDTAPD=y
+BR2_PACKAGE_SOUNDTAPD_BCOFLASH=y
+# Our own BCO image (first stage, app, WiLD core); soundtapd flashes it on the ST20 (ADR 0031).
+BR2_PACKAGE_HOST_SOUNDTAP_BCO_APP=y
+BR2_PACKAGE_SOUNDTAP_RUNTIME=y
+# flash_erase, nandwrite, nanddump and ubiformat: what POST /api/firmware installs with.
+BR2_PACKAGE_MTD=y
+# regulatory.db: soundtapd's Wi-Fi manager reloads it once the root filesystem is up, as mainline ships it.
+BR2_PACKAGE_WIRELESS_REGDB=y
+# BR2_TARGET_ROOTFS_TAR is not set
+BR2_TARGET_ROOTFS_UBI=y
+BR2_TARGET_ROOTFS_UBI_SUBSIZE=2048
+BR2_TARGET_ROOTFS_UBI_USE_CUSTOM_CONFIG=y
+BR2_TARGET_ROOTFS_UBI_CUSTOM_CONFIG_FILE="$(BR2_EXTERNAL_SOUNDTAP_PATH)/board/rootfs/ubinize.cfg"
+BR2_TARGET_ROOTFS_UBI_OPTS="-Q 0x4b11277b"
+BR2_TARGET_ROOTFS_UBIFS_LEBSIZE=0x1f000
+BR2_TARGET_ROOTFS_UBIFS_MAXLEBCNT=724
+BR2_TARGET_ROOTFS_UBIFS_OPTS="-F --uuid ee982fbc-2608-553f-9c7b-6e31872888ff --timestamp $(SOURCE_DATE_EPOCH)"
+BR2_LINUX_KERNEL=y
+BR2_LINUX_KERNEL_CUSTOM_VERSION=y
+BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="6.12.117"
+BR2_LINUX_KERNEL_PATCH="$(BR2_EXTERNAL_SOUNDTAP_PATH)/board/rootfs/linux-patches"
+BR2_LINUX_KERNEL_USE_DEFCONFIG=y
+BR2_LINUX_KERNEL_DEFCONFIG="omap2plus"
+BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_SOUNDTAP_PATH)/board/image/linux.fragment"
+BR2_LINUX_KERNEL_XZ=y
+BR2_LINUX_KERNEL_ZIMAGE=y
+BR2_LINUX_KERNEL_DTS_SUPPORT=y
+BR2_LINUX_KERNEL_CUSTOM_DTS_DIR="$(BR2_EXTERNAL_SOUNDTAP_PATH)/board/common/dts"
+BR2_LINUX_KERNEL_INSTALL_TARGET=y
+BR2_LINUX_KERNEL_NEEDS_HOST_OPENSSL=y
+BR2_LINUX_KERNEL_NEEDS_HOST_LIBELF=y
+BR2_PACKAGE_HOST_UBOOT_TOOLS=y
+# SPL and U-Boot from the mainline source, patches and .config; see
+# os/package/soundtap-bootloaders.
+BR2_PACKAGE_HOST_SOUNDTAP_BOOTLOADERS=y
+BR2_PACKAGE_HOST_SOUNDTAP_BOOTLOADERS_ST20=y
+BR2_PACKAGE_HOST_SOUNDTAP_BOOTLOADERS_WLA=y

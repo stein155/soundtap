@@ -1,0 +1,119 @@
+--- a/connect/src/spirc.rs
++++ b/connect/src/spirc.rs
+@@ -70,6 +70,7 @@
+ 
+ struct SpircTask {
+     context_uri: Arc<Mutex<String>>,
++    play_modes: Arc<Mutex<PlayModes>>,
+     player: Arc<Player>,
+     mixer: Arc<dyn Mixer>,
+ 
+@@ -142,10 +143,19 @@
+ // to reduce updates to remote, we group some request by waiting for a set amount of time
+ const UPDATE_STATE_DELAY: Duration = Duration::from_millis(200);
+ 
++/// Shuffle and repeat as the device has them, whoever set them.
++#[derive(Clone, Copy, Default)]
++pub struct PlayModes {
++    pub shuffle: bool,
++    pub repeat_context: bool,
++    pub repeat_track: bool,
++}
++
+ /// The spotify connect handle
+ pub struct Spirc {
+     commands: mpsc::UnboundedSender<SpircCommand>,
+     context_uri: Arc<Mutex<String>>,
++    play_modes: Arc<Mutex<PlayModes>>,
+ }
+ 
+ impl Spirc {
+@@ -154,6 +164,11 @@
+         self.context_uri.lock().map(|uri| uri.clone()).unwrap_or_default()
+     }
+ 
++    /// Shuffle and repeat as of the last state update.
++    pub fn play_modes(&self) -> PlayModes {
++        self.play_modes.lock().map(|m| *m).unwrap_or_default()
++    }
++
+     /// Initializes a new spotify connect device
+     ///
+     /// The returned tuple consists out of a handle to the [`Spirc`] that
+@@ -231,9 +246,11 @@
+         let player_events = player.get_player_event_channel();
+ 
+         let context_uri = Arc::new(Mutex::new(String::new()));
++        let play_modes = Arc::new(Mutex::new(PlayModes::default()));
+ 
+         let mut task = SpircTask {
+             context_uri: context_uri.clone(),
++            play_modes: play_modes.clone(),
+             player,
+             mixer,
+ 
+@@ -270,6 +287,7 @@
+         let spirc = Spirc {
+             commands: cmd_tx,
+             context_uri,
++            play_modes,
+         };
+ 
+         let initial_volume = task.connect_state.device_info().volume;
+@@ -1819,6 +1837,13 @@
+         if let Ok(mut uri) = self.context_uri.lock() {
+             uri.clone_from(self.connect_state.context_uri());
+         }
++        if let Ok(mut modes) = self.play_modes.lock() {
++            *modes = PlayModes {
++                shuffle: self.connect_state.shuffling_context(),
++                repeat_context: self.connect_state.repeat_context(),
++                repeat_track: self.connect_state.repeat_track(),
++            };
++        }
+ 
+         self.connect_state.set_status(&self.play_status);
+ 
+--- a/src/soundtap_ctl.rs
++++ b/src/soundtap_ctl.rs
+@@ -139,12 +139,20 @@
+         let user = session.as_ref().map(|s| s.username()).unwrap_or_default();
+         let country = session.as_ref().map(|s| s.country()).unwrap_or_default();
+         let context = spirc.as_ref().map(|s| s.context_uri()).unwrap_or_default();
++        let modes = spirc.as_ref().map(|s| s.play_modes()).unwrap_or_default();
++        let repeat = match (modes.repeat_track, modes.repeat_context) {
++            (true, _) => "track",
++            (false, true) => "context",
++            (false, false) => "off",
++        };
+         let body = format!(
+-            "{{\"state\":{},\"username\":{},\"country\":{},\"context\":{}}}",
++            "{{\"state\":{},\"username\":{},\"country\":{},\"context\":{},\"shuffle\":{},\"repeat\":{}}}",
+             json_str(state),
+             json_str(&user),
+             json_str(&country),
+-            json_str(&context)
++            json_str(&context),
++            modes.shuffle,
++            json_str(repeat)
+         );
+         return ("200 OK", body.into_bytes());
+     }
+@@ -250,6 +258,17 @@
+             Some(p) => cmd(spirc.set_volume(((p * 65535 + 50) / 100) as u16)),
+             None => bad("percent"),
+         },
++        ("POST", "/shuffle") => match q.get("on").map(String::as_str) {
++            Some("1") => cmd(spirc.shuffle(true)),
++            Some("0") => cmd(spirc.shuffle(false)),
++            _ => bad("on"),
++        },
++        ("POST", "/repeat") => match q.get("mode").map(String::as_str) {
++            Some("off") => cmd(spirc.repeat(false).and_then(|()| spirc.repeat_track(false))),
++            Some("context") => cmd(spirc.repeat(true).and_then(|()| spirc.repeat_track(false))),
++            Some("track") => cmd(spirc.repeat(true).and_then(|()| spirc.repeat_track(true))),
++            _ => bad("mode"),
++        },
+         ("POST", "/seek") => match q.get("ms").and_then(|v| v.parse::<u32>().ok()) {
+             Some(ms) => cmd(spirc.set_position_ms(ms)),
+             None => bad("ms"),

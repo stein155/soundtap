@@ -1,0 +1,366 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: 2026 SoundTap contributors
+/dts-v1/;
+
+/*
+ * SoundTouch 300, variant "ginger": the same SM2 module as the Wireless Link and the
+ * ST10, inside a soundbar. SoundTap runs on it (first install 2026-11-15,
+ * docs/hardware/install-records.md#soundtouch-300). The hardware facts below were read from a running
+ * stock ST300 (27.0.6) without writing to it.
+ *
+ * What the module does not have here: a codec, LEDs, buttons or a display. Stock
+ * disables all four nodes. The soundbar's own processor owns those, plus the DSP,
+ * ADAPTiQ and the bass module, and A4VServer talks to it over UART0 at 921600 baud.
+ */
+#include "am33xx.dtsi"
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/pinctrl/am33xx.h>
+#include "am335x-soundtap-ramoops.dtsi"
+#define SOUNDTAP_NAND_SLOT_RW soundtap,writable
+#define SOUNDTAP_NAND_ENV_RW soundtap,writable
+#define SOUNDTAP_NAND_PERSISTENT_RW soundtap,writable
+#define SOUNDTAP_NAND_BOOT_RW soundtap,writable
+#include "am335x-soundtap-nand.dtsi"
+
+/ {
+	model = "Bose SoundTouch 300 (SoundTap ginger)";
+	compatible = "bose,ginger-sm2", "ti,am33xx";
+
+	aliases {
+		serial0 = &uart0;
+		serial3 = &uart3;
+	};
+
+	chosen {
+		stdout-path = "serial3:115200n8";
+		bootargs = "console=ttyS3,115200n8 root=ubi0:rootfs ro rootfstype=ubifs ubi.mtd=9,2048 rootwait init=/init mem=128M cma=8M panic=10 omap_wdt.early_enable=1 variant=ginger module_type=sm2 country=GB region=GB soundtap.nandroot=1 soundtap.watchdog=90";
+	};
+
+	/* Stock reports 122488 kB of 128 MiB, the same part as the Wireless Link. */
+	memory@80000000 {
+		device_type = "memory";
+		reg = <0x80000000 0x08000000>;
+	};
+
+	spdif_codec: audio-codec {
+		compatible = "linux,spdif-dit";
+		#sound-dai-cells = <0>;
+	};
+
+	/*
+	 * The one audio output: S/PDIF into the soundbar's DSP, on McASP0 serializer 2.
+	 * snd-bardeen.ko's start_tx, read 2026-10-01: AFSXCTL 0xc002 (384-slot DIT),
+	 * DITCTL 1, SRCTL2 1 (transmit), AHCLKXCTL 0x8001 and ACLKXCTL 0xe1, so AUXCLK
+	 * 24 MHz / 2 / 2 = a 6 MHz biphase clock, which is 128 x 46875 Hz. Unlike the
+	 * Wireless Link's S/PDIF jack there is no oscillator on this link; the DSP takes
+	 * whatever rate the module sends.
+	 *
+	 * Serializer 0 receives a two-slot stream from the DSP on stock (SRCTL0 2,
+	 * external ACLKR/AFSR). It carries the processor's input, the TV: measured
+	 * 2026-11-08 with a register probe, full-scale audio while the TV played and
+	 * zeros while it was silent, clocked only while the bar is awake. It is the
+	 * card's capture stream (ti,dit-rx-i2s, kernel patch 0011), for sharing the TV
+	 * with a multiroom group.
+	 */
+	sound {
+		compatible = "bose,soundtap-mcasp-spdif-auxclk";
+		model = "SoundTap";
+		audio-cpu = <&mcasp0>;
+		audio-codec = <&spdif_codec>;
+	};
+
+	wlan_en_reg: regulator-wlan {
+		compatible = "regulator-fixed";
+		regulator-name = "wlan-en-regulator";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		gpio = <&gpio1 30 GPIO_ACTIVE_HIGH>;
+		startup-delay-us = <70000>;
+		enable-active-high;
+	};
+};
+
+&am33xx_pinmux {
+	uart3_pins: pinmux-uart3-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_MII1_RXD2, PIN_OUTPUT_PULLDOWN, MUX_MODE1)
+			AM33XX_PADCONF(AM335X_PIN_SPI0_CS1, PIN_INPUT_PULLUP, MUX_MODE1)
+		>;
+	};
+
+	/* The link to the soundbar processor. Stock uart0_pins_default, <0x170 0x30 0x174 0x00>. */
+	uart0_pins: pinmux-uart0-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_UART0_RXD, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_UART0_TXD, PIN_OUTPUT, MUX_MODE0)
+		>;
+	};
+
+	mmc1_pins: pinmux-mmc1-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_MMC0_DAT3, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_MMC0_DAT2, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_MMC0_DAT1, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_MMC0_DAT0, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_MMC0_CLK, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_MMC0_CMD, PIN_INPUT_PULLUP, MUX_MODE0)
+		>;
+	};
+
+	wlan_pins: pinmux-wlan-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_GPMC_CSN1, PIN_OUTPUT_PULLDOWN, MUX_MODE7)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_WPN, PIN_INPUT, MUX_MODE7)
+		>;
+	};
+
+	uart2_pins: pinmux-uart2-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_SPI0_SCLK, PIN_INPUT_PULLUP, MUX_MODE1) /* uart2_rxd */
+			AM33XX_PADCONF(AM335X_PIN_SPI0_D0, PIN_OUTPUT_PULLDOWN, MUX_MODE1) /* uart2_txd */
+			AM33XX_PADCONF(AM335X_PIN_I2C0_SDA, PIN_INPUT_PULLUP, MUX_MODE2) /* uart2_ctsn */
+			AM33XX_PADCONF(AM335X_PIN_I2C0_SCL, PIN_OUTPUT_PULLDOWN, MUX_MODE2) /* uart2_rtsn */
+		>;
+	};
+
+	bt_pins: pinmux-bt-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_GPMC_CSN2, PIN_OUTPUT_PULLDOWN, MUX_MODE7)
+		>;
+	};
+
+	/*
+	 * Stock i2c1_pins_default, <0x180 0x6b 0x184 0x6b>: uart1_rxd/uart1_txd in mode 3.
+	 * scmmond keeps /dev/i2c-1 open on stock; nothing here talks to it yet.
+	 */
+	i2c1_pins: pinmux-i2c1-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_UART1_RXD, PIN_INPUT | SLEWCTRL_SLOW, MUX_MODE3) /* i2c1_sda */
+			AM33XX_PADCONF(AM335X_PIN_UART1_TXD, PIN_INPUT | SLEWCTRL_SLOW, MUX_MODE3) /* i2c1_scl */
+		>;
+	};
+
+	/*
+	 * Stock mcaspo0_pins_default (sic), all eight pads. Same as the Wireless Link except
+	 * mii1_col, which is mcasp0_axr2 here -- the S/PDIF output -- where the Wireless
+	 * Link hands it to McASP1.
+	 */
+	mcasp0_pins: pinmux-mcasp0-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_LCD_DATA12, PIN_INPUT_PULLDOWN, MUX_MODE3) /* mcasp0_aclkr */
+			AM33XX_PADCONF(AM335X_PIN_LCD_DATA13, PIN_INPUT_PULLDOWN, MUX_MODE3) /* mcasp0_fsr */
+			AM33XX_PADCONF(AM335X_PIN_LCD_DATA14, PIN_INPUT_PULLDOWN, MUX_MODE3) /* mcasp0_axr1 */
+			AM33XX_PADCONF(AM335X_PIN_LCD_DATA15, PIN_OUTPUT, MUX_MODE3) /* mcasp0_ahclkx */
+			AM33XX_PADCONF(AM335X_PIN_MII1_COL, PIN_INPUT_PULLDOWN, MUX_MODE6) /* mcasp0_axr2 */
+			AM33XX_PADCONF(AM335X_PIN_MII1_TX_CLK, PIN_OUTPUT, MUX_MODE6) /* mcasp0_aclkx */
+			AM33XX_PADCONF(AM335X_PIN_MII1_RX_CLK, PIN_OUTPUT, MUX_MODE6) /* mcasp0_fsx */
+			AM33XX_PADCONF(AM335X_PIN_MII1_RXD3, PIN_INPUT_PULLDOWN, MUX_MODE6) /* mcasp0_axr0 */
+		>;
+	};
+
+	/* Stock rmii1_pins_default and davinci_mdio_default. */
+	rmii1_pins: pinmux-rmii1-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_MII1_CRS, PIN_INPUT_PULLDOWN, MUX_MODE1) /* rmii1_crs_dv */
+			AM33XX_PADCONF(AM335X_PIN_MII1_RX_ER, PIN_INPUT_PULLDOWN, MUX_MODE1) /* rmii1_rx_er */
+			AM33XX_PADCONF(AM335X_PIN_MII1_TX_EN, PIN_OUTPUT_PULLDOWN, MUX_MODE1) /* rmii1_tx_en */
+			AM33XX_PADCONF(AM335X_PIN_MII1_TXD1, PIN_OUTPUT_PULLDOWN, MUX_MODE1) /* rmii1_txd1 */
+			AM33XX_PADCONF(AM335X_PIN_MII1_TXD0, PIN_OUTPUT_PULLDOWN, MUX_MODE1) /* rmii1_txd0 */
+			AM33XX_PADCONF(AM335X_PIN_MII1_RXD1, PIN_INPUT_PULLDOWN, MUX_MODE1) /* rmii1_rxd1 */
+			AM33XX_PADCONF(AM335X_PIN_MII1_RXD0, PIN_INPUT_PULLDOWN, MUX_MODE1) /* rmii1_rxd0 */
+			AM33XX_PADCONF(AM335X_PIN_RMII1_REF_CLK, PIN_INPUT_PULLDOWN, MUX_MODE0) /* rmii1_refclk */
+		>;
+	};
+
+	mdio_pins: pinmux-mdio-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_MDIO, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_MDC, PIN_OUTPUT_PULLUP, MUX_MODE0)
+		>;
+	};
+
+	/* Stock gpiodev_pins_default, the lines the hogs below hold. */
+	control_pins: pinmux-control-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_LCD_DATA0, PIN_OUTPUT_PULLDOWN, MUX_MODE7) /* auth_resetn */
+			AM33XX_PADCONF(AM335X_PIN_LCD_DATA2, PIN_OUTPUT_PULLDOWN, MUX_MODE7) /* mute_out */
+			AM33XX_PADCONF(AM335X_PIN_LCD_DATA4, PIN_OUTPUT_PULLDOWN, MUX_MODE7) /* dac_adc_reset */
+			AM33XX_PADCONF(AM335X_PIN_LCD_DATA5, PIN_OUTPUT_PULLDOWN, MUX_MODE7) /* ampstby */
+			AM33XX_PADCONF(AM335X_PIN_LCD_DATA7, PIN_OUTPUT_PULLDOWN, MUX_MODE7) /* psm_disable */
+			AM33XX_PADCONF(AM335X_PIN_LCD_VSYNC, PIN_OUTPUT_PULLDOWN, MUX_MODE7) /* dsp_reset */
+			AM33XX_PADCONF(AM335X_PIN_LCD_PCLK, PIN_INPUT_PULLUP, MUX_MODE7) /* ampfault */
+		>;
+	};
+};
+
+&uart0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart0_pins>;
+	status = "okay";
+};
+
+&uart2 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart2_pins>;
+	status = "okay";
+	/* As on the Wireless Link: RX DMA delivers the radio's replies late. */
+	/delete-property/ dmas;
+	/delete-property/ dma-names;
+
+	bluetooth {
+		compatible = "ti,wl1835-st";
+		enable-gpios = <&gpio1 31 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&bt_pins>;
+		max-speed = <3000000>;
+	};
+};
+
+&uart3 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart3_pins>;
+	status = "okay";
+};
+
+&mmc1 {
+	/delete-property/ dmas;
+	/delete-property/ dma-names;
+	sdhci-caps-mask = <0 0x00580000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&mmc1_pins &wlan_pins>;
+	vmmc-supply = <&wlan_en_reg>;
+	bus-width = <4>;
+	non-removable;
+	cap-power-off-card;
+	keep-power-in-suspend;
+	ti,non-removable;
+	ti,needs-special-hs-handling;
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	wlcore: wifi@2 {
+		compatible = "ti,wl1835";
+		reg = <2>;
+		interrupt-parent = <&gpio0>;
+		interrupts = <31 IRQ_TYPE_EDGE_FALLING>;
+	};
+};
+
+&mcasp0 {
+	#sound-dai-cells = <0>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&mcasp0_pins>;
+	status = "okay";
+	op-mode = <1>;
+	tdm-slots = <2>;
+	serial-dir = <2 0 1 0>;
+	ti,tx-clock-only;
+	ti,dit-rx-i2s;
+	tx-num-evt = <1>;
+};
+
+/* Rear Ethernet: RMII, PHY at address 0, reference clock from the board (stock rmii-clock-ext). */
+&mac_sw {
+	pinctrl-names = "default";
+	pinctrl-0 = <&rmii1_pins>;
+	status = "okay";
+};
+
+&davinci_mdio_sw {
+	pinctrl-names = "default";
+	pinctrl-0 = <&mdio_pins>;
+
+	ethphy0: ethernet-phy@0 {
+		reg = <0>;
+	};
+};
+
+&cpsw_port1 {
+	phy-handle = <&ethphy0>;
+	phy-mode = "rmii";
+	ti,dual-emac-pvid = <1>;
+};
+
+&cpsw_port2 {
+	status = "disabled";
+};
+
+&usb0 {
+	dr_mode = "peripheral";
+	status = "okay";
+};
+
+&usb0_phy {
+	status = "okay";
+};
+
+&usb1 {
+	dr_mode = "host";
+	status = "okay";
+};
+
+&usb1_phy {
+	status = "okay";
+};
+
+&i2c1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c1_pins>;
+	status = "okay";
+	clock-frequency = <100000>;
+};
+
+/*
+ * The SM2 control lines, held where stock holds them on a running ST300 (read from
+ * /sys/class/gpio on 2026-10-01): auth_resetn 1, mute_out 0, dac_adc_reset 0,
+ * ampstby 1, psm_disable 1, dsp_reset 0. ampfault is an input and reads 1.
+ * Bose's flat numbers 70..86 are bank 2 here, matching the pads above.
+ */
+&gpio2 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&control_pins>;
+
+	auth-resetn-hog {
+		gpio-hog;
+		gpios = <6 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "auth_resetn";
+	};
+
+	mute-out-hog {
+		gpio-hog;
+		gpios = <8 GPIO_ACTIVE_HIGH>;
+		output-low;
+		line-name = "mute_out";
+	};
+
+	dac-adc-reset-hog {
+		gpio-hog;
+		gpios = <10 GPIO_ACTIVE_HIGH>;
+		output-low;
+		line-name = "dac_adc_reset";
+	};
+
+	ampstby-hog {
+		gpio-hog;
+		gpios = <11 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "ampstby";
+	};
+
+	psm-disable-hog {
+		gpio-hog;
+		gpios = <13 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "psm_disable";
+	};
+
+	dsp-reset-hog {
+		gpio-hog;
+		gpios = <22 GPIO_ACTIVE_HIGH>;
+		output-low;
+		line-name = "dsp_reset";
+	};
+};

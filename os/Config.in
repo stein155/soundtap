@@ -1,0 +1,5 @@
+menu "SoundTap"
+
+source "$BR2_EXTERNAL_SOUNDTAP_PATH/package/Config.in"
+
+endmenu

@@ -1,0 +1,1082 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Stein Milder <info@steinmilder.nl>
+Date: Tue, 6 Oct 2026 16:00:00 +0200
+Subject: [PATCH] net: usb: add SoundTap BCO link driver
+
+On the ST20 the Wi-Fi radio and the wired port live on the BCO
+co-processor. The own BCO app exposes both over one vendor-specific USB
+function (pid.codes test ID 1209:0001, class ff/52/01) that carries one
+message per transfer: le16 (channel << 12 | length) and the payload.
+Channel 0 is control, 1 the Wi-Fi station, 2 the wired port (ADR 0031).
+
+This usbnet minidriver takes the function as its transport (bcolink0)
+and registers wlan0, a FullMAC cfg80211 station (scan, connect with PMK
+offload, disconnect, station info) carrying its data on channel 1, and
+eth0 on channel 2, so userspace sees the same interfaces as on an ST10.
+It replaces the earlier wlan0 face that rode on cdc_ether. Stock BCOs
+still enumerate as CDC-ECM and never bind here.
+
+Upstream: Not applicable (SoundTap hardware support)
+Signed-off-by: Stein Milder <info@steinmilder.nl>
+---
+diff -Nru a/drivers/net/usb/Kconfig b/drivers/net/usb/Kconfig
+--- a/drivers/net/usb/Kconfig	2026-10-06 18:06:43.450816100 +0200
++++ b/drivers/net/usb/Kconfig	2026-10-06 18:06:43.454816079 +0200
+@@ -398,6 +398,14 @@
+ 	  adapter based on the MosChip 7830 controller. This includes
+ 	  adapters marketed under the DeLOCK brand.
+ 
++config USB_NET_SOUNDTAP_BCO
++	tristate "SoundTap BCO link (SoundTouch 20 Wi-Fi and wired ports)"
++	depends on USB_USBNET && CFG80211
++	help
++	  The own SoundTap application on the SoundTouch 20's BCO co-processor
++	  exposes its Wi-Fi station and wired port over one vendor-specific USB
++	  function. This driver registers them as wlan0 (cfg80211) and eth0.
++
+ config USB_NET_RNDIS_HOST
+ 	tristate "Host for RNDIS and ActiveSync devices"
+ 	depends on USB_USBNET
+diff -Nru a/drivers/net/usb/Makefile b/drivers/net/usb/Makefile
+--- a/drivers/net/usb/Makefile	2026-10-06 18:06:43.450816100 +0200
++++ b/drivers/net/usb/Makefile	2026-10-06 18:06:43.454816079 +0200
+@@ -24,6 +24,7 @@
+ obj-$(CONFIG_USB_NET_NET1080)	+= net1080.o
+ obj-$(CONFIG_USB_NET_PLUSB)	+= plusb.o
+ obj-$(CONFIG_USB_NET_RNDIS_HOST)	+= rndis_host.o
++obj-$(CONFIG_USB_NET_SOUNDTAP_BCO)	+= soundtap_bco.o
+ obj-$(CONFIG_USB_NET_CDC_SUBSET_ENABLE)	+= cdc_subset.o
+ obj-$(CONFIG_USB_NET_ZAURUS)	+= zaurus.o
+ obj-$(CONFIG_USB_NET_MCS7830)	+= mcs7830.o
+diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
+--- a/drivers/net/usb/soundtap_bco.c	1970-01-01 01:00:00.000000000 +0100
++++ b/drivers/net/usb/soundtap_bco.c	2026-10-06 18:06:43.454816079 +0200
+@@ -0,0 +1,1028 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * SoundTap BCO link: the SoundTouch 20's Wi-Fi and wired ports, which live on the BCO co-processor
++ * behind one vendor-specific USB function of the own BCO app (ADR 0031).
++ *
++ * The usbnet device is the transport, bcolink0. Every transfer carries one message:
++ *	le16 (channel << 12 | length), then length bytes of payload
++ * Channel 0 is control (the ADR 0027 management messages), 1 the Wi-Fi station, 2 the wired port;
++ * data payloads are Ethernet frames. On top of the transport this driver registers
++ *	wlan0	a FullMAC cfg80211 station (scan, connect with the PMK handed down, disconnect,
++ *		station info) whose data is channel 1, with the device's own Wi-Fi MAC;
++ *	eth0	the wired port, channel 2.
++ *	wlan1	on request (iw ... interface add wlan1 type __ap), an open access point for hostapd
++ *		whose data is channel 1 while it beacons (ADR 0031); the BCO answers probes,
++ *		authentication and association itself (AP SME in the device).
++ * so userspace sees the same interfaces as on a SoundTouch 10.
++ *
++ * The protocol constants mirror bco/app/src/bcolink.h in the SoundTap tree.
++ */
++#include <linux/module.h>
++#include <linux/netdevice.h>
++#include <linux/etherdevice.h>
++#include <linux/rtnetlink.h>
++#include <linux/usb.h>
++#include <linux/usb/usbnet.h>
++#include <linux/mutex.h>
++#include <linux/spinlock.h>
++#include <linux/completion.h>
++#include <linux/delay.h>
++#include <linux/random.h>
++#include <linux/workqueue.h>
++#include <linux/unaligned.h>
++#include <net/cfg80211.h>
++
++#define BCOLINK_HDR		2
++#define BCOLINK_MAX		1536
++#define BCOLINK_CH_CTRL		0
++#define BCOLINK_CH_WIFI		1
++#define BCOLINK_CH_WIRED	2
++
++/* Marks the transport's own messages: anything else the stack sends on bcolink0 is dropped. */
++#define BCO_SKB_PROTO		htons(ETH_P_802_EX1)
++
++#define BCO_MGMT_HDR		6
++/* The link protocol level this driver speaks; bco/app/src/bcolink.h BCOLINK_PROTO (ADR 0031). */
++#define BCO_LINK_PROTO		2
++#define BCO_JOIN_TIMEOUT	(30 * HZ)
++#define BCO_LINK_POLL		(5 * HZ)
++#define BCO_WIRED_POLL		(2 * HZ)
++
++enum { T_HELLO = 1, T_SCAN, T_SET_PROFILE, T_FORGET, T_STATUS, T_AP_START, T_AP_STOP, T_AP_STATUS,
++	T_WIRED_PROBE = 12 };
++enum { S_IDLE, S_SCANNING, S_JOINING, S_UP, S_FAILED, S_AP };
++
++struct bco {
++	struct usbnet *usb;
++	struct wiphy *wiphy;
++	struct wireless_dev wdev;
++	struct net_device *wlan, *eth;	/* set once registered; RX reads them lock-free */
++	struct net_device *ap;		/* wlan1 while it exists (wiphy lock) */
++	bool ap_up;			/* channel 1 belongs to wlan1: the BCO beacons */
++	struct work_struct setup;
++
++	struct mutex lock;		/* one request in flight; rsp is valid while it is held */
++	spinlock_t rx_lock;		/* armed/want_* and rsp against the RX path */
++	struct completion done;
++	bool armed;
++	u16 seq, want_seq;
++	u8 want_type;
++	u8 rsp[BCOLINK_MAX];
++	unsigned int rsp_len;
++
++	struct work_struct scan_work;
++	struct delayed_work join_work;
++	struct delayed_work wired_work;	/* eth0's carrier from the BCO's PHY */
++	struct cfg80211_scan_request *scan_req;	/* under lock */
++	unsigned long join_deadline;
++	bool joining, connected, running;
++};
++
++struct bco_port {
++	struct bco *b;
++	u8 ch;
++	struct wireless_dev wdev;	/* wlan1 only */
++};
++
++static struct ieee80211_channel bco_channels[13];
++static struct ieee80211_rate bco_rates[] = {
++	{ .bitrate = 10 }, { .bitrate = 20 }, { .bitrate = 55 }, { .bitrate = 110 },
++	{ .bitrate = 60 }, { .bitrate = 90 }, { .bitrate = 120 }, { .bitrate = 180 },
++	{ .bitrate = 240 }, { .bitrate = 360 }, { .bitrate = 480 }, { .bitrate = 540 },
++};
++
++static struct ieee80211_supported_band bco_band = {
++	.channels = bco_channels, .n_channels = ARRAY_SIZE(bco_channels),
++	.bitrates = bco_rates, .n_bitrates = ARRAY_SIZE(bco_rates),
++};
++
++static const u32 bco_ciphers[] = { WLAN_CIPHER_SUITE_CCMP };
++
++static struct bco *bco_of(struct usbnet *dev)
++{
++	return dev->driver_priv;
++}
++
++/* ---- control channel ---- */
++
++static void bco_ctrl_rx(struct bco *b, const u8 *p, unsigned int n)
++{
++	unsigned long flags;
++	unsigned int len;
++
++	/* ver, type, seq(2), len(2), payload */
++	if (n < BCO_MGMT_HDR || p[0] != 1)
++		return;
++	len = get_unaligned_be16(p + 4);
++	if (len > n - BCO_MGMT_HDR)
++		return;
++	spin_lock_irqsave(&b->rx_lock, flags);
++	if (b->armed && p[1] == b->want_type && get_unaligned_be16(p + 2) == b->want_seq) {
++		memcpy(b->rsp, p + BCO_MGMT_HDR, len);
++		b->rsp_len = len;
++		b->armed = false;
++		complete(&b->done);
++	}
++	spin_unlock_irqrestore(&b->rx_lock, flags);
++}
++
++/*
++ * One request/reply on the control channel. Caller holds b->lock; the reply payload (status byte
++ * first) is in b->rsp/b->rsp_len until the caller drops it. The message is built once and cloned
++ * per try, so a PMK in it can be wiped from our copy afterwards.
++ */
++static int bco_req(struct bco *b, u8 type, const u8 *pl, unsigned int plen)
++{
++	struct net_device *net = b->usb->net;
++	unsigned int n = BCO_MGMT_HDR + plen;
++	struct sk_buff *skb;
++	int try, err = -ETIMEDOUT;
++	u8 *p;
++
++	lockdep_assert_held(&b->lock);
++	if (!netif_running(net))
++		return -ENETDOWN;
++	skb = alloc_skb(BCOLINK_HDR + n, GFP_KERNEL);
++	if (!skb)
++		return -ENOMEM;
++	p = skb_put(skb, BCOLINK_HDR + BCO_MGMT_HDR);
++	put_unaligned_le16(BCOLINK_CH_CTRL << 12 | n, p);
++	p[2] = 1;
++	p[3] = type;
++	put_unaligned_be16(++b->seq, p + 4);
++	put_unaligned_be16(plen, p + 6);
++	if (plen)
++		skb_put_data(skb, pl, plen);
++	skb->dev = net;
++	skb->protocol = BCO_SKB_PROTO;
++
++	spin_lock_bh(&b->rx_lock);
++	b->want_seq = b->seq;
++	b->want_type = type | 0x80;
++	b->rsp_len = 0;
++	b->armed = true;
++	reinit_completion(&b->done);
++	spin_unlock_bh(&b->rx_lock);
++
++	for (try = 0; try < 3; try++) {
++		struct sk_buff *c = skb_clone(skb, GFP_KERNEL);
++
++		if (!c) {
++			err = -ENOMEM;
++			break;
++		}
++		dev_queue_xmit(c);
++		if (wait_for_completion_timeout(&b->done, msecs_to_jiffies(500))) {
++			err = b->rsp_len && b->rsp[0] == 0 ? 0 : -EIO;
++			break;
++		}
++	}
++	spin_lock_bh(&b->rx_lock);
++	b->armed = false;
++	spin_unlock_bh(&b->rx_lock);
++	/* a clone still queued in usbnet holds the same data; only ours is wiped */
++	memzero_explicit(skb->data, skb->len);
++	kfree_skb(skb);
++	return err;
++}
++
++/* ---- usbnet minidriver: framing ---- */
++
++static int bco_rx_fixup(struct usbnet *dev, struct sk_buff *skb)
++{
++	struct bco *b = bco_of(dev);
++	struct net_device *port;
++	struct sk_buff *c;
++	unsigned int h, ch, len;
++
++	if (skb->len < BCOLINK_HDR)
++		return 0;
++	h = get_unaligned_le16(skb->data);
++	ch = h >> 12;
++	len = h & 0xfff;
++	if (len > BCOLINK_MAX || len > skb->len - BCOLINK_HDR)
++		return 0;
++	if (ch == BCOLINK_CH_CTRL) {
++		bco_ctrl_rx(b, skb->data + BCOLINK_HDR, len);
++		return 1;
++	}
++	port = ch == BCOLINK_CH_WIFI ? (READ_ONCE(b->ap_up) ? READ_ONCE(b->ap) : READ_ONCE(b->wlan)) :
++	       ch == BCOLINK_CH_WIRED ? READ_ONCE(b->eth) : NULL;
++	if (!port || len < ETH_HLEN)
++		return 0;
++	if (!netif_running(port) || !netif_carrier_ok(port)) {
++		dev_core_stats_rx_dropped_inc(port);
++		return 1;
++	}
++	c = skb_clone(skb, GFP_ATOMIC);
++	if (!c) {
++		dev_core_stats_rx_dropped_inc(port);
++		return 1;
++	}
++	skb_pull(c, BCOLINK_HDR);
++	skb_trim(c, len);
++	c->protocol = eth_type_trans(c, port);
++	dev_sw_netstats_rx_add(port, len);
++	netif_rx(c);
++	return 1;
++}
++
++static struct sk_buff *bco_tx_fixup(struct usbnet *dev, struct sk_buff *skb, gfp_t flags)
++{
++	if (skb->protocol != BCO_SKB_PROTO) {
++		dev_kfree_skb_any(skb);
++		return NULL;
++	}
++	usbnet_set_skb_tx_stats(skb, 1, 0);
++	return skb;
++}
++
++/* ---- ports ---- */
++
++static netdev_tx_t bco_port_xmit(struct sk_buff *skb, struct net_device *dev)
++{
++	struct bco_port *p = netdev_priv(dev);
++	struct net_device *net = p->b->usb->net;
++	unsigned int len = skb->len;
++
++	if (len > BCOLINK_MAX || !netif_running(net) || skb_cow_head(skb, BCOLINK_HDR)) {
++		dev_core_stats_tx_dropped_inc(dev);
++		dev_kfree_skb_any(skb);
++		return NETDEV_TX_OK;
++	}
++	put_unaligned_le16(p->ch << 12 | len, skb_push(skb, BCOLINK_HDR));
++	skb->dev = net;
++	skb->protocol = BCO_SKB_PROTO;
++	dev_sw_netstats_tx_add(dev, 1, len);
++	dev_queue_xmit(skb);
++	return NETDEV_TX_OK;
++}
++
++/* A port up brings the transport up: userspace only ever touches wlan0 and eth0. */
++static int bco_port_open(struct net_device *dev)
++{
++	struct bco_port *p = netdev_priv(dev);
++	struct net_device *net = p->b->usb->net;
++
++	return netif_running(net) ? 0 : dev_open(net, NULL);
++}
++
++/*
++ * eth0's carrier is the BCO's PHY link: WIRED_PROBE's reply is status, then le32 module ID,
++ * NCR, NCFGR, NSR, TSR, RSR and the port state (1 = link). A BCO app without a wired port
++ * refuses the request; eth0 then keeps the carrier it was opened with.
++ */
++static void bco_wired_poll(struct work_struct *w)
++{
++	struct bco *b = container_of(to_delayed_work(w), struct bco, wired_work);
++	struct net_device *eth = READ_ONCE(b->eth);
++	int link = -1;
++
++	if (!eth || !netif_running(eth))
++		return;
++	mutex_lock(&b->lock);
++	if (!bco_req(b, T_WIRED_PROBE, NULL, 0) && b->rsp_len >= 1 + 7 * 4)
++		link = get_unaligned_le32(b->rsp + 1 + 6 * 4) == 1;
++	mutex_unlock(&b->lock);
++	if (link == 1)
++		netif_carrier_on(eth);
++	else if (link == 0)
++		netif_carrier_off(eth);
++	schedule_delayed_work(&b->wired_work, BCO_WIRED_POLL);
++}
++
++static int bco_eth_open(struct net_device *dev)
++{
++	struct bco_port *p = netdev_priv(dev);
++	int err = bco_port_open(dev);
++
++	if (!err) {
++		netif_carrier_on(dev);
++		schedule_delayed_work(&p->b->wired_work, 0);
++	}
++	return err;
++}
++
++static int bco_eth_stop(struct net_device *dev)
++{
++	struct bco_port *p = netdev_priv(dev);
++
++	cancel_delayed_work_sync(&p->b->wired_work);
++	netif_carrier_off(dev);
++	return 0;
++}
++
++static const struct net_device_ops bco_eth_ops = {
++	.ndo_open = bco_eth_open,
++	.ndo_stop = bco_eth_stop,
++	.ndo_start_xmit = bco_port_xmit,
++	.ndo_set_mac_address = eth_mac_addr,
++	.ndo_validate_addr = eth_validate_addr,
++};
++
++static void bco_port_setup(struct net_device *dev)
++{
++	ether_setup(dev);
++	dev->needed_headroom = BCOLINK_HDR;
++	dev->max_mtu = BCOLINK_MAX - ETH_HLEN;
++	dev->lltx = true;
++	dev->pcpu_stat_type = NETDEV_PCPU_STAT_TSTATS;
++}
++
++/* ---- wlan0: cfg80211 over the control channel ---- */
++
++static int bco_chan_freq(int ch)
++{
++	return 2407 + 5 * ch;
++}
++
++static const u8 bco_rsn[] = { 0x30, 0x14, 1, 0, 0x00, 0x0f, 0xac, 4, 1, 0, 0x00, 0x0f, 0xac, 4,
++			      1, 0, 0x00, 0x0f, 0xac, 2, 0, 0 };
++
++/* Put one BSS into the cfg80211 cache; returns a reference or NULL. */
++static struct cfg80211_bss *bco_inform(struct bco *b, const u8 *ssid, u8 ssid_len, const u8 *bssid,
++				       u8 ch, s8 rssi, u8 sec)
++{
++	u8 ie[2 + 32 + 3 + sizeof(bco_rsn)], *q = ie;
++	struct ieee80211_channel *c;
++
++	if (ssid_len > 32 || ch < 1 || ch > 13)
++		return NULL;
++	c = ieee80211_get_channel(b->wiphy, bco_chan_freq(ch));
++	if (!c)
++		return NULL;
++	*q++ = WLAN_EID_SSID, *q++ = ssid_len;
++	memcpy(q, ssid, ssid_len);
++	q += ssid_len;
++	*q++ = WLAN_EID_DS_PARAMS, *q++ = 1, *q++ = ch;
++	if (sec == 1) {
++		memcpy(q, bco_rsn, sizeof(bco_rsn));
++		q += sizeof(bco_rsn);
++	}
++	return cfg80211_inform_bss(b->wiphy, c, CFG80211_BSS_FTYPE_UNKNOWN, bssid, 0,
++				   WLAN_CAPABILITY_ESS | (sec ? WLAN_CAPABILITY_PRIVACY : 0),
++				   100, ie, q - ie, DBM_TO_MBM(rssi), GFP_KERNEL);
++}
++
++/*
++ * A scan runs on the BCO for ~11 s (13 channels, passive then probing). SCAN {1} starts it, SCAN {}
++ * polls; status 3 means still scanning. The lock is dropped between polls so STATUS keeps going.
++ */
++static void bco_scan_work(struct work_struct *w)
++{
++	struct bco *b = container_of(w, struct bco, scan_work);
++	struct cfg80211_scan_info info = { };
++	struct cfg80211_scan_request *req;
++	const u8 start = 1;
++	int err, tries;
++
++	mutex_lock(&b->lock);
++	err = bco_req(b, T_SCAN, &start, 1);
++	for (tries = 0; err == -EIO && b->rsp_len && b->rsp[0] == 3 && tries < 50; tries++) {
++		mutex_unlock(&b->lock);
++		msleep(500);
++		mutex_lock(&b->lock);
++		err = bco_req(b, T_SCAN, NULL, 0);
++	}
++	if (!err) {
++		const u8 *p = b->rsp + 2, *end = b->rsp + b->rsp_len;
++		unsigned int n = b->rsp_len > 1 ? b->rsp[1] : 0;
++
++		/* entry: ssid_len, ssid, bssid(6), channel, rssi (i8), security */
++		while (n-- && p < end && p[0] <= 32 && p + 1 + p[0] + 9 <= end) {
++			const u8 *bssid = p + 1 + p[0];
++
++			cfg80211_put_bss(b->wiphy, bco_inform(b, p + 1, p[0], bssid, bssid[6],
++							      (s8)bssid[7], bssid[8]));
++			p = bssid + 9;
++		}
++	}
++	req = b->scan_req;
++	b->scan_req = NULL;
++	mutex_unlock(&b->lock);
++	if (req) {
++		info.aborted = !!err;
++		cfg80211_scan_done(req, &info);
++	}
++}
++
++static int bco_scan(struct wiphy *wiphy, struct cfg80211_scan_request *req)
++{
++	struct bco *b = wiphy_priv(wiphy);
++	int err = 0;
++
++	mutex_lock(&b->lock);
++	if (b->scan_req || !b->running)
++		err = -EBUSY;
++	else
++		b->scan_req = req;
++	mutex_unlock(&b->lock);
++	if (!err)
++		schedule_work(&b->scan_work);
++	return err;
++}
++
++/* STATUS reply: status, state, ssid_len, ssid, bssid(6), channel, rssi. Returns state or -1. */
++static int bco_status(struct bco *b)
++{
++	const u8 *r = b->rsp;
++
++	if (bco_req(b, T_STATUS, NULL, 0) || b->rsp_len < 3 || r[2] > 32 ||
++	    b->rsp_len < 3 + r[2] + 8)
++		return -1;
++	return r[1];
++}
++
++static void bco_join_poll(struct work_struct *w)
++{
++	struct bco *b = container_of(to_delayed_work(w), struct bco, join_work);
++	struct cfg80211_connect_resp_params cr = { };
++	struct cfg80211_bss *bss = NULL;
++	u8 ap[ETH_ALEN];
++	bool fail, lost = false;
++	int state;
++
++	mutex_lock(&b->lock);
++	if (!b->running || (!b->joining && !b->connected)) {
++		mutex_unlock(&b->lock);
++		return;
++	}
++	state = bco_status(b);
++	if (b->connected) {
++		lost = state != S_UP && state != -1;	/* a missed poll is not a lost link */
++		if (lost)
++			b->connected = false;
++		mutex_unlock(&b->lock);
++		if (lost) {
++			netif_carrier_off(b->wlan);
++			cfg80211_disconnected(b->wlan, WLAN_REASON_UNSPECIFIED, NULL, 0, false,
++					      GFP_KERNEL);
++		} else {
++			if (state == S_UP)
++				netif_carrier_on(b->wlan);	/* back after bcolink0 was down */
++			schedule_delayed_work(&b->join_work, BCO_LINK_POLL);
++		}
++		return;
++	}
++	if (state == S_UP) {
++		const u8 *r = b->rsp, *bssid = r + 3 + r[2];
++
++		/* the AP may not be in the scan cache: inform it from STATUS before reporting */
++		bss = bco_inform(b, r + 3, r[2], bssid, bssid[6], (s8)bssid[7], 1);
++	}
++	fail = state == S_FAILED || (state == S_UP && !bss) ||
++	       time_after(jiffies, b->join_deadline);
++	if (bss || fail) {
++		b->joining = false;
++		b->connected = !!bss;
++	}
++	mutex_unlock(&b->lock);
++
++	if (!bss && !fail) {
++		schedule_delayed_work(&b->join_work, HZ);
++		return;
++	}
++	cr.status = bss ? WLAN_STATUS_SUCCESS : WLAN_STATUS_UNSPECIFIED_FAILURE;
++	cr.links[0].bss = bss;
++	if (bss)
++		memcpy(ap, bss->bssid, ETH_ALEN);
++	cr.links[0].bssid = bss ? ap : NULL;
++	cfg80211_connect_done(b->wlan, &cr, GFP_KERNEL);	/* consumes the bss reference */
++	if (bss) {
++		/* the BCO did the 4-way handshake (4WAY_HANDSHAKE_STA_PSK): the port is open */
++		cfg80211_port_authorized(b->wlan, ap, NULL, 0, GFP_KERNEL);
++		netif_carrier_on(b->wlan);
++		schedule_delayed_work(&b->join_work, BCO_LINK_POLL);
++	}
++}
++
++static int bco_connect(struct wiphy *wiphy, struct net_device *dev,
++		       struct cfg80211_connect_params *sme)
++{
++	struct bco *b = wiphy_priv(wiphy);
++	u8 pl[1 + 32 + 2 + WLAN_PMK_LEN + 32];
++	unsigned int n = 0;
++	int err;
++
++	/* WPA2-PSK only, with the PMK handed down (handshake offload), never a passphrase */
++	if (sme->ssid_len < 1 || sme->ssid_len > 32 || !sme->crypto.psk)
++		return -EOPNOTSUPP;
++	pl[n++] = sme->ssid_len;
++	memcpy(pl + n, sme->ssid, sme->ssid_len);
++	n += sme->ssid_len;
++	pl[n++] = 1;
++	pl[n++] = WLAN_PMK_LEN;
++	memcpy(pl + n, sme->crypto.psk, WLAN_PMK_LEN);
++	n += WLAN_PMK_LEN;
++	get_random_bytes(pl + n, 32);			/* the BCO's SNonce seed: it has no RNG */
++	n += 32;
++	mutex_lock(&b->lock);
++	err = b->running ? bco_req(b, T_SET_PROFILE, pl, n) : -ENETDOWN;
++	if (!err) {
++		b->joining = true;
++		b->connected = false;
++		b->join_deadline = jiffies + BCO_JOIN_TIMEOUT;
++	}
++	mutex_unlock(&b->lock);
++	memzero_explicit(pl, sizeof(pl));
++	if (!err)
++		schedule_delayed_work(&b->join_work, HZ / 2);
++	return err;
++}
++
++static int bco_disconnect(struct wiphy *wiphy, struct net_device *dev, u16 reason)
++{
++	struct bco *b = wiphy_priv(wiphy);
++
++	mutex_lock(&b->lock);
++	b->joining = false;
++	b->connected = false;
++	mutex_unlock(&b->lock);
++	cancel_delayed_work_sync(&b->join_work);
++	mutex_lock(&b->lock);
++	bco_req(b, T_FORGET, NULL, 0);
++	mutex_unlock(&b->lock);
++	netif_carrier_off(dev);
++	cfg80211_disconnected(dev, reason, NULL, 0, true, GFP_KERNEL);
++	return 0;
++}
++
++static int bco_get_station(struct wiphy *wiphy, struct net_device *dev, const u8 *mac,
++			   struct station_info *sinfo)
++{
++	struct bco *b = wiphy_priv(wiphy);
++	int err = -ENOENT, i;
++
++	mutex_lock(&b->lock);
++	if (dev == b->ap) {
++		/* AP_STATUS reply: status, count, client MACs */
++		if (!bco_req(b, T_AP_STATUS, NULL, 0) && b->rsp_len >= 2)
++			for (i = 0; i < b->rsp[1] && 2 + 6 * (i + 1) <= b->rsp_len; i++)
++				if (ether_addr_equal(b->rsp + 2 + 6 * i, mac))
++					err = 0;
++	} else if (bco_status(b) == S_UP) {
++		sinfo->filled |= BIT_ULL(NL80211_STA_INFO_SIGNAL);
++		sinfo->signal = (s8)b->rsp[3 + b->rsp[2] + 7];
++		err = 0;
++	}
++	mutex_unlock(&b->lock);
++	return err;
++}
++
++/* ---- wlan1: the access point ---- */
++
++static int bco_ap_stop_link(struct net_device *dev)
++{
++	netif_carrier_off(dev);
++	return 0;
++}
++
++static const struct net_device_ops bco_ap_ops = {
++	.ndo_open = bco_port_open,
++	.ndo_stop = bco_ap_stop_link,
++	.ndo_start_xmit = bco_port_xmit,
++	.ndo_set_mac_address = eth_mac_addr,
++	.ndo_validate_addr = eth_validate_addr,
++};
++
++/*
++ * AP_START: channel, beacon interval (network order), beacon body. hostapd hands the beacon as head
++ * (header, fixed fields, IEs before TIM) and tail; a non-mac80211 device inserts the TIM itself.
++ */
++static int bco_start_ap(struct wiphy *wiphy, struct net_device *dev, struct cfg80211_ap_settings *s)
++{
++	struct bco *b = wiphy_priv(wiphy);
++	const struct cfg80211_beacon_data *bd = &s->beacon;
++	unsigned int hl = bd->head_len > 24 ? bd->head_len - 24 : 0, n = 3 + hl + 6 + bd->tail_len;
++	u8 *pl;
++	int err;
++
++	if (hl < 12 || n - 3 > 512 || s->hidden_ssid || s->privacy || !s->chandef.chan)
++		return -EOPNOTSUPP;
++	/* the BCO refuses AP_START mid-scan; a scan takes ~11 s, so let a pending one finish */
++	flush_work(&b->scan_work);
++	pl = kmalloc(n, GFP_KERNEL);
++	if (!pl)
++		return -ENOMEM;
++	pl[0] = ieee80211_frequency_to_channel(s->chandef.chan->center_freq);
++	put_unaligned_be16(s->beacon_interval, pl + 1);
++	memcpy(pl + 3, bd->head + 24, hl);
++	memcpy(pl + 3 + hl, (u8[]){ WLAN_EID_TIM, 4, 0, s->dtim_period ?: 1, 0, 0 }, 6);
++	memcpy(pl + 3 + hl + 6, bd->tail, bd->tail_len);
++	mutex_lock(&b->lock);
++	err = bco_req(b, T_AP_START, pl, n);
++	if (!err)
++		WRITE_ONCE(b->ap_up, true);
++	mutex_unlock(&b->lock);
++	kfree(pl);
++	if (!err)
++		netif_carrier_on(dev);
++	return err;
++}
++
++static int bco_stop_ap(struct wiphy *wiphy, struct net_device *dev, unsigned int link_id)
++{
++	struct bco *b = wiphy_priv(wiphy);
++
++	netif_carrier_off(dev);
++	mutex_lock(&b->lock);
++	WRITE_ONCE(b->ap_up, false);
++	bco_req(b, T_AP_STOP, NULL, 0);
++	mutex_unlock(&b->lock);
++	return 0;
++}
++
++/* beacon updates (ERP, CSA) are not passed on; the first beacon stays */
++static int bco_change_beacon(struct wiphy *wiphy, struct net_device *dev,
++			     struct cfg80211_ap_update *info)
++{
++	return 0;
++}
++
++/* The BCO keeps its own client table (open AP, AP SME in the device): nothing to set here. */
++static int bco_del_station(struct wiphy *wiphy, struct net_device *dev,
++			   struct station_del_parameters *params)
++{
++	return 0;
++}
++
++static int bco_change_station(struct wiphy *wiphy, struct net_device *dev, const u8 *mac,
++			      struct station_parameters *params)
++{
++	return 0;
++}
++
++static int bco_change_bss(struct wiphy *wiphy, struct net_device *dev, struct bss_parameters *params)
++{
++	return 0;
++}
++
++static struct wireless_dev *bco_add_intf(struct wiphy *wiphy, const char *name,
++					 unsigned char name_assign_type, enum nl80211_iftype type,
++					 struct vif_params *params)
++{
++	struct bco *b = wiphy_priv(wiphy);
++	struct net_device *dev;
++	struct bco_port *p;
++	int err;
++
++	if (type != NL80211_IFTYPE_AP)
++		return ERR_PTR(-EOPNOTSUPP);
++	if (b->ap)
++		return ERR_PTR(-EBUSY);
++	dev = alloc_netdev(sizeof(*p), name, name_assign_type, bco_port_setup);
++	if (!dev)
++		return ERR_PTR(-ENOMEM);
++	p = netdev_priv(dev);
++	p->b = b;
++	p->ch = BCOLINK_CH_WIFI;
++	p->wdev.wiphy = wiphy;
++	p->wdev.iftype = NL80211_IFTYPE_AP;
++	p->wdev.netdev = dev;
++	dev->ieee80211_ptr = &p->wdev;
++	dev->netdev_ops = &bco_ap_ops;
++	dev->needs_free_netdev = true;
++	eth_hw_addr_set(dev, wiphy->perm_addr);	/* the BCO beacons as its own MAC */
++	SET_NETDEV_DEV(dev, wiphy_dev(wiphy));
++	netif_carrier_off(dev);
++	err = cfg80211_register_netdevice(dev);
++	if (err) {
++		free_netdev(dev);
++		return ERR_PTR(err);
++	}
++	WRITE_ONCE(b->ap, dev);
++	return &p->wdev;
++}
++
++static int bco_del_intf(struct wiphy *wiphy, struct wireless_dev *wdev)
++{
++	struct bco *b = wiphy_priv(wiphy);
++
++	if (wdev->netdev != b->ap)
++		return -EOPNOTSUPP;
++	WRITE_ONCE(b->ap_up, false);
++	WRITE_ONCE(b->ap, NULL);
++	synchronize_net();	/* no RX path holds it any more */
++	cfg80211_unregister_netdevice(wdev->netdev);
++	return 0;
++}
++
++static const struct cfg80211_ops bco_ops = {
++	.scan = bco_scan,
++	.connect = bco_connect,
++	.disconnect = bco_disconnect,
++	.get_station = bco_get_station,
++	.add_virtual_intf = bco_add_intf,
++	.del_virtual_intf = bco_del_intf,
++	.start_ap = bco_start_ap,
++	.stop_ap = bco_stop_ap,
++	.change_beacon = bco_change_beacon,
++	.del_station = bco_del_station,
++	.change_station = bco_change_station,
++	.change_bss = bco_change_bss,
++};
++
++static const struct ieee80211_iface_limit bco_limits[] = {
++	{ .max = 1, .types = BIT(NL80211_IFTYPE_STATION) },
++	{ .max = 1, .types = BIT(NL80211_IFTYPE_AP) },
++};
++
++static const struct ieee80211_iface_combination bco_combo = {
++	.limits = bco_limits, .n_limits = ARRAY_SIZE(bco_limits),
++	.max_interfaces = 2, .num_different_channels = 1,
++};
++
++static int bco_wlan_open(struct net_device *dev)
++{
++	struct bco_port *p = netdev_priv(dev);
++	int err = bco_port_open(dev);
++
++	if (err)
++		return err;
++	mutex_lock(&p->b->lock);
++	p->b->running = true;
++	mutex_unlock(&p->b->lock);
++	return 0;
++}
++
++/* Stop all work before cfg80211 tears the interface down: a pending scan is finished here. */
++static int bco_wlan_stop(struct net_device *dev)
++{
++	struct bco *b = ((struct bco_port *)netdev_priv(dev))->b;
++	struct cfg80211_scan_info info = { .aborted = true };
++	struct cfg80211_scan_request *req;
++
++	mutex_lock(&b->lock);
++	b->running = false;
++	b->joining = false;
++	b->connected = false;
++	mutex_unlock(&b->lock);
++	cancel_delayed_work_sync(&b->join_work);
++	cancel_work_sync(&b->scan_work);
++	mutex_lock(&b->lock);
++	req = b->scan_req;
++	b->scan_req = NULL;
++	mutex_unlock(&b->lock);
++	if (req)
++		cfg80211_scan_done(req, &info);
++	netif_carrier_off(dev);
++	return 0;
++}
++
++static const struct net_device_ops bco_wlan_ops = {
++	.ndo_open = bco_wlan_open,
++	.ndo_stop = bco_wlan_stop,
++	.ndo_start_xmit = bco_port_xmit,
++	.ndo_set_mac_address = eth_mac_addr,
++	.ndo_validate_addr = eth_validate_addr,
++};
++
++/* ---- bring-up ---- */
++
++static struct net_device *bco_port_new(struct bco *b, const char *name, u8 ch,
++				       const struct net_device_ops *ops, const u8 *mac)
++{
++	struct net_device *dev = alloc_netdev(sizeof(struct bco_port), name, NET_NAME_ENUM,
++					      bco_port_setup);
++	struct bco_port *p;
++
++	if (!dev)
++		return NULL;
++	p = netdev_priv(dev);
++	p->b = b;
++	p->ch = ch;
++	dev->netdev_ops = ops;
++	eth_hw_addr_set(dev, mac);
++	SET_NETDEV_DEV(dev, &b->usb->intf->dev);
++	netif_carrier_off(dev);
++	return dev;
++}
++
++/*
++ * After probe: bring the transport up, ask the BCO who it is, then register wiphy, wlan0 and eth0.
++ * A device that does not answer HELLO keeps only bcolink0.
++ */
++static void bco_setup_work(struct work_struct *w)
++{
++	struct bco *b = container_of(w, struct bco, setup);
++	struct net_device *net = b->usb->net, *wlan = NULL, *eth = NULL;
++	struct wiphy *wiphy = b->wiphy;
++	u8 mac[ETH_ALEN];
++	int i, err;
++
++	rtnl_lock();
++	err = net->reg_state == NETREG_REGISTERED ? dev_open(net, NULL) : -ENODEV;
++	rtnl_unlock();
++	if (err)
++		goto fail;
++
++	/* HELLO reply: status, ver_len, ver, wifi mac, state, uptime(4), proto, caps(4) */
++	mutex_lock(&b->lock);
++	err = bco_req(b, T_HELLO, NULL, 0);
++	if (!err && (b->rsp_len < 2 || b->rsp_len < 2 + b->rsp[1] + ETH_ALEN ||
++		     !is_valid_ether_addr(b->rsp + 2 + b->rsp[1])))
++		err = -EPROTO;
++	if (!err) {
++		unsigned int at = 2 + b->rsp[1] + ETH_ALEN + 1 + 4;
++
++		memcpy(mac, b->rsp + 2 + b->rsp[1], ETH_ALEN);
++		netdev_info(net, "BCO app %.*s\n", b->rsp[1], b->rsp + 2);
++		/* An app from before the level existed is still the only way onto the LAN: keep it. */
++		if (b->rsp_len <= at) {
++			netdev_warn(net, "BCO app predates link protocol %d; flash a current one\n",
++				    BCO_LINK_PROTO);
++		} else if (b->rsp[at] != BCO_LINK_PROTO) {
++			netdev_err(net, "BCO app speaks link protocol %u, this kernel %d; flash a matching BCO app\n",
++				   b->rsp[at], BCO_LINK_PROTO);
++			err = -EPROTONOSUPPORT;
++		}
++	}
++	mutex_unlock(&b->lock);
++	if (err)
++		goto fail;
++
++	memcpy(wiphy->perm_addr, mac, ETH_ALEN);
++	for (i = 0; i < ARRAY_SIZE(bco_channels); i++) {
++		bco_channels[i].band = NL80211_BAND_2GHZ;
++		bco_channels[i].center_freq = bco_chan_freq(i + 1);
++		bco_channels[i].hw_value = i + 1;
++		bco_channels[i].max_power = 20;
++	}
++	wiphy->bands[NL80211_BAND_2GHZ] = &bco_band;
++	wiphy->interface_modes = BIT(NL80211_IFTYPE_STATION) | BIT(NL80211_IFTYPE_AP);
++	wiphy->iface_combinations = &bco_combo;
++	wiphy->n_iface_combinations = 1;
++	wiphy->flags |= WIPHY_FLAG_HAVE_AP_SME;
++	wiphy->max_scan_ssids = 1;
++	wiphy->max_scan_ie_len = 256;	/* wpa_supplicant adds IEs; the BCO probes with its own */
++	wiphy->signal_type = CFG80211_SIGNAL_TYPE_MBM;
++	wiphy->cipher_suites = bco_ciphers;
++	wiphy->n_cipher_suites = ARRAY_SIZE(bco_ciphers);
++	wiphy_ext_feature_set(wiphy, NL80211_EXT_FEATURE_4WAY_HANDSHAKE_STA_PSK);
++	set_wiphy_dev(wiphy, &b->usb->intf->dev);
++	err = wiphy_register(wiphy);
++	if (err)
++		goto fail;
++
++	wlan = bco_port_new(b, "wlan%d", BCOLINK_CH_WIFI, &bco_wlan_ops, mac);
++	/*
++	 * the wired MAC is the Wi-Fi MAC, locally administered; read the BCO's own
++	 * wired MAC from PersParam once the GEM is brought up
++	 */
++	mac[0] |= 0x02;
++	eth = bco_port_new(b, "eth%d", BCOLINK_CH_WIRED, &bco_eth_ops, mac);
++	if (!wlan || !eth) {
++		err = -ENOMEM;
++		goto fail_free;
++	}
++	b->wdev.wiphy = wiphy;
++	b->wdev.iftype = NL80211_IFTYPE_STATION;
++	b->wdev.netdev = wlan;
++	wlan->ieee80211_ptr = &b->wdev;
++
++	/* the transport may be unplugged meanwhile: register under RTNL only while it is there */
++	rtnl_lock();
++	err = net->reg_state == NETREG_REGISTERED ? register_netdevice(wlan) : -ENODEV;
++	if (!err) {
++		err = register_netdevice(eth);
++		if (err)
++			unregister_netdevice(wlan);
++	}
++	if (!err) {
++		WRITE_ONCE(b->wlan, wlan);
++		WRITE_ONCE(b->eth, eth);
++	}
++	rtnl_unlock();
++	if (err)
++		goto fail_free;
++	netdev_info(net, "BCO link up: %s, %s\n", wlan->name, eth->name);
++	return;
++
++fail_free:
++	free_netdev(eth);
++	free_netdev(wlan);
++	wiphy_unregister(wiphy);
++fail:
++	netdev_info(net, "no SoundTap BCO app on this link (%d)\n", err);
++}
++
++static int bco_bind(struct usbnet *dev, struct usb_interface *intf)
++{
++	struct net_device *net = dev->net;
++	struct wiphy *wiphy;
++	struct bco *b;
++	int err;
++
++	err = usbnet_get_endpoints(dev, intf);
++	if (err)
++		return err;
++	wiphy = wiphy_new(&bco_ops, sizeof(*b));
++	if (!wiphy)
++		return -ENOMEM;
++	b = wiphy_priv(wiphy);
++	b->wiphy = wiphy;
++	b->usb = dev;
++	mutex_init(&b->lock);
++	/* The BCO resends its last reply for a repeated type+seq; a reloaded driver must not start
++	 * where the previous one did, or its first SET_PROFILE could get that stale reply. */
++	b->seq = get_random_u16();
++	spin_lock_init(&b->rx_lock);
++	init_completion(&b->done);
++	INIT_WORK(&b->setup, bco_setup_work);
++	INIT_WORK(&b->scan_work, bco_scan_work);
++	INIT_DELAYED_WORK(&b->join_work, bco_join_poll);
++	INIT_DELAYED_WORK(&b->wired_work, bco_wired_poll);
++	dev->driver_priv = b;
++
++	/* bcolink0 is a transport, not a LAN: no addresses, no ARP, no IPv6 autoconfiguration */
++	strscpy(net->name, "bcolink%d", sizeof(net->name));
++	net->priv_flags |= IFF_NO_ADDRCONF;
++	dev->hard_mtu = BCOLINK_HDR + BCOLINK_MAX;
++	dev->rx_urb_size = dev->hard_mtu;
++	/* the two-byte link header then leaves the IP header of a received frame 4-byte aligned */
++	set_bit(EVENT_NO_IP_ALIGN, &dev->flags);
++	schedule_work(&b->setup);
++	return 0;
++}
++
++static void bco_unbind(struct usbnet *dev, struct usb_interface *intf)
++{
++	struct bco *b = bco_of(dev);
++
++	cancel_work_sync(&b->setup);
++	if (b->ap) {
++		struct net_device *ap = b->ap;
++
++		WRITE_ONCE(b->ap, NULL);
++		unregister_netdev(ap);	/* needs_free_netdev frees it */
++	}
++	if (b->wlan) {
++		/* the transport is already unregistered, so no RX path runs any more */
++		unregister_netdev(b->wlan);	/* runs bco_wlan_stop: works cancelled */
++		unregister_netdev(b->eth);
++		free_netdev(b->wlan);
++		free_netdev(b->eth);
++		wiphy_unregister(b->wiphy);
++	}
++	cancel_delayed_work_sync(&b->join_work);
++	cancel_work_sync(&b->scan_work);
++	wiphy_free(b->wiphy);
++}
++
++/* bcolink0 came (back) up: an eth0 that is up asks the BCO for its link again. */
++static int bco_reset(struct usbnet *dev)
++{
++	struct bco *b = bco_of(dev);
++	struct net_device *eth = READ_ONCE(b->eth);
++
++	if (eth && netif_running(eth)) {
++		netif_carrier_on(eth);
++		mod_delayed_work(system_wq, &b->wired_work, 0);
++	}
++	return 0;
++}
++
++/* bcolink0 went down: nothing reaches the ports any more. */
++static int bco_stop(struct usbnet *dev)
++{
++	struct bco *b = bco_of(dev);
++
++	if (b->wlan)
++		netif_carrier_off(b->wlan);
++	if (b->eth)
++		netif_carrier_off(b->eth);
++	return 0;
++}
++
++static const struct driver_info bco_info = {
++	.description = "SoundTap BCO link",
++	.flags = FLAG_SEND_ZLP | FLAG_MULTI_PACKET | FLAG_NOARP,
++	.bind = bco_bind,
++	.unbind = bco_unbind,
++	.reset = bco_reset,
++	.stop = bco_stop,
++	.rx_fixup = bco_rx_fixup,
++	.tx_fixup = bco_tx_fixup,
++};
++
++static const struct usb_device_id bco_ids[] = {
++	/* pid.codes test PID until the BCO app has an allocated one (ADR 0031) */
++	{ USB_DEVICE_AND_INTERFACE_INFO(0x1209, 0x0001, USB_CLASS_VENDOR_SPEC, 0x52, 1),
++	  .driver_info = (unsigned long)&bco_info },
++	{ }
++};
++MODULE_DEVICE_TABLE(usb, bco_ids);
++
++static struct usb_driver bco_driver = {
++	.name = "soundtap_bco",
++	.id_table = bco_ids,
++	.probe = usbnet_probe,
++	.disconnect = usbnet_disconnect,
++	.suspend = usbnet_suspend,
++	.resume = usbnet_resume,
++	.disable_hub_initiated_lpm = 1,
++};
++module_usb_driver(bco_driver);
++
++MODULE_DESCRIPTION("SoundTap BCO link: SoundTouch 20 Wi-Fi and wired ports over USB");
++MODULE_LICENSE("GPL");

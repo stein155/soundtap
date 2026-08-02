@@ -1,0 +1,83 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: 2026 SoundTap contributors
+
+# A console on the USB gadget port, for hardware that has no usable UART.
+#
+# The Wireless Link exposes no serial port at all, so the getty on ttyO3 that
+# every other model debugs through is invisible there: a boot that fails before
+# the network comes up leaves nothing to read. This brings up a composite gadget
+# (CDC-ACM plus RNDIS) and puts the boot log and a shell on the ACM side, which
+# the host reads as a serial port (/dev/ttyACM0 on Linux).
+#
+# The ST10 has a UART, so it does not need this for a console. It needs the other
+# half: a route in that does not depend on Wi-Fi. Stock rhino always had one --
+# g_ether on usb0 -- and SoundTap had USB compiled out entirely, so a speaker that
+# lost its network had no way in at all. Its device tree now asks for peripheral
+# mode on the single controller it has, which is the shape this script expects.
+#
+# Alpha only, on both models — see the contract in CONTRIBUTING.md.
+set -u
+
+# This runs first in inittab, before the soundtap init has mounted anything, so
+# mount what it needs itself; both are idempotent.
+mount -t proc proc /proc 2>/dev/null || true
+mount -t sysfs sysfs /sys 2>/dev/null || true # already mounted
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || true # already mounted
+
+case "$(sed -n 's/.*[ ]variant=\([a-z0-9][a-z0-9]*\).*/\1/p' /proc/cmdline)" in
+binky|ginger|mojo|mojo3|rhino|spotty|spotty3) ;;
+*) exit 0 ;;
+esac
+
+G=/sys/kernel/config/usb_gadget/soundtap
+mount -t configfs configfs /sys/kernel/config 2>/dev/null || true # already mounted, or no configfs
+[ -d /sys/kernel/config/usb_gadget ] || exit 0
+mkdir -p "$G/functions/acm.gs0" "$G/functions/acm.gs1" "$G/functions/rndis.usb0" \
+	"$G/configs/c.1/strings/0x409" "$G/strings/0x409" 2>/dev/null || exit 0 # no gadget support in this kernel
+
+# The ROM's ids on purpose: the udev rule on the development host grants a
+# usable mode only to those, and the product string still tells them apart.
+echo 0x0451 >"$G/idVendor"
+echo 0x6141 >"$G/idProduct"
+echo SoundTap >"$G/strings/0x409/manufacturer"
+echo "SoundTap NAND boot" >"$G/strings/0x409/product"
+echo soundtapnand0 >"$G/strings/0x409/serialnumber"
+echo "acm+raw+rndis" >"$G/configs/c.1/strings/0x409/configuration"
+ln -sf "$G/functions/acm.gs0" "$G/configs/c.1/" 2>/dev/null || true # already linked on a restart
+ln -sf "$G/functions/acm.gs1" "$G/configs/c.1/" 2>/dev/null || true # already linked on a restart
+ln -sf "$G/functions/rndis.usb0" "$G/configs/c.1/" 2>/dev/null || true # already linked on a restart
+udc=$(ls /sys/class/udc 2>/dev/null | head -n1) # no UDC on this board
+[ -n "$udc" ] || exit 0
+echo "$udc" >"$G/UDC" 2>/dev/null || exit 0 # UDC busy or absent: no console
+
+i=0
+while [ "$i" -lt 10 ] && [ ! -c /dev/ttyGS0 ]; do
+	i=$((i + 1))
+	sleep 1
+done
+[ -c /dev/ttyGS0 ] || exit 0
+
+# A network on the same gadget, so soundtapd is reachable from the boot host even
+# when Wi-Fi is not configured yet.
+ip addr add 192.168.7.2/24 dev usb0 2>/dev/null || true
+ip link set usb0 up 2>/dev/null || true # no usb0 until a host binds
+
+# Opening /dev/ttyGS0 blocks until a USB host has the port open, and this script is the first
+# ::sysinit: entry in inittab, which BusyBox init runs to completion before the next one. So on a
+# board with no cable in it, writing the banner here would stop the entire boot: the soundtap init
+# would never run and Wi-Fi never come up.
+#
+# A speaker has to boot standalone, so the banner is a nicety that must never hold init: write it
+# detached and on a timeout, and let it be dropped when nobody is listening.
+(timeout 10 sh -c '{
+	echo "SOUNDTAP_GADGET_CONSOLE_UP"
+	uname -a
+	cat /proc/cmdline
+} >/dev/ttyGS0 2>&1' &) 2>/dev/null # detached: boot never waits on a USB host
+# Follow the boot log as it is written. The shell on this channel is inittab's
+# `ttyGS0::respawn:/bin/sh`, which respawns; a `setsid sh` started here as well used to
+# be, but on a running board it is never present -- `ps` shows exactly one console shell
+# and its argv is `/bin/sh`, which is init's, not this one's. Dead line, removed.
+(tail -F /tmp/soundtap.log >/dev/ttyGS0 2>&1 &) 2>/dev/null
+exit 0

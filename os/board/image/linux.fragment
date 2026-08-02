@@ -1,0 +1,303 @@
+# The one kernel every speaker boots, the one the universal STU ships and every model
+# runs. Applied to
+# omap2plus_defconfig on its own.
+#
+# Two deliberate differences, neither of which reaches the image:
+# - CONFIG_CMDLINE is empty. Every model's line comes from its own U-Boot environment, per
+#   slot; the script build left omap2plus's default in place, which the bootloader's line
+#   replaces (CMDLINE_FROM_BOOTLOADER).
+# - No DWARF. The script build asked for DEBUG_INFO_NONE and still ends up with DEBUG_INFO; the
+#   zImage is the same either way, the build is not.
+#
+# EXTRA_FIRMWARE_DIR is relative to the kernel tree; os/external.mk copies the Bluetooth
+# init script there. It is built in because hci_ll probes before UBIFS is mounted.
+
+# What the script build set with scripts/config.
+CONFIG_KERNEL_XZ=y
+CONFIG_MODULES=y
+# CONFIG_SMP is not set
+# CONFIG_HIGHMEM is not set
+CONFIG_ARM_APPENDED_DTB=y
+CONFIG_ARM_ATAG_DTB_COMPAT=y
+CONFIG_ARM_ATAG_DTB_COMPAT_CMDLINE_FROM_BOOTLOADER=y
+# CONFIG_ARCH_OMAP2 is not set
+# CONFIG_ARCH_OMAP3 is not set
+# CONFIG_ARCH_OMAP4 is not set
+# CONFIG_SOC_OMAP5 is not set
+# CONFIG_SOC_OMAP2420 is not set
+# CONFIG_SOC_OMAP2430 is not set
+# CONFIG_SOC_AM43XX is not set
+# CONFIG_SOC_DRA7XX is not set
+# CONFIG_SOC_TI81XX is not set
+CONFIG_SOC_AM33XX=y
+CONFIG_MACH_OMAP_GENERIC=y
+# CONFIG_AUDIT is not set
+# CONFIG_CGROUPS is not set
+# CONFIG_NAMESPACES is not set
+# CONFIG_PROFILING is not set
+# CONFIG_KEXEC is not set
+# CONFIG_CRASH_DUMP is not set
+# CONFIG_IKCONFIG is not set
+# CONFIG_DEBUG_KERNEL is not set
+# CONFIG_DEBUG_FS is not set
+# CONFIG_PM_DEBUG is not set
+# CONFIG_IPV6 is not set
+# nf_tables with connection tracking, built in (the image loads no modules) for the
+# production input filter (ADR 0066). Without a ruleset no hook is registered.
+CONFIG_NETFILTER=y
+CONFIG_NETFILTER_ADVANCED=y
+CONFIG_NF_CONNTRACK=y
+CONFIG_NF_TABLES=y
+CONFIG_NF_TABLES_IPV4=y
+CONFIG_NFT_CT=y
+# CONFIG_BRIDGE is not set
+# CONFIG_VLAN_8021Q is not set
+CONFIG_BT=y
+# CONFIG_CAN is not set
+# CONFIG_PCI is not set
+# ST300: the AM335x CPSW switch (mac_sw, ethphy0 on RMII). Modules, loaded by the init script on
+# the ST300 only: built in they cost every model about 100 KB of the kernel size limit.
+CONFIG_ETHERNET=y
+CONFIG_NET_VENDOR_TI=y
+# omap2plus builds the legacy CPSW driver, CPTS and the MDIO bus in; the new-binding switch driver
+# below is the only one the ST300 dts uses, and its MDIO and GMII selector go with it as modules.
+# CONFIG_TI_CPSW is not set
+# CONFIG_TI_CPTS is not set
+# CONFIG_NET_DEVMEM is not set
+CONFIG_TI_DAVINCI_MDIO=m
+CONFIG_TI_CPSW_SWITCHDEV=m
+CONFIG_PHY_TI_GMII_SEL=m
+# CONFIG_BLK_DEV_INITRD is not set
+# CONFIG_SCSI is not set
+# CONFIG_BLK_DEV_SD is not set
+CONFIG_USB=y
+# CONFIG_USB_STORAGE is not set
+# CONFIG_FAT_FS is not set
+# CONFIG_VFAT_FS is not set
+# CONFIG_BLK_DEV_LOOP is not set
+# CONFIG_OVERLAY_FS is not set
+# CONFIG_SQUASHFS is not set
+CONFIG_DEVTMPFS=y
+CONFIG_DEVTMPFS_MOUNT=y
+CONFIG_SERIAL_8250=y
+CONFIG_SERIAL_8250_CONSOLE=y
+CONFIG_SERIAL_8250_OMAP=y
+CONFIG_MTD=y
+CONFIG_MTD_OF_PARTS=y
+CONFIG_MTD_RAW_NAND=y
+CONFIG_MTD_NAND_OMAP2=y
+CONFIG_MTD_NAND_OMAP_BCH=y
+CONFIG_OMAP_GPMC=y
+CONFIG_MTD_UBI=y
+CONFIG_UBIFS_FS=y
+CONFIG_UBIFS_FS_LZO=y
+CONFIG_MMC=y
+CONFIG_MMC_OMAP_HS=y
+CONFIG_GPIOLIB=y
+CONFIG_GPIO_OMAP=y
+CONFIG_GPIO_SYSFS=y
+CONFIG_REGULATOR_FIXED_VOLTAGE=y
+CONFIG_CFG80211=y
+CONFIG_MAC80211=y
+CONFIG_RFKILL=y
+CONFIG_WLAN=y
+CONFIG_WLAN_VENDOR_TI=y
+CONFIG_WLCORE=y
+CONFIG_WLCORE_SDIO=y
+CONFIG_WL18XX=y
+CONFIG_SPI=y
+CONFIG_SPI_OMAP24XX=y
+CONFIG_SPI_SPIDEV=y
+CONFIG_DMA_ENGINE=y
+CONFIG_TI_EDMA=y
+CONFIG_NEW_LEDS=y
+CONFIG_LEDS_CLASS=y
+CONFIG_LEDS_GPIO=y
+CONFIG_LEDS_PWM=y
+CONFIG_PWM=y
+CONFIG_OMAP_DM_TIMER=y
+CONFIG_PWM_OMAP_DMTIMER=y
+CONFIG_INPUT=y
+CONFIG_INPUT_EVDEV=y
+CONFIG_INPUT_KEYBOARD=y
+CONFIG_KEYBOARD_GPIO_POLLED=y
+CONFIG_BT_BREDR=y
+CONFIG_BT_HCIUART=y
+CONFIG_BT_HCIUART_SERDEV=y
+CONFIG_BT_HCIUART_LL=y
+CONFIG_EXTRA_FIRMWARE="ti-connectivity/TIInit_11.8.32.bts"
+CONFIG_EXTRA_FIRMWARE_DIR="soundtap-firmware"
+CONFIG_MEDIA_SUPPORT=y
+# The IR receiver is all this kernel needs from media: rc-core, lirc and the decoders
+# below. omap2plus otherwise builds every DVB frontend, tuner, V4L driver and rc keymap
+# as modules -- 655 of the 1243 on 2026-10-07, a third of the kernel build -- for a
+# speaker with no video, no tuner and an IR path that reads raw scancodes from lirc0.
+CONFIG_MEDIA_SUPPORT_FILTER=y
+# CONFIG_MEDIA_CAMERA_SUPPORT is not set
+# CONFIG_MEDIA_ANALOG_TV_SUPPORT is not set
+# CONFIG_MEDIA_DIGITAL_TV_SUPPORT is not set
+# CONFIG_MEDIA_RADIO_SUPPORT is not set
+# CONFIG_MEDIA_SDR_SUPPORT is not set
+# CONFIG_MEDIA_PLATFORM_SUPPORT is not set
+# CONFIG_MEDIA_TEST_SUPPORT is not set
+# CONFIG_RC_MAP is not set
+CONFIG_RC_CORE=y
+CONFIG_RC_DEVICES=y
+CONFIG_IR_GPIO_CIR=y
+CONFIG_LIRC=y
+CONFIG_RC_DECODERS=y
+CONFIG_IR_NEC_DECODER=y
+CONFIG_IR_RC5_DECODER=y
+CONFIG_IR_RC6_DECODER=y
+CONFIG_IR_SONY_DECODER=y
+CONFIG_IR_JVC_DECODER=y
+CONFIG_IR_SHARP_DECODER=y
+CONFIG_WATCHDOG=y
+CONFIG_OMAP_WATCHDOG=y
+# The kernel feeds the watchdog omap_wdt.early_enable starts only until the first open of
+# /dev/watchdog, and soundtapd opens it once it answers. Without a bound a hang between the
+# kernel and soundtapd -- rootwait, init, a soundtapd that never comes up -- is fed for
+# ever and the speaker sits there until the plug is pulled. soundtapd is up within
+# 30 s of the kernel; 180 s ends such a boot in a reset and U-Boot's bootcount.
+CONFIG_WATCHDOG_OPEN_TIMEOUT=180
+# An oops is a panic, and a panic a reset: a driver that oopses otherwise leaves a half-dead
+# kernel that soundtapd keeps feeding to the watchdog, and a speaker that answers nothing
+# until the plug is pulled. ramoops keeps the record (/api/debug's last boot) and U-Boot's
+# bootcount rolls back a build that keeps doing it. 5 s is the init script's kernel/panic;
+# the command line's panic=10 replaces it until init runs, and this holds for a line without.
+CONFIG_PANIC_ON_OOPS=y
+CONFIG_PANIC_TIMEOUT=5
+CONFIG_RTC_DRV_OMAP=y
+CONFIG_SOUND=y
+CONFIG_SND=y
+CONFIG_SND_PCM=y
+CONFIG_SND_PROC_FS=y
+CONFIG_SND_DMAENGINE_PCM=y
+CONFIG_SND_SOC=y
+CONFIG_SND_SOC_DAVINCI_MCASP=y
+CONFIG_SND_SOC_SPDIF=y
+CONFIG_USB_MUSB_HDRC=y
+CONFIG_USB_MUSB_DSPS=y
+CONFIG_USB_MUSB_DUAL_ROLE=y
+CONFIG_AM335X_PHY_USB=y
+CONFIG_NOP_USB_XCEIV=y
+CONFIG_MUSB_PIO_ONLY=y
+CONFIG_USB_GADGET=y
+CONFIG_CONFIGFS_FS=y
+CONFIG_USB_CONFIGFS=y
+CONFIG_USB_CONFIGFS_ACM=y
+CONFIG_USB_CONFIGFS_RNDIS=y
+CONFIG_USB_U_SERIAL=y
+CONFIG_USB_F_ACM=y
+CONFIG_USB_F_RNDIS=y
+# CONFIG_USB_ZERO is not set
+# CONFIG_USB_G_NOKIA is not set
+CONFIG_NETDEVICES=y
+CONFIG_USB_NET_DRIVERS=y
+CONFIG_USB_USBNET=y
+CONFIG_USB_NET_CDCETHER=y
+CONFIG_USB_NET_CDC_NCM=y
+CONFIG_USB_NET_RNDIS_HOST=y
+# ST20: the own BCO app's USB link (ADR 0031), wlan0 and eth0. Idle on boards without a BCO.
+CONFIG_USB_NET_SOUNDTAP_BCO=y
+# CONFIG_DRM is not set
+# CONFIG_DRM_OMAP is not set
+# CONFIG_FB is not set
+# CONFIG_BACKLIGHT is not set
+CONFIG_DEBUG_INFO_NONE=y
+CONFIG_CMDLINE=""
+# CONFIG_CMDLINE_FORCE is not set
+
+# What the script build's two olddefconfig passes leave behind: switching USB off and on
+# again drops omap2plus's USB host drivers, and the rest follows from what it enables.
+# CONFIG_BT_HCIBCM203X is not set
+# CONFIG_BT_HCIBFUSB is not set
+# CONFIG_BT_HCIBPA10X is not set
+# CONFIG_BT_HCIBTUSB is not set
+# CONFIG_BT_HCIBTUSB_BCM is not set
+# CONFIG_BT_HCIBTUSB_POLL_SYNC is not set
+# CONFIG_BT_HCIBTUSB_RTL is not set
+# CONFIG_BT_INTEL is not set
+# CONFIG_BT_RTL is not set
+# CONFIG_LIBERTAS_USB is not set
+# CONFIG_MFD_OMAP_USB_HOST is not set
+# CONFIG_MWIFIEX_USB is not set
+# CONFIG_SND_HWDEP is not set
+# CONFIG_SND_USB_AUDIO is not set
+# CONFIG_SND_USB_AUDIO_USE_MEDIA_CONTROLLER is not set
+# CONFIG_TWL4030_USB is not set
+# CONFIG_TWL6030_USB is not set
+# CONFIG_USB_ACM is not set
+# CONFIG_USB_ANNOUNCE_NEW_DEVICES is not set
+# CONFIG_USB_CDC_PHONET is not set
+# CONFIG_USB_EHCI_HCD is not set
+# CONFIG_USB_EHCI_HCD_OMAP is not set
+# CONFIG_USB_EHCI_TT_NEWSCHED is not set
+# CONFIG_USB_HIDDEV is not set
+# CONFIG_USB_KBD is not set
+# CONFIG_USB_MON is not set
+# CONFIG_USB_MOUSE is not set
+# CONFIG_USB_MUSB_OMAP2PLUS is not set
+# CONFIG_USB_NET_QMI_WWAN is not set
+# CONFIG_USB_NET_SMSC75XX is not set
+# CONFIG_USB_NET_SMSC95XX is not set
+# CONFIG_USB_OHCI_HCD is not set
+# CONFIG_USB_OHCI_HCD_PLATFORM is not set
+# CONFIG_USB_SERIAL is not set
+# CONFIG_USB_SERIAL_FTDI_SIO is not set
+# CONFIG_USB_SERIAL_GENERIC is not set
+# CONFIG_USB_SERIAL_OPTION is not set
+# CONFIG_USB_SERIAL_PL2303 is not set
+# CONFIG_USB_SERIAL_SIMPLE is not set
+# CONFIG_USB_SERIAL_WWAN is not set
+# CONFIG_USB_TEST is not set
+# CONFIG_USB_WDM is not set
+# CONFIG_USB_XHCI_HCD is not set
+# CONFIG_USB_XHCI_PLATFORM is not set
+
+# USB drivers no model uses, which the residue above left on. Every USB link a speaker has
+# is one of the AM335x's two MUSB ports: gadget for the WLA's ttyGS0 console (ACM) and
+# RNDIS, host for the ST20's BCO (cdc_ether for a stock BCO, soundtap_bco for ours). The
+# ST300's Ethernet is the CPSW, not USB. Off: the USB Ethernet adapters (ASIX, NetChip,
+# Zaurus, the CDC subset; AX8817X also selected the Asix PHY and phylink), USB HID (no
+# keyboard; the IR remote is rc-core and lirc), the rtlwifi Wi-Fi family, and the DWC3 and
+# ISP1760 controllers no AM335x has. Checked by os/support/kernel_config_check.py.
+# CONFIG_USB_NET_AX88179_178A is not set
+# CONFIG_USB_NET_AX8817X is not set
+# CONFIG_AX88796B_PHY is not set
+# CONFIG_USB_NET_NET1080 is not set
+# CONFIG_USB_NET_ZAURUS is not set
+# CONFIG_USB_NET_CDC_SUBSET is not set
+# CONFIG_USB_HID is not set
+# CONFIG_RTL_CARDS is not set
+# CONFIG_USB_DWC3 is not set
+# CONFIG_USB_ISP1760 is not set
+
+# Hardening: omap2plus leaves these on and nothing here uses them. Checked against
+# the generated kernel.config by os/support/kernel_config_check.py. STRICT_DEVMEM only keeps
+# /dev/mem off RAM; init's devmem and the GPIO hog in internal/bco still reach registers
+# (IO_STRICT_DEVMEM would refuse them, so it stays off).
+# CONFIG_KPROBES is not set
+# CONFIG_BINFMT_MISC is not set
+# CONFIG_NET_KEY is not set
+# CONFIG_XFRM_USER is not set
+# CONFIG_IP_PNP is not set
+# CONFIG_NFS_FS is not set
+# CONFIG_ROOT_NFS is not set
+# CONFIG_MAGIC_SYSRQ is not set
+# CONFIG_MODULE_FORCE_LOAD is not set
+# CONFIG_MODULE_FORCE_UNLOAD is not set
+# No module signing: the kernel would generate its key afresh in every build and embed it,
+# so no two builds would give the same zImage or modules (ADR 0011), and a fixed key would
+# be public. The four ST300 modules come from the read-only root filesystem, and init.d
+# closes module loading once they are in (modules_disabled, ADR 0048).
+# CONFIG_MODULE_SIG is not set
+CONFIG_STRICT_KERNEL_RWX=y
+CONFIG_STACKPROTECTOR_STRONG=y
+CONFIG_STRICT_DEVMEM=y
+# CONFIG_IO_STRICT_DEVMEM is not set
+# Kernel log and panic records that survive a reset, in RAM the device tree reserves
+# (am335x-soundtap-ramoops.dtsi).
+CONFIG_PSTORE=y
+CONFIG_PSTORE_RAM=y
+CONFIG_PSTORE_CONSOLE=y

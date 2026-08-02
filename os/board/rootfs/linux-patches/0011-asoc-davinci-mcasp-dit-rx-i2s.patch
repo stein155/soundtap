@@ -1,0 +1,138 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Stein Milder <info@steinmilder.nl>
+Date: Sun, 8 Nov 2026 12:00:00 +0100
+Subject: [PATCH] ASoC: davinci-mcasp: receive I2S beside a DIT transmitter
+
+The SoundTouch 300's SM2 sends S/PDIF to the soundbar's processor on McASP0
+serializer 2 and gets the processor's input (the TV) back as I2S on
+serializer 0, on the processor's ACLKR/AFSR. davinci-mcasp registers only a
+playback stream in DIT mode.
+
+Add a ti,dit-rx-i2s property. With it, the DIT DAI also offers a stereo
+S32_LE capture stream, the capture DMA channel is set up, and hw_params for
+capture configures only the receive section: external clock and frame sync,
+two 32-bit slots, one bit of data delay. The transmitter's format and clocks
+are left alone, and TX_ASYNC keeps the two sections apart.
+
+Upstream: Not applicable (SoundTap hardware support)
+Signed-off-by: Stein Milder <info@steinmilder.nl>
+---
+ sound/soc/ti/davinci-mcasp.c | 56
+ 1 file changed, 53 insertions(+), 3 deletions(-)
+
+diff --git a/sound/soc/ti/davinci-mcasp.c b/sound/soc/ti/davinci-mcasp.c
+--- a/sound/soc/ti/davinci-mcasp.c
++++ b/sound/soc/ti/davinci-mcasp.c
+@@ -103,6 +103,7 @@
+ 	bool	bclk_master;
+ 	u32	auxclk_fs_ratio;
+ 	bool	tx_clock_only;
++	bool	dit_rx;
+ 
+ 	unsigned long pdir; /* Pin direction bitfield */
+ 
+@@ -1067,6 +1068,34 @@
+ 	return 0;
+ }
+ 
++/*
++ * I2S receive in DIT mode (ti,dit-rx-i2s): the far end drives ACLKR and AFSR,
++ * two 32-bit slots per frame, one bit of data delay. The transmitter keeps its
++ * own clocks, so the two sections run asynchronously.
++ */
++static int mcasp_dit_rx_hw_param(struct davinci_mcasp *mcasp, int period_words,
++				 int channels)
++{
++	int ret;
++
++	ret = mcasp_common_hw_param(mcasp, SNDRV_PCM_STREAM_CAPTURE,
++				    period_words, channels);
++	if (ret)
++		return ret;
++
++	mcasp_set_bits(mcasp, DAVINCI_MCASP_ACLKXCTL_REG, TX_ASYNC);
++	mcasp_clr_bits(mcasp, DAVINCI_MCASP_ACLKRCTL_REG, ACLKRE);
++	mcasp_set_bits(mcasp, DAVINCI_MCASP_ACLKRCTL_REG, ACLKRPOL);
++	mcasp_set_reg(mcasp, DAVINCI_MCASP_RXFMCTL_REG, FSRMOD(2) | FSRDUR | FSRPOL);
++	mcasp_set_reg(mcasp, DAVINCI_MCASP_RXFMT_REG,
++		      FSRDLY(1) | RXORD | RXSSZ(15) |
++		      (mcasp->dat_port ? 0 : RXSEL));
++	mcasp_set_reg(mcasp, DAVINCI_MCASP_RXTDM_REG, 0x3);
++	mcasp_set_reg(mcasp, DAVINCI_MCASP_RXMASK_REG, 0xffffffff);
++
++	return 0;
++}
++
+ /* S/PDIF */
+ static int mcasp_dit_hw_param(struct davinci_mcasp *mcasp,
+ 			      unsigned int rate)
+@@ -1268,6 +1297,15 @@
+ 		return -EINVAL;
+ 	}
+ 
++	/*
++	 * Receive beside a running S/PDIF transmitter: configure the receive section
++	 * only. The DAI format and the clock dividers below are the transmitter's.
++	 */
++	if (mcasp->op_mode == DAVINCI_MCASP_DIT_MODE &&
++	    substream->stream == SNDRV_PCM_STREAM_CAPTURE)
++		return mcasp_dit_rx_hw_param(mcasp, period_size * channels,
++					     channels);
++
+ 	ret = davinci_mcasp_set_dai_fmt(cpu_dai, mcasp->dai_fmt);
+ 	if (ret)
+ 		return ret;
+@@ -1987,6 +2025,7 @@
+ 		mcasp->auxclk_fs_ratio = val;
+ 
+ 	mcasp->tx_clock_only = of_property_read_bool(np, "ti,tx-clock-only");
++	mcasp->dit_rx = of_property_read_bool(np, "ti,dit-rx-i2s");
+ 
+ 	if (of_property_read_u32(np, "dismod", &val) == 0) {
+ 		if (val == 0 || val == 2 || val == 3) {
+@@ -2282,6 +2321,7 @@
+ 	struct snd_dmaengine_dai_dma_data *dma_data;
+ 	struct resource *mem, *dat;
+ 	struct davinci_mcasp *mcasp;
++	struct snd_soc_dai_driver *dai_drv;
+ 	char *irq_name;
+ 	int irq;
+ 	int ret;
+@@ -2406,8 +2446,8 @@
+ 	}
+ 
+ 
+-	/* RX is not valid in DIT mode */
+-	if (mcasp->op_mode != DAVINCI_MCASP_DIT_MODE) {
++	/* RX is not valid in DIT mode, unless the board receives I2S beside it */
++	if (mcasp->op_mode != DAVINCI_MCASP_DIT_MODE || mcasp->dit_rx) {
+ 		dma_data = &mcasp->dma_data[SNDRV_PCM_STREAM_CAPTURE];
+ 		dma_data->filter_data = "rx";
+ 		if (dat)
+@@ -2482,8 +2522,23 @@
+ 		goto err;
+ 	}
+ 
++	dai_drv = &davinci_mcasp_dai[mcasp->op_mode];
++	if (mcasp->op_mode == DAVINCI_MCASP_DIT_MODE && mcasp->dit_rx) {
++		dai_drv = devm_kmemdup(&pdev->dev, dai_drv, sizeof(*dai_drv), GFP_KERNEL);
++		if (!dai_drv) {
++			ret = -ENOMEM;
++			goto err;
++		}
++		dai_drv->capture = (struct snd_soc_pcm_stream) {
++			.stream_name	= "DIT Capture",
++			.channels_min	= 2,
++			.channels_max	= 2,
++			.rates		= DAVINCI_MCASP_RATES,
++			.formats	= SNDRV_PCM_FMTBIT_S32_LE,
++		};
++	}
+ 	ret = devm_snd_soc_register_component(&pdev->dev, &davinci_mcasp_component,
+-					      &davinci_mcasp_dai[mcasp->op_mode], 1);
++					      dai_drv, 1);
+ 
+ 	if (ret != 0)
+ 		goto err;
+-- 
+2.50.1

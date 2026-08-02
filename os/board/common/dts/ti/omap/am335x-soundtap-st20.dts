@@ -1,0 +1,475 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: 2026 SoundTap contributors
+/dts-v1/;
+
+#include "am33xx.dtsi"
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/pinctrl/am33xx.h>
+#include "am335x-soundtap-ramoops.dtsi"
+/*
+ * Persistent storage opens read-write, as on the Wireless Link. Read-only, the boot
+ * script put a tmpfs over /mnt/nv, so wifi-independent settings, presets, the Spotify
+ * login and the Dropbear host key were lost on every boot. The volume is shared with
+ * stock and SoundTap writes only its own names in it; UBIFS keeps the on-flash format
+ * version on a read-write mount, so stock's 3.14 kernel still mounts it.
+ */
+#define SOUNDTAP_NAND_PERSISTENT_RW soundtap,writable
+/*
+ * The environment opens too: stock U-Boot sets rt_try before it chainloads
+ * mainline U-Boot and boots stock when the flag survives, so soundtapd has to be
+ * able to clear it. Read-only, flash_erase failed with EACCES (2026-09-25) and
+ * every second boot fell back to stock.
+ */
+#define SOUNDTAP_NAND_ENV_RW soundtap,writable
+/*
+ * The Ping/Pong pairs open so the stock installer's inactive slot can be rewritten.
+ */
+#define SOUNDTAP_NAND_SLOT_RW soundtap,writable
+/*
+ * SPL and U-Boot open as well, as on the WLA and ST10: /api/firmware replaces the boot
+ * chain from Linux. The shared .dtsi defaults them read-only, so this must stay explicit.
+ */
+#define SOUNDTAP_NAND_BOOT_RW soundtap,writable
+#include "am335x-soundtap-nand.dtsi"
+
+/ {
+	model = "Bose SoundTouch 20 (SoundTap spotty)";
+	compatible = "bose,spotty-scm", "ti,am33xx";
+
+	aliases {
+		serial3 = &uart3;
+		serial0 = &uart5;
+	};
+
+	chosen {
+		stdout-path = "serial3:115200n8";
+		bootargs = "console=ttyS3,115200n8 root=ubi0:rootfs ro rootfstype=ubifs ubi.mtd=9,2048 rootwait init=/init mem=128M cma=8M panic=10 omap_wdt.early_enable=1 variant=spotty module_type=scm country=GB region=GB soundtap.nandroot=1 soundtap.watchdog=90";
+	};
+
+	memory@80000000 {
+		device_type = "memory";
+		reg = <0x80000000 0x08000000>;
+	};
+
+	audio_codec: audio-codec {
+		compatible = "linux,spdif-dit";
+		#sound-dai-cells = <0>;
+	};
+
+	/* Same receiver, same pad as the ST10: uart0_rxd as gpio1_10, decoded by rc-core. */
+	ir-receiver {
+		compatible = "gpio-ir-receiver";
+		gpios = <&gpio1 10 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&ir_pins>;
+		linux,autosuspend-period = <125>;
+	};
+
+	/*
+	 * The Wi-Fi lamp above the OLED. Stock's spotty_scm shelbyleds drives uledw (white)
+	 * from DM timer 5 and uledy (amber) from DM timer 6, each on its MDIO pad in mode 1,
+	 * so both are PWM lamps, as the ST10's Wi-Fi white is. Same labels as the ST10, so
+	 * soundtapd writes them the same way; brightness 0..255. Stock's uledg/uledr GPIOs
+	 * (gpio1_19, gpio1_30) are left out until hardware shows they light anything.
+	 */
+	wifi_white_pwm: dmtimer-pwm-white {
+		compatible = "ti,omap-dmtimer-pwm";
+		#pwm-cells = <3>;
+		ti,timers = <&timer5>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&wifi_white_pwm_pins>;
+	};
+
+	wifi_amber_pwm: dmtimer-pwm-amber {
+		compatible = "ti,omap-dmtimer-pwm";
+		#pwm-cells = <3>;
+		ti,timers = <&timer6>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&wifi_amber_pwm_pins>;
+	};
+
+	pwm-leds {
+		compatible = "pwm-leds";
+
+		wifi-white {
+			label = "wifi-white";
+			pwms = <&wifi_white_pwm 0 1000000 0>;
+			max-brightness = <255>;
+			/* A dark speaker reads as a dead one, and soundtapd takes this lamp over later. */
+			default-state = "on";
+		};
+
+		wifi-amber {
+			label = "wifi-amber";
+			pwms = <&wifi_amber_pwm 0 1000000 0>;
+			max-brightness = <255>;
+			default-state = "off";
+		};
+	};
+
+	sound {
+		compatible = "bose,soundtap-mcasp-audio";
+		audio-cpu = <&mcasp0>;
+		audio-codec = <&audio_codec>;
+	};
+};
+
+/*
+ * No UART driver for the infrared receiver: the ST10 route instead, proven there with a
+ * remote. The UART-sampling driver bound here and produced /dev/ir, and a remote in front
+ * of the ST20 produced no key event at all (2026-09-24).
+ */
+&gpio1 {
+	/* What stock leaves high through UART0's idle transmit line; see ir_pins. */
+	ir-power-hog {
+		gpio-hog;
+		gpios = <11 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "ir_power";
+	};
+};
+
+/*
+ * Every group here goes through AM33XX_PADCONF(pa, conf, mux), which takes the
+ * *absolute* pad-control address and subtracts the 0x800 pinmux base itself. Raw cells
+ * holding absolute addresses are rejected by pinctrl-single ("mux offset out of range":
+ * am33xx_pinmux covers reg = <0x44e10800 0x238>) and the pads stay in their power-on
+ * function. Use the macro; never the raw cells.
+ *
+ * The conf|mux values are byte-for-byte the stock spotty_scm.dtb groups
+ * (spi0_pins_default, mcasp0_pins_default, gpiodev_pins_default).
+ */
+&am33xx_pinmux {
+	/* The SCM wires NAND WP# to gpmc_wpn (stock spotty_scm nandflash_pins: 0x74 0x20); the
+	 * SM2 modules (ST10, WLA) use that pad for Wi-Fi, so it stays out of the shared
+	 * nand_pins. Unmuxed, WP# sits low and every erase and write is a silent no-op: under
+	 * stock's bootloader it only worked because Bose's U-Boot had muxed it already. */
+	nand_wp_pins: pinmux-nand-wp-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_GPMC_WPN, PIN_INPUT_PULLDOWN, MUX_MODE0)
+		>;
+	};
+
+	ir_pins: pinmux-ir-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(0x970, PIN_INPUT_PULLUP, MUX_MODE7)	/* uart0_rxd as gpio1_10 */
+			AM33XX_PADCONF(0x974, PIN_OUTPUT, MUX_MODE7)	/* uart0_txd as gpio1_11, hogged high */
+		>;
+	};
+
+	usb0_pins: pinmux-usb0-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(0xa1c, 0x00, MUX_MODE0) /* usb0_drvvbus */
+			AM33XX_PADCONF(0x910, 0x30, MUX_MODE7) /* mii1_rxerr, gpio3_2 */
+		>;
+	};
+
+	usb1_pins: pinmux-usb1-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(0xa34, 0x00, MUX_MODE0) /* usb1_drvvbus */
+		>;
+	};
+
+	microbsel_pins: pinmux-microbsel-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(0x9e4, 0x10, MUX_MODE7) /* microbsel     gpio3_7 */
+			AM33XX_PADCONF(0x9e8, 0x10, MUX_MODE7) /* charge_enable gpio3_8 */
+		>;
+	};
+
+	power_control_pins: pinmux-power-control-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(0x8d0, 0x08, MUX_MODE7) /* psm_disable gpio0_8  */
+			AM33XX_PADCONF(0x980, 0x10, MUX_MODE7) /* dm870pwr    gpio0_14 */
+			/*
+			 * clkout1: the BCO's reference clock. Stock U-Boot muxes it; the pad resets
+			 * to GPIO, so without this line the BCO never enumerates when our SPL
+			 * runs from the ROM. Measured 2026-09-27: with this pad at MODE7 there is
+			 * no cdc_ether, and MODE3 a few seconds after BCO power-on brings the LAN
+			 * up in 6 s with no power cycle needed.
+			 */
+			AM33XX_PADCONF(0x9b0, 0x00, MUX_MODE3) /* xdma_event_intr0 */
+		>;
+	};
+
+	/* Stock spotty_scm.dtb: McASP0 is the playback link to the AIC3256 DSP. */
+	mcasp0_pins: pinmux-mcasp0-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(0x868, 0x20, MUX_MODE6) /* gpmc_a10       */
+			AM33XX_PADCONF(0x930, 0x08, MUX_MODE6) /* mii1_rxclk     */
+			AM33XX_PADCONF(0x990, 0x08, MUX_MODE0) /* mcasp0_aclkx   */
+			AM33XX_PADCONF(0x99c, 0x20, MUX_MODE2) /* mcasp0_ahclkr  */
+			AM33XX_PADCONF(0x9a8, 0x20, MUX_MODE0) /* mcasp0_axr1 tx */
+			AM33XX_PADCONF(0x9ac, 0x08, MUX_MODE0) /* mcasp0_ahclkx  */
+		>;
+	};
+
+	/* McSPI leaves codec MISO stuck high on mainline; GPIO bitbang is proven on hardware. */
+	spi0_pins: pinmux-spi0-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(0x950, 0x00, MUX_MODE7) /* gpio0_2 SCLK */
+			AM33XX_PADCONF(0x954, 0x00, MUX_MODE7) /* gpio0_3 MOSI */
+			AM33XX_PADCONF(0x958, 0x30, MUX_MODE7) /* gpio0_4 MISO */
+			AM33XX_PADCONF(0x960, 0x10, MUX_MODE7) /* gpio0_6 CS   */
+		>;
+	};
+
+	spi1_pins: pinmux-spi1-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(0x964, 0x20, MUX_MODE4) /* ecap0_in_pwm0_out, spi1_sclk */
+			AM33XX_PADCONF(0x994, 0x20, MUX_MODE3) /* mcasp0_fsx, spi1_d0 */
+		>;
+	};
+
+	/* Stock spotty_scm.dtb i2c2_pins_default: uart1_ctsn/rtsn as I2C2, where the PMIC sits. */
+	i2c2_pins: pinmux-i2c2-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(0x978, 0x68, MUX_MODE3) /* i2c2_sda */
+			AM33XX_PADCONF(0x97c, 0x68, MUX_MODE3) /* i2c2_scl */
+		>;
+	};
+
+	oled_control_pins: pinmux-oled-control-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(0x934, 0x00, MUX_MODE7) /* oled_ce    gpio2_24 */
+			AM33XX_PADCONF(0x86c, 0x00, MUX_MODE7) /* oled_reset gpio2_18 */
+			AM33XX_PADCONF(0x8e8, 0x00, MUX_MODE7) /* oled_d_c   gpio1_27 */
+		>;
+	};
+
+	/* Stock spotty_scm.dtb keypad_pins_default; userspace polls, never IRQs. */
+	keypad_pins: pinmux-keypad-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(0x820, 0x30, MUX_MODE7) /* switch  gpio0_22 */
+			AM33XX_PADCONF(0x824, 0x30, MUX_MODE7) /* switch  gpio0_23 */
+			AM33XX_PADCONF(0x828, 0x30, MUX_MODE7) /* switch  gpio0_26 */
+			AM33XX_PADCONF(0x920, 0x08, MUX_MODE7) /* strobe  gpio0_17 */
+			AM33XX_PADCONF(0x928, 0x08, MUX_MODE7) /* strobe  gpio0_28 */
+			AM33XX_PADCONF(0x9b4, 0x08, MUX_MODE7) /* strobe  gpio0_20 */
+			AM33XX_PADCONF(0x944, 0x30, MUX_MODE7) /* direct  gpio0_29 */
+		>;
+	};
+
+	/*
+	 * Stock uart3_pins_default (stock names count from 1, so this is the one on
+	 * serial@481a6000): the recovery console, ttyO3 under Bose and ttyS3 here, on
+	 * mmc0_dat1 (rx) and mmc0_dat0 (tx).
+	 */
+	console_pins: pinmux-console-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(0x8f8, 0x30, MUX_MODE3)
+			AM33XX_PADCONF(0x8fc, 0x00, MUX_MODE3)
+		>;
+	};
+
+	/* Stock uart5_pins_default: BCO sdsShell, 115200 baud. */
+	bco_shell_pins: pinmux-bco-shell-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(0x908, 0x30, MUX_MODE3)
+			AM33XX_PADCONF(0x918, 0x00, MUX_MODE3)
+		>;
+	};
+
+	/*
+	 * Stock gpiodev_pins_default, minus the four pads power_control_pins and
+	 * microbsel_pins already claim (psm_disable, dm870pwr, microbsel, charge_enable):
+	 * pinctrl-single refuses a second claim on the same pad, so leaving them here
+	 * would make this whole group fail exactly like the offsets used to.
+	 *
+	 * This is the group that muxes mute_out and ampstby as well as the three codec
+	 * resets — without it, writing /sys/class/gpio/gpio49 or gpio55 does nothing.
+	 */
+	/* stock timer5_pins_default / timer6_pins_default: 0x14c 0x01, 0x148 0x01 */
+	wifi_white_pwm_pins: pinmux-wifi-white-pwm-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(0x94c, 0x00, MUX_MODE1) /* mdio_clk  timer5, wifi white */
+		>;
+	};
+
+	wifi_amber_pwm_pins: pinmux-wifi-amber-pwm-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(0x948, 0x00, MUX_MODE1) /* mdio_data timer6, wifi amber */
+		>;
+	};
+
+	audio_control_pins: pinmux-audio-control-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(0x924, 0x28, MUX_MODE7) /* pmic_int   gpio0_21 */
+			AM33XX_PADCONF(0x82c, 0x30, MUX_MODE7) /* dcpresent  gpio0_27 */
+			AM33XX_PADCONF(0x840, 0x20, MUX_MODE7) /* microbdet  gpio1_16 */
+			AM33XX_PADCONF(0x844, 0x00, MUX_MODE7) /* mute_out   gpio1_17 = gpio49 */
+			AM33XX_PADCONF(0x8d4, 0x20, MUX_MODE7) /* air_nreq   gpio0_9  */
+			AM33XX_PADCONF(0x85c, 0x00, MUX_MODE7) /* ampstby    gpio1_23 = gpio55 */
+			AM33XX_PADCONF(0x860, 0x30, MUX_MODE7) /* ampfault   gpio1_24 */
+			AM33XX_PADCONF(0x8d8, 0x28, MUX_MODE7) /* BTle_reset gpio0_10 */
+			AM33XX_PADCONF(0x9a4, 0x00, MUX_MODE7) /* dac_reset  gpio3_19 */
+			AM33XX_PADCONF(0x998, 0x00, MUX_MODE7) /* adc_reset  gpio3_16 */
+			AM33XX_PADCONF(0x9a0, 0x00, MUX_MODE7) /* dsp_reset  gpio3_18 */
+		>;
+	};
+};
+
+&gpio0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&power_control_pins &keypad_pins &spi0_pins>;
+
+	psm-disable-hog {
+		gpio-hog;
+		gpios = <8 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "psm_disable";
+	};
+
+	dm870pwr-hog {
+		gpio-hog;
+		gpios = <14 GPIO_ACTIVE_HIGH>;
+		output-low;
+		line-name = "dm870pwr";
+	};
+};
+
+&gpio3 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&microbsel_pins &audio_control_pins>;
+
+	/*
+	 * Routes the rear micro-B to usb0. Stock boots it low (initial = <0> in
+	 * spotty_scm.dtb), then /opt/Bose/microbswitch sets it to the value of
+	 * microbdet, and microbdet reads 1 with a host cable in ("Switching to
+	 * DEVICE MODE"). Held low, usb0 saw no VBUS at all and the host saw
+	 * no device, so the USB-TAP only existed under stock.
+	 */
+	microbsel-hog {
+		gpio-hog;
+		gpios = <7 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "microbsel";
+	};
+
+	charge-enable-hog {
+		gpio-hog;
+		gpios = <8 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "charge_enable";
+	};
+};
+
+&spi0 {
+	status = "disabled";
+};
+
+/*
+ * The OLED panel runs off the TPS65910's VDD3 boost. Stock's panel driver asks for "vdd3"
+ * (spotty_scm.dtb ssdspi@0 reg-name) and the PMIC does not keep it on through a cold
+ * start, so without this node a power-cycled ST20 showed only a faint, washed-out image
+ * although every SPI frame arrived (2026-09-30; the panel came back under stock).
+ * Only VDD3 is described: the regulator core leaves the rails it has no node for alone.
+ */
+&i2c2 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c2_pins>;
+	clock-frequency = <100000>;
+	status = "okay";
+
+	pmic@2d {
+		compatible = "ti,tps65910";
+		reg = <0x2d>;
+
+		regulators {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			vdd3 {
+				reg = <4>;
+				regulator-compatible = "vdd3";
+				regulator-name = "vdd3";
+				regulator-always-on;
+				regulator-boot-on;
+			};
+		};
+	};
+};
+
+
+&spi1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&spi1_pins>;
+	ti,pindir-d0-out-d1-in;
+	status = "okay";
+
+	oled@0 {
+		compatible = "rohm,dh2228fv";
+		reg = <0>;
+		spi-max-frequency = <2000000>;
+		spi-cpol;
+		spi-cpha;
+		pinctrl-names = "default";
+		pinctrl-0 = <&oled_control_pins>;
+	};
+};
+
+&mcasp0 {
+	#sound-dai-cells = <0>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&mcasp0_pins>;
+	status = "okay";
+	op-mode = <0>;
+	tdm-slots = <2>;
+	serial-dir = <2 1 0 0>;
+	ti,tx-clock-only;
+	tx-num-evt = <1>;
+	rx-num-evt = <1>;
+};
+
+/*
+ * The console the bootargs and stdout-path name. Without this node there is no ttyS3:
+ * the kernel has no console and init's getty fails with "tcgetattr: I/O error".
+ */
+&uart3 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&console_pins>;
+	status = "okay";
+};
+
+&uart5 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&bco_shell_pins>;
+	status = "okay";
+};
+
+/*
+ * The rear micro-USB. Peripheral, like the ST10 and the Wireless Link: a gadget console
+ * and network that do not depend on the BCO, so a boot with nothing on the LAN still
+ * has something to read. The recovery stick is read by U-Boot, before Linux, so
+ * recovery does not need host here.
+ */
+&usb0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&usb0_pins>;
+	dr_mode = "peripheral";
+	status = "okay";
+};
+
+&usb0_phy {
+	status = "okay";
+};
+
+/* USB1 is the internal host link to the BCO Ethernet/Wi-Fi processor. */
+&usb1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&usb1_pins>;
+	dr_mode = "host";
+	status = "okay";
+};
+
+&usb1_phy {
+	status = "okay";
+};
+
+&usb {
+	status = "okay";
+};
+
+&gpmc {
+	pinctrl-0 = <&nand_pins &nand_wp_pins>;
+};

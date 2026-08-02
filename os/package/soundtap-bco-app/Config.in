@@ -1,0 +1,8 @@
+config BR2_PACKAGE_HOST_SOUNDTAP_BCO_APP
+	bool "host SoundTap BCO app"
+	depends on BR2_HOSTARCH = "aarch64" || BR2_HOSTARCH = "x86_64"
+	help
+	  Our own ARM926 application for the SoundTouch 20's BridgeCo
+	  DM870 (bco/app), built bare-metal with a pinned
+	  arm-none-eabi toolchain. Installs app.bin, app.elf and a
+	  bCoD without any Bose bytes per variant.

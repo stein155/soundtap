@@ -1,0 +1,50 @@
+From: SoundTap <noreply@soundtap.invalid>
+Subject: [PATCH] ASoC: davinci-mcasp: let a board use AUXCLK without driving AHCLKX
+
+davinci_mcasp_set_sysclk() ties two things together that the hardware keeps
+apart: choosing AUXCLK as the high-frequency clock also puts AHCLKX in PDIR, so
+the McASP starts driving that pin. For a board that has its own source on the
+AHCLKX net, or simply does not route it to the converter, that means the SoC
+drives a line it should leave alone.
+
+The Wireless Link is such a board. Its vendor driver, snd-binky.ko, writes
+AHCLKXCTL 0x8001 -- AHCLKXE set, so the high clock is internal -- and PDIR
+0x14000002, which has the AHCLKX bit clear. Internal clock, pin untouched. That
+combination cannot be expressed through set_sysclk(), because every path that
+selects AUXCLK also sets the pin bit.
+
+"ti,ahclkx-not-driven" says so in the device tree. It changes nothing for a tree
+that does not carry it.
+
+Signed-off-by: SoundTap <noreply@soundtap.invalid>
+---
+ sound/soc/ti/davinci-mcasp.c | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+--- a/sound/soc/ti/davinci-mcasp.c
++++ b/sound/soc/ti/davinci-mcasp.c
+@@ -672,6 +672,7 @@ static int davinci_mcasp_set_sysclk(stru
+ 				    unsigned int freq, int dir)
+ {
+ 	struct davinci_mcasp *mcasp = snd_soc_dai_get_drvdata(dai);
++	struct device_node *np = mcasp->dev->of_node;
+
+ 	pm_runtime_get_sync(mcasp->dev);
+
+@@ -702,6 +703,16 @@ static int davinci_mcasp_set_sysclk(stru
+ 		set_bit(PIN_BIT_AHCLKX, &mcasp->pdir);
+ 	}
+ 	/*
++	 * Selecting AUXCLK above also claimed the AHCLKX pin. A board whose
++	 * AHCLKX net is driven by something else, or is not wired to the
++	 * converter at all, wants the internal clock without that: keep the
++	 * clock and hand the pin back.
++	 */
++	if (np && of_property_read_bool(np, "ti,ahclkx-not-driven")) {
++		clear_bit(PIN_BIT_AHCLKX, &mcasp->pdir);
++		dev_dbg(mcasp->dev, "AHCLKX left undriven by device tree\n");
++	}
++	/*
+ 	 * When AHCLK X/R is selected to be output it means that the HCLK is
+ 	 * the same clock - coming via AUXCLK.
+ 	 */

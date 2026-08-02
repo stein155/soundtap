@@ -1,0 +1,31 @@
+From 7e014e776a7089406c799017c62d2cc6cf86e14f Mon Sep 17 00:00:00 2001
+From: Stein Milder <info@steinmilder.nl>
+Date: Sat, 15 Aug 2026 23:30:00 +0200
+Subject: [PATCH] ASoC: ti: add SoundTap ST10 McASP machine driver
+
+The SoundTap ST10 uses McASP with a simple audio codec endpoint, fixed at
+48 kHz stereo and 32-bit samples. Add the board-specific machine driver
+that configures the required clocks, format, and TDM slots. Build it
+unconditionally to preserve the legacy NAND image build behavior.
+
+The driver source itself is os/drivers/soundtap-st10-audio.c, copied into
+sound/soc/ti/ by SOUNDTAP_LINUX_MCASP_DRIVER (os/external.mk) after the
+patches apply; this patch only builds it. One copy, so the WLA can no
+longer get a stale driver (its bose,soundtap-mcasp-spdif match once went
+missing from a second copy and the board had no audio at all).
+
+Upstream: Not applicable (SoundTap hardware support)
+Signed-off-by: Stein Milder <info@steinmilder.nl>
+---
+ sound/soc/ti/Makefile | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/sound/soc/ti/Makefile b/sound/soc/ti/Makefile
+index 421e13bc04db..5ca646d16e6c 100644
+--- a/sound/soc/ti/Makefile
++++ b/sound/soc/ti/Makefile
+@@ -44,3 +44,4 @@ obj-$(CONFIG_SND_SOC_OMAP_AMS_DELTA) += snd-soc-ams-delta.o
+ obj-$(CONFIG_SND_SOC_OMAP_HDMI) += snd-soc-omap-hdmi.o
+ obj-$(CONFIG_SND_SOC_OMAP_OSK5912) += snd-soc-osk5912.o
+ obj-$(CONFIG_SND_SOC_J721E_EVM) += snd-soc-j721e-evm.o
++obj-y += soundtap-st10-audio.o

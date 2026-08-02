@@ -1,0 +1,13 @@
+config BR2_PACKAGE_SOUNDTAPD
+	bool "soundtapd"
+	# fw_printenv/fw_setenv: how soundtapd reads and writes the U-Boot environment
+	select BR2_PACKAGE_LIBUBOOTENV
+	help
+	  SoundTap daemon and its embedded web interface.
+
+config BR2_PACKAGE_SOUNDTAPD_BCOFLASH
+	bool "bcoflash"
+	depends on BR2_PACKAGE_SOUNDTAPD
+	help
+	  Also build bcoflash, the ST20 BCO application flasher
+	  (docs/hardware/st20/bco-flasher.md).

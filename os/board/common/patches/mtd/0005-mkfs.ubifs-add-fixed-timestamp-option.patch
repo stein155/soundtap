@@ -1,0 +1,100 @@
+From d023014567e5ef72d5cb4dd8153783980cb10db6 Mon Sep 17 00:00:00 2001
+From: SoundTap contributors <soundtap@example.invalid>
+Date: Fri, 14 Aug 2026 21:30:00 +0000
+Subject: [PATCH] mkfs.ubifs: add fixed timestamp option
+
+Normalizing source-tree mtimes does not normalize ctimes, which cannot be
+set from userspace. Add an explicit timestamp for all inode time fields so
+reproducible builds do not depend on host filesystem metadata.
+
+Signed-off-by: SoundTap contributors <soundtap@example.invalid>
+---
+ ubifs-utils/mkfs.ubifs/mkfs.ubifs.c | 31 +++++++++++++++++++++++++------
+ 1 file changed, 25 insertions(+), 6 deletions(-)
+
+diff --git a/ubifs-utils/mkfs.ubifs/mkfs.ubifs.c b/ubifs-utils/mkfs.ubifs/mkfs.ubifs.c
+index 416f7cd..9c27315 100644
+--- a/ubifs-utils/mkfs.ubifs/mkfs.ubifs.c
++++ b/ubifs-utils/mkfs.ubifs/mkfs.ubifs.c
+@@ -174,6 +174,8 @@ static unsigned long long creat_sqnum;
+ 
+ static uuid_t filesystem_uuid;
+ static bool filesystem_uuid_set;
++static long long filesystem_timestamp;
++static bool filesystem_timestamp_set;
+ 
+ static const char *optstring = "d:r:m:o:D:yh?vVe:c:g:f:Fp:k:x:X:j:R:l:j:UQqaK:b:P:C:";
+ 
+@@ -182,6 +184,7 @@ enum {
+ 	AUTH_KEY_OPTION,
+ 	AUTH_CERT_OPTION,
+ 	UUID_OPTION,
++	TIMESTAMP_OPTION,
+ };
+ 
+ static const struct option longopts[] = {
+@@ -216,6 +219,7 @@ static const struct option longopts[] = {
+ 	{"auth-key",           1, NULL, AUTH_KEY_OPTION},
+ 	{"auth-cert",          1, NULL, AUTH_CERT_OPTION},
+ 	{"uuid",               1, NULL, UUID_OPTION},
++	{"timestamp",          1, NULL, TIMESTAMP_OPTION},
+ 	{NULL, 0, NULL, 0}
+ };
+ 
+@@ -250,6 +254,7 @@ static const char *helptext =
+ "-D, --devtable=FILE      use device table FILE\n"
+ "-U, --squash-uids        squash owners making all files owned by root\n"
+ "    --uuid=UUID          use a fixed filesystem UUID\n"
++"    --timestamp=SECONDS  use a fixed Unix timestamp for all inodes\n"
+ "-l, --log-lebs=COUNT     count of erase blocks for the log (used only for\n"
+ "                         debugging)\n"
+ "-y, --yes                assume the answer is \"yes\" for all questions\n"
+@@ -799,6 +804,14 @@ static int get_options(int argc, char**argv)
+ 				return errmsg("bad UUID '%s'", optarg);
+ 			filesystem_uuid_set = true;
+ 			break;
++		case TIMESTAMP_OPTION:
++			errno = 0;
++			filesystem_timestamp = strtoll(optarg, &endp, 10);
++			if (errno || *endp != '\0' || endp == optarg ||
++			    filesystem_timestamp < 0)
++				return errmsg("bad timestamp '%s'", optarg);
++			filesystem_timestamp_set = true;
++			break;
+ 		}
+ 	}
+ 
+@@ -1179,9 +1192,12 @@ static int add_xattr(struct ubifs_ino_node *host_ino, struct stat *st,
+ 	 * The time fields are updated assuming the default time granularity
+ 	 * of 1 second. To support finer granularities, utime() would be needed.
+ 	 */
+-	ino->atime_sec  = cpu_to_le64(st->st_atime);
+-	ino->ctime_sec  = cpu_to_le64(st->st_ctime);
+-	ino->mtime_sec  = cpu_to_le64(st->st_mtime);
++	ino->atime_sec  = cpu_to_le64(filesystem_timestamp_set ?
++				      filesystem_timestamp : st->st_atime);
++	ino->ctime_sec  = cpu_to_le64(filesystem_timestamp_set ?
++				      filesystem_timestamp : st->st_ctime);
++	ino->mtime_sec  = cpu_to_le64(filesystem_timestamp_set ?
++				      filesystem_timestamp : st->st_mtime);
+ 	ino->atime_nsec = 0;
+ 	ino->ctime_nsec = 0;
+ 	ino->mtime_nsec = 0;
+@@ -1494,9 +1510,12 @@ static int add_inode(struct stat *st, ino_t inum, void *data,
+ 	 * The time fields are updated assuming the default time granularity
+ 	 * of 1 second. To support finer granularities, utime() would be needed.
+ 	 */
+-	ino->atime_sec  = cpu_to_le64(st->st_atime);
+-	ino->ctime_sec  = cpu_to_le64(st->st_ctime);
+-	ino->mtime_sec  = cpu_to_le64(st->st_mtime);
++	ino->atime_sec  = cpu_to_le64(filesystem_timestamp_set ?
++				      filesystem_timestamp : st->st_atime);
++	ino->ctime_sec  = cpu_to_le64(filesystem_timestamp_set ?
++				      filesystem_timestamp : st->st_ctime);
++	ino->mtime_sec  = cpu_to_le64(filesystem_timestamp_set ?
++				      filesystem_timestamp : st->st_mtime);
+ 	ino->atime_nsec = 0;
+ 	ino->ctime_nsec = 0;
+ 	ino->mtime_nsec = 0;
+-- 
+2.50.1

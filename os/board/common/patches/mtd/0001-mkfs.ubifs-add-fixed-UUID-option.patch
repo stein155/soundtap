@@ -1,0 +1,72 @@
+From 6db4aa850a04ba8d8db5c6aa7b6de818a5f4a482 Mon Sep 17 00:00:00 2001
+From: SoundTap contributors <soundtap@example.invalid>
+Date: Fri, 14 Aug 2026 20:00:00 +0000
+Subject: [PATCH] mkfs.ubifs: add fixed UUID option
+
+Reproducible filesystem images need to override the random UUID generated
+for every invocation. Add a long option while preserving random UUIDs as
+the default.
+
+Signed-off-by: SoundTap contributors <soundtap@example.invalid>
+---
+ ubifs-utils/mkfs.ubifs/mkfs.ubifs.c | 18 +++++++++++++++++-
+ 1 file changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/ubifs-utils/mkfs.ubifs/mkfs.ubifs.c b/ubifs-utils/mkfs.ubifs/mkfs.ubifs.c
+index 375c9f4..e38c434 100644
+--- a/ubifs-utils/mkfs.ubifs/mkfs.ubifs.c
++++ b/ubifs-utils/mkfs.ubifs/mkfs.ubifs.c
+@@ -172,12 +172,16 @@ static struct inum_mapping **hash_table;
+ /* Inode creation sequence number */
+ static unsigned long long creat_sqnum;
+ 
++static uuid_t filesystem_uuid;
++static bool filesystem_uuid_set;
++
+ static const char *optstring = "d:r:m:o:D:yh?vVe:c:g:f:Fp:k:x:X:j:R:l:j:UQqaK:b:P:C:";
+ 
+ enum {
+ 	HASH_ALGO_OPTION = CHAR_MAX + 1,
+ 	AUTH_KEY_OPTION,
+ 	AUTH_CERT_OPTION,
++	UUID_OPTION,
+ };
+ 
+ static const struct option longopts[] = {
+@@ -211,6 +214,7 @@ static const struct option longopts[] = {
+ 	{"hash-algo",          1, NULL, HASH_ALGO_OPTION},
+ 	{"auth-key",           1, NULL, AUTH_KEY_OPTION},
+ 	{"auth-cert",          1, NULL, AUTH_CERT_OPTION},
++	{"uuid",               1, NULL, UUID_OPTION},
+ 	{NULL, 0, NULL, 0}
+ };
+ 
+@@ -246,0 +252 @@ static const char *helptext =
++"    --uuid=UUID          use a fixed filesystem UUID\n"
+@@ -788,6 +794,11 @@ static int get_options(int argc, char**argv)
+ 		case AUTH_CERT_OPTION:
+ 			return errmsg("mkfs.ubifs was built without crypto support.");
+ #endif
++		case UUID_OPTION:
++			if (uuid_parse(optarg, filesystem_uuid))
++				return errmsg("bad UUID '%s'", optarg);
++			filesystem_uuid_set = true;
++			break;
+ 		}
+ 	}
+ 
+@@ -2536,7 +2547,11 @@ static int write_super(void)
+ 	sup->rp_size       = cpu_to_le64(c->rp_size);
+ 	sup->time_gran     = cpu_to_le32(DEFAULT_TIME_GRAN);
+ 	sup->hash_algo     = cpu_to_le16(c->hash_algo);
+-	uuid_generate_random(sup->uuid);
++
++	if (filesystem_uuid_set)
++		uuid_copy(sup->uuid, filesystem_uuid);
++	else
++		uuid_generate_random(sup->uuid);
+ 
+ 	if (verbose) {
+ 		char s[40];
+-- 
+2.50.1

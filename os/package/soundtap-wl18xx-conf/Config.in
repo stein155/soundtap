@@ -1,0 +1,7 @@
+config BR2_PACKAGE_SOUNDTAP_WL18XX_CONF
+	bool "SoundTap WiLink8 board configuration"
+	help
+	  The per-region wl18xx-conf.bin for the WL1835MOD on every
+	  model, generated at build time by TI's wlconf (18xx-ti-utils
+	  R8.8, built for the host only) from the documented text in
+	  this package.

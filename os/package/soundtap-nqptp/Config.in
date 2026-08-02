@@ -1,0 +1,9 @@
+config BR2_PACKAGE_SOUNDTAP_NQPTP
+	bool "soundtap-nqptp"
+	depends on BR2_USE_MMU
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	help
+	  nqptp 1.2.9, the PTP timing companion Shairport Sync needs for
+	  AirPlay 2, pinned for SoundTap.
+
+	  https://github.com/mikebrady/nqptp

@@ -1,0 +1,86 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: 2026 SoundTap contributors
+/*
+ * SoundTouch 20 and 30 Series III: the ST10's Shelby 2 module in the ST20 and ST30 boxes.
+ * Preview, never booted. Compared with the stock spotty_sm2 and mojo_sm2 trees, which are
+ * one tree apart from the codec script's name and the sync-out timer: the amplifier, mute,
+ * codec and DSP reset lines, the keypad matrix, the IR receiver, Bluetooth's enable and the
+ * NAND are all the ST10's, so this is the ST10's tree with what stock changes:
+ *
+ * - One lamp, the Wi-Fi lamp: stock's shelby-led node has only uledw, on DM timer 4 (the
+ *   ST10's wifi-white PWM), and uledy on gpio2_17 (the ST10's wifi-amber).
+ * - The ST10's other lamp pads drive the front panel, a bose,ssdspi like the ST20's on
+ *   SPI1 chip select 0: chip enable gpio0_12, reset gpio2_9, data/command gpio2_12, and
+ *   its supply on gpio2_23 (the PMIC's "disp" regulator). soundtapd drives the panel over
+ *   /dev/spidev1.0, which the ST10 tree already has.
+ * - gpio0_4 is microbsel, the rear micro-B port's mux, held low as stock holds it.
+ * - The rear Ethernet port (RMII, PHY at 0, the SoundTouch 300's pads) stays off. The kernel
+ *   has the CPSW switch driver the ST300 uses (ti_cpsw_new, davinci_mdio, phy-gmii-sel, as
+ *   modules), but the init script loads them on the ST300 only, where eth0 took a lease on
+ *   2026-11-16. Nothing on this board has been seen: not the PHY, its strap or the reference
+ *   clock. Turning the port on takes the ST300's mac_sw, mdio and cpsw_port nodes here and the
+ *   modprobe and eth0 watcher for variant spotty3 in init.d/soundtap, after a read-only look
+ *   at a Series III.
+ */
+#include "am335x-soundtap-st10.dts"
+
+/ {
+	model = "Bose SoundTouch 20/30 Series III (SoundTap)";
+	compatible = "bose,spotty3-sm2", "ti,am33xx";
+
+	chosen {
+		bootargs = "console=ttyS3,115200n8 root=ubi0:rootfs ro rootfstype=ubifs ubi.mtd=9,2048 rootwait init=/init mem=128M cma=8M panic=10 omap_wdt.early_enable=1 variant=spotty3 module_type=sm2 country=GB region=GB soundtap.nandroot=1 soundtap.watchdog=90";
+	};
+
+	leds {
+		pinctrl-0 = <&wifi_amber_pins>;
+		/delete-node/ bt-white;
+		/delete-node/ soundtouch-white;
+		/delete-node/ soundtouch-amber;
+		/delete-node/ bt-blue;
+		/delete-node/ aux-white;
+	};
+};
+
+&am33xx_pinmux {
+	wifi_amber_pins: pinmux-wifi-amber-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_LCD_DATA11, PIN_OUTPUT_PULLDOWN, MUX_MODE7) /* gpio2_17 wifi amber */
+		>;
+	};
+
+	/* Stock ssdspi_pins_default and ncp6922_pins_default, and gpiodev's microbsel. */
+	panel_pins: pinmux-panel-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_UART1_CTSN, PIN_OUTPUT, MUX_MODE7) /* gpio0_12 panel CE */
+			AM33XX_PADCONF(AM335X_PIN_LCD_DATA3, PIN_OUTPUT, MUX_MODE7) /* gpio2_9 panel reset */
+			AM33XX_PADCONF(AM335X_PIN_LCD_DATA6, PIN_OUTPUT, MUX_MODE7) /* gpio2_12 panel D/C */
+			AM33XX_PADCONF(AM335X_PIN_LCD_HSYNC, PIN_OUTPUT, MUX_MODE7) /* gpio2_23 panel supply */
+			AM33XX_PADCONF(AM335X_PIN_SPI0_D1, PIN_OUTPUT, MUX_MODE7) /* gpio0_4 microbsel */
+		>;
+	};
+};
+
+/* The panel's lines are muxed with the bus it hangs on. */
+&spi1 {
+	pinctrl-0 = <&spi1_pins &panel_pins>;
+};
+
+&gpio0 {
+	microbsel-hog {
+		gpio-hog;
+		gpios = <4 GPIO_ACTIVE_HIGH>;
+		output-low;
+		line-name = "microbsel";
+	};
+};
+
+&gpio2 {
+	/* Stock's "disp" regulator: a GPIO the panel driver turns on and nothing turns off. */
+	panel-supply-hog {
+		gpio-hog;
+		gpios = <23 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "panel_supply";
+	};
+};

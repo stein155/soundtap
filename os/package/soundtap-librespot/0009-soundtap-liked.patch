@@ -1,0 +1,93 @@
+--- a/core/src/spclient.rs
++++ b/core/src/spclient.rs
+@@ -412,6 +412,16 @@
+             .await
+     }
+ 
++    /// POST a protobuf to Spotify's collection service: what is in Liked Songs.
++    pub async fn collection_request(&self, endpoint: &str, body: &[u8]) -> SpClientResult {
++        let kind = HeaderValue::from_static("application/vnd.collection-v2.spotify.proto");
++        let mut headers = HeaderMap::new();
++        headers.insert(CONTENT_TYPE, kind.clone());
++        headers.insert(ACCEPT, kind);
++        self.request(&Method::POST, endpoint, Some(headers), Some(body))
++            .await
++    }
++
+     pub async fn request_as_json(
+         &self,
+         method: &Method,
+--- a/src/soundtap_ctl.rs
++++ b/src/soundtap_ctl.rs
+@@ -87,6 +87,44 @@
+     out
+ }
+ 
++// The little protobuf the collection service speaks, written out: one request, no new crate.
++fn pb_varint(out: &mut Vec<u8>, mut v: u64) {
++    while v >= 0x80 {
++        out.push((v as u8 & 0x7f) | 0x80);
++        v >>= 7;
++    }
++    out.push(v as u8);
++}
++
++fn pb_bytes(out: &mut Vec<u8>, field: u8, bytes: &[u8]) {
++    out.push(field << 3 | 2);
++    pb_varint(out, bytes.len() as u64);
++    out.extend_from_slice(bytes);
++}
++
++fn liked_set(username: &str) -> Vec<u8> {
++    let mut out = Vec::new();
++    pb_bytes(&mut out, 1, username.as_bytes());
++    pb_bytes(&mut out, 2, b"collection");
++    out
++}
++
++fn liked_write(username: &str, uri: &str, on: bool) -> Vec<u8> {
++    let mut item = Vec::new();
++    pb_bytes(&mut item, 1, uri.as_bytes());
++    let now = std::time::SystemTime::now()
++        .duration_since(std::time::UNIX_EPOCH)
++        .map_or(0, |d| d.as_secs());
++    item.push(2 << 3);
++    pb_varint(&mut item, now);
++    if !on {
++        item.extend_from_slice(&[3 << 3, 1]);
++    }
++    let mut out = liked_set(username);
++    pb_bytes(&mut out, 3, &item);
++    out
++}
++
+ fn err_body(code: &str, e: &Error) -> String {
+     format!(
+         "{{\"error\":{},\"kind\":{},\"message\":{}}}",
+@@ -273,6 +311,26 @@
+             Some(ms) => cmd(spirc.set_position_ms(ms)),
+             None => bad("ms"),
+         },
++        // Whether a track is in Liked Songs: Spotify's answer as it comes, for soundtapd to read.
++        ("GET", "/liked") => {
++            let Some(uri) = q.get("uri") else { return bad("uri") };
++            let mut body = liked_set(&session.username());
++            pb_bytes(&mut body, 3, uri.as_bytes());
++            match session.spclient().collection_request("/collection/v2/contains", &body).await {
++                Ok(bytes) => ("200 OK", bytes.to_vec()),
++                Err(e) => ("502 Bad Gateway", err_body("liked_failed", &e).into_bytes()),
++            }
++        }
++        // Puts a track in Liked Songs or takes it out.
++        ("POST", "/liked") => {
++            let Some(uri) = q.get("uri") else { return bad("uri") };
++            let on = q.get("on").map(String::as_str) == Some("1");
++            let body = liked_write(&session.username(), uri, on);
++            match session.spclient().collection_request("/collection/v2/write", &body).await {
++                Ok(_) => ("200 OK", b"{}".to_vec()),
++                Err(e) => ("502 Bad Gateway", err_body("liked_failed", &e).into_bytes()),
++            }
++        }
+         _ => ("404 Not Found", b"{\"error\":\"not_found\"}".to_vec()),
+     }
+ }

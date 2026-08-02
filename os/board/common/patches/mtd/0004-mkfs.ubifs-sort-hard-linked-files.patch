@@ -1,0 +1,68 @@
+From 73238f049b2277f10c2c974dd70c27b6f6f11270 Mon Sep 17 00:00:00 2001
+From: SoundTap contributors <soundtap@example.invalid>
+Date: Fri, 14 Aug 2026 21:11:00 +0000
+Subject: [PATCH 2/2] mkfs.ubifs: sort hard-linked files
+
+Hard-linked files are deferred in a table keyed by host inode number, then
+written in hash-bucket order. Host inode allocation is not reproducible.
+Sort the deferred mappings by path before writing them.
+
+Signed-off-by: SoundTap contributors <soundtap@example.invalid>
+---
+ ubifs-utils/mkfs.ubifs/mkfs.ubifs.c | 38 ++++++++++++++++++++++++++++++--------
+ 1 file changed, 30 insertions(+), 8 deletions(-)
+
+diff --git a/ubifs-utils/mkfs.ubifs/mkfs.ubifs.c b/ubifs-utils/mkfs.ubifs/mkfs.ubifs.c
+index 6be1e83..416f7cd 100644
+--- a/ubifs-utils/mkfs.ubifs/mkfs.ubifs.c
++++ b/ubifs-utils/mkfs.ubifs/mkfs.ubifs.c
+@@ -2177,19 +2177,41 @@ static int compare_inum_mappings(const void *left, const void *right)
+ static int add_multi_linked_files(void)
+ {
+ 	int i, err;
++	size_t count = 0, index = 0;
++	struct inum_mapping **mappings;
+ 
+ 	for (i = 0; i < HASH_TABLE_SIZE; i++) {
+ 		struct inum_mapping *im;
++
++		for (im = hash_table[i]; im; im = im->next)
++			count++;
++	}
++
++	if (!count)
++		return 0;
++
++	mappings = xmalloc(count * sizeof(*mappings));
++	for (i = 0; i < HASH_TABLE_SIZE; i++) {
++		struct inum_mapping *im;
++
++		for (im = hash_table[i]; im; im = im->next)
++			mappings[index++] = im;
++	}
++
++	qsort(mappings, count, sizeof(*mappings), compare_inum_mappings);
++	for (index = 0; index < count; index++) {
++		struct inum_mapping *im = mappings[index];
+ 		unsigned char type = 0;
+ 
+-		for (im = hash_table[i]; im; im = im->next) {
+-			pr_debug("%s\n", im->path_name);
+-			err = add_non_dir(im->path_name, &im->use_inum,
+-					  im->use_nlink, &type, &im->st, NULL);
+-			if (err)
+-				return err;
++		pr_debug("%s\n", im->path_name);
++		err = add_non_dir(im->path_name, &im->use_inum,
++				  im->use_nlink, &type, &im->st, NULL);
++		if (err) {
++			free(mappings);
++			return err;
+ 		}
+ 	}
++	free(mappings);
+ 	return 0;
+ }
+ 
+-- 
+2.50.1

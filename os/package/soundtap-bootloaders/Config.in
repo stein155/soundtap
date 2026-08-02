@@ -1,0 +1,25 @@
+config BR2_PACKAGE_HOST_SOUNDTAP_BOOTLOADERS
+	bool "host SoundTap bootloaders"
+	depends on BR2_HOSTARCH = "aarch64" || BR2_HOSTARCH = "x86_64"
+	help
+	  The mainline SPL and U-Boot images the STUs carry, built
+	  from os/bootloader's source, patches and final .config
+	  with the same Debian gcc 12 cross compiler.
+
+if BR2_PACKAGE_HOST_SOUNDTAP_BOOTLOADERS
+
+config BR2_PACKAGE_HOST_SOUNDTAP_BOOTLOADERS_ST20
+	bool "ST20 SPL"
+	help
+	  st20-spl: MLO, u-boot-spl.bin, uImage-spl-sram. The
+	  shared SPL with USB first, as the ST20 ROM boots NAND
+	  before USB. U-Boot is wla-uboot, as on the other models.
+
+config BR2_PACKAGE_HOST_SOUNDTAP_BOOTLOADERS_WLA
+	bool "WLA product SPL and U-Boot"
+	help
+	  wla-spl: the product NAND MLO.
+	  wla-uboot: the NAND-booting u-boot.img with its
+	  environment in NAND.
+
+endif

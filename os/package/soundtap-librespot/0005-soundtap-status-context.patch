@@ -1,0 +1,91 @@
+diff --git a/connect/src/spirc.rs b/connect/src/spirc.rs
+index 7a4dea2..d9573c7 100644
+--- a/connect/src/spirc.rs
++++ b/connect/src/spirc.rs
+@@ -36,7 +36,7 @@ use librespot_protocol::context_page::ContextPage;
+ use protobuf::MessageField;
+ use std::{
+     future::Future,
+-    sync::Arc,
++    sync::{Arc, Mutex},
+     sync::atomic::{AtomicUsize, Ordering},
+     time::{Duration, SystemTime, UNIX_EPOCH},
+ };
+@@ -69,6 +69,7 @@ impl From<SpircError> for Error {
+ }
+ 
+ struct SpircTask {
++    context_uri: Arc<Mutex<String>>,
+     player: Arc<Player>,
+     mixer: Arc<dyn Mixer>,
+ 
+@@ -144,9 +145,15 @@ const UPDATE_STATE_DELAY: Duration = Duration::from_millis(200);
+ /// The spotify connect handle
+ pub struct Spirc {
+     commands: mpsc::UnboundedSender<SpircCommand>,
++    context_uri: Arc<Mutex<String>>,
+ }
+ 
+ impl Spirc {
++    /// The context the device plays, whoever started it.
++    pub fn context_uri(&self) -> String {
++        self.context_uri.lock().map(|uri| uri.clone()).unwrap_or_default()
++    }
++
+     /// Initializes a new spotify connect device
+     ///
+     /// The returned tuple consists out of a handle to the [`Spirc`] that
+@@ -223,7 +230,10 @@ impl Spirc {
+ 
+         let player_events = player.get_player_event_channel();
+ 
++        let context_uri = Arc::new(Mutex::new(String::new()));
++
+         let mut task = SpircTask {
++            context_uri: context_uri.clone(),
+             player,
+             mixer,
+ 
+@@ -257,7 +267,10 @@ impl Spirc {
+             spirc_id,
+         };
+ 
+-        let spirc = Spirc { commands: cmd_tx };
++        let spirc = Spirc {
++            commands: cmd_tx,
++            context_uri,
++        };
+ 
+         let initial_volume = task.connect_state.device_info().volume;
+         task.connect_state.set_volume(0);
+@@ -1803,6 +1816,10 @@ impl SpircTask {
+     }
+ 
+     async fn notify(&mut self) -> Result<(), Error> {
++        if let Ok(mut uri) = self.context_uri.lock() {
++            uri.clone_from(self.connect_state.context_uri());
++        }
++
+         self.connect_state.set_status(&self.play_status);
+ 
+         if self.connect_state.is_playing() {
+diff --git a/src/soundtap_ctl.rs b/src/soundtap_ctl.rs
+index e443a88..c9d1fa9 100644
+--- a/src/soundtap_ctl.rs
++++ b/src/soundtap_ctl.rs
+@@ -138,11 +138,13 @@ async fn route(
+     if path == "/status" {
+         let user = session.as_ref().map(|s| s.username()).unwrap_or_default();
+         let country = session.as_ref().map(|s| s.country()).unwrap_or_default();
++        let context = spirc.as_ref().map(|s| s.context_uri()).unwrap_or_default();
+         let body = format!(
+-            "{{\"state\":{},\"username\":{},\"country\":{}}}",
++            "{{\"state\":{},\"username\":{},\"country\":{},\"context\":{}}}",
+             json_str(state),
+             json_str(&user),
+-            json_str(&country)
++            json_str(&country),
++            json_str(&context)
+         );
+         return ("200 OK", body.into_bytes());
+     }

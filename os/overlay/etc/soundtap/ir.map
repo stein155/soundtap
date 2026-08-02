@@ -1,0 +1,20 @@
+# Stock Bose remote codes recovered from BoseApp FUN_004be208.
+#
+# Stock's ST10 BoseApp switches on exactly these codes plus two more (read 2026-11-02 at
+# 0x4b6232 in the ST10 BoseApp): 0xAA is KEY_VAL 5 and 0xDA is KEY_VAL 6, the thumbs up
+# and down keys that stock forwards to the playing source for a like or a dislike. No
+# SoundTap source takes a rating, so they stay unmapped. BLUETOOTH (KEY_VAL 0x1B) and MUTE
+# (KEY_VAL 0x09) have no IR code in that switch: the remote has no such buttons.
+0xCD = POWER
+0x3F = VOLUME_UP
+0xBF = VOLUME_DOWN
+0x1F = PRESET_1
+0xEF = PRESET_2
+0x6F = PRESET_3
+0xAF = PRESET_4
+0x2F = PRESET_5
+0xCF = PRESET_6
+0xE7 = PREV_TRACK
+0x67 = NEXT_TRACK
+0x27 = PLAY_PAUSE
+0x0F = AUX_INPUT

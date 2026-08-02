@@ -1,0 +1,12 @@
+# The U-Boot release archive os/bootloader pins (build-wla-uboot.sh, build-wla-product-spl.sh).
+sha256  78e8bfc382fe388f9b55aa1daf8c563522a037779b5d4c349d1415e381f1243e  u-boot-2026.07.tar.bz2
+# From the snapshot.debian.org 20260801T000000Z bookworm Packages indexes.
+sha256  3defa99e008641444c75f2d38a06a53cdb5760f7db215fa4c62c58011fd410c9  binutils-arm-linux-gnueabihf_2.40-2_arm64.deb
+sha256  6d8efa4f3d514341119445c7564bf8db26273a08159c1068c14f730e0f11b361  cpp-12-arm-linux-gnueabihf_12.2.0-14cross1_arm64.deb
+sha256  56cebf37f9da7cae073dc9adb99fb12dea4e5241a3f19f028cac548b212a9247  gcc-12-arm-linux-gnueabihf_12.2.0-14cross1_arm64.deb
+sha256  7ae66e614dc4ca896523641b66c643a8b157ab5ef7cddc658d5e16e76944643c  binutils-arm-linux-gnueabihf_2.40-2_amd64.deb
+sha256  41e6249f08ff9a6e0612c985b8fe5a844242e05f5865219fba83bfc747fbde59  cpp-12-arm-linux-gnueabihf_12.2.0-14cross1_amd64.deb
+sha256  5232b72a43b08b67f97c23408240db5836c37d7b0d41767f2194c41bca099c7e  gcc-12-arm-linux-gnueabihf_12.2.0-14cross1_amd64.deb
+sha256  55d2d48dc29a7a08c8a9287b0b0214db886dda5ae33a88138cfc782612f3b1a1  libgcc-12-dev-armhf-cross_12.2.0-14cross1_all.deb
+# Licence text, locally calculated from the u-boot-2026.07 tarball.
+sha256  8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643  Licenses/gpl-2.0.txt

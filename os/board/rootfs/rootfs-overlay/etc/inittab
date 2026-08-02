@@ -1,0 +1,15 @@
+# SoundTap owns PID 1 bring-up; keep the proven UART3 console available.
+#
+# gadget-console runs first, for the same reason it does on the WLA: it is the only way to
+# watch a boot on hardware whose UART goes nowhere. It exits quickly when no host is
+# attached, so a speaker still boots standalone.
+::sysinit:/etc/init.d/gadget-console
+::sysinit:/etc/init.d/soundtap
+ttyS3::respawn:/sbin/getty -L ttyS3 115200 vt100
+# A shell, not a getty: this rootfs has no /bin/login and the gadget console is read by a
+# machine. Harmless when the gadget never comes up -- init finds no ttyGS0 and moves on.
+ttyGS0::respawn:/bin/sh
+::ctrlaltdel:/sbin/reboot
+::shutdown:/etc/init.d/soundtap save-log
+::shutdown:/etc/init.d/soundtap save-clock
+::shutdown:/bin/umount -a -r

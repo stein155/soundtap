@@ -1,0 +1,2 @@
+# Alpha bring-up policy: accept the deliberately blank root password.
+DROPBEAR_ARGS="-B"

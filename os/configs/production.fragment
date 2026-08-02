@@ -1,0 +1,6 @@
+# Production release profile (ADR 0011), merged over soundtap_defconfig by
+# `make SOUNDTAP_PROFILE=production os`. No SSH server, and root cannot log in
+# (its password field becomes "*"), on the UART getty either.
+# BR2_PACKAGE_DROPBEAR is not set
+# BR2_TARGET_ENABLE_ROOT_LOGIN is not set
+BR2_PACKAGE_NFTABLES=y

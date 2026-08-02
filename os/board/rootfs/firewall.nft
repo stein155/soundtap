@@ -1,0 +1,51 @@
+#!/usr/sbin/nft -f
+# Production input filter (ADR 0066): from the network the speaker answers what
+# SoundTap serves and nothing else. Outbound traffic is not filtered. Loaded by the first
+# sysinit line of a production inittab, before any interface is up.
+flush ruleset
+
+table ip filter {
+	# Speakers this one leads: soundtapd adds a follower when it invites it and refreshes
+	# it while the follower is connected.
+	set snap_followers {
+		type ipv4_addr
+		flags timeout
+		timeout 10m
+	}
+
+	# The subnets this speaker has an address on, kept by /opt/soundtap/lan-allow.sh. As on
+	# stock, only hosts on the speaker's own links are answered: a port forward or a routed
+	# network does not reach it.
+	set lan_nets {
+		type ipv4_addr
+		flags interval
+	}
+
+	chain input {
+		type filter hook input priority filter; policy drop;
+		ct state established,related accept
+		ct state invalid drop
+		iif "lo" accept
+		icmp type { echo-request, destination-unreachable, time-exceeded } accept
+		# soundtapd (web UI, API, multiroom peers), AirPlay RTSP
+		tcp dport { 80, 7000 } ip saddr @lan_nets accept
+		# Snapcast stream: followers only, never the setup AP
+		iifname "wlan1" tcp dport 1704 drop
+		tcp dport 1704 ip saddr @snap_followers accept
+		# PTP (nqptp): AirPlay is not used from the setup AP
+		iifname "wlan1" udp dport { 319, 320 } drop
+		# mDNS (avahi), SSDP (soundtapd), PTP (nqptp)
+		udp dport { 5353, 1900, 319, 320 } ip saddr @lan_nets accept
+		# AirPlay 2 and Spotify Connect listen on ports the kernel picks, as do the
+		# replies to multicast searches and TFTP to the ST20's BCO
+		tcp dport 32768-60999 ip saddr @lan_nets accept
+		udp dport 32768-60999 ip saddr @lan_nets accept
+		# The ST20 BCO's bootloader answers TFTP from 192.168.1.100 on a link soundtapd
+		# addresses itself (internal/bco addressLevel2), not through lan-allow.sh.
+		ip saddr 192.168.1.100 udp dport 32768-60999 accept
+		# The setup AP (soundtapd's Wi-Fi manager: wlan1, 192.168.42.1): udhcpd hands a phone its lease and
+		# dnsd answers every captive-portal lookup with the setup page. A
+		# DHCPDISCOVER is a broadcast from 0.0.0.0, so neither is matched on address.
+		iifname "wlan1" udp dport { 53, 67 } accept
+	}
+}

@@ -1,0 +1,619 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: 2026 SoundTap contributors
+/dts-v1/;
+
+#include "am33xx.dtsi"
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/linux-event-codes.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/pinctrl/am33xx.h>
+#include "am335x-soundtap-ramoops.dtsi"
+#define SOUNDTAP_NAND_SLOT_RW soundtap,writable
+/* One entry in the U-Boot environment decides which slot boots, so firmware that
+ * installs into the other slot has to be able to write it. */
+#define SOUNDTAP_NAND_ENV_RW soundtap,writable
+/*
+ * Persistent storage, and it belongs here rather than in a sed in build-nand.sh.
+ *
+ * This tree is compiled by both legs: the Wireless Link's own, and the ST10's, because the
+ * shared root filesystem carries binky_sm2.dtb for the speaker that boots it. The build
+ * script only opens these partitions on the Wireless Link leg, so the copy that actually
+ * ships -- the one in the rootfs -- had this partition read-only. UBI then attaches read
+ * only, UBIFS refuses to mount read-write, and the boot script puts an 8 MiB tmpfs over
+ * /mnt/nv: wifi credentials, the Dropbear host key, presets and the Spotify login all gone
+ * on every power cycle. Measured on the speaker on 2026-09-22, where it looked like a
+ * missing wifi driver and was a read-only partition.
+ *
+ * The boot chain is here for the same reason: the running firmware is what installs the
+ * next package, and a package with bootloaders needs those partitions open.
+ */
+#define SOUNDTAP_NAND_PERSISTENT_RW soundtap,writable
+#define SOUNDTAP_NAND_BOOT_RW soundtap,writable
+#include "am335x-soundtap-nand.dtsi"
+
+/ {
+	model = "Bose SoundTouch Wireless Link (SoundTap binky)";
+	compatible = "bose,binky-sm2", "ti,am33xx";
+
+	aliases {
+		serial3 = &uart3;
+	};
+
+	chosen {
+		stdout-path = "serial3:115200n8";
+		/* The second ubi.mtd= attaches the persistent volume as ubi1, which etc/init.d/soundtap
+		 * mounts on /mnt/nv. Without it that mount fails and the init falls back to a volatile
+		 * 8 MiB tmpfs, so wifi.conf and every other setting is gone on the next boot. The rootfs
+		 * cannot attach it itself: the Buildroot profile ships no mtd-utils, and BusyBox's
+		 * ubiattach prints -O in its usage and then rejects it -- without the 2048-byte VID
+		 * header offset UBI_IOCATT answers EINVAL. Named, not numbered, so a renumbered
+		 * partition table cannot silently point it at the wrong flash. */
+		bootargs = "console=ttyGS0,115200n8 root=ubi0:rootfs ro rootfstype=ubifs ubi.mtd=9,2048 rootwait init=/init mem=128M cma=8M panic=10 omap_wdt.early_enable=1 variant=binky module_type=sm2 country=GB region=GB soundtap.nandroot=1 ubi.mtd=NAND.Persistent-Storage,2048";
+	};
+
+	/*
+	 * 128 MiB, not 256. U-Boot's get_ram_size() measures 0x08000000 on this board and
+	 * the stock Bose U-Boot passes mem=128M. Claiming 256 MiB made the upper half alias
+	 * onto the lower, and userspace corrupted itself a few minutes in -- soundtapd died
+	 * with a Go stack full of ASCII and "panic during panic".
+	 */
+	memory@80000000 {
+		device_type = "memory";
+		reg = <0x80000000 0x08000000>;
+	};
+
+	audio_codec: audio-codec {
+		compatible = "linux,spdif-dit";
+		#sound-dai-cells = <0>;
+	};
+
+	analog_codec: audio-codec-analog {
+		compatible = "linux,spdif-dit";
+		#sound-dai-cells = <0>;
+	};
+
+	/*
+	 * The analog link, and the first card on purpose: the only audio connector
+	 * on this box is a 3.5 mm pair, aux in and aux out, so this is the output
+	 * that actually reaches a speaker. soundtapd plays to plughw:0,0.
+	 *
+	 * mcasp0 is full duplex here -- serializer 1 transmits to the DAC, serializer
+	 * 0 receives from the ADC -- which is the aux input. Bose drives it the same
+	 * way: one clock master at 46875 Hz, from AUXCLK 24 MHz halved to AHCLKX and
+	 * quartered to a 3 MHz bit clock over two 32-bit slots.
+	 */
+	sound_analog: sound-analog {
+		compatible = "bose,soundtap-mcasp-audio";
+		model = "SoundTap";
+		pinctrl-names = "default";
+		pinctrl-0 = <&audio_control_pins>;
+		audio-cpu = <&mcasp0>;
+		audio-codec = <&analog_codec>;
+	};
+
+	/*
+	 * S/PDIF on the same jack. The out connector is dual mode -- Bose senses
+	 * which kind of plug is in it on two GPIOs and switches its driver between
+	 * ANALOG and SPDIF -- so this is the path an optical cable takes.
+	 */
+	sound {
+		compatible = "bose,soundtap-mcasp-spdif";
+		model = "SoundTapSPDIF";
+		audio-cpu = <&mcasp1>;
+		audio-codec = <&audio_codec>;
+	};
+
+	/*
+	 * The two lamps on the front. Bose's shelbyleds node names four channels --
+	 * uledw, uledy, rled6, rled3 -- and BoseApp's own CLI (`binkyled blink 0-63
+	 * [amber,white,blue] [wifi or bt]`) pairs them into a white/amber Wi-Fi lamp
+	 * and a white/blue Bluetooth one. Only the Wi-Fi white channel is a PWM, which
+	 * is why it is the only one stock ever gives an intensity to.
+	 * docs/hardware/wla/led-behaviour.md has the timings and the evidence.
+	 *
+	 * Which of gpio2_16 and gpio0_4 is the blue one is the single thing not read
+	 * out of the binary; it needs one look at a lit speaker. They are labelled the
+	 * way BoseApp constructs them, and swapping the two labels is the whole fix if
+	 * that turns out backwards.
+	 */
+	leds {
+		compatible = "gpio-leds";
+		pinctrl-names = "default";
+		pinctrl-0 = <&led_pins>;
+
+		led-wifi-amber {
+			label = "wla:amber:wifi";
+			gpios = <&gpio2 17 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+
+		led-bt-blue {
+			label = "wla:blue:bt";
+			gpios = <&gpio0 4 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+
+		led-bt-white {
+			label = "wla:white:bt";
+			gpios = <&gpio2 16 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+	};
+
+	led-controller {
+		compatible = "pwm-leds";
+
+		led-wifi-white {
+			label = "wla:white:wifi";
+			/*
+			 * 41667 ns is 24 kHz, which is stock's rate arrived at the long way:
+			 * shelby-led.ko calls omap_dm_timer_set_source(timer, 0) for the
+			 * 24 MHz system clock, set_prescaler(255) to disable the divider, and
+			 * set_load(-1000), so the period is 1000 ticks of 24 MHz.
+			 *
+			 * The same driver decides the scale: led_write compares the intensity
+			 * byte against 100 and programs a match of -(intensity * 10) against
+			 * that -1000 load, so duty is intensity/100 and anything above 100 is
+			 * clamped. max-brightness is 100 for that reason, and BoseApp's own
+			 * numbers go straight through. BoseApp's CLI help says "0-63"; the
+			 * driver it talks to says otherwise, and the driver is what runs.
+			 */
+			pwms = <&led_pwm 0 41667 0>;
+			max-brightness = <100>;
+			default-state = "off";
+		};
+	};
+
+	/*
+	 * timer4 in PWM mode on xdma_event_intr0, which is where Bose puts it:
+	 * their timer@48044000 carries ti,timer-pwm and timer4_pins_default is
+	 * <0x1b0 0x02>, that pad in mux mode 2.
+	 */
+	led_pwm: pwm-led {
+		compatible = "ti,omap-dmtimer-pwm";
+		ti,timers = <&timer4>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&led_pwm_pins>;
+		#pwm-cells = <3>;
+	};
+
+	/*
+	 * The two buttons. Stock disables the shelby_keypad node the ST10 uses and
+	 * declares its own with `switchins = <23 27>` -- gpio0_23 and gpio0_27, on
+	 * gpmc_ad9 and gpmc_ad11, which this board's 8-bit NAND leaves free. No
+	 * strobes and no matrix: two lines with pull-ups, low when pressed.
+	 *
+	 * gpio-keys-POLLED, deliberately. These are bank 0 lines and bank 0 also
+	 * carries the WL1835's interrupt on gpio0_31; every earlier attempt to drive
+	 * the ST10's keypad from the kernel asked for GPIO interrupts on lines like
+	 * these and stopped Wi-Fi from coming up. Stock polls too -- its `interrupts`
+	 * property only marks the lines as wake sources. See keypad_gpio.go and
+	 * docs/hardware/wla/buttons.md.
+	 *
+	 * Which button is which comes out of binky-keypad.ko's own debounce thread,
+	 * which hard-codes it rather than numbering by position:
+	 *
+	 *     cmp r3            @ the row the interrupt reported
+	 *     moveq r4         @ row 0 (gpio0_23) -> button 13 -> 'n' -> BLUETOOTH
+	 *     movne r4         @ row 3 (gpio0_27) -> button 12 -> 'm' -> AUX_INPUT
+	 *
+	 * and BoseApp's shared console table turns 13 and 12 into KEY_VAL_BLUETOOTH and
+	 * KEY_VAL_AUX_INPUT. docs/hardware/wla/buttons.md has both halves.
+	 */
+	buttons {
+		compatible = "gpio-keys-polled";
+		poll-interval = <30>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&button_pins>;
+
+		button-bluetooth {
+			label = "wla-bluetooth";
+			linux,code = <KEY_BLUETOOTH>;
+			gpios = <&gpio0 23 GPIO_ACTIVE_LOW>;
+		};
+
+		button-aux {
+			label = "wla-aux";
+			linux,code = <KEY_AUX>;
+			gpios = <&gpio0 27 GPIO_ACTIVE_LOW>;
+		};
+	};
+
+	wlan_en_reg: regulator-wlan {
+		compatible = "regulator-fixed";
+		regulator-name = "wlan-en-regulator";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		gpio = <&gpio1 30 GPIO_ACTIVE_HIGH>;
+		startup-delay-us = <70000>;
+		enable-active-high;
+	};
+};
+
+&am33xx_pinmux {
+	uart3_pins: pinmux-uart3-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_MII1_RXD2, PIN_OUTPUT_PULLDOWN, MUX_MODE1)
+			AM33XX_PADCONF(AM335X_PIN_SPI0_CS1, PIN_INPUT_PULLUP, MUX_MODE1)
+		>;
+	};
+
+	mmc1_pins: pinmux-mmc1-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_MMC0_DAT3, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_MMC0_DAT2, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_MMC0_DAT1, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_MMC0_DAT0, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_MMC0_CLK, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_MMC0_CMD, PIN_INPUT_PULLUP, MUX_MODE0)
+		>;
+	};
+
+	wlan_pins: pinmux-wlan-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_GPMC_CSN1, PIN_OUTPUT_PULLDOWN, MUX_MODE7)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_WPN, PIN_INPUT, MUX_MODE7)
+		>;
+	};
+
+	/* The WL1835 that already carries our Wi-Fi has its Bluetooth on the other side of
+	 * the chip: a four-wire UART with hardware flow control. Bose's own binky_sm2.dtb
+	 * wires it exactly this way -- uart2_pins_default claims spi0_sclk/spi0_d0 for rx/tx
+	 * and i2c0_sda/i2c0_scl for cts/rts, and I2C0 is disabled on this variant so nothing
+	 * else wants those two pads. Flow control is not optional at 3 Mbaud.
+	 *
+	 * Verified on 2026-09-17 against the vendor kernel running on this board, rather than
+	 * read out of their device tree source: pinmux-pins showed 48024000.serial claiming
+	 * pins 84, 85, 98 and 99 -- exactly these four pads -- and the pad registers read
+	 *
+	 *   pin 84 spi0_sclk  0x31    pin 98 i2c0_sda  0x32
+	 *   pin 85 spi0_d0    0x01    pin 99 i2c0_scl  0x02
+	 *
+	 * The two inputs match what is written here. The two outputs did not: we set
+	 * PIN_OUTPUT, which is bit 3, pull disabled, giving 0x09 and 0x0a where the vendor
+	 * leaves the pulldown enabled at 0x01 and 0x02. That is almost certainly harmless on
+	 * a driven output, but this radio answers its version read with -110 and a pad
+	 * setting that differs from a configuration known to work is not the place to keep a
+	 * difference nobody chose. PIN_OUTPUT_PULLDOWN reproduces the vendor's value exactly.
+	 * Changing it is alignment, not a fix: it has not been shown to move the timeout. */
+	uart2_pins: pinmux-uart2-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_SPI0_SCLK, PIN_INPUT_PULLUP, MUX_MODE1) /* uart2_rxd */
+			AM33XX_PADCONF(AM335X_PIN_SPI0_D0, PIN_OUTPUT_PULLDOWN, MUX_MODE1) /* uart2_txd */
+			AM33XX_PADCONF(AM335X_PIN_I2C0_SDA, PIN_INPUT_PULLUP, MUX_MODE2) /* uart2_ctsn */
+			AM33XX_PADCONF(AM335X_PIN_I2C0_SCL, PIN_OUTPUT_PULLDOWN, MUX_MODE2) /* uart2_rtsn */
+		>;
+	};
+
+	/* Bose names this line bt_enable and drives it from userspace through its gpiodev
+	 * shim: gpionum 63, output, initial 0. gpio1_31 is the GPMC_CSN2 pad. Here the
+	 * serdev driver owns it, so it is powered up and down with the HCI device.
+	 *
+	 * Checked against the running vendor kernel on 2026-09-17: pin 33 reads 0x07, which
+	 * is what PIN_OUTPUT_PULLDOWN with MUX_MODE7 produces, and /sys/kernel/debug/gpio
+	 * showed "gpio-63 (bt_enable) out hi" on a board whose Bluetooth works. This pad is
+	 * not the difference. */
+	/*
+	 * I2C1 and the regulator that feeds the analog output. Read straight out of
+	 * Bose's own device tree: i2c@4802a000 status okay, pinctrl on the pads at
+	 * 0x980/0x984 with value 0x6b, an "onsemi,ncp6922" at address 0x18 carrying
+	 * dcdc1, dcdc2, ldo3 and ldo4, and a separate ncp6922_pins_default that claims
+	 * lcd_hsync as a GPIO output -- the chip's enable line.
+	 *
+	 * 0x980/0x984 are uart1_rxd and uart1_txd, whose mode 3 is i2c1_sda/i2c1_scl
+	 * (not mcasp0_axr0/axr1, which have no I2C1 function in mode 3). The SoundTouch
+	 * 300's stock tree carries the same <0x180 0x6b 0x184 0x6b>. Nothing here talks to
+	 * the ncp6922 yet.
+	 */
+	i2c1_pins: pinmux-i2c1-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_UART1_RXD, PIN_INPUT | SLEWCTRL_SLOW, MUX_MODE3) /* i2c1_sda */
+			AM33XX_PADCONF(AM335X_PIN_UART1_TXD, PIN_INPUT | SLEWCTRL_SLOW, MUX_MODE3) /* i2c1_scl */
+		>;
+	};
+
+	ncp6922_pins: pinmux-ncp6922-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_LCD_HSYNC, PIN_OUTPUT, MUX_MODE7) /* ncp6922 enable */
+		>;
+	};
+
+	bt_pins: pinmux-bt-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_GPMC_CSN2, PIN_OUTPUT_PULLDOWN, MUX_MODE7)
+		>;
+	};
+
+	/*
+	 * Seven of the eight pads Bose gives mcasp0, decoded from the AM335x pin table:
+	 * lcd_data12/13 are aclkr/fsr, lcd_data14 is axr1, lcd_data15 is ahclkx, and
+	 * the three MII pads are aclkx, fsx and axr0. The eighth, mii1_col, is
+	 * mcasp0_axr2 in mode 6 -- deliberately left out. Bose muxes it and then
+	 * immediately re-muxes it as mcasp1_axr2, which is what it ends up as and what
+	 * mcasp1_pins below claims; serial-dir leaves mcasp0's serializer 2 inactive,
+	 * so nothing wants it. Two pinctrl nodes claiming one pad is a failed request.
+	 */
+	mcasp0_pins: pinmux-mcasp0-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_LCD_DATA12, PIN_INPUT_PULLDOWN, MUX_MODE3) /* mcasp0_aclkr */
+			AM33XX_PADCONF(AM335X_PIN_LCD_DATA13, PIN_INPUT_PULLDOWN, MUX_MODE3) /* mcasp0_fsr */
+			AM33XX_PADCONF(AM335X_PIN_LCD_DATA14, PIN_INPUT_PULLDOWN, MUX_MODE3) /* mcasp0_axr1 */
+			/*
+			 * The vendor's values, 0x0b and 0x0e. These three carried the pad's input
+			 * buffer for one day, so PDIN could be sampled to find out whether the clocks
+			 * physically leave the SoC -- AXR1 can be read because its pad happens to
+			 * carry RXACTIVE, these cannot, and the control module refuses pad writes at
+			 * runtime, so the only way to look was to build it in.
+			 *
+			 * The answer, measured with a stream provably flowing: ACLKX toggles, AFSX
+			 * toggles, AXR1 toggles, AHCLKX stays put (which is correct -- the vendor
+			 * leaves that pin undriven and ti,ahclkx-not-driven now does too). Nothing on
+			 * this side of the connector was missing, and the silence turned out to be
+			 * the amplifier standby line, never driven because init.d/soundtap was writing
+			 * Bose's flat GPIO numbers to paths that do not exist. See
+			 * docs/hardware/wla/bluetooth-and-analog-output.md.
+			 *
+			 * So back to the vendor's values. A pad that differs from theirs for no
+			 * reason anyone remembers is exactly the kind of thing that costs a day.
+			 */
+			AM33XX_PADCONF(AM335X_PIN_LCD_DATA15, PIN_OUTPUT, MUX_MODE3) /* mcasp0_ahclkx */
+			AM33XX_PADCONF(AM335X_PIN_MII1_TX_CLK, PIN_OUTPUT, MUX_MODE6) /* mcasp0_aclkx */
+			AM33XX_PADCONF(AM335X_PIN_MII1_RX_CLK, PIN_OUTPUT, MUX_MODE6) /* mcasp0_fsx */
+			AM33XX_PADCONF(AM335X_PIN_MII1_RXD3, PIN_INPUT_PULLDOWN, MUX_MODE6) /* mcasp0_axr0 */
+		>;
+	};
+
+	/*
+	 * Bose's gpiodev table for this variant, by the same numbers: mute_out 72,
+	 * dac_adc_reset 74, ampstby 75, dsp_reset 86, ampfault 88.
+	 */
+	audio_control_pins: pinmux-audio-control-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_LCD_DATA2, PIN_OUTPUT_PULLDOWN, MUX_MODE7) /* mute_out */
+			AM33XX_PADCONF(AM335X_PIN_LCD_DATA4, PIN_OUTPUT_PULLDOWN, MUX_MODE7) /* dac_adc_reset */
+			AM33XX_PADCONF(AM335X_PIN_LCD_DATA5, PIN_OUTPUT_PULLDOWN, MUX_MODE7) /* ampstby */
+			AM33XX_PADCONF(AM335X_PIN_LCD_VSYNC, PIN_OUTPUT_PULLDOWN, MUX_MODE7) /* dsp_reset */
+			AM33XX_PADCONF(AM335X_PIN_LCD_PCLK, PIN_INPUT_PULLUP, MUX_MODE7) /* ampfault */
+			/*
+			 * The analog bias. Bose's device tree hangs it off their tscadc node as
+			 * "adcbias_gpio" and claims exactly this pad for it -- tscadc_pins_default
+			 * is <0x3c 0x07>, which is gpmc_ad15 in mode 7. This tree had never named
+			 * the pad and never drove the line, and on the running board it sat as an
+			 * input reading 0. The NAND here is 8 bit and uses ad0..ad7, so ad15 is free.
+			 */
+			AM33XX_PADCONF(AM335X_PIN_GPMC_AD15, PIN_OUTPUT_PULLDOWN, MUX_MODE7) /* adcbias */
+			/*
+			 * The two lines that say what kind of plug is in the output jack.
+			 * Bose calls them binky_output_select_1 (gpio2_1, Linux 545) and
+			 * binky_output_select_2 (gpio2_25, Linux 569), and claims these exact
+			 * pads for them in gpiodev_binky_default, <0x8c 0x27 0xec 0x27>.
+			 *
+			 * /opt/Bose/BinkyOutputMonitor is eleven instructions of logic: poll
+			 * both once a second, and when the two agree and the agreed value has
+			 * changed, write that same ASCII digit to
+			 * /sys/class/sound/snd_shelby/outputMode. Disagreement means a plug
+			 * half in, and it writes nothing.
+			 *
+			 * Pull-DOWN, which is what stock's 0x27 actually decodes to. An earlier
+			 * version of this had them pulled up, and the board then read 0 and 1 --
+			 * a disagreement stock's monitor treats as a plug half-way in, so it
+			 * would never have switched at all. Measured on the board on 2026-09-19.
+			 *
+			 * Nothing reads them here yet -- they are muxed so that they can be,
+			 * because until now the pads sat in whatever mode the bootloader left
+			 * and an optical cable in that jack was undetectable.
+			 */
+			AM33XX_PADCONF(AM335X_PIN_GPMC_CLK, PIN_INPUT_PULLDOWN, MUX_MODE7) /* output_select_1 */
+			AM33XX_PADCONF(AM335X_PIN_LCD_AC_BIAS_EN, PIN_INPUT_PULLDOWN, MUX_MODE7) /* output_select_2 */
+		>;
+	};
+
+	/*
+	 * Bose splits these across two nodes -- led_pins_default <0xcc 0x07> for the
+	 * amber and led_binky_default <0x158 0x0f 0xc8 0x0f> for the other two -- and
+	 * keeps the pulldown on the amber pad only. Same pads, same modes, same pulls.
+	 */
+	led_pins: pinmux-led-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_LCD_DATA11, PIN_OUTPUT_PULLDOWN, MUX_MODE7) /* uledy, amber */
+			AM33XX_PADCONF(AM335X_PIN_LCD_DATA10, PIN_OUTPUT, MUX_MODE7) /* rled6 */
+			AM33XX_PADCONF(AM335X_PIN_SPI0_D1, PIN_OUTPUT, MUX_MODE7) /* rled3 */
+		>;
+	};
+
+	led_pwm_pins: pinmux-led-pwm-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_XDMA_EVENT_INTR0, PIN_OUTPUT_PULLDOWN, MUX_MODE2) /* uledw, timer4 */
+		>;
+	};
+
+	/*
+	 * Stock's keypad_pins_default, <0x24 0x2f 0x2c 0x2f>: gpmc_ad9 and gpmc_ad11 in
+	 * mode 7, input, pull *disabled*. Not a pull-up -- the pull-ups sit on the board
+	 * behind these lines, which is the same reason the ST10's switch-ins are muxed
+	 * pull-disabled (see keypad_gpio.go). Read back from a running board as 0x2f.
+	 */
+	button_pins: pinmux-button-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_GPMC_AD9, PIN_INPUT, MUX_MODE7) /* switch-in 23 */
+			AM33XX_PADCONF(AM335X_PIN_GPMC_AD11, PIN_INPUT, MUX_MODE7) /* switch-in 27 */
+		>;
+	};
+
+	mcasp1_pins: pinmux-mcasp1-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_MII1_COL, PIN_OUTPUT_PULLDOWN, MUX_MODE4) /* mcasp1_axr2 */
+			/*
+			 * mcasp1_ahclkx, not aclkx -- mode 6 on this pad is the high-frequency
+			 * clock input, and it is an input: Bose leaves AHCLKXCTL at 0, so the
+			 * clock is an oscillator on the board. 11.2896 MHz, halved to a
+			 * 5.6448 MHz bit clock, which is 128 x 44100 for biphase-mark S/PDIF.
+			 */
+			AM33XX_PADCONF(AM335X_PIN_RMII1_REF_CLK, PIN_INPUT_PULLDOWN, MUX_MODE6) /* mcasp1_ahclkx */
+		>;
+	};
+};
+
+&uart2 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart2_pins>;
+	status = "okay";
+
+	/*
+	 * No EDMA on this port. am33xx-l4.dtsi gives every UART a tx/rx EDMA pair, and
+	 * 8250_omap turns RX DMA on whenever "dmas" is present. With DMA on, this port
+	 * delivers the radio's answers late and more than once: a capture of the HCI
+	 * monitor on 2026-09-18 showed one Read Local Version reply handed to the stack
+	 * four times in 4 ms, and the command complete for 0xfe37 -- the command that had
+	 * "timed out" a minute earlier -- arriving in the middle of that burst. The bytes
+	 * are on the wire and correct; they reach the driver at the wrong time, which is
+	 * what makes every __hci_cmd_sync give up at its 10 s timeout. Polled RX has no
+	 * such buffer to go stale, and this UART carries at most a few kB of init script.
+	 */
+	/delete-property/ dmas;
+	/delete-property/ dma-names;
+
+	bluetooth {
+		compatible = "ti,wl1835-st";
+		enable-gpios = <&gpio1 31 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&bt_pins>;
+		/*
+		 * 3 Mbaud, the vendor's own rate: at 1.5 Mbaud the same command times out at
+		 * the same point, so the line rate is not what is wrong.
+		 *
+		 * Where it actually stops, from the script itself (action 1 of 568 is the
+		 * baud-rate command the driver deliberately ignores, action 2 is this one):
+		 *
+		 *   [12.496] Bluetooth: hci0: change remote baud rate command in firmware
+		 *   [14.562] Bluetooth: hci0: command 0xfe37 tx timeout
+		 *
+		 * So the chip answers the version read, the script is found and parsed, and
+		 * then the second vendor command of it gets no reply. CTS is asserted --
+		 * ll_setup would have said "Failed to get CTS" otherwise -- so the next
+		 * suspect is what that command does, not whether the wires work.
+		 */
+		max-speed = <3000000>;
+	};
+};
+
+&uart3 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart3_pins>;
+	status = "okay";
+};
+
+&mmc1 {
+	/* External EDMA corrupts RAM under sustained wl18xx RX on this board. */
+	/delete-property/ dmas;
+	/delete-property/ dma-names;
+	/* Internal SDHCI DMA times out during wl18xx firmware writes; use PIO. */
+	sdhci-caps-mask = <0 0x00580000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&mmc1_pins &wlan_pins>;
+	vmmc-supply = <&wlan_en_reg>;
+	bus-width = <4>;
+	non-removable;
+	cap-power-off-card;
+	keep-power-in-suspend;
+	ti,non-removable;
+	ti,needs-special-hs-handling;
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	wlcore: wifi@2 {
+		compatible = "ti,wl1835";
+		reg = <2>;
+		interrupt-parent = <&gpio0>;
+		interrupts = <31 IRQ_TYPE_EDGE_FALLING>;
+	};
+};
+
+&mcasp0 {
+	#sound-dai-cells = <0>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&mcasp0_pins>;
+	status = "okay";
+	op-mode = <0>;
+	tdm-slots = <2>;
+	/* Serializer 0 receives (aux in), serializer 1 transmits (aux out). */
+	serial-dir = <2 1 0 0>;
+	/*
+	 * Internal high-frequency clock, but the AHCLKX pin stays out of it.
+	 * snd-binky.ko writes AHCLKXCTL 0x8001 -- AHCLKXE set, so the clock comes
+	 * from AUXCLK -- together with PDIR 0x14000002, which has the AHCLKX bit
+	 * clear. Mainline's set_sysclk() cannot express that: every path that picks
+	 * AUXCLK also claims the pin, so without this we drive a line the vendor
+	 * leaves alone. Read off the running board on 2026-09-18, where our PDIR was
+	 * 0x1C000002 against the vendor's 0x14000002.
+	 */
+	ti,ahclkx-not-driven;
+	/*
+	 * Without this a clock-provider format marks the receive clock pins as
+	 * outputs too, and lcd_data12/lcd_data13 -- mcasp0_aclkr and mcasp0_fsr --
+	 * are inputs on this board, exactly as Bose configures them. The ST10 sets
+	 * it on the same McASP of the same module for the same reason. Receive
+	 * still works: ASYNC is clear, so the receive section runs off the transmit
+	 * clock rather than off those pins.
+	 */
+	ti,tx-clock-only;
+	tx-num-evt = <1>;
+	rx-num-evt = <1>;
+};
+
+&mcasp1 {
+	#sound-dai-cells = <0>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&mcasp1_pins>;
+	status = "okay";
+	op-mode = <1>;
+	tdm-slots = <2>;
+	serial-dir = <0 0 1 0>;
+	ti,tx-clock-only;
+	tx-num-evt = <1>;
+};
+
+&usb0 {
+	dr_mode = "peripheral";
+	status = "okay";
+};
+
+&usb0_phy {
+	status = "okay";
+};
+
+&usb1 {
+	dr_mode = "host";
+	status = "okay";
+};
+
+&usb1_phy {
+	status = "okay";
+};
+
+/*
+ * The supply side of the analog output. Mainline has no ncp6922 driver, so this
+ * node only brings the bus up and names what is on it; the rails are switched
+ * from userspace over /dev/i2c-* until a driver exists.
+ */
+&i2c1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c1_pins>;
+	status = "okay";
+	clock-frequency = <100000>;
+};
+
+/*
+ * Hold the analog bias high. There is no mainline binding for what Bose expresses as
+ * adcbias_gpio on their tscadc node, and nothing here needs to read it back, so a hog is
+ * the whole of it: the line comes up with the board and stays up.
+ */
+&gpio1 {
+	adcbias-hog {
+		gpio-hog;
+		gpios = <15 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "adcbias";
+	};
+};

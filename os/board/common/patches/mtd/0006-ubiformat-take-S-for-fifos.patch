@@ -1,0 +1,21 @@
+ubiformat: let -S give the size of a FIFO or stream, whose st_size is zero,
+so an image can be piped straight into flash without a temporary copy.
+
+--- a/ubi-utils/ubiformat.c
++++ b/ubi-utils/ubiformat.c
+@@ -324 +324,2 @@ static int open_file(off_t *sz)
+-		*sz = st.st_size;
++		/* -S is authoritative for streams and FIFOs, whose st_size is zero. */
++		*sz = args.image_sz ? args.image_sz : st.st_size;
+@@ -421,6 +422,11 @@ static int flash_image(libmtd_t libmtd, const struct mtd_dev_info *mtd,
+ 
+ 	img_ebs = st_size / mtd->eb_size;
+ 
++	if (img_ebs == 0) {
++		errmsg("file \"%s\" is empty", args.image);
++		goto out_close;
++	}
++
+ 	if (img_ebs > si->good_cnt) {
+ 		sys_errmsg("file \"%s\" is too large (%lld bytes)",
+ 			   args.image, (long long)st_size);

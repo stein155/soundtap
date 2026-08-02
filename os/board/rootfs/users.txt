@@ -1,0 +1,10 @@
+# Media daemons drop root (ADR 0066). All share primary group audio, the only group that
+# may write the source bus FIFO; nothing else on the speaker is theirs.
+airplay -1 audio -1 * - - - AirPlay receiver (shairport-sync)
+spotify -1 audio -1 * - - - Spotify Connect (librespot)
+snapcast -1 audio -1 * - - - Multiroom client (snapclient)
+radio -1 audio -1 * - - - Radio and announcement decoder (ffmpeg)
+ptp -1 ptp -1 * - - - AirPlay 2 clock (nqptp), no audio access
+# soundtapd itself (ADR 0066): its own group, audio for the source bus FIFO. soundtap-root starts
+# it with the capabilities it keeps; what needs root goes through soundtap-root.
+soundtapd -1 soundtapd -1 * - - audio SoundTap daemon (soundtapd)

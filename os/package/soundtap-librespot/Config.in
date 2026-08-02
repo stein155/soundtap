@@ -1,0 +1,16 @@
+config BR2_PACKAGE_SOUNDTAP_LIBRESPOT
+	bool "soundtap-librespot"
+	depends on BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS
+	select BR2_PACKAGE_ALSA_LIB
+	select BR2_PACKAGE_AVAHI
+	select BR2_PACKAGE_DBUS
+	select BR2_PACKAGE_HOST_RUSTC
+	help
+	  Spotify Connect client built with the ALSA output and Avahi
+	  discovery backends. SoundTap patches software attenuation out
+	  so the daemon remains the single master-gain owner.
+
+	  https://github.com/librespot-org/librespot
+
+comment "soundtap-librespot needs a Rust-capable target architecture"
+	depends on !BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS

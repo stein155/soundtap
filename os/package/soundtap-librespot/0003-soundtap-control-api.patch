@@ -1,0 +1,361 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index c892625..d5d6a53 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -179,6 +179,8 @@ tokio = { version = "1", features = [
+     "signal",
+     "sync",
+     "process",
++    "net",
++    "io-util",
+ ] }
+ url = "2.2"
+ 
+diff --git a/src/main.rs b/src/main.rs
+index fb85803..67fd483 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -29,6 +29,7 @@ use std::{
+     ops::RangeInclusive,
+     path::{Path, PathBuf},
+     pin::Pin,
++    sync::Arc,
+     process::exit,
+     str::FromStr,
+     time::{Duration, Instant},
+@@ -39,6 +40,7 @@ use tokio::sync::Semaphore;
+ use url::Url;
+ 
+ mod player_event_handler;
++mod soundtap_ctl;
+ use player_event_handler::{EventHandler, run_program_on_sink_events};
+ 
+ fn device_id(name: &str) -> String {
+@@ -1891,7 +1893,7 @@ async fn main() {
+     let setup = get_setup().await;
+ 
+     let mut last_credentials = None;
+-    let mut spirc: Option<Spirc> = None;
++    let mut spirc: Option<Arc<Spirc>> = None;
+     let mut spirc_task: Option<Pin<_>> = None;
+     let mut auto_connect_times: Vec<Instant> = vec![];
+     let mut discovery = None;
+@@ -1942,9 +1944,16 @@ async fn main() {
+         };
+     }
+ 
++    let ctl = Arc::new(soundtap_ctl::Ctl::default());
++    ctl.set_state("unpaired");
++    if let Ok(addr) = env::var("SOUNDTAP_SPOTIFY_CTL") {
++        soundtap_ctl::spawn(ctl.clone(), addr);
++    }
++
+     if let Some(credentials) = setup.credentials {
+         last_credentials = Some(credentials);
+         connecting = true;
++        ctl.set_state("connecting");
+     } else if setup.enable_oauth {
+         let port_str = match setup.oauth_port {
+             Some(port) => format!(":{port}"),
+@@ -2017,6 +2026,7 @@ async fn main() {
+                     Some(credentials) => {
+                         last_credentials = Some(credentials.clone());
+                         auto_connect_times.clear();
++                        ctl.detach("connecting");
+ 
+                         if let Some(spirc) = spirc.take() {
+                             if let Err(e) = spirc.shutdown() {
+@@ -2053,11 +2063,25 @@ async fn main() {
+                                                                 player.clone(),
+                                                                 mixer.clone()).await {
+                     Ok((spirc_, spirc_task_)) => (spirc_, spirc_task_),
++                    Err(e) if e.kind == librespot::core::error::ErrorKind::PermissionDenied => {
++                        // The stored credentials were rejected. Exiting made the
++                        // supervisor restart us into the same rejection every few
++                        // seconds; wait for the user to pick this speaker in a
++                        // Spotify app instead, which hands discovery new credentials.
++                        error!("Spotify rejected the stored credentials: {e}");
++                        ctl.detach("auth_required");
++                        last_credentials = None;
++                        connecting = false;
++                        continue;
++                    }
+                     Err(e) => {
+                         error!("could not initialize spirc: {e}");
++                        ctl.detach("reconnecting");
+                         exit(1);
+                     }
+                 };
++                let spirc_ = Arc::new(spirc_);
++                ctl.attach(session.clone(), spirc_.clone());
+                 spirc = Some(spirc_);
+                 spirc_task = Some(Box::pin(spirc_task_));
+ 
+@@ -2069,6 +2093,10 @@ async fn main() {
+                 }
+             }, if spirc_task.is_some() && !connecting => {
+                 spirc_task = None;
++                ctl.detach("reconnecting");
++                // Nothing controls the player now. Left alone it keeps writing the track to
++                // the audio bus, through standby and over whichever source plays next.
++                player.stop();
+ 
+                 warn!("Spirc shut down unexpectedly");
+ 
+diff --git a/src/soundtap_ctl.rs b/src/soundtap_ctl.rs
+new file mode 100644
+index 0000000..6ad774d
+--- /dev/null
++++ b/src/soundtap_ctl.rs
+@@ -0,0 +1,251 @@
++//! SoundTap control API: a loopback-only HTTP/1.1 endpoint through which soundtapd uses
++//! this process's one Spotify session for browsing, search and playback control.
++//!
++//! Deliberately tiny and dependency-free (tokio + url only): soundtapd does all JSON
++//! normalisation. Nothing here is reachable from the network; the listener binds
++//! 127.0.0.1 and refuses anything else.
++
++use librespot::connect::{LoadRequest, LoadRequestOptions, PlayingTrack, Spirc};
++use librespot::core::{Error, Session};
++use log::{info, warn};
++use std::collections::HashMap;
++use std::sync::{Arc, Mutex};
++use tokio::io::{AsyncReadExt, AsyncWriteExt};
++use tokio::net::{TcpListener, TcpStream};
++
++#[derive(Default)]
++struct Inner {
++    session: Option<Session>,
++    spirc: Option<Arc<Spirc>>,
++    state: &'static str,
++}
++
++/// Shared between main's connect loop and the control server.
++#[derive(Default)]
++pub struct Ctl(Mutex<Inner>);
++
++impl Ctl {
++    pub fn set_state(&self, state: &'static str) {
++        self.0.lock().unwrap().state = state;
++    }
++
++    pub fn attach(&self, session: Session, spirc: Arc<Spirc>) {
++        let mut inner = self.0.lock().unwrap();
++        inner.session = Some(session);
++        inner.spirc = Some(spirc);
++        inner.state = "connected";
++    }
++
++    pub fn detach(&self, state: &'static str) {
++        let mut inner = self.0.lock().unwrap();
++        inner.session = None;
++        inner.spirc = None;
++        inner.state = state;
++    }
++
++    fn get(&self) -> (Option<Session>, Option<Arc<Spirc>>, &'static str) {
++        let inner = self.0.lock().unwrap();
++        (inner.session.clone(), inner.spirc.clone(), inner.state)
++    }
++}
++
++/// Serve the control API on `addr` (must be a 127.0.0.1 address) for the life of the process.
++pub fn spawn(ctl: Arc<Ctl>, addr: String) {
++    if !addr.starts_with("127.0.0.1:") {
++        warn!("soundtap control API refused non-loopback address {addr}");
++        return;
++    }
++    tokio::spawn(async move {
++        let listener = match TcpListener::bind(&addr).await {
++            Ok(l) => l,
++            Err(e) => {
++                warn!("soundtap control API: bind {addr}: {e}");
++                return;
++            }
++        };
++        info!("soundtap control API on {addr}");
++        loop {
++            if let Ok((conn, _)) = listener.accept().await {
++                tokio::spawn(handle(ctl.clone(), conn));
++            }
++        }
++    });
++}
++
++fn json_str(s: &str) -> String {
++    let mut out = String::with_capacity(s.len() + 2);
++    out.push('"');
++    for c in s.chars() {
++        match c {
++            '"' => out.push_str("\\\""),
++            '\\' => out.push_str("\\\\"),
++            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
++            c => out.push(c),
++        }
++    }
++    out.push('"');
++    out
++}
++
++fn err_body(code: &str, e: &Error) -> String {
++    format!(
++        "{{\"error\":{},\"kind\":{},\"message\":{}}}",
++        json_str(code),
++        json_str(&format!("{:?}", e.kind)),
++        json_str(&e.to_string())
++    )
++}
++
++async fn handle(ctl: Arc<Ctl>, mut conn: TcpStream) {
++    let mut buf = Vec::with_capacity(2048);
++    let mut chunk = [0u8; 2048];
++    // Headers only: every request carries its arguments in the query string.
++    while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
++        match conn.read(&mut chunk).await {
++            Ok(0) | Err(_) => return,
++            Ok(n) => buf.extend_from_slice(&chunk[..n]),
++        }
++        if buf.len() > 16 * 1024 {
++            return;
++        }
++    }
++    let head = String::from_utf8_lossy(&buf);
++    let mut parts = head.lines().next().unwrap_or("").split_whitespace();
++    let method = parts.next().unwrap_or("").to_string();
++    let target = parts.next().unwrap_or("/").to_string();
++    let (path, query) = target.split_once('?').unwrap_or((&target, ""));
++    let q: HashMap<String, String> = url::form_urlencoded::parse(query.as_bytes())
++        .into_owned()
++        .collect();
++
++    let (status, body) = route(&ctl, &method, path, &q).await;
++    let reply = format!(
++        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
++        body.len()
++    );
++    let _ = conn.write_all(reply.as_bytes()).await;
++    let _ = conn.write_all(&body).await;
++    let _ = conn.shutdown().await;
++}
++
++async fn route(
++    ctl: &Ctl,
++    method: &str,
++    path: &str,
++    q: &HashMap<String, String>,
++) -> (&'static str, Vec<u8>) {
++    let (session, spirc, state) = ctl.get();
++    if path == "/status" {
++        let user = session.as_ref().map(|s| s.username()).unwrap_or_default();
++        let country = session.as_ref().map(|s| s.country()).unwrap_or_default();
++        let body = format!(
++            "{{\"state\":{},\"username\":{},\"country\":{}}}",
++            json_str(state),
++            json_str(&user),
++            json_str(&country)
++        );
++        return ("200 OK", body.into_bytes());
++    }
++    let (Some(session), Some(spirc)) = (session, spirc) else {
++        return (
++            "503 Service Unavailable",
++            format!("{{\"error\":\"not_connected\",\"state\":{}}}", json_str(state)).into_bytes(),
++        );
++    };
++    let ok = || ("200 OK", b"{}".to_vec());
++    let bad = |what: &str| {
++        (
++            "400 Bad Request",
++            format!("{{\"error\":{}}}", json_str(what)).into_bytes(),
++        )
++    };
++    let cmd = |r: Result<(), Error>| match r {
++        Ok(()) => ok(),
++        Err(e) => ("502 Bad Gateway", err_body("command_failed", &e).into_bytes()),
++    };
++
++    match (method, path) {
++        ("GET", "/token") => match session.login5().auth_token().await {
++            Ok(t) => (
++                "200 OK",
++                format!(
++                    "{{\"accessToken\":{},\"expiresIn\":{}}}",
++                    json_str(&t.access_token),
++                    t.expires_in.as_secs()
++                )
++                .into_bytes(),
++            ),
++            Err(e) => ("502 Bad Gateway", err_body("token_failed", &e).into_bytes()),
++        },
++        // Authenticated GET against Spotify's own client API, returned as is.
++        ("GET", "/spclient") => {
++            let Some(p) = q.get("path").filter(|p| p.starts_with('/')) else {
++                return bad("path");
++            };
++            match session.spclient().get_next_page(p).await {
++                Ok(bytes) => ("200 OK", bytes.to_vec()),
++                Err(e) => ("502 Bad Gateway", err_body("spclient_failed", &e).into_bytes()),
++            }
++        }
++        // Request/response over the session's own channel (hm:// URIs).
++        ("GET", "/mercury") => {
++            let Some(uri) = q.get("uri").filter(|u| u.starts_with("hm://")) else {
++                return bad("uri");
++            };
++            let fut = match session.mercury().get(uri.as_str()) {
++                Ok(f) => f,
++                Err(e) => return ("502 Bad Gateway", err_body("mercury_failed", &e).into_bytes()),
++            };
++            match fut.await {
++                Ok(resp) if resp.status_code == 200 => (
++                    "200 OK",
++                    resp.payload.into_iter().next().unwrap_or_default(),
++                ),
++                Ok(resp) => (
++                    "502 Bad Gateway",
++                    format!(
++                        "{{\"error\":\"mercury_failed\",\"status\":{}}}",
++                        resp.status_code
++                    )
++                    .into_bytes(),
++                ),
++                Err(e) => ("502 Bad Gateway", err_body("mercury_failed", &e).into_bytes()),
++            }
++        }
++        ("POST", "/load") => {
++            let uri = q.get("uri").cloned().unwrap_or_default();
++            let context = q.get("context").cloned().unwrap_or_default();
++            if !uri.starts_with("spotify:") && !context.starts_with("spotify:") {
++                return bad("uri");
++            }
++            let mut options = LoadRequestOptions {
++                start_playing: true,
++                ..Default::default()
++            };
++            let request = if context.is_empty() {
++                LoadRequest::from_tracks(vec![uri], options)
++            } else {
++                if !uri.is_empty() {
++                    options.playing_track = Some(PlayingTrack::Uri(uri));
++                }
++                LoadRequest::from_context_uri(context, options)
++            };
++            // Make this speaker the active Connect device first, so the Spotify apps
++            // show the playback here instead of it running invisibly beside them.
++            if let Err(e) = spirc.activate() {
++                return ("502 Bad Gateway", err_body("activate_failed", &e).into_bytes());
++            }
++            cmd(spirc.load(request))
++        }
++        ("POST", "/play") => cmd(spirc.play()),
++        ("POST", "/pause") => cmd(spirc.pause()),
++        ("POST", "/next") => cmd(spirc.next()),
++        ("POST", "/prev") => cmd(spirc.prev()),
++        ("POST", "/activate") => cmd(spirc.activate()),
++        ("POST", "/seek") => match q.get("ms").and_then(|v| v.parse::<u32>().ok()) {
++            Some(ms) => cmd(spirc.set_position_ms(ms)),
++            None => bad("ms"),
++        },
++        _ => ("404 Not Found", b"{\"error\":\"not_found\"}".to_vec()),
++    }
++}

@@ -1,0 +1,43 @@
+From: SoundTap contributors <soundtap@localhost>
+Subject: [PATCH] Bind discovery to IPv4
+
+The Shelby kernel has no IPv6 support. Binding the zeroconf server to
+[::] therefore fails with EAFNOSUPPORT and makes librespot exit when no
+stored credentials are available.
+
+Upstream: Not applicable (SoundTap target has no IPv6 support)
+Signed-off-by: Stein Milder <info@steinmilder.nl>
+
+---
+ discovery/src/server.rs | 9 ++-------
+ 1 file changed, 2 insertions(+), 7 deletions(-)
+
+diff --git a/discovery/src/server.rs b/discovery/src/server.rs
+index 15a67c8..3d21a71 100644
+--- a/discovery/src/server.rs
++++ b/discovery/src/server.rs
+@@ -1,7 +1,7 @@
+ use std::{
+     borrow::Cow,
+     collections::BTreeMap,
+-    net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener},
++    net::{Ipv4Addr, SocketAddr, TcpListener},
+     sync::{Arc, Mutex},
+ };
+ 
+@@ -281,12 +281,7 @@ impl DiscoveryServer {
+         event_tx: mpsc::UnboundedSender<DiscoveryEvent>,
+     ) -> Result<Self, Error> {
+         let discovery = RequestHandler::new(config, event_tx);
+-        let address = if cfg!(windows) {
+-            SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), *port)
+-        } else {
+-            // this creates a dual stack socket on non-windows systems
+-            SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), *port)
+-        };
++        let address = SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), *port);
+ 
+         let (close_tx, close_rx) = oneshot::channel();
+ 
+--
+2.39.5

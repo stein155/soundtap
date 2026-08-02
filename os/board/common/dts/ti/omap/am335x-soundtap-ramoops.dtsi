@@ -1,0 +1,28 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: 2026 SoundTap contributors
+
+/*
+ * Kernel log and panic records that survive a reset (pstore/ramoops).
+ *
+ * DDR keeps its content over the cold PRM reset every reboot goes through, but U-Boot
+ * relocates to the top of RAM and clears its 32 MiB malloc area below that: a pattern
+ * at 0x87f00000-0x87f80000 read back as zero after a reboot on the WLA (2026-11-07),
+ * only the last 256 bytes kept it. 0x84000000 is below U-Boot's malloc area, above the
+ * kernel it loads at 0x82000000 and clear of SPL's stack (0x82000000) and BSS
+ * (0x80a00000). 1 MiB of 128 MiB.
+ */
+/ {
+	reserved-memory {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		ramoops@84000000 {
+			compatible = "ramoops";
+			reg = <0x84000000 0x00100000>;
+			record-size = <0x00020000>;
+			console-size = <0x00080000>;
+			pmsg-size = <0x00010000>;
+		};
+	};
+};

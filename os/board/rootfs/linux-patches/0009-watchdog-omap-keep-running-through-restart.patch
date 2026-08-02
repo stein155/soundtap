@@ -1,0 +1,30 @@
+From: SoundTap <noreply@soundtap.invalid>
+Subject: [PATCH] watchdog: omap_wdt: keep the timer running through a restart
+
+omap_wdt's shutdown hook disables the hardware watchdog whenever it is in
+use, and device_shutdown() runs it on every reboot. Whatever comes after
+it -- the shutdown of the devices registered before the watchdog, and the
+PRM warm reset itself -- then runs with no watchdog at all. A stall there
+leaves the speaker without network or USB until someone pulls the plug
+(a rollout hang). Leave the timer running on a restart; on
+power-off and halt it is still stopped. A reset that does happen clears
+the timer with everything else.
+---
+--- a/drivers/watchdog/omap_wdt.c	2026-10-26 05:33:24.526958258 +0100
++++ b/drivers/watchdog/omap_wdt.c	2026-10-26 05:33:31.214931192 +0100
+@@ -298,6 +298,15 @@
+ {
+ 	struct omap_wdt_dev *wdev = platform_get_drvdata(pdev);
+ 
++	/*
++	 * Keep counting through a restart. Everything after device_shutdown() --
++	 * the remaining driver shutdowns and the PRM reset itself -- is otherwise
++	 * unguarded, and a stall there leaves the board dead until power is cut.
++	 * If the reset happens, the timer goes with it.
++	 */
++	if (system_state == SYSTEM_RESTART)
++		return;
++
+ 	mutex_lock(&wdev->lock);
+ 	if (wdev->omap_wdt_users) {
+ 		omap_wdt_disable(wdev);

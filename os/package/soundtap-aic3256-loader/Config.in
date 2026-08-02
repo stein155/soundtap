@@ -1,0 +1,12 @@
+config BR2_PACKAGE_SOUNDTAP_AIC3256_LOADER
+	bool "SoundTap AIC3256 loader"
+	help
+	  Build the bounded userspace SPI codec loader used by the ST10
+	  mainline Linux profile.
+
+config BR2_PACKAGE_SOUNDTAP_AIC3256_LOADER_BITBANG
+	bool "aic3256-bitbang"
+	depends on BR2_PACKAGE_SOUNDTAP_AIC3256_LOADER
+	help
+	  Also build the GPIO bit-banged codec loader. The ST20 has
+	  spi0 off and reaches its AIC3256 only through this.

@@ -1,0 +1,42 @@
+CONFIG_FEATURE_ROTATE_LOGFILE=y
+CONFIG_LOGGER=y
+CONFIG_NTPD=y
+CONFIG_SYSLOGD=y
+# syslogd reads 256 bytes of a record by default, which cut the audio health and play
+# lines short in /tmp/soundtap.log. musl's syslog() sends at most 1024 bytes, so
+# that is as much as is worth reading.
+CONFIG_FEATURE_SYSLOGD_READ_BUFFER_SIZE=1024
+CONFIG_TIMEOUT=y
+CONFIG_UBIATTACH=y
+CONFIG_UDHCPD=y
+# Nothing on the speaker serves or dials telnet or runs inetd. dnsd stays: the setup AP's
+# captive portal (soundtapd's Wi-Fi manager) needs it.
+# CONFIG_INETD is not set
+# CONFIG_TELNET is not set
+# CONFIG_TELNETD is not set
+# bt.sh waits on /run/soundtap for a rename instead of polling.
+CONFIG_INOTIFYD=y
+# Root starts everything; a setuid busybox only helps an attacker.
+# CONFIG_FEATURE_SUID is not set
+# The init script drops snapclient to its own user with this (ADR 0066).
+CONFIG_SETUIDGID=y
+# Network servers and clients nothing on the speaker calls. nc -l -e and the
+# inetd-style svd servers are a shell away from a backdoor; the rest is dead weight.
+# Kept on purpose: dnsd (captive portal), devmem (RTC scratch, GPIO hog), udhcpd,
+# wget (spotify-source.sh, init's health checks), ping/nslookup/traceroute for diagnosis.
+# CONFIG_NC is not set
+# CONFIG_HTTPD is not set
+# CONFIG_FTPD is not set
+# CONFIG_FTPGET is not set
+# CONFIG_FTPPUT is not set
+# CONFIG_TFTP is not set
+# CONFIG_TFTPD is not set
+# CONFIG_SENDMAIL is not set
+# CONFIG_CROND is not set
+# CONFIG_CRONTAB is not set
+# CONFIG_FAKEIDENTD is not set
+# CONFIG_TCPSVD is not set
+# CONFIG_UDPSVD is not set
+# CONFIG_IFPLUGD is not set
+# CONFIG_ZCIP is not set
+# CONFIG_ETHER_WAKE is not set

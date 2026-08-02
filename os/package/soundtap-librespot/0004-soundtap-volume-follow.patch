@@ -1,0 +1,72 @@
+From: SoundTap contributors <soundtap@localhost>
+Subject: [PATCH] Let the speaker's volume reach the Spotify apps
+
+Add POST /volume?percent=N to the control API so soundtapd can hand its
+master volume to librespot, and the Spotify apps' slider follows the
+speaker's buttons, remote and web UI.
+
+SetVolume from the control API is ignored when the percent is the one
+librespot already has: that is the echo of a change that came from
+Spotify, and its finer value stays. While another device is active the
+volume is kept without an event, so activation reports the speaker's
+current volume instead of the stale one librespot started with.
+
+Upstream: Not applicable (SoundTap control API)
+Signed-off-by: Stein Milder <info@steinmilder.nl>
+
+---
+diff --git a/connect/src/spirc.rs b/connect/src/spirc.rs
+index 3f9a06f..ada4937 100644
+--- a/connect/src/spirc.rs
++++ b/connect/src/spirc.rs
+@@ -657,6 +657,21 @@ impl SpircTask {
+             SpircCommand::Transfer(..) | SpircCommand::Activate => {
+                 warn!("SpircCommand::{cmd:?} will be ignored while already active")
+             }
++            // SoundTap: only the control API sends this, with the speaker's own volume.
++            // The same percent is the echo of a change that came from Spotify: keep its
++            // finer value. While another device plays, keep the volume without telling
++            // anyone, so activating reports the speaker's current volume instead of the
++            // one librespot started with -- that stale value used to become the speaker's.
++            SpircCommand::SetVolume(volume)
++                if percent(self.connect_state.device_info().volume) == percent(volume.into()) =>
++            {
++                return Ok(());
++            }
++            SpircCommand::SetVolume(volume) if !self.connect_state.is_active() => {
++                self.connect_state.set_volume(volume.into());
++                self.mixer.set_volume(volume);
++                return Ok(());
++            }
+             _ if !self.connect_state.is_active() => {
+                 warn!("SpircCommand::{cmd:?} will be ignored while Not Active")
+             }
+@@ -1823,6 +1838,11 @@ impl SpircTask {
+     }
+ }
+ 
++/// SoundTap's volume percent for a Spotify volume, rounded the way the onevent hook does.
++fn percent(volume: u32) -> u32 {
++    (volume * 100 + 32767) / 65535
++}
++
+ impl Drop for SpircTask {
+     fn drop(&mut self) {
+         debug!("drop Spirc[{}]", self.spirc_id);
+diff --git a/src/soundtap_ctl.rs b/src/soundtap_ctl.rs
+index 6ad774d..390a781 100644
+--- a/src/soundtap_ctl.rs
++++ b/src/soundtap_ctl.rs
+@@ -242,6 +242,12 @@ async fn route(
+         ("POST", "/next") => cmd(spirc.next()),
+         ("POST", "/prev") => cmd(spirc.prev()),
+         ("POST", "/activate") => cmd(spirc.activate()),
++        // The speaker's own volume in percent, so the Spotify apps follow its buttons,
++        // remote and web UI. Rounded to the u16 whose percent is exactly this one.
++        ("POST", "/volume") => match q.get("percent").and_then(|v| v.parse::<u32>().ok()).filter(|p| *p <= 100) {
++            Some(p) => cmd(spirc.set_volume(((p * 65535 + 50) / 100) as u16)),
++            None => bad("percent"),
++        },
+         ("POST", "/seek") => match q.get("ms").and_then(|v| v.parse::<u32>().ok()) {
+             Some(ms) => cmd(spirc.set_position_ms(ms)),
+             None => bad("ms"),

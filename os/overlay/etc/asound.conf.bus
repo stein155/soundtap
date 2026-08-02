@@ -1,0 +1,34 @@
+# /etc/asound.conf.bus — audio-arbiter mode (AUDIO_MIX=1).
+#
+# ALSA "default" does not write /dev/snd_shelby directly. Instead every ALSA app
+# (shairport-sync, bluealsa, librespot) writes raw S16_LE 48 kHz stereo PCM into the
+# source bus FIFO. soundtapd's Mixer reads that bus and is the *only* writer of
+# /dev/snd_shelby, so an announcement can duck AirPlay/BT/Spotify alike and restore.
+#
+# The `plug` layer converts each client's format (e.g. AirPlay's 44.1 kHz) to the bus
+# format; the `file` plugin writes those converted bytes to the FIFO (slave = null:
+# playback itself goes nowhere — the Mixer does the real output).
+#
+# Selected by the init script when AUDIO_MIX=1, which every mainline ST10 and ST20 boot is.
+
+pcm.busfile {
+    type file
+    slave.pcm "null"
+    file "/run/soundtap/source.pcm"
+    format "raw"
+}
+
+pcm.!default {
+    type plug
+    slave {
+        pcm "busfile"
+        format S16_LE
+		rate 48000
+        channels 2
+    }
+}
+
+ctl.!default {
+    type hw
+    card 0
+}

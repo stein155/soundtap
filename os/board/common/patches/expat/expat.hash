@@ -1,0 +1,6 @@
+# Above the pinned Buildroot's version (SOUNDTAP_PACKAGE_VERSIONS in the top Makefile).
+# Buildroot master's package/expat/expat.hash, taken 2026-11-12.
+# From https://github.com/libexpat/libexpat/releases/tag/R_2_10_0
+sha256  c624ba2998fc65df1163a49641ff3f9ab73138b11641d92c86bee0fb01b1bc7f  expat-2.10.0.tar.xz
+# Locally calculated
+sha256  31b15de82aa19a845156169a17a5488bf597e561b2c318d159ed583139b25e87  COPYING

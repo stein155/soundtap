@@ -1,0 +1,35 @@
+From: SoundTap contributors <soundtap@localhost>
+Subject: [PATCH] connect: ignore an empty track_uri/track_uid in skip_to
+
+Picking a track in a list in the Spotify app sends an empty track_uri
+next to the track_uid that identifies the track. 0.8.0 took the empty
+uri, failed to resolve it ("Failed to resolve index by Some(Uri(""))")
+and played the first track of the context instead. Treat empty values
+as not provided, so the uid (or the index) picks the track.
+
+Upstream: https://github.com/librespot-org/librespot/pull/1795 (merged
+to dev, not in a release)
+Signed-off-by: Stein Milder <info@steinmilder.nl>
+
+---
+ connect/src/model.rs | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/connect/src/model.rs b/connect/src/model.rs
+--- a/connect/src/model.rs
++++ b/connect/src/model.rs
+@@ -134,10 +134,11 @@ impl TryFrom<SkipTo> for PlayingTrack {
+ 
+     fn try_from(value: SkipTo) -> Result<Self, Self::Error> {
+         // order of checks is important, as the index can be 0, but still has an uid or uri provided,
+-        // so we only use the index as last resort
+-        if let Some(uri) = value.track_uri {
++        // so we only use the index as last resort. Clients may send an empty uri (or uid) next to
++        // the one that identifies the track, so empty values count as not provided.
++        if let Some(uri) = value.track_uri.filter(|uri| !uri.is_empty()) {
+             Ok(PlayingTrack::Uri(uri))
+-        } else if let Some(uid) = value.track_uid {
++        } else if let Some(uid) = value.track_uid.filter(|uid| !uid.is_empty()) {
+             Ok(PlayingTrack::Uid(uid))
+         } else if let Some(index) = value.track_index {
+             Ok(PlayingTrack::Index(index))

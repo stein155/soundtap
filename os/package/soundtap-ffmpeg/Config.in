@@ -1,0 +1,13 @@
+config BR2_PACKAGE_SOUNDTAP_FFMPEG
+	bool "soundtap-ffmpeg"
+	depends on BR2_PACKAGE_FFMPEG_ARCH_SUPPORTS
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	select BR2_PACKAGE_LIBSOXR
+	select BR2_PACKAGE_OPENSSL
+	select BR2_PACKAGE_ZLIB
+	help
+	  Audio-only FFmpeg 9 for the radio player and shairport-sync.
+	  The pinned Buildroot ships 6.1, whose CVEs are fixed only from
+	  9.0, and its recipe does not build 9.
+
+	  https://www.ffmpeg.org
