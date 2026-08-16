@@ -1,0 +1,27 @@
+<!doctype html>
+<meta charset="utf-8">
+<!-- Renders the design's screens with the same font files the atlases come from and prints
+     each 128x100 frame as hex grey levels. Run by golden.sh in headless Chromium. -->
+<style>
+@font-face{font-family:'Plus Jakarta Sans';src:url(fonts/PlusJakartaSans.ttf);font-weight:200 800}
+@font-face{font-family:'Silkscreen';src:url(fonts/Silkscreen-Regular.ttf);font-weight:400}
+</style>
+<pre id="out"></pre>
+<script src="design-screens.js"></script>
+<script src="golden-cases.js"></script>
+<script>
+(async () => {
+  for (const w of [500, 600, 700, 800]) await document.fonts.load(`${w} 10px 'Plus Jakarta Sans'`);
+  await document.fonts.load("400 10px 'Silkscreen'");
+  const out = [];
+  for (const [id, screen, t, st] of CASES) {
+    const c = document.createElement("canvas"); c.width = W; c.height = H;
+    draw(c, screen, t, st);
+    const a = c.getContext("2d").getImageData(0, 0, W, H).data;
+    let hex = "";
+    for (let i = 0; i < a.length; i += 4) hex += (a[i] / 17).toString(16);
+    out.push(id + " " + hex);
+  }
+  document.getElementById("out").textContent = out.join("\n");
+})();
+</script>
