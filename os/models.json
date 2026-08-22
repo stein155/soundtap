@@ -1,0 +1,142 @@
+{
+  "$comment": [
+    "The one table of the speakers SoundTap knows, by model and by hardware variant (ADR 0008).",
+    "Edit this file, then run `go generate ./internal/modeltable` in app/ (os/support/models_gen.py",
+    "writes app/internal/modeltable/table_gen.go). os/tests/build/test_models_table.py holds every",
+    "other copy to it: the init script, soundtapd's model profiles, installer.c, the STU builder and",
+    "checker, the boot recipes, U-Boot's model detection, the device trees and the image's /boot.",
+    "models: what MODEL names. variant is the board's own variant; module_suffix the suffix of the",
+    "STU modules it takes (soundtap-kernel.<suffix>); spl and uboot the suffix of the boot chain it",
+    "takes; kernel_name what the uImage header names after 'Linux-6.12 SoundTap '; stock_rootfs_limit",
+    "the largest ubi.img Bose's installer streamed to it; mfg_product the product name at 0x170 of",
+    "NAND.Manufacturing-Data that U-Boot reads, null when U-Boot tells the board apart otherwise;",
+    "variant_raw the recorded range of U-Boot's variant_raw (hex digits), null when none is recorded.",
+    "variants: what /proc/variant and variant= on the kernel command line say. model is the MODEL it",
+    "runs as; product the name /api/info reports; dtb and kernel what the slot recipes load from",
+    "/boot; dts the source tree the dtb is built from; codec_script the speaker's own codec script,",
+    "null on a board without a codec; stock_only a name only stock firmware reports, which no recipe",
+    "of ours writes, so it has no dtb, kernel or tree.",
+    "boot_images: where the build leaves each SPL and U-Boot, by suffix, under output/os/images."
+  ],
+  "models": {
+    "st10": {
+      "variant": "rhino",
+      "module_suffix": "rhino",
+      "spl": "binky",
+      "uboot": "binky",
+      "kernel_name": "st10",
+      "stock_rootfs_limit": 86114304,
+      "mfg_product": "rhino",
+      "variant_raw": ["3630", "3630"]
+    },
+    "st20": {
+      "variant": "spotty",
+      "module_suffix": "spotty",
+      "spl": "spotty",
+      "uboot": "binky",
+      "kernel_name": "st20",
+      "stock_rootfs_limit": 84279296,
+      "mfg_product": null,
+      "variant_raw": null
+    },
+    "wla": {
+      "variant": "binky",
+      "module_suffix": "binky",
+      "spl": "binky",
+      "uboot": "binky",
+      "kernel_name": "st10",
+      "stock_rootfs_limit": 89653248,
+      "mfg_product": "binky",
+      "variant_raw": ["2518", "2618"]
+    },
+    "st300": {
+      "variant": "ginger",
+      "module_suffix": "binky",
+      "spl": "binky",
+      "uboot": "binky",
+      "kernel_name": "st10",
+      "stock_rootfs_limit": 89653248,
+      "mfg_product": "ginger",
+      "variant_raw": null
+    }
+  },
+  "variants": {
+    "rhino": {
+      "model": "st10",
+      "product": "SoundTouch 10",
+      "module_type": "sm2",
+      "dtb": "rhino_sm2.dtb",
+      "kernel": "uImage-rhino",
+      "dts": "am335x-soundtap-st10",
+      "codec_script": "rhino_sm2_normal.cfg"
+    },
+    "spotty3": {
+      "model": "st10",
+      "product": "SoundTouch 20",
+      "module_type": "sm2",
+      "dtb": "spotty3_sm2.dtb",
+      "kernel": "uImage-rhino",
+      "dts": "am335x-soundtap-st20-iii",
+      "codec_script": "spotty_sm2_normal.cfg"
+    },
+    "mojo3": {
+      "model": "st10",
+      "product": "SoundTouch 30",
+      "module_type": "sm2",
+      "dtb": "spotty3_sm2.dtb",
+      "kernel": "uImage-rhino",
+      "dts": "am335x-soundtap-st20-iii",
+      "codec_script": "mojo_sm2_normal.cfg"
+    },
+    "spotty": {
+      "model": "st20",
+      "product": "SoundTouch 20",
+      "module_type": "scm",
+      "dtb": "spotty_scm.dtb",
+      "kernel": "uImage-spotty",
+      "dts": "am335x-soundtap-st20",
+      "codec_script": "spotty_scm_normal.cfg"
+    },
+    "mojo": {
+      "model": "st20",
+      "product": "SoundTouch 30",
+      "module_type": "scm",
+      "dtb": "spotty_scm.dtb",
+      "kernel": "uImage-spotty",
+      "dts": "am335x-soundtap-st20",
+      "codec_script": "mojo_scm_normal.cfg"
+    },
+    "lisa": {
+      "model": "st20",
+      "product": "SoundTouch 20",
+      "module_type": "scm",
+      "dtb": null,
+      "kernel": null,
+      "dts": null,
+      "codec_script": "spotty_scm_normal.cfg",
+      "stock_only": true
+    },
+    "binky": {
+      "model": "wla",
+      "product": "SoundTouch Wireless Link Adapter",
+      "module_type": "sm2",
+      "dtb": "binky_sm2.dtb",
+      "kernel": "uImage-binky",
+      "dts": "am335x-soundtap-wla",
+      "codec_script": null
+    },
+    "ginger": {
+      "model": "st300",
+      "product": "SoundTouch 300",
+      "module_type": "sm2",
+      "dtb": "ginger_sm2.dtb",
+      "kernel": "uImage-ginger",
+      "dts": "am335x-soundtap-st300",
+      "codec_script": null
+    }
+  },
+  "boot_images": {
+    "spl": {"binky": "wla-spl/MLO", "spotty": "st20-spl/MLO"},
+    "uboot": {"binky": "wla-uboot/u-boot.img"}
+  }
+}
