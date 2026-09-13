@@ -1,0 +1,101 @@
+--- a/common/wla_mark.c
++++ b/common/wla_mark.c
+@@ -28,7 +28,7 @@
+ #define WLA_MARK_BASE		0x0f280000
+ #define WLA_MARK_BLOCK_SIZE	0x20000
+ #define WLA_MARK_FIRST_BLOCK	2	/* 0 and 1 belong to the SPL */
+-#define WLA_MARK_STAGES		6
++#define WLA_MARK_STAGES		12
+ 
+ void wla_uboot_mark(unsigned int stage)
+ {
+@@ -39,6 +39,12 @@
+ 		"SOUNDTAP-UB:04\n",
+ 		"SOUNDTAP-UB:05\n",
+ 		"SOUNDTAP-UB:06\n",
++		"SOUNDTAP-UB:07\n",
++		"SOUNDTAP-UB:08\n",
++		"SOUNDTAP-UB:09\n",
++		"SOUNDTAP-UB:10\n",
++		"SOUNDTAP-UB:11\n",
++		"SOUNDTAP-UB:12\n",
+ 	};
+ 	struct mtd_info *mtd;
+ 	struct erase_info erase;
+--- a/cmd/Kconfig
++++ b/cmd/Kconfig
+@@ -1608,6 +1608,22 @@
+ 	help
+ 	 List, select, and deselect mux controllers on the fly.
+ 
++config CMD_WLAMARK
++	bool "mark command that records a boot stage into NAND"
++	help
++	  This board has no serial console, and the USB gadget that could carry one
++	  only exists while a host is attached -- which is exactly when the mask ROM
++	  boots over USB instead of from NAND. So a bootcmd running off NAND cannot
++	  be watched at all, and a board that does not come up says nothing about
++	  which step failed.
++
++	  mark <n> writes one short marker into a scratch block of the update
++	  staging partition, one block per stage, so a bootcmd can record how far it
++	  got and the next system to boot can read it back. Stages 1 to 6 belong to
++	  the C code; a script should use 7 and up, which nothing else writes.
++
++	  Diagnostic only. It writes to flash, so it has no place in a shipped image.
++
+ config CMD_NAND
+ 	bool "nand"
+ 	default y if NAND_SUNXI
+--- a/cmd/Makefile
++++ b/cmd/Makefile
+@@ -131,6 +131,7 @@
+ endif
+ obj-$(CONFIG_CMD_MUX) += mux.o
+ obj-$(CONFIG_CMD_NAND) += nand.o
++obj-$(CONFIG_CMD_WLAMARK) += wlamark.o
+ ifdef CONFIG_NET_LEGACY
+ obj-$(CONFIG_CMD_NET) += net.o net-common.o
+ else ifdef CONFIG_NET_LWIP
+diff -ruN a/cmd/wlamark.c b/cmd/wlamark.c
+--- a/cmd/wlamark.c	1970-01-01 01:00:00.000000000 +0100
++++ b/cmd/wlamark.c	2026-09-16 22:30:00.000000000 +0200
+@@ -0,0 +1,38 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * mark <n> -- record a boot stage from a bootcmd.
++ *
++ * The C-level markers in common/wla_mark.c answer "how far did U-Boot itself
++ * get". They cannot answer "how far did the boot script get", and on this board
++ * that is the question that matters: the slot recipe in the environment reads a
++ * kernel out of NAND, clears its boot marker and calls bootm, and when the board
++ * does not come up there is no console to say which of those steps failed.
++ *
++ * Stages 1 to 6 are written by the C code. A script uses 7 and up.
++ *
++ * Failures are silent, exactly as in wla_uboot_mark(): a diagnostic must never
++ * be the reason a board does not boot.
++ */
++#include <command.h>
++#include <vsprintf.h>
++#include <wla_mark.h>
++
++static int do_wlamark(struct cmd_tbl *cmdtp, int flag, int argc,
++		      char *const argv[])
++{
++	unsigned long stage;
++
++	if (argc != 2)
++		return CMD_RET_USAGE;
++
++	stage = simple_strtoul(argv[1], NULL, 10);
++	wla_uboot_mark((unsigned int)stage);
++
++	return CMD_RET_SUCCESS;
++}
++
++U_BOOT_CMD(mark, 2, 0, do_wlamark,
++	   "record a boot stage into the update staging partition",
++	   "n\n"
++	   "    - write marker n (1..12); one erase block per stage.\n"
++	   "      Stages 1..6 are U-Boot's own; scripts should use 7 and up.");

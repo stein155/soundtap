@@ -1,0 +1,161 @@
+diff -ruN a/board/ti/am335x/board.c b/board/ti/am335x/board.c
+--- a/board/ti/am335x/board.c	2026-07-07 01:50:43.000000000 +0200
++++ b/board/ti/am335x/board.c	2026-09-16 18:55:28.884401897 +0200
+@@ -10,6 +10,7 @@
+ #include <config.h>
+ #include <dm.h>
+ #include <env.h>
++#include <linux/errno.h>
+ #include <errno.h>
+ #include <hang.h>
+ #include <image.h>
+@@ -804,6 +805,138 @@
+ }
+ 
+ #ifdef CONFIG_BOARD_LATE_INIT
++
++#if !defined(CONFIG_XPL_BUILD)
++/*
++ * The Wireless Link's variant resistor, read the way the stock bootloader reads it.
++ *
++ * Bose's 2014.07 samples the AM335x touchscreen ADC at boot and publishes the raw
++ * count as the environment variable `variant_raw`, which their `nand_args` then
++ * pastes into the kernel command line. Their 3.14 kernel is not CONFIG_CMDLINE_FORCE
++ * and expects to be handed it. Without this, our U-Boot can boot our own firmware but
++ * not theirs, and the speaker loses its way back to stock -- see
++ * docs/hardware/wla/round-trip-requirement.md.
++ *
++ * The register sequence below is the one disassembled out of their bootloader and
++ * recorded in docs/archive/wla/stock-variant-raw-audit-20260905.md: their setup routine at
++ * 0x8011b574 and their sample routine at 0x8011b510. It is reproduced from that
++ * description, not copied. Offsets and field masks are the public ones from
++ * linux/mfd/ti_am335x_tscadc.h.
++ *
++ * The value is a live count, not a constant. This board has produced 2528, 2518 and
++ * 2603 on separate boots, so it must be sampled rather than baked in.
++ */
++#define WLA_TSCADC_BASE		0x44e0d000
++#define WLA_TSCADC_CTRL		0x040
++#define WLA_TSCADC_CLKDIV	0x04c
++#define WLA_TSCADC_SE		0x054
++#define WLA_TSCADC_IDLECONFIG	0x058
++#define WLA_TSCADC_CHARGECONFIG	0x05c
++#define WLA_TSCADC_CHARGEDELAY	0x060
++#define WLA_TSCADC_STEPCONFIG(n)	(0x64 + ((n) * 8))
++#define WLA_TSCADC_STEPDELAY(n)		(0x68 + ((n) * 8))
++#define WLA_TSCADC_FIFO0CNT	0x0e4
++#define WLA_TSCADC_FIFO1THR	0x0f4
++#define WLA_TSCADC_FIFO0	0x100
++
++#define WLA_VARIANT_CHANNEL	1
++#define WLA_ADC_STEPS		6
++#define WLA_ADC_TIMEOUT_US	10000
++/* FIFO0CNT counts entries, and the hardware field is seven bits. Masking is not
++ * cosmetic: the drain loop below is driven by this value, so a wedged peripheral
++ * reading back all ones would turn it into four billion MMIO reads and hang the
++ * boot. Cap it at what we actually enabled as well.
++ */
++#define WLA_TSCADC_FIFOCNT_MASK	0x7f
++
++static int wla_adc_init(void)
++{
++	static const u32 stepconfig[WLA_ADC_STEPS] = {
++		0x00040004, 0x000c0004, 0x00140004,
++		0x001c0004, 0x00240004, 0x002c0004,
++	};
++	struct cm_wkuppll *const wkup = (struct cm_wkuppll *)CM_WKUP;
++	u32 waited = 0;
++	unsigned int i;
++
++	/* The ADC sits in the wakeup domain and is not clocked out of reset. */
++	clrsetbits_le32(&wkup->wkup_adctscctrl, MODULE_CLKCTRL_MODULEMODE_MASK,
++			MODULE_CLKCTRL_MODULEMODE_SW_EXPLICIT_EN);
++	while (((readl(&wkup->wkup_adctscctrl) & MODULE_CLKCTRL_IDLEST_MASK) >>
++		MODULE_CLKCTRL_IDLEST_SHIFT) != MODULE_CLKCTRL_IDLEST_FULLY_FUNCTIONAL) {
++		if (++waited >= WLA_ADC_TIMEOUT_US) {
++			printf("variant_raw: ADC clock never came up\n");
++			return -ETIMEDOUT;
++		}
++		udelay(1);
++	}
++
++	writel(7, (void *)(WLA_TSCADC_BASE + WLA_TSCADC_CLKDIV));
++	/* Step-ID tagging and step-config writes on, subsystem still disabled. */
++	writel(0x106, (void *)(WLA_TSCADC_BASE + WLA_TSCADC_CTRL));
++	writel(0x00440000, (void *)(WLA_TSCADC_BASE + WLA_TSCADC_IDLECONFIG));
++	for (i = 0; i < WLA_ADC_STEPS; i++) {
++		writel(stepconfig[i],
++		       (void *)(WLA_TSCADC_BASE + WLA_TSCADC_STEPCONFIG(i)));
++		writel(0x88000018,
++		       (void *)(WLA_TSCADC_BASE + WLA_TSCADC_STEPDELAY(i)));
++	}
++	writel(0x000c0000, (void *)(WLA_TSCADC_BASE + WLA_TSCADC_CHARGECONFIG));
++	writel(1, (void *)(WLA_TSCADC_BASE + WLA_TSCADC_CHARGEDELAY));
++	writel(6, (void *)(WLA_TSCADC_BASE + WLA_TSCADC_FIFO1THR));
++	writel(0x107, (void *)(WLA_TSCADC_BASE + WLA_TSCADC_CTRL));
++	return 0;
++}
++
++/* Returns the 12-bit count for one channel, or -1 if the FIFO never filled. */
++static int wla_adc_sample(unsigned int channel)
++{
++	int value = -1;
++	u32 waited = 0;
++	u32 count;
++
++	writel(0x7e, (void *)(WLA_TSCADC_BASE + WLA_TSCADC_SE));
++
++	do {
++		count = readl((void *)(WLA_TSCADC_BASE + WLA_TSCADC_FIFO0CNT)) &
++			WLA_TSCADC_FIFOCNT_MASK;
++		if (count)
++			break;
++		udelay(1);
++	} while (++waited < WLA_ADC_TIMEOUT_US);
++
++	if (count > WLA_ADC_STEPS)
++		count = WLA_ADC_STEPS;
++
++	while (count--) {
++		u32 entry = readl((void *)(WLA_TSCADC_BASE + WLA_TSCADC_FIFO0));
++
++		if (((entry >> 16) & 0xf) == channel)
++			value = entry & 0xfff;
++	}
++
++	writel(0, (void *)(WLA_TSCADC_BASE + WLA_TSCADC_SE));
++	return value;
++}
++
++static void wla_publish_variant_raw(void)
++{
++	int raw;
++
++	/* A clock that never came up means every register access below reads
++	 * nothing useful, so do not spend a second timeout finding that out.
++	 */
++	if (wla_adc_init())
++		return;
++	raw = wla_adc_sample(WLA_VARIANT_CHANNEL);
++	if (raw < 0) {
++		printf("variant_raw: ADC produced no sample; stock firmware will not boot\n");
++		return;
++	}
++	env_set_ulong("variant_raw", raw);
++}
++#endif
++
+ int board_late_init(void)
+ {
+ 	struct udevice *dev;
+@@ -906,6 +1039,10 @@
+ 	/* Just probe the potentially supported cdce913 device */
+ 	uclass_get_device_by_name(UCLASS_CLK, "cdce913@65", &dev);
+ 
++#if !defined(CONFIG_XPL_BUILD)
++	wla_publish_variant_raw();
++#endif
++
+ 	return 0;
+ }
+ #endif

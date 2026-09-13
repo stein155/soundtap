@@ -1,0 +1,214 @@
+diff --git a/arch/arm/mach-omap2/am33xx/board.c b/arch/arm/mach-omap2/am33xx/board.c
+index 17ef413f..af6c8b78 100644
+--- a/arch/arm/mach-omap2/am33xx/board.c
++++ b/arch/arm/mach-omap2/am33xx/board.c
+@@ -455,6 +455,102 @@ am43xx_wait:
+ 
+ static void watchdog_disable(void);
+ 
++/*
++ * SYSBOOT as the pins latched it. The ST20's ROM boots NAND before USB (0x12); the ST10 and
++ * WLA ROMs try USB first (0x0b). The only thing it is used for besides the boot order is
++ * the BCO, which is on the ST20 alone.
++ */
++int spl_board_is_st20(void)
++{
++	return (readl(0x44e10040) & 0x1f) == 0x12;	/* CONTROL_STATUS SYSBOOT[4:0] */
++}
++
++/*
++ * A ROM that went straight to NAND leaves these modules off, and touching a module with no
++ * clock is a bus fault: one SPL sat in the ST20's mtd0 and hung at timer_init(). A ROM that
++ * tried USB first leaves them on, which is all the ST10 and WLA SPL ever relied on -- and
++ * whether it tried is the ROM's call, not ours. So every model enables them. The timer also
++ * has to run from the 24 MHz oscillator: the ROM USB path on the ST20 left it slower, and a
++ * 50 ms PHY delay took 45 s. Only the modules this SPL uses; the full enable_basic_clocks()
++ * is what the WLA notes say hangs.
++ */
++static void spl_clocks(void)
++{
++	static u32 *const domains[] = {
++		(u32 *)0x44e00000,	/* CM_PER_L4LS_CLKSTCTRL */
++		(u32 *)0x44e00004,	/* CM_PER_L3S_CLKSTCTRL (USB) */
++		0
++	};
++	static u32 *const modules[] = {
++		(u32 *)0x44e00080,	/* timer2 */
++		(u32 *)0x44e00030,	/* gpmc */
++		(u32 *)0x44e00040,	/* elm */
++		(u32 *)0x44e0001c,	/* usb0 */
++		(u32 *)0x44e000ac,	/* gpio1 */
++		(u32 *)0x44e000b0,	/* gpio2 */
++		(u32 *)0x44e000b4,	/* gpio3 */
++		0
++	};
++
++	writel(0x1, 0x44e00508);	/* CLKSEL_TIMER2_CLK: CLK_M_OSC */
++	/*
++	 * USB PHY clock (PER CLKDCOLDO, 960 MHz). A NAND-first ROM leaves it gated, so without
++	 * this no gadget enumerates before Linux enables it (ROM-like test, 2026-09-27).
++	 */
++	writel(0x300, 0x44e0047c);	/* CM_CLKDCOLDO_DPLL_PER: gate open */
++	do_enable_clocks(domains, modules, 1);
++}
++
++/*
++ * The BCO, ST20 only. clkout1 (xdma_event_intr0, mode 3) is its reference clock and the pad
++ * resets to GPIO. Linux muxes it too, but seconds after power-on: on the 2026-09-27 install
++ * only the first boot (BCO already running from stock) had LAN. The BCO keeps its supply
++ * through a warm reset but hangs once it lost that clock (no LAN after a reboot,
++ * 2026-09-28), so restart it with the clock running: supply off (dm870pwr, gpio0_14 high)
++ * for the stock loaders' 1 s, then on. Linux's hog keeps it on.
++ */
++static void spl_bco_restart(void)
++{
++	writel(0x3, 0x44e109b0);		/* conf_xdma_event_intr0: clkout1 */
++	writel(0x2, 0x44e00408);		/* CM_WKUP_GPIO0_CLKCTRL enable */
++	while (readl(0x44e00408) & (3 << 16))
++		;
++	writel(0x17, 0x44e10980);		/* conf_uart1_rxd: gpio0_14, pull-up */
++	writel(1 << 14, 0x44e07194);		/* GPIO0 SETDATAOUT: BCO off */
++	clrbits_le32((void *)0x44e07134, 1 << 14);	/* GPIO0 OE: output */
++	mdelay(1000);
++	writel(1 << 14, 0x44e07190);		/* GPIO0 CLEARDATAOUT: BCO on */
++}
++
++static void spl_wdt_write(u32 reg, u32 val)
++{
++	writel(val, WDT_BASE + reg);
++	while (readl(WDT_BASE + 0x34))		/* WWPS: write pending */
++		;
++}
++
++/*
++ * With the watchdog off, a hang anywhere before U-Boot proper starts its own sits there
++ * until someone pulls the plug. So it stays on for 120 s, through U-Boot (which leaves
++ * it alone), until the kernel takes it over. A reset then lands back here, U-Boot's bootcount
++ * sees the failed attempt, and past bootlimit the other slot boots.
++ */
++static void spl_watchdog_start(void)
++{
++	watchdog_disable();
++	/*
++	 * CLK_RC32K, not the reset default CLK_32KHZ. That one is divided down from the PER DPLL,
++	 * so a stall while the DPLL is in bypass or never locks also stops the watchdog. The ST20
++	 * stalls on about 1 boot in 15, cold power-on included, and no watchdog ever fires.
++	 */
++	writel(0x0, 0x44e00538);		/* CLKSEL_WDT1_CLK */
++	spl_wdt_write(0x24, 0);			/* WCLR: no prescaler, 32 kHz */
++	spl_wdt_write(0x2c, 0xffc40000);	/* WLDR: 120 s */
++	spl_wdt_write(0x28, 0xffc40000);	/* WCRR */
++	spl_wdt_write(0x48, 0xbbbb);		/* WSPR start sequence */
++	spl_wdt_write(0x48, 0x4444);
++}
++
+ void s_init(void)
+ {
+ 	u32 temp, timeout;
+@@ -462,8 +558,11 @@ void s_init(void)
+ #if defined(CONFIG_XPL_BUILD) && defined(CONFIG_SPL_RTC_DDR_SUPPORT)
+ 	rtc_only();
+ #endif
+-	watchdog_disable();
++	spl_watchdog_start();
++	spl_clocks();
+ 	timer_init();
++	if (spl_board_is_st20())
++		spl_bco_restart();
+ 	/* WLA USB boot has no UART console; its mux setup hangs here. */
+ 	setup_clocks_for_console();
+ 	/* pre-reloc dpll_ddr_regs pointer is invalid; use fixed AM335x registers. */
+@@ -513,7 +612,7 @@ void early_system_init(void)
+ #ifdef CONFIG_NOR_BOOT
+ 	enable_norboot_pin_mux();
+ #endif
+-	watchdog_disable();
++	/* s_init()'s spl_watchdog_start() owns the watchdog. */
+ 	/* ROM USB boot already provides clocks; generic retune hangs on WLA. */
+ 	/* no UART transport exists on WLA micro-USB. */
+ #ifdef CONFIG_XPL_BUILD
+diff --git a/common/spl/spl.c b/common/spl/spl.c
+index 26351b17..dd101da6 100644
+--- a/common/spl/spl.c
++++ b/common/spl/spl.c
+@@ -57,6 +57,8 @@ DECLARE_BINMAN_MAGIC_SYM;
+ 
+ u32 *boot_params_ptr = NULL;
+ 
++int spl_board_is_st20(void);
++
+ #if CONFIG_IS_ENABLED(BINMAN_UBOOT_SYMBOLS)
+ /* See spl.h for information about this */
+ #if defined(CONFIG_SPL_BUILD)
+@@ -767,7 +769,7 @@ void board_init_r(gd_t *dummy1, ulong dummy2)
+  * the loader rather than through the boot-device list. The product SPL built from
+  * this same stack has no USB at all and takes the ordinary path.
+  */
+-#if defined(CONFIG_AM33XX) && defined(CONFIG_SPL_USB_ETHER)
++#if defined(CONFIG_AM33XX) && defined(CONFIG_SPL_USB_ETHER) && !defined(CONFIG_SPL_NAND_SUPPORT)
+ 	{
+ 		struct spl_boot_device bootdev = { .boot_device = BOOT_DEVICE_USBETH };
+ 
+@@ -775,15 +777,30 @@ void board_init_r(gd_t *dummy1, ulong dummy2)
+ 	}
+ #elif defined(CONFIG_AM33XX)
+ 	/*
+-	 * name the device outright rather than trust spl_boot_device(). This
+-	 * stack never calls early_system_init() in the SPL -- board_init_f is sdram_init
+-	 * and get_ram_size and nothing else -- so gd->arch.omap_boot_device is still zero
+-	 * here, and boot_from_devices went looking for a loader that does not exist and
+-	 * gave up in three seconds. The product SPL reads U-Boot out of NAND.
++	 * ST20: its ROM boots NAND before USB, so this SPL asks the micro-B port first, the way
++	 * the ST10 and WLA ROMs do on their own, and reads U-Boot out of NAND only when nobody
++	 * there answered. Those two need no second ask.
+ 	 */
+-	spl_boot_list[0] = BOOT_DEVICE_NAND;
+-	ret = boot_from_devices(&spl_image, spl_boot_list,
+-				ARRAY_SIZE(spl_boot_list));
++	ret = -ENODEV;
++#if defined(CONFIG_SPL_USB_ETHER)
++	if (spl_board_is_st20()) {
++		struct spl_boot_device bootdev = { .boot_device = BOOT_DEVICE_USBETH };
++
++		ret = spl_net_load_image_usb(&spl_image, &bootdev);
++	}
++#endif
++	if (ret) {
++		/*
++		 * name the device outright rather than trust spl_boot_device(). This
++		 * stack never calls early_system_init() in the SPL -- board_init_f is sdram_init
++		 * and get_ram_size and nothing else -- so gd->arch.omap_boot_device is still
++		 * zero here, and boot_from_devices went looking for a loader that does not exist
++		 * and gave up in three seconds. The product SPL reads U-Boot out of NAND.
++		 */
++		spl_boot_list[0] = BOOT_DEVICE_NAND;
++		ret = boot_from_devices(&spl_image, spl_boot_list,
++					ARRAY_SIZE(spl_boot_list));
++	}
+ #else
+ 	ret = boot_from_devices(&spl_image, spl_boot_list,
+ 				ARRAY_SIZE(spl_boot_list));
+diff --git a/common/spl/spl_net.c b/common/spl/spl_net.c
+index 07fda2b5..364f33bb 100644
+--- a/common/spl/spl_net.c
++++ b/common/spl/spl_net.c
+@@ -73,6 +73,19 @@ int spl_net_load_image_usb(struct spl_image_info *spl_image,
+ {
+ 	bootdev->boot_device_name = "usb_ether";
+ #if CONFIG_IS_ENABLED(DM_USB_GADGET)
++#ifdef CONFIG_SPL_NAND_SUPPORT
++	/*
++	 * ST20 microbsel (gpio3_7 on the EMU0 pad) high routes the micro-B port to the SCM,
++	 * as the Linux hog does. Stock U-Boot leaves it elsewhere, and a gadget started
++	 * behind it never reaches the host. Data before direction, so it never pulses low.
++	 */
++	writel(0x2, (void *)0x44e000b4);		/* CM_PER_GPIO3_CLKCTRL enable */
++	while (readl((void *)0x44e000b4) & (3 << 16))
++		;
++	writel(0x17, (void *)0x44e109e4);		/* conf_emu0: mode 7, pull-up */
++	writel(1 << 7, (void *)0x481ae194);		/* GPIO3 SETDATAOUT */
++	clrbits_le32((void *)0x481ae134, 1 << 7);	/* GPIO3 OE: output */
++#endif
+ 	/* ROM owns the first USB session; power-cycle PHY before gadget takeover. */
+ 	writel(0x3, (void *)(CTRL_DEVICE_BASE + 0x620));
+ 	mdelay(50);

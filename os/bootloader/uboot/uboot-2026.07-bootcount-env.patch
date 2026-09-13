@@ -1,0 +1,62 @@
+diff --git a/drivers/bootcount/bootcount_davinci.c b/drivers/bootcount/bootcount_davinci.c
+--- a/drivers/bootcount/bootcount_davinci.c
++++ b/drivers/bootcount/bootcount_davinci.c
+@@ -9,9 +9,10 @@
+  */
+ 
+ #include <bootcount.h>
++#include <env.h>
+ #include <asm/davinci_rtc.h>
+ 
+-void bootcount_store(ulong a)
++static void bootcount_rtc_store(ulong a)
+ {
+ 	struct davinci_rtc *reg =
+ 		(struct davinci_rtc *)CONFIG_SYS_BOOTCOUNT_ADDR;
+@@ -27,7 +28,7 @@
+ 		(CONFIG_SYS_BOOTCOUNT_MAGIC & BOOTCOUNT_MAGIC_MASK) | (a & BOOTCOUNT_COUNT_MASK));
+ }
+ 
+-ulong bootcount_load(void)
++static ulong bootcount_rtc_load(void)
+ {
+ 	unsigned long val;
+ 	struct davinci_rtc *reg =
+@@ -39,3 +40,37 @@
+ 	else
+ 		return val & BOOTCOUNT_COUNT_MASK;
+ }
++
++/*
++ * SoundTap (ADR 0010): SCRATCH2 does not survive a cold reset or a power cut, so a slot
++ * that dies that way would start its count over at every boot and never fall back. A slot
++ * an install has selected and soundtapd has not confirmed carries upgrade_available=1,
++ * and while it does its count is kept in the redundant environment too, the way
++ * CONFIG_BOOTCOUNT_ENV keeps it (that backend and this one are one Kconfig choice). A
++ * confirmed slot counts in the RTC alone, with no NAND write per boot, and a warm reset
++ * loop there still falls back. The count is saved only up to bootlimit + 1: past that
++ * altbootcmd runs on every boot anyway, so a fallback that never confirms (stock firmware
++ * in the other slot) does not write NAND on every boot after it.
++ */
++void bootcount_store(ulong a)
++{
++	ulong limit = env_get_ulong("bootlimit", 10, 0);
++
++	bootcount_rtc_store(a);
++	if (env_get_ulong("upgrade_available", 10, 0) && limit && a <= limit + 1 &&
++	    env_get_ulong("bootcount", 10, ~0UL) != a) {
++		env_set_ulong("bootcount", a);
++		env_save();
++	}
++}
++
++ulong bootcount_load(void)
++{
++	ulong count = bootcount_rtc_load();
++	ulong saved;
++
++	if (!env_get_ulong("upgrade_available", 10, 0))
++		return count;
++	saved = env_get_ulong("bootcount", 10, 0);
++	return saved > count ? saved : count;
++}

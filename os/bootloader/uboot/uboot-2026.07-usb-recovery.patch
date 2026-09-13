@@ -1,0 +1,924 @@
+diff --git a/board/ti/am335x/Makefile b/board/ti/am335x/Makefile
+index 7df62fadb..fc222ae04 100644
+--- a/board/ti/am335x/Makefile
++++ b/board/ti/am335x/Makefile
+@@ -9,3 +9,9 @@ obj-y	:= mux.o
+ endif
+ 
+ obj-y	+= board.o
++
++# The USB-stick recovery's statement verifier (uboot-2026.07-usb-recovery.patch); the build
++# copies the sources in next to board.c. Only U-Boot proper with USB storage has the recovery.
++ifndef CONFIG_XPL_BUILD
++obj-$(CONFIG_USB_STORAGE) += soundtap-sig.o tweetnacl.o
++endif
+diff --git a/board/ti/am335x/board.c b/board/ti/am335x/board.c
+index 40f3f73ce..468db0c20 100644
+--- a/board/ti/am335x/board.c
++++ b/board/ti/am335x/board.c
+@@ -1292,3 +1292,905 @@ static int rt_board_setup(void)
+ }
+ EVENT_SPY_SIMPLE(EVT_LAST_STAGE_INIT, rt_board_setup);
+ #endif
++
++#if !defined(CONFIG_XPL_BUILD) && defined(CONFIG_USB_STORAGE) && defined(CONFIG_FS_FAT)
++#include <bootcount.h>
++#include <event.h>
++#include <fs.h>
++#include <nand.h>
++#include <usb.h>
++#include <asm/unaligned.h>
++#include <dm/device.h>
++#include <dm/lists.h>
++#include <dm/ofnode.h>
++#include <fdt_support.h>
++#include <linux/libfdt.h>
++#include <linux/mtd/mtd.h>
++#include <u-boot/crc.h>
++#include <u-boot/schedule.h>
++#include <u-boot/sha256.h>
++#include <mapmem.h>
++#include <memalign.h>
++/* Copied in next to this file by the build (os/bootloader/build-wla-uboot.sh,
++ * os/package/soundtap-bootloaders/build-variant.sh); soundtap-profile.h is written there
++ * from the image's profile, alpha or production. */
++#include "soundtap-sig.h"
++#include "soundtap-keys.h"
++#include "soundtap-profile.h"
++/*
++ * VOLUME DOWN + PRESET 4 held at power-on: install Update.stu from a USB stick and keep
++ * the settings. Stock U-Boot does this as `sweup uboot preserve`, and an owner who knows
++ * the gesture should not lose it because the bootloader is ours now
++ * (docs/architecture/bootloader-recovery.md, docs/decisions/0022-usb-emergency-update-in-uboot.md).
++ *
++ * Only a signed SoundTap package goes in (ADR 0048): Update.stu.sig next to it holds the
++ * statement soundtapd checks, and nothing is written unless it verifies against a compiled
++ * release key or the owner key in the environment (soundtap_owner_key), is a core package
++ * for this image's profile and names the SHA-256 of Update.stu. Bose's file, or ours
++ * without its .sig, is refused; the way back to Bose is the Updates page.
++ *
++ * Only the package's root filesystem is written -- our kernels live in it -- and only into
++ * the slot that is not booting. The stick is read twice: once to hash all of Update.stu
++ * before anything is erased, once to write, hashing it again in the same order. bootcmd
++ * moves to the new slot only when the second pass hashed to the signed digest as well, so
++ * what was written is what was signed, and a stick pulled halfway, a package that does not
++ * check out or a slot full of bad blocks leaves the old slot booting as before.
++ *
++ * ST10 (rhino) and ST20 (spotty). The Wireless Link has no preset keys. Stock's sampler
++ * (0x80101f44 in the ST20's U-Boot 2014.07) serves both from one function: the same matrix
++ * in the same order, the same 0x108 mask for these two keys, only other GPIOs.
++ */
++#define RT_STU_NAME		"/Update.stu"
++#define RT_SIG_NAME		"/Update.stu.sig"
++#define RT_STU_HEADER		0x138
++#define RT_STU_OVERLAP		0x14
++#define RT_STU_MAX		(120 << 20)
++#define RT_CHUNK		(1 << 20)
++#define RT_SLOT_SIZE		0x6000000
++#define RT_PING_ROOTFS		0xc80000
++#define RT_PONG_ROOTFS		0x6c80000
++
++/* soundtapd's defaultKeymap indices: strobe * 4 + switch-in, 12 the directly wired key. */
++#define RT_KEY(i)		(1 << (i))
++#define RT_KEYS_PRESERVE	(RT_KEY(4) | RT_KEY(10))	/* VOLUME DOWN + PRESET 4 */
++
++/* The ST20 straps SYSBOOT 10010b, as the early-lamp patch tells it apart. */
++static bool rt_st20(void)
++{
++	return (readl(0x44e10040) & 0x1f) == 0x12;
++}
++
++static const char *const rt_strobes[] = {
++	"gpio@4804c000_28", "gpio@4804c000_12", "gpio@4804c000_13",
++};
++static const char *const rt_switchins[] = {
++	"gpio@44e07000_23", "gpio@44e07000_26", "gpio@44e07000_22", "gpio@44e07000_27",
++};
++/* spotty_scm.dtb and keypad_gpio.go: strobes asserted low and released to input. */
++static const char *const rt_st20_strobes[] = {
++	"gpio@44e07000_28", "gpio@44e07000_20", "gpio@44e07000_17",
++};
++static const char *const rt_st20_switchins[] = {
++	"gpio@44e07000_22", "gpio@44e07000_23", "gpio@44e07000_26", "gpio@44e07000_29",
++};
++
++/* The kernel's keypad_pins group: switch-ins with the pulls off (they are on the board,
++ * behind the strobe FETs), strobes as outputs. */
++static struct module_pin_mux rt_keypad_pin_mux[] = {
++	{OFFSET(gpmc_ad8), MODE(7) | RXACTIVE | PULLUDDIS},
++	{OFFSET(gpmc_ad9), MODE(7) | RXACTIVE | PULLUDDIS},
++	{OFFSET(gpmc_ad10), MODE(7) | RXACTIVE | PULLUDDIS},
++	{OFFSET(gpmc_ad11), MODE(7) | RXACTIVE | PULLUDDIS},
++	{OFFSET(gpmc_be1n), MODE(7) | PULLUP_EN},
++	{OFFSET(gpmc_ad12), MODE(7) | PULLUP_EN},
++	{OFFSET(gpmc_ad13), MODE(7) | PULLUP_EN},
++	{-1},
++};
++
++/* The ST20 kernel's keypad_pins: switch-ins pulled up, strobes with the pulls off. */
++static struct module_pin_mux rt_st20_keypad_pin_mux[] = {
++	{OFFSET(gpmc_ad8), MODE(7) | RXACTIVE | PULLUP_EN},
++	{OFFSET(gpmc_ad9), MODE(7) | RXACTIVE | PULLUP_EN},
++	{OFFSET(gpmc_ad10), MODE(7) | RXACTIVE | PULLUP_EN},
++	{OFFSET(rmii1_refclk), MODE(7) | RXACTIVE | PULLUP_EN},
++	{OFFSET(mii1_txd2), MODE(7) | PULLUDDIS},
++	{OFFSET(mii1_txd0), MODE(7) | PULLUDDIS},
++	{OFFSET(xdma_event_intr1), MODE(7) | PULLUDDIS},
++	{-1},
++};
++
++/*
++ * Stock blinks its lamps while it installs from a stick. The ST10's Wi-Fi lamp (gpio0_19)
++ * is already a lit GPIO output here (uboot-2026.07-early-lamp.patch), so it toggles once
++ * per chunk read or written: a blink that runs as fast as the install does, and stops if
++ * it hangs. The ST20's pad is the BCO's clock and is left alone.
++ */
++static void rt_lamp(bool on)
++{
++	if (!rt_st20())
++		writel(1 << 19, on ? 0x44e07194 : 0x44e07190);	/* GPIO0 SET/CLEARDATAOUT */
++}
++
++/* Failure: ten quick blinks, then the lamp back on as the boot goes on. */
++static void rt_lamp_fail(void)
++{
++	int i;
++
++	for (i = 0; i < 20; i++) {
++		rt_lamp(i & 1);
++		mdelay(100);
++	}
++}
++
++/* Refused, nothing written: no Update.stu.sig, or one that is not for this speaker. Three
++ * slow blinks, so it is not taken for a stick that could not be read. */
++static void rt_lamp_refused(void)
++{
++	int i;
++
++	for (i = 0; i < 6; i++) {
++		rt_lamp(i & 1);
++		mdelay(600);
++	}
++}
++
++/*
++ * The ST20's SPL starts WDT1 for ~100 s and this U-Boot does not service it, so a long
++ * write would be cut off by a reset. Reloaded here, between chunks, only while the
++ * module is clocked: touching it gated is an external abort.
++ */
++static void rt_kick(void)
++{
++	static u32 trigger, chunks;
++
++	rt_lamp(++chunks & 1);
++	schedule();
++	if ((readl(0x44e004d4) & 0x30003) != 0x2)	/* CM_WKUP_WDT1_CLKCTRL: on, functional */
++		return;
++	while (readl(0x44e35034) & (1 << 3))		/* WWPS: WTGR write pending */
++		;
++	writel(++trigger, 0x44e35030);			/* WTGR: any new value reloads */
++}
++
++/*
++ * One sweep the way stock's sampler at 0x80101fe0 and soundtapd's keypad_gpio.go do it:
++ * assert a strobe high, settle 100 us, read three switch-ins, release; then the fourth
++ * switch-in unstrobed. A pressed key reads low. Returns the key mask, or -1.
++ */
++static int rt_keypad_scan(void)
++{
++	bool st20 = rt_st20();
++	const char *const *strobes = st20 ? rt_st20_strobes : rt_strobes;
++	const char *const *switchins = st20 ? rt_st20_switchins : rt_switchins;
++	/* ST10: drive high to assert, low to release. ST20: low to assert, input to release. */
++	ulong idle = st20 ? GPIOD_IS_IN : GPIOD_IS_OUT;
++	ulong assert = st20 ? GPIOD_IS_OUT : GPIOD_IS_OUT | GPIOD_IS_OUT_ACTIVE;
++	struct gpio_desc strobe[ARRAY_SIZE(rt_strobes)] = {};
++	struct gpio_desc in[ARRAY_SIZE(rt_switchins)] = {};
++	int mask = -1, s, n;
++
++	for (s = 0; s < ARRAY_SIZE(rt_strobes); s++)
++		if (dm_gpio_lookup_name(strobes[s], &strobe[s]) ||
++		    dm_gpio_request(&strobe[s], "keypad") ||
++		    dm_gpio_set_dir_flags(&strobe[s], idle))
++			goto out;
++	for (n = 0; n < ARRAY_SIZE(rt_switchins); n++)
++		if (dm_gpio_lookup_name(switchins[n], &in[n]) ||
++		    dm_gpio_request(&in[n], "keypad") ||
++		    dm_gpio_set_dir_flags(&in[n], GPIOD_IS_IN))
++			goto out;
++	configure_module_pin_mux(st20 ? rt_st20_keypad_pin_mux : rt_keypad_pin_mux);
++
++	mask = 0;
++	for (s = 0; s < ARRAY_SIZE(rt_strobes); s++) {
++		dm_gpio_set_dir_flags(&strobe[s], assert);
++		udelay(100);
++		for (n = 0; n < 3; n++)
++			if (dm_gpio_get_value(&in[n]) == 0)
++				mask |= RT_KEY(s * 4 + n);
++		dm_gpio_set_dir_flags(&strobe[s], idle);
++	}
++	if (dm_gpio_get_value(&in[3]) == 0)
++		mask |= RT_KEY(12);
++out:
++	for (s = 0; s < ARRAY_SIZE(rt_strobes); s++)
++		if (dm_gpio_is_valid(&strobe[s]))
++			dm_gpio_free(strobe[s].dev, &strobe[s]);
++	for (n = 0; n < ARRAY_SIZE(rt_switchins); n++)
++		if (dm_gpio_is_valid(&in[n]))
++			dm_gpio_free(in[n].dev, &in[n]);
++	return mask;
++}
++
++/*
++ * Bring up usb0 as a host. Its control tree says peripheral, which is what every other
++ * build of this U-Boot wants, and the musb wrapper binds by that property alone. So the
++ * property is rewritten in place -- same length, NUL padded -- and the host driver bound
++ * to the node by hand. Nothing here runs unless the keys are held.
++ */
++static int rt_usb_host_start(void)
++{
++	ofnode node = ofnode_get_aliases_node("usb0");
++	struct udevice *wrapper, *dev;
++	const char *mode;
++	char host[16] = "host";
++	int len;
++
++	if (!ofnode_valid(node))
++		return -ENODEV;
++	mode = ofnode_get_property(node, "dr_mode", &len);
++	if (!mode || len < (int)sizeof("host") || len > (int)sizeof(host))
++		return -EINVAL;
++	if (fdt_setprop_inplace((void *)gd->fdt_blob, ofnode_to_offset(node), "dr_mode",
++				host, len))
++		return -EIO;
++	if (device_find_global_by_ofnode(ofnode_get_parent(node), &wrapper) ||
++	    device_bind_driver_to_node(wrapper, "ti-musb-host", "usb-recovery", node, &dev))
++		return -ENODEV;
++	return usb_init();
++}
++
++static const char *rt_part = "0:1";
++
++/*
++ * The ST20's rear micro-B goes through a mux, microbsel (gpio3_7 on the EMU0 pad). Stock
++ * U-Boot drives it low at board init and runs `usb start` for the stick; high routes the
++ * connector to usb0, which is how the Pi reaches the gadget. Which controller a stick
++ * lands on with it low is not measured, so both are hosts and both settings are tried.
++ */
++static struct module_pin_mux rt_st20_usb_pin_mux[] = {
++	{OFFSET(emu0), MODE(7)},
++	{OFFSET(usb0_drvvbus), MODE(0)},
++	{OFFSET(usb1_drvvbus), MODE(0)},
++	{-1},
++};
++
++static void rt_st20_microbsel(int high)
++{
++	struct gpio_desc sel = {};
++
++	configure_module_pin_mux(rt_st20_usb_pin_mux);
++	if (dm_gpio_lookup_name("gpio@481ae000_7", &sel) || dm_gpio_request(&sel, "microbsel"))
++		return;
++	dm_gpio_set_dir_flags(&sel, high ? GPIOD_IS_OUT | GPIOD_IS_OUT_ACTIVE : GPIOD_IS_OUT);
++	dm_gpio_free(sel.dev, &sel);
++}
++
++static int rt_find_stick(void)
++{
++	rt_part = "0:1";
++	if (!fs_set_blk_dev("usb", rt_part, FS_TYPE_ANY))
++		return 0;
++	rt_part = "0";	/* a stick formatted without a partition table */
++	return fs_set_blk_dev("usb", rt_part, FS_TYPE_ANY) ? -ENODEV : 0;
++}
++
++static int rt_read(void *buf, loff_t off, loff_t len)
++{
++	loff_t got;
++
++	rt_kick();
++	if (fs_set_blk_dev("usb", rt_part, FS_TYPE_ANY))
++		return -ENODEV;
++	if (fs_read(RT_STU_NAME, map_to_sysmem(buf), off, len, &got) || got != len)
++		return -EIO;
++	return 0;
++}
++
++/* Where the root filesystem module sits in the package, and the header that said so. */
++struct rt_rootfs {
++	loff_t off;
++	u32 size, body;
++	u8 hdr[RT_STU_HEADER];
++};
++
++/* Walks the header chain the way internal/stu does: big-endian fields, each module's
++ * header starting 0x14 bytes before the end of the previous payload. */
++static int rt_find_rootfs(u8 *hdr, loff_t file, struct rt_rootfs *rf)
++{
++	loff_t off = 0;
++	int i;
++
++	for (i = 0; off + RT_STU_HEADER <= file && i < 32; i++) {
++		u32 size;
++
++		if (rt_read(hdr, off, RT_STU_HEADER))
++			return -EIO;
++		if (i == 0 && memcmp(hdr + 4, "BOSE", 4))
++			return -EINVAL;
++		if (crc32(0, hdr + RT_STU_OVERLAP, 0x134 - RT_STU_OVERLAP) !=
++		    get_unaligned_be32(hdr + 0x134))
++			return -EBADMSG;
++		size = get_unaligned_be32(hdr + 0x98);
++		if (size <= RT_STU_OVERLAP || size > RT_STU_MAX)
++			return -EINVAL;
++		if (!strncmp((char *)hdr + 0x18, "soundtap-rootfs", 0x28)) {
++			rf->off = off + RT_STU_HEADER;
++			rf->size = size;
++			memcpy(rf->hdr, hdr, RT_STU_HEADER);
++			return rf->off + size <= file ? 0 : -EINVAL;
++		}
++		off += RT_STU_HEADER + size - RT_STU_OVERLAP;
++	}
++	return -ENOENT;
++}
++
++/*
++ * The statement in Update.stu.sig, verified against the release keys this U-Boot was built
++ * with and the owner's own key in the environment, when it holds one, and held to what the
++ * stick takes (soundtap-sig.c, ADR 0048). -ENOKEY: there is no .sig, so the package is
++ * unsigned. -EKEYREJECTED: there is one, and it is not a signed statement for a SoundTap
++ * Core package of this image's profile.
++ */
++static int rt_check_sig(u8 *buf, struct st_statement *st)
++{
++	static unsigned char keys[ARRAY_SIZE(st_release_keys) + 1][32];
++	const char *owner = env_get(ST_OWNER_KEY_ENV);
++	loff_t size, got;
++	int ret, nkeys;
++
++	if (fs_set_blk_dev("usb", rt_part, FS_TYPE_ANY) || fs_size(RT_SIG_NAME, &size)) {
++		printf("Update.stu.sig not found: the stick takes only a signed SoundTap package\n");
++		return -ENOKEY;
++	}
++	if (size < 1 || size > ST_SIG_MAX) {
++		printf("Update.stu.sig: not a SoundTap package statement\n");
++		return -EKEYREJECTED;
++	}
++	if (fs_set_blk_dev("usb", rt_part, FS_TYPE_ANY) ||
++	    fs_read(RT_SIG_NAME, map_to_sysmem(buf), 0, size, &got) || got != size)
++		return -EIO;
++	/* A value that is not a key is no key: the release keys alone, as soundtapd does. */
++	nkeys = st_trusted_keys(st_release_keys, ARRAY_SIZE(st_release_keys), owner, keys);
++	if (nkeys > (int)ARRAY_SIZE(st_release_keys))
++		printf(ST_OWNER_KEY_ENV ": the owner key is trusted as well\n");
++	else if (owner)
++		printf(ST_OWNER_KEY_ENV ": not an ed25519 public key; ignored\n");
++	ret = st_verify((char *)buf, size, (const unsigned char (*)[32])keys, nkeys, "core", st);
++	if (!ret)
++		ret = st_stick_policy(st, SOUNDTAP_UBOOT_PROFILE);
++	if (ret) {
++		printf("Update.stu.sig: %s; nothing written\n", st_result_text(ret));
++		return -EKEYREJECTED;
++	}
++	printf("Update.stu.sig: SoundTap Core %s, %s, verified (soundtap-uboot-profile="
++	       SOUNDTAP_UBOOT_PROFILE ")\n", st->version, st->profile);
++	return 0;
++}
++
++/* SHA-256 over len bytes of Update.stu from off, a chunk at a time. */
++static int rt_hash(u8 *buf, sha256_context *ctx, loff_t off, loff_t len)
++{
++	u32 n;
++
++	for (; len > 0; off += n, len -= n) {
++		n = min_t(loff_t, RT_CHUNK, len);
++		if (rt_read(buf, off, n))
++			return -EIO;
++		sha256_update(ctx, buf, n);
++	}
++	return 0;
++}
++
++static bool rt_page_empty(const u8 *p, u32 len)
++{
++	while (len--)
++		if (*p++ != 0xff)
++			return false;
++	return true;
++}
++
++/* One NAND page read back after programming; 4 KiB covers every page size on these boards. */
++static u8 rt_page[4096];
++
++/*
++ * At most this many blocks of the slot are marked bad in one update, as the installer that
++ * runs on stock allows per partition (MTD_MARK_BAD_PER_PARTITION in os/installer/module/mtd.h).
++ * More failures than that in one write is not wear but something else -- timing, power, a
++ * driver -- and a mark is for good, so the update stops there and the old slot boots.
++ */
++#define RT_MARK_BAD_MAX		2
++
++/*
++ * An erase failed because of this block only when the NAND said so: nand_erase_nand sets
++ * fail_addr to the block when its status read FAIL. A write-protected chip fails every erase
++ * with -EIO and leaves fail_addr unknown; that says nothing about the block.
++ */
++static int rt_erase_err(const struct erase_info *ei, loff_t blk, int err)
++{
++	return err == -EIO && ei->fail_addr != blk ? -EROFS : err;
++}
++
++/*
++ * Retire a block of the slot being written after the NAND failed its erase or program: err
++ * is what that returned, and only -EIO, the chip's FAIL status, counts. A timeout or any other
++ * error, a read that fails or reads back otherwise, never comes here; nothing outside the two
++ * rootfs slots is ever marked, and never more than RT_MARK_BAD_MAX blocks. Returns 0 once
++ * the block is marked; the caller then goes on in the next good block.
++ */
++static int rt_mark_bad(struct mtd_info *mtd, loff_t part, loff_t blk, const char *op, int err,
++		       int *marked)
++{
++	const char *name = part == RT_PING_ROOTFS ? "NAND.File-System-Ping" : "NAND.File-System-Pong";
++	u32 n;
++	int ret;
++
++	if ((part != RT_PING_ROOTFS && part != RT_PONG_ROOTFS) || blk < part ||
++	    blk >= part + RT_SLOT_SIZE) {
++		printf("Update.stu: 0x%llx is outside the slot; not marked bad\n", (long long)blk);
++		return -EINVAL;
++	}
++	n = (u32)(blk - part) / mtd->erasesize;	/* 32-bit: U-Boot has no 64-bit division */
++	if (err != -EIO) {
++		printf("Update.stu: %s block %u: %s failed (%d), not a NAND failure; not marked bad\n",
++		       name, n, op, err);
++		return -EIO;
++	}
++	if (*marked >= RT_MARK_BAD_MAX) {
++		printf("Update.stu: %s block %u: %s failed (%d); %d blocks marked bad already, the "
++		       "most allowed: not marked, nothing selected\n", name, n, op, err, *marked);
++		return -EIO;
++	}
++	ret = mtd_block_markbad(mtd, blk);
++	if (ret) {
++		printf("Update.stu: %s block %u: %s failed (%d), and marking it bad failed (%d)\n",
++		       name, n, op, err, ret);
++		return -EIO;
++	}
++	(*marked)++;
++	printf("Update.stu: %s block %u (0x%llx) marked bad: %s failed (%d), %d of %d\n",
++	       name, n, (long long)blk, op, err, *marked, RT_MARK_BAD_MAX);
++	return 0;
++}
++
++/*
++ * One image eraseblock into the first good block at *blk or after it: erased, the pages that
++ * are not empty written, all of it read back and compared, as a write that reports success
++ * proves nothing about the bytes NAND kept. A block the NAND fails to erase or program is
++ * marked bad and the image block goes into the next one, as ubiformat does; it is all in RAM.
++ * A read that fails or differs fails the update, and marks nothing.
++ */
++static int rt_write_block(struct mtd_info *mtd, const u8 *data, loff_t part, loff_t *blk,
++			  int *marked)
++{
++	loff_t end = part + RT_SLOT_SIZE;
++	size_t ret;
++	u32 p;
++	int err;
++
++	for (;; *blk += mtd->erasesize) {
++		struct erase_info ei = { .mtd = mtd, .len = mtd->erasesize };
++
++		while (*blk < end && mtd_block_isbad(mtd, *blk))
++			*blk += mtd->erasesize;
++		if (*blk >= end)
++			return -ENOSPC;
++		ei.addr = *blk;
++		err = mtd_erase(mtd, &ei);
++		if (err) {
++			if (rt_mark_bad(mtd, part, *blk, "erase", rt_erase_err(&ei, *blk, err), marked))
++				return -EIO;
++			continue;
++		}
++		for (p = 0, err = 0; p < mtd->erasesize; p += mtd->writesize) {
++			if (rt_page_empty(data + p, mtd->writesize))
++				continue;
++			err = mtd_write(mtd, *blk + p, mtd->writesize, &ret, data + p);
++			if (err || ret != mtd->writesize)
++				break;
++		}
++		if (p < mtd->erasesize) {
++			if (rt_mark_bad(mtd, part, *blk, "write", err, marked))
++				return -EIO;
++			continue;
++		}
++		for (p = 0; p < mtd->erasesize; p += mtd->writesize) {
++			err = mtd_read(mtd, *blk + p, mtd->writesize, &ret, rt_page);
++			if ((err && !mtd_is_bitflip(err)) || ret != mtd->writesize ||
++			    memcmp(rt_page, data + p, mtd->writesize))
++				return -EIO;
++		}
++		return 0;
++	}
++}
++
++/*
++ * Pass two, what ubiformat does for the installer: every good eraseblock of the slot
++ * erased, image eraseblocks written to the good ones in order with empty pages left
++ * erased (rt_write_block), and every block after the image erased too, so no eraseblock of
++ * the old image survives with a volume header UBI would believe; one that cannot be erased
++ * is marked bad, which UBI skips. Each chunk goes into the package's hash from the buffer it
++ * is written from.
++ */
++static int rt_write(struct mtd_info *mtd, u8 *buf, const struct rt_rootfs *rf, loff_t part,
++		    sha256_context *ctx)
++{
++	loff_t blk = part, end = part + RT_SLOT_SIZE;
++	int marked = 0, err;
++	u32 done, n, b;
++
++	if (mtd->writesize > sizeof(rt_page))
++		return -EINVAL;
++	for (done = 0; done < rf->body; done += n) {
++		n = min_t(u32, RT_CHUNK, rf->body - done);
++		if (rt_read(buf, rf->off + done, n))
++			return -EIO;
++		sha256_update(ctx, buf, n);
++		for (b = 0; b < n; b += mtd->erasesize, blk += mtd->erasesize) {
++			err = rt_write_block(mtd, buf + b, part, &blk, &marked);
++			if (err)
++				return err;
++		}
++	}
++	for (; blk < end; blk += mtd->erasesize) {
++		struct erase_info ei = { .mtd = mtd, .addr = blk, .len = mtd->erasesize };
++
++		rt_kick();
++		if (mtd_block_isbad(mtd, blk))
++			continue;
++		err = mtd_erase(mtd, &ei);
++		if (err && rt_mark_bad(mtd, part, blk, "erase", rt_erase_err(&ei, blk, err), &marked))
++			return -EIO;
++	}
++	return 0;
++}
++
++/*
++ * The slot recipes our installers write: mainline_env_templates in
++ * os/installer/module/installer.c and mainlineTemplates in internal/flash/recipes.go, byte for
++ * byte (os/tests/installer/test_wla_env_recipes.py). Index 2 takes the device tree and the
++ * kernel, 3 the variant and the module type, 4 the variant.
++ */
++static const char *const rt_env_templates[] = {
++	"nand_boot=setenv slot Ping; setenv rmtd 8; setenv kaddr 0x280000; run slot_boot",
++	"nand_boot2=setenv slot Pong; setenv rmtd 9; setenv kaddr 0x780000; run slot_boot",
++	"slot_boot=if ubi part NAND.File-System-${slot} 2048; then if ubifsmount ubi0:rootfs; "
++		"then if ubifsload 0x83000000 /boot/%s; then mw.l 0x82000000 0 1; ubifsload "
++		"0x82000000 /boot/%s; if itest.l *0x82000000 == 0x56190527; then run "
++		"soundtap_args; bootm 0x82000000 - 0x83000000; fi; run stock_args; if nand read 0x80007fc0 "
++		"${kaddr} 0x500000; then if fixsig 0x80007fc0; then bootm 0x80007fc0 - 0x83000000; fi; "
++		"fi; fi; fi; fi; reset",
++	"soundtap_args=setenv bootargs console=ttyGS0,115200n8 root=ubi0:rootfs ro "
++		"rootfstype=ubifs ubi.mtd=${rmtd},2048 rootwait init=/init mem=128M cma=8M panic=10 "
++		"omap_wdt.early_enable=1 variant=%s module_type=%s country=GB region=GB "
++		"soundtap.nandroot=1 ubi.mtd=NAND.Persistent-Storage,2048",
++	"stock_args=setenv bootargs console=ttyO3,115200n8 quiet root=ubi0:rootfs ro "
++		"ubi.mtd=${rmtd},2048 noinitrd rootfstype=ubifs rootwait=1 ip=off variant=%s "
++		"variant_raw=${variant_raw} variant_mode=normal oled_type= country=GB region=GB",
++	"mtdids=nand0=nand0",
++	"mtdparts=mtdparts=nand0:0x20000@0x0(NAND.SPL),0x20000@0x20000(NAND.SPL.backup1),0x20000@0x40000(NAND.SPL.backup2),0x20000@0x60000(NAND.SPL.backup3),0x1E0000@0x80000(NAND.U-Boot),0x20000@0x260000(NAND.U-Boot-Env),0x500000@0x280000(NAND.Kernel-Ping),0x500000@0x780000(NAND.Kernel-Pong),0x6000000@0xC80000(NAND.File-System-Ping),0x6000000@0x6C80000(NAND.File-System-Pong),0x2600000@0xCC80000(NAND.Persistent-Storage),0xB80000@0xF280000(NAND.Update-Staging),0x40000@0xFE00000(NAND.Manufacturing-Data)",
++};
++
++/*
++ * A torn environment leaves U-Boot on its built-in one, which holds none of the recipes a
++ * saved bootcmd names, and Bose's names nboot.e. So when any is missing the whole
++ * set goes in for this board's model (rt_v and rt_m, as rt_board_setup read them), with the
++ * nand_args pair soundtapd needs to select a slot (rebuiltEnv in internal/flash): the
++ * environment this saves is complete on its own. One that has them all keeps them; its
++ * installer knew the model's variant (a Series III, say) better than the board does.
++ */
++static int rt_set_recipes(void)
++{
++	static char line[2048];
++	const char *v = env_get("rt_v"), *m = env_get("rt_m");
++	char dtb[32], kernel[32], *eq;
++	int i, n;
++
++	for (i = 0; i < ARRAY_SIZE(rt_env_templates); i++) {
++		n = strcspn(rt_env_templates[i], "=");
++		memcpy(line, rt_env_templates[i], n);
++		line[n] = 0;
++		if (!env_get(line))
++			break;
++	}
++	if (i == ARRAY_SIZE(rt_env_templates))
++		return 0;
++	if (!v || !m)
++		return -ENODEV;
++	snprintf(dtb, sizeof(dtb), "%s_%s.dtb", v, m);
++	snprintf(kernel, sizeof(kernel), "uImage-%s", v);
++	for (i = 0; i < ARRAY_SIZE(rt_env_templates); i++) {
++		const char *t = rt_env_templates[i];
++
++		n = i == 2 ? snprintf(line, sizeof(line), t, dtb, kernel) :
++		    i == 3 ? snprintf(line, sizeof(line), t, v, m) :
++		    i == 4 ? snprintf(line, sizeof(line), t, v) :
++			     snprintf(line, sizeof(line), "%s", t);
++		eq = strchr(line, '=');
++		if (n < 0 || n >= sizeof(line) || !eq)
++			return -EINVAL;
++		*eq = 0;
++		if (env_set(line, eq + 1))
++			return -EIO;
++	}
++	if (!env_get("nand_args"))
++		env_set("nand_args", "setenv bootargs ${bootargs} ubi.mtd=8,2048");
++	if (!env_get("nand_args2"))
++		env_set("nand_args2", "setenv bootargs ${bootargs} ubi.mtd=9,2048");
++	printf("Update.stu: boot recipes for %s_%s written with the slot\n", v, m);
++	return 0;
++}
++
++static int rt_usb_update(void)
++{
++	const char *bootcmd = env_get("bootcmd");
++	bool st20 = rt_st20();
++	/* Install into the slot that is not booting; bootcmd says which. */
++	bool pong = bootcmd && strstr(bootcmd, "nand_boot2");
++	loff_t part = pong ? RT_PING_ROOTFS : RT_PONG_ROOTFS;
++	const char *next = pong ? "run nand_boot;" : "run nand_boot2;";
++	const char *prev = pong ? "run nand_boot2;" : "run nand_boot;";
++	struct mtd_info *mtd = get_nand_dev_by_index(0);
++	struct rt_rootfs rf = {};
++	struct st_statement st;
++	sha256_context ctx;
++	u8 digest[SHA256_SUM_LEN];
++	loff_t file, head;
++	u8 *buf;
++	int ret;
++
++	if (!mtd || mtd->erasesize > RT_CHUNK || RT_CHUNK % mtd->erasesize)
++		return -ENODEV;
++	buf = malloc_cache_aligned(RT_CHUNK);
++	if (!buf)
++		return -ENOMEM;
++	if (st20)
++		rt_st20_microbsel(0);
++	ret = rt_usb_host_start();
++	if (ret)
++		goto out;
++	if (rt_find_stick() && st20) {
++		usb_stop();
++		rt_st20_microbsel(1);
++		ret = usb_init();
++		if (ret)
++			goto out;
++	}
++	ret = rt_find_stick();
++	if (ret)
++		goto out;
++	if (fs_size(RT_STU_NAME, &file)) {
++		printf("USB UPDATE FILE NOT FOUND\n");
++		ret = -ENOENT;
++		goto out;
++	}
++	ret = rt_check_sig(buf, &st);
++	if (ret)
++		goto out;
++	ret = rt_find_rootfs(buf, file, &rf);
++	if (ret)
++		goto out;
++	/* The module declares its overlap with the next header as its own; the UBI image is
++	 * whichever of the two lengths is whole eraseblocks (ubiBodySize in internal/web). */
++	if (rf.size % mtd->erasesize == 0)
++		rf.body = rf.size;
++	else if ((rf.size - RT_STU_OVERLAP) % mtd->erasesize == 0)
++		rf.body = rf.size - RT_STU_OVERLAP;
++	ret = -EINVAL;
++	if (!rf.body || rf.body > RT_SLOT_SIZE)
++		goto out;
++	/* Pass one: nothing is erased before all of Update.stu hashes to the signed digest. */
++	printf("Update.stu: %lld bytes, rootfs %u, checking\n", file, rf.size);
++	sha256_starts(&ctx);
++	ret = rt_hash(buf, &ctx, 0, file);
++	if (ret)
++		goto out;
++	sha256_finish(&ctx, digest);
++	if (st_matches(&st, digest)) {
++		printf("Update.stu: %s; nothing written\n", st_result_text(ST_WRONG_FILE));
++		ret = -EKEYREJECTED;
++		goto out;
++	}
++	/*
++	 * Pass two hashes the whole file again, in order, with the rootfs hashed from the very
++	 * buffers it is written from, and the rootfs header compared with the one that placed
++	 * it. A stick that reads back otherwise ends with another digest, and nothing is
++	 * selected. The spare slot is written by then, as an interrupted /api/firmware leaves
++	 * it; the slot that boots is untouched.
++	 */
++	printf("Update.stu: writing %s\n", pong ? "PING" : "PONG");
++	head = rf.off - RT_STU_HEADER;
++	sha256_starts(&ctx);
++	ret = rt_hash(buf, &ctx, 0, head);
++	if (!ret)
++		ret = rt_read(buf, head, RT_STU_HEADER);
++	if (!ret && memcmp(buf, rf.hdr, RT_STU_HEADER))
++		ret = -EBADMSG;
++	if (!ret) {
++		sha256_update(&ctx, buf, RT_STU_HEADER);
++		ret = rt_write(mtd, buf, &rf, part, &ctx);
++	}
++	if (!ret)
++		ret = rt_hash(buf, &ctx, rf.off + rf.body, file - rf.off - rf.body);
++	if (ret)
++		goto out;
++	sha256_finish(&ctx, digest);
++	if (st_matches(&st, digest)) {
++		ret = -EBADMSG;	/* the stick read back differently the second time */
++		goto out;
++	}
++	ret = rt_set_recipes();
++	if (ret)
++		goto out;
++	/* As a normal install leaves it (armRollback in internal/flash, ADR 0010): the new
++	 * slot boots, the one it was installed next to is the fallback, and the count starts
++	 * over, so a recovered slot that never confirms rolls back instead of retrying. It
++	 * is unconfirmed, so the count is kept in the environment too, where a power cut
++	 * does not clear it (bootcount_davinci.c), in this same save. */
++	env_set("bootcmd", next);
++	env_set("altbootcmd", prev);
++	env_set("bootlimit", "4");
++	env_set("upgrade_available", "1");
++	env_set("bootcount", "0");
++	ret = env_save();
++#ifdef CONFIG_BOOTCOUNT_LIMIT
++	if (!ret)
++		bootcount_store(0);	/* the RTC: the environment already holds 0 */
++#endif
++out:
++	free(buf);
++	return ret;
++}
++
++/*
++ * The Wireless Link has no preset keys, only two buttons: Bluetooth on gpio0_23 and AUX on
++ * gpio0_27, low when pressed, pulled up on the board (docs/hardware/wla/buttons.md). Both held at
++ * power-on stand in for VOLUME DOWN + PRESET 4; the stick goes in its micro-B, as on the
++ * ST10 (ADR 0095).
++ */
++static const char *const rt_wla_buttons[] = { "gpio@44e07000_23", "gpio@44e07000_27" };
++
++static struct module_pin_mux rt_wla_button_pin_mux[] = {
++	{OFFSET(gpmc_ad9), MODE(7) | RXACTIVE | PULLUDDIS},
++	{OFFSET(gpmc_ad11), MODE(7) | RXACTIVE | PULLUDDIS},
++	{-1},
++};
++
++static bool rt_wla_both_held(void)
++{
++	struct gpio_desc in[ARRAY_SIZE(rt_wla_buttons)] = {};
++	int held = 0, n;
++
++	configure_module_pin_mux(rt_wla_button_pin_mux);
++	for (n = 0; n < ARRAY_SIZE(rt_wla_buttons); n++)
++		if (!dm_gpio_lookup_name(rt_wla_buttons[n], &in[n]) &&
++		    !dm_gpio_request(&in[n], "button") &&
++		    !dm_gpio_set_dir_flags(&in[n], GPIOD_IS_IN) &&
++		    dm_gpio_get_value(&in[n]) == 0)
++			held++;
++	for (n = 0; n < ARRAY_SIZE(rt_wla_buttons); n++)
++		if (dm_gpio_is_valid(&in[n]))
++			dm_gpio_free(in[n].dev, &in[n]);
++	return held == ARRAY_SIZE(rt_wla_buttons);
++}
++
++/*
++ * The ST300 (ginger) has no keypad on the module: its keys and IR live on the LPM, which
++ * raises a module GPIO at power-on when the remote's recovery combo is held (SoundTouch,
++ * then CC held while power comes back; Bose's documented USB update). Stock U-Boot reads
++ * it asserted high: gpio0_26 on this SM2 module (bits 17:16 of 0x44e107fc = 2), gpio0_23
++ * on the other revision. Its second pin (gpio0_22, factory reset) is not used: SoundTap
++ * only offers the preserving update. Stock brackets the update with LPM frames over UART0;
++ * this does not, as the update writes the other slot and a reset midway boots the old one.
++ */
++static bool rt_ginger_combo(void)
++{
++	bool rev2 = ((readl(0x44e107fc) >> 16) & 3) == 2;
++	struct module_pin_mux mux[] = {
++		{rev2 ? OFFSET(gpmc_ad10) : OFFSET(gpmc_ad9), MODE(7) | RXACTIVE | PULLUDEN},
++		{-1},
++	};
++	struct gpio_desc in = {};
++	bool held;
++
++	configure_module_pin_mux(mux);
++	held = !dm_gpio_lookup_name(rev2 ? "gpio@44e07000_26" : "gpio@44e07000_23", &in) &&
++	       !dm_gpio_request(&in, "recovery") &&
++	       !dm_gpio_set_dir_flags(&in, GPIOD_IS_IN) &&
++	       dm_gpio_get_value(&in) == 1;
++	if (dm_gpio_is_valid(&in))
++		dm_gpio_free(in.dev, &in);
++	return held;
++}
++
++/*
++ * Tell Linux the gesture was seen: soundtap.recovery=<result> on the kernel command line,
++ * 0 for an install, a negative errno otherwise (-19 no stick, -2 no Update.stu, -126 no
++ * Update.stu.sig, -129 a signature refused, -74 a header that does not check out or a
++ * stick that read back otherwise). A gesture
++ * with no stick in is how the trigger is tested without installing anything. It is added
++ * where the command line goes into the device tree (board_fdt_chosen_bootargs), never to
++ * the environment: the boot count of an unconfirmed slot saves the environment after this
++ * runs, and the next boot must not carry it.
++ */
++#define RT_NO_RECOVERY		1	/* no gesture this boot */
++static int rt_recovery_result = RT_NO_RECOVERY;
++
++static void rt_mark_cmdline(int ret)
++{
++	rt_recovery_result = ret;
++}
++
++static int rt_usb_recovery(void)
++{
++	/* The model from the board, never from the environment, which may be torn or another
++	 * board's: rt_board_setup set rt_v from SYSBOOT (the ST20), the manufacturing
++	 * partition (rhino, binky, ginger) or variant_raw. That spy runs first: the linker list
++	 * sorts spies by name. */
++	const char *v = env_get("rt_v");
++	int ret;
++
++	if (!v)
++		return 0;
++	if (!strcmp(v, "ginger")) {
++		if (!rt_ginger_combo())
++			return 0;
++		mdelay(50);
++		if (!rt_ginger_combo())
++			return 0;
++	} else if (!strcmp(v, "binky")) {
++		if (!rt_wla_both_held())
++			return 0;
++		mdelay(50);
++		if (!rt_wla_both_held())
++			return 0;
++	} else {
++		if (strcmp(v, "rhino") && strcmp(v, "spotty"))
++			return 0;
++		/* Two sweeps 50 ms apart must agree, as stock's own exact-mask test does. */
++		if (rt_keypad_scan() != RT_KEYS_PRESERVE)
++			return 0;
++		mdelay(50);
++		if (rt_keypad_scan() != RT_KEYS_PRESERVE)
++			return 0;
++	}
++	printf("Emergency Update from USB - preserve...\n");
++	ret = rt_usb_update();
++	usb_stop();
++	if (ret) {
++		printf("Emergency Update failed (%d); booting the current slot\n", ret);
++		if (ret == -ENOKEY || ret == -EKEYREJECTED)
++			rt_lamp_refused();
++		else
++			rt_lamp_fail();
++	}
++	rt_lamp(true);
++	if (!ret)
++		printf("Emergency Update done; booting it\n");
++	rt_mark_cmdline(ret);
++	/* Either way the boot goes on: bootcmd names the new slot only if it checked out. */
++	return 0;
++}
++EVENT_SPY_SIMPLE(EVT_LAST_STAGE_INIT, rt_usb_recovery);
++
++/*
++ * What this U-Boot adds to the kernel command line: the gesture's result, and, on every
++ * boot, that it reads the redundant environment, so soundtapd writes that format and no
++ * other (flash.EnvRedundantMarker, ADR 0010): an older U-Boot of ours, or Bose's, reads
++ * one 8 KiB copy and falls back to its built-in default on two of 32 KiB. fdt_chosen puts
++ * what this returns in /chosen/bootargs, the line the kernel takes.
++ */
++#ifdef CONFIG_ENV_REDUNDANT
++#define RT_ENV_MARKER		" soundtap.env=redundant"
++#else
++#define RT_ENV_MARKER		""
++#endif
++
++const char *board_fdt_chosen_bootargs(const struct fdt_property *fdt_ba)
++{
++	const char *args = env_get("bootargs");
++	static char *line;
++
++	if (!args)
++		return NULL;
++	free(line);
++	line = malloc(strlen(args) + sizeof(RT_ENV_MARKER) + 32);
++	if (!line)
++		return args;
++	if (rt_recovery_result != RT_NO_RECOVERY)
++		sprintf(line, "%s%s soundtap.recovery=%d", args, RT_ENV_MARKER, rt_recovery_result);
++	else
++		sprintf(line, "%s%s", args, RT_ENV_MARKER);
++	return line;
++}
++#endif

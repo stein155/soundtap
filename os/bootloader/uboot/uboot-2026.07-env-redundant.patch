@@ -1,0 +1,38 @@
+diff --git a/env/common.c b/env/common.c
+--- a/env/common.c
++++ b/env/common.c
+@@ -474,7 +474,11 @@
+ static unsigned char env_flags;
+ 
+ #define ENV_SINGLE_HEADER_SIZE	(sizeof(uint32_t))
+-#define ENV_SINGLE_SIZE		(CONFIG_ENV_SIZE - ENV_SINGLE_HEADER_SIZE)
++/*
++ * SoundTap: the single copy this upgrades from is 8 KiB, CONFIG_ENV_SIZE of Bose's U-Boot
++ * and of ours before the redundant environment, not this build's 32 KiB (ADR 0010).
++ */
++#define ENV_SINGLE_SIZE		(0x2000 - ENV_SINGLE_HEADER_SIZE)
+ 
+ typedef struct {
+ 	uint32_t	crc;			/* CRC32 over data bytes */
+@@ -484,7 +488,7 @@
+ int env_check_redund(const char *buf1, int buf1_read_fail,
+ 		     const char *buf2, int buf2_read_fail)
+ {
+-	int crc1_ok = 0, crc2_ok = 0, i;
++	int crc1_ok = 0, crc2_ok = 0;
+ 	env_t *tmp_env1, *tmp_env2;
+ 	env_single_t *tmp_envs;
+ 
+@@ -521,8 +525,10 @@
+ 		 */
+ 		if (CONFIG_IS_ENABLED(ENV_REDUNDANT_UPGRADE) && !buf1_read_fail &&
+ 		    crc32(0, tmp_envs->data, ENV_SINGLE_SIZE) == tmp_envs->crc) {
+-			for (i = ENV_SIZE - 1; i >= 0; i--)
+-				tmp_env1->data[i] = tmp_envs->data[i];
++			/* SoundTap: the single copy is smaller than this one;
++			 * the rest of the data is zeroes, as env_export leaves it. */
++			memmove(tmp_env1->data, tmp_envs->data, ENV_SINGLE_SIZE);
++			memset(tmp_env1->data + ENV_SINGLE_SIZE, 0, ENV_SIZE - ENV_SINGLE_SIZE);
+ 			tmp_env1->flags = 0;
+ 			gd->env_valid = ENV_VALID;
+ 			return 0;

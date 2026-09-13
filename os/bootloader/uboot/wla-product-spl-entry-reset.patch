@@ -1,0 +1,16 @@
+diff --git a/arch/arm/mach-omap2/am33xx/board.c b/arch/arm/mach-omap2/am33xx/board.c
+index 4e9ad893..f540d737 100644
+--- a/arch/arm/mach-omap2/am33xx/board.c
++++ b/arch/arm/mach-omap2/am33xx/board.c
+@@ -534,4 +534,11 @@ void early_system_init(void)
+ #ifdef CONFIG_XPL_BUILD
+ void board_init_f(ulong dummy)
+ {
++	/*
++	 * Diagnostic-only: PRM global warm reset returns control to the AM335x ROM.
++	 * A fresh mask-ROM generation proves the product SPL got control at all.
++	 */
++	writel(0x2, (void *)0x44e00f00);
++	for (;;)
++		;
+ 	sdram_init();

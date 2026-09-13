@@ -1,0 +1,74 @@
+diff --git a/board/ti/am335x/board.c b/board/ti/am335x/board.c
+index bd1587c1..e89bc36a 100644
+--- a/board/ti/am335x/board.c
++++ b/board/ti/am335x/board.c
+@@ -1206,3 +1206,69 @@ U_BOOT_DRVINFO(am335x_mmc1) = {
+ 	.plat = &am335x_mmc1_plat,
+ };
+ #endif
++
++#if !defined(CONFIG_XPL_BUILD) && defined(CONFIG_MTD_RAW_NAND)
++#include <event.h>
++#include <nand.h>
++#include <vsprintf.h>
++/*
++ * One U-Boot for the ST10, the WLA and the ST20. The ST20 is the one whose ROM boots NAND
++ * before USB (SYSBOOT 10010b), and its SCM module differs from the SM2 module the other two
++ * carry in two ways that matter here:
++ *
++ * - NAND WP# is wired to gpmc_wpn (stock spotty_scm.dtb muxes it in its NAND group). The
++ *   SM2 modules use that pad for Wi-Fi, so wla_nand_pin_mux leaves it alone. Unmuxed, WP#
++ *   sits low and every erase and write is a silent no-op, which is how the 2026-09-27 ST20
++ *   rescue's first erase "succeeded" without changing a byte. Reads work either way.
++ * - The default bootcmd, which runs only when the stored environment does not, has to name
++ *   the kernel, device tree and module type. rt_v and rt_m tell it: spotty/scm on the ST20,
++ *   otherwise sm2, and the product the manufacturing partition names: rhino (ST10),
++ *   binky (WLA) or ginger (ST300). Stock's U-Boot reads the same field for its SM2 boards.
++ *   Only when that field holds none of the three does variant_raw decide, as before:
++ *   rhino from 0x3100 up, binky below, compared in hex as the bootcmd's itest did.
++ *   They are set here rather than in the bootcmd because the default environment is full.
++ */
++#define RT_MFG_PART	0x0fe00000	/* NAND.Manufacturing-Data */
++#define RT_MFG_SIZE	0x00040000
++#define RT_MFG_VARIANT	0x170		/* the product name, NUL-terminated */
++
++static struct module_pin_mux scm_nand_wp_pin_mux[] = {
++	{OFFSET(gpmc_wpn), MODE(0) | PULLDOWN_EN | RXACTIVE},
++	{-1},
++};
++
++static const char *rt_mfg_variant(void)
++{
++	static const char *const known[] = { "rhino", "binky", "ginger" };
++	static u8 page[2048];
++	struct mtd_info *mtd = get_nand_dev_by_index(0);
++	size_t len = sizeof(page);
++	unsigned int i;
++
++	if (!mtd || nand_read_skip_bad(mtd, RT_MFG_PART, &len, NULL, RT_MFG_SIZE, page))
++		return NULL;
++	for (i = 0; i < ARRAY_SIZE(known); i++)
++		if (!memcmp(page + RT_MFG_VARIANT, known[i], strlen(known[i]) + 1))
++			return known[i];
++	return NULL;
++}
++
++static int rt_board_setup(void)
++{
++	const char *raw = env_get("variant_raw");
++	bool st20 = (readl(0x44e10040) & 0x1f) == 0x12;
++	const char *mfg = st20 ? NULL : rt_mfg_variant();
++
++	if (st20)
++		configure_module_pin_mux(scm_nand_wp_pin_mux);
++	env_set("rt_v", st20 ? "spotty" : mfg ? mfg :
++		raw && hextoul(raw, NULL) >= 0x3100 ? "rhino" : "binky");
++	/* The ST300's UART0 is its link to the soundbar processor: a key seen there during
++	 * bootdelay would stop autoboot. The installed environment says -2 as well. */
++	if (mfg && !strcmp(mfg, "ginger"))
++		env_set("bootdelay", "-2");
++	env_set("rt_m", st20 ? "scm" : "sm2");
++	return 0;
++}
++EVENT_SPY_SIMPLE(EVT_LAST_STAGE_INIT, rt_board_setup);
++#endif

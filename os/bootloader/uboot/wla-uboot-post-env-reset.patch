@@ -1,0 +1,8 @@
+diff --git a/common/board_r.c b/common/board_r.c
+index 16a10522e4d..7ccbf4d274a 100644
+--- a/common/board_r.c
++++ b/common/board_r.c
+@@ -712 +712,2 @@ static void initcall_run_r(void)
+-	INITCALL(initr_env);
++	INITCALL(initr_env);
++	reset_cpu();

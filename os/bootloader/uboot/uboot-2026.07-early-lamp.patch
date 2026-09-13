@@ -1,0 +1,33 @@
+diff --git a/board/ti/am335x/board.c b/board/ti/am335x/board.c
+index 81624731..c828151d 100644
+--- a/board/ti/am335x/board.c
++++ b/board/ti/am335x/board.c
+@@ -748,8 +748,28 @@ void board_nand_pinmux(void)
+ }
+ #endif
+ 
++/*
++ * Stock lights the Wi-Fi lamp from power-on; ours stayed dark until soundtapd, about 20 s
++ * later, so a booting speaker looked dead. Turn it on here, full white, as plain GPIO:
++ * Linux takes the pad back as timer4 PWM and soundtapd sets the real brightness.
++ * ST10 and WLA put the lamp on xdma_event_intr0 (gpio0_19). On the ST20 (SYSBOOT 10010b)
++ * that pad is the BCO's clkout1 and must not be touched.
++ */
++static void soundtap_early_lamp(void)
++{
++	if ((readl(0x44e10040) & 0x1f) == 0x12)
++		return;
++	writel(0x2, 0x44e00408);		/* CM_WKUP_GPIO0_CLKCTRL enable */
++	while (readl(0x44e00408) & (3 << 16))
++		;
++	writel(0xf, 0x44e109b0);		/* conf_xdma_event_intr0: gpio0_19, no pull */
++	writel(1 << 19, 0x44e07194);		/* GPIO0 SETDATAOUT */
++	clrbits_le32((void *)0x44e07134, 1 << 19);	/* GPIO0 OE: output */
++}
++
+ int board_init(void)
+ {
++	soundtap_early_lamp();
+ #if defined(CONFIG_HW_WATCHDOG)
+ 	hw_watchdog_init();
+ #endif

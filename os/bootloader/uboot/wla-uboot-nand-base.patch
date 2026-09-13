@@ -1,0 +1,152 @@
+diff --git a/board/ti/am335x/board.c b/board/ti/am335x/board.c
+index 2d057cbf..1c4798bd 100644
+--- a/board/ti/am335x/board.c
++++ b/board/ti/am335x/board.c
+@@ -26,6 +26,7 @@
+ #include <asm/arch/clk_synthesizer.h>
+ #include <asm/arch/gpio.h>
+ #include <asm/arch/mmc_host_def.h>
++#include <asm/arch/mux.h>
+ #include <asm/arch/sys_proto.h>
+ #include <asm/arch/mem.h>
+ #include <asm/global_data.h>
+@@ -70,6 +71,26 @@ int ctrlc(void)
+ 
+ static struct ctrl_dev *cdev = (struct ctrl_dev *)CTRL_DEVICE_BASE;
+ 
++#ifdef CONFIG_MTD_RAW_NAND
++static struct module_pin_mux wla_nand_pin_mux[] = {
++	{OFFSET(gpmc_ad0), MODE(0) | PULLUP_EN | RXACTIVE},
++	{OFFSET(gpmc_ad1), MODE(0) | PULLUP_EN | RXACTIVE},
++	{OFFSET(gpmc_ad2), MODE(0) | PULLUP_EN | RXACTIVE},
++	{OFFSET(gpmc_ad3), MODE(0) | PULLUP_EN | RXACTIVE},
++	{OFFSET(gpmc_ad4), MODE(0) | PULLUP_EN | RXACTIVE},
++	{OFFSET(gpmc_ad5), MODE(0) | PULLUP_EN | RXACTIVE},
++	{OFFSET(gpmc_ad6), MODE(0) | PULLUP_EN | RXACTIVE},
++	{OFFSET(gpmc_ad7), MODE(0) | PULLUP_EN | RXACTIVE},
++	{OFFSET(gpmc_wait0), MODE(0) | PULLDOWN_EN | RXACTIVE},
++	{OFFSET(gpmc_csn0), MODE(0) | PULLUDDIS},
++	{OFFSET(gpmc_advn_ale), MODE(0) | PULLUDDIS},
++	{OFFSET(gpmc_oen_ren), MODE(0) | PULLUDDIS},
++	{OFFSET(gpmc_wen), MODE(0) | PULLUDDIS},
++	{OFFSET(gpmc_be0n_cle), MODE(0) | PULLUDDIS},
++	{-1},
++};
++#endif
++
+ #define GPIO0_RISINGDETECT	(AM33XX_GPIO0_BASE + OMAP_GPIO_RISINGDETECT)
+ #define GPIO1_RISINGDETECT	(AM33XX_GPIO1_BASE + OMAP_GPIO_RISINGDETECT)
+ 
+@@ -710,6 +731,22 @@ static bool __maybe_unused prueth_is_mii = true;
+ /*
+  * Basic board specific setup.  Pinmux has been handled already.
+  */
++#ifdef CONFIG_MTD_RAW_NAND
++/*
++ * Called from board_nand_init(), immediately before the chip is probed, which is the
++ * only place that runs in every phase. board_init() is U-Boot proper only, so an SPL
++ * that reads U-Boot out of NAND got neither the peripheral clocks nor a configured
++ * GPMC nor muxed pads, and its load failed. All three are idempotent, so U-Boot proper
++ * doing them again in board_init() costs nothing.
++ */
++void board_nand_pinmux(void)
++{
++	enable_basic_clocks();
++	configure_module_pin_mux(wla_nand_pin_mux);
++	gpmc_init();
++}
++#endif
++
+ int board_init(void)
+ {
+ #if defined(CONFIG_HW_WATCHDOG)
+@@ -718,6 +755,8 @@ int board_init(void)
+ 
+ 	gd->bd->bi_boot_params = CFG_SYS_SDRAM_BASE + 0x100;
+ #if defined(CONFIG_NOR) || defined(CONFIG_MTD_RAW_NAND)
++	/* The WLA RAM-loading SPL does not enable peripheral clock domains. */
++	enable_basic_clocks();
+ 	gpmc_init();
+ #endif
+ 
+diff --git a/drivers/mtd/nand/raw/omap_gpmc.c b/drivers/mtd/nand/raw/omap_gpmc.c
+index 9c704c60..5a932a87 100644
+--- a/drivers/mtd/nand/raw/omap_gpmc.c
++++ b/drivers/mtd/nand/raw/omap_gpmc.c
+@@ -7,6 +7,7 @@
+ #include <config.h>
+ #include <log.h>
+ #include <system-constants.h>
++#include <time.h>
+ #include <asm/io.h>
+ #include <dm.h>
+ #include <linux/errno.h>
+@@ -455,6 +456,7 @@ static inline void omap_nand_read_buf(struct mtd_info *mtd, uint8_t *buf, int le
+ #define PREFETCH_STATUS_COUNT(val)	(val & 0x00003fff)
+ #define PREFETCH_STATUS_FIFO_CNT(val)	((val >> 24) & 0x7F)
+ #define ENABLE_PREFETCH			(1 << 7)
++#define PREFETCH_TIMEOUT_MS		1000
+ 
+ /**
+  * omap_prefetch_enable - configures and starts prefetch transfer
+@@ -499,12 +501,14 @@ static int __read_prefetch_aligned(struct nand_chip *chip, uint32_t *buf, int le
+ {
+ 	int ret;
+ 	uint32_t cnt;
++	ulong start;
+ 	struct omap_nand_info *info = nand_get_controller_data(chip);
+ 
+ 	ret = omap_prefetch_enable(PREFETCH_FIFOTHRESHOLD_MAX, len, 0, info->cs);
+ 	if (ret < 0)
+ 		return ret;
+ 
++	start = get_timer(0);
+ 	do {
+ 		int i;
+ 
+@@ -515,6 +519,11 @@ static int __read_prefetch_aligned(struct nand_chip *chip, uint32_t *buf, int le
+ 			*buf++ = readl(info->fifo);
+ 			len -= 4;
+ 		}
++
++		if (get_timer(start) > PREFETCH_TIMEOUT_MS) {
++			omap_prefetch_reset();
++			return -ETIMEDOUT;
++		}
+ 	} while (len);
+ 
+ 	omap_prefetch_reset();
+@@ -546,9 +555,11 @@ static void omap_nand_read_prefetch(struct mtd_info *mtd, uint8_t *buf, int len)
+ 	tail = len % 4;
+ 
+ 	ret = __read_prefetch_aligned(chip, (uint32_t *)buf, len - tail);
+-	if (ret < 0) {
++	if (ret == -EBUSY) {
+ 		/* fallback in case the prefetch engine is busy */
+ 		omap_nand_read_buf(mtd, buf, len);
++	} else if (ret < 0) {
++		log_err("GPMC NAND prefetch read timed out\n");
+ 	} else if (tail) {
+ 		buf += len - tail;
+ 		omap_nand_read_buf(mtd, buf, tail);
+@@ -1245,8 +1256,20 @@ void board_nand_init(void)
+ 
+ #else
+ 
++/*
++ * Boards whose NAND pads are not left muxed for the GPMC by the time NAND is
++ * initialised override this. On the SoundTouch Wireless Link the pads read back
++ * as mode 7 GPIO here even though board_init() muxed them, and a data bus that
++ * is not connected to the controller reads 0x00, so READID never matches and
++ * nand_scan() returns -ENODEV.
++ */
++__weak void board_nand_pinmux(void)
++{
++}
++
+ int board_nand_init(struct nand_chip *nand)
+ {
++	board_nand_pinmux();
+ 	return gpmc_nand_init(nand, (void __iomem *)CFG_SYS_NAND_BASE);
+ }
+ 

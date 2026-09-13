@@ -1,0 +1,82 @@
+diff --git a/common/spl/spl_nand.c b/common/spl/spl_nand.c
+--- a/common/spl/spl_nand.c
++++ b/common/spl/spl_nand.c
+@@ -13,6 +13,7 @@
+ #include <asm/io.h>
+ #include <mapmem.h>
+ #include <nand.h>
++#include <u-boot/crc.h>
+ #include <linux/libfdt_env.h>
+ #include <fdt.h>
+ 
+@@ -70,9 +71,50 @@
+ 				 struct spl_boot_device *bootdev, int offset)
+ {
+ 	struct spl_load_info load;
++	int err;
+ 
+ 	spl_load_init(&load, spl_nand_read, &offset, 1);
+-	return spl_load(spl_image, bootdev, &load, 0, offset);
++	err = spl_load(spl_image, bootdev, &load, 0, offset);
++	if (err)
++		return err;
++	/*
++	 * spl.c checks this too, but only after the caller has given up on the second
++	 * copy. A power cut mid-write leaves a good header in front of bad data.
++	 */
++	if (spl_image->dcrc_length &&
++	    crc32_wd(0, (unsigned char *)spl_image->dcrc_data, spl_image->dcrc_length,
++		     CHUNKSZ_CRC32) != spl_image->dcrc)
++		return -EIO;
++	return 0;
++}
++
++/*
++ * Our u-boot.img carries this name (mkimage -n in os/bootloader). A first install from
++ * stock writes our spare U-Boot, then our SPLs, and the first copy last, so for a moment
++ * our SPL finds Bose's U-Boot in the first copy: a pairing nobody has proven. It boots our
++ * spare then, which was verified before any SPL of ours was written.
++ */
++#define SOUNDTAP_UBOOT_NAME	"U-Boot WLA RAM net"
++
++static bool __maybe_unused spl_nand_ours(const struct spl_image_info *spl_image)
++{
++	return spl_image->name && !strncmp(spl_image->name, SOUNDTAP_UBOOT_NAME, IH_NMLEN);
++}
++
++/*
++ * The first copy, unless it does not load or check out, or is not ours while the spare
++ * is: then the spare. A first copy that checks out but is not ours still beats nothing.
++ */
++static int __maybe_unused spl_nand_load_uboot(struct spl_image_info *spl_image,
++					      struct spl_boot_device *bootdev, int first, int spare)
++{
++	if (spl_nand_load_element(spl_image, bootdev, first))
++		return spl_nand_load_element(spl_image, bootdev, spare);
++	if (spl_nand_ours(spl_image))
++		return 0;
++	if (!spl_nand_load_element(spl_image, bootdev, spare) && spl_nand_ours(spl_image))
++		return 0;
++	return spl_nand_load_element(spl_image, bootdev, first);
+ }
+ 
+ #if IS_ENABLED(CONFIG_SPL_OS_BOOT)
+@@ -155,13 +197,12 @@
+ #endif
+ #endif
+ 	/* Load u-boot */
++#if defined(CONFIG_SYS_NAND_U_BOOT_OFFS_REDUND) && \
++	CONFIG_SYS_NAND_U_BOOT_OFFS != CONFIG_SYS_NAND_U_BOOT_OFFS_REDUND
++	err = spl_nand_load_uboot(spl_image, bootdev, spl_nand_get_uboot_raw_page(),
++				  CONFIG_SYS_NAND_U_BOOT_OFFS_REDUND);
++#else
+ 	err = spl_nand_load_element(spl_image, bootdev, spl_nand_get_uboot_raw_page());
+-#ifdef CONFIG_SYS_NAND_U_BOOT_OFFS_REDUND
+-#if CONFIG_SYS_NAND_U_BOOT_OFFS != CONFIG_SYS_NAND_U_BOOT_OFFS_REDUND
+-	if (err)
+-		err = spl_nand_load_element(spl_image, bootdev,
+-					    CONFIG_SYS_NAND_U_BOOT_OFFS_REDUND);
+-#endif
+ #endif
+ 	nand_deselect();
+ 	return err;

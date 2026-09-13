@@ -1,0 +1,128 @@
+diff --git a/common/spl/spl_nand.c b/common/spl/spl_nand.c
+index f449b31..4a11182 100644
+--- a/common/spl/spl_nand.c
++++ b/common/spl/spl_nand.c
+@@ -135,6 +135,7 @@ static int spl_nand_load_image(struct spl_image_info *spl_image,
+ 	debug("spl: nand - using hw ecc\n");
+ #endif
+ 	nand_init();
++	wla_spl_diag_mark(1);
+ 
+ #if CONFIG_IS_ENABLED(OS_BOOT)
+ 	if (!spl_start_uboot()) {
+@@ -156,6 +157,8 @@ static int spl_nand_load_image(struct spl_image_info *spl_image,
+ #endif
+ 	/* Load u-boot */
+ 	err = spl_nand_load_element(spl_image, bootdev, spl_nand_get_uboot_raw_page());
++	if (!err)
++		wla_spl_diag_mark(2);
+ #ifdef CONFIG_SYS_NAND_U_BOOT_OFFS_REDUND
+ #if CONFIG_SYS_NAND_U_BOOT_OFFS != CONFIG_SYS_NAND_U_BOOT_OFFS_REDUND
+ 	if (err)
+diff --git a/drivers/mtd/nand/raw/am335x_spl_bch.c b/drivers/mtd/nand/raw/am335x_spl_bch.c
+index a77206d..b899ae5 100644
+--- a/drivers/mtd/nand/raw/am335x_spl_bch.c
++++ b/drivers/mtd/nand/raw/am335x_spl_bch.c
+@@ -198,6 +198,90 @@ static int nand_read_page(int block, int page, void *dst)
+ 	return 0;
+ }
+ 
++/* Diagnostic build only: mtd11 starts at 0xf280000 and is scratch space. */
++#define WLA_DIAG_FIRST_BLOCK	(0xf280000 / CONFIG_SYS_NAND_BLOCK_SIZE)
++#define WLA_DIAG_WAIT_US	1000000
++
++static int wla_diag_ready(struct nand_chip *this)
++{
++	unsigned int left = WLA_DIAG_WAIT_US;
++
++	while (left && !this->dev_ready(mtd)) {
++		left--;
++		udelay(1);
++	}
++	return left ? 0 : -1;
++}
++
++static void wla_diag_ctrl(struct nand_chip *this, int value, unsigned int ctrl)
++{
++	this->cmd_ctrl(mtd, value, ctrl);
++}
++
++static void wla_diag_write(struct nand_chip *this, const u8 *buf, unsigned int len)
++{
++	unsigned int i;
++
++	for (i = 0; i < len; i++)
++		writeb(buf[i], this->IO_ADDR_R);
++}
++
++void wla_spl_diag_mark(unsigned int stage)
++{
++	static const u8 marker[][16] = {
++		"SOUNDTAP-SPL:01\n", "SOUNDTAP-SPL:02\n",
++	};
++	static const u8 erased[16] = {
++		[0 ... 15] = 0xff,
++	};
++	struct nand_chip *this = mtd_to_nand(mtd);
++	unsigned int block, page_addr, i;
++	u8 status;
++
++	if (!stage || stage > ARRAY_SIZE(marker))
++		return;
++	block = WLA_DIAG_FIRST_BLOCK + stage - 1;
++	if (nand_is_bad_block(block) || wla_diag_ready(this))
++		return;
++	page_addr = block * SYS_NAND_BLOCK_PAGES;
++
++	/* Erase exactly one dedicated mtd11 block. */
++	wla_diag_ctrl(this, NAND_CMD_ERASE1, NAND_CTRL_CLE | NAND_CTRL_CHANGE);
++	wla_diag_ctrl(this, page_addr & 0xff, NAND_CTRL_ALE | NAND_CTRL_CHANGE);
++	wla_diag_ctrl(this, (page_addr >> 8) & 0xff, NAND_CTRL_ALE);
++#ifdef CONFIG_SYS_NAND_5_ADDR_CYCLE
++	wla_diag_ctrl(this, (page_addr >> 16) & 0x0f, NAND_CTRL_ALE);
++#endif
++	wla_diag_ctrl(this, NAND_CMD_ERASE2, NAND_CTRL_CLE | NAND_CTRL_CHANGE);
++	wla_diag_ctrl(this, NAND_CMD_NONE, NAND_NCE | NAND_CTRL_CHANGE);
++	ndelay(150);
++	if (wla_diag_ready(this))
++		return;
++
++	/* Program first page raw. No OOB/ECC bytes: inspect with nanddump --noecc. */
++	wla_diag_ctrl(this, NAND_CMD_SEQIN, NAND_CTRL_CLE | NAND_CTRL_CHANGE);
++	wla_diag_ctrl(this, 0, NAND_CTRL_ALE | NAND_CTRL_CHANGE);
++	wla_diag_ctrl(this, 0, NAND_CTRL_ALE);
++	wla_diag_ctrl(this, page_addr & 0xff, NAND_CTRL_ALE);
++	wla_diag_ctrl(this, (page_addr >> 8) & 0xff, NAND_CTRL_ALE);
++#ifdef CONFIG_SYS_NAND_5_ADDR_CYCLE
++	wla_diag_ctrl(this, (page_addr >> 16) & 0x0f, NAND_CTRL_ALE);
++#endif
++	wla_diag_ctrl(this, NAND_CMD_NONE, NAND_NCE | NAND_CTRL_CHANGE);
++	wla_diag_write(this, marker[stage - 1], sizeof(marker[0]));
++	for (i = sizeof(marker[0]); i < CONFIG_SYS_NAND_PAGE_SIZE; i += sizeof(erased))
++		wla_diag_write(this, erased, sizeof(erased));
++	wla_diag_ctrl(this, NAND_CMD_PAGEPROG, NAND_CTRL_CLE | NAND_CTRL_CHANGE);
++	wla_diag_ctrl(this, NAND_CMD_NONE, NAND_NCE | NAND_CTRL_CHANGE);
++	ndelay(150);
++	if (wla_diag_ready(this))
++		return;
++	wla_diag_ctrl(this, NAND_CMD_STATUS, NAND_CTRL_CLE | NAND_CTRL_CHANGE);
++	wla_diag_ctrl(this, NAND_CMD_NONE, NAND_NCE | NAND_CTRL_CHANGE);
++	status = readb(this->IO_ADDR_R);
++	(void)status;
++}
++
+ /* nand_init() - initialize data to make nand usable by SPL */
+ void nand_init(void)
+ {
+diff --git a/include/nand.h b/include/nand.h
+index 3a0ef6a..49636ef 100644
+--- a/include/nand.h
++++ b/include/nand.h
+@@ -106,6 +106,7 @@ int nand_get_lock_status(struct mtd_info *mtd, loff_t offset);
+ 
+ u32 nand_spl_adjust_offset(u32 sector, u32 offs);
+ int nand_spl_load_image(uint32_t offs, unsigned int size, void *dst);
++void wla_spl_diag_mark(unsigned int stage);
+ int nand_spl_read_block(int block, int offset, int len, void *dst);
+ void nand_deselect(void);
+ 

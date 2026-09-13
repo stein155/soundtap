@@ -1,0 +1,135 @@
+diff -ruN a/cmd/fixsig.c b/cmd/fixsig.c
+--- a/cmd/fixsig.c	1970-01-01 01:00:00.000000000 +0100
++++ b/cmd/fixsig.c	2026-09-16 18:55:05.172535823 +0200
+@@ -0,0 +1,100 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * fixsig - bless a legacy uImage whose name field has been marked.
++ *
++ * The stock firmware on this board uses the uImage name field as a one-value
++ * validity flag and the header CRC as its enforcement. A slot that is not
++ * cleared for boot has its five leading name characters replaced -- "Linpv",
++ * "Linub", "Linem" and others have been observed -- while the stored header CRC
++ * is left as it was, computed over "Linux". bootm then refuses the image.
++ *
++ * Measured on this hardware: both kernel slots hold the same image with the
++ * same stored header CRC; the cleared slot reads "Linux" and verifies, the
++ * marked one reads "Linpv" and does not, and restoring those five characters
++ * makes it verify again. Nothing is ever recomputed, so nothing needs to be.
++ *
++ * This command therefore restores "Linux" in the RAM copy only, and only when
++ * doing so reproduces the CRC that is already stored.
++ *
++ * Be precise about what that gate is worth. CRC32 is not keyed, so it catches
++ * accidental corruption -- a randomly damaged header lands on the stored CRC
++ * with probability about 2^-32 -- and nothing else. Anyone who can write NAND
++ * can compute the CRC of the header they want and have it accepted. This is a
++ * compatibility mechanism, not secure boot, and it must never be described as
++ * one. It is also not a claim that the image is *allowed* to run: the marker
++ * may equally mean the paired root filesystem was never finished, so the boot
++ * script must still have chosen this slot deliberately.
++ *
++ * Flash is never touched. NAND can only clear bits, and "Linpv" -> "Linux"
++ * needs three set, so persisting the change would mean erasing a 128 KiB block
++ * on every boot of a marked slot. The vendor cannot do that in place either,
++ * which is why their own repair is in RAM as well.
++ */
++
++#include <command.h>
++#include <image.h>
++#include <mapmem.h>
++#include <vsprintf.h>
++#include <u-boot/crc.h>
++#include <linux/string.h>
++
++#define SIG_LEN 5
++
++static int do_fixsig(struct cmd_tbl *cmdtp, int flag, int argc,
++		     char *const argv[])
++{
++	struct legacy_img_hdr *hdr, probe;
++	char marker[SIG_LEN + 1];
++	unsigned long addr;
++	void *ptr;
++	u32 want;
++
++	if (argc != 2)
++		return CMD_RET_USAGE;
++
++	addr = hextoul(argv[1], NULL);
++	ptr = map_sysmem(addr, sizeof(*hdr));
++	hdr = ptr;
++
++	if (image_get_magic(hdr) != IH_MAGIC) {
++		printf("fixsig: no legacy uImage at %08lx\n", addr);
++		unmap_sysmem(ptr);
++		return CMD_RET_FAILURE;
++	}
++
++	memcpy(marker, image_get_name(hdr), SIG_LEN);
++	marker[SIG_LEN] = '\0';
++
++	/* Nothing to clear. Note this says nothing about whether the header is
++	 * valid -- success here is "no marker", not "verified". bootm does the
++	 * verifying, and no caller may treat a fixsig exit code as that.
++	 */
++	if (!memcmp(marker, "Linux", SIG_LEN)) {
++		unmap_sysmem(ptr);
++		return CMD_RET_SUCCESS;
++	}
++
++	/* Does restoring the name reproduce the CRC that is already stored? */
++	memcpy(&probe, hdr, sizeof(probe));
++	memcpy(probe.ih_name, "Linux", SIG_LEN);
++	want = image_get_hcrc(&probe);
++	probe.ih_hcrc = 0;
++	if (crc32(0, (unsigned char *)&probe, sizeof(probe)) != want) {
++		printf("fixsig: %s is not a marked image; header CRC still fails\n",
++		       marker);
++		unmap_sysmem(ptr);
++		return CMD_RET_FAILURE;
++	}
++
++	memcpy(hdr->ih_name, "Linux", SIG_LEN);
++	printf("fixsig: %s -> Linux at %08lx\n", marker, addr);
++	unmap_sysmem(ptr);
++	return CMD_RET_SUCCESS;
++}
++
++U_BOOT_CMD(fixsig, 2, 0, do_fixsig,
++	   "restore the Linux signature of a marked uImage in RAM",
++	   "addr\n"
++	   "    - clear the vendor boot marker on the uImage at addr, but only\n"
++	   "      when doing so reproduces the header CRC already stored there.\n"
++	   "      RAM only; flash is never written.");
+diff -ruN a/cmd/Kconfig b/cmd/Kconfig
+--- a/cmd/Kconfig	2026-07-07 01:50:43.000000000 +0200
++++ b/cmd/Kconfig	2026-09-16 18:55:05.156535914 +0200
+@@ -578,6 +578,16 @@
+ 	help
+ 	  Do FDT related setup before booting into the Operating System.
+ 
++config CMD_FIXSIG
++	bool "fixsig command for vendor-marked uImages"
++	help
++	  Some vendor firmware marks a kernel slot as not cleared for boot by
++	  overwriting the five leading characters of the uImage name, leaving
++	  the stored header CRC alone so that bootm refuses the image. fixsig
++	  puts "Linux" back in the RAM copy, and only when that reproduces the
++	  CRC already stored in the header, so a damaged image is not blessed.
++	  Flash is never written.
++
+ config CMD_EXTENSION
+ 	bool "Extension board management command"
+ 	select CMD_FDT
+diff -ruN a/cmd/Makefile b/cmd/Makefile
+--- a/cmd/Makefile	2026-07-07 01:50:43.000000000 +0200
++++ b/cmd/Makefile	2026-09-16 18:55:05.156535914 +0200
+@@ -83,6 +83,7 @@
+ obj-$(CONFIG_CMD_EXT2) += ext2.o
+ obj-$(CONFIG_CMD_FAT) += fat.o
+ obj-$(CONFIG_CMD_FDT) += fdt.o
++obj-$(CONFIG_CMD_FIXSIG) += fixsig.o
+ obj-$(CONFIG_CMD_SQUASHFS) += sqfs.o
+ obj-$(CONFIG_CMD_SELECT_FONT) += font.o
+ obj-$(CONFIG_CMD_FLASH) += flash.o

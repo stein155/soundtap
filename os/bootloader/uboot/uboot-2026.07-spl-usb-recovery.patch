@@ -1,0 +1,95 @@
+Give the SPL a USB fallback when NAND holds no usable U-Boot.
+
+Replacing NAND.U-Boot is the one step in a bootloader install with no way back:
+mtd0 has three spare copies the mask ROM reads in order, mtd4 has no redundant
+partner at all. Stock U-Boot's own answer -- hold VOLUME DOWN + PRESET 4 and it
+reads Update.stu off a USB stick -- lives in stock U-Boot, so it goes away exactly
+when it is needed.
+
+This rebuilds that net one layer lower, where it survives: the SPL tries NAND
+first and a FAT USB stick second. It needs nothing from the mask ROM, whose
+behaviour on the ST10 is unmeasured.
+
+Applied after wla-am335x-bringup.patch, so the board.c context below includes its ctrlc
+stub.
+
+The third hunk is a build fix, not a feature. am335x_evm.h guards its USB, PXE and
+DHCP boot targets and leaves MMC unguarded, so a board with no MMC expands
+BOOTENV_DEV_MMC to an error token in every build that is not an SPL build. CMD_MMC
+cannot be switched on to silence it -- it depends on MMC, which is what such a board
+does not have -- so the entry is guarded in the same style as its neighbours. It only
+surfaces here because turning USB on is what first pulls that header into the build.
+
+See docs/architecture/bootloader-recovery.md.
+--- a/arch/arm/include/asm/arch-am33xx/spl.h
++++ b/arch/arm/include/asm/arch-am33xx/spl.h
+@@ -17,6 +17,12 @@
+ #define BOOT_DEVICE_MMC1	0x08
+ #define BOOT_DEVICE_MMC2	0x09
+ #define BOOT_DEVICE_SPI		0x0B
++/*
++ * Not a value the AM335x ROM ever reports. It is the marker spl_usb.c registers
++ * itself under, so board_boot_order() can name a USB stick as a fallback when NAND
++ * holds no usable U-Boot. Same value AM43xx uses, and unused in the list above.
++ */
++#define BOOT_DEVICE_USB		0x0D
+ #define BOOT_DEVICE_UART	0x41
+ #define BOOT_DEVICE_USBETH	0x44
+ #define BOOT_DEVICE_CPGMAC	0x46
+--- a/board/ti/am335x/board.c
++++ b/board/ti/am335x/board.c
+@@ -58,6 +58,28 @@
+ }
+ #endif
+ 
++#if defined(CONFIG_XPL_BUILD) && defined(CONFIG_SPL_USB_STORAGE)
++/*
++ * NAND first, then a FAT USB stick.
++ *
++ * The default order is whatever single device the ROM booted from, which on a
++ * speaker is NAND -- and NAND failing to yield a U-Boot is exactly the case this
++ * exists for, so the order has to be stated rather than inherited. Listing USB
++ * second costs nothing on a normal boot: the SPL only reaches it once the NAND
++ * loader has already failed, and with no stick in it fails too and the board
++ * behaves as before.
++ *
++ * The SPL brings the port up in host mode itself, so this does not depend on how
++ * Linux later sets dr_mode.
++ */
++void board_boot_order(u32 *spl_boot_list)
++{
++	spl_boot_list[0] = BOOT_DEVICE_NAND;
++	spl_boot_list[1] = BOOT_DEVICE_USB;
++	spl_boot_list[2] = BOOT_DEVICE_NONE;
++}
++#endif
++
+ /* GPIO that controls power to DDR on EVM-SK */
+ #define GPIO_TO_PIN(bank, gpio)		(32 * (bank) + (gpio))
+ #define GPIO_DDR_VTT_EN		GPIO_TO_PIN(0, 7)
+--- a/include/configs/am335x_evm.h
++++ b/include/configs/am335x_evm.h
+@@ -65,9 +65,21 @@
+ # define BOOT_TARGET_DHCP(func)
+ #endif
+ 
++/*
++ * Guarded the way BOOT_TARGET_USB, _PXE and _DHCP above already are. Unguarded, a
++ * board with no MMC expands BOOTENV_DEV_MMC to the error token
++ * BOOT_TARGET_DEVICES_references_MMC_without_CONFIG_CMD_MMC in every build that is
++ * not an SPL build, and CMD_MMC cannot be turned on to silence it because it depends
++ * on MMC, which is exactly what such a board does not have.
++ */
++#if CONFIG_IS_ENABLED(CMD_MMC)
++# define BOOT_TARGET_MMC(func) func(MMC, mmc, 0) func(MMC, mmc, 1)
++#else
++# define BOOT_TARGET_MMC(func)
++#endif
++
+ #define BOOT_TARGET_DEVICES(func) \
+-	func(MMC, mmc, 0) \
+-	func(MMC, mmc, 1) \
++	BOOT_TARGET_MMC(func) \
+ 	func(NAND, nand, 0) \
+ 	BOOT_TARGET_USB(func) \
+ 	BOOT_TARGET_PXE(func) \

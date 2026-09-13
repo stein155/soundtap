@@ -1,0 +1,75 @@
+// SPDX-License-Identifier: GPL-2.0+
+/*
+ * U-Boot control device tree for the SoundTouch Wireless Link.
+ *
+ * The EVM tree U-Boot defaults to describes a different board: its NAND pin
+ * group and GPMC timings are the EVM's, and it muxes gpmc_wpn, which on this
+ * board is the WL1835's interrupt line. Everything here is the board's own
+ * NAND wiring, copied from
+ * the kernel's os/board/common/dts/ti/omap/am335x-soundtap-nand.dtsi, which is derived
+ * from the stock rhino/binky device tree and does work on this hardware.
+ */
+#include "am335x-evm.dts"
+
+&usb0 {
+	dr_mode = "peripheral";
+};
+
+&am33xx_pinmux {
+	soundtap_nand_pins: soundtap-nand-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_GPMC_AD0, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_AD1, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_AD2, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_AD3, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_AD4, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_AD5, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_AD6, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_AD7, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_WAIT0, PIN_INPUT_PULLDOWN, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_CSN0, PIN_OUTPUT, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_ADVN_ALE, PIN_OUTPUT, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_OEN_REN, PIN_OUTPUT, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_WEN, PIN_OUTPUT, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_GPMC_BEN0_CLE, PIN_OUTPUT, MUX_MODE0)
+		>;
+	};
+};
+
+&elm {
+	status = "okay";
+};
+
+&gpmc {
+	/delete-property/ pinctrl-names;
+	/delete-property/ pinctrl-0;
+	status = "okay";
+	ranges = <0 0 0x08000000 0x01000000>;
+
+	/delete-node/ nand@0,0;
+
+	/* This board's timings, not the EVM's. */
+	nand@0,0 {
+		compatible = "ti,omap2-nand";
+		reg = <0 0 4>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&soundtap_nand_pins>;
+		rb-gpios = <&gpmc 0 GPIO_ACTIVE_HIGH>;
+		nand-bus-width = <8>;
+		ti,nand-ecc-opt = "bch8";
+		ti,elm-id = <&elm>;
+		gpmc,device-width = <1>;
+		gpmc,cs-rd-off-ns = <30>;
+		gpmc,cs-wr-off-ns = <30>;
+		gpmc,adv-rd-off-ns = <30>;
+		gpmc,adv-wr-off-ns = <30>;
+		gpmc,we-off-ns = <20>;
+		gpmc,oe-off-ns = <20>;
+		gpmc,access-ns = <30>;
+		gpmc,rd-cycle-ns = <30>;
+		gpmc,wr-cycle-ns = <30>;
+		gpmc,wr-access-ns = <30>;
+		#address-cells = <1>;
+		#size-cells = <1>;
+	};
+};

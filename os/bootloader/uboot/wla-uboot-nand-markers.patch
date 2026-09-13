@@ -1,0 +1,169 @@
+diff -ruN a/common/board_r.c b/common/board_r.c
+--- a/common/board_r.c	2026-09-16 13:23:58.155433916 +0200
++++ b/common/board_r.c	2026-09-16 13:23:58.175433815 +0200
+@@ -10,6 +10,7 @@
+  */
+ 
+ #include <config.h>
++#include <wla_mark.h>
+ #include <api.h>
+ #include <bootstage.h>
+ #include <cpu_func.h>
+@@ -446,6 +447,8 @@
+ 
+ static int initr_env(void)
+ {
++	wla_uboot_mark(1);
++
+ 	/* initialize environment */
+ 	if (should_load_env())
+ 		env_relocate();
+@@ -466,6 +469,8 @@
+ 	/* Initialize from environment */
+ 	image_load_addr = env_get_ulong("loadaddr", 16, image_load_addr);
+ 
++	wla_uboot_mark(2);
++
+ 	return 0;
+ }
+ 
+@@ -571,6 +576,8 @@
+ {
+ 	int ret;
+ 
++	wla_uboot_mark(3);
++
+ #ifdef CONFIG_SANDBOX
+ 	sandbox_main_loop_init();
+ #endif
+diff -ruN a/common/main.c b/common/main.c
+--- a/common/main.c	2026-09-16 14:01:13.020057798 +0200
++++ b/common/main.c	2026-09-16 14:01:13.044057676 +0200
+@@ -7,6 +7,7 @@
+ /* #define	DEBUG	*/
+ 
+ #include <autoboot.h>
++#include <wla_mark.h>
+ #include <button.h>
+ #include <bootstage.h>
+ #include <bootstd.h>
+@@ -68,12 +69,19 @@
+ 
+ 	process_button_cmds();
+ 
++	wla_uboot_mark(4);
++
+ 	s = bootdelay_process();
+ 	if (cli_process_fdt(&s))
+ 		cli_secure_boot_cmd(s);
+ 
++	wla_uboot_mark(5);
++
+ 	autoboot_command(s);
+ 
++	/* Reached only if the boot command returned, which means it failed. */
++	wla_uboot_mark(6);
++
+ 	/* if standard boot if enabled, assume that it will be able to boot */
+ 	if (IS_ENABLED(CONFIG_BOOTSTD_PROG)) {
+ 		int ret;
+diff -ruN a/common/Makefile b/common/Makefile
+--- a/common/Makefile	2026-09-16 13:23:58.155433916 +0200
++++ b/common/Makefile	2026-09-16 13:24:09.543376246 +0200
+@@ -5,6 +5,7 @@
+ 
+ # core
+ ifndef CONFIG_XPL_BUILD
++obj-y += wla_mark.o
+ obj-y += init/
+ obj-y += main.o
+ obj-y += memtop.o
+diff -ruN a/common/wla_mark.c b/common/wla_mark.c
+--- a/common/wla_mark.c	1970-01-01 01:00:00.000000000 +0100
++++ b/common/wla_mark.c	2026-09-16 14:01:13.044057676 +0200
+@@ -0,0 +1,73 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * Boot-stage markers for a Wireless Link that has no console.
++ *
++ * This board boots from NAND only with its USB cable out -- the AM335x ROM takes
++ * USB over NAND whenever a host is present -- so a NAND-booting U-Boot cannot
++ * print anywhere. Every attempt then costs a power cycle and returns one bit,
++ * came up or did not, and boots here are not reliably repeatable: a build proven
++ * to work failed one five-minute window and then booted in 44 seconds untouched.
++ * One failure therefore does not separate a build that cannot run from a boot
++ * that happened not to come up. A marker that is present does: it is evidence the
++ * code ran, whatever the boot does afterwards.
++ *
++ * mtd11 (NAND.Update-Staging) starts at 0xf280000 and is scratch. The SPL's own
++ * markers use its first two blocks; these use the six after them, one block per
++ * stage, so both survive into the same read-back.
++ *
++ * Every failure here is silent on purpose. A diagnostic must never become the
++ * reason a board does not boot.
++ */
++#include <config.h>
++#include <nand.h>
++#include <linux/mtd/mtd.h>
++#include <linux/string.h>
++#include <linux/types.h>
++#include <wla_mark.h>
++
++#define WLA_MARK_BASE		0x0f280000
++#define WLA_MARK_BLOCK_SIZE	0x20000
++#define WLA_MARK_FIRST_BLOCK	2	/* 0 and 1 belong to the SPL */
++#define WLA_MARK_STAGES		6
++
++void wla_uboot_mark(unsigned int stage)
++{
++	static const char *const marker[WLA_MARK_STAGES] = {
++		"SOUNDTAP-UB:01\n",
++		"SOUNDTAP-UB:02\n",
++		"SOUNDTAP-UB:03\n",
++		"SOUNDTAP-UB:04\n",
++		"SOUNDTAP-UB:05\n",
++		"SOUNDTAP-UB:06\n",
++	};
++	struct mtd_info *mtd;
++	struct erase_info erase;
++	size_t len;
++	loff_t off;
++	char page[16];
++
++	if (!stage || stage > WLA_MARK_STAGES)
++		return;
++
++	mtd = get_nand_dev_by_index(0);
++	if (!mtd)
++		return;
++
++	off = WLA_MARK_BASE +
++	      (loff_t)(WLA_MARK_FIRST_BLOCK + stage - 1) * WLA_MARK_BLOCK_SIZE;
++
++	if (mtd_block_isbad(mtd, off))
++		return;
++
++	memset(&erase, 0, sizeof(erase));
++	erase.mtd = mtd;
++	erase.addr = off;
++	erase.len = WLA_MARK_BLOCK_SIZE;
++	if (mtd_erase(mtd, &erase))
++		return;
++
++	memset(page, 0xff, sizeof(page));
++	memcpy(page, marker[stage - 1], strlen(marker[stage - 1]));
++	len = sizeof(page);
++	(void)nand_write(mtd, off, &len, (u_char *)page);
++}
+diff -ruN a/include/wla_mark.h b/include/wla_mark.h
+--- a/include/wla_mark.h	1970-01-01 01:00:00.000000000 +0100
++++ b/include/wla_mark.h	2026-09-16 13:24:09.547376225 +0200
+@@ -0,0 +1,8 @@
++/* SPDX-License-Identifier: GPL-2.0+ */
++#ifndef __WLA_MARK_H
++#define __WLA_MARK_H
++
++/* Diagnostic build only. Writes one short marker into a scratch block of mtd11. */
++void wla_uboot_mark(unsigned int stage);
++
++#endif
