@@ -1,0 +1,118 @@
+{
+  "_comment": [
+    "Pinned MMIO bring-up trace our own BCO first stage must produce (ADR 0031).",
+    "Ordered list of [address, value] writes to the clock block (0xe0007000), the SDRAM",
+    "controller (0xe001d000) and 0x70000000. These register values are hardware facts read",
+    "from the stock first stage (App_BD 9423); the code that writes them is ours.",
+    "check-first-init.py models the ST20's delay-line measurement (0xe0007844: 0xa00d0f07,",
+    "then 0x800d0703, read on hardware 2026-10-16) and the self-clearing SDRAM command bits,",
+    "and asserts our built first.bin produces exactly this (with --stock, a local copy only,",
+    "that the stock first stage does too). Clock: 24 MHz crystal -> PLL 480 MHz, AHB 80 MHz."
+  ],
+  "writes": [
+    [
+      "0xe0007010",
+      "0x00000006"
+    ],
+    [
+      "0xe0007014",
+      "0x22221223"
+    ],
+    [
+      "0xe0007000",
+      "0x00022800"
+    ],
+    [
+      "0xe0007018",
+      "0x00000001"
+    ],
+    [
+      "0xe0007004",
+      "0x00000001"
+    ],
+    [
+      "0xe0007020",
+      "0x00008000"
+    ],
+    [
+      "0xe0007024",
+      "0x00008000"
+    ],
+    [
+      "0xe001dff0",
+      "0x00000001"
+    ],
+    [
+      "0xe001dff0",
+      "0x00000001"
+    ],
+    [
+      "0xe001d00c",
+      "0x00000040"
+    ],
+    [
+      "0xe001d004",
+      "0xfda07c60"
+    ],
+    [
+      "0xe001d008",
+      "0x00460000"
+    ],
+    [
+      "0xe001d00c",
+      "0x01000400"
+    ],
+    [
+      "0xe001d000",
+      "0x00000001"
+    ],
+    [
+      "0xe00070f0",
+      "0x80000006"
+    ],
+    [
+      "0xe00070f0",
+      "0x80000106"
+    ],
+    [
+      "0xe000701c",
+      "0x00000000"
+    ],
+    [
+      "0xe000701c",
+      "0x00000016"
+    ],
+    [
+      "0xe000701c",
+      "0x00000116"
+    ],
+    [
+      "0xe001d004",
+      "0xfda87c60"
+    ],
+    [
+      "0xe001d004",
+      "0xfdb07c60"
+    ],
+    [
+      "0xe001d004",
+      "0xfdb07c60"
+    ],
+    [
+      "0xe001d004",
+      "0xfdb87c60"
+    ],
+    [
+      "0x70000004",
+      "0x00000000"
+    ],
+    [
+      "0xe001d010",
+      "0x00000025"
+    ],
+    [
+      "0xe001d00c",
+      "0x00000025"
+    ]
+  ]
+}

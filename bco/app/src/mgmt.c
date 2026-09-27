@@ -1,0 +1,165 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* SPDX-FileCopyrightText: 2026 SoundTap contributors */
+
+#include "bcolink.h"
+#include "mgmt.h"
+#include "wifi.h"
+
+/* The management server on top of the station in wifi.c (host tests: a fake wifi). */
+unsigned char mgmt_wifi_mac[6];
+volatile unsigned mgmt_uptime;
+
+static unsigned char *put_bss(unsigned char *o, const struct wifi_bss *b)
+{
+    *o++ = b->ssid_len;
+    for (unsigned i = 0; i < b->ssid_len; i++) *o++ = b->ssid[i];
+    for (unsigned i = 0; i < 6; i++) *o++ = b->bssid[i];
+    *o++ = b->chan;
+    *o++ = (unsigned char)b->rssi;
+    return o;
+}
+
+/* The wired port's register and PHY readout (wired.c on hardware). The weak default says the
+ * build has no wired port: -1, no bytes. */
+__attribute__((weak)) int wired_probe(unsigned char *o)
+{
+    (void)o;
+    return -1;
+}
+
+/* The driver resends a request whose reply it missed, with the same seq. Re-running SET_PROFILE or
+ * AP_START would join or start twice, so the last state-changing reply is kept and resent instead.
+ * Queries simply run again. Only the reply is kept, never the request: SET_PROFILE carries the PMK. */
+static unsigned char last_rsp[16];
+static unsigned last_len, last_key; /* type << 16 | seq; 0 = nothing kept */
+
+static int changes_state(unsigned type)
+{
+    return type == 3 || type == 4 || type == 6 || type == 7;
+}
+
+unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
+{
+    if (n < MGMT_HDR)
+        return 0;
+    unsigned len = p[4] << 8 | p[5];
+    if (p[0] != 1 || MGMT_HDR + len > n)
+        return 0;
+    unsigned key = (unsigned)p[1] << 16 | p[2] << 8 | p[3];
+    if (changes_state(p[1]) && key == last_key) {
+        for (unsigned i = 0; i < last_len; i++) r[i] = last_rsp[i];
+        return last_len;
+    }
+    unsigned char *o = r + MGMT_HDR; /* reply payload; header filled at the end */
+    unsigned char type = p[1], st = 0;
+    const unsigned char *a = p + MGMT_HDR;
+    switch (type) {
+    case 1: /* HELLO: status, ver_len, ver, wifi mac, state, uptime, proto, caps */
+        *o++ = 0;
+#ifdef WILD_OWN
+        { /* "link-2 wild=T:DDDDDDDD": our own core's ready type and descriptor table */
+            extern unsigned wild_own_type, wild_own_desc;
+            static const char hx[] = "0123456789abcdef";
+            *o++ = 22;
+            for (const char *v = "link-2 wild="; *v;) *o++ = *v++;
+            *o++ = hx[wild_own_type & 15];
+            *o++ = ':';
+            for (int i = 28; i >= 0; i -= 4) *o++ = hx[wild_own_desc >> i & 15];
+        }
+#else
+        *o++ = 6;
+        for (const char *v = "link-2"; *v;) *o++ = *v++;
+#endif
+        for (unsigned i = 0; i < 6; i++) *o++ = mgmt_wifi_mac[i];
+        *o++ = wifi_state();
+        for (unsigned i = 0; i < 32; i += 8) /* uptime in ms, le32 */
+            *o++ = mgmt_uptime >> i;
+        *o++ = BCOLINK_PROTO;
+        for (unsigned i = 0; i < 32; i += 8) /* capabilities, le32 */
+            *o++ = (BCOLINK_CAP_AP | BCOLINK_CAP_REPLAY) >> i;
+        break;
+    case 2: { /* SCAN [start]: status (3 = still scanning), count, entries */
+        int n = wifi_scan(len >= 1 && a[0] == 1);
+        struct wifi_bss b;
+        *o++ = n < 0 ? 3 : 0;
+        unsigned char *cnt = o++;
+        *cnt = 0;
+        for (int i = 0; i < n && wifi_bss(i, &b) == 0; i++) {
+            o = put_bss(o, &b); /* 42 bytes at most, 24 entries fit MGMT_MAX */
+            *o++ = b.sec;
+            ++*cnt;
+        }
+        break;
+    }
+    case 3: /* SET_PROFILE: ssid_len, ssid, security, pmk_len, pmk, 32-byte seed */
+        if (len < 1 || a[0] < 1 || a[0] > 32 || len < 1u + a[0] + 2 ||
+            len != 1u + a[0] + 2 + a[1 + a[0] + 1] + 32)
+            st = 1;
+        else if (a[1 + a[0]] != 1 || a[1 + a[0] + 1] != 32)
+            st = 2; /* WPA2-PSK with a PMK only */
+        else
+            st = wifi_join(a + 1, a[0], a + 1 + a[0] + 2, a + 1 + a[0] + 2 + 32) ? 1 : 0;
+        *o++ = st;
+        break;
+    case 4: /* FORGET: drop the link, then reboot the WiLD core so a sticky RX wedge clears
+             * without re-flashing the DM870 app (dev-phase iteration aid; `iw dev wlan0 disconnect`
+             * reaches here via the driver). */
+        wifi_leave();
+        wifi_reset_core();
+        *o++ = 0;
+        break;
+    case 5: { /* STATUS: status, state, ssid_len, ssid, bssid, channel, rssi */
+        struct wifi_bss b;
+        *o++ = 0; *o++ = wifi_state();
+        wifi_current(&b);
+        o = put_bss(o, &b);
+        break;
+    }
+    case 6: /* AP_START: channel, beacon interval (TU, network order), beacon body */
+        *o++ = len < 3 || wifi_ap_start(a[0], a[1] << 8 | a[2], a + 3, len - 3) ? 1 : 0;
+        break;
+    case 7: /* AP_STOP */
+        wifi_ap_stop();
+        *o++ = 0;
+        break;
+    case 8: { /* AP_STATUS: status, count, client MACs, le32 counters (wifi_ap_counters) */
+        unsigned char m[WIFI_AP_CLIENTS][6];
+        unsigned c = wifi_ap_clients(m), k[WIFI_AP_COUNTERS];
+        *o++ = 0; *o++ = c;
+        for (unsigned i = 0; i < c * 6; i++) *o++ = m[i / 6][i % 6];
+        wifi_ap_counters(k);
+        for (unsigned i = 0; i < WIFI_AP_COUNTERS * 32; i += 8) *o++ = k[i / 32] >> i % 32;
+        break;
+    }
+    case 12: { /* WIRED_PROBE: status (1 = no wired port in this build), then wired_probe's bytes */
+        int w = wired_probe(o + 1);
+        *o = w < 0;
+        o += 1 + (w > 0 ? w : 0);
+        break;
+    }
+#ifdef WILD_OWN
+    case 9: /* WILD_WRITE: be32 offset, bytes into the runtime core-image staging area */
+        *o++ = len < 4 || wifi_wild_write((unsigned)a[0] << 24 | a[1] << 16 | a[2] << 8 | a[3],
+                                          a + 4, len - 4) ? 1 : 0;
+        break;
+    case 10: /* WILD_BOOT: be32 length, be32 crc32; boot the staged image (falls back if dead) */
+        *o++ = len != 8 || wifi_wild_boot((unsigned)a[0] << 24 | a[1] << 16 | a[2] << 8 | a[3],
+                                          (unsigned)a[4] << 24 | a[5] << 16 | a[6] << 8 | a[7]) ? 1 : 0;
+        break;
+    case 11: /* WILD_PEEK: be32 core offset, be16 length; words go to the UART */
+        *o++ = len != 6 || wifi_wild_peek((unsigned)a[0] << 24 | a[1] << 16 | a[2] << 8 | a[3],
+                                          a[4] << 8 | a[5]) ? 1 : 0;
+        break;
+#endif
+    default:
+        *o++ = 0xff;
+        break;
+    }
+    unsigned plen = o - (r + MGMT_HDR);
+    r[0] = 1; r[1] = type | 0x80; r[2] = p[2]; r[3] = p[3]; r[4] = plen >> 8; r[5] = plen;
+    if (changes_state(type) && MGMT_HDR + plen <= sizeof last_rsp) {
+        for (unsigned i = 0; i < MGMT_HDR + plen; i++) last_rsp[i] = r[i];
+        last_len = MGMT_HDR + plen, last_key = key;
+    }
+    return MGMT_HDR + plen;
+}

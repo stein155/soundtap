@@ -1,0 +1,503 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* SPDX-FileCopyrightText: 2026 SoundTap contributors */
+
+/* WPA2-PSK (CCMP) 4-way supplicant -- see wpa.h. Pure, freestanding, no libc. */
+#include "wpa.h"
+
+/* ---- local libc-free helpers (freestanding: no implicit memcpy/memset) ---- */
+static void cp(void *d, const void *s, size_t n)
+{
+    unsigned char *p = d;
+    const unsigned char *q = s;
+    while (n--)
+        *p++ = *q++;
+}
+static void zero(void *d, size_t n)
+{
+    unsigned char *p = d;
+    while (n--)
+        *p++ = 0;
+}
+static int eq(const void *a, const void *b, size_t n)
+{
+    const unsigned char *p = a, *q = b;
+    while (n--)
+        if (*p++ != *q++)
+            return 0;
+    return 1;
+}
+
+/* ============================ SHA-1 (RFC 3174) ============================ */
+struct sha1 {
+    uint32_t h[5];
+    uint64_t len;
+    uint8_t buf[64];
+    unsigned n;
+};
+static uint32_t rol(uint32_t v, unsigned s) { return (v << s) | (v >> (32 - s)); }
+static void sha1_block(struct sha1 *c, const uint8_t *p)
+{
+    uint32_t w[80], a, b, d, e, f, k, t;
+    unsigned i;
+    for (i = 0; i < 16; i++)
+        w[i] = (uint32_t)p[4 * i] << 24 | (uint32_t)p[4 * i + 1] << 16 |
+               (uint32_t)p[4 * i + 2] << 8 | p[4 * i + 3];
+    for (i = 16; i < 80; i++)
+        w[i] = rol(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+    a = c->h[0], b = c->h[1], d = c->h[2], e = c->h[3];
+    {
+        uint32_t cc = c->h[4];
+        for (i = 0; i < 80; i++) {
+            if (i < 20)
+                f = (b & d) | (~b & e), k = 0x5a827999;
+            else if (i < 40)
+                f = b ^ d ^ e, k = 0x6ed9eba1;
+            else if (i < 60)
+                f = (b & d) | (b & e) | (d & e), k = 0x8f1bbcdc;
+            else
+                f = b ^ d ^ e, k = 0xca62c1d6;
+            t = rol(a, 5) + f + cc + k + w[i];
+            cc = e, e = d, d = rol(b, 30), b = a, a = t;
+        }
+        c->h[0] += a, c->h[1] += b, c->h[2] += d, c->h[3] += e, c->h[4] += cc;
+    }
+}
+static void sha1_init(struct sha1 *c)
+{
+    c->h[0] = 0x67452301, c->h[1] = 0xefcdab89, c->h[2] = 0x98badcfe;
+    c->h[3] = 0x10325476, c->h[4] = 0xc3d2e1f0;
+    c->len = 0, c->n = 0;
+}
+static void sha1_update(struct sha1 *c, const uint8_t *p, size_t n)
+{
+    c->len += (uint64_t)n * 8;
+    while (n) {
+        unsigned r = 64 - c->n, k = n < r ? (unsigned)n : r;
+        cp(c->buf + c->n, p, k);
+        c->n += k, p += k, n -= k;
+        if (c->n == 64)
+            sha1_block(c, c->buf), c->n = 0;
+    }
+}
+static void sha1_final(struct sha1 *c, uint8_t out[20])
+{
+    uint64_t bits = c->len;
+    uint8_t pad = 0x80;
+    unsigned i;
+    sha1_update(c, &pad, 1);
+    pad = 0;
+    while (c->n != 56)
+        sha1_update(c, &pad, 1);
+    for (i = 0; i < 8; i++) {
+        uint8_t b = (uint8_t)(bits >> (56 - 8 * i));
+        sha1_update(c, &b, 1);
+    }
+    for (i = 0; i < 5; i++) {
+        out[4 * i] = (uint8_t)(c->h[i] >> 24), out[4 * i + 1] = (uint8_t)(c->h[i] >> 16);
+        out[4 * i + 2] = (uint8_t)(c->h[i] >> 8), out[4 * i + 3] = (uint8_t)c->h[i];
+    }
+}
+void wpa_sha1(const uint8_t *msg, size_t len, uint8_t out[20])
+{
+    struct sha1 c;
+    sha1_init(&c);
+    sha1_update(&c, msg, len);
+    sha1_final(&c, out);
+}
+
+/* ============================ HMAC-SHA1 (RFC 2104) ============================ */
+void wpa_hmac_sha1(const uint8_t *key, size_t key_len, const uint8_t *data, size_t data_len,
+                   uint8_t out[20])
+{
+    uint8_t k[64], ipad[64], opad[64], inner[20];
+    struct sha1 c;
+    unsigned i;
+    zero(k, 64);
+    if (key_len > 64) {
+        wpa_sha1(key, key_len, k); /* keys longer than the block get hashed first */
+    } else {
+        cp(k, key, key_len);
+    }
+    for (i = 0; i < 64; i++)
+        ipad[i] = k[i] ^ 0x36, opad[i] = k[i] ^ 0x5c;
+    sha1_init(&c);
+    sha1_update(&c, ipad, 64);
+    sha1_update(&c, data, data_len);
+    sha1_final(&c, inner);
+    sha1_init(&c);
+    sha1_update(&c, opad, 64);
+    sha1_update(&c, inner, 20);
+    sha1_final(&c, out);
+}
+
+void wpa_sha1_prf(const uint8_t *key, size_t key_len, const char *label, const uint8_t *data,
+                  size_t data_len, uint8_t *out, size_t out_len)
+{
+    uint8_t buf[128], digest[20];
+    size_t label_len = 0, pos = 0;
+    unsigned char i = 0;
+    while (label[label_len])
+        label_len++;
+    /* buf = label || 0x00 || data || i */
+    cp(buf, (const uint8_t *)label, label_len);
+    buf[label_len] = 0;
+    cp(buf + label_len + 1, data, data_len);
+    while (pos < out_len) {
+        size_t need = out_len - pos;
+        buf[label_len + 1 + data_len] = i;
+        wpa_hmac_sha1(key, key_len, buf, label_len + 2 + data_len, digest);
+        cp(out + pos, digest, need < 20 ? need : 20);
+        pos += 20, i++;
+    }
+}
+
+/* PBKDF2-HMAC-SHA1 for the WPA PMK: PMK = PBKDF2(passphrase, SSID, 4096, 32). Two 20-byte
+ * blocks, truncated to 32. 4096 iterations each -- runs once per connect. */
+void wpa_pbkdf2(const uint8_t *pass, size_t pass_len, const uint8_t *ssid, size_t ssid_len,
+                uint8_t pmk[32])
+{
+    for (unsigned block = 1; block <= 2; block++) {
+        uint8_t salt[36], u[20], t[20];
+        size_t sl = ssid_len > 32 ? 32 : ssid_len;
+        cp(salt, ssid, sl);
+        salt[sl] = 0, salt[sl + 1] = 0, salt[sl + 2] = 0, salt[sl + 3] = (uint8_t)block;
+        wpa_hmac_sha1(pass, pass_len, salt, sl + 4, u);
+        cp(t, u, 20);
+        for (unsigned c = 1; c < 4096; c++) {
+            wpa_hmac_sha1(pass, pass_len, u, 20, u);
+            for (unsigned i = 0; i < 20; i++)
+                t[i] ^= u[i];
+        }
+        cp(pmk + (block - 1) * 20, t, block == 1 ? 20 : 12);
+    }
+}
+
+/* ============================ AES-128 decrypt (for RFC 3394 unwrap) ============================ */
+static const uint8_t sbox[256] = {
+    0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b, 0xfe, 0xd7, 0xab, 0x76,
+    0xca, 0x82, 0xc9, 0x7d, 0xfa, 0x59, 0x47, 0xf0, 0xad, 0xd4, 0xa2, 0xaf, 0x9c, 0xa4, 0x72, 0xc0,
+    0xb7, 0xfd, 0x93, 0x26, 0x36, 0x3f, 0xf7, 0xcc, 0x34, 0xa5, 0xe5, 0xf1, 0x71, 0xd8, 0x31, 0x15,
+    0x04, 0xc7, 0x23, 0xc3, 0x18, 0x96, 0x05, 0x9a, 0x07, 0x12, 0x80, 0xe2, 0xeb, 0x27, 0xb2, 0x75,
+    0x09, 0x83, 0x2c, 0x1a, 0x1b, 0x6e, 0x5a, 0xa0, 0x52, 0x3b, 0xd6, 0xb3, 0x29, 0xe3, 0x2f, 0x84,
+    0x53, 0xd1, 0x00, 0xed, 0x20, 0xfc, 0xb1, 0x5b, 0x6a, 0xcb, 0xbe, 0x39, 0x4a, 0x4c, 0x58, 0xcf,
+    0xd0, 0xef, 0xaa, 0xfb, 0x43, 0x4d, 0x33, 0x85, 0x45, 0xf9, 0x02, 0x7f, 0x50, 0x3c, 0x9f, 0xa8,
+    0x51, 0xa3, 0x40, 0x8f, 0x92, 0x9d, 0x38, 0xf5, 0xbc, 0xb6, 0xda, 0x21, 0x10, 0xff, 0xf3, 0xd2,
+    0xcd, 0x0c, 0x13, 0xec, 0x5f, 0x97, 0x44, 0x17, 0xc4, 0xa7, 0x7e, 0x3d, 0x64, 0x5d, 0x19, 0x73,
+    0x60, 0x81, 0x4f, 0xdc, 0x22, 0x2a, 0x90, 0x88, 0x46, 0xee, 0xb8, 0x14, 0xde, 0x5e, 0x0b, 0xdb,
+    0xe0, 0x32, 0x3a, 0x0a, 0x49, 0x06, 0x24, 0x5c, 0xc2, 0xd3, 0xac, 0x62, 0x91, 0x95, 0xe4, 0x79,
+    0xe7, 0xc8, 0x37, 0x6d, 0x8d, 0xd5, 0x4e, 0xa9, 0x6c, 0x56, 0xf4, 0xea, 0x65, 0x7a, 0xae, 0x08,
+    0xba, 0x78, 0x25, 0x2e, 0x1c, 0xa6, 0xb4, 0xc6, 0xe8, 0xdd, 0x74, 0x1f, 0x4b, 0xbd, 0x8b, 0x8a,
+    0x70, 0x3e, 0xb5, 0x66, 0x48, 0x03, 0xf6, 0x0e, 0x61, 0x35, 0x57, 0xb9, 0x86, 0xc1, 0x1d, 0x9e,
+    0xe1, 0xf8, 0x98, 0x11, 0x69, 0xd9, 0x8e, 0x94, 0x9b, 0x1e, 0x87, 0xe9, 0xce, 0x55, 0x28, 0xdf,
+    0x8c, 0xa1, 0x89, 0x0d, 0xbf, 0xe6, 0x42, 0x68, 0x41, 0x99, 0x2d, 0x0f, 0xb0, 0x54, 0xbb, 0x16};
+static uint8_t inv_sbox[256];
+static int inv_ready;
+static uint8_t xtime(uint8_t x) { return (uint8_t)((x << 1) ^ ((x >> 7) * 0x1b)); }
+static uint8_t mul(uint8_t a, uint8_t b)
+{
+    uint8_t p = 0;
+    while (b) {
+        if (b & 1)
+            p ^= a;
+        a = xtime(a);
+        b >>= 1;
+    }
+    return p;
+}
+static void aes128_expand(const uint8_t key[16], uint8_t rk[176])
+{
+    static const uint8_t rcon[10] = {1, 2, 4, 8, 16, 32, 64, 128, 0x1b, 0x36};
+    unsigned i;
+    cp(rk, key, 16);
+    for (i = 16; i < 176; i += 4) {
+        uint8_t t[4];
+        cp(t, rk + i - 4, 4);
+        if (i % 16 == 0) {
+            uint8_t tmp = t[0];
+            t[0] = (uint8_t)(sbox[t[1]] ^ rcon[i / 16 - 1]);
+            t[1] = sbox[t[2]], t[2] = sbox[t[3]], t[3] = sbox[tmp];
+        }
+        rk[i] = rk[i - 16] ^ t[0], rk[i + 1] = rk[i - 15] ^ t[1];
+        rk[i + 2] = rk[i - 14] ^ t[2], rk[i + 3] = rk[i - 13] ^ t[3];
+    }
+}
+void wpa_aes128_dec(const uint8_t key[16], const uint8_t in[16], uint8_t out[16])
+{
+    uint8_t rk[176], s[16];
+    unsigned round, i;
+    if (!inv_ready) {
+        for (i = 0; i < 256; i++)
+            inv_sbox[sbox[i]] = (uint8_t)i;
+        inv_ready = 1;
+    }
+    aes128_expand(key, rk);
+    cp(s, in, 16);
+    for (i = 0; i < 16; i++)
+        s[i] ^= rk[160 + i]; /* AddRoundKey(10) */
+    for (round = 9; round >= 1; round--) {
+        uint8_t t[16];
+        /* InvShiftRows + InvSubBytes */
+        static const uint8_t isr[16] = {0, 13, 10, 7, 4, 1, 14, 11, 8, 5, 2, 15, 12, 9, 6, 3};
+        for (i = 0; i < 16; i++)
+            t[i] = inv_sbox[s[isr[i]]];
+        for (i = 0; i < 16; i++)
+            t[i] ^= rk[round * 16 + i]; /* AddRoundKey */
+        /* InvMixColumns */
+        for (i = 0; i < 16; i += 4) {
+            uint8_t a0 = t[i], a1 = t[i + 1], a2 = t[i + 2], a3 = t[i + 3];
+            s[i] = mul(a0, 14) ^ mul(a1, 11) ^ mul(a2, 13) ^ mul(a3, 9);
+            s[i + 1] = mul(a0, 9) ^ mul(a1, 14) ^ mul(a2, 11) ^ mul(a3, 13);
+            s[i + 2] = mul(a0, 13) ^ mul(a1, 9) ^ mul(a2, 14) ^ mul(a3, 11);
+            s[i + 3] = mul(a0, 11) ^ mul(a1, 13) ^ mul(a2, 9) ^ mul(a3, 14);
+        }
+    }
+    {
+        static const uint8_t isr[16] = {0, 13, 10, 7, 4, 1, 14, 11, 8, 5, 2, 15, 12, 9, 6, 3};
+        uint8_t t[16];
+        for (i = 0; i < 16; i++)
+            t[i] = inv_sbox[s[isr[i]]];
+        for (i = 0; i < 16; i++)
+            out[i] = t[i] ^ rk[i]; /* AddRoundKey(0) */
+    }
+}
+
+int wpa_aes_unwrap(const uint8_t kek[16], unsigned n, const uint8_t *cipher, uint8_t *plain)
+{
+    uint8_t a[8], b[16];
+    unsigned i, j;
+    int round;
+    static const uint8_t iv[8] = {0xa6, 0xa6, 0xa6, 0xa6, 0xa6, 0xa6, 0xa6, 0xa6};
+    cp(a, cipher, 8);
+    cp(plain, cipher + 8, n * 8);
+    for (round = 5; round >= 0; round--) {
+        for (i = n; i >= 1; i--) {
+            uint64_t t = (uint64_t)n * (unsigned)round + i;
+            for (j = 0; j < 8; j++)
+                a[j] ^= (uint8_t)(t >> (56 - 8 * j));
+            cp(b, a, 8);
+            cp(b + 8, plain + (i - 1) * 8, 8);
+            wpa_aes128_dec(kek, b, b);
+            cp(a, b, 8);
+            cp(plain + (i - 1) * 8, b + 8, 8);
+        }
+    }
+    return eq(a, iv, 8);
+}
+
+/* ============================ PTK ============================ */
+void wpa_pmk_to_ptk(const uint8_t pmk[32], const uint8_t aa[6], const uint8_t spa[6],
+                    const uint8_t anonce[32], const uint8_t snonce[32], uint8_t ptk[48])
+{
+    uint8_t data[76]; /* min||max MAC (12) + min||max nonce (64) */
+    /* min/max by byte compare */
+    {
+        int maccmp = 0, noncecmp = 0;
+        unsigned i;
+        for (i = 0; i < 6; i++) {
+            if (aa[i] != spa[i]) {
+                maccmp = aa[i] < spa[i] ? -1 : 1;
+                break;
+            }
+        }
+        for (i = 0; i < 32; i++) {
+            if (anonce[i] != snonce[i]) {
+                noncecmp = anonce[i] < snonce[i] ? -1 : 1;
+                break;
+            }
+        }
+        cp(data + 0, maccmp <= 0 ? aa : spa, 6);
+        cp(data + 6, maccmp <= 0 ? spa : aa, 6);
+        cp(data + 12, noncecmp <= 0 ? anonce : snonce, 32);
+        cp(data + 44, noncecmp <= 0 ? snonce : anonce, 32);
+    }
+    wpa_sha1_prf(pmk, 32, "Pairwise key expansion", data, 76, ptk, 48);
+}
+
+/* ============================ 4-way state machine ============================ */
+/* EAPOL-Key offsets from the 802.1X header byte. */
+#define O_KEYINFO 5
+#define O_KEYLEN 7
+#define O_REPLAY 9
+#define O_NONCE 17
+#define O_MIC 81
+#define O_KDLEN 97
+#define O_KD 99
+#define KI_VER 0x0007
+#define KI_PAIRWISE 0x0008
+#define KI_INSTALL 0x0040
+#define KI_ACK 0x0080
+#define KI_MIC 0x0100
+#define KI_SECURE 0x0200
+#define KI_ENCRYPTED 0x1000
+
+static uint16_t be16(const uint8_t *p) { return (uint16_t)(p[0] << 8 | p[1]); }
+static void wbe16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)(v >> 8), p[1] = (uint8_t)v; }
+
+/* RSN IE we advertise (WPA2, group+pairwise CCMP, AKM PSK, no caps). */
+static const uint8_t rsn_ie[22] = {0x30, 0x14, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x04,
+                                   0x01, 0x00, 0x00, 0x0f, 0xac, 0x04, 0x01, 0x00,
+                                   0x00, 0x0f, 0xac, 0x02, 0x00, 0x00};
+
+void wpa_sm_init(struct wpa_sm *sm, const uint8_t pmk[32], const uint8_t aa[6], const uint8_t spa[6],
+                 const uint8_t snonce[32])
+{
+    zero(sm, sizeof *sm);
+    cp(sm->pmk, pmk, 32);
+    cp(sm->aa, aa, 6);
+    cp(sm->spa, spa, 6);
+    cp(sm->snonce, snonce, 32);
+    sm->state = WPA_IDLE;
+    sm->gtk_idx = -1;
+}
+
+/* Walk msg3 decrypted key data: it is the RSN IE (0x30..) followed by the GTK KDE (0xdd 00 0f ac 01
+ * keyid res GTK..) and then 0-padding. Skip anything that is not the GTK KDE; stop on padding/end.
+ * Returns 1 with the GTK filled in, or 0 if no GTK KDE is present. */
+int wpa_extract_gtk(const uint8_t *kd, unsigned plen, uint8_t gtk[32], unsigned *gtk_len,
+                    int *gtk_idx, int *gtk_tx)
+{
+    for (unsigned p = 0; p + 2 <= plen;) {
+        unsigned l = kd[p + 1];
+        if (l == 0 || p + 2 + l > plen) /* padding (0xdd 00 / 00..) or end */
+            break;
+        if (kd[p] == 0xdd && l >= 6 && kd[p + 2] == 0x00 && kd[p + 3] == 0x0f &&
+            kd[p + 4] == 0xac && kd[p + 5] == 0x01) { /* GTK KDE (skip RSN IE & others) */
+            unsigned n = l - 6;
+            if (n > 32)
+                n = 32;
+            *gtk_idx = kd[p + 6] & 3;
+            *gtk_tx = (kd[p + 6] >> 2) & 1;
+            *gtk_len = n;
+            cp(gtk, kd + p + 8, n);
+            return 1;
+        }
+        p += 2 + l;
+    }
+    return 0;
+}
+
+/* 1 when the 8-byte big-endian replay counter a is newer than b. */
+static int replay_newer(const uint8_t *a, const uint8_t *b)
+{
+    for (unsigned i = 0; i < 8; i++)
+        if (a[i] != b[i])
+            return a[i] > b[i];
+    return 0;
+}
+
+/* MIC = HMAC-SHA1(KCK, frame with the MIC field zeroed)[0:16]. */
+static int mic_ok(const uint8_t kck[16], const uint8_t *in, size_t in_len)
+{
+    uint8_t frame[WPA_EAPOL_RX_MAX], mic[20];
+    if (in_len > sizeof frame)
+        return 0;
+    cp(frame, in, in_len);
+    zero(frame + O_MIC, 16);
+    wpa_hmac_sha1(kck, 16, frame, in_len, mic);
+    return eq(mic, in + O_MIC, 16);
+}
+
+/* A reply without nonce or key data (Message 4, group Message 2), MICed under the current KCK. */
+static size_t reply(const struct wpa_sm *sm, const uint8_t *in, uint16_t ki, uint8_t *out)
+{
+    uint8_t mic[20];
+    zero(out, O_KD);
+    out[0] = in[0], out[1] = 3;
+    wbe16(out + 2, O_KD - 4);
+    out[4] = 2;
+    wbe16(out + O_KEYINFO, ki);
+    cp(out + O_KEYLEN, in + O_KEYLEN, 2);
+    cp(out + O_REPLAY, sm->replay, 8);
+    wpa_hmac_sha1(sm->ptk, 16, out, O_KD, mic);
+    cp(out + O_MIC, mic, 16);
+    return O_KD;
+}
+
+/* Unwrap the key data under kek and take the GTK KDE out of it. */
+static int unwrap_gtk(struct wpa_sm *sm, const uint8_t *kek, uint16_t ki, const uint8_t *in,
+                      uint16_t kdlen)
+{
+    uint8_t kd[128];
+    unsigned n = kdlen / 8 - 1;
+    if (!(ki & KI_ENCRYPTED) || kdlen < 16 || kdlen % 8 || kdlen > sizeof kd + 8 ||
+        !wpa_aes_unwrap(kek, n, in + O_KD, kd))
+        return 0;
+    return wpa_extract_gtk(kd, n * 8, sm->gtk, &sm->gtk_len, &sm->gtk_idx, &sm->gtk_tx);
+}
+
+int wpa_sm_rx(struct wpa_sm *sm, const uint8_t *in, size_t in_len, uint8_t *out, size_t *out_len)
+{
+    uint16_t ki, kdlen;
+    if (in_len < O_KD || in[1] != 3) /* 802.1X type 3 = EAPOL-Key */
+        return WPA_RX_FAIL;
+    ki = be16(in + O_KEYINFO);
+    if ((ki & KI_VER) != 2 || !(ki & KI_ACK)) /* CCMP only: HMAC-SHA1 MIC + AES key wrap */
+        return WPA_RX_FAIL;
+    kdlen = be16(in + O_KDLEN);
+    if ((size_t)O_KD + kdlen > in_len)
+        return WPA_RX_FAIL;
+    /* Every frame after the first must count up: a replayed one is dropped unanswered. */
+    if (sm->state != WPA_IDLE && !replay_newer(in + O_REPLAY, sm->replay))
+        return WPA_RX_FAIL;
+
+    if (!(ki & KI_PAIRWISE)) {
+        /* ---- Group Message 1 (GTK rekey): only once keyed, answered with group Message 2 ---- */
+        if (sm->state != WPA_DONE || !(ki & KI_MIC) || !mic_ok(sm->ptk, in, in_len) ||
+            !unwrap_gtk(sm, sm->ptk + 16, ki, in, kdlen))
+            return WPA_RX_FAIL;
+        cp(sm->replay, in + O_REPLAY, 8);
+        *out_len = reply(sm, in, 2 | KI_MIC | KI_SECURE, out);
+        return WPA_RX_SEND | WPA_RX_INSTALL_GTK;
+    }
+
+    if (!(ki & KI_MIC)) {
+        /* ---- Message 1: ANonce in, build Message 2 ----
+         * The new PTK waits in tptk until a MICed Message 3 proves it: Message 1 carries no MIC, so
+         * a forged one must not replace the keys in use. A rekey (Message 1 while DONE) gets a fresh
+         * SNonce derived from the old one and the new ANonce. */
+        uint8_t *o = out;
+        unsigned total = O_KD + sizeof rsn_ie;
+        uint8_t mic[20];
+        if (sm->state == WPA_DONE)
+            wpa_sha1_prf(sm->snonce, 32, "SoundTap SNonce", in + O_NONCE, 32, sm->snonce, 32);
+        cp(sm->anonce, in + O_NONCE, 32);
+        wpa_pmk_to_ptk(sm->pmk, sm->aa, sm->spa, sm->anonce, sm->snonce, sm->tptk);
+        cp(sm->replay, in + O_REPLAY, 8);
+        zero(o, total);
+        o[0] = in[0], o[1] = 3; /* echo 802.1X version, type key */
+        wbe16(o + 2, (uint16_t)(total - 4));
+        o[4] = 2; /* RSN descriptor */
+        wbe16(o + O_KEYINFO, 2 | KI_PAIRWISE | KI_MIC);
+        cp(o + O_KEYLEN, in + O_KEYLEN, 2); /* echo key length */
+        cp(o + O_REPLAY, sm->replay, 8);
+        cp(o + O_NONCE, sm->snonce, 32);
+        wbe16(o + O_KDLEN, sizeof rsn_ie);
+        cp(o + O_KD, rsn_ie, sizeof rsn_ie);
+        wpa_hmac_sha1(sm->tptk, 16, o, total, mic);
+        cp(o + O_MIC, mic, 16);
+        sm->state = WPA_GOT_MSG1;
+        *out_len = total;
+        return WPA_RX_SEND;
+    }
+
+    /* ---- Message 3: verify MIC, unwrap GTK, build Message 4, install ---- */
+    if (sm->state == WPA_DONE) {
+        /* Our Message 4 got lost and the AP resends Message 3: answer again, install nothing
+         * (reinstalling would reset the nonce, the KRACK class). */
+        if (!mic_ok(sm->ptk, in, in_len))
+            return WPA_RX_FAIL;
+        cp(sm->replay, in + O_REPLAY, 8);
+        *out_len = reply(sm, in, 2 | KI_PAIRWISE | KI_MIC | KI_SECURE, out);
+        return WPA_RX_SEND;
+    }
+    /* A WPA2 Message 3 always carries the GTK: key data that does not unwrap (integrity
+     * check) or holds no GTK fails the frame before any key is taken. */
+    if (!eq(in + O_NONCE, sm->anonce, 32) || !mic_ok(sm->tptk, in, in_len) ||
+        !unwrap_gtk(sm, sm->tptk + 16, ki, in, kdlen))
+        return WPA_RX_FAIL;
+    cp(sm->ptk, sm->tptk, 48);
+    cp(sm->replay, in + O_REPLAY, 8);
+    *out_len = reply(sm, in, 2 | KI_PAIRWISE | KI_MIC | KI_SECURE, out);
+    sm->state = WPA_DONE;
+    return WPA_RX_SEND | WPA_RX_INSTALL_PTK | WPA_RX_INSTALL_GTK | WPA_RX_DONE;
+}

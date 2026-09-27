@@ -1,0 +1,69 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* SPDX-FileCopyrightText: 2026 SoundTap contributors */
+
+/* Fake station for the host tests of mgmt.c: records what the management server asked for. */
+#include <string.h>
+#include "wifi.h"
+
+unsigned fake_state, fake_scanning, fake_nbss, fake_joins, fake_leaves;
+unsigned char fake_ssid[32], fake_pmk[32], fake_seed[32];
+unsigned fake_ssid_len;
+
+unsigned wifi_state(void) { return fake_state; }
+int wifi_scan(int start)
+{
+    if (start && !fake_scanning && fake_state != WIFI_UP)
+        fake_scanning = 1;
+    return fake_scanning ? -1 : (int)fake_nbss;
+}
+int wifi_bss(unsigned i, struct wifi_bss *b)
+{
+    if (i >= fake_nbss)
+        return -1;
+    memset(b, 0, sizeof *b);
+    b->ssid_len = 3, memcpy(b->ssid, "ap0", 3), b->ssid[2] += i;
+    memcpy(b->bssid, "\x02\x00\x00\x00\x00\x10", 6), b->bssid[5] += i;
+    b->chan = 1 + i, b->rssi = -40 - (int)i, b->sec = 1;
+    return 0;
+}
+int wifi_join(const unsigned char *ssid, unsigned n, const unsigned char pmk[32],
+              const unsigned char seed[32])
+{
+    memcpy(fake_ssid, ssid, n), fake_ssid_len = n;
+    memcpy(fake_pmk, pmk, 32), memcpy(fake_seed, seed, 32);
+    fake_joins++, fake_state = WIFI_JOINING;
+    return 0;
+}
+void wifi_leave(void) { fake_leaves++, fake_state = WIFI_IDLE, fake_ssid_len = 0; }
+int wifi_reset_core(void) { fake_state = WIFI_IDLE; return 0; }
+int wifi_current(struct wifi_bss *b)
+{
+    memset(b, 0, sizeof *b);
+    if (!fake_ssid_len)
+        return 0;
+    b->ssid_len = fake_ssid_len, memcpy(b->ssid, fake_ssid, fake_ssid_len);
+    memcpy(b->bssid, "\x02\x00\x00\x00\x00\x10", 6), b->chan = 6, b->rssi = -50;
+    return 1;
+}
+
+unsigned fake_ap_chan, fake_ap_bint, fake_ap_len, fake_ap_stops;
+int wifi_ap_start(unsigned chan, unsigned bint, const unsigned char *body, unsigned len)
+{
+    if (chan < 1 || chan > 13 || len < 12 || len > WIFI_AP_BODY_MAX)
+        return -1;
+    fake_ap_chan = chan, fake_ap_bint = bint, fake_ap_len = len, fake_state = WIFI_AP;
+    return 0;
+}
+void wifi_ap_stop(void) { fake_ap_stops++, fake_state = WIFI_IDLE; }
+unsigned wifi_ap_clients(unsigned char macs[][6])
+{
+    if (fake_state != WIFI_AP)
+        return 0;
+    memcpy(macs[0], "\x02\x00\x00\x00\x00\x77", 6);
+    return 1;
+}
+void wifi_ap_counters(unsigned c[WIFI_AP_COUNTERS])
+{
+    for (unsigned i = 0; i < WIFI_AP_COUNTERS; i++)
+        c[i] = 0x11 * (i + 1);
+}
