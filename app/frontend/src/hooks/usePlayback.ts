@@ -1,0 +1,83 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 SoundTap contributors
+
+import { useEffect, useEffectEvent } from 'react';
+import { storePreset } from '../lib/api';
+import { isStreamUrl } from '../lib/station';
+import type { Station } from '../lib/types';
+import { useI18n } from '../lib/i18n';
+import type { Block, Notify, ReportFailure } from './useErrorReporter';
+import type { SelectedRoom } from './useSelectedRoom';
+import { useSettling, type PlaybackContext } from './playback/context';
+import { presetStores } from './playback/presets';
+import { roomTransporter, useSourcePicks } from './playback/rooms';
+import { starters } from './playback/starters';
+import { transports } from './playback/transport';
+
+// Everything that starts, stops or changes what a room plays. The selected room goes
+// through useSpeaker's optimistic state, so a tap shows at once; any other room is
+// asked directly and re-read a moment later. A request that fails says so (`failed`)
+// and the speaker's real state is read back.
+export function usePlayback(
+  { live, speaker, lead, roomsState }: SelectedRoom,
+  failed: ReportFailure,
+  notify?: Notify,
+  block?: Block
+) {
+  const { t } = useI18n();
+  const leadFailed = failed(lead?.name || '');
+
+  // The request went through but the speaker could not play what it was given.
+  const { gaveUp } = live;
+  const reportGaveUp = useEffectEvent(() => block?.(t('playGaveUp')));
+  useEffect(() => {
+    if (gaveUp) reportGaveUp(); // once per failure: a new language must not replay it
+  }, [gaveUp]);
+
+  const { begin, settle } = useSettling(live);
+  const c: PlaybackContext = {
+    live,
+    speaker,
+    lead,
+    roomsState,
+    failed,
+    leadFailed,
+    notify,
+    t,
+    begin,
+    settle,
+  };
+  const { playSlot, playStation, playRecent } = starters(c);
+  const { stop, transport, skip, power } = transports(c);
+  const { storeSpotify, canStore, storeCurrent } = presetStores(c);
+  const setSource = useSourcePicks(c, stop);
+  const roomTransport = roomTransporter(c, { transport, playSlot });
+
+  // A station played, or stored when held onto a slot. Storing does not also play: that cut
+  // off whatever the room was playing.
+  const pick = async (station: Station, slot: number | null) => {
+    if (!station.tuneInId) return;
+    if (slot === null) return playStation(station);
+    await storePreset(slot, station, speaker).catch((err: { status?: number }) =>
+      // The speaker refused the address itself: say so, not "refused that".
+      err.status === 400 && isStreamUrl(station.tuneInId)
+        ? notify?.(t('customHelpInvalid'))
+        : leadFailed(err)
+    );
+    await live.refreshPresets();
+  };
+
+  return {
+    playSlot,
+    pick,
+    playRecent,
+    transport,
+    skip,
+    canStore,
+    storeCurrent,
+    storeSpotify,
+    setSource,
+    power,
+    roomTransport,
+  };
+}

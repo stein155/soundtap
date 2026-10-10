@@ -1,0 +1,6137 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Speaker HTTP API",
+    "version": "1",
+    "description": "The speaker's own HTTP API, served by soundtapd. All bodies are JSON unless noted. Retry a write safely by repeating it with the same X-SoundTap-Request id."
+  },
+  "tags": [
+    {
+      "name": "Playback"
+    },
+    {
+      "name": "Presets"
+    },
+    {
+      "name": "Radio"
+    },
+    {
+      "name": "Rooms and devices"
+    },
+    {
+      "name": "Spotify"
+    },
+    {
+      "name": "Media servers"
+    },
+    {
+      "name": "Notifications"
+    },
+    {
+      "name": "Settings"
+    },
+    {
+      "name": "Connectivity"
+    },
+    {
+      "name": "System"
+    },
+    {
+      "name": "Firmware"
+    }
+  ],
+  "paths": {
+    "/api/now": {
+      "get": {
+        "tags": [
+          "Playback"
+        ],
+        "summary": "Now playing",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NowPlaying"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/events": {
+      "get": {
+        "tags": [
+          "Playback"
+        ],
+        "summary": "Live state stream",
+        "description": "Server-sent events: a state snapshot is pushed whenever playback, volume or power changes. Reconnect delay is 3 s. Capped number of concurrent streams (503 when full).",
+        "responses": {
+          "200": {
+            "description": "Server-sent event stream.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Too many event streams."
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/household/events": {
+      "get": {
+        "tags": [
+          "Playback"
+        ],
+        "summary": "Live state of the whole household",
+        "description": "Like /api/events, merged across speakers.",
+        "responses": {
+          "200": {
+            "description": "Server-sent event stream.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/volume": {
+      "get": {
+        "tags": [
+          "Playback"
+        ],
+        "summary": "Read volume",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Volume"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Playback"
+        ],
+        "summary": "Set volume",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "volume": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "source": {
+                    "type": "string",
+                    "description": "Source reporting its own slider, e.g. SPOTIFY."
+                  },
+                  "group": {
+                    "type": "boolean",
+                    "description": "Move the followers of a group too."
+                  }
+                },
+                "required": [
+                  "volume"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "volume": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/power": {
+      "post": {
+        "tags": [
+          "Playback"
+        ],
+        "summary": "Power on or standby",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "on": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "on"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "on": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/stop": {
+      "post": {
+        "tags": [
+          "Playback"
+        ],
+        "summary": "Stop playback",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/play": {
+      "post": {
+        "tags": [
+          "Playback"
+        ],
+        "summary": "Play a TuneIn station",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "stationId": {
+                    "type": "string",
+                    "description": "A TuneIn guide id, or an http(s) stream URL of the user's own."
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "stationId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "station": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/play/{slot}": {
+      "post": {
+        "tags": [
+          "Playback"
+        ],
+        "summary": "Play a preset",
+        "parameters": [
+          {
+            "name": "slot",
+            "in": "path",
+            "required": true,
+            "description": "Preset slot 1..6.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "playing": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Preset is empty."
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/sleep": {
+      "get": {
+        "tags": [
+          "Playback"
+        ],
+        "summary": "Sleep timer",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Sleep"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Playback"
+        ],
+        "summary": "Set sleep timer",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "minutes": {
+                    "type": "integer",
+                    "description": "0 cancels."
+                  }
+                },
+                "required": [
+                  "minutes"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Sleep"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/favorites": {
+      "get": {
+        "tags": [
+          "Playback"
+        ],
+        "summary": "The saved favorites, in the order they were saved",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Favorite"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Playback"
+        ],
+        "summary": "Remove one favorite",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "description": "The favorite's source, as GET /api/favorites gives it."
+                  },
+                  "location": {
+                    "type": "string",
+                    "description": "The favorite's location."
+                  }
+                },
+                "required": [
+                  "source",
+                  "location"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Removed, or was not on the list"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Playback"
+        ],
+        "summary": "Save a favorite; a full list answers 409",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "description": "TUNEIN or SPOTIFY."
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "location": {
+                    "type": "string",
+                    "description": "A TuneIn guide id, a stream URL or a Spotify URI."
+                  },
+                  "art": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "source",
+                  "name",
+                  "location"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Saved"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/recent": {
+      "get": {
+        "tags": [
+          "Playback"
+        ],
+        "summary": "Recently played",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RecentEntry"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Playback"
+        ],
+        "summary": "Remove one entry from the recently played list",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "description": "The entry's source, as GET /api/recent gives it."
+                  },
+                  "location": {
+                    "type": "string",
+                    "description": "The entry's location; empty for one that cannot be replayed."
+                  }
+                },
+                "required": [
+                  "source"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Removed, or was not on the list"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/user-sources": {
+      "get": {
+        "tags": [
+          "Playback"
+        ],
+        "summary": "Selectable sources",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/user-source": {
+      "post": {
+        "tags": [
+          "Playback"
+        ],
+        "summary": "Select a source",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "source"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "source": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/presets": {
+      "get": {
+        "tags": [
+          "Presets"
+        ],
+        "summary": "List presets",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Preset"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/presets/{slot}": {
+      "put": {
+        "tags": [
+          "Presets"
+        ],
+        "summary": "Store a preset",
+        "parameters": [
+          {
+            "name": "slot",
+            "in": "path",
+            "required": true,
+            "description": "Preset slot 1..6.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StoredPreset"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoredPreset"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Presets"
+        ],
+        "summary": "Clear a preset",
+        "parameters": [
+          {
+            "name": "slot",
+            "in": "path",
+            "required": true,
+            "description": "Preset slot 1..6.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/presets/move": {
+      "post": {
+        "tags": [
+          "Presets"
+        ],
+        "summary": "Move a preset",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "integer"
+                  },
+                  "to": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "from",
+                  "to"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/search": {
+      "get": {
+        "tags": [
+          "Radio"
+        ],
+        "summary": "Search TuneIn stations",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Search text.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/tunein/": {
+      "get": {
+        "tags": [
+          "Radio"
+        ],
+        "summary": "TuneIn OPML proxy",
+        "description": "Same-origin mirror of the TuneIn browse API.",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "description": "TuneIn OPML path.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "TuneIn OPML response.",
+            "content": {
+              "application/xml": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/logo": {
+      "get": {
+        "tags": [
+          "Radio"
+        ],
+        "summary": "Station logo proxy",
+        "parameters": [
+          {
+            "name": "url",
+            "in": "query",
+            "required": true,
+            "description": "Logo URL.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Image (max 2 MiB).",
+            "content": {
+              "image/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/devices": {
+      "get": {
+        "tags": [
+          "Rooms and devices"
+        ],
+        "summary": "Speakers found on the LAN",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "devices": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Device"
+                      }
+                    }
+                  },
+                  "required": [
+                    "devices"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/devices/{id}/{rest}": {
+      "get": {
+        "tags": [
+          "Rooms and devices"
+        ],
+        "summary": "Forward a call to another speaker",
+        "description": "Proxy: the call is made on the other speaker.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Device id from /api/devices.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "rest",
+            "in": "path",
+            "required": true,
+            "description": "Any /api/... path on that speaker.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Rooms and devices"
+        ],
+        "summary": "Forward a call to another speaker",
+        "description": "Proxy: the call is made on the other speaker.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Device id from /api/devices.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "rest",
+            "in": "path",
+            "required": true,
+            "description": "Any /api/... path on that speaker.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Rooms and devices"
+        ],
+        "summary": "Forward a call to another speaker",
+        "description": "Proxy: the call is made on the other speaker.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Device id from /api/devices.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "rest",
+            "in": "path",
+            "required": true,
+            "description": "Any /api/... path on that speaker.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Rooms and devices"
+        ],
+        "summary": "Forward a call to another speaker",
+        "description": "Proxy: the call is made on the other speaker.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Device id from /api/devices.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "rest",
+            "in": "path",
+            "required": true,
+            "description": "Any /api/... path on that speaker.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/multiroom": {
+      "get": {
+        "tags": [
+          "Rooms and devices"
+        ],
+        "summary": "Group state",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MultiroomClient"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/multiroom/clients/{id}/volume": {
+      "put": {
+        "tags": [
+          "Rooms and devices"
+        ],
+        "summary": "Set a group member's volume",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Client id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "percent": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "muted": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "percent",
+                  "muted"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Client not found."
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/multiroom/clients/{id}/membership": {
+      "put": {
+        "tags": [
+          "Rooms and devices"
+        ],
+        "summary": "Add or remove a group member",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Client id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "member": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "member"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Client not found."
+          },
+          "409": {
+            "description": "Current client not found."
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/multiroom/follow": {
+      "post": {
+        "tags": [
+          "Rooms and devices"
+        ],
+        "summary": "Follow another speaker",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "host": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "host"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "This speaker leads a group; ungroup first."
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/multiroom/invite": {
+      "post": {
+        "tags": [
+          "Rooms and devices"
+        ],
+        "summary": "Invite a speaker to follow this one",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ip": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "ip"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Group audio unavailable."
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/multiroom/listen": {
+      "post": {
+        "tags": [
+          "Rooms and devices"
+        ],
+        "summary": "Let the caller reach this speaker's stream port",
+        "responses": {
+          "204": {
+            "description": "Allowed."
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/multiroom/downstream": {
+      "get": {
+        "tags": [
+          "Rooms and devices"
+        ],
+        "summary": "Followers of this speaker",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/multiroom/leader": {
+      "get": {
+        "tags": [
+          "Rooms and devices"
+        ],
+        "summary": "Leader of this speaker",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/spotify/status": {
+      "get": {
+        "tags": [
+          "Spotify"
+        ],
+        "summary": "Connection status",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/position": {
+      "get": {
+        "tags": [
+          "Playback"
+        ],
+        "summary": "Where the track is",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "positionMs": {
+                      "type": "integer"
+                    },
+                    "durationMs": {
+                      "type": "integer"
+                    },
+                    "seekable": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "positionMs",
+                    "durationMs",
+                    "seekable"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/seek": {
+      "post": {
+        "tags": [
+          "Playback"
+        ],
+        "summary": "Seek the playing track (Spotify or a UPnP controller's track)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "positionMs": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/spotify/liked": {
+      "get": {
+        "tags": [
+          "Spotify"
+        ],
+        "summary": "Whether what plays is in Liked Songs",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "available": {
+                      "type": "boolean"
+                    },
+                    "liked": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Spotify"
+        ],
+        "summary": "Put what plays in Liked Songs or take it out",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "on": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/spotify/player": {
+      "get": {
+        "tags": [
+          "Spotify"
+        ],
+        "summary": "Player state",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/spotify/me/playlists": {
+      "get": {
+        "tags": [
+          "Spotify"
+        ],
+        "summary": "Your playlists",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/spotify/me/following": {
+      "get": {
+        "tags": [
+          "Spotify"
+        ],
+        "summary": "Artists you follow",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/spotify/me/recent": {
+      "get": {
+        "tags": [
+          "Spotify"
+        ],
+        "summary": "What you played lately",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/spotify/me/tracks": {
+      "get": {
+        "tags": [
+          "Spotify"
+        ],
+        "summary": "Your saved tracks",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/spotify/search": {
+      "get": {
+        "tags": [
+          "Spotify"
+        ],
+        "summary": "Search",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Search text.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/spotify/albums/{id}": {
+      "get": {
+        "tags": [
+          "Spotify"
+        ],
+        "summary": "Album",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Spotify id.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/spotify/artists/{id}": {
+      "get": {
+        "tags": [
+          "Spotify"
+        ],
+        "summary": "Artist",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Spotify id.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/spotify/playlists/{id}": {
+      "get": {
+        "tags": [
+          "Spotify"
+        ],
+        "summary": "Playlist",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Spotify id.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/spotify/images/{id}": {
+      "get": {
+        "tags": [
+          "Spotify"
+        ],
+        "summary": "Cover image",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Image id.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Image.",
+            "content": {
+              "image/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/spotify/play": {
+      "post": {
+        "tags": [
+          "Spotify"
+        ],
+        "summary": "Play a URI",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "uri": {
+                    "type": "string"
+                  },
+                  "context": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "uri"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/spotify/pause": {
+      "post": {
+        "tags": [
+          "Spotify"
+        ],
+        "summary": "Pause",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/spotify/resume": {
+      "post": {
+        "tags": [
+          "Spotify"
+        ],
+        "summary": "Resume",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/spotify/next": {
+      "post": {
+        "tags": [
+          "Spotify"
+        ],
+        "summary": "Next",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/spotify/previous": {
+      "post": {
+        "tags": [
+          "Spotify"
+        ],
+        "summary": "Previous",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/spotify/disconnect": {
+      "post": {
+        "tags": [
+          "Spotify"
+        ],
+        "summary": "Disconnect",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/spotify/seek": {
+      "post": {
+        "tags": [
+          "Spotify"
+        ],
+        "summary": "Seek",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "positionMs": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/spotify/shuffle": {
+      "post": {
+        "tags": [
+          "Spotify"
+        ],
+        "summary": "Shuffle on or off",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "on": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/spotify/repeat": {
+      "post": {
+        "tags": [
+          "Spotify"
+        ],
+        "summary": "Repeat off, the context, or the track",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "off",
+                      "context",
+                      "track"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/upnp/servers": {
+      "get": {
+        "tags": [
+          "Media servers"
+        ],
+        "summary": "UPnP media servers",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/UPnPServer"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/upnp/search": {
+      "post": {
+        "tags": [
+          "Media servers"
+        ],
+        "summary": "Search for media servers now",
+        "responses": {
+          "200": {
+            "description": "The servers known after the search",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/UPnPServer"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/upnp/browse": {
+      "get": {
+        "tags": [
+          "Media servers"
+        ],
+        "summary": "Browse a media server",
+        "parameters": [
+          {
+            "name": "server",
+            "in": "query",
+            "required": false,
+            "description": "Server id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "query",
+            "required": false,
+            "description": "Container id.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/UPnPItem"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/upnp/play": {
+      "post": {
+        "tags": [
+          "Media servers"
+        ],
+        "summary": "Play a media URL",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "url"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/speaker/notify": {
+      "post": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Play a clip over the current source",
+        "description": "Smart-home hubs post doorbells here. Alternatively send the audio clip itself as the binary body with its own Content-Type. An appKey or app_key, in the body or as a query parameter, is accepted and ignored.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "description": "http(s) URL, not loopback or link-local."
+                  },
+                  "appKey": {
+                    "type": "string",
+                    "description": "Ignored. Accepted, like app_key, so clients written for Bose's SoundTouch API keep working."
+                  }
+                },
+                "required": [
+                  "url"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/settings": {
+      "get": {
+        "tags": [
+          "Settings"
+        ],
+        "summary": "Read settings",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Settings"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Settings"
+        ],
+        "summary": "Change settings",
+        "description": "Partial update: omitted fields are kept. Includes the MQTT broker settings.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/mqtt/status": {
+      "get": {
+        "tags": [
+          "Settings"
+        ],
+        "summary": "MQTT connection status",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "connected": {
+                      "type": "boolean"
+                    },
+                    "lastError": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/geocode": {
+      "get": {
+        "tags": [
+          "Settings"
+        ],
+        "summary": "Look up a town",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "description": "Town name.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Place"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/info": {
+      "get": {
+        "tags": [
+          "Settings"
+        ],
+        "summary": "Speaker identity",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Info"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/bluetooth": {
+      "get": {
+        "tags": [
+          "Connectivity"
+        ],
+        "summary": "Bluetooth status",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/bluetooth/pair": {
+      "post": {
+        "tags": [
+          "Connectivity"
+        ],
+        "summary": "Make discoverable for pairing",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/bluetooth/clear": {
+      "post": {
+        "tags": [
+          "Connectivity"
+        ],
+        "summary": "Forget paired devices",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/wifi/scan": {
+      "post": {
+        "tags": [
+          "Connectivity"
+        ],
+        "summary": "Scan for Wi-Fi networks",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "networks": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/WifiNetwork"
+                      }
+                    }
+                  },
+                  "required": [
+                    "networks"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/wifi/saved": {
+      "get": {
+        "tags": [
+          "Connectivity"
+        ],
+        "summary": "List the saved Wi-Fi networks (names only, never a passphrase)",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "networks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "ssid": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "joinFailed": {
+                      "type": "string",
+                      "enum": [
+                        "not_found",
+                        "wrong_password",
+                        "refused",
+                        "no_address",
+                        "timeout"
+                      ],
+                      "description": "Why the last Wi-Fi join failed; absent once a join worked"
+                    },
+                    "fellBack": {
+                      "type": "string",
+                      "enum": [
+                        "not_found",
+                        "wrong_password",
+                        "refused",
+                        "no_address",
+                        "timeout"
+                      ],
+                      "description": "Why new Wi-Fi settings did not take and the speaker went back to its last network; absent once dismissed"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/wifi/forget": {
+      "post": {
+        "tags": [
+          "Connectivity"
+        ],
+        "summary": "Forget a saved Wi-Fi network (409 for the one in use)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/wifi/fallback/dismiss": {
+      "post": {
+        "tags": [
+          "Connectivity"
+        ],
+        "summary": "Dismiss the notice that new Wi-Fi settings did not take",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/wifi": {
+      "post": {
+        "tags": [
+          "Connectivity"
+        ],
+        "summary": "Join a Wi-Fi network",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ssid": {
+                    "type": "string"
+                  },
+                  "security": {
+                    "type": "string"
+                  },
+                  "password": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "ssid"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/setup": {
+      "post": {
+        "tags": [
+          "Connectivity"
+        ],
+        "summary": "Enter setup (access point) mode",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Setup mode unavailable."
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/version": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Running version",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Version"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/releases": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Available releases",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Releases"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/docs": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "This reference (HTML page)",
+        "responses": {
+          "200": {
+            "description": "HTML page.",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/openapi.json": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "This reference (OpenAPI 3 document)",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/health": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Disk, memory, process and firewall health, and event counters",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/crash-report": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "The crash report the speaker offers, once its owner turned them on",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrashReportAnswer"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Record a crash as reported or dismissed, so it is not offered again (404 for a crash the speaker does not hold)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "outcome": {
+                    "type": "string",
+                    "enum": [
+                      "reported",
+                      "dismissed"
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "outcome"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/debug": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Diagnostic bundle",
+        "description": "Waits for a press on the speaker (ADR 0055). Without download, a redacted plain-text snapshot; with download=1, a zip of that text, version, health, the kernel log, every log in full and the previous boot's ramoops records, all through the same redaction.",
+        "parameters": [
+          {
+            "name": "download",
+            "in": "query",
+            "required": false,
+            "description": "Any value: answer with the support archive as an attachment.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Plain-text bundle, or the support archive with download.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/zip": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/backup": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Download a settings backup",
+        "responses": {
+          "200": {
+            "description": "Backup file.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/restore": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Restore a settings backup",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/factory-reset": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Factory reset",
+        "description": "Body must carry confirm: true.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "confirm": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "confirm"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/reboot": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Reboot the speaker",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/update": {
+      "post": {
+        "tags": [
+          "Firmware"
+        ],
+        "summary": "Update to a release",
+        "description": "confirm must be true. 202 with status updating when started; 200 with status current when already up to date.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "tag": {
+                    "type": "string"
+                  },
+                  "confirm": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "confirm"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Update started."
+          },
+          "409": {
+            "description": "Another update is running."
+          },
+          "502": {
+            "description": "Release check failed."
+          },
+          "503": {
+            "description": "Code clock_not_set: NTP has not set the speaker's clock since boot, so it does not ask GitHub yet."
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/core-update": {
+      "post": {
+        "tags": [
+          "Firmware"
+        ],
+        "summary": "Install the newest SoundTap Core release",
+        "description": "Waits for a button held on the speaker. The speaker downloads the newest stable Core release that is newer than the running one and streams it into the same install as POST /api/firmware?install=1, signature and version checks included. confirm must be true. The answer is the install's report; reboot to start the new slot. 200 with status current when no newer release exists.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "confirm": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "confirm"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The install's report, or status current.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/FirmwareReport"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string"
+                        },
+                        "version": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "No button held on the speaker, or the package's signature did not verify."
+          },
+          "409": {
+            "description": "Not a speaker, or another install is running."
+          },
+          "502": {
+            "description": "The release could not be downloaded."
+          },
+          "503": {
+            "description": "Code clock_not_set: NTP has not set the speaker's clock since boot, so it does not ask GitHub yet."
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/firmware": {
+      "post": {
+        "tags": [
+          "Firmware"
+        ],
+        "summary": "Check or install a .stu package",
+        "description": "Raw package as the body (not multipart), streamed and never stored.",
+        "parameters": [
+          {
+            "name": "install",
+            "in": "query",
+            "required": false,
+            "description": "1 installs; otherwise the package is only validated.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-SoundTap-Confirm",
+            "in": "header",
+            "description": "With ?install=1: install for the same or a newer SoundTap, downgrade for an older one, stock for Bose firmware (ADR 0048).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FirmwareReport"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Another firmware operation is running."
+          },
+          "428": {
+            "description": "The confirmation does not match the package version: send the one the check reported (ADR 0048)."
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/soundtapd": {
+      "post": {
+        "tags": [
+          "Firmware"
+        ],
+        "summary": "Replace the soundtapd binary",
+        "description": "Needs a signed upload.",
+        "parameters": [
+          {
+            "name": "X-SoundTap-Confirm",
+            "in": "header",
+            "description": "soundtapd, or downgrade for an app whose signature names an older version or none (HTTP 428 otherwise).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "This build cannot replace soundtapd."
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Firmware"
+        ],
+        "summary": "Remove an installed soundtapd override",
+        "parameters": [
+          {
+            "name": "X-SoundTap-Confirm",
+            "in": "header",
+            "description": "Must be exactly soundtapd.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "This build cannot replace soundtapd."
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/owner-key": {
+      "get": {
+        "tags": [
+          "Firmware"
+        ],
+        "summary": "Owner key",
+        "description": "Whether an owner key is set: an ed25519 public key whose signed packages this speaker installs next to the release keys' (ADR 0048).",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerKey"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Firmware"
+        ],
+        "summary": "Set the owner key",
+        "description": "Waits for a key held on the speaker. key is the base64 of the 32 raw bytes of an ed25519 public key. It is kept in both copies of the U-Boot environment, so the USB-stick recovery trusts it too.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "key"
+                ],
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerKey"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "This speaker has no U-Boot environment to keep a key in."
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Firmware"
+        ],
+        "summary": "Remove the owner key",
+        "description": "Waits for a key held on the speaker. Afterwards only the release keys are trusted. A factory reset removes it as well.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerKey"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "This speaker has no U-Boot environment to keep a key in."
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/channel": {
+      "get": {
+        "tags": [
+          "Rooms and devices"
+        ],
+        "summary": "Channel this speaker plays",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "channel": {
+                      "type": "string",
+                      "enum": [
+                        "stereo",
+                        "left",
+                        "right",
+                        "mono"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "channel"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Rooms and devices"
+        ],
+        "summary": "Play both channels, one as half of a stereo pair, or both mixed to mono",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "channel"
+                ],
+                "properties": {
+                  "channel": {
+                    "type": "string",
+                    "enum": [
+                      "stereo",
+                      "left",
+                      "right",
+                      "mono"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "channel": {
+                      "type": "string",
+                      "enum": [
+                        "stereo",
+                        "left",
+                        "right",
+                        "mono"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/soundbar/adaptiq": {
+      "post": {
+        "tags": [
+          "Sound"
+        ],
+        "summary": "Start a soundbar's ADAPTiQ calibration (SoundTouch 300); needs {\"confirm\": true}. It plays test tones and replaces the room calibration when it finishes. 404 on any other speaker, 503 until the soundbar has answered",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "confirm"
+                ],
+                "properties": {
+                  "confirm": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Started"
+          }
+        }
+      }
+    },
+    "/api/soundbar/tone": {
+      "get": {
+        "tags": [
+          "Sound"
+        ],
+        "summary": "A soundbar's tone and speaker levels with their ranges (SoundTouch 300); 404 on any other speaker, 503 until the soundbar has answered",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tone"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Sound"
+        ],
+        "summary": "Set a soundbar's bass, treble, centre and rear levels, each within its range",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "bass",
+                  "treble",
+                  "centre",
+                  "rear"
+                ],
+                "properties": {
+                  "bass": {
+                    "type": "integer"
+                  },
+                  "treble": {
+                    "type": "integer"
+                  },
+                  "centre": {
+                    "type": "integer"
+                  },
+                  "rear": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "bass": {
+                      "type": "object",
+                      "properties": {
+                        "value": {
+                          "type": "integer"
+                        },
+                        "min": {
+                          "type": "integer"
+                        },
+                        "max": {
+                          "type": "integer"
+                        },
+                        "step": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "treble": {
+                      "type": "object",
+                      "properties": {
+                        "value": {
+                          "type": "integer"
+                        },
+                        "min": {
+                          "type": "integer"
+                        },
+                        "max": {
+                          "type": "integer"
+                        },
+                        "step": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "centre": {
+                      "type": "object",
+                      "properties": {
+                        "value": {
+                          "type": "integer"
+                        },
+                        "min": {
+                          "type": "integer"
+                        },
+                        "max": {
+                          "type": "integer"
+                        },
+                        "step": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "rear": {
+                      "type": "object",
+                      "properties": {
+                        "value": {
+                          "type": "integer"
+                        },
+                        "min": {
+                          "type": "integer"
+                        },
+                        "max": {
+                          "type": "integer"
+                        },
+                        "step": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/soundbar/audio-mode": {
+      "get": {
+        "tags": [
+          "Sound"
+        ],
+        "summary": "A soundbar's audio mode (SoundTouch 300): normal, dialog, night or direct; 404 on any other speaker, mode is \"\" while the soundbar has not said",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "normal",
+                        "dialog",
+                        "night",
+                        "direct"
+                      ]
+                    },
+                    "modes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "normal",
+                          "dialog",
+                          "night",
+                          "direct"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Sound"
+        ],
+        "summary": "Set a soundbar's audio mode",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "mode"
+                ],
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "normal",
+                      "dialog",
+                      "night",
+                      "direct"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "normal",
+                        "dialog",
+                        "night",
+                        "direct"
+                      ]
+                    },
+                    "modes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "normal",
+                          "dialog",
+                          "night",
+                          "direct"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/soundbar/cec-mode": {
+      "get": {
+        "tags": [
+          "Sound"
+        ],
+        "summary": "A soundbar's HDMI-CEC mode (SoundTouch 300): on, alternate, fine or off; 404 on any other speaker, mode is \"\" while the soundbar has not said",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "on",
+                        "alternate",
+                        "fine",
+                        "off"
+                      ]
+                    },
+                    "modes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "on",
+                          "alternate",
+                          "fine",
+                          "off"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Sound"
+        ],
+        "summary": "Set a soundbar's HDMI-CEC mode",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "mode"
+                ],
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "on",
+                      "alternate",
+                      "fine",
+                      "off"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "on",
+                        "alternate",
+                        "fine",
+                        "off"
+                      ]
+                    },
+                    "modes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "on",
+                          "alternate",
+                          "fine",
+                          "off"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/soundbar/hdmi-input": {
+      "get": {
+        "tags": [
+          "Sound"
+        ],
+        "summary": "The remote's source button that picks a soundbar's HDMI input (SoundTouch 300): none, 1, 2 or 3; 404 on any other speaker, mode is \"\" while the soundbar has not said",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "none",
+                        "1",
+                        "2",
+                        "3"
+                      ]
+                    },
+                    "modes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "none",
+                          "1",
+                          "2",
+                          "3"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Sound"
+        ],
+        "summary": "Set the remote's source button for a soundbar's HDMI input",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "mode"
+                ],
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "1",
+                      "2",
+                      "3"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "none",
+                        "1",
+                        "2",
+                        "3"
+                      ]
+                    },
+                    "modes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "none",
+                          "1",
+                          "2",
+                          "3"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/soundbar/lip-sync": {
+      "get": {
+        "tags": [
+          "Sound"
+        ],
+        "summary": "How long a soundbar's sound waits for the TV picture, in ms (SoundTouch 300); 404 on any other speaker",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ms": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "null until the soundbar has said"
+                    },
+                    "max": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Sound"
+        ],
+        "summary": "Set a soundbar's lip-sync delay, 0 to max ms",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "ms"
+                ],
+                "properties": {
+                  "ms": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ms": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "null until the soundbar has said"
+                    },
+                    "max": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/key": {
+      "post": {
+        "tags": [
+          "Playback"
+        ],
+        "summary": "Apply a transport key",
+        "description": "What a grouped follower sends its leader for PLAY, PAUSE, PLAY_PAUSE, STOP, NEXT_TRACK and PREV_TRACK. Half of a stereo pair (channel left or right) also sends POWER and PRESET_1 to PRESET_6. Any other key is refused.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "key"
+                ],
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "enum": [
+                      "PLAY",
+                      "PAUSE",
+                      "PLAY_PAUSE",
+                      "STOP",
+                      "NEXT_TRACK",
+                      "PREV_TRACK",
+                      "POWER",
+                      "PRESET_1",
+                      "PRESET_2",
+                      "PRESET_3",
+                      "PRESET_4",
+                      "PRESET_5",
+                      "PRESET_6"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
+    "/api/upnp/modes": {
+      "get": {
+        "tags": [
+          "Media servers"
+        ],
+        "summary": "Shuffle and repeat of the played folder",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "active": {
+                      "type": "boolean"
+                    },
+                    "shuffle": {
+                      "type": "boolean"
+                    },
+                    "repeat": {
+                      "type": "string",
+                      "enum": [
+                        "off",
+                        "all",
+                        "track"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Media servers"
+        ],
+        "summary": "Set shuffle or repeat of the played folder",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "shuffle": {
+                    "type": "boolean"
+                  },
+                  "repeat": {
+                    "type": "string",
+                    "enum": [
+                      "off",
+                      "all",
+                      "track"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "active": {
+                      "type": "boolean"
+                    },
+                    "shuffle": {
+                      "type": "boolean"
+                    },
+                    "repeat": {
+                      "type": "string",
+                      "enum": [
+                        "off",
+                        "all",
+                        "track"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "responses": {
+      "Error": {
+        "description": "Error: 4xx is the caller's fault, 5xx the speaker's.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
+    },
+    "parameters": {
+      "Request": {
+        "name": "X-SoundTap-Request",
+        "in": "header",
+        "description": "Optional id naming one user action. A repeated write with the same id within a minute gets the first answer back instead of acting twice.",
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "What went wrong, in English, for a person. Its wording may change in any release."
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "invalid_request",
+              "not_found",
+              "method_not_allowed",
+              "forbidden",
+              "signature_invalid",
+              "confirm_required",
+              "not_confirmed",
+              "confirm_superseded",
+              "busy",
+              "conflict",
+              "timeout",
+              "too_large",
+              "package_rejected",
+              "precondition_failed",
+              "unsupported",
+              "unavailable",
+              "clock_not_set",
+              "upstream_failed",
+              "storage_full",
+              "internal"
+            ],
+            "description": "What went wrong, for a program: stable across releases, so a client says it in its own language. The list is open: treat a code you do not know as the generic failure the status says."
+          }
+        },
+        "required": [
+          "error",
+          "code"
+        ],
+        "description": "The one error shape. Status says whose fault: 4xx the caller's, 5xx the speaker's. code says what went wrong: invalid_request (400), not_found (404), method_not_allowed (405), forbidden (403), signature_invalid (403, an upload's signature is missing or does not verify), confirm_required (428, or 400 for an app upload, the X-SoundTap-Confirm it needs), not_confirmed (403, nobody held a button on the speaker in time), confirm_superseded (409, a newer request took this one's place in the wait for the button), busy (409 or 503, another operation is running), conflict (409, the speaker's state does not allow it), timeout (408, 504), too_large (413), package_rejected (400, 415), precondition_failed (412), unsupported (501), unavailable (503), clock_not_set (503, the update check waits until NTP has set the clock since boot), upstream_failed (502), storage_full (507), internal (500)."
+      },
+      "Preset": {
+        "type": "object",
+        "properties": {
+          "slot": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "stationId": {
+            "type": "string",
+            "description": "A TuneIn guide id, or an http(s) stream URL of the user's own."
+          },
+          "source": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "location": {
+            "type": "string"
+          },
+          "logo": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "slot",
+          "name",
+          "stationId",
+          "location"
+        ]
+      },
+      "Sleep": {
+        "type": "object",
+        "properties": {
+          "minutes": {
+            "type": "integer",
+            "description": "0 when no timer runs."
+          },
+          "endsAt": {
+            "type": "string",
+            "description": "RFC 3339; empty when no timer runs."
+          }
+        },
+        "required": [
+          "minutes",
+          "endsAt"
+        ],
+        "description": "Timer state."
+      },
+      "SettingsPatch": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "bass": {
+            "type": "integer"
+          },
+          "language": {
+            "type": "string"
+          },
+          "autoOff": {
+            "type": "integer",
+            "description": "Idle minutes; 0 default, negative off."
+          },
+          "auxName": {
+            "type": "string",
+            "description": "What the AUX input is called where it plays; empty is AUX."
+          },
+          "mqtt": {
+            "type": "object",
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "host": {
+                "type": "string"
+              },
+              "port": {
+                "type": "integer"
+              },
+              "username": {
+                "type": "string"
+              },
+              "password": {
+                "type": "string"
+              },
+              "baseTopic": {
+                "type": "string"
+              },
+              "discoveryPrefix": {
+                "type": "string"
+              },
+              "tls": {
+                "type": "boolean"
+              }
+            }
+          },
+          "display": {
+            "type": "object"
+          },
+          "alarm": {
+            "type": "object",
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "time": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "integer"
+              },
+              "timezone": {
+                "type": "string"
+              }
+            }
+          },
+          "crashReports": {
+            "type": "boolean",
+            "description": "Turns the crash report offer on or off (ADR 0126)."
+          }
+        },
+        "description": "Every field is optional: what is absent keeps its stored value."
+      },
+      "Info": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The speaker's identity: its factory serial, else deviceId."
+          },
+          "deviceId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "ip": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "deviceId",
+          "name",
+          "model",
+          "ip"
+        ]
+      },
+      "Version": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "string"
+          },
+          "os": {
+            "type": "string",
+            "description": "SoundTap Core version; empty off a speaker."
+          },
+          "app": {
+            "type": "string"
+          },
+          "commit": {
+            "type": "string",
+            "description": "Commit the image was built from; empty off a speaker."
+          },
+          "updatable": {
+            "type": "boolean"
+          },
+          "updateMode": {
+            "type": "string",
+            "enum": [
+              "firmware",
+              "unmanaged"
+            ]
+          },
+          "api": {
+            "type": "integer",
+            "description": "API level (ADR 0091)."
+          }
+        },
+        "required": [
+          "version",
+          "os",
+          "app",
+          "commit",
+          "updatable",
+          "updateMode",
+          "api"
+        ]
+      },
+      "Boot": {
+        "type": "object",
+        "description": "The running boot, for bench scripts without a shell (tools/hil/, ADR 0119).",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The kernel's boot_id: every boot has a new one. Empty where the kernel has none."
+          },
+          "slot": {
+            "type": "string",
+            "description": "The NAND slot this boot runs from, PING or PONG; empty off NAND."
+          },
+          "confirmed": {
+            "type": "boolean",
+            "description": "soundtapd has confirmed this boot to U-Boot's boot count (ADR 0010), a minute after it started."
+          },
+          "previous": {
+            "type": "string",
+            "description": "How the boot before this one ended, as ramoops recorded it (reboot, power loss, panic, ...); empty when nothing was recorded."
+          }
+        },
+        "required": [
+          "id",
+          "slot",
+          "confirmed",
+          "previous"
+        ]
+      },
+      "ReleaseRef": {
+        "type": "object",
+        "properties": {
+          "tag": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "string"
+          },
+          "publishedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tag",
+          "name",
+          "notes",
+          "publishedAt"
+        ]
+      },
+      "Releases": {
+        "type": "object",
+        "properties": {
+          "current": {
+            "type": "string"
+          },
+          "updatable": {
+            "type": "boolean"
+          },
+          "stable": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseRef"
+              }
+            ],
+            "nullable": true
+          },
+          "unavailable": {
+            "type": "string",
+            "description": "Set when the release list could not be reached; stable is then null."
+          },
+          "unavailableCode": {
+            "type": "string",
+            "enum": [
+              "clock_not_set",
+              "upstream_failed"
+            ],
+            "description": "Why, with unavailable: clock_not_set while NTP has not set the speaker's clock since boot (the speaker does not ask GitHub before), upstream_failed when GitHub did not answer."
+          },
+          "core": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CoreReleases"
+              }
+            ],
+            "description": "Absent from speakers that predate the Core lane."
+          }
+        },
+        "required": [
+          "current",
+          "updatable",
+          "stable"
+        ]
+      },
+      "NowPlaying": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "track": {
+            "type": "string"
+          },
+          "artist": {
+            "type": "string"
+          },
+          "album": {
+            "type": "string"
+          },
+          "station": {
+            "type": "string"
+          },
+          "stationId": {
+            "type": "string"
+          },
+          "location": {
+            "type": "string",
+            "description": "The content location; absent for sources that cannot be replayed."
+          },
+          "art": {
+            "type": "string"
+          },
+          "playStatus": {
+            "type": "string",
+            "description": "PLAY_STATE, PAUSE_STATE, STOP_STATE, BUFFERING_STATE ..."
+          },
+          "canSkip": {
+            "type": "boolean",
+            "description": "Next and previous work through the transport keys."
+          },
+          "failed": {
+            "type": "boolean",
+            "description": "This selection ended without ever playing."
+          }
+        },
+        "required": [
+          "source",
+          "track",
+          "artist",
+          "station",
+          "art",
+          "playStatus"
+        ]
+      },
+      "StoredPreset": {
+        "type": "object",
+        "properties": {
+          "slot": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "stationId": {
+            "type": "string",
+            "description": "A TuneIn guide id, or an http(s) stream URL of the user's own."
+          },
+          "source": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "location": {
+            "type": "string"
+          },
+          "logo": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "slot",
+          "name",
+          "stationId"
+        ]
+      },
+      "RecentEntry": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "location": {
+            "type": "string",
+            "description": "Empty when the entry cannot be replayed."
+          },
+          "art": {
+            "type": "string"
+          },
+          "stoppedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "source",
+          "name",
+          "location",
+          "art",
+          "stoppedAt"
+        ]
+      },
+      "Favorite": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "location": {
+            "type": "string"
+          },
+          "art": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "name",
+          "location",
+          "art"
+        ]
+      },
+      "Volume": {
+        "type": "object",
+        "properties": {
+          "volume": {
+            "type": "integer"
+          },
+          "muted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "volume",
+          "muted"
+        ]
+      },
+      "MultiroomClient": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "ip": {
+            "type": "string"
+          },
+          "percent": {
+            "type": "integer"
+          },
+          "muted": {
+            "type": "boolean"
+          },
+          "groupId": {
+            "type": "string"
+          },
+          "deviceId": {
+            "type": "string",
+            "description": "The same speaker as /api/devices calls it; absent for a client that is not a SoundTap speaker."
+          },
+          "current": {
+            "type": "boolean"
+          },
+          "member": {
+            "type": "boolean"
+          },
+          "connected": {
+            "type": "boolean"
+          },
+          "latency": {
+            "type": "integer",
+            "description": "Playback offset in ms."
+          },
+          "lastSeenAgo": {
+            "type": "integer",
+            "description": "Seconds since an offline client was last seen."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "host",
+          "ip",
+          "percent",
+          "muted",
+          "groupId",
+          "current",
+          "member",
+          "connected",
+          "latency"
+        ]
+      },
+      "Device": {
+        "type": "object",
+        "properties": {
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "firmware": {
+            "type": "string"
+          },
+          "ip": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer"
+          },
+          "self": {
+            "type": "boolean"
+          },
+          "online": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "capabilities",
+          "id",
+          "name",
+          "model",
+          "firmware",
+          "ip",
+          "port",
+          "self",
+          "online"
+        ]
+      },
+      "ToneControl": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "integer"
+          },
+          "min": {
+            "type": "integer"
+          },
+          "max": {
+            "type": "integer"
+          },
+          "step": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "value",
+          "min",
+          "max",
+          "step"
+        ]
+      },
+      "Tone": {
+        "type": "object",
+        "properties": {
+          "bass": {
+            "$ref": "#/components/schemas/ToneControl"
+          },
+          "treble": {
+            "$ref": "#/components/schemas/ToneControl"
+          },
+          "centre": {
+            "$ref": "#/components/schemas/ToneControl"
+          },
+          "rear": {
+            "$ref": "#/components/schemas/ToneControl"
+          }
+        },
+        "required": [
+          "bass",
+          "treble",
+          "centre",
+          "rear"
+        ]
+      },
+      "Place": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "country": {
+            "type": "string"
+          },
+          "lat": {
+            "type": "number"
+          },
+          "lon": {
+            "type": "number"
+          },
+          "timezone": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "region",
+          "country",
+          "lat",
+          "lon",
+          "timezone"
+        ]
+      },
+      "UPnPServer": {
+        "type": "object",
+        "properties": {
+          "usn": {
+            "type": "string"
+          },
+          "friendlyName": {
+            "type": "string"
+          },
+          "location": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "usn",
+          "friendlyName",
+          "location"
+        ]
+      },
+      "UPnPItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "class": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "description": "Resource URL; absent for containers."
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "class"
+        ]
+      },
+      "WifiNetwork": {
+        "type": "object",
+        "properties": {
+          "ssid": {
+            "type": "string"
+          },
+          "signal": {
+            "type": "string",
+            "enum": [
+              "excellent",
+              "good",
+              "fair",
+              "poor"
+            ]
+          },
+          "secure": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ssid",
+          "secure"
+        ]
+      },
+      "FirmwareReport": {
+        "type": "object",
+        "properties": {
+          "size": {
+            "type": "integer"
+          },
+          "modules": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "size": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "name",
+                "size"
+              ]
+            }
+          },
+          "kernel": {
+            "type": "string",
+            "description": "mainline or stock"
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "installable": {
+            "type": "boolean"
+          },
+          "installed": {
+            "type": "boolean"
+          },
+          "slot": {
+            "type": "string",
+            "description": "Slot written."
+          },
+          "runningSlot": {
+            "type": "string",
+            "description": "Slot still booting."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string",
+            "description": "What the signature says the package is; stock for the stock firmware."
+          },
+          "confirm": {
+            "type": "string",
+            "enum": [
+              "install",
+              "downgrade",
+              "stock"
+            ],
+            "description": "The X-SoundTap-Confirm an install of it needs here."
+          }
+        },
+        "required": [
+          "size",
+          "modules",
+          "kernel",
+          "models",
+          "installable"
+        ]
+      },
+      "BassCaps": {
+        "type": "object",
+        "properties": {
+          "actual": {
+            "type": "integer"
+          },
+          "target": {
+            "type": "integer"
+          },
+          "min": {
+            "type": "integer"
+          },
+          "max": {
+            "type": "integer"
+          },
+          "default": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "actual",
+          "target",
+          "min",
+          "max",
+          "default"
+        ]
+      },
+      "Soundbar": {
+        "type": "object",
+        "properties": {
+          "bassPaired": {
+            "type": "boolean"
+          },
+          "bassConnected": {
+            "type": "boolean"
+          },
+          "rearsPaired": {
+            "type": "boolean"
+          },
+          "rearsConnected": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "bassPaired",
+          "bassConnected",
+          "rearsPaired",
+          "rearsConnected"
+        ]
+      },
+      "NetworkInfo": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "wifi or ethernet"
+          },
+          "ssid": {
+            "type": "string"
+          },
+          "signal": {
+            "type": "string",
+            "enum": [
+              "excellent",
+              "good",
+              "fair",
+              "poor"
+            ]
+          },
+          "ip": {
+            "type": "string"
+          },
+          "dbm": {
+            "type": "integer",
+            "description": "RSSI."
+          },
+          "linkMbps": {
+            "type": "integer"
+          },
+          "mhz": {
+            "type": "integer",
+            "description": "Channel frequency."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "Display": {
+        "type": "object",
+        "properties": {
+          "clockOff": {
+            "type": "boolean"
+          },
+          "hour12": {
+            "type": "boolean"
+          },
+          "city": {
+            "type": "string",
+            "description": "The picked town; empty is none."
+          },
+          "lat": {
+            "type": "number"
+          },
+          "lon": {
+            "type": "number"
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "weatherOn": {
+            "type": "boolean"
+          },
+          "brightness": {
+            "type": "integer",
+            "description": "Clock peak in percent; absent is the default."
+          }
+        },
+        "required": [
+          "clockOff",
+          "hour12",
+          "city",
+          "lat",
+          "lon",
+          "timezone",
+          "weatherOn"
+        ]
+      },
+      "Alarm": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "time": {
+            "type": "string",
+            "description": "24-hour HH:MM."
+          },
+          "slot": {
+            "type": "integer"
+          },
+          "timezone": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "enabled",
+          "time",
+          "slot"
+        ]
+      },
+      "Settings": {
+        "type": "object",
+        "properties": {
+          "language": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "Absent when the speaker could not be asked."
+          },
+          "model": {
+            "type": "string",
+            "description": "Absent when the speaker could not be asked."
+          },
+          "bass": {
+            "$ref": "#/components/schemas/BassCaps"
+          },
+          "soundbar": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Soundbar"
+              }
+            ],
+            "nullable": true,
+            "description": "Soundbars only; null until the processor has answered."
+          },
+          "autoOff": {
+            "type": "integer",
+            "description": "Idle minutes; 0 default, negative off."
+          },
+          "auxName": {
+            "type": "string"
+          },
+          "network": {
+            "$ref": "#/components/schemas/NetworkInfo"
+          },
+          "host": {
+            "type": "string",
+            "description": "This speaker's own .local name."
+          },
+          "mqtt": {
+            "type": "object",
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "host": {
+                "type": "string"
+              },
+              "port": {
+                "type": "integer"
+              },
+              "username": {
+                "type": "string"
+              },
+              "hasPassword": {
+                "type": "boolean"
+              },
+              "baseTopic": {
+                "type": "string"
+              },
+              "discoveryPrefix": {
+                "type": "string"
+              },
+              "tls": {
+                "type": "boolean"
+              },
+              "connected": {
+                "type": "boolean"
+              },
+              "lastError": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "enabled",
+              "host",
+              "port",
+              "username",
+              "hasPassword",
+              "baseTopic",
+              "discoveryPrefix",
+              "tls"
+            ]
+          },
+          "hasDisplay": {
+            "type": "boolean"
+          },
+          "display": {
+            "$ref": "#/components/schemas/Display"
+          },
+          "alarm": {
+            "$ref": "#/components/schemas/Alarm"
+          },
+          "multiroom": {
+            "type": "object",
+            "properties": {
+              "keepGroups": {
+                "type": "boolean"
+              },
+              "syncVolume": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "keepGroups",
+              "syncVolume"
+            ]
+          },
+          "integrations": {
+            "type": "object",
+            "properties": {
+              "spotify": {
+                "type": "boolean"
+              },
+              "airplay": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "spotify",
+              "airplay"
+            ]
+          },
+          "crashReports": {
+            "type": "boolean",
+            "description": "Whether the web UI offers to report a crash it finds on the speaker (ADR 0126); off by default."
+          }
+        },
+        "required": [
+          "language",
+          "autoOff",
+          "auxName",
+          "mqtt",
+          "hasDisplay",
+          "display",
+          "alarm",
+          "multiroom",
+          "integrations",
+          "crashReports"
+        ]
+      },
+      "CoreReleases": {
+        "type": "object",
+        "description": "SoundTap Core: the running version and, on a speaker, the newest stable Core release when it is newer. POST /api/core-update installs it.",
+        "properties": {
+          "current": {
+            "type": "string",
+            "description": "The running Core version; empty off a speaker."
+          },
+          "latest": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseRef"
+              }
+            ],
+            "nullable": true
+          }
+        },
+        "required": [
+          "current",
+          "latest"
+        ]
+      },
+      "Health": {
+        "type": "object",
+        "description": "The resources that, when they run out, stop the speaker from updating or staying up, and whether a production image's inbound filter is loaded. Warnings are computed on the speaker, so the UI and the support bundle agree. boot is the running boot, read by the bench scripts in tools/hil/.",
+        "properties": {
+          "disk": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "freeBytes": {
+                "type": "integer"
+              },
+              "totalBytes": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "path",
+              "freeBytes",
+              "totalBytes"
+            ]
+          },
+          "memory": {
+            "type": "object",
+            "properties": {
+              "totalBytes": {
+                "type": "integer"
+              },
+              "availableBytes": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "totalBytes",
+              "availableBytes"
+            ]
+          },
+          "processes": {
+            "type": "integer",
+            "description": "0 when the speaker could not count them."
+          },
+          "logs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "bytes": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "path",
+                "bytes"
+              ]
+            }
+          },
+          "ampFault": {
+            "type": "boolean"
+          },
+          "firewall": {
+            "type": "string",
+            "enum": [
+              "loaded",
+              "missing",
+              "n/a"
+            ],
+            "description": "The production inbound filter (ADR 0066): loaded; missing, on a production image whose filter did not load, so every listening port is open (a warning says so too); n/a on an alpha image, which loads none, and off a speaker. Checked at most once a minute by a bounded, read-only nft run."
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "boot": {
+            "$ref": "#/components/schemas/Boot"
+          },
+          "counters": {
+            "type": "object",
+            "description": "Restarts, underruns and failed writes, counted in memory since soundtapd started (sinceSeconds ago); soundtapdRestarts alone spans soundtapd's restarts and counts this boot (ADR 0127).",
+            "properties": {
+              "sinceSeconds": {
+                "type": "integer",
+                "description": "How long ago soundtapd started."
+              },
+              "soundtapdRestarts": {
+                "type": "integer",
+                "description": "How often the init script started soundtapd again in this boot."
+              },
+              "daemonRestarts": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "description": "Per supervised media daemon, the restarts after it exited on its own or failed to start; a deliberate stop is not one."
+              },
+              "bufferUnderruns": {
+                "type": "integer",
+                "description": "Times the mixer's jitter buffer ran dry while a source played."
+              },
+              "alsaUnderruns": {
+                "type": "integer",
+                "description": "Underruns aplay reported: the sound card ran out of samples."
+              },
+              "installFailures": {
+                "type": "integer",
+                "description": "Firmware installs that were admitted and then failed."
+              },
+              "bcoFlashFailures": {
+                "type": "integer",
+                "description": "Failed flashes of the ST20's BCO image; 0 on other models."
+              },
+              "bootConfirmRetries": {
+                "type": "integer",
+                "description": "Looks of the boot confirmation that found the boot not good yet (ADR 0010)."
+              }
+            },
+            "required": [
+              "sinceSeconds",
+              "soundtapdRestarts",
+              "daemonRestarts",
+              "bufferUnderruns",
+              "alsaUnderruns",
+              "installFailures",
+              "bcoFlashFailures",
+              "bootConfirmRetries"
+            ]
+          }
+        },
+        "required": [
+          "disk",
+          "memory",
+          "processes",
+          "logs",
+          "ampFault",
+          "firewall",
+          "warnings",
+          "boot",
+          "counters"
+        ]
+      },
+      "OwnerKey": {
+        "type": "object",
+        "required": [
+          "available",
+          "active"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean",
+            "description": "The speaker has an environment the key can be kept in."
+          },
+          "active": {
+            "type": "boolean",
+            "description": "An owner key is set and trusted."
+          },
+          "key": {
+            "type": "string",
+            "description": "The public key, base64 of its 32 raw bytes."
+          },
+          "fingerprint": {
+            "type": "string",
+            "description": "The first 8 bytes of the key's SHA-256, in hex."
+          }
+        }
+      },
+      "CrashReport": {
+        "type": "object",
+        "description": "A crash written up as a GitHub issue the owner opens and submits: the exact title and body the link carries, already redacted as the support bundle is. Nothing is sent by the speaker.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The crash's kind and a hash of its content, e.g. panic-0123456789ab."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "panic",
+              "kernel",
+              "daemon"
+            ],
+            "description": "panic: soundtapd's last panic (panic.log); kernel: the previous boot ended in a kernel panic or oops; daemon: a media daemon crash-looped."
+          },
+          "title": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string",
+            "description": "Markdown: what happened, the versions, the model, the uptime, the trace as far as the link has room, and a request to attach the support bundle."
+          },
+          "url": {
+            "type": "string",
+            "description": "https://github.com/stein155/soundtap/issues/new with title and body, at most 6000 bytes."
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "title",
+          "body",
+          "url"
+        ]
+      },
+      "CrashReportAnswer": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether the owner turned crash reports on."
+          },
+          "crash": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CrashReport"
+              }
+            ],
+            "nullable": true,
+            "description": "The first crash on the speaker not yet reported or dismissed; null when there is none, and always while reports are off."
+          }
+        },
+        "required": [
+          "enabled",
+          "crash"
+        ]
+      }
+    }
+  }
+}

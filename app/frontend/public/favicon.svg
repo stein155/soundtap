@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="SoundTap">
+  <title>SoundTap</title>
+  <!-- The SoundTap mark reduced for a browser tab: note plus one grille hole. -->
+  <rect width="256" height="256" rx="56" fill="#ffffff"/>
+  <g fill="none" stroke="#111111" stroke-width="26" stroke-linecap="round">
+    <circle cx="100" cy="176" r="26"/>
+    <path d="M126 176V56"/>
+  </g>
+  <circle cx="176" cy="96" r="18" fill="#111111"/>
+</svg>

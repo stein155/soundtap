@@ -1,0 +1,2249 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* SPDX-FileCopyrightText: 2026 SoundTap contributors */
+
+/* The home page (Stockholm layout): top bar, search and rails, the dock, and the layers
+   over it (presets, menu, speaker card, now playing). The colours are the app's tokens
+   (theme/GlobalStyle.ts), so the dark theme needs nothing here. Layers are drawn in a
+   portal, outside the app frame, so nothing below depends on .app. The desktop query is
+   the one in theme/media.ts. */
+
+.home,
+.top,
+.dock,
+.overlay,
+.top-layer {
+  --focus: var(--ink);
+  --press: color-mix(in srgb, var(--ink) 7%, transparent);
+}
+
+[data-focus-visible],
+.home :focus-visible,
+.top :focus-visible,
+.dock :focus-visible,
+.overlay :focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Over a picture the ring has to be light, whatever the theme. */
+.spk-modal,
+.np,
+.minibar,
+.dots {
+  --focus: #fff;
+}
+
+.home svg,
+.top svg,
+.dock svg,
+.overlay svg {
+  display: block;
+}
+
+/* top bar */
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px; /* a long name ends before the icons, also at 320 px */
+  height: calc(60px + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) 12px 0;
+  background: var(--surface);
+  flex: none;
+}
+
+.top-btn {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  padding: 0;
+  border-radius: 50%;
+  transition: opacity 0.15s;
+}
+
+.top-btn svg {
+  width: 26px;
+  height: 26px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.top-btn[data-pressed] {
+  opacity: 0.6;
+}
+
+.top-field {
+  flex: 1;
+  min-width: 0;
+  padding-left: 8px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  min-width: 0;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  color: var(--ink-2);
+}
+
+.brand span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* recently played */
+.brand svg {
+  flex: none;
+  width: 24px;
+  height: 24px;
+}
+
+.recent {
+  list-style: none;
+  margin: 0 calc(-1 * var(--page-gutter));
+  padding: 0;
+}
+
+.recent-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.recent-play {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 8px 0 8px 20px;
+  border: 0;
+  background: none;
+  text-align: left;
+  color: var(--ink);
+  cursor: pointer;
+  outline: none;
+}
+
+.recent-play:active {
+  background: var(--press);
+}
+
+.recent-play:focus-visible,
+.recent-more[data-focus-visible] {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.recent-art {
+  width: 62px;
+  height: 62px;
+  flex: none;
+}
+
+.recent-text {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  font-size: 15px;
+  letter-spacing: -0.25px;
+}
+
+.recent-text > span,
+.recent-text small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: -0.4px;
+}
+
+.recent-text small {
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--ink-3);
+}
+
+.recent-more {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 44px;
+  height: 100%;
+  opacity: 0;
+  pointer-events: none;
+  border: 0;
+  background: none;
+  color: var(--ink-3);
+  cursor: pointer;
+  outline: none;
+}
+
+.recent-more[data-focus-visible] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.recent-more svg {
+  width: 18px;
+  height: 18px;
+  margin: auto;
+}
+
+.home {
+  padding-top: 20px;
+}
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 62px;
+  padding: 0 16px 0 20px;
+  color: var(--ink);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.search-mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 41px;
+  height: 41px;
+  border-radius: 50%;
+  background: #b2b2b2;
+  color: #fff;
+}
+
+.search-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  letter-spacing: -0.25px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.search svg {
+  width: 22px;
+  height: 22px;
+  stroke-width: 1.8;
+}
+
+.search[data-pressed] {
+  background: var(--surface-2);
+}
+
+/* artwork */
+.art {
+  position: relative;
+  overflow: hidden;
+  flex: none;
+  background: var(--logo-plate);
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+}
+
+.art img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.art-cover img {
+  object-fit: cover;
+}
+
+.art-plate img {
+  object-fit: contain;
+  padding: 12%;
+}
+
+.art-empty {
+  background: var(--surface-3);
+  color: var(--ink-2);
+}
+
+.art-empty svg {
+  width: 46%;
+  height: 46%;
+}
+
+.art-letters {
+  font-size: 1.5em;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.mini-art .art-letters,
+.np-art .art-letters {
+  font-size: 15px;
+}
+
+.part .art-letters {
+  font-size: 20px;
+}
+
+.blur {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #8d8680;
+  z-index: 0;
+}
+
+.blur img {
+  position: absolute;
+  inset: -40%;
+  width: 180%;
+  height: 180%;
+  object-fit: cover;
+  filter: blur(28px) saturate(1.1);
+  /* Its own layer: the blur is drawn once and moved with a sliding sheet, instead of
+     being filtered again on every frame of the slide. */
+  transform: translateZ(0);
+}
+
+.blur::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+/* With nothing to blur, a light grey field behind a dark card glares in dark mode. */
+[data-theme='dark'] .blur:not(:has(img)) {
+  background: #3a3734;
+}
+
+[data-theme='dark'] .blur:not(:has(img))::after {
+  background: none;
+}
+
+/* The bar's text is white: a light logo blurs to near-white, so the bar darkens
+   its blur like the player does rather than lightening it. */
+.minibar .blur::after {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+/* dock */
+.dock {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  z-index: 5;
+}
+
+.minibar,
+.idlebar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 64px;
+  width: 100%;
+  overflow: hidden;
+  color: #fff;
+  font-weight: 400;
+  letter-spacing: -0.25px;
+}
+
+.idlebar {
+  gap: 12px;
+  padding: 0 12px 0 16px;
+  border: 0;
+  background: var(--surface-2);
+  color: var(--ink-3);
+  text-align: left;
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: -0.1px;
+  cursor: pointer;
+}
+
+.idlebar[data-pressed] {
+  background: var(--surface-3);
+}
+
+.idle-badge {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1.5px solid var(--ink-3);
+  display: grid;
+  place-items: center;
+}
+
+.idle-badge svg {
+  width: 11px;
+  height: 11px;
+}
+
+.mini-open {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 0 0 10px;
+  border: 0;
+  background: none;
+  color: #fff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mini-art {
+  width: 40px;
+  height: 40px;
+  border-radius: 0;
+}
+
+.mini-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.mini-title {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
+}
+
+.mini-line {
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: -0.3px;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
+}
+
+.mini-ctl {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  margin-right: 8px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: none;
+  color: #fff;
+  cursor: pointer;
+  border-radius: 50%;
+}
+
+.mini-ctl svg {
+  width: 22px;
+  height: 22px;
+}
+
+.mini-ctl[data-pressed] {
+  opacity: 0.6;
+}
+
+.spkbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  height: calc(64px + env(safe-area-inset-bottom));
+  padding: 0 18px env(safe-area-inset-bottom) 10px;
+  border: 0;
+  background: var(--surface);
+  text-align: left;
+  cursor: pointer;
+  color: var(--ink);
+}
+
+.spkbar[data-pressed] {
+  background: var(--surface-2);
+}
+
+.avatar {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
+.av-glyph {
+  width: 34px;
+  height: 34px;
+}
+
+.av-glyph svg {
+  width: 100%;
+  height: 100%;
+}
+
+.avatar b {
+  position: absolute;
+  right: -4px;
+  bottom: -2px;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--surface);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.spk-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.spk-name {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--ink);
+}
+
+.spk-sub {
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: -0.3px;
+  color: var(--ink-3);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.spkbar-wrap {
+  position: relative;
+}
+
+.spk-vol.tap {
+  position: absolute;
+  top: 8px;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.spk-vol.tap[data-pressed] {
+  opacity: 0.6;
+}
+
+/* the volume panel from the speaker bar */
+.sheet.volpanel {
+  height: auto;
+  border-radius: 0;
+  padding-bottom: calc(24px + env(safe-area-inset-bottom));
+}
+
+.volpanel .vols {
+  padding-top: 24px;
+}
+
+.volpanel-top {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  height: 60px;
+  border-bottom: 1px solid var(--border);
+}
+
+.volpanel-top h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  color: var(--ink);
+}
+
+.volpanel-top .top-btn {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+}
+
+.spk-vol svg {
+  width: 24px;
+  height: 24px;
+  color: var(--ink);
+}
+
+/* the start page */
+.h-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 14px;
+  padding: 0 16px;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: var(--ink-2);
+}
+
+/* A heading that opens its full list: the row is a button inside the h2. */
+.h-link {
+  margin: 0;
+  font-size: inherit;
+}
+
+button.h-row {
+  background: none;
+  border: 0;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.h-row svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2.6;
+}
+
+.rail {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding: 2px 16px 4px;
+  margin: 0 0 30px;
+  list-style: none;
+  scrollbar-width: none;
+  outline: none;
+}
+
+.rail::-webkit-scrollbar {
+  display: none;
+}
+
+/* A rail inside a page's padding runs from edge to edge. */
+.ribbon {
+  margin: 16px calc(-1 * var(--page-gutter)) 0;
+}
+
+.ribbon .h-row {
+  padding: 0 var(--page-gutter);
+}
+
+.ribbon .rail {
+  padding-inline: var(--page-gutter);
+  margin-bottom: 24px;
+}
+
+.ribbon .card-play .card-label {
+  padding-right: 10px;
+}
+
+.card {
+  position: relative;
+  flex: none;
+  width: 154px;
+  background: var(--surface);
+  cursor: pointer;
+  outline: none;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  transition: transform 0.18s var(--ease);
+}
+
+.card:has(.card-play[data-pressed]) {
+  transform: scale(0.97);
+}
+
+.card-play {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  outline: none;
+}
+
+.card-play .card-label {
+  padding-right: 40px;
+}
+
+.card:has(.card-play[data-focus-visible]),
+.card-more[data-focus-visible] {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.card-more {
+  position: absolute;
+  right: 2px;
+  bottom: 4px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-2);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  outline: none;
+}
+
+.card-more svg {
+  width: 20px;
+  height: 20px;
+}
+
+.card-art {
+  width: 154px;
+  height: 154px;
+  border-radius: 0;
+}
+
+.card-label {
+  display: flex;
+  align-items: center;
+  padding: 12px 10px;
+  min-height: 52px;
+  font-size: 12px;
+  letter-spacing: -0.3px;
+  font-weight: 400;
+  color: var(--ink-2);
+}
+
+/* block, not a flex column: text-overflow does not apply to a flex container's text,
+   which clipped long names mid-letter instead of ending them in an ellipsis. */
+.card-label > span {
+  min-width: 0;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-label small {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  letter-spacing: -0.4px;
+  color: var(--ink-3);
+  white-space: normal;
+  font-weight: 400;
+}
+
+.card-art .art-letters {
+  font-size: 40px;
+}
+
+.svc {
+  color: #fff;
+}
+
+.svc svg {
+  width: 46%;
+  height: 46%;
+}
+
+.svc.spotify {
+  --spotify-disc: #fff;
+  --spotify-waves: #1db954;
+  background: #1db954;
+}
+
+/* TuneIn's colours, in both themes: its navy logo on its teal. */
+.svc.tunein {
+  background: #14d8cc;
+  color: #1c203c;
+}
+
+.svc.tunein svg {
+  width: 72%;
+  height: auto;
+}
+
+/* The logo is a wide word: where other services show a square icon it runs wider. */
+
+/* layers */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.overlay[data-entering] {
+  animation: dim 0.3s var(--ease);
+}
+
+/* A reversed animation runs its curve backwards too: ease-out here is what makes the
+   exit start slow and speed away. ease-in started fast and crept into the edge. */
+.overlay[data-exiting] {
+  animation: dim 0.3s var(--ease) reverse;
+}
+
+.overlay.left {
+  justify-content: flex-start;
+  align-items: stretch;
+  background: var(--backdrop);
+}
+
+.overlay.bare,
+.overlay.bare[data-entering],
+.overlay.bare[data-exiting] {
+  background: none;
+  animation-name: none;
+}
+
+.sheet {
+  width: 100%;
+  max-width: var(--shell-max);
+  height: calc(100dvh - 56px);
+  background: var(--bg);
+  border-radius: var(--radius) var(--radius) 0 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.sheet.full {
+  height: 100dvh;
+  border-radius: 0;
+}
+
+.sheet[data-entering] {
+  animation: slide 0.3s var(--ease);
+  will-change: transform;
+}
+
+.sheet[data-exiting] {
+  animation: slide 0.3s var(--ease) reverse;
+  will-change: transform;
+}
+
+/* Settings replaces the app, as in Stockholm: no slide. */
+.sheet.page[data-entering] {
+  animation: fade 0.3s var(--ease);
+  will-change: opacity;
+}
+
+.sheet.page[data-exiting] {
+  animation: fade 0.15s var(--ease) reverse;
+  will-change: opacity;
+}
+
+.dlg {
+  outline: none;
+  height: 100%;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.sheet-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 60px;
+  background: var(--surface);
+  flex: none;
+}
+
+.sheet-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  color: var(--ink);
+}
+
+/* Stockholm's presets page has the one capitals title. */
+.sheet-title.caps {
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.x-btn {
+  position: absolute;
+  right: 10px;
+  top: 8px;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.x-btn svg {
+  width: 24px;
+  height: 24px;
+}
+
+/* presets: Stockholm's grey page */
+.sheet:has(.plist) {
+  background: var(--bg-grey);
+}
+
+.plist {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 20px calc(24px + env(safe-area-inset-bottom));
+  outline: none;
+}
+
+.phint {
+  margin: 0 0 12px;
+  text-align: center;
+  font-size: 12px;
+  letter-spacing: 0;
+  color: var(--ink-3);
+}
+
+.pblank {
+  position: relative;
+  height: 100%;
+  padding: 0 20px calc(16px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  text-align: center;
+  color: var(--ink-2);
+  background: var(--bg);
+}
+
+.pblank-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.pblank p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.3;
+}
+
+.pblank-ok {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  height: 54px;
+  border: 1px solid var(--ink);
+  border-radius: var(--radius);
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.prows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.prow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 0;
+}
+
+.prow.skeleton {
+  height: 62px;
+  margin: 5px 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.prow-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 62px;
+  text-align: left;
+  color: inherit;
+  border-radius: var(--radius-sm);
+  transition: background 0.15s;
+}
+
+.prow-main:active {
+  background: var(--press);
+}
+
+.pnum {
+  width: 28px;
+  text-align: center;
+  font-size: 18px;
+  font-weight: 400;
+  color: var(--ink);
+  letter-spacing: 2px;
+}
+
+.part {
+  width: 62px;
+  height: 62px;
+  border-radius: 0;
+}
+
+.pempty {
+  border: 1.5px solid var(--surface-3);
+  background: none;
+  display: block;
+  aspect-ratio: 1;
+}
+
+.ptext {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.pname {
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: -0.25px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.psrc {
+  font-size: 11px;
+  letter-spacing: -0.4px;
+  color: var(--ink-3);
+  margin-top: 4px;
+}
+
+.prow.empty .pname {
+  color: var(--ink-3);
+}
+
+.prow[data-active] .pname {
+  font-weight: 700;
+  color: var(--ink);
+}
+
+/* menu from the left */
+.drawer {
+  width: 85%;
+  max-width: 332px;
+  height: 100%;
+  background: var(--surface);
+}
+
+.drawer[data-entering] {
+  animation: slide-left 0.3s var(--ease);
+  will-change: transform;
+}
+
+.drawer[data-exiting] {
+  animation: slide-left 0.3s var(--ease) reverse;
+  will-change: transform;
+}
+
+.menu {
+  padding: calc(14px + env(safe-area-inset-top)) 0;
+}
+
+.mrow {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  width: 100%;
+  height: 60px;
+  padding: 0 39px;
+  border: 0;
+  background: none;
+  text-align: left;
+  font-size: 12.8px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--ink);
+  cursor: pointer;
+  outline: none;
+}
+
+.mrow[data-pressed] {
+  background: var(--press);
+}
+
+.mrow[data-active] {
+  box-shadow: inset 5px 0 0 var(--source, var(--ink));
+}
+
+.mrow:not([data-active]) {
+  color: var(--ink-3);
+}
+
+.mrow:not([data-active]) .mico {
+  filter: grayscale(1);
+}
+
+.mrow[data-focus-visible] {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.mico {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--ink);
+  --spotify-disc: #1ed760;
+  --spotify-waves: #fff;
+}
+
+.mico svg {
+  width: 22px;
+  height: 22px;
+}
+
+.menu hr {
+  border: 0;
+  border-top: 1px solid var(--surface-3);
+  margin: 0 25px;
+}
+
+/* speaker card */
+.spk-modal {
+  background: #8a8480;
+}
+
+.spk-modal .blur::after {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.spk-now {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 72px;
+  padding: calc(env(safe-area-inset-top) + 8px) 8px 8px 18px;
+  color: #fff;
+  flex: none;
+}
+
+.spk-now .mini-ctl {
+  margin-right: 0;
+}
+
+/* The speaker tray: a native scroll-snap carousel, one page per speaker, the neighbours
+   peeking in at the edges. Page k is centred at scrollLeft = k * page width. */
+.spk-tray {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* With nothing playing, the tray opens the sheet: keep it off the status bar. The
+   background blur is always the sheet's first element, so this follows it. */
+.spk-modal .blur + .spk-tray {
+  margin-top: calc(env(safe-area-inset-top) + 16px);
+}
+
+.spk-track {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  padding: 0 6%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.spk-track[data-single] {
+  padding: 0 8px;
+}
+
+.spk-track::-webkit-scrollbar {
+  display: none;
+}
+
+.spk-page {
+  flex: 0 0 100%;
+  min-width: 0;
+  padding: 0 6px;
+  display: flex;
+  scroll-snap-align: center;
+  scroll-snap-stop: always;
+}
+
+.spk-card {
+  position: relative;
+  background: var(--surface);
+  border-radius: var(--radius);
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+  color: var(--ink);
+}
+
+/* The card's content, inert on a page that is not selected (see SpeakerCard). */
+.spk-body {
+  display: contents;
+}
+
+.spk-page:not([data-active]) .spk-card {
+  cursor: pointer;
+}
+
+.spk-arrow {
+  position: absolute;
+  top: 50%;
+  display: none;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  transform: translateY(-50%);
+  cursor: pointer;
+}
+
+.spk-arrow.prev {
+  left: 4px;
+}
+
+.spk-arrow.next {
+  right: 4px;
+}
+
+.spk-arrow.prev svg {
+  transform: scaleX(-1);
+}
+
+.spk-arrow[data-pressed] {
+  opacity: 0.6;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .spk-arrow {
+    display: grid;
+  }
+}
+
+.spk-tip {
+  position: absolute;
+  left: 50%;
+  /* Over the speaker picture, as Stockholm puts it: at the bottom it covered the sleep timer. */
+  top: 30%;
+  margin: 0;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  font-size: 14px;
+  width: max-content;
+  max-width: calc(100% - 32px);
+  text-align: center;
+  pointer-events: none;
+  transform: translateX(-50%);
+  animation: spk-tip 5s ease forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spk-tip {
+    animation-timing-function: step-end;
+  }
+}
+
+@keyframes spk-tip {
+  0%,
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+
+.spk-card::-webkit-scrollbar {
+  display: none;
+}
+
+.card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 8px 0;
+}
+
+/* Stockholm's power button is a bare outline; a speaker in standby shows it faded. */
+.card-top .top-btn[aria-pressed='false'] {
+  opacity: 0.4;
+}
+
+.card-room {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+.spk-hero {
+  display: grid;
+  place-items: center;
+  padding: 20px 0 18px;
+}
+
+.disc {
+  position: relative;
+  width: 200px;
+  height: 200px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  display: grid;
+  place-items: center;
+}
+
+.disc .gear {
+  position: absolute;
+  top: 2px;
+  right: -4px;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 50%;
+  padding: 0;
+  background: var(--surface);
+  color: var(--ink);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.disc .gear svg {
+  width: 24px;
+  height: 24px;
+}
+
+.glyph {
+  width: 150px;
+  height: 150px;
+}
+
+.glyph svg {
+  width: 100%;
+  height: 100%;
+  filter: drop-shadow(0 6px 6px rgba(0, 0, 0, 0.18));
+}
+
+.disc.grouped {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding-top: 20px;
+}
+
+.disc.grouped .plus {
+  font-size: 40px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--ink);
+  margin-bottom: 6px;
+}
+
+.disc.grouped .glyph {
+  width: 96px;
+  height: 96px;
+  margin-top: -2px;
+}
+
+.members {
+  margin: 14px 18px 0;
+  text-align: center;
+  font-size: 15px;
+  letter-spacing: 0;
+  color: var(--ink-3);
+}
+
+.line {
+  border-top: 1px solid var(--surface-3);
+  padding: 14px 18px;
+}
+
+.line.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 18px;
+}
+
+.lbl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  letter-spacing: 0;
+  color: var(--ink);
+}
+
+.srcs {
+  display: flex;
+  gap: 10px;
+}
+
+.src {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 0;
+  background: var(--surface-2);
+  color: var(--ink);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition:
+    background 0.2s,
+    color 0.2s;
+}
+
+.src svg {
+  width: 24px;
+  height: 24px;
+}
+
+.src b {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.src[data-selected] {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.src[data-pressed] {
+  opacity: 0.7;
+}
+
+/* volume */
+.vol {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.vol-ico {
+  width: 44px;
+  height: 44px;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  cursor: pointer;
+  flex: none;
+  border-radius: 50%;
+}
+
+span.vol-ico {
+  cursor: default;
+}
+
+.vol-ico svg {
+  width: 22px;
+  height: 22px;
+}
+
+.vtrack {
+  position: relative;
+  flex: 1;
+  height: 44px;
+  touch-action: none;
+  cursor: pointer;
+}
+
+.vtrack::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 4px;
+  margin-top: -2px;
+  background: var(--rail);
+  border-radius: 2px;
+}
+
+.vfill {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.vthumb {
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--thumb);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  transition: transform 0.15s;
+}
+
+.vthumb[data-dragging] {
+  transform: translate(-50%, -50%) scale(1.15) !important;
+}
+
+/* On a touch screen only the knob drags. The bar spans the whole card, so a sideways swipe
+   to the next speaker (or down, to close a sheet) that began on it turned the volume up or
+   down instead. The bar lets the touch through; the knob gets a 44 px target. */
+@media (pointer: coarse) {
+  .vtrack {
+    pointer-events: none;
+  }
+
+  .vthumb {
+    pointer-events: auto;
+  }
+
+  .vthumb::after {
+    content: '';
+    position: absolute;
+    inset: -11px;
+    border-radius: 50%;
+  }
+}
+
+.vthumb[data-focus-visible] {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.vols .vtitle,
+.vols .vname {
+  text-align: center;
+  font-size: 15px;
+  color: var(--ink);
+  margin: 6px 0 0;
+  letter-spacing: -0.2px;
+}
+
+.vols .vtitle {
+  font-weight: 700;
+  margin-top: 4px;
+}
+
+.vols .vname {
+  margin-top: 14px;
+}
+
+/* grouping */
+.grp {
+  background: var(--surface-2);
+  padding: 22px 18px 24px;
+  border-top: 1px solid var(--surface-3);
+  text-align: center;
+}
+
+.pill {
+  display: block;
+  width: 100%;
+  height: 40px;
+  border-radius: 999px;
+  border: 0;
+  background: var(--accent);
+  color: var(--on-accent);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.pill + .pill {
+  margin-top: 10px;
+}
+
+.pill[data-pressed] {
+  opacity: 0.7;
+}
+
+.or {
+  margin: 22px 0 14px;
+  font-size: 13.6px;
+  letter-spacing: -0.2px;
+  color: var(--ink);
+}
+
+.pill + .gwrap {
+  margin-top: 22px;
+}
+
+.gwrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.or + .gwrap {
+  margin-top: 0;
+}
+
+.gpill {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 54px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface);
+  padding: 6px 18px;
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.gpill > svg {
+  width: 22px;
+  height: 22px;
+  flex: none;
+}
+
+.gpill .gicon {
+  width: 34px;
+  height: 34px;
+  flex: none;
+}
+
+.gpill .gicon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.gpill[data-pressed] {
+  background: var(--surface-3);
+}
+
+.gpill[data-selected] > svg {
+  color: var(--ink);
+}
+
+.gtext {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.gtext b {
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: -0.25px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gtext small {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ink-3);
+  letter-spacing: -0.2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gpill.offline {
+  cursor: default;
+}
+
+.retry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+
+.retry svg {
+  width: 15px;
+  height: 15px;
+}
+
+.retry[data-disabled] {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.dots {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: center;
+  height: calc(52px + env(safe-area-inset-bottom));
+  padding-bottom: env(safe-area-inset-bottom);
+  flex: none;
+}
+
+.dot {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.dot::before {
+  content: '';
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.dot[data-on]::before {
+  background: #fff;
+}
+
+/* sleep timer */
+.line.slrow {
+  padding: 0;
+  background: var(--surface);
+}
+
+.sleeprow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 48px;
+  padding: 0 18px;
+  border: 0;
+  background: none;
+  color: var(--ink-3);
+  font-size: 14px;
+  letter-spacing: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.sleeprow svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+
+.sleeprow .sl-l {
+  flex: 1;
+}
+
+.sleeprow svg:last-child {
+  width: 14px;
+  height: 14px;
+}
+
+.sleeprow.on-dark {
+  color: rgba(255, 255, 255, 0.85);
+  width: auto;
+  padding: 0 6px;
+  gap: 8px;
+  min-height: 44px;
+}
+
+.sleeprow.on-dark .sl-l {
+  flex: none;
+}
+
+.sleeprow.on-dark .sl-v {
+  color: #fff;
+}
+
+.sl-pop {
+  background: var(--surface);
+  color: var(--ink);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  min-width: 150px;
+  outline: none;
+}
+
+.sl-menu {
+  padding: 6px;
+  outline: none;
+}
+
+.sl-item {
+  display: flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 0 14px;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  letter-spacing: -0.25px;
+  color: var(--ink);
+  cursor: pointer;
+  outline: none;
+}
+
+.sl-item[data-focused],
+.sl-item[data-hovered] {
+  background: var(--surface-2);
+}
+
+.sl-item[data-selected] {
+  font-weight: 700;
+}
+
+.sl-item.danger {
+  color: var(--danger);
+}
+
+/* now playing */
+.np {
+  background: #8a8480;
+  color: #fff;
+}
+
+/* As Stockholm: darkened, washed with the artwork's main colour (--wash, set by WashedBlur,
+   limited so white text stays readable on pale artwork), deeper at the top and bottom. */
+.np .blur::after {
+  background:
+    linear-gradient(to bottom, rgb(var(--wash) / 60%), transparent 26%),
+    linear-gradient(to right, rgb(var(--wash) / 10%), transparent 80%),
+    linear-gradient(to top, rgb(var(--wash) / 60%), transparent 45%),
+    linear-gradient(rgb(var(--wash) / 40%), rgb(var(--wash) / 40%)), rgb(0 0 0 / 40%);
+}
+
+.np .blur img {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  filter: blur(20px);
+  transform: scale(1.1) translateZ(0);
+}
+
+.np-top {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: calc(env(safe-area-inset-top) + 8px) 12px 0;
+}
+
+.np .top-btn {
+  color: #fff;
+}
+
+.np-src {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  --spotify-disc: #fff;
+  --spotify-waves: #1db954;
+}
+
+.np-src svg {
+  width: 26px;
+  height: 26px;
+}
+
+.np-body {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 28px 20px 12px;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.np-title {
+  margin: 0;
+  font-size: 44px;
+  line-height: 1.08;
+  font-weight: 700;
+  letter-spacing: -1.5px;
+  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.2);
+  overflow-wrap: anywhere;
+}
+
+.np-line {
+  margin: 10px 0 0;
+  font-size: 16px;
+  font-weight: 400;
+  letter-spacing: 0;
+  opacity: 0.92;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.3);
+}
+
+.np-ctl {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 84px;
+  gap: 36px;
+  margin: auto 0 28px;
+  padding-top: 24px;
+}
+
+.np-ctl .skip {
+  width: 64px;
+  height: 64px;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: #fff;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.np-ctl .skip svg {
+  width: 28px;
+  height: 28px;
+}
+
+.big {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.9);
+  background: none;
+  color: #fff;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition:
+    transform 0.15s var(--ease),
+    background 0.2s;
+}
+
+.big svg {
+  width: 40px;
+  height: 40px;
+}
+
+.big[data-pressed] {
+  transform: scale(0.94);
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.vol.on-dark {
+  color: #fff;
+}
+
+.vol.on-dark .vol-ico {
+  color: #fff;
+}
+
+.vol.on-dark .vtrack::before {
+  background: rgba(255, 255, 255, 0.35);
+  height: 2px;
+  margin-top: -1px;
+}
+
+.vol.on-dark .vfill {
+  background: #fff;
+  height: 2px;
+  margin-top: -1px;
+}
+
+.vol.on-dark .vthumb {
+  width: 16px;
+  height: 16px;
+  background: #fff;
+}
+
+.np-time {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  margin-bottom: 16px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.np-time .vol {
+  flex: 1;
+  min-width: 0;
+}
+
+.np-total {
+  opacity: 0.5;
+}
+
+.np-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.np-left {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.np-modes {
+  display: flex;
+  gap: 8px;
+  margin-left: -10px;
+}
+
+.np-mode {
+  display: grid;
+  place-items: center;
+  position: relative;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #fff;
+  opacity: 0.6;
+  transition: opacity 0.2s ease-in-out;
+}
+
+.np-mode svg {
+  width: 26px;
+  height: 26px;
+}
+
+.np-mode[data-selected] {
+  opacity: 1;
+}
+
+/* the dot says on without leaning on the contrast alone */
+.np-mode[data-selected]::after {
+  content: '';
+  position: absolute;
+  bottom: 3px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentcolor;
+}
+
+.np-art {
+  width: 62px;
+  height: 62px;
+  border-radius: 0;
+  margin-left: auto;
+}
+
+.np .spkbar {
+  position: relative;
+  z-index: 1;
+  flex: none;
+}
+
+/* notices above everything (components/molecules/TopLayer) */
+.top-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.top-layer-frame {
+  position: relative;
+  width: 100%;
+  max-width: var(--shell-max);
+  height: 100%;
+}
+
+@keyframes dim {
+  from {
+    background-color: rgba(0, 0, 0, 0);
+  }
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes slide {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes slide-left {
+  from {
+    transform: translateX(-100%);
+  }
+}
+
+/* A desktop or tablet window: the layers fill the app's column. */
+@media (min-width: 720px) and (min-height: 600px) {
+  .sheet,
+  .sheet.full {
+    border-radius: 0;
+  }
+
+  .drawer {
+    margin-left: max(0px, calc(50vw - var(--shell-max) / 2));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home *,
+  .top *,
+  .dock *,
+  .overlay,
+  .overlay *,
+  .top-layer * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.favs {
+  margin-top: 20px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.fav-add svg {
+  flex: none;
+  margin-left: 3px;
+}
+
+/* The speaker drawings are near-black: on dark surfaces they need lifting to stay visible. */
+[data-theme='dark'] .av-glyph svg,
+[data-theme='dark'] .gpill .gicon svg {
+  filter: brightness(1.8);
+}
+
+[data-theme='dark'] .glyph svg {
+  filter: brightness(1.4) drop-shadow(0 6px 6px rgba(0, 0, 0, 0.18));
+}
+
+/* The logo is a wide word: where other services show a square icon it runs wider. Last in
+   the file, to outrank the square sizes above. */
+.brand .tunein-logo,
+.mico .tunein-logo,
+.np-src .tunein-logo {
+  width: 36px;
+  height: 16px;
+}

@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- No maximum-scale / user-scalable=no: blocking pinch-zoom fails WCAG 1.4.4,
+         and station names on this UI are small. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>SoundTap</title>
+    <!-- iOS home-screen shortcut label. Overwritten at runtime with the radio's
+         own name (see HomePage) so a pinned tile reads e.g. "Keuken". -->
+    <meta name="apple-mobile-web-app-title" content="SoundTap" />
+    <meta name="theme-color" content="#f9f9f9" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <!-- iOS launch screen for the home-screen app: the launch skeleton below as a
+         picture, shown until the page paints. soundtap.local can take seconds to
+         resolve, and plain http allows no service worker to show a cached shell
+         sooner. One per screen size; regenerate with scripts/splash.py. -->
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/440x956@3-light.png"
+      media="(device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: light)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/440x956@3-dark.png"
+      media="(device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/430x932@3-light.png"
+      media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: light)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/430x932@3-dark.png"
+      media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/428x926@3-light.png"
+      media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: light)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/428x926@3-dark.png"
+      media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/414x896@3-light.png"
+      media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: light)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/414x896@3-dark.png"
+      media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/414x896@2-light.png"
+      media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait) and (prefers-color-scheme: light)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/414x896@2-dark.png"
+      media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait) and (prefers-color-scheme: dark)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/402x874@3-light.png"
+      media="(device-width: 402px) and (device-height: 874px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: light)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/402x874@3-dark.png"
+      media="(device-width: 402px) and (device-height: 874px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/393x852@3-light.png"
+      media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: light)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/393x852@3-dark.png"
+      media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/390x844@3-light.png"
+      media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: light)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/390x844@3-dark.png"
+      media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/375x812@3-light.png"
+      media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: light)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/375x812@3-dark.png"
+      media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/375x667@2-light.png"
+      media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait) and (prefers-color-scheme: light)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/375x667@2-dark.png"
+      media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait) and (prefers-color-scheme: dark)"
+    />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <!-- Draw the app under the iOS status bar, as a native app does: without it iOS
+         paints an opaque grey bar above the page that matches none of its screens.
+         Every top edge already pads env(safe-area-inset-top). -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!-- Critical base layout, inline so it applies before the JS bundle and its
+         stylesheet load. Without it the body briefly shows the UA margin + a window
+         scrollbar, so the app jumps on refresh. Keep in sync with
+         styles/tokens.css. -->
+    <!-- Apply the saved colour scheme before the first paint so a dark-mode
+         device never flashes the light theme. Mirrors theme/hooks/useThemeMode.ts — keep
+         the storage key (PREF.theme in lib/storage.ts) + resolution in sync with it. -->
+    <script>
+      (function () {
+        try {
+          var m = localStorage.getItem('soundtap-theme');
+          var mode = m === 'light' || m === 'dark' ? m : 'system';
+          var dark =
+            mode === 'dark' ||
+            (mode === 'system' &&
+              window.matchMedia &&
+              window.matchMedia('(prefers-color-scheme: dark)').matches);
+          document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) meta.setAttribute('content', dark ? '#121212' : '#f9f9f9');
+        } catch (e) {
+          /* private mode / no matchMedia: default to light */
+        }
+      })();
+    </script>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: #f9f9f9;
+        height: 100dvh;
+        overflow: hidden;
+        overscroll-behavior: none;
+      }
+      html[data-theme='dark'],
+      html[data-theme='dark'] body {
+        background: #121212;
+      }
+
+      /* Launch skeleton: the app shell as static HTML (header, room cards, mini
+         player) so the first frame is the layout, not a blank screen, while the JS
+         bundle loads. React replaces #root's contents on mount. Keep the shapes and
+         colours in step with styles/tokens.css and the component styles. */
+      #root:has(.ls) {
+        height: 100%;
+      }
+      .ls {
+        --bg: #f9f9f9;
+        --surface: #fff;
+        --surface-3: #e5e5e5;
+        --border: rgba(22, 24, 27, 0.07);
+        --shimmer: rgba(255, 255, 255, 0.55);
+        width: 393px;
+        max-width: 100%;
+        height: 100dvh;
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        background: var(--bg);
+        position: relative;
+      }
+      html[data-theme='dark'] .ls {
+        --bg: #121212;
+        --surface: #1c1c1e;
+        --surface-3: #333333;
+        --border: rgba(238, 240, 243, 0.08);
+        --shimmer: rgba(255, 255, 255, 0.06);
+      }
+      @media (min-width: 720px) and (min-height: 600px) {
+        .ls {
+          height: min(852px, calc(100dvh - 64px));
+          box-shadow: 0 30px 60px -20px rgba(31, 24, 20, 0.22);
+        }
+      }
+      .ls-hdr {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: max(30px, calc(env(safe-area-inset-top) + 12px)) 20px 18px;
+      }
+      .ls-sect {
+        padding: 18px 16px 0;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .ls-room {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        background: var(--surface);
+        border-radius: 22px;
+        padding: 12px;
+        box-shadow: 0 0 0 1px var(--border);
+      }
+      .ls-mp {
+        position: absolute;
+        left: 10px;
+        right: 10px;
+        bottom: max(10px, calc(env(safe-area-inset-bottom) + 6px));
+        background: var(--surface);
+        border-radius: 22px;
+        padding: 12px;
+        box-shadow:
+          0 0 0 1px var(--border),
+          0 20px 40px -20px rgba(22, 24, 27, 0.3);
+      }
+      .ls-sk {
+        display: block;
+        background-color: var(--surface-3);
+        background-image: linear-gradient(
+          90deg,
+          transparent 0,
+          var(--shimmer) 50%,
+          transparent 100%
+        );
+        background-size: 150% 100%;
+        background-repeat: no-repeat;
+        border-radius: 9px;
+        animation: ls-shimmer 1.4s ease-in-out infinite;
+      }
+      @keyframes ls-shimmer {
+        from {
+          background-position: -150% 0;
+        }
+        to {
+          background-position: 150% 0;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .ls-sk {
+          animation: none;
+          background-image: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <!-- Static launch skeleton; see .ls styles above. Replaced by React on mount. -->
+      <div class="ls" aria-hidden="true">
+        <div class="ls-hdr">
+          <span>
+            <span class="ls-sk" style="width: 170px; height: 20px; border-radius: 6px"></span>
+            <span
+              class="ls-sk"
+              style="width: 120px; height: 12px; border-radius: 6px; margin-top: 8px"
+            ></span>
+          </span>
+          <span class="ls-sk" style="width: 36px; height: 36px; border-radius: 50%"></span>
+        </div>
+        <div class="ls-sect">
+          <span class="ls-sk" style="width: 64px; height: 12px; border-radius: 6px"></span>
+          <div class="ls-room">
+            <span class="ls-sk" style="width: 52px; height: 52px; border-radius: 14px"></span>
+            <span style="flex: 1">
+              <span class="ls-sk" style="width: 45%; height: 15px; border-radius: 6px"></span>
+              <span
+                class="ls-sk"
+                style="width: 30%; height: 12px; border-radius: 6px; margin-top: 7px"
+              ></span>
+            </span>
+            <span class="ls-sk" style="width: 38px; height: 38px; border-radius: 50%"></span>
+          </div>
+          <div class="ls-room">
+            <span class="ls-sk" style="width: 52px; height: 52px; border-radius: 14px"></span>
+            <span style="flex: 1">
+              <span class="ls-sk" style="width: 40%; height: 15px; border-radius: 6px"></span>
+              <span
+                class="ls-sk"
+                style="width: 25%; height: 12px; border-radius: 6px; margin-top: 7px"
+              ></span>
+            </span>
+            <span class="ls-sk" style="width: 38px; height: 38px; border-radius: 50%"></span>
+          </div>
+        </div>
+        <div class="ls-mp">
+          <span class="ls-sk" style="width: 50%; height: 12px; border-radius: 6px"></span>
+          <span
+            class="ls-sk"
+            style="width: 100%; height: 8px; border-radius: 99px; margin-top: 18px"
+          ></span>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

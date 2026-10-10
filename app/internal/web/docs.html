@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>API reference</title>
+<style>
+:root{color-scheme:light dark;--bg:#fff;--fg:#1d2024;--mut:#5f6770;--bd:#d8dce1;--cd:#f5f6f8;--ac:#0b5cad}
+@media(prefers-color-scheme:dark){:root{--bg:#16181b;--fg:#e6e8ea;--mut:#9aa3ad;--bd:#33383e;--cd:#1f2226;--ac:#6cb2f5}}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif}
+main{max-width:56rem;margin:0 auto;padding:1rem}
+h1{font-size:1.5rem}h2{font-size:1.15rem;margin-top:2rem;border-bottom:1px solid var(--bd)}
+details{border:1px solid var(--bd);border-radius:6px;margin:.4rem 0;background:var(--cd)}
+summary{cursor:pointer;padding:.45rem .7rem;display:flex;gap:.6rem;align-items:baseline;flex-wrap:wrap}
+summary span.s{color:var(--mut)}
+.m{font:600 .75rem monospace;min-width:3.6rem;text-transform:uppercase;color:var(--ac)}
+code,pre{font-family:ui-monospace,monospace;font-size:.85rem}
+pre{background:var(--bg);border:1px solid var(--bd);border-radius:4px;padding:.5rem;overflow:auto;margin:.3rem 0}
+.b{padding:0 .7rem .6rem}.b h4{margin:.7rem 0 .2rem;font-size:.85rem;color:var(--mut)}
+table{border-collapse:collapse;width:100%}td{border-top:1px solid var(--bd);padding:.2rem .4rem;vertical-align:top}
+p.d{white-space:pre-wrap}
+input{width:100%;box-sizing:border-box;padding:.4rem;margin:.5rem 0;background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:4px}
+</style></head><body><main>
+<h1 id="t">API reference</h1><div id="i"></div>
+<input id="q" type="search" placeholder="Filter by path or summary" aria-label="Filter">
+<div id="o">Loading...</div>
+</main><script>
+(async()=>{
+const $=id=>document.getElementById(id),E=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e};
+const spec=await(await fetch('/api/openapi.json')).json();
+document.title=$('t').textContent=spec.info.title+' (v'+spec.info.version+')';
+const rs=o=>o&&o.$ref?rs(o.$ref.slice(2).split('/').reduce((a,k)=>a[k],spec)):o;
+const sc=(s,d)=>{s=rs(s);if(!s)return'';if(s.type==='array')return'['+sc(s.items,d+1)+']';
+ if(s.properties&&d<4){const r=s.required||[];return'{ '+Object.entries(s.properties).map(([k,v])=>k+(r.includes(k)?'*':'')+': '+sc(v,d+1)).join(', ')+' }'}
+ return(s.type||'any')+(s.format?'('+s.format+')':'')};
+const sec=spec.components.securitySchemes.token;
+$('i').append(E('p','d',spec.info.description),E('p','d','Auth: header '+sec.name+'. '+sec.description));
+const by={};
+for(const[p,ms]of Object.entries(spec.paths))for(const[m,o]of Object.entries(ms))(by[o.tags[0]]=by[o.tags[0]]||[]).push([p,m,o]);
+const list=[];
+for(const t of spec.tags){const h=E('h2',0,t.name),ops=by[t.name]||[];$('o').append(h);
+ for(const[p,m,o]of ops){const d=E('details'),s=E('summary');
+  s.append(E('span','m',m),E('code',0,p),E('span','s',o.summary));d.append(s);
+  const b=E('div','b');if(o.description)b.append(E('p','d',o.description));
+  const ps=(o.parameters||[]).map(rs);
+  if(ps.length){b.append(E('h4',0,'Parameters'));const tb=E('table');
+   for(const x of ps)tb.insertRow().append(E('td',0,x.name+(x.required?'*':'')),E('td',0,x.in),E('td',0,x.description||''));b.append(tb)}
+  const rb=o.requestBody&&Object.entries(o.requestBody.content)[0];
+  if(rb){b.append(E('h4',0,'Request body ('+rb[0]+')'),E('pre',0,sc(rb[1].schema,0)))}
+  b.append(E('h4',0,'Responses'));const tb=E('table');
+  for(const[c,r0]of Object.entries(o.responses)){const r=rs(r0),ct=r.content&&Object.entries(r.content)[0];
+   tb.insertRow().append(E('td',0,c),E('td',0,r.description||''),E('td',0,ct?ct[0]+' '+sc(ct[1].schema,0):''))}
+  b.append(tb);if(o.security&&!o.security.length)b.append(E('p',0,'No token needed.'));
+  d.append(b);$('o').append(d);list.push([d,(p+' '+o.summary+' '+m).toLowerCase(),h])}}
+$('q').oninput=e=>{const q=e.target.value.toLowerCase();list.forEach(([d,k])=>d.hidden=!k.includes(q))};
+const l=$('o');for(const n of l.childNodes)if(n.nodeType===3)n.remove();
+})().catch(e=>{document.getElementById('o').textContent='Could not load openapi.json: '+e});
+</script></body></html>

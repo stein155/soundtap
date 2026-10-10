@@ -1,0 +1,133 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* SPDX-FileCopyrightText: 2026 SoundTap contributors */
+
+/* First-run Wi-Fi setup (Stockholm layout): a plain white title block, then the name and
+   network as one flat white card on the grey page, black filled controls. Own CSS on the
+   app tokens; no external assets, so it works on the offline setup access point. */
+
+.setup-head {
+  display: grid;
+  justify-items: center;
+  padding: max(28px, calc(env(safe-area-inset-top) + 16px)) 24px 28px;
+  background: var(--surface);
+  text-align: center;
+}
+
+/* Our own speaker drawing on a light grey disc, like the speaker card's hero. */
+.setup-disc {
+  width: 148px;
+  height: 148px;
+  padding: 22px;
+  border-radius: 50%;
+  background: var(--surface-2);
+}
+
+.setup-disc svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  filter: drop-shadow(0 6px 6px rgba(0, 0, 0, 0.18));
+}
+
+.setup-name {
+  margin: 14px 0 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.setup-head h1 {
+  margin: 6px 0 0;
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: var(--tracking-title);
+  color: var(--ink);
+  text-wrap: balance;
+}
+
+.setup-head p:not(.setup-name) {
+  margin: 10px 0 0;
+  max-width: 28ch;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+.setup section {
+  margin: 16px 16px 0;
+  padding: 20px 16px 4px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  counter-reset: step;
+}
+
+/* Steps 1 and 2 are numbered; 3 is the button. */
+.setup section > h2::before,
+.setup section > h3:nth-of-type(1)::before {
+  counter-increment: step;
+  content: counter(step);
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-right: 10px;
+  border-radius: 50%;
+  background: var(--accent-fill);
+  color: var(--on-accent-fill);
+  font-size: 11px;
+  letter-spacing: 0;
+}
+
+.setup h2,
+.setup h3 {
+  padding: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* Full-width network rows, and the black pill primary button. */
+.setup section button:has(> span) {
+  min-height: 52px;
+  background: var(--surface-2);
+  border-radius: var(--radius);
+}
+
+.setup section > div > button:not(:has(> span)) {
+  min-height: 52px;
+  border-radius: 999px;
+  background: var(--accent-fill);
+  color: var(--on-accent-fill);
+  box-shadow: none;
+}
+
+.setup input {
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  box-shadow: none;
+}
+
+.setup input:focus {
+  box-shadow: none;
+  border-color: var(--ink);
+}
+
+.setup-foot {
+  padding: 22px 24px 14px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.setup section p {
+  margin-inline: 0;
+}

@@ -1,0 +1,16 @@
+{
+  "name": "SoundTap",
+  "short_name": "SoundTap",
+  "description": "Play and group your speakers, on your own network.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f9f9f9",
+  "theme_color": "#f9f9f9",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
