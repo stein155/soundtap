@@ -1,0 +1,58 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 SoundTap contributors
+
+package supervise
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"sync"
+	"time"
+)
+
+// capWriter passes at most budget bytes per minute to w and drops the rest, saying so
+// once per minute. A child process that floods its output -- ffmpeg on a broken stream
+// prints a line per packet -- would otherwise push every other daemon out of the shared
+// log ring (ADR 0066).
+// childLogBudget is per child and minute: a healthy decoder says a few lines a minute.
+const childLogBudget = 16 << 10
+
+// ChildLog is where a child process named name writes its output: stderr, capped at
+// childLogBudget a minute.
+func ChildLog(name string) io.Writer { return newCapWriter(os.Stderr, name, childLogBudget) }
+
+type capWriter struct {
+	mu      sync.Mutex
+	w       io.Writer
+	name    string
+	budget  int
+	left    int
+	window  time.Time
+	dropped int
+	now     func() time.Time
+}
+
+func newCapWriter(w io.Writer, name string, budget int) *capWriter {
+	return &capWriter{w: w, name: name, budget: budget, now: time.Now}
+}
+
+func (c *capWriter) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if t := c.now(); t.Sub(c.window) >= time.Minute {
+		if c.dropped > 0 {
+			fmt.Fprintf(c.w, "%s: %d bytes of output dropped\n", c.name, c.dropped)
+		}
+		c.window, c.left, c.dropped = t, c.budget, 0
+	}
+	n := min(len(p), c.left)
+	if n > 0 {
+		if _, err := c.w.Write(p[:n]); err != nil {
+			return 0, err
+		}
+		c.left -= n
+	}
+	c.dropped += len(p) - n
+	return len(p), nil // the child must never block or fail on its log
+}
