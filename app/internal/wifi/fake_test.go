@@ -1,0 +1,460 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 SoundTap contributors
+
+package wifi
+
+import (
+	"context"
+	"crypto/pbkdf2"
+	"crypto/sha1"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"slices"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/stein155/soundtap/app/internal/wpactrl/wpactrltest"
+)
+
+// fakeNet is a network as the fake wpa_supplicant holds it.
+type fakeNet struct {
+	ssid     string // decoded
+	vars     map[string]string
+	enabled  bool
+	priority int
+}
+
+// supplicant is a fake wpa_supplicant behind the control socket. Where says, per SSID,
+// what the air does: "ok" joins, "wrong_key" fails the handshake, anything else (or
+// nothing) is not in range. A join takes one STATUS to scan, then the result.
+type supplicant struct {
+	mu        sync.Mutex
+	sys       *fakeSys
+	nets      map[int]*fakeNet
+	nextID    int
+	steps     int
+	state     string
+	current   int
+	connected bool
+	srv       *wpactrltest.Server
+	scan      []string // SSIDs in SCAN_RESULTS
+}
+
+func (f *supplicant) handle(cmd string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	w := strings.Fields(cmd)
+	switch {
+	case cmd == "REMOVE_NETWORK all":
+		f.nets = map[int]*fakeNet{}
+		return "OK\n"
+	case cmd == "ADD_NETWORK":
+		id := f.nextID
+		f.nextID++
+		f.nets[id] = &fakeNet{vars: map[string]string{}}
+		return strconv.Itoa(id) + "\n"
+	case len(w) == 4 && w[0] == "SET_NETWORK":
+		id, _ := strconv.Atoi(w[1])
+		n, ok := f.nets[id]
+		if !ok {
+			return "FAIL\n"
+		}
+		n.vars[w[2]] = w[3]
+		switch w[2] {
+		case "ssid":
+			b, err := hex.DecodeString(w[3])
+			if err != nil {
+				return "FAIL\n"
+			}
+			n.ssid = string(b)
+		case "priority":
+			n.priority, _ = strconv.Atoi(w[3])
+		}
+		return "OK\n"
+	case len(w) == 2 && w[0] == "ENABLE_NETWORK":
+		id, _ := strconv.Atoi(w[1])
+		if n, ok := f.nets[id]; ok {
+			n.enabled = true
+			return "OK\n"
+		}
+		return "FAIL\n"
+	case cmd == "STATUS":
+		f.step()
+		s := "wpa_state=" + f.state + "\nmode=station\n"
+		if f.state == "COMPLETED" {
+			s += fmt.Sprintf("ssid=%s\nid=%d\n", f.nets[f.current].ssid, f.current)
+		}
+		return s
+	case cmd == "SCAN_RESULTS":
+		s := "bssid / frequency / signal level / flags / ssid\n"
+		for i, ssid := range f.scan {
+			s += fmt.Sprintf("aa:bb:cc:dd:ee:%02x\t2437\t-50\t[WPA2-PSK-CCMP][ESS]\t%s\n", i, ssid)
+		}
+		return s
+	}
+	return ""
+}
+
+// step moves the join on by one STATUS: scanning first, then the highest-priority enabled
+// network that is in range decides.
+func (f *supplicant) step() {
+	f.steps++
+	if f.connected || f.steps < 2 {
+		if f.state == "" {
+			f.state = "SCANNING"
+		}
+		return
+	}
+	ids := make([]int, 0, len(f.nets))
+	for id, n := range f.nets {
+		if n.enabled {
+			ids = append(ids, id)
+		}
+	}
+	sort.Slice(ids, func(a, b int) bool { return f.nets[ids[a]].priority > f.nets[ids[b]].priority })
+	for _, id := range ids {
+		n := f.nets[id]
+		if f.result(n) == "ok" {
+			f.state, f.current, f.connected = "COMPLETED", id, true
+			go f.srv.Event(fmt.Sprintf("CTRL-EVENT-CONNECTED - Connection to aa:bb:cc:dd:ee:ff completed [id=%d id_str=]", id))
+			return
+		}
+	}
+	for _, id := range ids {
+		if f.result(f.nets[id]) == "wrong_key" {
+			if f.state != "4WAY_HANDSHAKE" {
+				f.state = "4WAY_HANDSHAKE"
+				go f.srv.Event(fmt.Sprintf(`CTRL-EVENT-SSID-TEMP-DISABLED id=%d ssid="%s" auth_failures=1 duration=10 reason=WRONG_KEY`, id, f.nets[id].ssid))
+			} else {
+				f.state = "DISCONNECTED"
+			}
+			return
+		}
+	}
+	f.state = "SCANNING"
+}
+
+// result is what joining n does: a network in range with another key than n's refuses
+// the handshake.
+func (f *supplicant) result(n *fakeNet) string {
+	r, pass, ok := f.sys.air(n.ssid)
+	if ok && r == "ok" {
+		key, _ := pbkdf2.Key(sha1.New, pass, []byte(n.ssid), 4096, 32)
+		if n.vars["psk"] != hex.EncodeToString(key) {
+			return "wrong_key"
+		}
+	}
+	return r
+}
+
+// fakeSys records every command and plays the box: the radio's interfaces, the daemons'
+// pid files, wpa_supplicant's control socket and the address DHCP gives.
+type fakeSys struct {
+	t       *testing.T
+	p       Paths
+	mu      sync.Mutex
+	calls   []string
+	signals []string
+	alive   map[int]bool
+	nextPid int
+	sup     *supplicant
+	where   map[string]string
+	scan    []string
+	dhcp    bool // udhcpc runs
+	noIP    bool // DHCP never answers
+	apMode  bool
+	fail    map[string]bool // command prefixes that fail
+	iwScan  string
+	station string            // iw station dump on wlan1
+	keys    map[string]string // SSID -> the passphrase the network takes; absent: any
+	env     string            // what fw_printenv prints; "" fails
+	servers map[int]*wpactrltest.Server
+}
+
+func newFakeSys(t *testing.T, p Paths) *fakeSys {
+	t.Helper()
+	return &fakeSys{t: t, p: p, alive: map[int]bool{}, nextPid: 1000, where: map[string]string{},
+		apMode: true, fail: map[string]bool{}, keys: map[string]string{}, servers: map[int]*wpactrltest.Server{}}
+}
+
+func (s *fakeSys) record(line string) {
+	s.mu.Lock()
+	s.calls = append(s.calls, line)
+	s.mu.Unlock()
+}
+
+func (s *fakeSys) failing(line string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for p := range s.fail {
+		if strings.HasPrefix(line, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *fakeSys) spawn(pidfile string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.nextPid++
+	s.alive[s.nextPid] = true
+	if pidfile != "" {
+		_ = os.WriteFile(pidfile, []byte(strconv.Itoa(s.nextPid)+"\n"), 0o644)
+	}
+	return s.nextPid
+}
+
+func arg(args []string, flag string) string {
+	if i := slices.Index(args, flag); i >= 0 && i+1 < len(args) {
+		return args[i+1]
+	}
+	return ""
+}
+
+func (s *fakeSys) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+	line := strings.TrimSpace(filepath.Base(name) + " " + strings.Join(args, " "))
+	s.record(line)
+	if s.failing(line) {
+		return []byte("refused"), fmt.Errorf("exit status 1")
+	}
+	switch {
+	case name == "wpa_supplicant":
+		s.mu.Lock()
+		sup := &supplicant{sys: s, nets: map[int]*fakeNet{}, scan: s.scan}
+		s.sup = sup
+		s.mu.Unlock()
+		sup.mu.Lock()
+		srv, err := wpactrltest.Open(filepath.Join(s.p.CtrlDir, arg(args, "-i")), sup.handle)
+		sup.srv = srv
+		sup.mu.Unlock()
+		if err != nil {
+			return nil, err
+		}
+		s.t.Cleanup(srv.Close)
+		pid := s.spawn(arg(args, "-P"))
+		s.mu.Lock()
+		s.servers[pid] = srv
+		s.mu.Unlock()
+	case name == "fw_printenv":
+		if s.env == "" {
+			return []byte("Cannot read environment"), fmt.Errorf("exit status 1")
+		}
+		return []byte(s.env), nil
+	case name == "hostapd":
+		s.spawn(arg(args, "-P"))
+	case line == "iw phy":
+		if s.apMode {
+			return []byte("Wiphy phy0\n\tSupported interface modes:\n\t\t * managed\n\t\t * AP\n"), nil
+		}
+		return []byte("Wiphy phy0\n\tSupported interface modes:\n\t\t * managed\n"), nil
+	case strings.HasSuffix(line, " scan"):
+		return []byte(s.iwScan), nil
+	case strings.HasSuffix(line, "station dump"):
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return []byte(s.station), nil
+	case strings.Contains(line, "interface add"):
+		_ = os.MkdirAll(filepath.Join(s.p.SysNet, args[3]), 0o755)
+	case strings.HasPrefix(line, "iw dev wlan1 del"):
+		_ = os.RemoveAll(filepath.Join(s.p.SysNet, "wlan1"))
+	}
+	return nil, nil
+}
+
+func (s *fakeSys) Start(name string, args ...string) (int, <-chan struct{}, error) {
+	line := strings.TrimSpace(name + " " + strings.Join(args, " "))
+	s.record(line)
+	exited := make(chan struct{})
+	if s.failing(line) {
+		close(exited)
+		return s.spawn(""), exited, nil
+	}
+	pid := s.spawn(arg(args, "-p"))
+	if name == "udhcpc" {
+		s.mu.Lock()
+		s.dhcp = true
+		s.mu.Unlock()
+	}
+	return pid, exited, nil
+}
+
+func (s *fakeSys) Signal(pid int, sig syscall.Signal) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.alive[pid] {
+		return syscall.ESRCH
+	}
+	if sig != 0 {
+		s.signals = append(s.signals, fmt.Sprintf("%d %s", pid, sig))
+	}
+	if sig == syscall.SIGTERM {
+		delete(s.alive, pid)
+		if srv, ok := s.servers[pid]; ok {
+			srv.Close() // wpa_supplicant exits and takes its socket along
+			delete(s.servers, pid)
+		}
+	}
+	return nil
+}
+
+func (s *fakeSys) HasIPv4(iface string) bool {
+	s.mu.Lock()
+	sup, ok := s.sup, iface == "wlan0" && s.dhcp && !s.noIP && s.sup != nil
+	s.mu.Unlock()
+	if !ok {
+		return false
+	}
+	sup.mu.Lock()
+	defer sup.mu.Unlock()
+	return sup.connected
+}
+
+// air is what the test set for ssid: in range or not, and the passphrase it takes.
+func (s *fakeSys) air(ssid string) (where, pass string, hasKey bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	pass, hasKey = s.keys[ssid]
+	return s.where[ssid], pass, hasKey
+}
+
+func (s *fakeSys) Calls() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.calls...)
+}
+
+func (s *fakeSys) Signals() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.signals...)
+}
+
+func (s *fakeSys) called(prefix string) bool {
+	for _, c := range s.Calls() {
+		if strings.HasPrefix(c, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// rig is a Manager on a fake box in a temp tree.
+type rig struct {
+	t        *testing.T
+	dir      string
+	p        Paths
+	sys      *fakeSys
+	m        *Manager
+	conf     string
+	problems []string
+	joins    int
+	mu       sync.Mutex
+	cancel   context.CancelFunc
+	done     chan struct{}
+}
+
+func quiet() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+func newRig(t *testing.T, variant string) *rig {
+	t.Helper()
+	dir := wpactrltest.ShortDir(t)
+	p := Paths{
+		State: filepath.Join(dir, "st"), Pid: filepath.Join(dir, "pid"), Tmp: filepath.Join(dir, "tmp"),
+		CtrlDir: filepath.Join(dir, "c"), ScanCache: filepath.Join(dir, "scan"),
+		SysNet: filepath.Join(dir, "net"), SysPhy: filepath.Join(dir, "phy"),
+		ProcMTD: filepath.Join(dir, "mtd"), Dev: filepath.Join(dir, "dev"), Cmdline: filepath.Join(dir, "cmdline"),
+		Firmware: "/lib/firmware/ti-connectivity", FirmwareParam: filepath.Join(dir, "fwpath"),
+		BootLog: filepath.Join(dir, "nv", "soundtap-boot.log"), LanAllow: "lan-allow",
+	}
+	for _, d := range []string{p.State, p.Pid, p.Tmp, p.CtrlDir, filepath.Join(p.SysNet, "wlan0"),
+		filepath.Join(p.SysPhy, "phy0"), p.Dev, filepath.Join(dir, "nv")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r := &rig{t: t, dir: dir, p: p, conf: filepath.Join(dir, "nv", "wifi.conf")}
+	r.sys = newFakeSys(t, p)
+	r.m = New(Config{
+		Conf: r.conf, Variant: variant, Paths: p, Sys: r.sys,
+		Timing: Timing{
+			Iface: 200 * time.Millisecond, Join: 300 * time.Millisecond, Poll: 10 * time.Millisecond,
+			Ready: 200 * time.Millisecond, Settle: 5 * time.Millisecond, Scan: time.Second,
+			ScanRetry: 5 * time.Millisecond, ShortPause: 30 * time.Millisecond, LongPause: 60 * time.Millisecond,
+			Hold: 90 * time.Millisecond, Release: 5 * time.Millisecond, Watch: 10 * time.Millisecond,
+			Gone: 10 * time.Millisecond,
+		},
+		Hostname:  func() string { return "soundtap-test" },
+		SetupSSID: func() string { return "SoundTap ST10 C3D411" },
+		Ready:     func() bool { return true },
+		Joined:    func() { r.mu.Lock(); r.joins++; r.mu.Unlock() },
+		Problem:   func(s string) { r.mu.Lock(); r.problems = append(r.problems, s); r.mu.Unlock() },
+		Log:       quiet(),
+	})
+	return r
+}
+
+func (r *rig) save(ssid, psk string) {
+	r.t.Helper()
+	if err := WriteConf(r.conf, NewRecord(ssid, psk)); err != nil {
+		r.t.Fatal(err)
+	}
+}
+
+func (r *rig) start() {
+	ctx, cancel := context.WithCancel(context.Background())
+	r.cancel, r.done = cancel, make(chan struct{})
+	go func() { defer close(r.done); r.m.Run(ctx) }()
+	r.t.Cleanup(r.stop)
+}
+
+func (r *rig) stop() {
+	if r.cancel != nil {
+		r.cancel()
+		<-r.done
+		r.cancel = nil
+	}
+}
+
+// eventually waits for cond, failing with what after 5 s.
+func (r *rig) eventually(what string, cond func() bool) {
+	r.t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			r.t.Fatalf("%s did not happen; calls:\n%s", what, strings.Join(r.sys.Calls(), "\n"))
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func (r *rig) exists(name string) bool { return exists(filepath.Join(r.p.State, name)) }
+
+func (r *rig) read(path string) string {
+	b, _ := os.ReadFile(path)
+	return string(b)
+}
+
+func (r *rig) lastProblem() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.problems) == 0 {
+		return "<none>"
+	}
+	return r.problems[len(r.problems)-1]
+}
+
+func (r *rig) joinCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.joins
+}
