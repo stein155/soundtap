@@ -1,0 +1,151 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 SoundTap contributors
+
+// Package btctl reports Bluetooth pairings and removes one at a time.
+//
+// It asks BlueZ over D-Bus (godbus, ADR 0114) instead of parsing bluetoothctl's text: one
+// GetManagedObjects call returns the adapter and every device with typed properties, so a
+// name a phone chose can never pose as a property. The pairing agent, the pairing window
+// and clearing every pairing are internal/bluez.
+package btctl
+
+import (
+	"context"
+	"errors"
+	"maps"
+	"net"
+	"path"
+	"slices"
+	"strings"
+
+	"github.com/godbus/dbus/v5"
+
+	"github.com/stein155/soundtap/app/internal/sysbus"
+)
+
+// Bus opens a connection to the bus BlueZ is on, for one call; the caller closes it.
+// soundtapd passes the system bus, tests a test bus.
+type Bus func(ctx context.Context) (*sysbus.Conn, error)
+
+// Device is one remote Bluetooth device, as BlueZ reports it.
+type Device struct {
+	Address   string `json:"address"`
+	Name      string `json:"name"`
+	Connected bool   `json:"connected"`
+	Path      string `json:"-"` // D-Bus object path, for Remove
+}
+
+// Status is what the speaker can say about its own Bluetooth without touching a phone.
+type Status struct {
+	Adapter      bool     `json:"adapter"`
+	Alias        string   `json:"alias"`
+	Powered      bool     `json:"powered"`
+	Discoverable bool     `json:"discoverable"`
+	Devices      []Device `json:"devices"`
+}
+
+const (
+	service      = "org.bluez"
+	adapterIface = "org.bluez.Adapter1"
+	deviceIface  = "org.bluez.Device1"
+)
+
+// objects is GetManagedObjects' answer: per object path, per interface, its properties.
+type objects = map[dbus.ObjectPath]map[string]map[string]dbus.Variant
+
+func managed(ctx context.Context, bus Bus) (objects, error) {
+	c, err := bus(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = c.Close() }()
+	var objs objects
+	err = c.Object(service, "/").CallWithContext(ctx, "org.freedesktop.DBus.ObjectManager.GetManagedObjects", 0).Store(&objs)
+	return objs, err
+}
+
+// each calls f, in path order, for every object with iface.
+func each(objs objects, iface string, f func(path dbus.ObjectPath, props map[string]dbus.Variant)) {
+	for _, p := range slices.Sorted(maps.Keys(objs)) {
+		if props, ok := objs[p][iface]; ok {
+			f(p, props)
+		}
+	}
+}
+
+func str(props map[string]dbus.Variant, key string) string {
+	s, _ := props[key].Value().(string)
+	return s
+}
+
+func flag(props map[string]dbus.Variant, key string) bool {
+	b, _ := props[key].Value().(bool)
+	return b
+}
+
+// Read asks BlueZ what the adapter is doing and which devices it remembers.
+// It does not return an error, because every way this can fail means the same thing
+// to a caller: this speaker has no Bluetooth it can report on. A missing bus, a dead
+// bluetoothd, a board whose radio never came up and a build with the transport left
+// out are all Adapter false.
+func Read(ctx context.Context, bus Bus) Status {
+	var st Status
+	objs, err := managed(ctx, bus)
+	if err != nil {
+		return st
+	}
+	each(objs, adapterIface, func(_ dbus.ObjectPath, props map[string]dbus.Variant) {
+		if !st.Adapter {
+			st.Adapter = true
+			st.Alias = str(props, "Alias")
+			st.Powered = flag(props, "Powered")
+			st.Discoverable = flag(props, "Discoverable")
+		}
+	})
+	if st.Adapter {
+		st.Devices = pairedOf(objs)
+	}
+	return st
+}
+
+// Paired lists the paired devices; nil when BlueZ cannot be asked.
+func Paired(ctx context.Context, bus Bus) []Device {
+	objs, err := managed(ctx, bus)
+	if err != nil {
+		return nil
+	}
+	return pairedOf(objs)
+}
+
+func pairedOf(objs objects) []Device {
+	var devs []Device
+	each(objs, deviceIface, func(p dbus.ObjectPath, props map[string]dbus.Variant) {
+		if !flag(props, "Paired") {
+			return
+		}
+		addr := str(props, "Address")
+		if _, err := net.ParseMAC(addr); err != nil {
+			return
+		}
+		name := str(props, "Alias")
+		if name == "" {
+			name = str(props, "Name")
+		}
+		devs = append(devs, Device{Address: addr, Name: name, Connected: flag(props, "Connected"), Path: string(p)})
+	})
+	return devs
+}
+
+// Remove forgets one device: Adapter1.RemoveDevice on the adapter that owns it.
+func Remove(ctx context.Context, bus Bus, d Device) error {
+	if !strings.HasPrefix(d.Path, "/org/bluez/") || !dbus.ObjectPath(d.Path).IsValid() {
+		return errors.New("not a BlueZ object path: " + d.Path)
+	}
+	c, err := bus(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = c.Close() }()
+	_, err = c.Call(ctx, service, dbus.ObjectPath(path.Dir(d.Path)), adapterIface, "RemoveDevice", dbus.ObjectPath(d.Path))
+	return err
+}
