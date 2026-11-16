@@ -1,0 +1,14 @@
+{
+  "about": "The one table of Bose software SoundTap installs from, read by install.sh, install.ps1 and index.html. A rule matches the <type> of the speaker's :8090/info exactly (typeContains: as a substring) and, when it names one, its <moduleType>. minimum is the oldest Bose software with a recorded install on that model (docs/owners/install.md); versions compare number by number. Unsupported rules are checked first, so a SoundTouch 20 that reports the Series III's sm2 module never reaches the Series I/II rule; a speaker no rule matches is not supported either. Keep one rule per line: install.sh reads it line by line.",
+  "unsupported": [
+    {"model": "SoundTouch 20 Series III", "type": "SoundTouch 20", "moduleType": "sm2"},
+    {"model": "SoundTouch 30 Series III", "type": "SoundTouch 30", "moduleType": "sm2"},
+    {"model": "SoundTouch 30", "type": "SoundTouch 30"}
+  ],
+  "supported": [
+    {"model": "SoundTouch Wireless Link adapter", "typeContains": "Wireless Link", "minimum": "20.0.6"},
+    {"model": "SoundTouch 10", "type": "SoundTouch 10", "minimum": "22.0.3"},
+    {"model": "SoundTouch 20 (Series I or II)", "type": "SoundTouch 20", "minimum": "27.0.6"},
+    {"model": "SoundTouch 300", "type": "SoundTouch 300", "minimum": "27.0.6"}
+  ]
+}
