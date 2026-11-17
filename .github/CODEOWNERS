@@ -1,0 +1,16 @@
+# Paths that decide what software a speaker accepts: changes here need the maintainer's
+# review (RELEASING.md, "The first-install feed"). This holds only while branch protection
+# on main requires code-owner review.
+
+# The feed index a speaker still on Bose's software installs from, checked by CRC only.
+/updates/ @stein155
+# The installers that name that feed in swUpdateStart.
+/docs/installer/ @stein155
+# The release keys compiled into soundtapd, and the repository the updater trusts.
+/app/internal/release/ @stein155
+/app/internal/update/ @stein155
+# Signing, publishing and the feed check.
+/tools/release/ @stein155
+/.github/workflows/feed.yml @stein155
+/.github/workflows/release.yml @stein155
+/.github/CODEOWNERS @stein155

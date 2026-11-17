@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: 2026 SoundTap contributors
+
+name: 🛟 Install or recovery problem
+description: Installing SoundTap failed, the speaker does not come back, or going back to Bose did not work.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not panic and do not keep retrying.** Every supported model has a way back that works
+        below Linux, see [Going back to Bose](https://github.com/stein155/soundtap/blob/main/docs/owners/install.md#going-back-to-bose).
+        Tell us exactly what you did and what the speaker does now, and we will help you from there.
+  - type: dropdown
+    id: model
+    attributes:
+      label: Model
+      options: [SoundTouch 10, SoundTouch 20, SoundTouch 300, SoundTouch Wireless Link adapter, Other]
+    validations:
+      required: true
+  - type: dropdown
+    id: route
+    attributes:
+      label: What were you doing?
+      options:
+        - First install, from Bose software
+        - Update, from one SoundTap version to another
+        - Going back to Bose software
+        - Recovery after a failed install
+    validations:
+      required: true
+  - type: input
+    id: package
+    attributes:
+      label: Package and its SHA-256
+      description: File name and `sha256sum` of the .stu you installed.
+      placeholder: SoundTap-Core-0.1.0.stu  3f9a…
+    validations:
+      required: true
+  - type: textarea
+    id: commands
+    attributes:
+      label: Exactly what you did
+      description: Commands you ran, their full output, and the HTTP answer the speaker gave.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: now
+    attributes:
+      label: What the speaker does now
+      description: Lights, display, sounds, does it show up on the network or over USB? Has it been power-cycled since?
+    validations:
+      required: true
+  - type: checkboxes
+    id: backup
+    attributes:
+      label: Backup
+      options:
+        - label: I have a NAND backup of this speaker from before the install.
+  - type: textarea
+    id: serial
+    attributes:
+      label: Serial console log (if you have one)
+      description: The full log from power-on. The debug UART runs at 115200 baud.
+      render: text

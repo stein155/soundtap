@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: 2026 SoundTap contributors
+
+# zizmor (make lint-actions). Every action, GitHub's own included, is pinned by full commit
+# SHA: a tag can be moved to other code, a commit cannot.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        "*": hash-pin
+  # zizmor proposes `$/` for the repository's own actions and workflows; the pinned
+  # actionlint does not know that spelling, and `./` means the same.
+  self-repository:
+    disable: true

@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: 2026 SoundTap contributors
+
+name: Reproducible build
+
+# Two builds of the same commit, each from an empty output/os, with the same
+# SOURCE_DATE_EPOCH and SOUNDTAP_COMMIT, must give the same images (os/images SHA256SUMS)
+# and the same STU (ADR 0011). `make repro-check` builds twice and compares with
+# os/support/repro_compare.py, which names each image that differs and, for the
+# rootfs, the paths inside it. Two full builds take hours, so this runs weekly and by hand,
+# not on every merge.
+on:
+  schedule:
+    - cron: '17 2 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reproducible-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  repro:
+    name: build twice and compare
+    # GitHub-hosted, as build.yml (ADR 0011): an empty machine, so nothing but the caches
+    # below carries over into either build.
+    runs-on: ubuntu-24.04
+    # The hosted limit is 360: one build on the warm compiler cache, one without it.
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+          persist-credentials: false
+
+      # build.yml's caches, restored and never saved here: the downloads (checked against
+      # their hashes) and the toolchain are inputs, not what is under test. The first build
+      # uses the compiler cache as a release build does; the second starts without it
+      # (REPRO_FRESH_CCACHE), so every object of the second is compiled afresh.
+      - uses: ./.github/actions/buildroot-cache
+        with:
+          mode: restore
+
+      # Both builds get this commit and its date, set once here. The default shell runs
+      # with pipefail, so tee does not hide a failed build.
+      - name: Build twice and compare
+        id: repro
+        env:
+          REPRO_FRESH_CCACHE: '1'
+        run: |
+          mkdir -p output
+          make repro-check SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" SOUNDTAP_COMMIT="$GITHUB_SHA" \
+            2>&1 | tee output/repro.log
+
+      - name: Report
+        if: always()
+        run: |
+          {
+            echo '### Reproducible build'
+            echo '```'
+            python3 os/support/repro_compare.py compare output/repro/a output/repro/b || true
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY" 2>&1
+
+      # The two builds' images, to take apart with diffoscope; only when they differ.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure() && steps.repro.outcome == 'failure'
+        with:
+          name: repro-builds
+          retention-days: 7
+          path: |
+            output/repro/
+            output/repro.log

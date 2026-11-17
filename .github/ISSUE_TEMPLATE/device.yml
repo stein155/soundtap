@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: 2026 SoundTap contributors
+
+name: 🔬 Support for another model
+description: Help bring SoundTap to a SoundTouch we do not support yet (SoundTouch 30, 300, Portable, SA-5, …).
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Support for a new model starts with **read-only** evidence from a speaker that still runs Bose software.
+        Please do not flash anything for this: nothing you collect here needs a write.
+  - type: input
+    id: model
+    attributes:
+      label: Model and variant
+      description: The model, and the variant name if you know it (e.g. `ginger`, `taigan`).
+    validations:
+      required: true
+  - type: textarea
+    id: info
+    attributes:
+      label: Speaker info
+      description: "`curl http://<speaker>:8090/info` from the speaker on Bose software (remove the serial numbers if you prefer)."
+      render: xml
+  - type: textarea
+    id: hardware
+    attributes:
+      label: What you know about the hardware
+      description: Board photos, SoC, Wi-Fi chip, a serial console, a firmware version, whatever you have.
+  - type: dropdown
+    id: help
+    attributes:
+      label: Can you test on this model?
+      options:
+        - "Yes, and I accept the risk of a speaker that needs USB recovery"
+        - "Read-only only"
+        - "No"

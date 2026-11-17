@@ -1,0 +1,268 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: 2026 SoundTap contributors
+
+"""A fake speaker for the bench scripts in tools/hil/: the HTTP API they use, and a boot.
+
+    fake_speaker.py [--port 8080]      (then: tools/hil/install-candidate.sh 127.0.0.1:8080 ...)
+
+It answers what a production image answers to the scripts, and nothing else:
+
+- GET /api/health with the running boot (id, slot, confirmed, previous) and GET
+  /api/version with the running slot's build;
+- GET/POST /api/volume;
+- POST /api/firmware?install=1, /api/soundtapd and /api/reboot, which wait for a key held
+  on the speaker (press()) or carry the one-time token (token_file), as ADR 0055 says.
+
+The boot follows our U-Boot and soundtapd (ADR 0010): a reboot takes the speaker off the
+network for a moment and comes back with a new boot id. U-Boot adds one to its boot count
+at every boot and boots the other slot once the count passes bootlimit (4); soundtapd confirms
+a boot `confirm_after` seconds after it started, which resets the count and selects the slot
+it runs from. A reboot before the confirm is warm and keeps the count; after it, and at a
+power cut, the reset is cold and clears it, except for a slot an install selected and no
+boot has confirmed yet (upgrade_available): U-Boot keeps that count in the environment too.
+"""
+import argparse
+import json
+import threading
+import time
+import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlsplit, parse_qs
+
+BOOTLIMIT = 4
+
+
+def other(slot):
+    return "PONG" if slot == "PING" else "PING"
+
+
+class FakeSpeaker:
+    def __init__(self, slot="PING", build="0.1.0", confirm_after=1.0, down_for=0.2,
+                 reboot_delay=0.0, hold_window=5.0, token_file=None):
+        self.cond = threading.Condition()
+        self.confirm_after, self.down_for = confirm_after, down_for
+        self.reboot_delay, self.hold_window = reboot_delay, hold_window
+        # The NAND: what each slot holds, which one the environment selects.
+        self.builds = {"PING": build, "PONG": build}
+        self.selected = slot
+        self.count = 0
+        self.cold = True
+        # upgrade_available: the selection an install made, not confirmed yet.
+        self.unconfirmed = False
+        # The running boot: confirmed long ago.
+        self.running, self.boot_id = slot, str(uuid.uuid4())
+        self.booted_at = time.monotonic() - confirm_after
+        self.confirmed, self.previous = True, "reboot"
+        self.app = None
+        self.volume = 12
+        # A reset in progress: off the network from down_from to up_at, then booting.
+        self.down_from = self.up_at = None
+        self.pending = None
+        self.never_back = False
+        # The press: requests waiting for it, holds not yet taken.
+        self.waiting = self.holds = 0
+        self.token_file = token_file
+        self._new_token()
+        # What happened, for the tests: (method, path, how it was confirmed).
+        self.requests = []
+        self.boots = []
+
+    # --- the speaker's side -------------------------------------------------------------
+
+    def _new_token(self):
+        self.token = uuid.uuid4().hex
+        if self.token_file:
+            with open(self.token_file, "w") as f:
+                f.write(self.token + "\n")
+
+    def _tick(self):
+        """Moves time on: a reset that is due, a boot confirm that is due."""
+        now = time.monotonic()
+        if self.pending and not self.never_back and now >= self.up_at:
+            self._boot(self.pending)
+        if not self.confirmed and not self.down() and now - self.booted_at >= self.confirm_after:
+            # soundtapd: a count past bootlimit means U-Boot fell back, so select this slot.
+            if self.count > BOOTLIMIT:
+                self.selected = self.running
+            self.count, self.confirmed, self.cold = 0, True, True
+            self.unconfirmed = False
+
+    def down(self):
+        return self.pending is not None and time.monotonic() >= self.down_from
+
+    def _reset(self, how, delay=0.0):
+        now = time.monotonic()
+        self.pending = how
+        self.down_from = now + delay
+        self.up_at = now + delay + self.down_for
+
+    def _boot(self, how):
+        if (self.cold or how == "power loss") and not self.unconfirmed:
+            self.count = 0
+        self.count += 1
+        self.running = self.selected if self.count <= BOOTLIMIT else other(self.selected)
+        self.boot_id = str(uuid.uuid4())
+        self.booted_at = time.monotonic()
+        # Init keeps the reset warm while U-Boot counts (init.d/soundtap).
+        self.confirmed, self.cold, self.previous = False, False, how
+        self.pending = None
+        self.volume = 30  # a boot does not keep the bench's volume
+        self.boots.append(self.running)
+
+    def power_cut(self):
+        """The person at the speaker pulls the plug and puts it back."""
+        with self.cond:
+            self.cold = True
+            self._reset("power loss")
+
+    def press(self, timeout=10.0):
+        """Holds a key once a request waits for it, as a person reading the prompt does."""
+        deadline = time.monotonic() + timeout
+        with self.cond:
+            while self.waiting == 0:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    return False
+                self.cond.wait(left)
+            self.holds += 1
+            self.cond.notify_all()
+            return True
+
+    def gate(self, token):
+        """Whether a dangerous request may run: the token, or a hold in time."""
+        if token and token == self.token:
+            self._new_token()
+            return "token"
+        self.waiting += 1
+        self.cond.notify_all()
+        deadline = time.monotonic() + self.hold_window
+        try:
+            while self.holds == 0:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    return None
+                self.cond.wait(left)
+            self.holds -= 1
+            return "hold"
+        finally:
+            self.waiting -= 1
+
+    # --- the API ------------------------------------------------------------------------
+
+    def health(self):
+        return {"warnings": [], "firewall": "loaded",
+                "boot": {"id": self.boot_id, "slot": self.running,
+                         "confirmed": self.confirmed, "previous": self.previous}}
+
+    def version(self):
+        app = self.app or self.builds[self.running]
+        return {"version": "app-v" + app, "os": self.builds[self.running], "app": app,
+                "commit": "0123abcd", "updatable": True, "updateMode": "firmware", "api": 1}
+
+    def get(self, path):
+        """GET path: (status, JSON body)."""
+        self.requests.append(("GET", path, None))
+        answers = {"/api/health": self.health, "/api/version": self.version,
+                   "/api/volume": lambda: {"volume": self.volume}}
+        if path not in answers:
+            return 404, {"error": "not found"}
+        return 200, answers[path]()
+
+    def post(self, path, query, headers, body):
+        """POST path: (status, JSON body). A dangerous one waits for the hold first."""
+        gated = path in ("/api/reboot", "/api/soundtapd") or (
+            path == "/api/firmware" and parse_qs(query).get("install") == ["1"])
+        how = self.gate(headers.get("X-SoundTap-Device-Token")) if gated else "open"
+        self._tick()  # the boot went on while the request waited for the hold
+        self.requests.append(("POST", path, how))
+        if how is None:
+            return 403, {"error": "hold a button on the speaker to confirm", "code": "not_confirmed"}
+        signed = bool(headers.get("X-SoundTap-Signature"))
+        if path == "/api/volume":
+            self.volume = json.loads(body)["volume"]
+            return 200, {"volume": self.volume}
+        if path == "/api/reboot":
+            if json.loads(body or b"{}").get("confirm") is not True:
+                return 400, {"error": "confirm"}
+            self._reset("reboot", self.reboot_delay)
+            return 200, {"status": "rebooting"}
+        if path == "/api/firmware":
+            if headers.get("X-SoundTap-Confirm") != "install" or not signed:
+                return 400, {"error": "unsigned or unconfirmed"}
+            target = other(self.running)
+            self.builds[target] = body.decode().strip()
+            self.selected = target
+            # The selection's write: upgrade_available, and the count starts over.
+            self.unconfirmed, self.count = True, 0
+            return 200, {"slot": target, "runningSlot": self.running}
+        if path == "/api/soundtapd":
+            if not signed:
+                return 400, {"error": "unsigned"}
+            self.app = body.decode().strip()
+            return 200, {"status": "restarting"}
+        return 404, {"error": "not found"}
+
+
+def make_handler(sp):
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def reply(self, code, body):
+            data = json.dumps(body).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def off_network(self):
+            """A speaker that is resetting does not answer: the connection just closes."""
+            sp._tick()
+            if sp.down():
+                self.close_connection = True
+                return True
+            return False
+
+        def do_GET(self):
+            with sp.cond:
+                if not self.off_network():
+                    self.reply(*sp.get(urlsplit(self.path).path))
+
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            url = urlsplit(self.path)
+            with sp.cond:
+                if not self.off_network():
+                    self.reply(*sp.post(url.path, url.query, self.headers, body))
+
+    return Handler
+
+
+def serve(sp, port=0):
+    """Starts the fake on 127.0.0.1 in a thread; returns the server (server_address[1])."""
+    httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(sp))
+    httpd.daemon_threads = True
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    return httpd
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--port", type=int, default=8080)
+    ap.add_argument("--confirm-after", type=float, default=60.0)
+    opts = ap.parse_args()
+    sp = FakeSpeaker(confirm_after=opts.confirm_after, down_for=5.0, hold_window=60.0)
+    httpd = serve(sp, opts.port)
+    print(f"fake speaker on 127.0.0.1:{httpd.server_address[1]}; Enter holds a key, Ctrl-C ends")
+    try:
+        while True:
+            input()
+            print("held" if sp.press(timeout=0.1) else "nothing waits for a hold")
+    except (KeyboardInterrupt, EOFError):
+        httpd.shutdown()
+
+
+if __name__ == "__main__":
+    main()

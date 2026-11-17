@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: 2026 SoundTap contributors
+
+name: ✨ Feature idea
+description: Something SoundTap should do that it does not do yet.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the [FAQ](https://github.com/stein155/soundtap/blob/main/docs/owners/faq.md) and the
+        [decision records](https://github.com/stein155/soundtap/blob/main/docs/decisions/README.md) first:
+        some things (Google Cast, a fake HomeKit speaker) are deliberately out of scope, with the reasons written down.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What do you want to do?
+      description: Describe the situation, not the solution. "I want my kitchen speaker to wake me with the radio" beats "add alarms".
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How could SoundTap do it?
+  - type: dropdown
+    id: models
+    attributes:
+      label: Which models?
+      multiple: true
+      options: [SoundTouch 10, SoundTouch 20, SoundTouch 300, SoundTouch Wireless Link adapter]

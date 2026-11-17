@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: 2026 SoundTap contributors
+
+name: Version watch
+
+# Dependabot covers actions, Go modules and npm, not the versions Buildroot builds. This
+# compares the GitHub-hosted packages in os/package/*/*.mk with their latest release, and
+# the kernel with the newest release of its longterm series, and warns on each one behind.
+# It changes nothing.
+on:
+  schedule:
+    - cron: '41 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  watch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Compare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          for mk in os/package/*/*.mk; do
+            # FOO_SITE = $(call github,owner,repo,<prefix>$(FOO_VERSION))
+            sed -n 's/^\([A-Z0-9_]*\)_SITE = $(call github,\([^,]*\),\([^,]*\),\([^$]*\)\$(.*/\1 \2 \3 \4/p' "$mk" |
+            while read -r var owner repo prefix; do
+              have=$(sed -n "s/^${var}_VERSION = //p" "$mk")
+              latest=$(gh api "repos/$owner/$repo/releases/latest" -q .tag_name || echo "no release")
+              if [ "$prefix$have" != "$latest" ]; then
+                echo "::warning file=$mk::$owner/$repo is at $prefix$have, latest release $latest"
+                echo "- $owner/$repo: $prefix$have -> $latest" >>"$GITHUB_STEP_SUMMARY"
+              fi
+            done
+          done
+          have=$(sed -n 's/^BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="\(.*\)"$/\1/p' os/configs/soundtap_defconfig)
+          series=$(echo "$have" | cut -d. -f1,2)
+          latest=$(curl -fsS https://www.kernel.org/releases.json |
+            grep -Eo "\"version\": *\"$series(\\.[0-9]+)?\"" | head -n1 | grep -Eo '[0-9.]+' || true)
+          if [ -n "$latest" ] && [ "$have" != "$latest" ]; then
+            echo "::warning file=os/configs/soundtap_defconfig::Linux $have, latest $series is $latest"
+            echo "- Linux: $have -> $latest" >>"$GITHUB_STEP_SUMMARY"
+          fi

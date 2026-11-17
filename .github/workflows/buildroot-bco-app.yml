@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: 2026 SoundTap contributors
+
+name: Buildroot BCO app
+
+# bco/app through the Buildroot package host-soundtap-bco-app (pinned arm-none-eabi
+# toolchain). Builds every variant (hello, usb, usb-connect, mon, link); no Bose bytes, no stock
+# container, no hardware. The images come out as an artifact.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/buildroot-bco-app.yml
+      - os/package/soundtap-bco-app/**
+      - bco/app/**
+      - bco/tools/bco-pack
+      - bco/tools/copy-records.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: buildroot-bco-app-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: true
+
+      - run: make builder
+
+      - name: Build host-soundtap-bco-app
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" --env HOME=/tmp --env FORCE_UNSAFE_CONFIGURE=1 \
+            --volume "$PWD:/work" --workdir /work soundtap-builder:2026.05.1 sh -euc '
+            o=/work/output/bco-app-ci
+            m="make -C buildroot O=$o BR2_EXTERNAL=/work/os BR2_DL_DIR=/work/dl"
+            $m soundtap_defconfig
+            sed -i -e "s/^BR2_CCACHE=y/# BR2_CCACHE is not set/" \
+              -e "\$a BR2_PACKAGE_HOST_SOUNDTAP_BCO_APP=y" $o/.config
+            $m olddefconfig
+            $m host-soundtap-bco-app-dirclean host-soundtap-bco-app'
+          cd output/bco-app-ci/images/bco-app
+          sha256sum -- */app.bin */app.bcd | tee SHA256SUMS
+          # the monitor must still start with the entry the loader expects (blob at 0x60008000)
+          test -s mon/app.bin
+          test -s link-own/app.bcd
+
+      # The images, built and checked above, for a bench test of the BCO app.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bco-app
+          path: output/bco-app-ci/images/bco-app
+          retention-days: 7

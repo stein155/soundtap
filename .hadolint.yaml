@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: 2026 SoundTap contributors
+
+# Build images only: reproducibility comes from the pinned base digests, and layer size
+# does not matter here.
+ignored: [DL3008, DL3009, DL3015, DL3042]

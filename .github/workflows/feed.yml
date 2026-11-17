@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: 2026 SoundTap contributors
+
+name: Update feed
+
+# A speaker still on Bose's software installs whatever updates/soundtouch on main names, and
+# checks only the length and CRC the index states. This holds the index to a published,
+# not withdrawn SoundTap Core release whose .sig verifies with the keys compiled into
+# soundtapd (tools/release/feed_check.py; RELEASING.md, "The first-install feed").
+# Every pull request, without a paths filter: branch protection requires this check, and a
+# required check that never starts blocks the merge. Without updates/soundtouch it takes seconds.
+on:
+  push:
+    branches: [main]
+    paths: [updates/**, app/internal/release/release.go, app/internal/update/update.go, tools/release/feed_check.py, .github/workflows/feed.yml]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    # Release assets download anonymously only from the public repository.
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The feed names a published release signed with a compiled key
+        run: |
+          if [ -e updates/soundtouch ]; then
+            python3 tools/release/feed_check.py updates/soundtouch
+          else
+            echo "no updates/soundtouch on this commit: nothing to check"
+          fi

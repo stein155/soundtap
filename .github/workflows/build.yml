@@ -1,0 +1,187 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: 2026 SoundTap contributors
+
+name: Build
+
+# Builds the one product: the universal STU that installs on the ST10, the Wireless Link,
+# the ST20 and the ST300, from the one Buildroot profile, os/configs/soundtap_defconfig (ADR
+# 0011), and puts it through the install gate on every model. tools/ci/run-build.sh does the
+# work, as it does on a build host. The finished package is the candidate that release.yml
+# publishes as a version.
+on:
+  # Every merge to main builds the image, so a broken build shows up on the PR that broke
+  # it rather than at release time. Docs-only merges skip it.
+  push:
+    branches: [main]
+    paths-ignore: ['docs/**', '**/*.md']
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "Buildroot profile (ADR 0011); release.yml publishes only production"
+        type: choice
+        default: alpha
+        options: [alpha, production]
+
+permissions:
+  contents: read
+
+# One build per ref at a time: a build costs hours of runner time, and a second one on the
+# same ref would compile the same thing next to it. Queue, do not cancel.
+concurrency:
+  group: buildroot-nand-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    # A GitHub-hosted x64 runner (ADR 0011): an empty machine every run, so every build
+    # starts from no Buildroot tree.
+    runs-on: ubuntu-24.04
+    # The hosted limit is 360.
+    timeout-minutes: 350
+    # actions write to delete superseded caches; id-token and attestations for the build
+    # provenance. The run publishes nothing: the candidate is an artifact of the run.
+    permissions:
+      actions: write
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      # Pushes to main build alpha, the bring-up image our own speakers run.
+      SOUNDTAP_PROFILE: ${{ inputs.profile || 'alpha' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+          persist-credentials: false
+
+      - uses: ./.github/actions/buildroot-cache
+        with:
+          mode: restore
+
+      - name: Build
+        id: build
+        run: tools/ci/run-build.sh os
+
+      # Where the time and the disk went, in the run's summary: minutes per package from
+      # Buildroot's own log, the compiler cache's hit rate and the size of the tree.
+      - name: Report build time, cache hits and disk use
+        if: always()
+        run: |
+          {
+            echo '### Minutes per package (top 25)'
+            echo '```'
+            awk -F: '{ gsub(/ /, "", $2); gsub(/ /, "", $3); gsub(/ /, "", $4); k = $4 SUBSEP $3
+                if ($2 == "start") s[k] = $1; else if (k in s) d[$4] += $1 - s[k] }
+              END { for (p in d) printf "%6.1f  %s\n", d[p] / 60, p }' output/os/build/build-time.log |
+              sort -rn | head -25
+            echo '```'
+            echo '### Compiler cache'
+            echo '```'
+            docker run --rm --user "$(id -u):$(id -g)" --volume "$PWD:/work" \
+              "$(sed -n 's/^BUILDER_IMAGE := //p' Makefile)" /work/output/os/host/bin/ccache -s
+            echo '```'
+            echo '### Disk'
+            echo '```'
+            du -sh output/os dl .cache/buildroot-ccache
+            df -h /
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY" || true
+
+      # Saved right after the build, also when it failed: a build that compiled for hours
+      # and then failed must not cost the next run those hours again.
+      - uses: ./.github/actions/buildroot-cache
+        if: always()
+        with:
+          mode: save
+          build-ok: ${{ steps.build.outcome == 'success' }}
+
+      # make stu, the candidate in dist/, and install-gate layer 2: the armv7 soundtapd that
+      # ships, run from the package's own rootfs under qemu-user, must answer /api/version
+      # and serve the web UI (docs/contributors/testing/install-gate.md).
+      - name: Package the universal STU and run its soundtapd
+        run: tools/ci/run-build.sh stu run
+
+      # The GPL asks for the exact sources of what we ship; users and auditors want the
+      # package list. Both come from Buildroot (legal-info, show-info -> CycloneDX).
+      # Production only: that is what release.yml publishes, and the sources are large.
+      - name: License texts, sources and SBOM
+        if: env.SOUNDTAP_PROFILE == 'production'
+        run: |
+          make legal-info
+          v=$(tr -d ' \n' < os/VERSION)
+          tar -C output/os -cf "dist/SoundTap-Core-$v-sources.tar" legal-info
+          cp output/os/sbom.cdx.json "dist/SoundTap-Core-$v.cdx.json"
+
+      # Signed statement of which workflow run built the package from which commit
+      # (https://slsa.dev). GitHub offers it to public repositories on every plan.
+      - name: Build provenance
+        if: ${{ !github.event.repository.private }}
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/SoundTap-Core-*.stu
+
+      # An artifact of this run (ADR 0011): the install gate below, release.yml and the
+      # hardware test fetch it with `gh run download <run> -n candidate`. A failed upload
+      # fails the run: Release can use no build without it.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: candidate
+          retention-days: 30
+          if-no-files-found: error
+          path: |
+            dist/SoundTap-Core-*.stu
+            dist/SoundTap-Core-*.stu.sha256
+            dist/commit
+            dist/profile
+            dist/SHA256SUMS
+            dist/kernel.config
+            dist/SoundTap-Core-*-sources.tar
+            dist/SoundTap-Core-*.cdx.json
+
+      # The production package set's legal-info on every other Build too, so a package
+      # missing from NOTICE.md (production adds nftables, libmnl and libnftnl), a licence
+      # file whose hash moved or a source that cannot be archived fails on the merge that
+      # caused it, not at release. After the upload: the alpha candidate is still there to
+      # install. Production builds ran it above; here nothing is kept or uploaded.
+      - name: License texts and sources of the production profile (checked, not kept)
+        if: env.SOUNDTAP_PROFILE != 'production'
+        run: |
+          make legal-info SOUNDTAP_PROFILE=production
+          rm -rf output/os/legal-info
+
+      # Known CVEs of the shipped OS packages, against NVD today: an open CVE scoring 7.0
+      # or more fails the run (RELEASING.md). After the upload, so a red CVE check still
+      # leaves the candidate to install and fix; Release takes only a green run. The SBOM is
+      # the one legal-info writes, without its sources. The NVD_API_KEY secret is optional:
+      # without it os_cves.py keeps to NVD's keyless rate limit, which takes minutes longer.
+      - name: Known CVEs of the OS packages
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: make sbom os-cves
+
+  # Install-gate layer 1 (docs/contributors/testing/install-gate.md) on every Build, one job per model:
+  # the candidate streams over the real HTTP path into a simulated NAND (nandsim in a QEMU
+  # guest) with the model's geometry, in both slots, on a clean and a worn chip, with a
+  # power cut on the ST10 and ST20. A truncated copy is refused, the U-Boot environment
+  # selects the installed slot, the kernel and UBI volume equal the image's, nothing else
+  # moved. The hosted x64 runner has /dev/kvm, so a cell takes seconds.
+  install-gate:
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        model: [st10, st20, wla, st300]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: candidate
+          path: dist
+      - name: Install the STU into simulated NAND (${{ matrix.model }})
+        env:
+          MODELS: ${{ matrix.model }}
+        run: tools/ci/run-build.sh gate

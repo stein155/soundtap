@@ -1,0 +1,36 @@
+# make lint-python. Style choices this repository makes on purpose in byte-twiddling tools
+# and tests are ignored below; everything else in the selected rule sets must pass.
+line-length = 200
+# Upstream Buildroot (a submodule) is not ours to lint.
+extend-exclude = ["buildroot"]
+
+[lint]
+select = [
+    "E", "F", # pycodestyle errors, pyflakes
+    "B",      # likely bugs
+    "C4",     # comprehensions
+    "C90",    # complexity
+    "PIE",    # needless constructs
+    "RET",    # return flow
+    "RUF",    # ruff's own checks
+    "SIM",    # simpler forms
+    "UP",     # current Python syntax
+]
+ignore = [
+    "E702", # a; b on one line keeps byte-mutation tables readable
+    "E741", # `l` for a line in generator expressions
+    "UP031", # %-formatting keeps the hex dumps and register traces short
+]
+
+# Only ever shrinks: these wait for their refactor.
+[lint.per-file-ignores]
+"os/installer/build-stu.py" = ["C901"]
+"os/support/buildroot_wla_nand_check.py" = ["C901"]
+"os/support/check_wla_product_spl.py" = ["C901"]
+"os/support/check_wla_uboot_ram.py" = ["C901", "E501"] # E501: expected-bytes tables
+"os/support/rootfs_check.py" = ["C901"]
+"os/support/stu_check.py" = ["C901"]
+"os/support/wla_stock_route_dryrun.py" = ["C901"]
+
+[lint.mccabe]
+max-complexity = 15

@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: 2026 SoundTap contributors
+
+# Version watch. Buildroot packages pin their versions in os/package/*/*.mk, which
+# Dependabot cannot read; those are watched by hand.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # A release is a week old before it is proposed: time for a bad one to be withdrawn.
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: gomod
+    directory: /app
+    schedule:
+      interval: weekly
+    # A release is a week old before it is proposed: time for a bad one to be withdrawn.
+    cooldown:
+      default-days: 7
+    groups:
+      gomod:
+        patterns: ["*"]
+  - package-ecosystem: npm
+    directory: /app/frontend
+    schedule:
+      interval: weekly
+    # A release is a week old before it is proposed: time for a bad one to be withdrawn.
+    cooldown:
+      default-days: 7
+    # typescript-eslint 8 peers on typescript <7; lift this when it accepts 7.
+    ignore:
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
+    groups:
+      npm:
+        patterns: ["*"]

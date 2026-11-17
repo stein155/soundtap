@@ -1,0 +1,159 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: 2026 SoundTap contributors
+
+name: Buildroot caches
+description: >-
+  The setup every Buildroot job shares (ADR 0011). mode restore frees the runner's disk and
+  restores what a build carries over between runs: the downloads, the cross toolchain and
+  the compiler cache. mode save stores them again, on main only, and deletes the entries they
+  replace, so the three stay inside the repository's 10 GB cache budget.
+inputs:
+  mode:
+    description: >-
+      restore (before the build) or save (after it, with if always(); the save steps run
+      after a failed build too, since what did compile is still valid)
+    required: true
+  build-ok:
+    description: With mode save, whether the build succeeded; only then is the download directory complete.
+    default: "false"
+runs:
+  using: composite
+  steps:
+    # A Buildroot tree with per-package directories needs about 20 GB and the runner promises
+    # 14. The image carries tool sets no build here uses; removing them frees about 25 GB. It
+    # takes a minute and a half, so it runs behind the build's first steps: the tree needs the
+    # room only after the downloads and the toolchain.
+    - name: Free disk space
+      if: inputs.mode == 'restore'
+      shell: bash
+      run: |
+        nproc; free -g; df -h /
+        sudo sh -c 'nohup rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+          /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/share/swift \
+          /usr/local/share/boost >/dev/null 2>&1 &'
+
+    # The cross toolchain is built once per key (Makefile: toolchain-build) and lives in
+    # .cache/toolchain/<key>; the same inputs name it here. The compiler cache is keyed per
+    # run with a prefix restore, because it grows and the newest one is best; the builder
+    # container always builds in /work, so the paths in ccache's keys match between runs.
+    - name: Name the caches
+      if: inputs.mode == 'restore'
+      shell: bash
+      env:
+        DL: ${{ hashFiles('os/configs/soundtap_defconfig', 'os/package/**/*.hash') }}
+        TOOLCHAIN: ${{ hashFiles('os/configs/soundtap_toolchain_defconfig', 'os/container/Dockerfile.builder') }}
+        BUILDER: ${{ hashFiles('os/container/Dockerfile.builder') }}
+      run: |
+        br=$(git rev-parse HEAD:buildroot)
+        {
+          echo "BR_CACHE_DL=buildroot-dl-$DL"
+          echo "BR_CACHE_TOOLCHAIN=buildroot-toolchain-$br-$TOOLCHAIN"
+          echo "BR_CACHE_CCACHE=buildroot-ccache-$br-$BUILDER"
+        } >>"$GITHUB_ENV"
+
+    - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      if: inputs.mode == 'restore'
+      with:
+        path: dl
+        key: ${{ env.BR_CACHE_DL }}
+        restore-keys: buildroot-dl-
+
+    - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      if: inputs.mode == 'restore'
+      with:
+        path: .cache/toolchain
+        key: ${{ env.BR_CACHE_TOOLCHAIN }}
+
+    - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      if: inputs.mode == 'restore'
+      with:
+        path: .cache/buildroot-ccache
+        key: ${{ env.BR_CACHE_CCACHE }}-${{ github.run_id }}
+        restore-keys: ${{ env.BR_CACHE_CCACHE }}-
+
+    # ccache reads its limit from the cache directory: 3 GB keeps the compiler cache, the
+    # downloads (about 2 GB) and the toolchain (under 1 GB) well inside the 10 GB budget.
+    - name: Cap the compiler cache
+      if: inputs.mode == 'restore'
+      shell: bash
+      run: |
+        mkdir -p .cache/buildroot-ccache
+        echo 'max_size = 3G' >.cache/buildroot-ccache/ccache.conf
+
+    # Objects no build of the last week used are dropped before saving, so what is saved is
+    # what the next build will hit. The host ccache is Buildroot's own, run in the builder.
+    - name: Trim the compiler cache
+      if: always() && inputs.mode == 'save' && github.ref == 'refs/heads/main' && hashFiles('output/os/host/bin/ccache') != ''
+      shell: bash
+      run: |
+        docker run --rm --user "$(id -u):$(id -g)" --env BR_CACHE_DIR=/work/.cache/buildroot-ccache \
+          --volume "$PWD:/work" "$(sed -n 's/^BUILDER_IMAGE := //p' Makefile)" \
+          sh -c '/work/output/os/host/bin/ccache --evict-older-than 7d && /work/output/os/host/bin/ccache --cleanup' || true
+
+    # Saved on main only: a pull request reads main's caches and adds none of its own. A key
+    # is saved once, so only a key not there yet is worth the upload.
+    - name: Which of this run's keys are saved already
+      id: saved
+      if: always() && inputs.mode == 'save' && github.ref == 'refs/heads/main'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        for kind in dl toolchain; do
+          if [ $kind = dl ]; then key=$BR_CACHE_DL; else key=$BR_CACHE_TOOLCHAIN; fi
+          found=$(gh cache list -R "$GITHUB_REPOSITORY" --ref refs/heads/main --key "$key" \
+            --json key -q "[.[] | select(.key == \"$key\")] | length")
+          echo "$kind=$([ "$found" -gt 0 ] && echo true || echo false)" >>"$GITHUB_OUTPUT"
+        done
+
+    # Only a finished build has every download; a partial directory saved under the key
+    # would stay partial.
+    - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      if: always() && inputs.mode == 'save' && github.ref == 'refs/heads/main' && inputs.build-ok == 'true' && steps.saved.outputs.dl == 'false'
+      with:
+        path: dl
+        key: ${{ env.BR_CACHE_DL }}
+
+    - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      if: always() && inputs.mode == 'save' && github.ref == 'refs/heads/main' && steps.saved.outputs.toolchain == 'false' && hashFiles('.cache/toolchain/*/sdk/bin/arm-buildroot-linux-musleabihf-gcc') != ''
+      with:
+        path: .cache/toolchain
+        key: ${{ env.BR_CACHE_TOOLCHAIN }}
+
+    # Also after a failed build: what did compile is still valid.
+    - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      if: always() && inputs.mode == 'save' && github.ref == 'refs/heads/main'
+      with:
+        path: .cache/buildroot-ccache
+        key: ${{ env.BR_CACHE_CCACHE }}-${{ github.run_id }}
+
+    # Each kind keeps one entry on main: the one this run used or saved, else its newest. A
+    # new compiler cache every run, a new download set per hash change and a new toolchain per
+    # key would otherwise pile up until GitHub evicts by age, which can be what a build needs.
+    - name: Delete superseded cache entries
+      if: always() && inputs.mode == 'save' && github.ref == 'refs/heads/main'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        prune() {
+          entries=$(gh cache list -R "$GITHUB_REPOSITORY" --ref refs/heads/main --key "$1" \
+            --sort created_at --order desc --limit 100 --json id,key -q '.[] | "\(.id) \(.key)"')
+          keep=$2
+          printf '%s\n' "$entries" | grep -q " $keep\$" || keep=$(printf '%s\n' "$entries" | head -n 1 | cut -d ' ' -f 2)
+          printf '%s\n' "$entries" | while read -r id key; do
+            if [ -n "$id" ] && [ "$key" != "$keep" ]; then
+              echo "delete $key"
+              gh cache delete -R "$GITHUB_REPOSITORY" "$id" || true
+            fi
+          done
+        }
+        prune buildroot-dl- "$BR_CACHE_DL"
+        prune buildroot-toolchain- "$BR_CACHE_TOOLCHAIN"
+        prune buildroot-ccache- "$BR_CACHE_CCACHE-$GITHUB_RUN_ID"
+        {
+          echo '### Caches'
+          echo '```'
+          gh cache list -R "$GITHUB_REPOSITORY" --limit 100
+          echo '```'
+        } >>"$GITHUB_STEP_SUMMARY" || true

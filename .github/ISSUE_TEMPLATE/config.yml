@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: 2026 SoundTap contributors
+
+blank_issues_enabled: true
+contact_links:
+  - name: Questions and ideas
+    url: https://github.com/stein155/soundtap/discussions
+    about: How do I…? Will SoundTap ever…? Ask in Discussions so the answer helps the next person too.
+  - name: FAQ
+    url: https://github.com/stein155/soundtap/blob/main/docs/owners/faq.md
+    about: Most questions about models, Spotify, AirPlay, MQTT and going back to Bose are answered here.
+  - name: Security problem
+    url: https://github.com/stein155/soundtap/blob/main/SECURITY.md
+    about: Please report vulnerabilities privately, never in a public issue.

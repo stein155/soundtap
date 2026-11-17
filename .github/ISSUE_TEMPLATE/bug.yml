@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: 2026 SoundTap contributors
+
+name: 🐞 Bug on a speaker running SoundTap
+description: Something does not work the way it should on a speaker that already runs SoundTap.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. **Quickest route:** on the speaker's page open
+        *Settings → Debug mode → Report a bug*. It opens a pre-filled issue with the diagnostics.
+
+        Installing, a speaker that does not boot, or going back to Bose? Use the
+        **Install or recovery** form instead.
+  - type: dropdown
+    id: model
+    attributes:
+      label: Model
+      options: [SoundTouch 10, SoundTouch 20, SoundTouch 300, SoundTouch Wireless Link adapter, Other]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: SoundTap version
+      description: Settings → Updates shows both, e.g. "SoundTap Core 0.1.0 · app 0.1.0". Or `curl http://<speaker>/api/version`.
+      placeholder: SoundTap Core 0.1.0 · app 0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [Internet radio (TuneIn), Spotify, AirPlay, Multiroom, Bluetooth, AUX, UPnP / DLNA, MQTT, Buttons / remote / LEDs, Display (ST20), Wi-Fi / network, Updates, Web page, Other]
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      placeholder: I pressed preset 3 on the speaker; the light came on but nothing played. I expected the station to start.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. …
+        2. …
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Output of `curl http://<speaker>/api/debug`, or the block *Report a bug* adds. Check it for anything you would rather not share first.
+      render: text

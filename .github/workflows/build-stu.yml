@@ -1,0 +1,109 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: 2026 SoundTap contributors
+
+name: CI
+
+# The checks for pull requests and main, one job per suite so they run side by side. Each
+# job runs one step of tools/ci/run-ci.sh, which a laptop or build host runs without
+# arguments for all of them (docs/contributors/testing/README.md). `make lint` runs on main too: work has
+# landed there by direct push, and a PR-only lint once missed `make lint` failing on main.
+# No paths filter on the workflow: a required check that never starts blocks a merge. The
+# OS build decides in the job whether a pull request needs it.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      # lint-go judges what changed against the base: on a pull request the merge commit's
+      # first parent, on main nothing new. Two commits of history are all that takes.
+      GO_LINT_BASE: ${{ github.event_name == 'pull_request' && 'HEAD^1' || 'HEAD' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      # external-tree-check wants the Buildroot submodule at its pin: one commit, not its history.
+      - run: git submodule update --init --depth 1 buildroot
+      - run: tools/ci/run-ci.sh lint
+
+  # Forks run with read-only permissions on isolated hosted runners.
+  test:
+    name: ${{ matrix.step }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        step: [web, go, go-race, python, firewall, bco, vuln]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: tools/ci/run-ci.sh "$STEP"
+        env:
+          STEP: ${{ matrix.step }}
+      # The web job also runs the UI end to end: Playwright against the demo speaker.
+      - if: matrix.step == 'web'
+        run: tools/ci/run-ci.sh e2e
+
+  # Whether a pull request touches what goes into the image or the package: os/, bco/, the
+  # Buildroot pin, the build and its scripts, and the installer.
+  changes:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      os: ${{ steps.paths.outputs.os }}
+    steps:
+      - id: paths
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" \
+            -q '.[] | .filename, (.previous_filename // empty)' >"$RUNNER_TEMP/files"
+          os=false
+          while read -r f; do
+            case $f in
+            os/* | bco/* | buildroot | .gitmodules | Makefile | tools/ci/run-build.sh | \
+              tools/ci/buildroot-reuse.sh | app/internal/stu/* | app/internal/flash/* | \
+              app/internal/install/* | app/internal/ubootenv/* | .github/actions/buildroot-cache/* | \
+              .github/workflows/build-stu.yml)
+              echo "$f"; os=true ;;
+            esac
+          done <"$RUNNER_TEMP/files"
+          echo "os=$os" >>"$GITHUB_OUTPUT"
+
+  # The image and the universal STU, as Build makes them, so a broken OS build is red
+  # before the merge. Main's caches are restored and none are saved. The install gate
+  # runs on main, in every Build (build.yml).
+  os:
+    needs: changes
+    if: needs.changes.outputs.os == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+          persist-credentials: false
+      - uses: ./.github/actions/buildroot-cache
+        with:
+          mode: restore
+      - run: tools/ci/run-build.sh os stu run
