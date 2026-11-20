@@ -1,0 +1,12 @@
+{
+  "targetSlot": "PONG",
+  "package": {
+    "size": 41943040,
+    "kernel": "0123456789abcdef",
+    "models": [
+      "st10",
+      "st20",
+      "wla"
+    ]
+  }
+}

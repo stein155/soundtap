@@ -1,0 +1,31 @@
+# Sanitized wire facts from the 2026-09-13 WLA capture, reproduced twice on the board.
+# Only structure is recorded here: no stock binary bytes, no credentials, no account identifiers.
+
+installer_path=/mnt/update/SoftwareUpdateInstaller
+installer_mode=700
+installer_argc=0
+installer_uid=0
+installer_listen=0.0.0.0:40015
+stock_connects_from=127.0.0.1
+installer_speaks_first=SoftwareUpdateStatus
+stock_first_reply=SoftwareUpdateStart
+start_sequence=1
+start_url=bonjour//
+start_update_crc=0
+start_size_excludes_installer_module=true
+data_request_first_sequence=2
+data_request_bytes=16384
+data_response_sequence_mirrors_request=true
+end_of_stream_field=3
+upload_http_status_on_complete_stream=200
+silent_installer_http_status=500
+silent_installer_failure_code=bad_url
+silent_installer_kill_seconds=10
+abort_after_end_of_stream_seconds=116
+link_close_after_abort_seconds=120
+stock_prestages_only=SoftwareUpdateInstaller,scm_swup_data
+status_state_installing_reported_as=INSTALLING
+status_state_completed_moves_stock=false
+stock_kernel=Linux version 3.14.43+ #137
+go_static_arm_module_runs_under_stock_kernel=false
+c_static_arm_module_runs_under_stock_kernel=true

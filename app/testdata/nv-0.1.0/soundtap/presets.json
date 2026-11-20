@@ -1,0 +1,17 @@
+[
+  {
+    "slot": 1,
+    "stationId": "s24896",
+    "name": "Radio 1",
+    "logo": "https://example.com/radio1.png"
+  },
+  {
+    "slot": 6,
+    "stationId": "",
+    "source": "SPOTIFY",
+    "type": "tracklisturl",
+    "location": "spotify:playlist:0000000000000000000000",
+    "name": "Sunday",
+    "logo": "https://example.com/sunday.jpg"
+  }
+]

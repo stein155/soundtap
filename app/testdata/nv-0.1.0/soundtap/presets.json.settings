@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "name": "Kitchen",
+  "sourceNames": [
+    {
+      "source": "SPOTIFY",
+      "account": "anna",
+      "name": "Anna's Spotify"
+    }
+  ],
+  "language": "nl",
+  "mqtt": {
+    "enabled": true,
+    "host": "broker.lan",
+    "port": 8883,
+    "username": "speaker",
+    "password": "secret",
+    "baseTopic": "soundtap/kitchen",
+    "discoveryPrefix": "ha",
+    "tls": true
+  },
+  "audio": {
+    "volume": 23,
+    "bass": -3,
+    "hasVolume": true,
+    "autoOff": -1
+  },
+  "display": {
+    "clockOff": true,
+    "hour12": true,
+    "city": "Utrecht",
+    "lat": 52.09,
+    "lon": 5.12,
+    "timezone": "Europe/Amsterdam",
+    "weatherOn": true,
+    "brightness": 50
+  },
+  "alarm": {
+    "enabled": true,
+    "time": "06:45",
+    "slot": 3,
+    "timezone": "Europe/Amsterdam"
+  },
+  "multiroom": {
+    "dissolveGroups": true,
+    "syncVolume": true
+  },
+  "integrations": {
+    "spotifyOff": true,
+    "airplayOff": true
+  },
+  "channel": "left",
+  "auxName": "Turntable",
+  "crashReports": {
+    "enabled": true,
+    "handled": [
+      "panic-0123456789ab"
+    ]
+  }
+}

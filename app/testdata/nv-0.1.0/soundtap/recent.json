@@ -1,0 +1,16 @@
+[
+  {
+    "source": "SPOTIFY",
+    "name": "Sunday",
+    "location": "spotify:playlist:0000000000000000000000",
+    "art": "https://example.com/sunday.jpg",
+    "stoppedAt": "2026-11-12T08:30:00Z"
+  },
+  {
+    "source": "TUNEIN",
+    "name": "Jazz",
+    "location": "s12345",
+    "art": "",
+    "stoppedAt": "2026-11-12T07:00:00Z"
+  }
+]

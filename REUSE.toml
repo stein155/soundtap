@@ -1,0 +1,203 @@
+# Licensing of the files that carry no SPDX header (REUSE specification 3.3; `make lint-reuse`
+# checks every tracked file). Source files carry their own header instead (CONTRIBUTING.md):
+# a new .go, .ts, .py, .sh, .c ... without one fails the lint, because nothing below matches it.
+# When several annotations match a file, the last one wins.
+version = 1
+
+# This project's own files that take no comment, or that are generated, data or images. GPL-3.0-only
+# like the rest of the project (LICENSE, app/LICENSE). "closest": a header in the file wins.
+[[annotations]]
+path = [
+  "**.md",
+  "**.gitignore",
+  "**.dockerignore",
+  ".gitattributes",
+  ".gitmodules",
+  ".github/CODEOWNERS",
+  "ruff.toml",
+  "app/VERSION",
+  "os/VERSION",
+  "app/go.mod",
+  "app/go.sum",
+  "app/vendor/modules.txt",
+  "**.json",
+  "**.webmanifest",
+  "**.html",
+  "**.ps1",
+  "**.png",
+  "**.svg",
+  "**.xml",
+  "**.txt",
+  "**.ld",
+  "**.in",
+  "**.hash",
+  "**.sha256",
+  "**.fragment",
+  "**.config",
+  "**.conf",
+  "**.cfg",
+  "**.nft",
+  "**.map",
+  "**.rules",
+  "**.sample",
+  "**.source",
+  "app/frontend/.prettierignore",
+  "app/frontend/.prettierrc.json",
+  # Generated: openapi-typescript writes it from app/internal/web/openapi.json and
+  # `npm run typecheck` holds it to that, so a header would be overwritten.
+  "app/frontend/src/lib/api/schema.d.ts",
+  # Generated from a read-only capture of the BCO's own TX ring (ADR 0031).
+  "bco/app/src/wild_assoc_config.h",
+  "app/internal/osapi/level",
+  "app/testdata/**",
+  "app/internal/web/testdata/**",
+  # Inputs a Go fuzzer found, kept as regression seeds (go test runs them).
+  "app/**/testdata/fuzz/**",
+  "app/oled/screen/testdata/**",
+  "os/configs/*defconfig",
+  "os/external.desc",
+  "os/overlay/etc/asound.conf.*",
+  "os/board/rootfs/rootfs-overlay/etc/default/dropbear",
+  "os/board/rootfs/rootfs-overlay/etc/inittab",
+  "os/bootloader/source-date-epoch",
+  # The builder image's Dockerfile is part of the toolchain cache key (Makefile); a header
+  # would rebuild the toolchain for a comment.
+  "os/container/Dockerfile.builder",
+  # Hardware evidence, kept as captured.
+  "os/tests/fixtures/**",
+]
+SPDX-FileCopyrightText = "2026 SoundTap contributors"
+SPDX-License-Identifier = "GPL-3.0-only"
+
+# The npm packages' own licence texts, collected by tools/ci/npm_licenses.py; each text in it
+# is its package's.
+[[annotations]]
+path = "app/frontend/THIRD_PARTY_LICENSES.txt"
+precedence = "override"
+SPDX-FileCopyrightText = "2026 SoundTap contributors"
+SPDX-License-Identifier = "GPL-3.0-only"
+
+# Go modules vendored by `go mod vendor` (ADR 0124): their bytes as the module proxy serves them,
+# each under its own licence (NOTICE.md). The Go module table names the same licences; the
+# copyright lines are the modules' own LICENSE files'.
+[[annotations]]
+path = "app/vendor/github.com/eclipse/paho.mqtt.golang/**"
+precedence = "override"
+SPDX-FileCopyrightText = "IBM Corp and others (Eclipse Paho contributors)"
+SPDX-License-Identifier = "EPL-2.0 OR BSD-3-Clause"
+
+[[annotations]]
+path = "app/vendor/github.com/godbus/dbus/v5/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2013 Georg Reinke, Google"
+SPDX-License-Identifier = "BSD-2-Clause"
+
+[[annotations]]
+path = "app/vendor/github.com/gorilla/websocket/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2013 The Gorilla WebSocket Authors"
+SPDX-License-Identifier = "BSD-2-Clause"
+
+[[annotations]]
+path = "app/vendor/golang.org/x/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2009 The Go Authors"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+# Everything SPL and U-Boot are built from stays byte-identical (the bootloaders are written
+# only when they differ, ADR 0008), so these carry no new header: U-Boot's licence,
+# GPL-2.0-or-later, for our sources, generated headers, device tree and patches.
+[[annotations]]
+path = "os/bootloader/uboot/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2026 SoundTap contributors"
+SPDX-License-Identifier = "GPL-2.0-or-later"
+
+[[annotations]]
+path = "os/bootloader/uboot/README.md"
+precedence = "override"
+SPDX-FileCopyrightText = "2026 SoundTap contributors"
+SPDX-License-Identifier = "GPL-3.0-only"
+
+# TweetNaCl 20140427 as fetched from tweetnacl.cr.yp.to (ADR 0124).
+[[annotations]]
+path = ["os/bootloader/uboot/tweetnacl.c", "os/bootloader/uboot/tweetnacl.h"]
+precedence = "override"
+SPDX-FileCopyrightText = "2014 Daniel J. Bernstein, Bernard van Gastel, Wesley Janssen, Tanja Lange, Peter Schwabe, Sjaak Smetsers"
+SPDX-License-Identifier = "LicenseRef-PublicDomain"
+
+# Patches take the licence of the project they patch.
+[[annotations]]
+path = "os/board/rootfs/linux-patches/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2026 SoundTap contributors"
+SPDX-License-Identifier = "GPL-2.0-only"
+
+[[annotations]]
+path = "os/board/common/patches/libglib2/*.patch"
+precedence = "override"
+SPDX-FileCopyrightText = "Philip Withnall"
+SPDX-License-Identifier = "LGPL-2.1-or-later"
+
+[[annotations]]
+path = "os/board/common/patches/mtd/*.patch"
+precedence = "override"
+SPDX-FileCopyrightText = "2026 SoundTap contributors"
+SPDX-License-Identifier = "GPL-2.0-only"
+
+[[annotations]]
+path = "os/package/soundtap-ffmpeg/*.patch"
+precedence = "override"
+SPDX-FileCopyrightText = "BapToutatis"
+SPDX-License-Identifier = "LGPL-2.1-or-later"
+
+[[annotations]]
+path = "os/package/soundtap-librespot/*.patch"
+precedence = "override"
+SPDX-FileCopyrightText = "2026 SoundTap contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "os/package/soundtap-snapcast/*.patch"
+precedence = "override"
+SPDX-FileCopyrightText = "2026 SoundTap contributors"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+
+[[annotations]]
+path = "os/package/soundtap-wl18xx-conf/*.patch"
+precedence = "override"
+SPDX-FileCopyrightText = "2026 SoundTap contributors"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+# TI's WiLink Bluetooth init script (os/upstream/MANIFEST.json); TI's licence, copied from
+# os/upstream/ti-connectivity/LICENCE.
+[[annotations]]
+path = "os/upstream/ti-connectivity/TIInit_11.8.32.bts"
+precedence = "override"
+SPDX-FileCopyrightText = "Texas Instruments Incorporated"
+SPDX-License-Identifier = "LicenseRef-TI-Text-File"
+
+# Fonts (NOTICE.md): Montserrat for the browser installer, and the ST20 OLED atlas rendered
+# from the fonts its OFL.txt lists.
+[[annotations]]
+path = "docs/assets/fonts/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2011 The Montserrat Project Authors (https://github.com/JulietaUla/Montserrat)"
+SPDX-License-Identifier = "OFL-1.1"
+
+[[annotations]]
+path = [
+  "app/oled/screen/assets/OFL.txt",
+  "app/oled/screen/assets/st20-atlas.png",
+  "app/oled/screen/assets/st20-atlas.txt.gz",
+]
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "2020 The Plus Jakarta Sans Project Authors (https://github.com/tokotype/PlusJakartaSans)",
+  "2001 The Silkscreen Project Authors (https://github.com/googlefonts/silkscreen)",
+  "2018 The Manrope Project Authors (https://github.com/googlefonts/manrope)",
+  "2022 The Noto Project Authors (https://github.com/notofonts/thai)",
+  "2014-2021 Adobe (http://www.adobe.com/)",
+  "2026 SoundTap contributors",
+]
+SPDX-License-Identifier = "OFL-1.1"

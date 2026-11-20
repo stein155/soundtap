@@ -1,0 +1,14 @@
+[
+  {
+    "source": "TUNEIN",
+    "name": "Jazz",
+    "location": "s12345",
+    "art": "https://example.com/jazz.png"
+  },
+  {
+    "source": "LOCAL_INTERNET_RADIO",
+    "name": "My stream",
+    "location": "https://example.com/stream.mp3",
+    "art": ""
+  }
+]

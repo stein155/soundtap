@@ -1,0 +1,4 @@
+# A universal remote, mapped by hand
+0x10 = POWER
+17 = VOLUME_UP
+0x12 = preset_1

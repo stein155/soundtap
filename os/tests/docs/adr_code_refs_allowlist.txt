@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: 2026 SoundTap contributors
+#
+# ADR code references that did not resolve when test_adr_code_refs.py was introduced.
+# This list only shrinks: remove an entry when its ADR is fixed (the test fails while a
+# resolved entry stays), and never add one. A new reference in an ADR must resolve.
