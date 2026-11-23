@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -281,13 +283,26 @@ func writeCodecGainTries(ctx context.Context, command []string, gain float64, tr
 	}
 }
 
+// codecWriteNice is the niceness a codec write runs at. On the ST20 it bit-bangs the codec
+// over GPIO, busy on the one CPU for a moment per volume step; at the Mixer's own priority
+// a burst of volume keys starved the Mixer and aplay ran dry ("underrun!!!", heard as a
+// pop, 2026-11-23). A volume step may land a little later; the sound may not stop.
+const codecWriteNice = 10
+
 func writeCodecGain(ctx context.Context, command []string, gain float64) error {
 	wctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	args := append(slices.Clone(command[1:]), codecGainHex(gain))
-	out, err := exec.CommandContext(wctx, command[0], args...).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+	cmd := exec.CommandContext(wctx, command[0], args...)
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	// Lowering a child's priority needs no privilege; a failure only leaves it as it was.
+	_ = syscall.Setpriority(syscall.PRIO_PROCESS, cmd.Process.Pid, codecWriteNice)
+	if err := cmd.Wait(); err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(out.String()))
 	}
 	return nil
 }

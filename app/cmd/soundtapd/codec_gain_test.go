@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -147,5 +148,27 @@ func TestCodecVolumeWriteTriesAgainBeforeThePCM(t *testing.T) {
 	}
 	if len(failed) != 0 {
 		t.Fatal("failed called more than once")
+	}
+}
+
+// A codec write runs below the Mixer's priority, with the gain as its last argument, and
+// says what failed when it fails.
+func TestCodecWriteRunsNiced(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "nice")
+	script := `sleep 0.3; ps -o nice= -p $$ > "$0"; echo "$1" >> "$0"`
+	if err := writeCodecGain(t.Context(), []string{"sh", "-c", script, out}, 1); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := strings.Fields(string(b))
+	if len(fields) != 2 || fields[0] != strconv.Itoa(codecWriteNice) || fields[1] != codecGainHex(1) {
+		t.Errorf("the write ran as %q, want nice %d and gain %s", fields, codecWriteNice, codecGainHex(1))
+	}
+	err = writeCodecGain(t.Context(), []string{"sh", "-c", `echo no clock >&2; exit 3`}, 1)
+	if err == nil || !strings.Contains(err.Error(), "no clock") {
+		t.Errorf("failed write: %v, want its output", err)
 	}
 }
