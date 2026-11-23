@@ -2,7 +2,7 @@
 
 What works on which speaker, and how sure we are. One universal STU installs on the ST10, the
 ST20, the Wireless Link and the SoundTouch 300 ([install records](../hardware/install-records.md)).
-No candidate is release-approved yet. The API contract begins at public 0.1.0;
+SoundTap Core 0.1.0 is out as an alpha; no candidate is release-approved yet. The API contract begins at public 0.1.0;
 its stable/internal split, deprecation and maintenance rules are in
 [ADR 0108](../decisions/0108-http-api-compatibility-for-1-0.md).
 

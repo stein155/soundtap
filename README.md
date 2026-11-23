@@ -19,7 +19,7 @@
 <p align="center">
   <a href="https://github.com/stein155/soundtap/actions/workflows/build-stu.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/stein155/soundtap/build-stu.yml?branch=main&style=flat-square&label=CI&labelColor=5e5e5e&color=111111"></a>
   <img alt="Status: alpha" src="https://img.shields.io/badge/status-alpha-111111?style=flat-square&labelColor=5e5e5e">
-  <img alt="SoundTap Core 0.1.0" src="https://img.shields.io/badge/SoundTap%20Core-0.1.0-111111?style=flat-square&labelColor=5e5e5e">
+  <img alt="SoundTap Core 0.1.0 alpha" src="https://img.shields.io/badge/SoundTap%20Core-0.1.0%20alpha-111111?style=flat-square&labelColor=5e5e5e">
   <img alt="Linux 6.12" src="https://img.shields.io/badge/Linux-6.12-111111?style=flat-square&labelColor=5e5e5e">
   <a href="LICENSE"><img alt="License: GPL-3.0" src="https://img.shields.io/badge/license-GPL--3.0-111111?style=flat-square&labelColor=5e5e5e"></a>
 </p>
@@ -39,14 +39,14 @@ speakers locally, but service browsing and supported preset operation are gone, 
 provides no further firmware or security updates ([Bose's announcement](https://www.bose.com/soundtouch-end-of-life-row)).
 
 **SoundTap is new software for the speaker you already own.** Not an app, not a server you
-have to keep running next to it: a complete operating system, rebuilt from scratch, from
-the bootloader to the web page on your phone. Afterwards the speaker runs on its own, on
+have to keep running next to it: a complete operating system built from open source, with
+no Bose software in it, from the bootloader to the web page on your phone. Afterwards the speaker runs on its own, on
 your home network, and does more than it ever did.
 
 > [!WARNING]
 > SoundTap is **alpha** software, version 0.x. It runs every day on our own speakers, but it
-> has not yet passed everything a 1.0 needs: for now the speaker accepts a root login without
-> a password, so use it only on a network you trust. What is left is listed on the
+> has not yet passed everything a 1.0 needs: for now its web page has no login, so anyone on
+> your network can control the speaker. Use it only on a network you trust. What is left is listed on the
 > [road to 1.0](docs/owners/roadmap.md).
 
 ## Why SoundTap
@@ -103,7 +103,7 @@ Not every feature is proven on every model. The [hardware checklist](docs/hardwa
 | SoundTouch 30 Series III | 🧪 Preview | As the ST20 Series III, with the ST30's own sound tuning. Its Wi-Fi lamp and front panel are mapped from stock's hardware description, untested. |
 | **SoundTouch 300** | ✅ Supported | The soundbar: radio, Spotify, the TV and HDMI inputs, volume and mute, from the app, the bar's buttons and its remote. The soundbar's own processor keeps driving the bass module, rear speakers and HDMI. It gets SoundTap's own bootloader, like every model ([notes](docs/owners/install.md#soundtouch-300)). |
 
-"Supported" means SoundTap is released for that model, and a release is published only after it has passed that model's [hardware checklist](docs/hardware/hardware-test.md#release-checklist-per-model); individual features may not have run on every model yet. "Validation pending" and "Preview" models install from the same file but have not had that test.
+"Supported" means SoundTap is released for that model, and a release is published only after it has passed that model's [hardware checklist](docs/hardware/hardware-test.md#release-checklist-per-model); an alpha, a prerelease, comes before that test. Individual features may not have run on every model yet. "Validation pending" and "Preview" models install from the same file but have not had that test.
 
 **One universal file serves the supported models**; each speaker picks its own parts from it.
 The model-support roadmap prioritizes
@@ -128,8 +128,9 @@ the first step is read-only investigation.
 Everything after that, including updates, happens from the speaker's own page.
 
 > [!NOTE]
-> The first public release, SoundTap Core 0.1.0, is still going through the hardware test on the ST10, ST20,
-> Wireless Link and SoundTouch 300. Until then, packages are CI builds for testers.
+> SoundTap Core 0.1.0 is out as an **alpha**, a prerelease signed like a release. The release
+> 0.1.0 follows once it has passed the hardware test on the ST10, ST20, Wireless Link and
+> SoundTouch 300.
 
 ## How it works
 

@@ -127,7 +127,8 @@ The speaker stays on your Wi-Fi and downloads SoundTap itself. You do not downlo
 2. Go on with [What happens next](#5-what-happens-next).
 
 > [!NOTE]
-> The update server starts answering with the first public release.
+> The update server answers with the newest published SoundTap Core, an alpha until the first
+> release is out.
 
 ## 4. Without internet: upload the file
 
@@ -156,7 +157,8 @@ parts that belong to it.
    with the one in the `.sha256` file.
 
 > [!NOTE]
-> Until the first public release (`os-v0.1.0`) is out, packages are test builds for testers.
+> Until the first release (`os-v0.1.0`) is out, the newest package is an alpha: a prerelease,
+> signed like a release, that has not yet passed every model's hardware test.
 
 ### 2. Put the speaker in setup mode
 
@@ -388,7 +390,7 @@ The SoundTouch 300 takes the same package as the other models and installs the s
 has run on it is in the [install records](../hardware/install-records.md#soundtouch-300).
 
 - After the install the bar takes over the Wi-Fi Bose's software was on. If it opens its own
-  setup network (`SoundTap-ST300-…`) instead, connect it again from there.
+  setup network (`SoundTap ST300 …`) instead, connect it again from there.
 - The soundbar's own processor and its firmware are never touched. The bass module, rear
   speakers, HDMI, ADAPTiQ, the remote and the bar's buttons keep their pairing and settings.
 - When SoundTap starts playing it asks the bar to switch to its input. Starting something on

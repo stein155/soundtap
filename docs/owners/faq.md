@@ -386,9 +386,9 @@ A crash you reported or dismissed is not offered again
 ### Is it safe on my network?
 
 Not yet as locked down as it will be at 1.0. Like the original Bose software, it lets anyone
-on your network control the speaker, and there is no login on its web page yet. Alpha builds
-also accept a root SSH login without a password; release builds have no SSH at all, so you never
-need to log in to the speaker: for a bug report, attach the [support bundle](#how-do-i-report-a-bug). Use
+on your network control the speaker, and there is no login on its web page yet. Published
+packages, alphas included, have no SSH at all, so you never need to log in to the speaker
+(only self-built development images accept a root login without a password): for a bug report, attach the [support bundle](#how-do-i-report-a-bug). Use
 SoundTap 0.x on a network you trust; see [SECURITY.md](../../SECURITY.md). Published updates are signed. Production images refuse unsigned updates; alpha images
 can explicitly allow unsigned development candidates (ADR 0048).
 
