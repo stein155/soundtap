@@ -114,6 +114,8 @@ for f in "$@"; do
 done
 # The expectation comes from the last package (what ends up in the slot); the first
 # one only tells the power-cut case where its rootfs starts.
+# Docker cannot create the dist mountpoint inside the read-only /src; a fresh checkout lacks it.
+mkdir -p "$REPO/app/internal/web/dist"
 docker run --rm --user "$HOST_UID:$HOST_GID" -e HOME=/tmp -e GOPATH=/tmp/go -e GOCACHE=/tmp/gocache \
   -e GOARCH="$GOARCH" -v "$REPO/app":/src:ro -v "$WORK/web":/src/internal/web/dist:ro -v "$WORK":/out \
   -v "$REPO/os/support":/repo/os/support:ro -v "$REPO/os/board":/repo/os/board:ro -w /src "$GO_IMAGE" \
