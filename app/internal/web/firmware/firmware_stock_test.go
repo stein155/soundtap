@@ -719,14 +719,14 @@ func TestFallbackBootSelectsTheRunningSlot(t *testing.T) {
 	s := wlaInstallServer(t, f, "root=ubi0:rootfs ubi.mtd=8,2048")
 	fallback := false
 	s.bootGuardFn = func(_ uint32, settle func(bool) error) error { return settle(fallback) }
-	if err := s.settleBootGuard(); err != nil {
+	if err := s.settleBootGuard(true); err != nil {
 		t.Fatal(err)
 	}
 	if len(f.cmds) != 0 {
 		t.Fatalf("an ordinary boot confirm wrote NAND: %v", f.cmds)
 	}
 	fallback = true
-	if err := s.settleBootGuard(); err != nil {
+	if err := s.settleBootGuard(true); err != nil {
 		t.Fatal(err)
 	}
 	env := envOf(t, f)
@@ -752,7 +752,7 @@ func TestBootConfirmClearsTheEnvironmentCount(t *testing.T) {
 		handed = envCount
 		return settle(false)
 	}
-	if err := s.settleBootGuard(); err != nil {
+	if err := s.settleBootGuard(true); err != nil {
 		t.Fatal(err)
 	}
 	if handed != 2 {
@@ -769,7 +769,7 @@ func TestBootConfirmClearsTheEnvironmentCount(t *testing.T) {
 	}
 	// Confirmed already: nothing more to write.
 	n := len(f.cmds)
-	if err := s.settleBootGuard(); err != nil || len(f.cmds) != n {
+	if err := s.settleBootGuard(true); err != nil || len(f.cmds) != n {
 		t.Fatalf("a second confirm: %v, wrote %v", err, f.cmds[n:])
 	}
 	// An environment nothing can read holds no count: the RTC's still confirms the boot.
@@ -786,7 +786,7 @@ func TestBootConfirmClearsTheEnvironmentCount(t *testing.T) {
 		confirmed = envCount == 0
 		return nil
 	}
-	if err := s.settleBootGuard(); err != nil || !confirmed {
+	if err := s.settleBootGuard(true); err != nil || !confirmed {
 		t.Fatalf("a confirm over an unreadable environment: %v, confirmed %v", err, confirmed)
 	}
 }
@@ -830,6 +830,53 @@ func TestRebootAfterAnInstallKeepsTheNewSlotUnconfirmed(t *testing.T) {
 	}
 	if got := flash.SelectedSlot(after); got != "PONG" {
 		t.Errorf("selected %q, want the installed PONG", got)
+	}
+}
+
+// A restart from the page in the first minute of a new version is no proof that it works:
+// the slot stays on trial, and only the count that restart would have added goes.
+func TestRebootDuringATrialBootKeepsTheTrial(t *testing.T) {
+	f := &fakeFlash{}
+	s := wlaInstallServer(t, f, "root=ubi0:rootfs ubi.mtd=9,2048") // running PONG
+	env := soundtapEnv(t)                                          // selects PONG
+	env.Set("upgrade_available", "1")
+	env.Set("altbootcmd", "run nand_boot;")
+	env.Set("bootlimit", "4")
+	env.Set("bootcount", "2")
+	if err := ubootenvtest.Image(f.writes, "/dev/mtd5", "/dev/mtd4", env); err != nil {
+		t.Fatal(err)
+	}
+	s.bootGuardFn = func(_ uint32, settle func(bool) error) error { return settle(false) }
+	called := make(chan struct{}, 1)
+	s.rebootFn = func() error { called <- struct{}{}; return nil }
+	reboot := func() {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		s.reboot(rec, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/reboot", strings.NewReader(`{"confirm":true}`)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("reboot = %d %s", rec.Code, rec.Body)
+		}
+		select {
+		case <-called:
+		case <-time.After(5 * time.Second):
+			t.Fatal("the reboot hook never ran")
+		}
+	}
+	reboot()
+	after := envOf(t, f)
+	if v, _ := after.Get("upgrade_available"); v != "1" {
+		t.Errorf("upgrade_available = %q after a restart on trial, want 1", v)
+	}
+	if v, ok := after.Get("bootcount"); ok {
+		t.Errorf("bootcount = %q after a deliberate restart, want it gone", v)
+	}
+	// The confirm, once this boot has proven itself, ends the trial. (A reboot that went
+	// out holds the lane until the speaker is gone, so the confirm runs on its own here.)
+	if err := s.settleBootGuard(true); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := envOf(t, f).Get("upgrade_available"); ok {
+		t.Errorf("upgrade_available = %q after the confirm", v)
 	}
 }
 

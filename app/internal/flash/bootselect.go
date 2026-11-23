@@ -129,8 +129,8 @@ func isSoundTapMarker(field string) bool {
 // is not in the list removed. Passing no markers is how an install of stock
 // firmware hands the environment back the way Bose would have left it.
 //
-// It changes nothing else. Reinstalling is idempotent, which matters because the
-// environment is one erase block: every rewrite is an erase of the only copy.
+// It changes nothing else. Reinstalling is idempotent, which matters because every
+// rewrite erases a copy of the environment: under Bose's U-Boot the only one.
 func SelectSlot(env *ubootenv.Env, slot Slot, markers []string) error {
 	bootcmd, cmdKey, argsKey, err := bootFor(slot)
 	if err != nil {
@@ -559,6 +559,19 @@ func (in *Installer) ConfirmPendingBoot(read Reader) error {
 	})
 }
 
+// ClearPendingBootCount removes the boot count the environment keeps for a selection on
+// trial, and leaves the trial itself: a deliberate reboot before the confirm is not a
+// failed attempt, nor a proof. It writes nothing when there is no count.
+func (in *Installer) ClearPendingBootCount(read Reader) error {
+	return in.rewriteEnv(read, func(env *ubootenv.Env) (bool, error) {
+		if _, ok := env.Get(countKey); !ok {
+			return false, nil
+		}
+		env.Delete(countKey)
+		return true, nil
+	})
+}
+
 // SelectedSlot is the slot an environment's bootcmd boots, "" when it names neither.
 func SelectedSlot(env *ubootenv.Env) string {
 	v, _ := env.Get(bootcmdKey)
@@ -655,7 +668,7 @@ func (in *Installer) rewriteEnv(read Reader, edit func(*ubootenv.Env) (bool, err
 	script, err := ubootenv.Script(current, env)
 	if err != nil || len(script) == 0 {
 		// Nothing changed. Not erasing is the whole point: this is one erase block
-		// and it is the only copy of the environment on the board.
+		// and under Bose's U-Boot it is the only copy of the environment.
 		return err
 	}
 	staged, err := os.CreateTemp("", "soundtap-env-")

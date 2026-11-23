@@ -267,8 +267,9 @@ func (s *Handler) reboot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A deliberate reboot is not a failed attempt: without this, one before the boot
-	// confirm would count towards the fallback to the other slot.
-	if err := s.settleBootGuard(); err != nil && s.log != nil {
+	// confirm would count towards the fallback to the other slot. It is no confirmation
+	// either: a slot still on trial stays on trial.
+	if err := s.settleBootGuard(s.bootConfirmed.Load()); err != nil && s.log != nil {
 		s.log.Warn("boot guard", "err", err)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"rebooting": true})
@@ -329,7 +330,7 @@ func (s *Handler) ConfirmBoot() error {
 				"redundant", target.EnvRedundant)
 		}
 	}
-	if err := s.settleBootGuard(); err != nil {
+	if err := s.settleBootGuard(true); err != nil {
 		return err
 	}
 	s.bootConfirmed.Store(true)
@@ -352,8 +353,10 @@ func (s *Handler) livePlan() (flash.Target, error) {
 // settleBootGuard resets U-Boot's boot count, in the RTC and, for a selection not yet
 // confirmed, in the environment. When U-Boot had to fall back to the other slot to get
 // here, the slot that failed is still the selected one, so the running slot is selected
-// in its place: it just proved it boots.
-func (s *Handler) settleBootGuard() error {
+// in its place: it just proved it boots. confirm says whether this boot has proven
+// itself: only then does a selection of the running slot leave its trial, otherwise only
+// the count goes.
+func (s *Handler) settleBootGuard(confirm bool) error {
 	if s.bootGuardFn == nil {
 		return nil
 	}
@@ -382,6 +385,9 @@ func (s *Handler) settleBootGuard() error {
 		if !fallback {
 			if envErr != nil {
 				return nil
+			}
+			if !confirm {
+				return inst.ClearPendingBootCount(read)
 			}
 			return inst.ConfirmPendingBoot(read)
 		}

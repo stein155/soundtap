@@ -110,7 +110,7 @@ func (s *Handler) selectInstalledSlot(w http.ResponseWriter, j *installJob, pkg 
 		markers = flash.SoundTapMarkers(target.PersistentName)
 	}
 	// Settle a pending fallback first, so it cannot later put back the slot this selects.
-	if err := s.settleBootGuard(); err != nil && s.log != nil {
+	if err := s.settleBootGuard(true); err != nil && s.log != nil {
 		s.log.Warn("boot guard", "err", err)
 	}
 	if err := j.inst.SelectBootSlot(j.read, target.Alternate, markers); err != nil {
