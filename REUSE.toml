@@ -17,6 +17,7 @@ path = [
   "ruff.toml",
   "app/VERSION",
   "os/VERSION",
+  "updates/soundtouch",
   "app/go.mod",
   "app/go.sum",
   "app/vendor/modules.txt",
