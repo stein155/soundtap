@@ -36,7 +36,8 @@ def make_mlo(seed, size=0x5000):
     head = bytearray(b"\xff" * 0x200)
     struct.pack_into("<I", head, 0, 0x40)
     head[0x14:0x1E] = b"CHSETTINGS"
-    return bytes(head) + struct.pack("<II", len(body), 0x402F0400) + body
+    # As mkimage writes it: the size counts the 8-byte GP header too.
+    return bytes(head) + struct.pack("<II", len(body) + 8, 0x402F0400) + body
 
 
 def make_uboot(size=0x81234):
@@ -369,6 +370,11 @@ class RomUsbRestoreTest(unittest.TestCase):
         (self.images / "st20-spl/MLO").write_bytes(make_mlo(5))
         r = self.tool("--model", "st20", "--images", str(self.images), "--dry-run")
         self.assertIn("does not match", r.stderr)
+
+        short = self.tmp / "short"
+        write_images(short, self.wla_mlo[:-1], self.st20_mlo, self.uboot)
+        self.assertIn("declares 20488 bytes but holds 20487",
+                      self.tool("--model", "wla", "--images", str(short), "--dry-run").stderr)
 
         badmlo = self.tmp / "badmlo"
         write_images(badmlo, b"\0" * 0x300, self.st20_mlo, self.uboot)

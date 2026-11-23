@@ -159,8 +159,9 @@ def check_mlo(mlo: bytes, what: str) -> None:
     size, load = struct.unpack_from("<II", mlo, 0x200)
     if load != 0x402F0400:
         raise Refused(f"{what}: loads to {load:#010x}, not AM335x SRAM at 0x402f0400")
-    if 0x208 + size > len(mlo):
-        raise Refused(f"{what}: declares {size} bytes but holds {len(mlo) - 0x208}")
+    # mkimage counts its own 8-byte GP header in the size (check_wla_product_spl.py).
+    if 0x200 + size > len(mlo):
+        raise Refused(f"{what}: declares {size} bytes but holds {len(mlo) - 0x200}")
     if mlo[0x20B] not in (0xEA, 0xEB):
         raise Refused(f"{what}: does not start with a branch to the reset handler")
 
