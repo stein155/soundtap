@@ -623,3 +623,34 @@ func TestConfirmBringsBootLimitUpToDate(t *testing.T) {
 		t.Errorf("the confirm added bootlimit=%q", v)
 	}
 }
+
+// Our U-Boot saves board_serial out of uninitialised SRAM with the boot count, newlines
+// and all, as it did on an ST10 (2026-11-23). fw_printenv prints such a value over
+// several lines; the boot count still reads and the confirm still clears it, leaving the
+// value as it was.
+func TestConfirmReadsAnEnvironmentWithAMultiLineValue(t *testing.T) {
+	garbage := "\x01\xb8(b\f\xab\xf1\n\xb2%\xc1\n:\xd4=\xf1[\x8b}oO\n\x80\xa7"
+	nand := newEnvNAND(t, func(env *ubootenv.Env) {
+		if err := SelectSlot(env, pong, SoundTapMarkers("")); err != nil {
+			t.Fatal(err)
+		}
+		env.Set("board_serial", garbage)
+		env.Set("upgrade_available", "1")
+		env.Set("bootcount", "1")
+	})
+	in := nand.installer(pong, ping)
+	in.Target.BootCount = true
+	if n, err := in.PendingBootCount(nand.read); err != nil || n != 1 {
+		t.Fatalf("pending count %d, err %v", n, err)
+	}
+	if err := in.ConfirmPendingBoot(nand.read); err != nil {
+		t.Fatal(err)
+	}
+	env := nand.env(t)
+	if v, ok := env.Get("upgrade_available"); ok {
+		t.Errorf("the confirm left upgrade_available=%q", v)
+	}
+	if v, _ := env.Get("board_serial"); v != garbage {
+		t.Errorf("board_serial = %q, want it untouched", v)
+	}
+}

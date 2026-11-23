@@ -204,3 +204,25 @@ func TestTheCopyUBootBootsFrom(t *testing.T) {
 		t.Error("a copy larger than 32 KiB was encoded")
 	}
 }
+
+// fw_printenv prints a value holding a newline over several lines: a line that does not
+// start with a key continues the value before it, as one that does starts the next entry.
+func TestParseTextContinuesAMultiLineValue(t *testing.T) {
+	text := "bootcmd=run a\nboard_serial=\xb8(b\f\n\xb2%\xc1\n\n:\xd4=\xf1 x\nbootcount=1\n"
+	env, err := ParseText([]byte(text))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := env.Get("board_serial"); v != "\xb8(b\f\n\xb2%\xc1\n\n:\xd4=\xf1 x" {
+		t.Errorf("board_serial = %q", v)
+	}
+	if v, _ := env.Get("bootcount"); v != "1" || len(env.Keys()) != 3 {
+		t.Errorf("bootcount = %q, keys %q", v, env.Keys())
+	}
+	if back, err := ParseText(env.Text()); err != nil || !back.Equal(env) {
+		t.Errorf("round trip: %v", err)
+	}
+	if _, err := ParseText([]byte("\xb8(b\nbootcmd=run a\n")); err == nil {
+		t.Error("a first line that is no entry was read")
+	}
+}

@@ -247,20 +247,45 @@ func le32(v uint32) []byte { return []byte{byte(v), byte(v >> 8), byte(v >> 16),
 // buffer this size and splits a longer one silently.
 const scriptLine = 2048
 
-// ParseText reads fw_printenv output: one key=value per line.
+// ParseText reads fw_printenv output: one key=value per line. fw_printenv prints a value
+// that holds a newline over several lines, so a line that does not start with a key
+// continues the value before it. Our U-Boot leaves such values: it sets board_name,
+// board_rev and board_serial from a TI EEPROM these boards do not have, out of SRAM that
+// nothing initialised, and saves them with the boot count (ADR 0010).
 func ParseText(b []byte) (*Env, error) {
 	env := NewEnv()
-	for _, line := range strings.Split(strings.TrimRight(string(b), "\n"), "\n") {
+	last := ""
+	// Only the newline that ends the last entry: one before it belongs to a value.
+	for _, line := range strings.Split(strings.TrimSuffix(string(b), "\n"), "\n") {
 		key, value, ok := strings.Cut(line, "=")
-		if !ok || key == "" {
-			return nil, fmt.Errorf("fw_printenv line %q is not key=value", line)
+		if !ok || !isKey(key) {
+			if last == "" {
+				return nil, fmt.Errorf("fw_printenv line %q is not key=value", line)
+			}
+			env.Set(last, env.vals[last]+"\n"+line)
+			continue
 		}
 		env.Set(key, value)
+		last = key
 	}
 	if len(env.order) == 0 {
 		return nil, errors.New("environment is empty")
 	}
 	return env, nil
+}
+
+// isKey reports whether s can be an entry's name as fw_printenv prints it: printable
+// ASCII without a space or '='.
+func isKey(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := range len(s) {
+		if s[i] <= ' ' || s[i] > '~' {
+			return false
+		}
+	}
+	return true
 }
 
 // Text renders env the way fw_printenv prints it.

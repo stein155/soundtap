@@ -76,6 +76,7 @@ func FuzzParseText(f *testing.F) {
 	f.Add([]byte("bootcmd=run a\nbootcount=1\n"), []byte("bootcmd=run b\n"))
 	f.Add([]byte("a=1\na=2\n"), []byte("b==\n"))
 	f.Add([]byte("x\n"), []byte("=\n"))
+	f.Add([]byte("board_serial=\xb8(b\n:\xd4=\xf1\nbootcount=1\n"), []byte("bootcount=2\n"))
 	f.Fuzz(func(t *testing.T, from, to []byte) {
 		a, err := ParseText(from)
 		if err != nil {
