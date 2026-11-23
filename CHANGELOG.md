@@ -10,6 +10,27 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
 
 ## [Unreleased]
 
+## [app-v0.1.0-alpha.2] - 2026-11-23
+
+- The SoundTap app that SoundTap Core 0.1.0-alpha.2 carries; what it fixes is listed under
+  that release.
+
+## [os-v0.1.0-alpha.2] - 2026-11-23
+
+The second alpha of SoundTap Core 0.1.0. Install it over 0.1.0-alpha.1: on some speakers that
+version could not confirm its own boot and would have gone back to the previous version after
+a few restarts.
+
+### Fixed
+
+- **A new version stays on the speaker.** Our bootloader can leave a value of several lines in
+  its settings; the player could not read them then, so it never confirmed the new version and
+  the speaker would have returned to the previous one after four restarts or power cuts.
+- **A restart in the first minute of a new version** no longer counts as proof that it works:
+  the speaker still goes back to the previous version if the new one keeps failing.
+- **A package that is not the one its signature names** no longer leaves its system in the
+  other slot when the install refuses it.
+
 ## [app-v0.1.0-alpha.1] - 2026-11-23
 
 - The SoundTap app that SoundTap Core 0.1.0-alpha.1 carries; what it brings is listed under
