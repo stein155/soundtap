@@ -325,7 +325,11 @@ docker run --rm -e BOOTCOMMAND -e MINIMAL_INIT_CONFIG -e SOURCE_DATE_EPOCH -e RE
   export DEBIAN_FRONTEND=noninteractive
   archive=/cache/u-boot-'"$VERSION"'.tar.bz2
   source=/cache/u-boot-'"$VERSION"'
-  [ -f "$archive" ] || curl -fsSL https://ftp.denx.de/pub/u-boot/u-boot-'"$VERSION"'.tar.bz2 -o "$archive"
+  # ftp.denx.de, else the Buildroot mirror of it; the hash below decides.
+  for site in https://ftp.denx.de/pub/u-boot https://sources.buildroot.net/uboot; do
+    [ -f "$archive" ] || curl -fsSL --connect-timeout 20 "$site/u-boot-'"$VERSION"'.tar.bz2" -o "$archive" ||
+      rm -f "$archive"
+  done
   printf "%s  %s\n" '"$SHA256"' "$archive" | sha256sum -c -
   rm -rf "$source"
   tar -xjf "$archive" -C /cache

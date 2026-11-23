@@ -33,7 +33,11 @@ docker run --rm -e SOURCE_DATE_EPOCH -v "$REPO:/repo:ro" -v "$OUT:/out" "$IMAGE"
     bison flex libssl-dev libgnutls28-dev uuid-dev pkg-config python3 python3-dev \
     python3-setuptools python3-pyelftools device-tree-compiler swig bc git ca-certificates curl
   cd /tmp
-  curl -fsSLO https://ftp.denx.de/pub/u-boot/u-boot-'"$VERSION"'.tar.bz2
+  # ftp.denx.de, else the Buildroot mirror of it; the hash below decides.
+  for site in https://ftp.denx.de/pub/u-boot https://sources.buildroot.net/uboot; do
+    [ -f u-boot-'"$VERSION"'.tar.bz2 ] || curl -fsSLO --connect-timeout 20 "$site/u-boot-'"$VERSION"'.tar.bz2" ||
+      rm -f u-boot-'"$VERSION"'.tar.bz2
+  done
   printf "%s  %s\n" '"$SOURCE_SHA256"' u-boot-'"$VERSION"'.tar.bz2 | sha256sum -c -
   tar -xjf u-boot-'"$VERSION"'.tar.bz2
   cd u-boot-'"$VERSION"'
