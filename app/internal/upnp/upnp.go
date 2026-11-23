@@ -405,7 +405,7 @@ func parseHMS(v string) (time.Duration, bool) {
 	sec, err3 := strconv.ParseFloat(parts[2], 64)
 	// Hours past what a Duration holds overflowed into a negative Seek target or duration.
 	if err1 != nil || err2 != nil || err3 != nil || h < 0 || h >= int(math.MaxInt64/int64(time.Hour)) ||
-		m < 0 || m > 59 || sec < 0 || sec >= 60 {
+		m < 0 || m > 59 || !(sec >= 0 && sec < 60) { // !(…) also refuses NaN
 		return 0, false
 	}
 	return time.Duration(h)*time.Hour + time.Duration(m)*time.Minute + time.Duration(sec*float64(time.Second)), true

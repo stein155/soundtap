@@ -109,8 +109,11 @@ func TestReadReportsAdapterAndDevices(t *testing.T) {
 	if !reflect.DeepEqual(st.Devices, want) {
 		t.Errorf("devices = %#v", st.Devices)
 	}
-	if f.calls != 1 {
-		t.Errorf("GetManagedObjects called %d times", f.calls)
+	f.mu.Lock()
+	calls := f.calls
+	f.mu.Unlock()
+	if calls != 1 {
+		t.Errorf("GetManagedObjects called %d times", calls)
 	}
 }
 

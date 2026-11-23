@@ -222,7 +222,7 @@ esac
             self.assertIn("--draft=false --prerelease --latest=false\n", self.calls)
 
     def test_publish_of_a_release_is_not_a_prerelease(self):
-        done, published = self.run_sign("os-v1.0.0", None, publish=True, sig=statement())
+        done, _published = self.run_sign("os-v1.0.0", None, publish=True, sig=statement())
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertIn("--draft=false --prerelease=false --latest\n", self.calls)
 

@@ -317,7 +317,7 @@ test: test-go test-go-race test-web test-e2e test-shell test-bco
 
 # The whole repository is mounted: Go tests read fixtures outside app/. The embedded UI
 # needs one file in dist to compile; the real one comes from `make web`.
-GO_RUN = docker run --rm -v "$(ROOT):/w" -w /w/app -v soundtap-gomod:/go/pkg/mod -v soundtap-gocache:/root/.cache $(GO_IMAGE)
+GO_RUN = docker run --rm -e GOFLAGS=-buildvcs=false -v "$(ROOT):/w" -w /w/app -v soundtap-gomod:/go/pkg/mod -v soundtap-gocache:/root/.cache $(GO_IMAGE)
 go-dist:
 	@mkdir -p "$(ROOT)/app/internal/web/dist" && touch "$(ROOT)/app/internal/web/dist/.keep"
 
