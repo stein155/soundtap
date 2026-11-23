@@ -406,7 +406,8 @@ func ubootFitsBothHalves(uboot string) error {
 
 // ValidateAM335xSPL checks the TI image the mask ROM loads: a 0x200-byte
 // configuration header, then an 8-byte GP header of image size and load address,
-// then the SPL itself.
+// then the SPL itself. mkimage counts its own GP header in the size, so our MLO is
+// exactly 0x200 + size bytes; Bose's declares less than it stores.
 //
 // This used to pin the first instruction to 0xea00000f, which is the exact branch
 // our own mainline SPL happens to start with. Bose's SPL starts with 0xeb000042 --
@@ -424,7 +425,7 @@ func ValidateAM335xSPL(b []byte) error {
 	if got := binary.LittleEndian.Uint32(b[0x204:]); got != 0x402f0400 {
 		return fmt.Errorf("loads to %#08x, not AM335x SRAM at 0x402f0400", got)
 	}
-	if end := 0x208 + int64(binary.LittleEndian.Uint32(b[0x200:])); end > int64(len(b)) {
+	if end := 0x200 + int64(binary.LittleEndian.Uint32(b[0x200:])); end > int64(len(b)) {
 		return fmt.Errorf("declares %d bytes but the module holds %d", end, len(b))
 	}
 	// An unconditional ARM branch, b or bl: the SPL entry point is a jump to reset.

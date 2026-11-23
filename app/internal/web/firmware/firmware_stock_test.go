@@ -577,10 +577,11 @@ func TestStockPackageOnEveryModelNeedsItsBootChain(t *testing.T) {
 // bl, and our mainline one, which begins with b. Pinning the exact instruction was
 // what refused the approved stock package.
 func TestAM335xSPLAcceptsBothBranchForms(t *testing.T) {
+	// As mkimage writes it: the size counts the 8-byte GP header, nothing pads the end.
 	spl := func(first uint32, imageSize int) []byte {
 		b := make([]byte, 0x208+imageSize)
 		binary.LittleEndian.PutUint32(b, 0x40)
-		binary.LittleEndian.PutUint32(b[0x200:], uint32(imageSize))
+		binary.LittleEndian.PutUint32(b[0x200:], uint32(imageSize+8))
 		binary.LittleEndian.PutUint32(b[0x204:], 0x402f0400)
 		binary.LittleEndian.PutUint32(b[0x208:], first)
 		return b
@@ -599,6 +600,7 @@ func TestAM335xSPLAcceptsBothBranchForms(t *testing.T) {
 		}(),
 		"no config header":   func() []byte { b := spl(0xea00000f, 0x100); binary.LittleEndian.PutUint32(b, 0xea00000f); return b }(),
 		"image past the end": func() []byte { b := spl(0xea00000f, 0x100); binary.LittleEndian.PutUint32(b[0x200:], 0x9999); return b }(),
+		"one byte short":     spl(0xea00000f, 0x100)[:0x307],
 		"too short":          spl(0xea00000f, 0x100)[:0x100],
 	} {
 		if err := install.ValidateAM335xSPL(b); err == nil {
