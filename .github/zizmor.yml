@@ -12,3 +12,9 @@ rules:
   # actionlint does not know that spelling, and `./` means the same.
   self-repository:
     disable: true
+  # release.yml calls sign.yml for an alpha. GitHub hands a called workflow no secret, its own
+  # environment's included, unless the caller inherits them; only sign.yml's job, in the
+  # release environment, reads one (ADR 0035).
+  secrets-inherit:
+    ignore:
+      - release.yml

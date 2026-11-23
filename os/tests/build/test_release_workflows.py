@@ -98,7 +98,9 @@ for job, needs in (("sign-os", "release"), ("sign-app", "app")):
     assert f"needs: {needs}\n" in block, job
     assert f"if: contains(needs.{needs}.outputs.tag, '-alpha.')\n" in block, job
     assert "uses: ./.github/workflows/sign.yml\n" in block, job
-    assert "publish" not in block and "secrets" not in block, job
+    # GitHub gives a called workflow no secret, its environment's included, unless the caller
+    # inherits them; release.yml's own jobs still read none ("secrets." above).
+    assert "publish" not in block and "    secrets: inherit" in block.splitlines(), job
 assert release.count('echo "tag=$tag" >> "$GITHUB_OUTPUT"') == 2
 
 # Execute the workflow's actual Core draft script against local candidate fixtures.

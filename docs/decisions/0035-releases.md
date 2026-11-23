@@ -97,7 +97,9 @@ deterministic), and then runs `sign-release.sh --publish <tag>`, which makes it 
 latest; app: never latest) only when the draft's `.sig` states that tag's kind, version and
 digest. The tag is validated before use and every input reaches the shell through the
 environment. `release.yml` calls `sign.yml` for an alpha right after the draft is made, never
-with `publish`; a release is signed by dispatching it.
+with `publish`, and with `secrets: inherit`: GitHub hands a called workflow no secret otherwise,
+its own environment's included, while `release.yml`'s own jobs still read none. A release is
+signed by dispatching it.
 
 A Core release `X.Y.Z` is signed only against its four hardware reports, committed with their
 evidence files in `releases/os-vX.Y.Z/` on `main` (an alpha needs none). They land in a PR after
@@ -106,7 +108,7 @@ evidence files in `releases/os-vX.Y.Z/` on `main` (an alpha needs none). They la
 `sign.sh` refuses a key whose public half is not `release.PublicKey`, and for a production
 signature a key that opens without a passphrase, so the key secret alone cannot sign a release;
 an alpha (bench) signature may use a plain key. CI checks fail if `release.yml` mentions the key,
-`sign.sh` or a secret, or if `sign.yml` leaves its environment, its `main`-only check, the
+`sign.sh` or a secret other than that inheritance, or if `sign.yml` leaves its environment, its `main`-only check, the
 removal of the key file or its pinned actions. The reserve release key is not in GitHub: it stays
 offline until a rotation makes it the active key, and then replaces the secret
 ([RELEASING.md](../../RELEASING.md#release-keys)).

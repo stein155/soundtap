@@ -190,6 +190,8 @@ jobs:
     uses: ./.github/workflows/sign.yml
     with:
       tag: ${{ needs.release.outputs.tag }}
+    # A called workflow sees no secret the caller does not pass, the environment's included.
+    secrets: inherit
 
   sign-app:
     needs: app
@@ -199,3 +201,5 @@ jobs:
     uses: ./.github/workflows/sign.yml
     with:
       tag: ${{ needs.app.outputs.tag }}
+    # A called workflow sees no secret the caller does not pass, the environment's included.
+    secrets: inherit
