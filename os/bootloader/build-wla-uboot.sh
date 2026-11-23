@@ -396,6 +396,7 @@ docker run --rm -e BOOTCOMMAND -e MINIMAL_INIT_CONFIG -e SOURCE_DATE_EPOCH -e RE
      --enable CMD_FIXSIG \
      --disable EFI_LOADER --disable BOOTSTD --disable DISTRO_DEFAULTS --disable PXE_UTILS \
      --disable FIT_SIGNATURE --disable FIT_VERBOSE --disable FIT_PRINT \
+     --disable ENV_VARS_UBOOT_RUNTIME_CONFIG \
      --disable CMD_BOOTFLOW --disable CMD_BOOTZ --disable CMD_BOOTEFI --disable CMD_ELF \
      --disable CMD_FDT --disable CMD_EXTENSION --disable CMD_GO --disable CMD_RUN --disable CMD_IMI \
      --disable CMD_XIMG --disable CMD_SPL --disable CMD_ASKENV --disable CMD_EXPORTENV \

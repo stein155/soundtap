@@ -77,7 +77,7 @@ jobs:
           5f94d9581617d8692d23d1ae8bb3577de494121cb17f5b88883ffaae4ab79ee5  st20-spl/u-boot-spl.bin
           ce258e7a0d3f4cbaebdbd39ad70fbd79a6f7dd5a4ebb01454f3f3607490cecf7  st20-spl/uImage-spl-sram
           41852b248c4fd8ffc0e031b9fac245015f9282e1225c8a944de6614711ecd216  wla-spl/MLO
-          47c879d444df35b70da398948b668e220c56a938d71caba7f719f08b1c1ec577  wla-uboot/u-boot.img
+          9aa97fee2dde2d3b3be0cc80e2a0d499c535b574c123c740cb6ca3975327d2d8  wla-uboot/u-boot.img
           SUMS
       # The rescue chain (docs/hardware/st20/rom-usb-recovery.md) serves these bytes.
       # One copy: the sums above hold both legs to the same bytes.
