@@ -132,6 +132,20 @@ like the other three ([install records](../hardware/install-records.md#soundtouc
       on the ST20 following the Wireless Link, from standby (amp unmuted 3.06 s after power)
       and from a playing preset (no amp mute line). The join chime made `source sound reaches
       the DAC` fire during the hold; it is now logged once the hold ends.
+- [ ] **Bootloader findings from the alpha review** (2026-11-23), each a bootloader or
+      first-install change that is RAM-booted and run on a speaker before it ships:
+  - Our U-Boot sets `board_name`, `board_rev` and `board_serial` from TI EEPROM data that
+    nothing initialises on these boards, and saves the SRAM it finds there with the boot
+    count (an ST10, 2026-11-23). soundtapd reads such values since 0.1.0-alpha.2; U-Boot
+    should not set them (`CONFIG_ENV_VARS_UBOOT_RUNTIME_CONFIG`).
+  - The USB-stick recovery picks its target slot from `bootcmd` alone. After a failed update
+    that is the slot U-Boot would fall back to, and with no environment it is the slot the
+    built-in `bootcmd` tries first; it should take the slot `altbootcmd` names once the count
+    passed `bootlimit`, point `altbootcmd` away from the slot it erases, and reset when its
+    final `env_save` fails.
+  - The first-install module treats an unreadable module type as a match, and maps the
+    Preview models onto the ST10's and ST20's boot chains; it should refuse both until a
+    Preview model is opted in.
 - [x] **AUX latency**: about 0.19 s since 2026-11-12, with a clean 10-minute run on
       the ST10 and the ST20; stock is about 30 ms. Project decision 2026-11-12: about 190 ms
       is acceptable for the first release.
