@@ -10,6 +10,29 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
 
 ## [Unreleased]
 
+## [app-v0.1.0-alpha.3] - 2026-11-23
+
+- The SoundTap app that SoundTap Core 0.1.0-alpha.3 carries; what it fixes is listed under
+  that release.
+
+## [os-v0.1.0-alpha.3] - 2026-11-23
+
+The third alpha of SoundTap Core 0.1.0.
+
+### Security
+
+- **The MQTT bridge's websocket transport** masks its frames with a cryptographic random key
+  (gorilla/websocket, GO-2026-6278).
+
+### Fixed
+
+- **The bootloader no longer stores board values it cannot read**, which on some speakers
+  filled its settings with unreadable data.
+- **Turning the volume on a SoundTouch 20 right after starting a preset** no longer makes the
+  sound drop out for a moment, heard as a pop.
+- **Spotify Connect starts once the speaker is on the network**, instead of failing once at
+  every start-up and trying again.
+
 ## [app-v0.1.0-alpha.2] - 2026-11-23
 
 - The SoundTap app that SoundTap Core 0.1.0-alpha.2 carries; what it fixes is listed under
