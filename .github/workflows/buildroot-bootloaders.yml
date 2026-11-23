@@ -73,11 +73,11 @@ jobs:
           # Print the actual sums first, so a re-pin can be read off a failed run.
           sha256sum st20-spl/* wla-spl/MLO wla-uboot/u-boot.img
           sha256sum -c <<'SUMS'
-          c35444c745384cb15d6d7a219b44aa1ba9d17ab98a8dabc3dbff1e80f2d4a60f  st20-spl/MLO
-          336af97d96707ddeaced7dbf3f19016d470deeb61354a9b3d269a4e5b7d50ada  st20-spl/u-boot-spl.bin
-          d29c8f20524a33079077ebd9da09cf1974d6c2e40f79124495a0bd4e97549838  st20-spl/uImage-spl-sram
-          1e183c2b5a6dd05dc23a0fe2f8d0f09ecf6b2765b9a3bd4a47653c6288ae6ea1  wla-spl/MLO
-          6c8d875e5a1c24d6877df3883f5744cd3cbb971eb7c5e5ff8e9f1c92048d306b  wla-uboot/u-boot.img
+          ed3c65b77b3bad78bbd7ad3b3e0d649f5aa74929a119c600d2f3909bbce18feb  st20-spl/MLO
+          5f94d9581617d8692d23d1ae8bb3577de494121cb17f5b88883ffaae4ab79ee5  st20-spl/u-boot-spl.bin
+          ce258e7a0d3f4cbaebdbd39ad70fbd79a6f7dd5a4ebb01454f3f3607490cecf7  st20-spl/uImage-spl-sram
+          41852b248c4fd8ffc0e031b9fac245015f9282e1225c8a944de6614711ecd216  wla-spl/MLO
+          47c879d444df35b70da398948b668e220c56a938d71caba7f719f08b1c1ec577  wla-uboot/u-boot.img
           SUMS
       # The rescue chain (docs/hardware/st20/rom-usb-recovery.md) serves these bytes.
       # One copy: the sums above hold both legs to the same bytes.
