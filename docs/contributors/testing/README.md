@@ -93,6 +93,8 @@ fails when a test file sits in a directory this table does not list.
   the ADR index's titles equal to the files' own, and `os/tests/docs/test_adr_code_refs.py`
   checks that the code an ADR cites (paths, `pkg.Symbol`, `path/file.go:Symbol`, a symbol
   linked to its file) exists; its allow-list of older broken references only shrinks.
+  `os/tests/docs/test_adr_numbers_in_code.py` fails on a tracked file that cites the number of
+  an ADR that does not exist (a deleted one).
   `os/tests/docs/test_root_pages.py` runs the docs site's hook that brings the README,
   CHANGELOG, RUNBOOK and SECURITY pages onto the site. `os/tests/docs/test_public_tree.py` keeps the
   maintainer's serials, MACs, home network and build host out of every tracked file (it

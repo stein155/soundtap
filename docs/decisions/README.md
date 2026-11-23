@@ -36,7 +36,8 @@ pipeline, or a safety boundary. A bug fix or a refactor inside one package is no
    [`../hardware/hardware-test.md`](../hardware/hardware-test.md) and the pages it links; an ADR links there
    instead of retelling them.
 5. **Numbers stay.** An ADR keeps its number for life. A deleted number is not reused and the
-   others are not renumbered, so links from code, commits and other ADRs keep working.
+   others are not renumbered, so the gaps in the index are deleted ADRs. Code and docs cite
+   only numbers that exist ([`test_adr_numbers_in_code.py`](../../os/tests/docs/test_adr_numbers_in_code.py)).
 
 ## Format
 

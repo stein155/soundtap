@@ -59,7 +59,7 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 + *
 + * The usbnet device is the transport, bcolink0. Every transfer carries one message:
 + *	le16 (channel << 12 | length), then length bytes of payload
-+ * Channel 0 is control (the ADR 0027 management messages), 1 the Wi-Fi station, 2 the wired port;
++ * Channel 0 is control (the ADR 0031 management messages), 1 the Wi-Fi station, 2 the wired port;
 + * data payloads are Ethernet frames. On top of the transport this driver registers
 + *	wlan0	a FullMAC cfg80211 station (scan, connect with the PMK handed down, disconnect,
 + *		station info) whose data is channel 1, with the device's own Wi-Fi MAC;

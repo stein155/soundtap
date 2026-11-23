@@ -338,7 +338,7 @@ fail:
 /*
  * The codec scripts are Bose's (miniDSP program and speaker tuning), so the image carries
  * none: the boot script copies each speaker's own script out of its stock firmware into
- * persistent storage (ADR 0082), and the codec gets exactly stock's register writes.
+ * persistent storage (ADR 0012), and the codec gets exactly stock's register writes.
  */
 #define CODEC_DIR "/mnt/nv/soundtap/codec/"
 

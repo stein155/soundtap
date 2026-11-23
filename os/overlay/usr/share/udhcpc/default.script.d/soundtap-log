@@ -11,7 +11,7 @@
 # It also opens resolv.conf to everyone: udhcpc inherits the umask of whoever started it
 # (077 under the old wifi.sh), and the default script writes resolv.conf afresh on every
 # lease, so it could come out 0600.
-# The media daemons run as their own users (ADR 0083); musl then falls back to a resolver
+# The media daemons run as their own users (ADR 0066); musl then falls back to a resolver
 # on 127.0.0.1, and Spotify and every radio stream lost DNS.
 # a+r, not 0644: init makes it root's and writable for soundtapd's DHCP as well (ADR 0066),
 # and the wired DHCP runs as root.

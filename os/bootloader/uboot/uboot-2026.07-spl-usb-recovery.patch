@@ -20,7 +20,7 @@ cannot be switched on to silence it -- it depends on MMC, which is what such a b
 does not have -- so the entry is guarded in the same style as its neighbours. It only
 surfaces here because turning USB on is what first pulls that header into the build.
 
-See docs/architecture/bootloader-recovery.md.
+See docs/decisions/0130-usb-stick-recovery.md.
 --- a/arch/arm/include/asm/arch-am33xx/spl.h
 +++ b/arch/arm/include/asm/arch-am33xx/spl.h
 @@ -17,6 +17,12 @@

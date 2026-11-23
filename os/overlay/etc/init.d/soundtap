@@ -158,7 +158,7 @@ for kv in kernel/panic=5 vm/panic_on_oom=2 vm/min_free_kbytes=2000 vm/vfs_cache_
 done
 }
 
-# --- logging (ADR 0057) ----------------------------------------------------------------
+# --- logging (ADR 0066) ----------------------------------------------------------------
 # syslogd owns /tmp/soundtap.log and rotates it by rename at 256 KiB, keeping one old copy:
 # bounded RAM, and no line lost to a truncate. Everyone else writes to $LOG, a FIFO one
 # logger drains into syslogd.
@@ -722,7 +722,7 @@ if [ "$MODEL" = unknown ]; then
 	exit 1
 fi
 # The codec scripts are Bose's (miniDSP program and speaker tuning), so the image carries
-# none (ADR 0082). The first boot after an install copies this speaker's own script out of
+# none (ADR 0012). The first boot after an install copies this speaker's own script out of
 # the slot it was installed from: stock's rootfs after the STU, the previous SoundTap image
 # after an update. Both hold it in /lib/firmware. From then on it lives in persistent
 # storage, which updates and factory resets leave alone.

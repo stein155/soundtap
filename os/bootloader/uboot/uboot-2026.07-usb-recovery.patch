@@ -49,7 +49,7 @@ index 40f3f73ce..468db0c20 100644
 + * VOLUME DOWN + PRESET 4 held at power-on: install Update.stu from a USB stick and keep
 + * the settings. Stock U-Boot does this as `sweup uboot preserve`, and an owner who knows
 + * the gesture should not lose it because the bootloader is ours now
-+ * (docs/architecture/bootloader-recovery.md, docs/decisions/0022-usb-emergency-update-in-uboot.md).
++ * (docs/decisions/0130-usb-stick-recovery.md).
 + *
 + * Only a signed SoundTap package goes in (ADR 0048): Update.stu.sig next to it holds the
 + * statement soundtapd checks, and nothing is written unless it verifies against a compiled
@@ -764,7 +764,7 @@ index 40f3f73ce..468db0c20 100644
 + * The Wireless Link has no preset keys, only two buttons: Bluetooth on gpio0_23 and AUX on
 + * gpio0_27, low when pressed, pulled up on the board (docs/hardware/wla/buttons.md). Both held at
 + * power-on stand in for VOLUME DOWN + PRESET 4; the stick goes in its micro-B, as on the
-+ * ST10 (ADR 0095).
++ * ST10 (ADR 0130).
 + */
 +static const char *const rt_wla_buttons[] = { "gpio@44e07000_23", "gpio@44e07000_27" };
 +

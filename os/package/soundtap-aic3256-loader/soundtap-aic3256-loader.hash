@@ -1,3 +1,3 @@
 # Locally calculated.
-sha256  6e347a3034d71b0de6c435c48819ce739eccbfc585564370a63e147958198803  aic3256-loader.c
+sha256  72c23069ce7c0d29a4266b111559b61c185dc1fd1bce53eaebffedf8aeb85bea  aic3256-loader.c
 sha256  b2299ce0890a94a1dabd51141db1cc61a33616c12bb3095defb8fc6d0efbff8a  aic3256-bitbang.c
