@@ -1,0 +1,113 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: 2026 SoundTap contributors
+
+name: Sign
+
+# Signs a draft that release.yml made, and on request publishes it (ADR 0035). The release key
+# is an encrypted secret of the `release` environment, whose deployment branches are limited
+# to main; only this job reads it, and only from main (RELEASING.md, "The release
+# environment"):
+#   SOUNDTAP_RELEASE_KEY             the release key, an ed25519 PEM under a passphrase
+#   SOUNDTAP_RELEASE_KEY_PASSPHRASE  its passphrase
+# tools/release/sign-release.sh does the work, as on a maintainer's machine: it checks the
+# draft's digest, signs with sign.sh and uploads <asset>.sig, and the release stays a draft.
+# A Core release X.Y.Z is signed only against the four hardware reports committed in
+# releases/os-vX.Y.Z/; an alpha needs none. Install the signed draft on your own speakers,
+# then dispatch again with publish=true: ed25519 signs the same statement to the same bytes,
+# so the .sig is the one the speakers took, and sign-release.sh --publish makes it public.
+# release.yml calls this for an alpha right after its draft (never with publish).
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Draft to sign: os-vX.Y.Z or app-vX.Y.Z, an alpha with -alpha.N"
+        required: true
+        type: string
+      publish:
+        description: "Publish it afterwards (only once your own speakers took the signed draft)"
+        required: false
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      publish:
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  sign:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: release
+    concurrency:
+      group: sign
+      cancel-in-progress: false
+    # Downloads the draft, uploads its .sig and, on request, publishes it.
+    permissions:
+      contents: write
+    steps:
+      # Before the key is touched. The environment's branch rule refuses another ref as well.
+      - name: Only main, only a release tag
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          test "$GITHUB_REF" = refs/heads/main || { echo "sign only from main, not $GITHUB_REF" >&2; exit 1; }
+          [[ "$TAG" =~ ^(os|app)-v[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}(-alpha\.[1-9][0-9]{0,8})?$ ]] ||
+            { echo "tag must be os-vX.Y.Z or app-vX.Y.Z, an alpha with -alpha.N" >&2; exit 2; }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # A Core release is signed only against reports committed on main; an alpha's are
+      # checked when there are any.
+      - name: Hardware reports from the repository
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          case $TAG in
+          os-v*-alpha.*) ;;
+          os-v*)
+            test -d "releases/$TAG" || {
+              echo "no releases/$TAG on main: commit the four hardware reports first (RELEASING.md)" >&2
+              exit 1
+            } ;;
+          esac
+      - name: Release key into a private file
+        env:
+          KEY: ${{ secrets.SOUNDTAP_RELEASE_KEY }}
+        run: |
+          test -n "$KEY" || { echo "the release environment has no SOUNDTAP_RELEASE_KEY" >&2; exit 1; }
+          umask 077
+          printf '%s\n' "$KEY" > "$RUNNER_TEMP/release-key.pem"
+      - name: Sign the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+          SOUNDTAP_RELEASE_KEY_PASSPHRASE: ${{ secrets.SOUNDTAP_RELEASE_KEY_PASSPHRASE }}
+        run: |
+          reports=()
+          case $TAG in
+          app-v*) ;;
+          *) if [ -d "releases/$TAG" ]; then reports=("releases/$TAG"); fi ;;
+          esac
+          # openssl reads the passphrase from the environment; it never is an argument.
+          SOUNDTAP_RELEASE_KEY_FILE="$RUNNER_TEMP/release-key.pem" \
+            SOUNDTAP_RELEASE_KEY_PASSIN=env:SOUNDTAP_RELEASE_KEY_PASSPHRASE \
+            tools/release/sign-release.sh "$TAG" "${reports[@]}"
+      - name: Remove the release key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release-key.pem"
+      - name: Publish the signed draft
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+        run: tools/release/sign-release.sh --publish "$TAG"

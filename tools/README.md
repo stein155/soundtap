@@ -46,7 +46,7 @@ The order is in [`RELEASING.md`](../RELEASING.md).
 | `changelog.py`, `notes.py`, `screenshots.py` | The changelog section, the release notes and the README screenshots. |
 | `os_cves.py` | Known CVEs of the packages in Core, from the SBOM. |
 | `release_approval.py`, `hardware_evidence.py`, `release_gate.py` | Refuse to sign without passing hardware reports for every model against the exact asset. |
-| `sign-release.sh`, `sign.sh` | The offline signing step; the private key never leaves the maintainer's machine. |
+| `sign-release.sh`, `sign.sh` | Signs a draft and publishes it; `sign.yml` runs them in the `release` environment, the one place the release key is ([RELEASING.md](../RELEASING.md#the-release-environment)). |
 | `feed_check.py`, `mock_update_server.py` | The first-install feed, and a stand-in for Bose's updater in tests. |
 
 ## `recovery/`: developer recovery

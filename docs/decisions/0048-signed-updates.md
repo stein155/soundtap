@@ -31,9 +31,10 @@ route around the signature or the press on the speaker
 
 Two ed25519 release keys: the active one (`release.PublicKey`), which signs every release, and
 a reserve (`release.ReservePublicKey`), which signs nothing until it replaces the active key.
-Both private halves stay offline with the maintainer, apart from each other;
-`tools/release/sign-release.sh` signs and publishes ([ADR 0035](0035-releases.md)), and the
-release workflow builds the draft assets without a key. Both public halves are compiled into
+The active private half, under its passphrase, is a secret of the GitHub Actions environment
+`release`, limited to `main`, where `sign.yml` runs `tools/release/sign-release.sh` to sign and
+publish ([ADR 0035](0035-releases.md)); the release workflow builds the draft assets without a
+key. The reserve's private half stays offline with the maintainer, apart from the active one. Both public halves are compiled into
 soundtapd, which accepts a statement signed by either and skips an empty one. U-Boot carries
 the same keys for the USB stick (`os/bootloader/uboot/soundtap-keys.h`, generated from
 `release.PublicKeys`; a test fails when the two differ). A speaker can trust one more key, its
@@ -224,7 +225,9 @@ file, not our signature over it).
   holds the private half.
 - U-Boot carries the statement reader, the small-order table and the key handling within its
   size limit ([ADR 0009](0009-mainline-linux-own-bootloaders.md)).
-- The release keys are held offline, not in repository secrets or on a build runner.
+- The active release key is held only as an encrypted secret of the protected `release`
+  environment, which one job on `main` reads; it is never a repository secret and never on a
+  build host. The reserve key is held offline.
 
 ## Code
 
@@ -246,4 +249,5 @@ file, not our signature over it).
 - `os/bootloader/uboot/soundtap-sig.c`, `os/bootloader/uboot/soundtap-keys.h`,
   `os/bootloader/uboot/uboot-2026.07-usb-recovery.patch`: the stick's check.
 - `os/board/image/post-image.sh`: U-Boot's profile must be the image's.
-- `tools/release/sign.sh`, `tools/release/sign-release.sh`, `tools/release/feed_check.py`.
+- `tools/release/sign.sh`, `tools/release/sign-release.sh`, `.github/workflows/sign.yml`,
+  `tools/release/feed_check.py`.

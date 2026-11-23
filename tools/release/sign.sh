@@ -9,7 +9,8 @@
 #
 # sig is the ed25519 signature over everything before " sig=". The key is the PEM file
 # SOUNDTAP_RELEASE_KEY_FILE (default ~/.soundtap-release-key.pem), and is refused unless its
-# public half is the one compiled into soundtapd. Run offline (ADR 0035).
+# public half is the one compiled into soundtapd. For a release, .github/workflows/sign.yml
+# writes it from the release environment's secret and removes it afterwards (ADR 0035).
 #
 # An owner signing their own builds names their own key in SOUNDTAP_OWNER_KEY_FILE instead:
 # any ed25519 key, whose public half they set on their speaker as its owner key (ADR 0048,

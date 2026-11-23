@@ -67,7 +67,7 @@ Keep it short. Add a Mermaid diagram when a picture says it faster.
 | [0014](0014-spotify-through-librespot.md) | Spotify through the librespot session | accepted |
 | [0029](0029-speaker-side-timers-and-household-prefs.md) | Speaker-side sleep timer, alarm and multiroom preferences for the multi-device UI | accepted |
 | [0031](0031-bco-network-card.md) | The BCO is the ST20's network card and runs our own app | accepted |
-| [0035](0035-releases.md) | Releases: two lanes, versioned in the repo, built cold, signed offline | accepted |
+| [0035](0035-releases.md) | Releases: two lanes, versioned in the repo, built cold, signed in a protected environment | accepted |
 | [0040](0040-repository-layout.md) | Repository layout: app/, os/, bco/, docs/ and a slim tools/; Buildroot sees only os/ | accepted |
 | [0041](0041-radio-one-ffmpeg-one-url-rule.md) | Radio: one ffmpeg and one media URL rule | accepted |
 | [0043](0043-mdns-through-avahi.md) | mDNS goes through avahi-daemon over D-Bus; the device registry holds each speaker id to one address | accepted |

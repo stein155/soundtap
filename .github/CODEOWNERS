@@ -9,8 +9,11 @@
 # The release keys compiled into soundtapd, and the repository the updater trusts.
 /app/internal/release/ @stein155
 /app/internal/update/ @stein155
-# Signing, publishing and the feed check.
+# Signing, publishing and the feed check. sign.yml runs with the release key.
 /tools/release/ @stein155
 /.github/workflows/feed.yml @stein155
 /.github/workflows/release.yml @stein155
+/.github/workflows/sign.yml @stein155
+# The hardware reports a Core release is signed against.
+/releases/ @stein155
 /.github/CODEOWNERS @stein155

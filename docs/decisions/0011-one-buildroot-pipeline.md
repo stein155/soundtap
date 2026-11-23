@@ -90,7 +90,8 @@ All CI runs on GitHub-hosted runners; there is no self-hosted runner.
 | Candidates and releases, with the install gate on every model | `build.yml` on a hosted x64 runner, on every push to `main` | An empty machine every run: a build depends on its commit and two caches, and the run records which commit gave which bytes |
 | CI checks, including fork pull requests | `build-stu.yml` on hosted `ubuntu-24.04`, one job per suite | Isolated runners with read-only repository permissions |
 | The OS build of a pull request that touches `os/`, `bco/`, the build or the installer | the `os` job of `build-stu.yml` | A broken image is red before the merge |
-| Draft releases, both lanes | `release.yml` on hosted `ubuntu-24.04` | Publish only a commit CI passed on; signing stays offline ([ADR 0035](0035-releases.md)) |
+| Draft releases, both lanes | `release.yml` on hosted `ubuntu-24.04` | Publish only a commit CI passed on, without the release key ([ADR 0035](0035-releases.md)) |
+| Signing and publishing a draft | `sign.yml` on hosted `ubuntu-24.04`, in the `release` environment, from `main` only | The one job that reads the release key ([ADR 0035](0035-releases.md)) |
 | Weekly reproducibility check of `main` | `reproducible.yml` on hosted `ubuntu-24.04`; its second build starts without the compiler cache | Two full builds, too long for every merge |
 | Bootloader and BCO app package checks, tool builds, the version watch | their own workflows on `ubuntu-24.04`; the bootloader package also on `ubuntu-24.04-arm` | The pinned bootloader sums were measured on arm64 and the package ships from x64; both must give them |
 | Development candidates | `tools/ci/run-build.sh --reuse` on a build host or a laptop | A warm tree |
@@ -142,7 +143,7 @@ single packages, or if a board with a very different chip joins.
 - One profile, one reuse key and one set of checks.
 - A Go module change is `go get`, `go mod tidy` and `go mod vendor` in one commit.
 - Anyone can rebuild a release from its commit and compare it with the published STU. Only the
-  signature is not reproducible; it is added offline after the build ([ADR 0048](0048-signed-updates.md)).
+  signature is not reproducible; `sign.yml` adds it to the draft after the build ([ADR 0048](0048-signed-updates.md)).
 - The reproducibility check costs two full builds a week. The toolchain is shared through its
   cache, so a toolchain that differs between builds is outside what the check sees.
 

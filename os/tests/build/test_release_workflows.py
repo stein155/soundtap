@@ -3,8 +3,9 @@
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
 """Pin the one-product release shape: build.yml builds only the universal STU, from the
-one Buildroot profile, hands off as the run's `candidate` artifact, and release.yml
-publishes that exact candidate."""
+one Buildroot profile, hands off as the run's `candidate` artifact, release.yml publishes
+that exact candidate as a draft, and sign.yml, alone with the release key, signs and
+publishes it."""
 import hashlib
 import json
 import os
@@ -19,6 +20,7 @@ from pathlib import Path
 root = Path(__file__).parents[3]
 workflow = (root / ".github/workflows/build.yml").read_text()
 release = (root / ".github/workflows/release.yml").read_text()
+sign = (root / ".github/workflows/sign.yml").read_text()
 
 # One Buildroot tree for kernel, rootfs and bootloaders (ADR 0011); no script leg left. The
 # only matrix is the install gate's, one job per model, after the one package job.
@@ -83,12 +85,21 @@ assert release.count("needs: ci-passed") == 2
 # Both lanes wait on the README screenshots of the released UI (test_screenshots.py).
 assert 'python3 tools/release/screenshots.py check "$GITHUB_SHA"' in release.split("\n  release:")[0]
 
-# ADR 0035: the key never reaches CI. Both lanes publish a draft; sign-release.sh signs
-# offline and makes it public.
+# ADR 0035: release.yml never sees the release key. Both lanes publish a draft; sign.yml signs
+# it in the release environment (SignWorkflowTest) and makes it public on request.
 assert "SOUNDTAP_RELEASE_KEY" not in release and "sign.sh" not in release
+assert "secrets." not in release and "environment:" not in release
 assert release.count("--draft") == 2
 sign_release = (root / "tools/release/sign-release.sh").read_text()
 assert "sign.sh" in sign_release and "--draft=false" in sign_release
+# An alpha's draft, and only an alpha's, is signed right after it is made, never published.
+for job, needs in (("sign-os", "release"), ("sign-app", "app")):
+    block = release.split(f"\n  {job}:\n", 1)[1].split("\n\n", 1)[0]
+    assert f"needs: {needs}\n" in block, job
+    assert f"if: contains(needs.{needs}.outputs.tag, '-alpha.')\n" in block, job
+    assert "uses: ./.github/workflows/sign.yml\n" in block, job
+    assert "publish" not in block and "secrets" not in block, job
+assert release.count('echo "tag=$tag" >> "$GITHUB_OUTPUT"') == 2
 
 # Execute the workflow's actual Core draft script against local candidate fixtures.
 # GitHub, tag lookup and package inspection are stubbed; checksums and shell gates run.
@@ -172,9 +183,13 @@ esac
                 command.chmod(0o755)
             env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'],
                        FIXTURE=tmp, SCENARIO=scenario, GITHUB_SHA='candidate-sha',
-                       GITHUB_REPOSITORY='fixture/soundtap', VERSION=version, TAGS=tags)
+                       GITHUB_REPOSITORY='fixture/soundtap', VERSION=version, TAGS=tags,
+                       GITHUB_OUTPUT=str(base / 'output'))
             result = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', core_release_script()],
                                     cwd=base, env=env, text=True, capture_output=True, check=False)
+            # The tag goes to the job's outputs, for sign.yml to sign an alpha right away.
+            if result.returncode == 0:
+                self.assertEqual((base / 'output').read_text(), f'tag=os-v{version}\n')
             calls_file = base / 'calls'  # Absent when the script stops before it asks gh anything.
             calls = [json.loads(line) for line in calls_file.read_text().splitlines()] if calls_file.exists() else []
             created = next((call for call in calls if call[:2] == ['release', 'create']), None)
@@ -225,3 +240,207 @@ esac
                                               tags=tags if previous else 'os-v0.1.0-alpha.1\n')
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(notes[4:5], [previous] if previous else [])
+
+
+# sign.yml, the one workflow that reads the release key (ADR 0035): its job's steps, parsed
+# from the file and run below with a stub sign-release.sh, in the order Actions runs them.
+def sign_steps():
+    job = sign.split('\n    steps:\n', 1)[1]
+    steps = []
+    for chunk in re.split(r'\n      - ', '\n' + job)[1:]:
+        step = {'env': {}}
+        lines = chunk.splitlines()
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip() if i else lines[i]
+            if line.startswith('name: '):
+                step['name'] = line[6:]
+            elif line.startswith('uses: '):
+                step['uses'] = line[6:]
+            elif line.startswith('if: '):
+                step['if'] = line[4:]
+            elif line == 'env:':
+                while i + 1 < len(lines) and lines[i + 1].startswith(' ' * 10):
+                    i += 1
+                    key, value = lines[i].strip().split(': ', 1)
+                    step['env'][key] = value
+            elif line == 'run: |':
+                body = []
+                while i + 1 < len(lines) and (lines[i + 1].startswith(' ' * 10) or not lines[i + 1].strip()):
+                    i += 1
+                    body.append(lines[i])
+                step['run'] = textwrap.dedent('\n'.join(body)) + '\n'
+            elif line.startswith('run: '):
+                step['run'] = line[5:] + '\n'
+            i += 1
+        steps.append(step)
+    return steps
+
+
+KEY = '-----BEGIN ENCRYPTED PRIVATE KEY-----\nfixture key, not a key\n-----END ENCRYPTED PRIVATE KEY-----'
+PASSPHRASE = 'fixture passphrase'
+
+
+class SignWorkflowTest(unittest.TestCase):
+    def test_shape(self):
+        head, job = sign.split('\njobs:\n', 1)
+        # Dispatched by hand, or called by release.yml for an alpha; inputs tag and publish.
+        self.assertIn('  workflow_dispatch:\n', head)
+        self.assertIn('  workflow_call:\n', head)
+        self.assertEqual(head.count('      tag:\n'), 2)
+        self.assertEqual(head.count('      publish:\n'), 2)
+        self.assertEqual(head.count('        default: false\n'), 2)
+        # Read-only by default; the one job writes releases and nothing else.
+        self.assertIn('\npermissions:\n  contents: read\n', head)
+        self.assertEqual(re.findall(r'\n    permissions:\n((?:      .*\n)+)', job), ['      contents: write\n'])
+        # The key lives in the release environment, whose branch rule is main.
+        self.assertIn('\n    environment: release\n', job)
+        self.assertEqual(job.count('runs-on: ubuntu-24.04'), 1)
+        self.assertNotIn('set -x', sign)
+        self.assertNotIn('ACTIONS_STEP_DEBUG', sign)
+        # The secrets are read once each, into one step's environment.
+        self.assertEqual(sorted(re.findall(r'secrets\.(\w+)', sign)),
+                         ['SOUNDTAP_RELEASE_KEY', 'SOUNDTAP_RELEASE_KEY_PASSPHRASE'])
+
+    def test_no_expression_in_a_script(self):
+        # Inputs reach the shell through the environment, never spliced into its text.
+        for step in sign_steps():
+            self.assertNotIn('${{', step.get('run', ''), step.get('name'))
+            for value in step['env'].values():
+                self.assertRegex(value, r'^\$\{\{ (inputs\.tag|github\.token|github\.repository|secrets\.\w+) \}\}$')
+
+    def test_actions_are_pinned_by_commit(self):
+        for path in (root / '.github/workflows').glob('*.yml'):
+            for ref in re.findall(r'uses: (\S+)', path.read_text()):
+                if not ref.startswith('./'):
+                    self.assertRegex(ref, r'^[\w.-]+/[\w./-]+@[0-9a-f]{40}$', path.name)
+
+    def test_order(self):
+        names = [step.get('name') or step['uses'].split('@')[0] for step in sign_steps()]
+        self.assertEqual(names, [
+            'Only main, only a release tag', 'actions/checkout', 'Hardware reports from the repository',
+            'Release key into a private file', 'Sign the draft', 'Remove the release key',
+            'Publish the signed draft'])
+        steps = sign_steps()
+        self.assertEqual(steps[5].get('if'), 'always()')
+        self.assertEqual(steps[6].get('if'), 'inputs.publish')
+        self.assertIn('persist-credentials: false', sign)
+
+    def run_job(self, tag, ref='refs/heads/main', publish=False, reports=False, fail=False,
+                key=KEY):
+        """Runs the job's steps as Actions would; returns the step results, the stub's log
+        and the runner's temporary directory afterwards."""
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        tree, temp = tmp / 'tree', tmp / 'runner-temp'
+        (tree / 'tools/release').mkdir(parents=True)
+        temp.mkdir()
+        if reports:
+            (tree / 'releases' / tag).mkdir(parents=True)
+        log = tmp / 'log'
+        stub = tree / 'tools/release/sign-release.sh'
+        stub.write_text(f'''#!/bin/sh
+{{
+	echo "args $*"
+	if [ "$1" != --publish ]; then
+		echo "file $SOUNDTAP_RELEASE_KEY_FILE"
+		echo "mode $(stat -c %a "$SOUNDTAP_RELEASE_KEY_FILE" 2>/dev/null || stat -f %Lp "$SOUNDTAP_RELEASE_KEY_FILE")"
+		echo "passin $SOUNDTAP_RELEASE_KEY_PASSIN"
+		var=${{SOUNDTAP_RELEASE_KEY_PASSIN#env:}}
+		eval "[ \\"\\${{$var}}\\" = '{PASSPHRASE}' ]" && echo "passphrase reaches openssl"
+		cmp -s "$SOUNDTAP_RELEASE_KEY_FILE" "$KEY_COPY" && echo "key intact"
+	fi
+}} >> {log}
+exit {1 if fail else 0}
+''')
+        stub.chmod(0o755)
+        (tmp / 'key-copy').write_text(key + '\n')
+        values = {'inputs.tag': tag, 'github.token': 'fixture-token',
+                  'github.repository': 'fixture/soundtap',
+                  'secrets.SOUNDTAP_RELEASE_KEY': key,
+                  'secrets.SOUNDTAP_RELEASE_KEY_PASSPHRASE': PASSPHRASE}
+        results, failed = [], False
+        for step in sign_steps():
+            condition = step.get('if', 'success()')
+            run = {'success()': not failed, 'always()': True,
+                   'inputs.publish': not failed and publish}[condition]
+            if not run or 'run' not in step:
+                continue
+            env = dict(os.environ, GITHUB_REF=ref, RUNNER_TEMP=str(temp), KEY_COPY=str(tmp / 'key-copy'))
+            for name, value in step['env'].items():
+                env[name] = values[value[4:-3]]
+            done = subprocess.run(['bash', '--noprofile', '--norc', '-eo', 'pipefail', '-c', step['run']],
+                                  cwd=tree, env=env, text=True, capture_output=True, check=False)
+            results.append((step['name'], done))
+            failed = failed or done.returncode != 0
+        return results, log.read_text() if log.exists() else '', temp
+
+    def assertNoSecretShown(self, results):
+        for name, done in results:
+            for secret in (PASSPHRASE, 'fixture key, not a key'):
+                self.assertNotIn(secret, done.stdout + done.stderr, name)
+
+    def test_an_alpha_is_signed_without_reports_and_the_key_removed(self):
+        for tag in ('os-v0.1.0-alpha.1', 'app-v0.1.0-alpha.1', 'app-v0.1.0'):
+            with self.subTest(tag=tag):
+                results, log, temp = self.run_job(tag)
+                self.assertTrue(all(done.returncode == 0 for _, done in results), results)
+                self.assertIn(f'args {tag}\n', log)
+                self.assertIn(f'file {temp}/release-key.pem\n', log)
+                self.assertIn('mode 600\n', log)
+                self.assertIn('passin env:SOUNDTAP_RELEASE_KEY_PASSPHRASE\n', log)
+                self.assertIn('passphrase reaches openssl\n', log)
+                self.assertIn('key intact\n', log)
+                self.assertNotIn('--publish', log)
+                self.assertEqual(list(temp.iterdir()), [])
+                self.assertNoSecretShown(results)
+
+    def test_a_core_release_is_signed_against_the_committed_reports(self):
+        results, log, temp = self.run_job('os-v0.1.0', reports=True)
+        self.assertTrue(all(done.returncode == 0 for _, done in results), results)
+        self.assertIn('args os-v0.1.0 releases/os-v0.1.0\n', log)
+        self.assertEqual(list(temp.iterdir()), [])
+        # An alpha's reports, when there are any, are checked as well.
+        _, log, _ = self.run_job('os-v0.1.0-alpha.2', reports=True)
+        self.assertIn('args os-v0.1.0-alpha.2 releases/os-v0.1.0-alpha.2\n', log)
+
+    def test_a_core_release_without_reports_never_touches_the_key(self):
+        results, log, temp = self.run_job('os-v0.1.0')
+        self.assertIn('no releases/os-v0.1.0 on main', results[-2][1].stderr)
+        self.assertEqual(log, '')
+        self.assertEqual(list(temp.iterdir()), [])
+
+    def test_publish_comes_after_the_key_is_gone(self):
+        results, log, temp = self.run_job('os-v0.1.0-alpha.1', publish=True)
+        self.assertTrue(all(done.returncode == 0 for _, done in results), results)
+        self.assertEqual([name for name, _ in results][-2:], ['Remove the release key', 'Publish the signed draft'])
+        self.assertTrue(log.endswith('args --publish os-v0.1.0-alpha.1\n'), log)
+        self.assertEqual(list(temp.iterdir()), [])
+
+    def test_a_failed_signature_removes_the_key_and_publishes_nothing(self):
+        results, log, temp = self.run_job('app-v0.1.0', publish=True, fail=True)
+        self.assertNotEqual(results[-2][1].returncode, 0)
+        self.assertEqual(results[-1][0], 'Remove the release key')
+        self.assertNotIn('--publish', log)
+        self.assertEqual(list(temp.iterdir()), [])
+
+    def test_only_main_and_only_release_tags(self):
+        for tag, ref in (('os-v0.1.0-alpha.1', 'refs/heads/feature'),
+                         ('os-v0.1.0-alpha.1', 'refs/tags/os-v0.1.0-alpha.1'),
+                         ('os-v0.1.0-beta.1', 'refs/heads/main'),
+                         ('os-v0.1.0-alpha.0', 'refs/heads/main'),
+                         ('candidate-abc', 'refs/heads/main'),
+                         ('os-v0.1.0; echo pwned', 'refs/heads/main'),
+                         ('os-v0.1.0\nos-v0.2.0', 'refs/heads/main'),
+                         ('app-v$(id)', 'refs/heads/main')):
+            with self.subTest(tag=tag, ref=ref):
+                results, log, temp = self.run_job(tag, ref=ref, reports=True)
+                self.assertNotEqual(results[0][1].returncode, 0)
+                self.assertEqual(log, '')
+                self.assertEqual(list(temp.iterdir()), [])
+
+    def test_an_empty_key_secret_is_refused(self):
+        results, log, temp = self.run_job('app-v0.1.0', key='')
+        self.assertIn('no SOUNDTAP_RELEASE_KEY', results[-2][1].stderr)
+        self.assertEqual(log, '')
+        self.assertEqual(list(temp.iterdir()), [])

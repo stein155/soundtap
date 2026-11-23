@@ -343,7 +343,10 @@ read-only hardware evidence for that model exists.
   Owner documentation never asks for SSH.
 - Releases follow [`RELEASING.md`](RELEASING.md) and [`docs/hardware/hardware-test.md`](docs/hardware/hardware-test.md):
   publish only the exact bytes tested. Only the maintainer signs and publishes. Private keys are
-  never in the repository, CI or a build host.
+  never in the repository or on a build host. The release key exists in CI only as an encrypted
+  secret of the protected `release` environment, which only `sign.yml` on `main` reads
+  ([ADR 0035](docs/decisions/0035-releases.md)); it is never a repository secret, and no other
+  workflow names it.
 - Credentials are inert data: never source user-controlled files. Credentials stay on `/mnt/nv`
   (0600) and never reach the browser, logs or diagnostics.
 - From 0.1.0 on-box state survives every update ([ADR 0120](docs/decisions/0120-on-box-state-migrates.md)):

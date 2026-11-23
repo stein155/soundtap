@@ -33,8 +33,9 @@ func SHA256File(path string) (string, error) {
 }
 
 // PublicKey is the active ed25519 key SoundTap release assets are signed with (ADR 0048).
-// The private half stays offline with the maintainer; tools/release/sign-release.sh signs with it
-// (ADR 0035), and tools/release/sign.sh refuses any other key.
+// The private half, under its passphrase, is a secret of the protected release environment;
+// .github/workflows/sign.yml signs with it through tools/release/sign-release.sh (ADR 0035), and
+// tools/release/sign.sh refuses any other key.
 const PublicKey = "3LMtYUZyymdQTtzj+5wUD8iFy8LioqDM2dHTUE25dUA="
 
 // ReservePublicKey is the reserve release key: a second ed25519 key, kept offline apart from

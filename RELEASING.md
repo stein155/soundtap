@@ -42,7 +42,7 @@ Both lanes publish only a commit on which CI (`build-stu.yml`) passed on `main`
 A release goes out only when the maintainer says so, every time. Before that it travels one route:
 
 1. **CI on `main`.** Every push to `main` runs CI (`build-stu.yml`) and, unless it changes
-   only docs, Build (`build.yml`): the checks, the image and the install gate on every model.
+   only docs or a release's hardware reports, Build (`build.yml`): the checks, the image and the install gate on every model.
    No speaker is touched ([ADR 0117](docs/decisions/0117-no-automated-speaker-install.md)). A
    red run on `main` is a bug to fix before anything moves on.
 2. **Soak.** The production candidate (step 1 below) runs for **7 days** on the maintainer's
@@ -68,8 +68,8 @@ SBOM, verifies the `.sig` against `release.PublicKey` (its statement: kind `core
 update feed into a temporary directory to check it. It never reads the private key and never
 contacts GitHub. Without an SBOM or a `.sig`, or while the commit's `release.ReservePublicKey`
 is still the empty placeholder, it says which step is incomplete and exits 3: a skipped step
-is not a pass. The `.sig` comes from the reviewer running `tools/release/sign.sh`
-on the package offline.
+is not a pass. The `.sig` is the release's own, which `sign.yml` puts on the draft (step 5);
+run the dry run again with it before publishing.
 
 ## Release criteria
 
@@ -143,17 +143,19 @@ again. The check proves which UI the images come from, not that they look right.
    need candidate regression evidence; unavailable hardware and prohibited tests remain
    explicit limitations for the maintainer to resolve in release scope, never implied passes.
 3. Write one schema 2 report per model, `hardware-st10.json`, `hardware-st20.json`,
-   `hardware-wla.json` and `hardware-st300.json`, with its evidence files, into one directory (see
-   [Hardware approval](#hardware-approval)).
+   `hardware-wla.json` and `hardware-st300.json`, with its evidence files, into
+   `releases/os-vX.Y.Z/` and open a PR with them (see [Hardware approval](#hardware-approval)).
+   Merge it only after step 4: it moves `main`, and step 4 releases the candidate's own commit.
 4. Run **Release** (`release.yml`) on the same `main` commit. It checks that the candidate
    was built from that commit, verifies the checksum and the STU structure, and creates a
    **draft** release with the package, its `.sha256`, sources, SBOM and the release notes.
    The hosted job allows 60 minutes for downloading and uploading the sources archive;
    actual transfer time still needs measuring on the production candidate.
-5. Sign offline: `tools/release/sign-release.sh os-vX.Y.Z <reports-dir>`. It downloads the
-   draft, checks the digest, refuses to sign unless all four reports pass against those
-   exact bytes and uploads `<asset>.sig`. The release stays a **draft**: no speaker but the
-   maintainer's can see it.
+5. Sign: merge the reports PR, then run **Sign** (`sign.yml`) on `main` with the tag. In the
+   [release environment](#the-release-environment) it runs `tools/release/sign-release.sh`,
+   which downloads the draft, checks the digest, refuses to sign unless all four reports in
+   `releases/os-vX.Y.Z/` pass against those exact bytes and uploads `<asset>.sig`. The release
+   stays a **draft**: no speaker but the maintainer's can see it.
 6. **Staged rollout: the maintainer's bench speakers first.** Download the signed draft
    (`gh release download os-vX.Y.Z -p 'SoundTap-Core-*'`) and install it on each of the
    maintainer's bench speakers through its Updates page, choosing the `.stu` and its `.sig`
@@ -161,9 +163,10 @@ again. The check proves which UI the images come from, not that they look right.
    owner uses, which a soak candidate installed over SSH or unsigned does not exercise. Each
    speaker must come back on the new version and confirm its boot (ADR 0010). A failure
    here stops the release: fix it, and the fix is a new candidate from step 1.
-7. Publish: `tools/release/sign-release.sh --publish os-vX.Y.Z`. It checks that the draft
-   holds the `.sig` that states this tag's kind, version and digest, then makes the release
-   public and latest (an [alpha](#alphas): a prerelease, never latest). From now on speakers on SoundTap see it on their Updates page (within
+7. Publish: run **Sign** again with `publish=true`. It signs again, which gives the same
+   `.sig` (an ed25519 signature is deterministic), and `sign-release.sh --publish` checks that
+   the draft holds the `.sig` that states this tag's kind, version and digest, then makes the
+   release public and latest (an [alpha](#alphas): a prerelease, never latest). From now on speakers on SoundTap see it on their Updates page (within
    the ten minutes soundtapd caches the release list).
 8. Point the update feed at it, in a PR. A speaker still on Bose's software installs from
    `updates/soundtouch` on `main`: the SoundTap app and `docs/installer` name that file
@@ -176,12 +179,13 @@ again. The check proves which UI the images come from, not that they look right.
 # raise os/VERSION and give the tag its CHANGELOG.md section in a PR, merge it
 make screenshots    # once the UI is final; commit docs/assets in a PR, merge it
 gh workflow run build.yml -f profile=production
-# ...hardware test...
+# ...hardware test; the reports and evidence in releases/os-vX.Y.Z/ in a PR, not merged yet...
 gh workflow run release.yml -f lane=os
-tools/release/sign-release.sh os-vX.Y.Z ~/soundtap-reports/os-vX.Y.Z
+# ...merge the reports PR...
+gh workflow run sign.yml -f tag=os-vX.Y.Z
 gh release download os-vX.Y.Z -p 'SoundTap-Core-*' -D ~/soundtap-stage/os-vX.Y.Z
 # ...install the .stu with its .sig on each of your own speakers through its Updates page...
-tools/release/sign-release.sh --publish os-vX.Y.Z
+gh workflow run sign.yml -f tag=os-vX.Y.Z -f publish=true
 gh release download os-vX.Y.Z -p 'SoundTap-Core-*.stu' -D /tmp/feed
 mkdir -p updates
 python3 tools/release/mock_update_server.py --serve /tmp/feed/SoundTap-Core-X.Y.Z.stu \
@@ -190,12 +194,12 @@ python3 tools/release/mock_update_server.py --serve /tmp/feed/SoundTap-Core-X.Y.
 python3 tools/release/feed_check.py updates/soundtouch
 ```
 
-An app draft is signed separately with `tools/release/sign-release.sh app-vX.Y.Z`, which
+An app draft is signed separately with `gh workflow run sign.yml -f tag=app-vX.Y.Z`, which
 signs it as app `X.Y.Z` (kind `app`, the tag's version); a speaker installs an app release
 only with that statement. It follows the same staged order: install
 `SoundTap-app-X.Y.Z-armv7.bin` with its `.sig` on the maintainer's bench speakers (Updates page,
-`POST /api/soundtapd`), then `sign-release.sh --publish app-vX.Y.Z`. The script does not
-require the Core reports for that lane; this is not an exemption from the release approval
+`POST /api/soundtapd`), then `gh workflow run sign.yml -f tag=app-vX.Y.Z -f publish=true`. The
+signing does not require the Core reports for that lane; this is not an exemption from the release approval
 or applicable hardware validation for changes carried by the app.
 
 If `main` moves between steps 1 and 4, the Release workflow refuses to publish. Run
@@ -209,11 +213,12 @@ An alpha is a release published before its hardware approval: version `X.Y.Z-alp
 ([ADR 0035](docs/decisions/0035-releases.md#alphas-prereleases-before-the-hardware-approval)).
 It follows the [Steps](#steps) above with two differences:
 
-- **No hardware reports.** Steps 2 and 3 are not required: `sign-release.sh os-vX.Y.Z-alpha.N`
-  signs without a reports directory and says that it does. Reports given are still checked.
-  Everything else holds: the release criteria, CI on the commit, a `profile=production`
-  candidate from Build on that commit with its sources and SBOM, the CHANGELOG section, the
-  release key under its passphrase, and the maintainer's own speakers before publishing.
+- **No hardware reports.** Steps 2 and 3 are not required, so `release.yml` has `sign.yml`
+  sign the draft right after making it, without reports, saying that it does; reports in
+  `releases/os-vX.Y.Z-alpha.N/` would still be checked. It stays a draft. Everything else
+  holds: the release criteria, CI on the commit, a `profile=production` candidate from Build on
+  that commit with its sources and SBOM, the CHANGELOG section, the release key under its
+  passphrase, and the maintainer's own speakers before publishing.
 - **A prerelease.** `release.yml` creates the draft as a prerelease, and
   `sign-release.sh --publish` publishes it as one, never as latest.
 
@@ -228,13 +233,11 @@ so installing an older alpha over a newer one, or an alpha over its release, is 
 ```sh
 # set os/VERSION and app/VERSION to X.Y.Z-alpha.N with CHANGELOG.md sections for both tags, merge
 gh workflow run build.yml -f profile=production
-gh workflow run release.yml -f lane=os
+gh workflow run release.yml -f lane=os     # makes the draft and signs it
 gh workflow run release.yml -f lane=app
-tools/release/sign-release.sh os-vX.Y.Z-alpha.N        # no reports directory
-tools/release/sign-release.sh app-vX.Y.Z-alpha.N
 # ...install both with their .sig on your own speakers through the Updates page...
-tools/release/sign-release.sh --publish os-vX.Y.Z-alpha.N
-tools/release/sign-release.sh --publish app-vX.Y.Z-alpha.N
+gh workflow run sign.yml -f tag=os-vX.Y.Z-alpha.N -f publish=true
+gh workflow run sign.yml -f tag=app-vX.Y.Z-alpha.N -f publish=true
 # then point the first-install feed at the alpha (step 8), while no release is out
 ```
 
@@ -330,8 +333,9 @@ public repository needs these settings once, by the maintainer:
   commit SHA) and require full-length SHA pins. Workflow permissions: read repository contents
   only; leave "Allow GitHub Actions to create and approve pull requests" off. Fork pull
   requests from first-time contributors wait for approval.
-- **Secrets.** None is required. `NVD_API_KEY` (an NVD API key) is optional: Build's CVE check
-  runs without it at NVD's slower keyless rate.
+- **Secrets.** No repository secret is required. `NVD_API_KEY` (an NVD API key) is optional:
+  Build's CVE check runs without it at NVD's slower keyless rate. The release key is an
+  environment secret, never a repository one ([The release environment](#the-release-environment)).
 - **Features.** Discussions on (the issue form links them), private vulnerability reporting on
   ([SECURITY.md](SECURITY.md)), Dependabot alerts and security updates on.
 - **Branch protection** of `main`, as [The first-install feed](#the-first-install-feed) says,
@@ -369,19 +373,61 @@ Confirm on the installed candidate that nothing listens on port 22.
 
 Each installable Core STU or app binary gets `<asset>.sig` (ADR 0048). The signing script
 selects the one asset with a companion `.sha256`; it does not create separate signatures
-for the source archive or SBOM. CI never holds the key: `release.yml`
-only makes a draft, and `tools/release/sign-release.sh` signs it on the maintainer's machine with
-`tools/release/sign.sh`, which reads the local key file `SOUNDTAP_RELEASE_KEY_FILE` (default
-`~/.soundtap-release-key.pem`) and refuses a key whose public half is not
-`release.PublicKey`. The release key is kept under a passphrase: for a production signature,
-which is what `sign-release.sh` makes, `sign.sh` refuses a key that opens without one. openssl
-asks for the passphrase, or reads it as `SOUNDTAP_RELEASE_KEY_PASSIN` says (openssl's
-`-passin` form, such as `env:VAR` or `file:path`). To put a passphrase on a key:
-`openssl pkey -in <key> -aes256 -out <new key>`. An alpha (bench) signature may use a key
-without one. A running speaker installs an STU or app only with its `.sig`
-picked alongside it. The one exception is an alpha image with
+for the source archive or SBOM. `release.yml` never holds the key: it only makes a draft.
+**Sign** (`sign.yml`) signs it, in the [release environment](#the-release-environment), from
+`main` only: it writes the secret `SOUNDTAP_RELEASE_KEY` to a file only the runner's user can
+read under `$RUNNER_TEMP`, and runs `tools/release/sign-release.sh` with
+`SOUNDTAP_RELEASE_KEY_FILE` naming that file and `SOUNDTAP_RELEASE_KEY_PASSIN=env:SOUNDTAP_RELEASE_KEY_PASSPHRASE`,
+so openssl reads the passphrase from the environment, never from its arguments. A step that
+always runs, failure or not, removes the file. `tools/release/sign.sh` refuses a key whose
+public half is not `release.PublicKey`. The release key is kept under a passphrase: for a
+production signature, which is what `sign-release.sh` makes, `sign.sh` refuses a key that
+opens without one. To put a passphrase on a key: `openssl pkey -in <key> -aes256 -out <new key>`.
+An alpha (bench) signature may use a key without one; openssl asks for a passphrase, or reads
+it as `SOUNDTAP_RELEASE_KEY_PASSIN` says (openssl's `-passin` form, such as `env:VAR`).
+A running speaker installs an STU or app only with its `.sig` picked alongside it. The one exception is an alpha image with
 `/mnt/nv/soundtap/allow-unsigned` (development speakers, for `build.yml` candidates). A
 production image ignores that file.
+
+### The release environment
+
+The release key reaches one job: `sign.yml`'s, in the GitHub Actions environment `release`.
+The maintainer sets it up once, and again with new secrets after a rotation:
+
+1. Create the environment and limit its deployment branches to `main` (Settings →
+   Environments → *New environment* `release` → *Deployment branches and tags*: *Selected
+   branches and tags*, add `main`), or:
+
+   ```sh
+   echo '{"deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}}' |
+     gh api -X PUT repos/stein155/soundtap/environments/release --input -
+   gh api -X POST repos/stein155/soundtap/environments/release/deployment-branch-policies \
+     -f name=main -f type=branch
+   ```
+
+2. Optionally, add yourself as a required reviewer: each signing run then waits for your
+   approval, so pushing to `main` alone cannot sign. Without one, anyone who can run a workflow
+   on `main` can sign. In the settings page, *Required reviewers*; or, together with the branch
+   rule above:
+
+   ```sh
+   printf '{"reviewers": [{"type": "User", "id": %s}], "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}}' \
+     "$(gh api user -q .id)" | gh api -X PUT repos/stein155/soundtap/environments/release --input -
+   ```
+
+3. Set the two secrets in the environment, never in the repository. The key is the PEM
+   encrypted under its passphrase (`sign.sh` refuses one without); `gh` asks for the passphrase
+   without echoing it, so it stays out of the shell history:
+
+   ```sh
+   gh secret set SOUNDTAP_RELEASE_KEY --env release < ~/.soundtap-release-key.pem
+   gh secret set SOUNDTAP_RELEASE_KEY_PASSPHRASE --env release
+   ```
+
+`gh secret list --env release` shows both names, never their values. Nothing else reads them:
+`release.yml` has no secret, and the environment refuses any other branch, pull requests and
+forks. GitHub masks the secrets in logs; `sign.yml` never prints them or turns on shell
+tracing, and a test checks that it does not.
 
 ### Signing your own builds
 
@@ -426,8 +472,10 @@ header in the same PR (`TestUbootKeysAreTheReleaseKeys` fails until then). A new
 changes `u-boot.img`, so the next Core release writes `NAND.U-Boot` on every speaker.
 
 Each private half has its own offline copy under its own passphrase, on separate media in
-separate places, so that one loss or theft does not take both. Neither is ever on a build host, in CI or in the
-repository.
+separate places, so that one loss or theft does not take both. The active key, still under its
+passphrase, is also the secret of the [release environment](#the-release-environment), where
+`sign.yml` signs with it; the reserve is in no secret until it becomes the active key. Neither is
+ever a repository secret, on a build host or in the repository.
 
 ### Before the first public release: the reserve key
 
@@ -454,16 +502,19 @@ differs. None of it has been exercised yet.
 2. In a PR, move the old reserve's public half into `PublicKey` and put the new reserve's
    into `ReservePublicKey`, and regenerate U-Boot's key header. The retired active key is
    no longer in the list.
-3. Release Core and the app from that commit as usual. `sign.sh` checks the key against the
-   `PublicKey` of the checkout it runs from, so `sign-release.sh` from that commit signs with
-   the old reserve, now the active key: `SOUNDTAP_RELEASE_KEY_FILE=<reserve key> sign-release.sh ...`.
-   Speakers in the field accept it because they already trust the reserve.
+3. Set the [release environment](#the-release-environment)'s two secrets to the old reserve,
+   now the active key, and its passphrase. Release Core and the app from that commit as usual.
+   `sign.sh` checks the key against the `PublicKey` of the checkout it runs from, so `sign.yml`
+   on `main` from that commit on signs with the old reserve. Speakers in the field accept it
+   because they already trust the reserve.
 4. A speaker that installs this release trusts the new pair from then on. A speaker that
    skips it still trusts its old pair, which includes the new active key, so it can take
    any later release until the next rotation. A speaker two rotations behind trusts neither
    key and can no longer update through its update page.
 
-A **leaked** key is rotated at once. A **lost** active key is
+A **leaked** key is rotated at once, and its secrets are deleted from the release
+environment first (`gh secret delete SOUNDTAP_RELEASE_KEY --env release`), so nothing signs
+with it in the meantime. A **lost** active key is
 rotated the same way; nothing is lost but the key. If **both** keys are lost, no release can
 be signed for speakers in the field: their update page is closed for good, and so is the
 power-on USB update, which takes only a package signed with a key compiled into U-Boot. What
@@ -496,7 +547,8 @@ speaker on their network or in their hands can still give it software.
 ## Hardware approval
 
 `sign-release.sh` refuses a Core release, an [alpha](#alphas) excepted, unless
-`tools/release/release_approval.py` accepts the reports directory: one report per model (`hardware-st10.json`, `hardware-st20.json`,
+`tools/release/release_approval.py` accepts the reports directory, which `sign.yml` takes from
+`releases/os-vX.Y.Z/` on `main`: one report per model (`hardware-st10.json`, `hardware-st20.json`,
 `hardware-wla.json`, `hardware-st300.json`), each schema 2, naming the exact asset and its SHA-256, the device
 (ST10 `rhino`/`sm2`, ST20 `spotty`/`scm`, WLA `binky`/`sm2`, ST300 `ginger`/`sm2`), every check of that model as
 `pass`, and evidence files whose hashes still match. The WLA report must also carry its RF
@@ -505,6 +557,15 @@ configuration evidence (`rf_config`) and pass `rf-config`, `usb-recovery` and
 (`soundbar-link`), the TV input (`tv-input`) and the bass module (`bass-module`), plus
 `usb-recovery` and `bootcount-rollback`. A report records what was tested; it never authorises a hardware
 action.
+
+`releases/os-vX.Y.Z/` holds the four reports and their evidence files side by side, each
+evidence file named `hardware-<model>-<what>` as its report names it. They are public. Redact
+them before their hashes go into the report, as recorded hardware evidence is redacted
+(`os/tests/fixtures/`): no credentials or account identifiers, serials as `SERIAL0000000000A`,
+MACs as `02:00:00:xx:xx:xx`, addresses as `192.0.2.x`; `os/tests/docs/test_public_tree.py`
+fails on the maintainer's own. No Bose bytes: no firmware, dump or codec script
+([ADR 0049](docs/decisions/0049-no-stock-bytes.md)). Once a release is signed against them,
+they do not change.
 
 On each model, keep the serial boot log, `dmesg`, `/tmp/soundtap.log` and the SHA-256 of
 the tested package. Cover at least:

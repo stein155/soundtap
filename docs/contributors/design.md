@@ -383,16 +383,19 @@ flowchart LR
   main --> REPRO[reproducible.yml weekly: make repro-check<br/>two clean builds, same SHA256SUMS and STU]
   CB --> HW[hardware test on ST10, WLA, ST20, ST300]
   HW --> REL[release.yml lane=os: tag os-vX.Y.Z, draft exact bytes]
+  HW --> REP[hardware reports PR: releases/os-vX.Y.Z/]
   CB -. alpha X.Y.Z-alpha.N: no hardware reports, a prerelease .-> REL
   main --> APP[release.yml lane=app: tag app-vX.Y.Z, draft soundtapd + UI]
-  REL & APP --> SIGN[maintainer: sign offline, still a draft]
+  REL & APP --> SIGN[sign.yml in the release environment, main only:<br/>release key secret, still a draft]
+  REP -. a Core release X.Y.Z: the four reports on main .-> SIGN
   SIGN --> OWN[maintainer's bench speakers: signed upload]
-  OWN --> PUB[maintainer: publish; Core: update feed PR]
+  OWN --> PUB[sign.yml publish=true; Core: update feed PR]
   LINT -. must have passed on the commit .-> REL
   LINT -. must have passed on the commit .-> APP
 ```
 
 - Every workflow runs on GitHub-hosted runners and calls the repository's own entry points, `tools/ci/run-ci.sh` and `tools/ci/run-build.sh`, which a developer's own build machine runs too ([ADR 0011](../decisions/0011-one-buildroot-pipeline.md)).
+- Only `sign.yml` reads the release key: an encrypted secret of the GitHub Actions environment `release`, whose deployment branches are `main` alone. `release.yml` makes drafts without it and has `sign.yml` sign an alpha's at once; a Core release is signed against its four hardware reports in `releases/os-vX.Y.Z/` ([ADR 0035](../decisions/0035-releases.md)).
 - Speakers trust two compiled release keys, the active one and a reserve, in soundtapd and in U-Boot for the USB stick. An owner can add a key of their own, set and removed on the Updates page behind a hold and kept in both U-Boot environment copies; builds signed with it install under a release's rules, and a factory reset removes it. The first-install feed `updates/soundtouch` is held to a signed release by code-owner review and `feed.yml` ([ADR 0048](../decisions/0048-signed-updates.md), [RELEASING.md](../../RELEASING.md#the-first-install-feed)).
 - One pipeline: Buildroot, one profile `os/configs/soundtap_defconfig` ([ADR 0011](../decisions/0011-one-buildroot-pipeline.md)). `make os` builds it, `make stu` packages it with
   `os/installer/build-universal-stu.sh`. Neither the repository nor the STU holds Bose files

@@ -2,11 +2,12 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-# sign-release.sh <tag> [reports-dir]: the offline half of a release (ADR 0035). release.yml
-# publishes a draft with the asset and its .sha256; this downloads it, checks the digest,
-# signs it with the local key (sign.sh) and uploads <asset>.sig. The release stays a draft:
-# the maintainer installs the signed asset on their own speakers first (RELEASING.md,
-# "Steps").
+# sign-release.sh <tag> [reports-dir]: the signing half of a release (ADR 0035), which
+# .github/workflows/sign.yml runs in the release environment with the release key in
+# SOUNDTAP_RELEASE_KEY_FILE. release.yml publishes a draft with the asset and its .sha256; this
+# downloads it, checks the digest, signs it with that key (sign.sh) and uploads <asset>.sig.
+# The release stays a draft: the maintainer installs the signed asset on their own speakers
+# first (RELEASING.md, "Steps").
 #
 # sign-release.sh --publish <tag>: makes that signed draft public, once the own speakers took
 # it. An OS release becomes "latest"; an app release never does (ADR 0035). An alpha, a tag
@@ -14,7 +15,7 @@
 #
 # An OS release is one STU for every model, so it is signed only when reports-dir holds
 # passing hardware-{st10,st20,wla,st300}.json reports made against these exact bytes
-# (release_approval.py). An alpha is signed without them, and says so; reports given for an
+# (release_approval.py); sign.yml takes them from releases/<tag>/ on main. An alpha is signed without them, and says so; reports given for an
 # alpha are still checked.
 set -eu
 publish=

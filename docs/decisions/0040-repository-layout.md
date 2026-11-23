@@ -13,8 +13,9 @@ the image.
 
 ## Decision
 
-Every file belongs to one of four parts, each with an owner and a lifecycle, or to a slim `tools/`
-of host tooling that ships nothing:
+Every file belongs to one of four parts, each with an owner and a lifecycle, to a slim `tools/`
+of host tooling that ships nothing, or to `releases/`, the record of what each Core release was
+tested with:
 
 | Directory | What it is |
 | --- | --- |
@@ -22,6 +23,7 @@ of host tooling that ships nothing:
 | `os/` | SoundTap Core, and the Buildroot external tree (`BR2_EXTERNAL=os`). `os/VERSION`. |
 | `bco/` | The ST20's BCO network processor: our app (`app/`), WiLD core (`wild/`) and image packer (`tools/`). |
 | `docs/` | The documentation and its site; `docs/tools/` makes the README's images and holds the MkDocs hook. |
+| `releases/` | Each Core release's hardware reports and their evidence files, `releases/os-vX.Y.Z/`, as tested; `sign.yml` signs a release only against them ([ADR 0035](0035-releases.md)). Nothing in it ships. |
 | `tools/` | Host tooling that delivers nothing into the image: `ci/` (the CI entry points and helpers: repository lints, licence checks, `buildroot-reuse.sh`, the fake speaker), `release/` (notes, approval, signing, the feed check and mock update server), `hil/` (bench scripts against a speaker), `recovery/` (NAND backup, the ROM-USB restore, its loader and read-back script) and `dev/` (the developer loop behind `make dev`). |
 
 Nothing in `tools/` goes into the image or the STU: Buildroot, `make os` and `make image-check`
@@ -64,7 +66,7 @@ a build with what touches a speaker).
 ## Consequences
 
 - A reader can tell from the top level what ships (`app/`, `os/`, `bco/`) and what does not
-  (`tools/`, `docs/`).
+  (`tools/`, `docs/`, `releases/`).
 - Buildroot sees only `os/`. Packages that build from the rest of the repository say so with
   `$(BR2_EXTERNAL_SOUNDTAP_PATH)/../app`, which keeps that dependency visible in the `.mk`.
 - Python under `os/support/` and `os/tests/` is imported through `sys.path`, never as a package:

@@ -65,6 +65,8 @@ path = [
   "os/container/Dockerfile.builder",
   # Hardware evidence, kept as captured.
   "os/tests/fixtures/**",
+  # Each Core release's hardware reports and evidence, kept as tested (RELEASING.md).
+  "releases/**",
 ]
 SPDX-FileCopyrightText = "2026 SoundTap contributors"
 SPDX-License-Identifier = "GPL-3.0-only"

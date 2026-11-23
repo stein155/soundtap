@@ -10,10 +10,11 @@ name: Build
 # publishes as a version.
 on:
   # Every merge to main builds the image, so a broken build shows up on the PR that broke
-  # it rather than at release time. Docs-only merges skip it.
+  # it rather than at release time. Merges of only docs or of a release's hardware reports
+  # skip it.
   push:
     branches: [main]
-    paths-ignore: ['docs/**', '**/*.md']
+    paths-ignore: ['docs/**', '**/*.md', 'releases/**']
   workflow_dispatch:
     inputs:
       profile:

@@ -14,10 +14,10 @@ name: Release
 # X.Y.Z-alpha.N is an alpha: its draft is a GitHub prerelease, and everything else here
 # (CI, the candidate, production, checksums, sources, SBOM) is required as for a release.
 #
-# Signing is offline (ADR 0035): this workflow never sees the release key. It publishes a
-# draft with the asset and its digest; the maintainer runs tools/release/sign-release.sh <tag>,
-# which signs it locally and uploads <asset>.sig, installs it on their own speakers, and then
-# makes the release public with sign-release.sh --publish <tag>.
+# Signing is sign.yml's (ADR 0035): this workflow never sees the release key. It publishes a
+# draft with the asset and its digest. An alpha's draft is signed at once by sign.yml, called
+# below; a release's once its hardware reports are on main, by dispatching sign.yml. Either
+# stays a draft until the maintainer's own speakers took it and sign.yml publishes it.
 on:
   workflow_dispatch:
     inputs:
@@ -72,6 +72,8 @@ jobs:
     permissions:
       contents: write
       actions: read
+    outputs:
+      tag: ${{ steps.draft.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -79,6 +81,7 @@ jobs:
           fetch-depth: 0
 
       - name: Publish the candidate built from this commit
+        id: draft
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -123,6 +126,7 @@ jobs:
             --notes-file dist/notes.md --draft "${pre[@]}" \
             "dist/$stu" "dist/$stu.sha256" \
             "dist/SoundTap-Core-$version-sources.tar" "dist/SoundTap-Core-$version.cdx.json"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
   app:
     needs: ci-passed
@@ -131,6 +135,8 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: write
+    outputs:
+      tag: ${{ steps.draft.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -148,6 +154,7 @@ jobs:
           go-version-file: app/go.mod
           cache-dependency-path: app/go.mod
       - name: Build and publish the app
+        id: draft
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -171,3 +178,24 @@ jobs:
             "$(cut -d ' ' -f 1 "dist/$bin.sha256")" $previous --os-api "$level" > dist/notes.md
           gh release create "$tag" --target "$GITHUB_SHA" --title "SoundTap app $version" \
             --notes-file dist/notes.md --draft "${pre[@]}" "dist/$bin" "dist/$bin.sha256"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  # An alpha needs no hardware reports (ADR 0035), so its draft is signed right away, in the
+  # release environment; it stays a draft. A release is signed by dispatching sign.yml.
+  sign-os:
+    needs: release
+    if: contains(needs.release.outputs.tag, '-alpha.')
+    permissions:
+      contents: write
+    uses: ./.github/workflows/sign.yml
+    with:
+      tag: ${{ needs.release.outputs.tag }}
+
+  sign-app:
+    needs: app
+    if: contains(needs.app.outputs.tag, '-alpha.')
+    permissions:
+      contents: write
+    uses: ./.github/workflows/sign.yml
+    with:
+      tag: ${{ needs.app.outputs.tag }}

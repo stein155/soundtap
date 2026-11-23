@@ -27,9 +27,9 @@ like the other three ([install records](../hardware/install-records.md#soundtouc
       The ST20 part runs without audio. The signing gate requires all four reports, `hardware-st300.json`
       since 2026-11-15.
 - [x] **Signed updates.** Published Core STUs and app binaries are signed; production speakers refuse unsigned updates
-      ([ADR 0048](../decisions/0048-signed-updates.md)). The key stays offline: `release.yml`
-      publishes a draft, `tools/release/sign-release.sh <tag>` signs it, and after the
-      maintainer's bench speakers took it `sign-release.sh --publish <tag>` publishes it
+      ([ADR 0048](../decisions/0048-signed-updates.md)). `release.yml` publishes a draft
+      without the key; `sign.yml`, the one job with the release key, in a GitHub environment
+      limited to `main`, signs it, and after the maintainer's bench speakers took it publishes it
       ([ADR 0035](../decisions/0035-releases.md)).
 
 ### Security

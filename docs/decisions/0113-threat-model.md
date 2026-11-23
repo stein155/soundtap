@@ -50,7 +50,7 @@ For each stranger: what they can do, what stops the rest, and what we accept.
 - **What stops the rest.** Reboot, factory reset, restore, Wi-Fi changes, setup mode, every update
   but the latest one the speaker is offered ([ADR 0118](0118-update-button-without-press.md)), the owner key and
   the debug bundle wait for a key held on the speaker. Firmware and daemon updates must also carry
-  a signature from the offline release key or from the owner key set on that speaker. The player,
+  a signature from a release key or from the owner key set on that speaker. The player,
   receiver and Bluetooth hooks answer only 127.0.0.1. No route returns a password: the backup
   leaves them out, and saved Wi-Fi lists names only.
 
@@ -126,8 +126,10 @@ the speaker, or already has root on it, can run anything and read everything on 
 ### What the model rests on beyond the speaker
 
 - Only the Release workflow builds what is published, from a commit CI passed on
-  ([ADR 0035](0035-releases.md)), and every Core package and app binary is signed offline with the
-  release key.
+  ([ADR 0035](0035-releases.md)), and every Core package and app binary is signed with the
+  release key by `sign.yml`, the one job that reads it: an encrypted secret of the `release`
+  environment, limited to `main`. Whoever can run a workflow there can sign, so the workflows and
+  the release tooling are code-owner reviewed under branch protection of `main`.
 - A speaker still on Bose's software installs whatever the update feed on `main` names, with a
   CRC check only. Code-owner review of that path and a check that the feed names a published
   release whose `.sig` verifies stand in for the signature check the stock updater lacks; they

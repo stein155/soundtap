@@ -339,8 +339,8 @@ with that board's NAND backup, and an install needs a separately authorised sess
 Run the same install, reboot, persistent-state, recovery and rollback gates as above on the
 ST20, with OLED and BCO networking in place of ST10 LEDs/SCM Wi-Fi. Record the device as
 model `SoundTouch 20`, variant `spotty`, module type `scm` (what SoundTap reports), and put the
-completed `hardware-st20.json` with the other two reports for `sign-release.sh`
-(`RELEASING.md`).
+completed `hardware-st20.json` with the other reports in `releases/os-vX.Y.Z/`, which `sign.yml`
+signs against (`RELEASING.md`).
 
 On a cable, also check the wired port: `eth0` gets a DHCP lease at boot and again
 after a BCO reset, and Wi-Fi keeps its own lease beside it.
