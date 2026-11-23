@@ -112,6 +112,9 @@ like the other three ([install records](../hardware/install-records.md#soundtouc
       setup network on the Wireless Link and the ST10 (2026-11-18). Still open: cold boots on
       the Wireless Link, the ST20 on the same candidate and the SoundTouch 300, and the whole
       set from the candidate.
+      On 2026-11-23 the ST10's first boot after an install of 0.1.0-alpha.2 never reached
+      init; U-Boot's next try of the same slot booted (boot count 2, 145 s in all). Where the
+      first try stopped needs the serial console.
 - [x] The bootloader write must not cross into the spare U-Boot when it skips bad blocks.
       Each U-Boot copy is written only into its own half of `mtd4`: `main`,
       2026-11-12, with a test that puts bad blocks in the primary half.
