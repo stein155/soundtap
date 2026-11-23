@@ -80,11 +80,11 @@ environment.
   value, a newline, a line longer than its buffer) is refused before anything is written. The
   installer module writes the environment itself, because Bose's root filesystem has no
   `fw_setenv`. `fw_printenv` prints a value that holds a newline over several lines; a
-  line that does not start with a key continues the value before it. Our U-Boot leaves such
-  values: `board_late_init` sets `board_name`, `board_rev` and `board_serial` from the TI
-  EEPROM data, which on these boards is SRAM nothing initialised, and the boot count's save
-  writes them to NAND. Not setting them is a bootloader change, still to be proven on a
-  speaker.
+  line that does not start with a key continues the value before it. Our U-Boot left such
+  values before 0.1.0-alpha.3: `board_late_init` set `board_name`, `board_rev`,
+  `board_serial` and `serial#` from TI EEPROM data that on these boards is SRAM nothing
+  initialised, and the boot count's save wrote them to NAND. It no longer sets them
+  (`CONFIG_ENV_VARS_UBOOT_RUNTIME_CONFIG` off), but an environment saved before keeps them.
 - **A damaged environment is rebuilt, not edited.** The image ships no `/etc/u-boot-initial-env`,
   so libubootenv exits with an error instead of falling back to defaults. Before an install and at
   boot confirm, soundtapd reads the raw copies: one that checks out is enough (libubootenv writes
