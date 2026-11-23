@@ -4,6 +4,7 @@
 package flash
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -61,17 +62,20 @@ func (in *Installer) SetEnvEverywhere(read Reader, key, value string) error {
 }
 
 // copiesSay reports whether both copies of the redundant environment check out and hold
-// key at value ("" for absent).
+// key at value ("" for absent). A copy lost to a bad block holds nothing to disagree:
+// rewriteEnv wrote the one left and read it back.
 func (in *Installer) copiesSay(read Reader, key, value string) (bool, error) {
-	primary, err := in.dumpEnv(read, in.Target.EnvMTD, 0, ubootenv.Size)
-	if err != nil {
-		return false, err
+	for _, which := range []int{ubootenv.Primary, ubootenv.Redundant} {
+		c := in.envCopy(which)
+		raw, err := in.dumpEnv(read, c.mtd, c.offset, ubootenv.Size)
+		if errors.Is(err, errBadBlock) {
+			continue
+		}
+		if err != nil || !copyHolds(raw, key, value) {
+			return false, err
+		}
 	}
-	redundant, err := in.dumpEnv(read, ubootMTD, ubootenv.RedundantOffset, ubootenv.Size)
-	if err != nil {
-		return false, err
-	}
-	return copyHolds(primary, key, value) && copyHolds(redundant, key, value), nil
+	return true, nil
 }
 
 // copyHolds reports whether raw is a copy that checks out with key at value. A copy that

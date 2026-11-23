@@ -19,11 +19,32 @@ import (
 // rawNAND is mtd4 and mtd5 with the mtd-utils and libubootenv the environment code runs:
 // flash_erase by block, nandwrite and nanddump with -s and -l, fw_printenv and fw_setenv.
 // cutAfter, when set, fails every command once that many have run, as a power cut would
-// leave the flash.
+// leave the flash. bad holds bad erase blocks, by device and offset, as the tools meet them:
+// nanddump --bb=skipbad reads nothing there, nandwrite fails, flash_erase skips it and
+// libubootenv refuses an environment with a copy in one.
 type rawNAND struct {
 	nand     map[string][]byte
 	cmds     []string
 	cutAfter int
+	bad      map[string]int
+}
+
+func (r *rawNAND) isBad(dev string, offset int) bool {
+	at, ok := r.bad[dev]
+	return ok && offset >= at && offset < at+0x20000
+}
+
+func (r *rawNAND) copyOnBadBlock(args []string) bool {
+	copies, err := ubootenvtest.Config(args)
+	if err != nil {
+		return false
+	}
+	for _, c := range copies {
+		if r.isBad(c.Dev, c.Offset) {
+			return true
+		}
+	}
+	return false
 }
 
 func newRawNAND() *rawNAND {
@@ -51,14 +72,23 @@ func (r *rawNAND) run(_ io.Reader, name string, args ...string) error {
 		dev := r.nand[args[0]]
 		start, _ := strconv.Atoi(args[1])
 		blocks, _ := strconv.Atoi(args[2])
+		if r.isBad(args[0], start) {
+			return nil // "Skipping bad block"
+		}
 		copy(dev[start:start+blocks*0x20000], bytes.Repeat([]byte{0xff}, blocks*0x20000))
 	case "nandwrite":
 		b, err := os.ReadFile(args[len(args)-1])
 		if err != nil {
 			return err
 		}
+		if r.isBad(args[len(args)-2], intArg(args, "-s")) {
+			return io.ErrShortWrite
+		}
 		copy(r.nand[args[len(args)-2]][intArg(args, "-s"):], b)
 	case "fw_setenv":
+		if r.copyOnBadBlock(args) {
+			return io.ErrUnexpectedEOF // libubootenv: -EIO
+		}
 		return ubootenvtest.SetEnv(r.nand, args)
 	}
 	return nil
@@ -66,10 +96,16 @@ func (r *rawNAND) run(_ io.Reader, name string, args ...string) error {
 
 func (r *rawNAND) read(name string, args ...string) ([]byte, error) {
 	if name == "fw_printenv" {
+		if r.copyOnBadBlock(args) {
+			return nil, io.ErrUnexpectedEOF // libubootenv: -EIO
+		}
 		return ubootenvtest.PrintEnv(r.nand, args)
 	}
 	dev := r.nand[args[len(args)-1]]
 	off := intArg(args, "-s")
+	if r.isBad(args[len(args)-1], off) {
+		return nil, nil // --bb=skipbad, and no block after it in the partition
+	}
 	return append([]byte(nil), dev[off:off+intArg(args, "-l")]...), nil
 }
 

@@ -85,6 +85,15 @@ environment.
   boot confirm, soundtapd reads the raw copies: one that checks out is enough (libubootenv writes
   the other), the single copy is converted with every entry kept, and anything else is rebuilt
   with our recipes for this model and `bootcmd` on the running slot, which just proved it boots.
+- **A copy on a bad block is lost, the other carries the environment.** U-Boot boots the copy
+  that reads, and a save that fails on the lost copy writes the other one. libubootenv refuses
+  both copies when one cannot be read, so when `fw_printenv` refuses, soundtapd checks the two
+  blocks (`nanddump --bb=skipbad` reads nothing from a bad one) and, with one lost, reads and
+  writes the copy left itself: the redundant format with the next flag, read back. The lost block
+  is never written. With one copy a cut between its erase and its write leaves U-Boot its built-in
+  `bootcmd`, which boots either slot, until the repair at boot confirm writes the copy again. The
+  way back to stock refuses a board whose primary block is bad before it writes: Bose's U-Boot
+  reads that copy alone. Both copies lost is an error.
 
 ### Boot confirmation and rollback through U-Boot's boot count
 
@@ -188,7 +197,8 @@ good update back).
   readback.
 - `app/internal/flash/bootselect.go`: `HoldRunningSlot`, `SelectSlot`, `armRollback`, `BootLimit`,
   `RepairEnv`, `UseLegacyEnv`, `ConfirmPendingBoot`, and the `fw_setenv` path (`rewriteEnv`,
-  `envConfig`); `app/internal/flash/bootcount.go:ConfirmBootCount`: SCRATCH2.
+  `envConfig`); `app/internal/flash/envlost.go`: a copy lost to a bad block;
+  `app/internal/flash/bootcount.go:ConfirmBootCount`: SCRATCH2.
 - `app/internal/ubootenv/ubootenv.go`: the codecs of both formats; `app/internal/ubootenv/ubootenvtest`
   and `app/internal/ubootenv/writers_test.go`: the fakes and the same-bytes check of every writer.
 - `app/cmd/soundtapd/bootconfirm.go`: `confirmBoot`, `bootConfirmAfter`, `bootConfirmPoll`;

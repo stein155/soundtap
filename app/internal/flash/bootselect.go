@@ -263,15 +263,12 @@ func (in *Installer) RepairEnv(read Reader, variant string) (bool, error) {
 	if !in.Target.EnvRedundant {
 		return in.repairLegacyEnv(read, variant)
 	}
-	primary, err := in.dumpEnv(read, in.Target.EnvMTD, 0, ubootenv.Size)
+	copies, lost, err := in.readCopies(read)
 	if err != nil {
 		return false, err
 	}
-	redundant, err := in.dumpEnv(read, ubootMTD, ubootenv.RedundantOffset, ubootenv.Size)
-	if err != nil {
-		return false, err
-	}
-	if _, _, _, err := ubootenv.Current(primary, redundant); !errors.Is(err, ubootenv.ErrBadCRC) {
+	primary := copies[ubootenv.Primary]
+	if _, _, _, err := ubootenv.Current(primary, copies[ubootenv.Redundant]); !errors.Is(err, ubootenv.ErrBadCRC) {
 		return false, err
 	}
 	env, err := ubootenv.ParseLegacy(primary)
@@ -280,7 +277,7 @@ func (in *Installer) RepairEnv(read Reader, variant string) (bool, error) {
 			return false, err
 		}
 	}
-	return true, in.writeFreshEnv(read, env)
+	return true, in.writeFreshEnv(read, env, lost)
 }
 
 // repairLegacyEnv is RepairEnv for a U-Boot that reads the single 8 KiB copy.
@@ -315,6 +312,9 @@ func (in *Installer) dropStaleRedundantEnv(read Reader) (bool, error) {
 		return false, nil // no NAND.U-Boot in the table, so no copy there to find
 	}
 	redundant, err := in.dumpEnv(read, ubootMTD, ubootenv.RedundantOffset, ubootenv.Size)
+	if errors.Is(err, errBadBlock) {
+		return false, nil // a bad block holds no copy for any U-Boot to boot
+	}
 	if err != nil {
 		return false, err
 	}
@@ -351,8 +351,9 @@ func (in *Installer) rebuiltEnv(variant string) (*ubootenv.Env, error) {
 const ubootMTD = 4
 
 // writeFreshEnv writes env as a whole redundant environment: the redundant copy, then the
-// primary, each read back.
-func (in *Installer) writeFreshEnv(read Reader, env *ubootenv.Env) error {
+// primary, each read back. The copy lost to a bad block (lost, -1 for none) is not
+// written.
+func (in *Installer) writeFreshEnv(read Reader, env *ubootenv.Env, lost int) error {
 	redundant, err := env.EncodeCopy(ubootenv.FreshRedundantFlag)
 	if err != nil {
 		return err
@@ -361,8 +362,13 @@ func (in *Installer) writeFreshEnv(read Reader, env *ubootenv.Env) error {
 	if err != nil {
 		return err
 	}
-	if err := in.writeEnvCopy(read, ubootMTD, ubootenv.RedundantOffset, redundant); err != nil {
-		return err
+	if lost != ubootenv.Redundant {
+		if err := in.writeEnvCopy(read, ubootMTD, ubootenv.RedundantOffset, redundant); err != nil {
+			return err
+		}
+	}
+	if lost == ubootenv.Primary {
+		return nil
 	}
 	return in.writeEnvCopy(read, in.Target.EnvMTD, 0, primary)
 }
@@ -378,6 +384,13 @@ func (in *Installer) UseLegacyEnv(read Reader) error {
 	if !in.Target.EnvRedundant {
 		return nil
 	}
+	lost, err := in.lostCopy(read)
+	if err != nil {
+		return err
+	}
+	if lost == ubootenv.Primary {
+		return fmt.Errorf("%s sits on a bad erase block: Bose's U-Boot would find no environment there", envPart)
+	}
 	env, err := in.Env(read)
 	if err != nil {
 		return err
@@ -389,8 +402,10 @@ func (in *Installer) UseLegacyEnv(read Reader) error {
 	if err := in.writeEnvCopy(read, in.Target.EnvMTD, 0, image); err != nil {
 		return err
 	}
-	if err := in.eraseEnvCopy(read, ubootMTD, ubootenv.RedundantOffset); err != nil {
-		return err
+	if lost != ubootenv.Redundant {
+		if err := in.eraseEnvCopy(read, ubootMTD, ubootenv.RedundantOffset); err != nil {
+			return err
+		}
 	}
 	in.Target.EnvRedundant = false
 	return nil
@@ -403,7 +418,9 @@ func (in *Installer) dumpEnv(read Reader, mtd, offset, n int) ([]byte, error) {
 		args = append(args, "-s", strconv.Itoa(offset))
 	}
 	raw, err := read("nanddump", append(args, in.dev(mtd))...)
-	if err == nil && len(raw) < n {
+	if err == nil && len(raw) == 0 {
+		err = fmt.Errorf("mtd%d+%#x: %w", mtd, offset, errBadBlock)
+	} else if err == nil && len(raw) < n {
 		err = fmt.Errorf("mtd%d+%#x: short read of %d bytes", mtd, offset, len(raw))
 	}
 	return raw, err
@@ -562,7 +579,11 @@ func (in *Installer) Env(read Reader) (*ubootenv.Env, error) {
 		return nil, err
 	}
 	defer os.Remove(cfg)
-	return in.readEnv(read, cfg)
+	env, err := in.readEnv(read, cfg)
+	if lost := in.lostBehind(read, err); lost >= 0 {
+		env, _, err = in.remainingEnv(read, lost)
+	}
+	return env, err
 }
 
 func (in *Installer) readEnv(read Reader, cfg string) (*ubootenv.Env, error) {
@@ -621,6 +642,9 @@ func (in *Installer) rewriteEnv(read Reader, edit func(*ubootenv.Env) (bool, err
 	}
 	defer os.Remove(cfg)
 	current, err := in.readEnv(read, cfg)
+	if lost := in.lostBehind(read, err); lost >= 0 {
+		return in.rewriteRemaining(read, lost, edit)
+	}
 	if err != nil {
 		return err
 	}

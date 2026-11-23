@@ -168,7 +168,20 @@ CFG=/run/fw_env.config
 CFG1=/run/fw_env1.config
 printf '/dev/mtd5 0x0 0x8000 0x20000 1\n/dev/mtd4 0x1c0000 0x8000 0x20000 1\n' >"$CFG"
 echo "/dev/mtd5 0x0 0x2000 0x20000 1" >"$CFG1"
-envcfg() { if fw_printenv -c "$CFG" >/dev/null 2>&1; then echo "$CFG"; else echo "$CFG1"; fi; }  # no copy checks out: the single one
+# libubootenv refuses both copies when one sits on a bad eraseblock; U-Boot boots the other
+# (ADR 0010). UCFG reads the copies as U-Boot does: dumped to files, a bad block as 0xff,
+# which checks out as no copy.
+UCFG=/run/fw_env.uboot.config
+printf '/run/env0.bin 0x0 0x8000 0x8000 1\n/run/env1.bin 0x0 0x8000 0x8000 1\n' >"$UCFG"
+ucopies() {
+  nanddump --omitoob --bb=padbad -l $((0x8000)) -f /run/env0.bin /dev/mtd5 2>/dev/null
+  nanddump --omitoob --bb=padbad -s $((0x1c0000)) -l $((0x8000)) -f /run/env1.bin /dev/mtd4 2>/dev/null
+}
+envcfg() {  # no redundant copy checks out: the single one
+  if fw_printenv -c "$CFG" >/dev/null 2>&1; then echo "$CFG"; return; fi
+  ucopies
+  if fw_printenv -c "$UCFG" >/dev/null 2>&1; then echo "$UCFG"; else echo "$CFG1"; fi
+}
 penv() { fw_printenv -c "$(envcfg)" | sort; }
 eget() { fw_printenv -c "$(envcfg)" -n "$1" 2>/dev/null || true; }
 
@@ -312,6 +325,9 @@ scenario() {
     some) BBARG="badblocks=$(echo $SOME | tr ' ' ,)" ;;
     *) BBARG="badblocks=$(echo "$bb" | tr + ,)" ;;
   esac
+  # A bad block 18 or 19 holds an environment copy: the other one carries the environment.
+  ENVCFG=$CFG
+  case ",${BBARG#badblocks=}," in *,18,*|*,19,*) ENVCFG=$UCFG ;; esac
 
   umount /proc/mtd 2>/dev/null || true
   umount /proc/cmdline 2>/dev/null || true
@@ -384,7 +400,7 @@ scenario() {
 
   # --- the environment: slot switch and boot count, as the installer leaves them, in the
   # redundant format the U-Boot that booted reads
-  [ "$(envcfg)" = "$CFG" ] || fail "the environment is not the redundant one our U-Boot reads"
+  [ "$(envcfg)" = "$ENVCFG" ] || fail "the environment is not the redundant one our U-Boot reads"
   [ "$(eget bootcmd)" = "$TCMD" ] || fail "bootcmd is '$(eget bootcmd)', want '$TCMD'"
   case $(eget "$TARGS") in
     *" soundtap.nandroot=1 ubi.mtd=NAND.Persistent-Storage,2048") ;;

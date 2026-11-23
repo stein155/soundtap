@@ -259,7 +259,7 @@ and installing SoundTap needs no original Bose STU.
 - `bootcmd` in the environment selects the slot on every model; U-Boot's boot count falls back to
   the other slot for a boot soundtapd never confirms. soundtapd writes the environment with
   libubootenv's `fw_setenv` and reads every write back; it rebuilds the environment only when no
-  copy checks out (ADR 0010).
+  copy checks out, and writes the copy left itself when the other sits on a bad block (ADR 0010).
 - U-Boot loads the model's device tree from `/boot` (recipes in `app/internal/flash/recipes.go`)
   and Linux runs `/init`.
 
