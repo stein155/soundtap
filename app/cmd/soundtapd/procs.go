@@ -124,6 +124,12 @@ func runSubprocesses(ctx context.Context, name, deviceID string, names <-chan st
 			// Older builds ran librespot as root and left everything here root's.
 			ownTree(spotifyDir, procUser["librespot"], log)
 			ownTree(spotifyStateDir, procUser["librespot"], log)
+			// librespot reaches Spotify's servers as it starts and exits at once without a
+			// route ("could not initialize spirc"): on every boot it died once and came back
+			// 6 s later. A speaker with no route at all (its setup network) starts it anyway.
+			if !waitUntil(childCtx, librespotRouteWait, func() bool { return hasDefaultRoute(procNetRoute) }) && childCtx.Err() == nil {
+				log.Info("no default route yet; starting librespot anyway", "after", librespotRouteWait)
+			}
 			// umask 077 so the credentials librespot writes are the owner's alone;
 			// librespot creates them with the default mode.
 			// The volume is read at every start, crash restarts included: librespot reports

@@ -41,6 +41,25 @@ func udpListening(table string, port int) bool {
 	return false
 }
 
+var (
+	procNetRoute       = "/proc/net/route"
+	librespotRouteWait = 60 * time.Second
+)
+
+// hasDefaultRoute reports whether a /proc/net/route table holds an IPv4 default route.
+func hasDefaultRoute(table string) bool {
+	b, err := os.ReadFile(table)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(b), "\n")[1:] {
+		if f := strings.Fields(line); len(f) > 1 && f[1] == "00000000" {
+			return true
+		}
+	}
+	return false
+}
+
 // waitUntil polls ready; false once max has passed or ctx ends.
 func waitUntil(ctx context.Context, max time.Duration, ready func() bool) bool { //nolint:revive,predeclared // moved unchanged
 	deadline := time.Now().Add(max)
