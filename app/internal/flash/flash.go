@@ -25,11 +25,12 @@
 //     libubootenv's fw_setenv (ADR 0010).
 //
 // So the order here is chosen so that every failure lands on the running slot:
-// erase the alternate kernel first (a slot with no valid kernel cannot be
-// booted), then write the rootfs, and only write the kernel — the small, fast,
-// last step — once the whole package has streamed through and every CRC in it
-// has checked out. An update interrupted at any point leaves the speaker
-// booting exactly what it booted before.
+// erase the alternate kernel first (stock's U-Boot boots no slot without one), then
+// write the rootfs, and only write the kernel and select the slot -- the last steps --
+// once the whole package has streamed through and every CRC in it has checked out.
+// Under our U-Boot the kernel comes out of the rootfs, so what keeps a half-written
+// slot from booting there is the selection in the environment (bootselect.go). An
+// update interrupted at any point leaves the speaker booting what it booted before.
 package flash
 
 import (
@@ -355,11 +356,19 @@ type Installer struct {
 	written *rootfsDigest
 }
 
-// EraseAlternateKernel invalidates the slot before anything else is written. A
-// slot whose kernel is erased cannot be selected, so every later failure —
-// power loss, a bad CRC, a full disk — leaves the running slot booting.
+// EraseAlternateKernel invalidates the slot for stock's U-Boot before anything else is
+// written: it boots no slot whose kernel partition is erased. Our U-Boot boots the slot
+// the environment selects, which an install changes last.
 func (in *Installer) EraseAlternateKernel() error {
 	return in.Run(nil, "flash_erase", in.dev(in.Target.Alternate.KernelMTD), "0", "0")
+}
+
+// EraseAlternateRootfs erases the alternate slot's root filesystem whole. Under our U-Boot
+// the kernel comes out of the root filesystem, so a written slot boots once something
+// selects it, or once a lost environment leaves U-Boot its built-in bootcmd: a package
+// that turns out not to be the one its signature names must not stay there.
+func (in *Installer) EraseAlternateRootfs() error {
+	return in.Run(nil, "flash_erase", in.dev(in.Target.Alternate.RootfsMTD), "0", "0")
 }
 
 // StartRootfs begins writing the UBI image and returns the writer to feed it and

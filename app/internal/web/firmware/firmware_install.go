@@ -87,15 +87,18 @@ func (s *Handler) installFirmware(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Nothing written so far boots: the slot has no kernel and is not selected. The
-	// signature over the named digest passed before the first write; check that the file
-	// hashes to it before the bootloaders, the kernel or the environment change.
+	// Nothing written so far is selected. The signature over the named digest passed
+	// before the first write; check that the file hashes to it before the bootloaders, the
+	// kernel or the environment change. A native root filesystem carries its kernel and
+	// boots under a lost environment's built-in bootcmd, so one that fails is erased.
 	if _, err := io.Copy(io.Discard, body); err != nil {
+		s.discardRootfs(job, pkg)
 		s.fail(w, "the package was not installed", err)
 		return
 	}
 	if !req.unsignedStock {
 		if err := s.checkSignature(r, release.KindCore, digest.Sum(nil)); err != nil {
+			s.discardRootfs(job, pkg)
 			s.fail(w, "the package was not installed", err)
 			return
 		}
@@ -109,6 +112,16 @@ func (s *Handler) installFirmware(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.selectInstalledSlot(w, job, pkg)
+}
+
+// discardRootfs erases a native root filesystem the install wrote and then refused.
+func (s *Handler) discardRootfs(job *installJob, pkg *stu.Package) {
+	if !pkg.Native {
+		return
+	}
+	if err := job.inst.EraseAlternateRootfs(); err != nil && s.log != nil {
+		s.log.Warn("erasing the refused root filesystem", "err", err)
+	}
 }
 
 // installProgress turns the bytes read off the request into a percentage. It stops at 99:

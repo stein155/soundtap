@@ -184,3 +184,51 @@ func TestSoundTapdUploadOlderNeedsDowngrade(t *testing.T) {
 		}
 	}
 }
+
+// A statement that verifies but names another file's digest is found out only once the
+// whole package went by, after its root filesystem was written. That filesystem carries a
+// kernel and would boot under a lost environment's built-in bootcmd, so it is erased.
+func TestCoreThatMissesItsDigestLeavesNoRootfs(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	oldKey, oldAllow, oldVersion, oldProfile := releaseKeys, allowUnsigned, osVersionFile, profileFile
+	releaseKeys, allowUnsigned = []string{base64.StdEncoding.EncodeToString(pub)}, strictAllowUnsigned
+	dir := t.TempDir()
+	osVersionFile, profileFile = filepath.Join(dir, "os-version"), filepath.Join(dir, "profile")
+	t.Cleanup(func() {
+		releaseKeys, allowUnsigned, osVersionFile, profileFile = oldKey, oldAllow, oldVersion, oldProfile
+	})
+	for path, text := range map[string]string{osVersionFile: "0.1.0\n", profileFile: "production\n"} {
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pkg := universalST10Package(t)
+	other := sha256.Sum256(append([]byte("not "), pkg...))
+	sig := signed(t, priv, release.KindCore, release.ProfileProduction, "0.2.0", other[:])
+
+	f := &fakeFlash{}
+	s := wlaInstallServer(t, f, "root=ubi0:rootfs ubi.mtd=9,2048") // running PONG
+	s.firmwareModel = func() (string, error) { return "st10", nil }
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/core-update", nil)
+	if err := s.InstallStream(rec, req, func() (io.ReadCloser, int64, string, error) {
+		return io.NopCloser(bytes.NewReader(pkg)), int64(len(pkg)), sig, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(rec.Body.String(), `"installed":true`) {
+		t.Fatalf("installed a package that misses its digest: %s", rec.Body)
+	}
+	formatted, erased := -1, -1
+	for i, c := range f.cmds {
+		if strings.HasPrefix(c, "ubiformat /dev/mtd8") {
+			formatted = i
+		}
+		if c == "flash_erase /dev/mtd8 0 0" {
+			erased = i
+		}
+	}
+	if formatted < 0 || erased < formatted {
+		t.Errorf("PING's root filesystem written at %d, erased at %d: %q", formatted, erased, f.cmds)
+	}
+}
