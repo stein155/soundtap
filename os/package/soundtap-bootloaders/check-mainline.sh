@@ -22,7 +22,12 @@ mainline=$repo/os/bootloader
 mkdir -p "$out"
 out=$(CDPATH= cd -- "$out" && pwd)
 tarball=$out/u-boot-2026.07.tar.bz2
-[ -f "$tarball" ] || curl -fsSL https://ftp.denx.de/pub/u-boot/u-boot-2026.07.tar.bz2 -o "$tarball"
+# ftp.denx.de first, then Buildroot's mirror of it, as the build itself falls back; the hash
+# below decides what is accepted either way.
+for site in https://ftp.denx.de/pub/u-boot https://sources.buildroot.net/uboot; do
+	[ -f "$tarball" ] || curl -fsSL --connect-timeout 20 "$site/u-boot-2026.07.tar.bz2" -o "$tarball" ||
+		rm -f "$tarball"
+done
 grep -q "$(sha256sum <"$tarball" | cut -d ' ' -f 1)  u-boot-2026.07.tar.bz2" "$here/soundtap-bootloaders.hash" || {
 	echo "$tarball does not match soundtap-bootloaders.hash" >&2; rm -f "$tarball"; exit 1
 }
