@@ -10,17 +10,76 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
 
 ## [Unreleased]
 
+## [app-v0.1.0-alpha.4] - 2026-11-24
+
+- The SoundTap app that SoundTap Core 0.1.0-alpha.4 carries; what it changes is listed under
+  that release.
+
+## [os-v0.1.0-alpha.4] - 2026-11-24
+
+The fourth alpha of SoundTap Core 0.1.0.
+
 ### Added
 
 - **A firmware install names the bootloader copies it rewrote**, in its answer and on the
   Updates page, so it is clear whether the SPL and U-Boot were replaced.
 - **`/api/health` reports the SPL and U-Boot on NAND** by SHA-256 (`boot.bootloader`), so the
   boot chain can be checked on a speaker without SSH.
+- **An install from Bose's software keeps the SoundTouch 20's clock settings**: on or off,
+  12 or 24 hours and the time zone, so the standby clock shows at once without opening the
+  settings first.
+
+- **Previews for more SoundTouch models**: the SoundTouch 20 and 30 Series III, the
+  SoundTouch 30 Series I/II, the Portable, the SA-5 and the SoundTouch adapter. They are worked
+  out from Bose's software alone and have never run on hardware, their recovery included. They
+  install only from the release's preview package (`SoundTap-Core-X.Y.Z-preview.stu`), which the
+  installers fetch after an extra confirmation. The Lifestyle 600/650 module is refused.
+
+### Changed
+
+- **The USB stick at power-on needs no signature and also takes Bose's own update file**:
+  `Update.stu` alone, without `Update.stu.sig`; holding the keys is the permission. A SoundTap
+  package puts SoundTap back; Bose's file for the model goes back to Bose, its bootloader
+  included. No install from a stick has run on any model yet.
+- **Multiroom sends lossless FLAC between speakers instead of raw PCM**, roughly half to two
+  thirds of the data, so a SoundTouch 20 leading a group has far less to push through its
+  network chip, where followers dropped out. **Update every SoundTap speaker to this Core before grouping them:** a
+  speaker on an older Core can still lead a group but stays silent when it follows an updated
+  one.
 
 ### Fixed
 
+- **The bass no longer swells and fades while the volume changes** on the SoundTouch 10 and
+  20: their codec now gets its level as stock sends it, a gain word and a decibel word,
+  instead of one 48-bit number.
+- **No more pop on a SoundTouch 20 leading a multiroom group**: the stream server and the radio
+  decoder run below the sound card's feed, which ran dry for a moment.
 - **The package report lists the SoundTouch 300** among the models a Core package installs on;
   it takes the Wireless Link's modules and was left out.
+- **The SoundTouch 20 holds its Wi-Fi uploads back instead of dropping them on the network
+  chip**: when the chip's transmit buffers are full, frames wait on the speaker, the chip
+  has one buffer more and tries a frame on air seven times instead of five. A multiroom
+  leader lost about one TCP segment in ten this way, and followers dropped out. `/api/health`
+  shows the chip's transmit counters as `bco`.
+
+### Changed
+
+- **Settings, laid out again as Stockholm's**: straight rows in titled groups (Speakers,
+  Household and This app; on a speaker Sound, Speaker, Connection and Maintenance), a chevron on
+  every row that opens a page, and switches and sliders that apply at once; the name and the
+  alarm keep their own Save. Media servers moved to the menu, your own station to the TuneIn
+  page, and the signing key, firmware upload and crash reports under For developers. The MQTT
+  port, TLS and discovery prefix wait behind More options. The stereo/mono switch shows only
+  on the SoundTouch 10, as on stock. The colour scheme follows the system; the AUX name and the
+  appearance setting are gone.
+
+### Removed
+
+- **The weather and the date on the SoundTouch 20's standby clock**, with the town search
+  (`GET /api/geocode`) and the `city`, `lat`, `lon` and `weatherOn` display settings: the
+  clock shows the time alone, as stock's, which keeps the least of the OLED lit, and the
+  speaker no longer contacts Open-Meteo. The clock keeps the browser's timezone.
+- **Backup and restore in the web UI**; `GET /api/backup` and `POST /api/restore` remain.
 
 ## [app-v0.1.0-alpha.3] - 2026-11-23
 
