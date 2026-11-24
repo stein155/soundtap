@@ -6,10 +6,11 @@ import { Defs, St10, St20, St300, Wla } from './drawings';
 
 type ModelKey = 'st10' | 'st20' | 'st300' | 'wla';
 
-// Which drawing a speaker gets, from the model it reports. Unknown models get the
-// ST10's.
-const modelKey = (model?: string): ModelKey =>
-  /Wireless Link/i.test(model || '')
+// Which drawing a speaker gets, from the model it reports: the speaker's own type
+// ("SoundTouch Wireless Link Adapter") or its short name ("WLA", "ST300"). Unknown models
+// get the ST10's.
+export const modelKey = (model?: string): ModelKey =>
+  /Wireless Link|^WLA$/i.test(model || '')
     ? 'wla'
     : /300/.test(model || '')
       ? 'st300'
