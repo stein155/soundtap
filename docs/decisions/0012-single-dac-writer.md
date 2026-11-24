@@ -18,8 +18,9 @@ so neither the repository nor an image may carry it ([ADR 0049](0049-no-stock-by
 Every speaker that runs SoundTap was installed from a slot that holds it in `/lib/firmware`:
 stock's rootfs after the STU install, or the previous SoundTap image after an update.
 
-Stock applies the master volume in the codec's DSP, not in the PCM: APServer writes a 48-bit
-coefficient (unity `0x400000000000`) into the page 0x2C register 0x10 block per step. Applying
+Stock applies the master volume in the codec's DSP, not in the PCM: APServer writes two words
+per step into the page 0x2C register 0x10 block, the gain in Q22 (unity `0x400000`) and the
+same level in dB times 65536 (`0` at unity), from two 101-entry tables. Applying
 the master volume in the PCM instead makes a step audible only after the sink buffer, and at
 the lowest steps hands the codec a signal near the bottom of its word
 ([ST20 observations](../hardware/st20/hardware-contract.md#observations-behind-audio-choices),
@@ -77,8 +78,9 @@ full-scale pass has succeeded:
 
 - `SetVolume` hands the gain to the codec at once; a worker runs the tool and the newest value
   wins. The PCM then reaches the codec at full scale.
-- The coefficient is `stockVolumeGain` (our own fit to stock's curve) times 2^46. No table is
-  copied from Bose.
+- Word 0 is `stockVolumeGain` (our own fit to stock's curve) in Q22, word 1 its level in dB
+  times 65536. No table is copied from Bose. Sending the gain as one 48-bit number instead put
+  noise in word 1 that changed with every step, and the bass with it (ST20, 2026-11-23).
 - The PCM keeps what is relative: the duck, the hold gate, and an announcement against the
   source. An announcement louder than the listening volume turns the codec up to its level and
   the source down by the same ratio in the PCM, timed to the moment the block reaches the DAC,
@@ -115,7 +117,8 @@ Alternatives that lost:
   persistent volume and the owner's backup file hold the speaker's own copy; factory reset
   keeps it, because the reset removes only named files.
 - A speaker whose persistent volume lost the script, and whose other slot has none, stays muted
-  with a logged error. The way back is a backup file exported while it still had the script,
+  with a logged error. The way back is a backup file exported while it still had the script
+  (`GET /api/backup`, restored with `POST /api/restore`; the web UI has no backup button),
   or a reinstall from stock (a production image has no shell to copy it by hand). The USB-stick
   recovery does not check the other-slot marker.
 - A volume step costs one codec write, about 34 register writes plus the buffer flip. Over the

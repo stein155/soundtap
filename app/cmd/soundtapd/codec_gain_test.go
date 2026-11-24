@@ -71,16 +71,31 @@ func TestGainPassUsesBitbangWithoutSPI(t *testing.T) {
 	}
 }
 
-// The coefficient is the 48-bit pair stock writes as words 0 and 1, unity 0x400000000000;
-// stock's volume 50 is 0x01c0a9e0c000, -31.25 dB.
+// Words 0 and 1 are stock's two tables side by side: the gain in Q22 and the same level in
+// dB times 65536. Stock's volume 50 is 01c0a9 e0c000 (-31.25 dB) and volume 10 0007d9 bd9c28
+// (-66.39 dB); unity is 400000 000000 and silence 000000 800000.
 func TestCodecGainHex(t *testing.T) {
-	for gain, want := range map[float64]string{1: "400000000000", 2: "400000000000", 0.5: "200000000000", 0: "000000000000", -1: "000000000000"} {
+	for gain, want := range map[float64]string{1: "400000000000", 2: "400000000000", 0.5: "200000f9faba",
+		0: "000000800000", -1: "000000800000", math.Pow(10, -31.25/20): "01c0a9e0c000"} {
 		if got := codecGainHex(gain); got != want {
 			t.Fatalf("codecGainHex(%g) = %s, want %s", gain, got, want)
 		}
 	}
-	if got := codecGainHex(math.Pow(10, -31.25/20)); got[:6] != "01c0a9" {
-		t.Fatalf("-31.25 dB = %s, want stock's high word 01c0a9", got)
+	got := codecGainHex(audio.VolumeGain(10))
+	hi, _ := strconv.ParseUint(got[:6], 16, 32)
+	lo, _ := strconv.ParseUint(got[6:], 16, 32)
+	if hi < 0x7d8 || hi > 0x7da || lo < 0xbd9c27 || lo > 0xbd9c29 {
+		t.Fatalf("volume 10 = %s, want stock's 0007d9 bd9c28 within one", got)
+	}
+	// Word 1 only ever rises with the volume: it is the level, not the gain's low bits.
+	prev := int32(-1 << 23)
+	for v := 1; v <= 100; v++ {
+		w, _ := strconv.ParseUint(codecGainHex(audio.VolumeGain(v))[6:], 16, 32)
+		db := int32(w<<8) >> 8
+		if db < prev {
+			t.Fatalf("volume %d: dB word %d below volume %d's %d", v, db, v-1, prev)
+		}
+		prev = db
 	}
 }
 

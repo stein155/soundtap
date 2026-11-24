@@ -321,7 +321,21 @@ func (c *codecVolume) SetGain(gain float64) {
 	}
 }
 
-// codecGainHex is gain as the DSP's 48-bit volume coefficient, 0x400000000000 at unity.
+// codecGainHex is gain as words 0 and 1 of the DSP's volume block, as the tools take them
+// (HEX48, word 0 first). They are two numbers, as stock's two 101-entry tables are: word 0 is
+// the linear gain in Q22 (0x400000 unity), word 1 the same level in dB times 65536, a signed
+// 24-bit value (0 at unity, 0x800000 = -128 dB for silence). Read as one 48-bit number,
+// stock's volume 50 happens to come out at -31.25 dB, which once made word 1 the low half of
+// the gain: noise that jumped with every step, and the codec script's volume-dependent bass
+// with it (heard on an ST20, 2026-11-23).
 func codecGainHex(gain float64) string {
-	return fmt.Sprintf("%012x", uint64(math.Round(min(max(gain, 0), 1)*(1<<46))))
+	g := min(max(gain, 0), 1)
+	db := uint64(0x800000)
+	if g > 0 {
+		v := int64(math.Round(max(20*math.Log10(g), -128) * 65536))
+		db = uint64(v & 0xffffff)
+	}
+	// Word 0 as before: the top of the gain rounded at 2^46, which lands on stock's 0x01c0a9
+	// at volume 50 where rounding at 2^22 would give 0x01c0aa.
+	return fmt.Sprintf("%06x%06x", uint64(math.Round(g*(1<<46)))>>24, db)
 }
