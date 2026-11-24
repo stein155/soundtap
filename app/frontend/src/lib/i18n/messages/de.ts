@@ -242,6 +242,7 @@ const de: Messages = {
   firmwareKernel: 'Kernel',
   firmwareModels: 'Modelle',
   firmwareModules: 'Module',
+  firmwareBootloaders: 'Bootloader neu geschrieben',
   firmwareCompatible: 'Für diesen Lautsprecher geeignet.',
   firmwareNotInstallable:
     'Dieser Lautsprecher kann keine Firmware schreiben. Nutze den USB-Stick aus der Installationsanleitung.',

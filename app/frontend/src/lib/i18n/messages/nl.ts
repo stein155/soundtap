@@ -236,6 +236,7 @@ const nl: Messages = {
   firmwareKernel: 'Kernel',
   firmwareModels: 'Modellen',
   firmwareModules: 'Modules',
+  firmwareBootloaders: 'Bootloaders herschreven',
   firmwareCompatible: 'Geschikt voor deze speaker.',
   firmwareNotInstallable:
     'Deze speaker kan geen firmware schrijven. Gebruik de USB-stick uit de installatiegids.',

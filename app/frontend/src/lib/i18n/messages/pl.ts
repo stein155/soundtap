@@ -237,6 +237,7 @@ const pl: Messages = {
   firmwareKernel: 'Jądro',
   firmwareModels: 'Modele',
   firmwareModules: 'Moduły',
+  firmwareBootloaders: 'Programy rozruchowe zapisane ponownie',
   firmwareCompatible: 'Zgodne z tym głośnikiem.',
   firmwareNotInstallable:
     "Ten głośnik nie może zapisywać oprogramowania. Użyj pendrive'a opisanego w instrukcji instalacji.",

@@ -236,6 +236,7 @@ const tr: Messages = {
   firmwareKernel: 'Çekirdek',
   firmwareModels: 'Modeller',
   firmwareModules: 'Modüller',
+  firmwareBootloaders: 'Önyükleyiciler yeniden yazıldı',
   firmwareCompatible: 'Bu hoparlörle uyumlu.',
   firmwareNotInstallable:
     'Bu hoparlör yazılım yazamaz. Kurulum kılavuzunda anlatılan USB belleği kullanın.',

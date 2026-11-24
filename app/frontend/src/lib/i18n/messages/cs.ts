@@ -236,6 +236,7 @@ const cs: Messages = {
   firmwareKernel: 'Jádro',
   firmwareModels: 'Modely',
   firmwareModules: 'Moduly',
+  firmwareBootloaders: 'Zavaděče přepsány',
   firmwareCompatible: 'Kompatibilní s tímto reproduktorem.',
   firmwareNotInstallable:
     'Tento reproduktor nemůže zapisovat firmware. Použijte USB disk podle instalační příručky.',

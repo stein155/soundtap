@@ -236,6 +236,7 @@ const en = {
   firmwareKernel: 'Kernel',
   firmwareModels: 'Models',
   firmwareModules: 'Modules',
+  firmwareBootloaders: 'Bootloaders rewritten',
   firmwareCompatible: 'Compatible with this speaker.',
   firmwareNotInstallable:
     'This speaker cannot write firmware. Use the USB stick described in the install guide.',

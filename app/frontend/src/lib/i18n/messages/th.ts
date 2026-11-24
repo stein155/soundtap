@@ -220,6 +220,7 @@ const th: Messages = {
   firmwareKernel: 'เคอร์เนล',
   firmwareModels: 'รุ่น',
   firmwareModules: 'โมดูล',
+  firmwareBootloaders: 'เขียนบูตโหลดเดอร์ใหม่แล้ว',
   firmwareCompatible: 'ใช้งานร่วมกับลำโพงนี้ได้',
   firmwareNotInstallable: 'ลำโพงนี้เขียนเฟิร์มแวร์ไม่ได้ ใช้แฟลชไดรฟ์ USB ตามคู่มือการติดตั้ง',
   firmwareInstallWarn: 'การติดตั้งจะเขียนลงช่อง NAND สำรอง อย่าถอดปลั๊กลำโพง',

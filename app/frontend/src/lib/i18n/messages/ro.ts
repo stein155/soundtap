@@ -237,6 +237,7 @@ const ro: Messages = {
   firmwareKernel: 'Kernel',
   firmwareModels: 'Modele',
   firmwareModules: 'Module',
+  firmwareBootloaders: 'Încărcătoare de pornire rescrise',
   firmwareCompatible: 'Compatibil cu acest difuzor.',
   firmwareNotInstallable:
     'Acest difuzor nu poate scrie firmware. Folosiți stick-ul USB descris în ghidul de instalare.',

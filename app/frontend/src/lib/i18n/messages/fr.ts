@@ -239,6 +239,7 @@ const fr: Messages = {
   firmwareKernel: 'Noyau',
   firmwareModels: 'Modèles',
   firmwareModules: 'Modules',
+  firmwareBootloaders: 'Chargeurs d’amorçage réécrits',
   firmwareCompatible: 'Compatible avec cette enceinte.',
   firmwareNotInstallable:
     "Cette enceinte ne peut pas écrire de micrologiciel. Utilisez la clé USB décrite dans le guide d'installation.",

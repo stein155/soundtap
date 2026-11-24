@@ -18,6 +18,7 @@ import (
 
 	"github.com/stein155/soundtap/app/internal/counters"
 	"github.com/stein155/soundtap/app/internal/flash"
+	"github.com/stein155/soundtap/app/internal/install"
 )
 
 // Bounds a speaker actually runs into. The ST10 has 128 MiB of RAM and a NAND
@@ -130,6 +131,9 @@ type bootState struct {
 	// Previous is how the boot before this one ended, as lastboot.go read it from ramoops:
 	// reboot, power loss, panic and so on. Empty when nothing was recorded.
 	Previous string `json:"previous"`
+	// Bootloader is the SPL and U-Boot on NAND by SHA-256, the sums of a build's MLO and
+	// u-boot.img; absent off NAND.
+	Bootloader *install.BootChain `json:"bootloader,omitempty"`
 }
 
 // healthCounters are internal/counters' counts and how long they have been counting: each
@@ -156,6 +160,8 @@ func (s *Server) bootState() bootState {
 	}
 	if slot, err := flash.SlotFromCmdline(read(sysPath("/proc/cmdline"))); err == nil {
 		b.Slot = slot.Name
+		chain := s.fw.BootChain()
+		b.Bootloader = &chain
 	}
 	return b
 }

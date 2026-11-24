@@ -236,6 +236,7 @@ const nb: Messages = {
   firmwareKernel: 'Kjerne',
   firmwareModels: 'Modeller',
   firmwareModules: 'Moduler',
+  firmwareBootloaders: 'Oppstartslastere skrevet på nytt',
   firmwareCompatible: 'Kompatibel med denne høyttaleren.',
   firmwareNotInstallable:
     'Denne høyttaleren kan ikke skrive fastvare. Bruk USB-pinnen som er beskrevet i installasjonsveiledningen.',

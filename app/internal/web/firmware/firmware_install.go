@@ -300,6 +300,8 @@ type installJob struct {
 	// mainline image: one kernel serves rhino and binky, so the name inside it names
 	// whichever model the build happened to be driven from.
 	kernelWasSuffixed bool
+	// bootloaders names the boot chain copies this install rewrote, for the report.
+	bootloaders []string
 	// The rootfs writer, started when its module begins, because ubiformat has to be
 	// told the image size up front -- and the size is in the module header, which
 	// arrives immediately before the payload.

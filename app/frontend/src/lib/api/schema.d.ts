@@ -4978,6 +4978,15 @@ export interface components {
             confirmed: boolean;
             /** @description How the boot before this one ended, as ramoops recorded it (reboot, power loss, panic, ...); empty when nothing was recorded. */
             previous: string;
+            /** @description The SPL and U-Boot on NAND by SHA-256, each image as long as its header says: the sums of a build's MLO and u-boot.img. Read once per soundtapd start; absent off NAND. A copy that cannot be read or does not parse is empty. */
+            bootloader?: {
+                /** @description The SPL in mtd0. */
+                spl: string;
+                /** @description The first U-Boot copy in mtd4. */
+                uboot: string;
+                /** @description The spare U-Boot copy at mtd4+0x100000. */
+                ubootSpare: string;
+            };
         };
         ReleaseRef: {
             tag: string;
@@ -5127,6 +5136,8 @@ export interface components {
             slot?: string;
             /** @description Slot still booting. */
             runningSlot?: string;
+            /** @description The boot chain copies the install rewrote (mtd1, mtd4+0x100000, ...); absent when the speaker already held the package's. */
+            bootloaders?: string[];
             reason?: string;
             /** @description What the signature says the package is; stock for the stock firmware. */
             version?: string;

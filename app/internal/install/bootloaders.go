@@ -107,6 +107,15 @@ var stockBootSlots = []bootSlot{
 
 func (s bootSlot) device() string { return fmt.Sprintf("/dev/mtd%d", s.mtd) }
 
+// String names the copy as the install report and the log do: mtd1, or mtd4+0x100000
+// for the spare U-Boot.
+func (s bootSlot) String() string {
+	if s.offset == 0 {
+		return fmt.Sprintf("mtd%d", s.mtd)
+	}
+	return fmt.Sprintf("mtd%d+%#x", s.mtd, s.offset)
+}
+
 // holds reports whether the slot carries want. Not being able to tell counts as no.
 func (s bootSlot) holds(read func(string, ...string) ([]byte, error), want []byte) bool {
 	ok, _ := s.check(read, want)
@@ -300,11 +309,11 @@ var mtdBlockBad = func(dev string, off int) (bool, error) {
 	return bad != 0, nil
 }
 
-// BootloadersChanging reports which of mtd0-mtd4 do not already hold the bytes
+// BootloadersChanging names the copies in mtd0-mtd4 (bootSlot.String) that do not already hold the bytes
 // this package would write, or hold them with so many bitflips corrected that they are
 // written again (bootSlot.worn). An unreadable partition counts as changing: not being
 // able to tell is not the same as knowing it matches.
-func BootloadersChanging(read func(string, ...string) ([]byte, error), mlo, uboot string) ([]int, error) {
+func BootloadersChanging(read func(string, ...string) ([]byte, error), mlo, uboot string) ([]string, error) {
 	staged := map[string][]byte{}
 	for name, path := range map[string]string{stagedSPL: mlo, stagedUBoot: uboot} {
 		b, err := os.ReadFile(path)
@@ -313,10 +322,10 @@ func BootloadersChanging(read func(string, ...string) ([]byte, error), mlo, uboo
 		}
 		staged[name] = b
 	}
-	var changing []int
+	var changing []string
 	for _, slot := range bootSlots {
 		if holds, flips := slot.check(read, staged[slot.name]); !holds || slot.worn(flips) {
-			changing = append(changing, slot.mtd)
+			changing = append(changing, slot.String())
 		}
 	}
 	return changing, nil
@@ -363,6 +372,9 @@ func WriteBootloaders(run flash.Command, read func(string, ...string) ([]byte, e
 		if slot.worn(flips) && log != nil {
 			log.Warn("boot loader copy still needs ECC corrections after its rewrite; its blocks are wearing out",
 				"mtd", slot.mtd, "offset", slot.offset, "corrected_bits", flips)
+		}
+		if log != nil {
+			log.Info("boot loader copy written and read back", "copy", slot.String())
 		}
 		wrote = true
 	}

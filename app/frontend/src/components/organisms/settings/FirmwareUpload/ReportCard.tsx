@@ -45,6 +45,11 @@ export function ReportCard({ report, busy, onInstall, onReboot }: Props) {
         <FieldRow label={t('firmwareModules')} layout="value">
           {String(report.modules.length)}
         </FieldRow>
+        {report.bootloaders && report.bootloaders.length > 0 && (
+          <FieldRow label={t('firmwareBootloaders')} layout="value">
+            {report.bootloaders.join(', ')}
+          </FieldRow>
+        )}
       </FieldCard>
       <Hint error={!report.installable}>
         {report.reason ||

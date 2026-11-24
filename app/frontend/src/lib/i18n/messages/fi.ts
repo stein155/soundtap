@@ -236,6 +236,7 @@ const fi: Messages = {
   firmwareKernel: 'Ydin',
   firmwareModels: 'Mallit',
   firmwareModules: 'Moduulit',
+  firmwareBootloaders: 'Käynnistyslataimet kirjoitettu uudelleen',
   firmwareCompatible: 'Yhteensopiva tämän kaiuttimen kanssa.',
   firmwareNotInstallable:
     'Tämä kaiutin ei voi kirjoittaa laiteohjelmistoa. Käytä asennusoppaassa kuvattua USB-tikkua.',

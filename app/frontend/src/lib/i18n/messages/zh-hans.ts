@@ -219,6 +219,7 @@ const zhHans: Messages = {
   firmwareKernel: '内核',
   firmwareModels: '型号',
   firmwareModules: '模块',
+  firmwareBootloaders: '已重写引导加载程序',
   firmwareCompatible: '与此扬声器兼容。',
   firmwareNotInstallable: '此扬声器无法写入固件。请按安装指南使用 U 盘。',
   firmwareInstallWarn: '安装会写入备用 NAND 分区。请勿拔掉扬声器电源。',

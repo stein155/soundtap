@@ -104,7 +104,7 @@ func TestWornBootloaderCopyIsRewritten(t *testing.T) {
 	n.flips[nandSlot{4, SecondUBootOffset}] = 9 // the spare U-Boot too
 	n.flips[nandSlot{3, 0}] = 5                 // below it: left
 	changing, err := BootloadersChanging(n.read, mlo, uboot)
-	if err != nil || !slices.Equal(changing, []int{4, 2}) {
+	if err != nil || !slices.Equal(changing, []string{"mtd4+0x100000", "mtd2"}) {
 		t.Fatalf("BootloadersChanging = %v, %v; want the spare (mtd4) and mtd2", changing, err)
 	}
 	var logged bytes.Buffer

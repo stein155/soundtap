@@ -63,7 +63,10 @@ type Report struct {
 	Installed   bool             `json:"installed,omitempty"`
 	Slot        string           `json:"slot,omitempty"`        // slot written
 	RunningSlot string           `json:"runningSlot,omitempty"` // slot still booting
-	Reason      string           `json:"reason,omitempty"`
+	// Bootloaders names the copies of the boot chain the install rewrote (mtd1,
+	// mtd4+0x100000, ...); absent when the speaker already held the package's.
+	Bootloaders []string `json:"bootloaders,omitempty"`
+	Reason      string   `json:"reason,omitempty"`
 	// Version is what the signature says the package is ("stock" for Bose's firmware), and
 	// Confirm the X-SoundTap-Confirm an install of it needs here.
 	Version string `json:"version,omitempty"`
@@ -340,6 +343,16 @@ func (s *Handler) ConfirmBoot() error {
 // BootConfirmed reports whether this process confirmed the boot: ConfirmBoot succeeded.
 // A soundtapd restarted within one boot confirms it again a minute after it starts.
 func (s *Handler) BootConfirmed() bool { return s.bootConfirmed.Load() }
+
+// BootChain is the SPL and U-Boot on NAND by SHA-256, read once per soundtapd: an install
+// that rewrites them reports so itself, and the chain it wrote runs from the next boot.
+func (s *Handler) BootChain() install.BootChain {
+	s.bootChainOnce.Do(func() {
+		_, read := s.flashIO()
+		s.bootChain = install.ReadBootChain(read)
+	})
+	return s.bootChain
+}
 
 // livePlan is this speaker's NAND layout: the install's plan where one is wired (tests
 // wire a fake), the live one otherwise.

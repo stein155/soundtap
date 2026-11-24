@@ -233,6 +233,7 @@ const ko: Messages = {
   firmwareKernel: '커널',
   firmwareModels: '모델',
   firmwareModules: '모듈',
+  firmwareBootloaders: '부트로더 다시 씀',
   firmwareCompatible: '이 스피커와 호환됩니다.',
   firmwareNotInstallable:
     '이 스피커는 펌웨어를 쓸 수 없습니다. 설치 안내서에 설명된 USB 메모리를 사용하십시오.',

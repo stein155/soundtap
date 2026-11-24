@@ -238,6 +238,7 @@ const ru: Messages = {
   firmwareKernel: 'Ядро',
   firmwareModels: 'Модели',
   firmwareModules: 'Модули',
+  firmwareBootloaders: 'Загрузчики перезаписаны',
   firmwareCompatible: 'Совместимо с этим динамиком.',
   firmwareNotInstallable:
     'Этот динамик не может записывать прошивку. Воспользуйтесь USB-накопителем, как описано в руководстве по установке.',

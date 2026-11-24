@@ -10,6 +10,18 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
 
 ## [Unreleased]
 
+### Added
+
+- **A firmware install names the bootloader copies it rewrote**, in its answer and on the
+  Updates page, so it is clear whether the SPL and U-Boot were replaced.
+- **`/api/health` reports the SPL and U-Boot on NAND** by SHA-256 (`boot.bootloader`), so the
+  boot chain can be checked on a speaker without SSH.
+
+### Fixed
+
+- **The package report lists the SoundTouch 300** among the models a Core package installs on;
+  it takes the Wireless Link's modules and was left out.
+
 ## [app-v0.1.0-alpha.3] - 2026-11-23
 
 - The SoundTap app that SoundTap Core 0.1.0-alpha.3 carries; what it fixes is listed under

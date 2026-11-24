@@ -8,7 +8,7 @@ SoundTap starts again at 0.1.0 (ADR 0035). This page lists what stands between t
 a first release a stranger can install on their own speaker. A ticked item names its evidence:
 the date and the tested artifact (version and SHA-256) of the result. A design choice is closed by an ADR, not by this page.
 
-Status on 2026-11-22. The models are the ST10, the ST20, the Wireless Link and the
+Status on 2026-11-24. The models are the ST10, the ST20, the Wireless Link and the
 SoundTouch 300: the ST300 ships in the first release (project decision 2026-11-12), the signing
 gate requires its hardware report since 2026-11-15, and since 2026-11-20 it has full support
 like the other three ([install records](../hardware/install-records.md#soundtouch-300)).
@@ -21,7 +21,12 @@ like the other three ([install records](../hardware/install-records.md#soundtouc
       the ST20 and the ST300, and published by `release.yml` as `os-v0.1.0` and `app-v0.1.0`
       ([RELEASING.md](../../RELEASING.md)). So far: a build of `main`, built on the build host
       because Actions are off, installed unchanged through `/api/firmware` on the ST10, the
-      Wireless Link and the ST20 on 2026-11-10. Not yet from `build.yml`.
+      Wireless Link and the ST20 on 2026-11-10. Since 2026-11-23 `build.yml` builds `main` on
+      the public repository and `release.yml` published 0.1.0-alpha.1 to 0.1.0-alpha.3 from it.
+      The alpha.3 Core STU (SHA-256
+      `dab9664708ee1dca8e6ffa46692caf688def568f28bb51ac326dde65911a7f76`) installed unchanged on
+      the SoundTouch 300 on 2026-11-24; the ST10, the Wireless Link and the ST20 run alpha-profile
+      builds of 0.1.0-alpha.3. Still open: `os-v0.1.0` and `app-v0.1.0` from one candidate on all four.
 - [ ] The hardware test ([hardware-test.md](../hardware/hardware-test.md)) on each model from that candidate,
       kept as one checklist per model with the tested artifact's version, SHA-256 and date of each row.
       The ST20 part runs without audio. The signing gate requires all four reports, `hardware-st300.json`
@@ -30,7 +35,8 @@ like the other three ([install records](../hardware/install-records.md#soundtouc
       ([ADR 0048](../decisions/0048-signed-updates.md)). `release.yml` publishes a draft
       without the key; `sign.yml`, the one job with the release key, in a GitHub environment
       limited to `main`, signs it, and after the maintainer's bench speakers took it publishes it
-      ([ADR 0035](../decisions/0035-releases.md)).
+      ([ADR 0035](../decisions/0035-releases.md)). For an alpha `release.yml` calls `sign.yml`
+      itself: 0.1.0-alpha.2 and 0.1.0-alpha.3 were signed that way on 2026-11-23.
 
 ### Security
 
@@ -57,18 +63,19 @@ like the other three ([install records](../hardware/install-records.md#soundtouc
       absent by build; it was not measured from the cable end on a production image. The last
       gap, clearing Bluetooth pairings from the LAN, waits for a press on the speaker. Audit closed
       2026-11-15.
-- [ ] **Public home.** The repository goes public with the first release under GPL-3.0. The
-      scan of 2026-11-09 found the current tree clean and the history not; project decision
-      2026-11-10: a fresh public history. Done 2026-11-15: `main` rebuilt without
-      stock paths. Still open: making it public, when the maintainer says so.
+- [x] **Public home.** The repository is public under GPL-3.0. The scan of 2026-11-09 found
+      the current tree clean and the history not; project decision 2026-11-10: a fresh public
+      history. `main` was rebuilt without stock paths on 2026-11-15 and published as
+      [stein155/soundtap](https://github.com/stein155/soundtap) on 2026-11-23.
 - [x] **Authenticated changes.** The speaker trusts its home network; factory reset, restore,
       reboot, Wi-Fi changes, manual firmware installs and debug routes wait for a key held on
       the speaker (on a SoundTouch 300, which has no buttons, on its remote); the latest stable update is press-free ([ADR 0118](../decisions/0118-update-button-without-press.md))
       ([ADR 0055](../decisions/0055-household-token-and-windows.md)).
-- [ ] **Dependency audit in CI** for Go and npm: `make vuln` runs `govulncheck` on soundtapd and
+- [x] **Dependency audit in CI** for Go and npm: `make vuln` runs `govulncheck` on soundtapd and
       `npm audit --omit=dev --audit-level=high` (only what ships in the web UI; build tools such as
-      vite and eslint never reach a speaker), as CI's `vuln` job on every pull request and push to `main`. Open: its first
-      run in Actions.
+      vite and eslint never reach a speaker), as CI's `vuln` job on every pull request and push to `main`. It runs in Actions
+      since 2026-11-23; that day it caught GO-2026-6278 in `gorilla/websocket`, fixed by the bump
+      in 0.1.0-alpha.3.
 
 ### Install and recovery
 
@@ -217,12 +224,11 @@ like the other three ([install records](../hardware/install-records.md#soundtouc
 - [ ] PR CI under 15 minutes; a cold `build.yml` under an hour on a GitHub-hosted runner, 30
       minutes as the goal. So far: a build without any cache took about 142 minutes on a hosted
       runner (2026-10-07); on the build host a cold image build that also built gcc took 53
-      minutes (2026-11-17), and a warm tree takes 8 to 13 minutes. The workflows are written
-      but not yet run on the public repository: the job split, the change filter, the
-      install-gate matrix, the `ubuntu-24.04-arm` legs, the cache pruning and the weekly
-      reproducibility check ([ADR 0011](../decisions/0011-one-buildroot-pipeline.md)) show whether
-      they work on their first runs there. The entry scripts are proven locally and on the build
-      host.
+      minutes (2026-11-17), and a warm tree takes 8 to 13 minutes. On the public repository
+      since 2026-11-23: CI takes 6 to 13 minutes per push to `main`, and `build.yml` 29 to 82
+      minutes with its caches. Still to see: a cold `build.yml` there, and the weekly
+      reproducibility check ([ADR 0011](../decisions/0011-one-buildroot-pipeline.md)), which has
+      not run yet.
 - [ ] One README per audience: the root README for owners, `docs/contributors/design.md` for developers,
       and nothing in between that repeats them.
 

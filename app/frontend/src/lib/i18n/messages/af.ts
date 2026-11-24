@@ -234,6 +234,7 @@ const af: Messages = {
   firmwareKernel: 'Kern',
   firmwareModels: 'Modelle',
   firmwareModules: 'Modules',
+  firmwareBootloaders: 'Selflaaiers herskryf',
   firmwareCompatible: 'Geskik vir hierdie luidspreker.',
   firmwareNotInstallable:
     'Hierdie luidspreker kan nie fermware skryf nie. Gebruik die USB-stokkie uit die installasiegids.',

@@ -219,6 +219,7 @@ const zhHant: Messages = {
   firmwareKernel: '核心',
   firmwareModels: '型號',
   firmwareModules: '模組',
+  firmwareBootloaders: '已重寫開機載入程式',
   firmwareCompatible: '與此揚聲器相容。',
   firmwareNotInstallable: '此揚聲器無法寫入韌體。請依安裝指南使用 USB 隨身碟。',
   firmwareInstallWarn: '安裝會寫入備用 NAND 分區。請勿拔除揚聲器電源。',

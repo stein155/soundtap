@@ -234,6 +234,7 @@ const sl: Messages = {
   firmwareKernel: 'Jedro',
   firmwareModels: 'Modeli',
   firmwareModules: 'Moduli',
+  firmwareBootloaders: 'Zagonski nalagalniki prepisani',
   firmwareCompatible: 'Združljivo s tem zvočnikom.',
   firmwareNotInstallable:
     'Ta zvočnik ne more pisati vdelane programske opreme. Uporabite ključ USB, kot je opisano v navodilih za namestitev.',

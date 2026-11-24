@@ -238,6 +238,7 @@ const ja: Messages = {
   firmwareKernel: 'カーネル',
   firmwareModels: 'モデル',
   firmwareModules: 'モジュール',
+  firmwareBootloaders: 'ブートローダーを書き換えました',
   firmwareCompatible: 'このスピーカーに対応しています。',
   firmwareNotInstallable:
     'このスピーカーにはファームウェアを書き込めません。インストールガイドにあるUSBメモリーを使用してください。',

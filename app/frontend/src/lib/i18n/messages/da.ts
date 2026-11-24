@@ -234,6 +234,7 @@ const da: Messages = {
   firmwareKernel: 'Kerne',
   firmwareModels: 'Modeller',
   firmwareModules: 'Moduler',
+  firmwareBootloaders: 'Bootloadere skrevet igen',
   firmwareCompatible: 'Kompatibel med denne højttaler.',
   firmwareNotInstallable:
     'Denne højttaler kan ikke skrive firmware. Brug USB-nøglen fra installationsvejledningen.',

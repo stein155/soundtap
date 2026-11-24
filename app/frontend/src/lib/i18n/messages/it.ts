@@ -241,6 +241,7 @@ const it: Messages = {
   firmwareKernel: 'Kernel',
   firmwareModels: 'Modelli',
   firmwareModules: 'Moduli',
+  firmwareBootloaders: 'Bootloader riscritti',
   firmwareCompatible: 'Compatibile con questo diffusore.',
   firmwareNotInstallable:
     "Questo diffusore non può scrivere il firmware. Usa la chiavetta USB descritta nella guida all'installazione.",

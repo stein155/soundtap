@@ -37,6 +37,7 @@ func (s *Handler) installBootloaders(w http.ResponseWriter, j *installJob, pkg *
 		return false
 	}
 	if len(changing) > 0 {
+		j.bootloaders = changing
 		return s.replaceBootloaders(w, j, pkg)
 	}
 	// The board already runs this chain; bring its recipes in line with it too. The
@@ -128,5 +129,6 @@ func (s *Handler) selectInstalledSlot(w http.ResponseWriter, j *installJob, pkg 
 	}
 	rep.Installed = true
 	rep.Slot, rep.RunningSlot = target.Alternate.Name, target.Running.Name
+	rep.Bootloaders = j.bootloaders
 	writeJSON(w, http.StatusOK, rep)
 }

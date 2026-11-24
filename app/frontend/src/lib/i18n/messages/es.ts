@@ -238,6 +238,7 @@ const es: Messages = {
   firmwareKernel: 'Kernel',
   firmwareModels: 'Modelos',
   firmwareModules: 'Módulos',
+  firmwareBootloaders: 'Cargadores de arranque reescritos',
   firmwareCompatible: 'Compatible con este altavoz.',
   firmwareNotInstallable:
     'Este altavoz no puede escribir firmware. Usa la memoria USB que describe la guía de instalación.',

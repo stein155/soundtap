@@ -238,6 +238,7 @@ const hu: Messages = {
   firmwareKernel: 'Kernel',
   firmwareModels: 'Típusok',
   firmwareModules: 'Modulok',
+  firmwareBootloaders: 'Rendszerbetöltők újraírva',
   firmwareCompatible: 'Kompatibilis ezzel a hangszóróval.',
   firmwareNotInstallable:
     'Ez a hangszóró nem tud firmware-t írni. Használja a telepítési útmutatóban leírt USB-kulcsot.',

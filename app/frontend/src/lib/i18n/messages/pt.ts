@@ -238,6 +238,7 @@ const pt: Messages = {
   firmwareKernel: 'Kernel',
   firmwareModels: 'Modelos',
   firmwareModules: 'Módulos',
+  firmwareBootloaders: 'Carregadores de arranque reescritos',
   firmwareCompatible: 'Compatível com este alto-falante.',
   firmwareNotInstallable:
     'Este alto-falante não pode gravar firmware. Use o pendrive descrito no guia de instalação.',

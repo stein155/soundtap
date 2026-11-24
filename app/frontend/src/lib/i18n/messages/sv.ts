@@ -236,6 +236,7 @@ const sv: Messages = {
   firmwareKernel: 'Kärna',
   firmwareModels: 'Modeller',
   firmwareModules: 'Moduler',
+  firmwareBootloaders: 'Startladdare omskrivna',
   firmwareCompatible: 'Kompatibel med den här högtalaren.',
   firmwareNotInstallable:
     'Den här högtalaren kan inte skriva firmware. Använd USB-minnet som beskrivs i installationsguiden.',

@@ -39,15 +39,19 @@ func moduleWithSuffix(pkg *stu.Package, name, suffix string) (stu.Module, bool) 
 	return stu.Module{}, false
 }
 
-// SuffixedKernelModels lists the speakers a universal package carries a kernel for.
+// SuffixedKernelModels lists the speakers a universal package carries a kernel for: every
+// model whose modules carry that kernel's suffix, so the ST300 with the Wireless Link's.
 func SuffixedKernelModels(pkg *stu.Package) []string {
 	var models []string
 	for _, m := range pkg.Modules {
 		if stu.BaseModuleName(m.Name) != "soundtap-kernel" || m.Name == "soundtap-kernel" {
 			continue
 		}
-		if model := ModelForVariant(m.Name[strings.LastIndex(m.Name, ".")+1:]); model != "" {
-			models = append(models, strings.ToUpper(model))
+		suffix := m.Name[strings.LastIndex(m.Name, ".")+1:]
+		for _, model := range modeltable.Models {
+			if model.ModuleSuffix == suffix {
+				models = append(models, strings.ToUpper(model.Name))
+			}
 		}
 	}
 	return models

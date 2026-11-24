@@ -242,6 +242,7 @@ const el: Messages = {
   firmwareKernel: 'Πυρήνας',
   firmwareModels: 'Μοντέλα',
   firmwareModules: 'Ενότητες',
+  firmwareBootloaders: 'Οι φορτωτές εκκίνησης ξαναγράφτηκαν',
   firmwareCompatible: 'Συμβατό με αυτό το ηχείο.',
   firmwareNotInstallable:
     'Αυτό το ηχείο δεν μπορεί να γράψει υλικολογισμικό. Χρησιμοποιήστε το USB στικ όπως περιγράφεται στον οδηγό εγκατάστασης.',

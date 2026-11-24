@@ -14,10 +14,12 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sync"
 	"sync/atomic"
 	"syscall"
 
 	"github.com/stein155/soundtap/app/internal/flash"
+	"github.com/stein155/soundtap/app/internal/install"
 	"github.com/stein155/soundtap/app/internal/web/apierror"
 )
 
@@ -66,6 +68,10 @@ type Handler struct {
 	// rootRun runs the NAND commands through soundtap-root when soundtapd is not root
 	// (ADR 0066); nil runs them here.
 	rootRun RootRun
+
+	// bootChain is the boot chain on NAND as BootChain first read it.
+	bootChainOnce sync.Once
+	bootChain     install.BootChain
 }
 
 // RootRun runs one flash command (flash.Command's shape) elsewhere, passing lock, the

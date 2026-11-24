@@ -489,7 +489,7 @@ func TestWLAAcceptsTheUniversalPackage(t *testing.T) {
 	if spl, uboot, ok := install.BootloaderModules(pkg, "wla"); !ok || spl.Name != "soundtap-spl.binky" || uboot.Name != "soundtap-uboot.binky" {
 		t.Errorf("bootloaders = %q %q %v", spl.Name, uboot.Name, ok)
 	}
-	if got := install.SuffixedKernelModels(pkg); strings.Join(got, ",") != "ST10,WLA" {
+	if got := install.SuffixedKernelModels(pkg); strings.Join(got, ",") != "ST10,WLA,ST300" {
 		t.Errorf("models = %v", got)
 	}
 	if err := install.PackageRefusal("st20", pkg); err == nil {
@@ -508,7 +508,7 @@ func TestST10AndWLAAcceptTheTriPackage(t *testing.T) {
 	if err := install.PackageRefusal("wla", pkg); err != nil {
 		t.Errorf("wla refused the tri package: %v", err)
 	}
-	if got := install.SuffixedKernelModels(pkg); strings.Join(got, ",") != "ST10,WLA,ST20" {
+	if got := install.SuffixedKernelModels(pkg); strings.Join(got, ",") != "ST10,WLA,ST300,ST20" {
 		t.Errorf("models = %v", got)
 	}
 	for i := range mods {
