@@ -16,6 +16,7 @@
 #   fixed in/before V      the package version we ship already has the fix
 #   not built for Linux    a package's file only another platform builds (the kernel names
 #                          its CONFIG_ symbol instead)
+#   ffmpeg filter X not built  a libavfilter filter SOUNDTAP_FFMPEG_FILTERS leaves out
 #   maintainer accepted    open, with the maintainer's recorded acceptance and why
 
 # Linux 6.12.117 (BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE in os/configs/soundtap_defconfig).
@@ -221,3 +222,14 @@ SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-107696 # fixed by our patch
 # NVD ends this one's range at the date "2025-01-13", not a version; its fix (d5873be,
 # January 2025) is in 9.0.2.
 SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2025-25469 # fixed in 9.0.2
+# libavfilter filters our ffmpeg leaves out (SOUNDTAP_FFMPEG_FILTERS: aresample volume bass
+# aformat afade, built --disable-everything); all eight are fixed upstream in 9.1, published
+# 2026-11-24 against every 9.0.
+SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-135734 # ffmpeg filter deflicker not built
+SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-135736 # ffmpeg filter deband not built
+SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-135737 # ffmpeg filter tmidequalizer not built
+SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-135738 # ffmpeg filter signalstats not built
+SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-135739 # ffmpeg filter scale not built
+SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-135740 # ffmpeg filter readeia608 not built
+SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-135742 # ffmpeg filters zmq, azmq not built
+SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-135743 # ffmpeg filter dynaudnorm not built

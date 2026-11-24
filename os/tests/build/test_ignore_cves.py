@@ -47,6 +47,18 @@ class IgnoreCvesTest(unittest.TestCase):
         self.assertIn("none of the forms", found[0])
         self.assertIn("one CVE per line", found[1])
 
+    def test_an_ffmpeg_filter_reason_must_name_a_filter_we_leave_out(self):
+        mk = ("SOUNDTAP_FFMPEG_FILTERS = aresample volume\n"
+              "SOUNDTAP_FFMPEG_CONF_OPTS = --disable-everything\n")
+        files = {"os/package/soundtap-ffmpeg/soundtap-ffmpeg.mk": mk}
+        self.assertEqual(self.check("SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-1001 # ffmpeg filters zmq, azmq not built\n",
+                                    files=files), [])
+        found = self.check("SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-1002 # ffmpeg filter volume not built\n"
+                           "LIBGLIB2_IGNORE_CVES += CVE-2026-1003 # ffmpeg filter zmq not built\n", files=files)
+        self.assertEqual(len(found), 2, found)
+        self.assertIn("builds the volume filter", found[0])
+        self.assertIn("soundtap-ffmpeg only", found[1])
+
     def test_a_6_12_fix_must_be_in_the_pinned_kernel(self):
         self.assertEqual(self.check("LINUX_IGNORE_CVES += CVE-2026-1000 # fixed in 6.12.117\n"), [])
         found = self.check("LINUX_IGNORE_CVES += CVE-2026-1000 # fixed in 6.12.118\n")
