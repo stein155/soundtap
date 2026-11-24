@@ -47,8 +47,8 @@ HOST_SOUNDTAP_BOOTLOADERS_VARIANTS = \
 	$(if $(BR2_PACKAGE_HOST_SOUNDTAP_BOOTLOADERS_ST20),st20-spl) \
 	$(if $(BR2_PACKAGE_HOST_SOUNDTAP_BOOTLOADERS_WLA),wla-uboot wla-spl)
 HOST_SOUNDTAP_BOOTLOADERS_SCRIPT = $(BR2_EXTERNAL_SOUNDTAP_PATH)/package/soundtap-bootloaders/build-variant.sh
-# The profile the USB-stick recovery holds a signed package to (ADR 0048), by the rule
-# post-build.sh writes /etc/soundtap/profile with; post-image.sh checks the two agree.
+# The image's profile, by the rule post-build.sh writes /etc/soundtap/profile with. U-Boot
+# no longer reads it: the USB stick checks no statement (ADR 0130).
 HOST_SOUNDTAP_BOOTLOADERS_PROFILE = $(if $(BR2_PACKAGE_DROPBEAR),alpha,production)
 HOST_SOUNDTAP_BOOTLOADERS_GCC = $(@D)/gcc/usr/bin/arm-linux-gnueabihf-
 

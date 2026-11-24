@@ -8,7 +8,7 @@ provenance:
 | --- | --- |
 | `uboot-am335x-soundtap-wla.dts` | the board's device tree, copied into `arch/arm/dts/` |
 | `uboot-2026.07-spl-usb-recovery.patch` | the SPL USB fallback, behind `WLA_SPL_USB_RECOVERY=1` |
-| `soundtap-sig.c`, `soundtap-sig.h` | the USB stick's `Update.stu.sig` check (ADR 0048), next to `board.c` |
+| `soundtap-sig.c`, `soundtap-sig.h` | the statement verifier soundtapd's tests share (`app/internal/release/uboot_test.go`); the USB stick no longer checks a `.sig` (ADR 0130), so `board.c` does not call it |
 | `soundtap-keys.h` | the release keys it trusts, generated from `app/internal/release` (`UPDATE_UBOOT_KEYS=1`) |
 | `tweetnacl.c`, `tweetnacl.h` | TweetNaCl 20140427 as upstream ships it, its ed25519 (ADR 0124) |
 

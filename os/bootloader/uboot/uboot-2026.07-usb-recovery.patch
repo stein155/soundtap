@@ -1,31 +1,21 @@
-diff --git a/board/ti/am335x/Makefile b/board/ti/am335x/Makefile
-index 7df62fadb..fc222ae04 100644
---- a/board/ti/am335x/Makefile
-+++ b/board/ti/am335x/Makefile
-@@ -9,3 +9,9 @@ obj-y	:= mux.o
- endif
- 
- obj-y	+= board.o
-+
-+# The USB-stick recovery's statement verifier (uboot-2026.07-usb-recovery.patch); the build
-+# copies the sources in next to board.c. Only U-Boot proper with USB storage has the recovery.
-+ifndef CONFIG_XPL_BUILD
-+obj-$(CONFIG_USB_STORAGE) += soundtap-sig.o tweetnacl.o
-+endif
 diff --git a/board/ti/am335x/board.c b/board/ti/am335x/board.c
 index 40f3f73ce..468db0c20 100644
 --- a/board/ti/am335x/board.c
 +++ b/board/ti/am335x/board.c
-@@ -1292,3 +1292,905 @@ static int rt_board_setup(void)
+@@ -1382,3 +1382,1694 @@ static int rt_board_setup(void)
  }
  EVENT_SPY_SIMPLE(EVT_LAST_STAGE_INIT, rt_board_setup);
  #endif
 +
 +#if !defined(CONFIG_XPL_BUILD) && defined(CONFIG_USB_STORAGE) && defined(CONFIG_FS_FAT)
 +#include <bootcount.h>
++#include <command.h>
++#include <env.h>
++#include <env_internal.h>
 +#include <event.h>
 +#include <fs.h>
 +#include <nand.h>
++#include <search.h>
 +#include <usb.h>
 +#include <asm/unaligned.h>
 +#include <dm/device.h>
@@ -39,44 +29,61 @@ index 40f3f73ce..468db0c20 100644
 +#include <u-boot/sha256.h>
 +#include <mapmem.h>
 +#include <memalign.h>
-+/* Copied in next to this file by the build (os/bootloader/build-wla-uboot.sh,
-+ * os/package/soundtap-bootloaders/build-variant.sh); soundtap-profile.h is written there
-+ * from the image's profile, alpha or production. */
-+#include "soundtap-sig.h"
-+#include "soundtap-keys.h"
-+#include "soundtap-profile.h"
 +/*
 + * VOLUME DOWN + PRESET 4 held at power-on: install Update.stu from a USB stick and keep
 + * the settings. Stock U-Boot does this as `sweup uboot preserve`, and an owner who knows
 + * the gesture should not lose it because the bootloader is ours now
 + * (docs/decisions/0130-usb-stick-recovery.md).
 + *
-+ * Only a signed SoundTap package goes in (ADR 0048): Update.stu.sig next to it holds the
-+ * statement soundtapd checks, and nothing is written unless it verifies against a compiled
-+ * release key or the owner key in the environment (soundtap_owner_key), is a core package
-+ * for this image's profile and names the SHA-256 of Update.stu. Bose's file, or ours
-+ * without its .sig, is refused; the way back to Bose is the Updates page.
++ * No signature (the speaker owner, 2026-11-24): someone holding the keys at power-on is
++ * the authorization. Signatures are for the updates anyone can start over the network
++ * (ADR 0048). What the stick checks is that the file is whole: every header CRC, every
++ * module's image CRC, and a second read of the whole file that hashes (SHA-256) to what
++ * the first read did. A file that is not a BOSE-magic .stu container is refused.
 + *
-+ * Only the package's root filesystem is written -- our kernels live in it -- and only into
-+ * the slot that is not booting. The stick is read twice: once to hash all of Update.stu
-+ * before anything is erased, once to write, hashing it again in the same order. bootcmd
-+ * moves to the new slot only when the second pass hashed to the signed digest as well, so
-+ * what was written is what was signed, and a stick pulled halfway, a package that does not
-+ * check out or a slot full of bad blocks leaves the old slot booting as before.
++ * Two kinds of package:
++ *
++ * - SoundTap's (it carries soundtap-rootfs): only the root filesystem -- our kernels live
++ *   in it -- into the slot that is not booting.
++ * - Bose's own for this board, on every model (the speaker owner, 2026-11-24; its ubi.img
++ *   names the module and variants it is for): the way back to stock, as POST /api/firmware
++ *   takes it, writing only Bose's kernel, ubi.img, SPL and U-Boot. Its kernel and ubi.img go into the slot that is not
++ *   booting, the environment selects that slot in the 8 KiB copy Bose's U-Boot reads,
++ *   then Bose's SPL and U-Boot replace ours, only the copies that differ, and the speaker
++ *   restarts into Bose's boot chain (rt_bose_finish has the order and every cut).
++ *
++ * The stick is read twice: once to check and hash all of Update.stu before anything is
++ * erased, once to write, hashing it again in the same order. bootcmd moves to the new
++ * slot only when the second pass hashed to the first pass's digest, so what was written
++ * is what was checked, and a stick pulled halfway, a package that does not check out or a
++ * slot full of bad blocks leaves the old slot booting as before.
 + *
 + * ST10 (rhino) and ST20 (spotty). The Wireless Link has no preset keys. Stock's sampler
 + * (0x80101f44 in the ST20's U-Boot 2014.07) serves both from one function: the same matrix
 + * in the same order, the same 0x108 mask for these two keys, only other GPIOs.
 + */
 +#define RT_STU_NAME		"/Update.stu"
-+#define RT_SIG_NAME		"/Update.stu.sig"
 +#define RT_STU_HEADER		0x138
 +#define RT_STU_OVERLAP		0x14
 +#define RT_STU_MAX		(120 << 20)
++#define RT_STU_MODULES		16	/* the longest chain, Bose's ST20 package, has 13 */
 +#define RT_CHUNK		(1 << 20)
 +#define RT_SLOT_SIZE		0x6000000
 +#define RT_PING_ROOTFS		0xc80000
 +#define RT_PONG_ROOTFS		0x6c80000
++#define RT_KERNEL_SIZE		0x500000
++#define RT_PING_KERNEL		0x280000
++#define RT_PONG_KERNEL		0x780000
++/* The boot chain (ADR 0009): four SPL copies of one block each, then NAND.U-Boot with the
++ * first U-Boot in blocks 0-7, the spare in 8-13 and the redundant environment in 14. */
++#define RT_SPL_SIZE		0x20000
++#define RT_UBOOT		0x80000
++#define RT_UBOOT_SPARE		0x180000
++#define RT_UBOOT_MAX		0xc0000
++#define RT_ENV_REDUND		0x240000
++#define RT_ENV_OFFSET		0x260000
++#define RT_ENV_SIZE		0x8000
++#define RT_ENV_LEGACY		0x2000
 +
 +/* soundtapd's defaultKeymap indices: strobe * 4 + switch-in, 12 the directly wired key. */
 +#define RT_KEY(i)		(1 << (i))
@@ -150,8 +157,8 @@ index 40f3f73ce..468db0c20 100644
 +	}
 +}
 +
-+/* Refused, nothing written: no Update.stu.sig, or one that is not for this speaker. Three
-+ * slow blinks, so it is not taken for a stick that could not be read. */
++/* Refused, nothing written: not a .stu, or not a package for this speaker. Three slow
++ * blinks, so it is not taken for a stick that could not be read. */
 +static void rt_lamp_refused(void)
 +{
 +	int i;
@@ -305,85 +312,309 @@ index 40f3f73ce..468db0c20 100644
 +	return 0;
 +}
 +
-+/* Where the root filesystem module sits in the package, and the header that said so. */
-+struct rt_rootfs {
++/*
++ * One module of the package: where its payload starts, what its header declares, and a
++ * CRC-32 of the whole header, so the second pass can tell the header it reads again is the
++ * one that placed the write.
++ */
++struct rt_module {
 +	loff_t off;
-+	u32 size, body;
-+	u8 hdr[RT_STU_HEADER];
++	u32 size, body;		/* the declared size; how much of it is written */
++	u32 crc;		/* the image CRC its header names */
++	u32 hcrc;
++	char name[0x29];
++	char tag[0x41];		/* the version at 0xa8: 27.0.6...@<module>/<variants> */
 +};
 +
-+/* Walks the header chain the way internal/stu does: big-endian fields, each module's
-+ * header starting 0x14 bytes before the end of the previous payload. */
-+static int rt_find_rootfs(u8 *hdr, loff_t file, struct rt_rootfs *rf)
++/* What the first read found: every module, and the ones this stick writes. */
++struct rt_pkg {
++	int n;
++	struct rt_module m[RT_STU_MODULES];
++	struct rt_module *rootfs, *kernel, *mlo, *uboot;
++	bool bose;
++};
++
++/*
++ * Walks the header chain the way internal/stu does: big-endian fields, each module's header
++ * starting 0x14 bytes before the end of the previous payload, the last module ending where
++ * the file does. The first header carries the BOSE magic, the package size and a CRC over
++ * its first 0x10 bytes; every header its own CRC from 0x14 to 0x134. -ENOEXEC: not a .stu
++ * at all. -EBADMSG: one that does not check out.
++ */
++static int rt_scan(u8 *hdr, loff_t file, struct rt_pkg *pkg)
 +{
 +	loff_t off = 0;
-+	int i;
 +
-+	for (i = 0; off + RT_STU_HEADER <= file && i < 32; i++) {
-+		u32 size;
++	for (pkg->n = 0; pkg->n < RT_STU_MODULES; pkg->n++) {
++		struct rt_module *m = &pkg->m[pkg->n];
 +
++		if (off + RT_STU_HEADER > file)
++			return pkg->n ? -EBADMSG : -ENOEXEC;
 +		if (rt_read(hdr, off, RT_STU_HEADER))
 +			return -EIO;
-+		if (i == 0 && memcmp(hdr + 4, "BOSE", 4))
-+			return -EINVAL;
++		if (!pkg->n && memcmp(hdr + 4, "BOSE", 4)) {
++			printf("Update.stu: not a .stu package; nothing written\n");
++			return -ENOEXEC;
++		}
++		if (!pkg->n && (get_unaligned_be32(hdr + 0x08) != file ||
++				crc32(0, hdr, 0x10) != get_unaligned_be32(hdr + 0x10)))
++			return -EBADMSG;
 +		if (crc32(0, hdr + RT_STU_OVERLAP, 0x134 - RT_STU_OVERLAP) !=
 +		    get_unaligned_be32(hdr + 0x134))
 +			return -EBADMSG;
-+		size = get_unaligned_be32(hdr + 0x98);
-+		if (size <= RT_STU_OVERLAP || size > RT_STU_MAX)
-+			return -EINVAL;
-+		if (!strncmp((char *)hdr + 0x18, "soundtap-rootfs", 0x28)) {
-+			rf->off = off + RT_STU_HEADER;
-+			rf->size = size;
-+			memcpy(rf->hdr, hdr, RT_STU_HEADER);
-+			return rf->off + size <= file ? 0 : -EINVAL;
++		m->size = get_unaligned_be32(hdr + 0x98);
++		if (m->size <= RT_STU_OVERLAP || m->size > RT_STU_MAX)
++			return -EBADMSG;
++		m->off = off + RT_STU_HEADER;
++		m->body = m->size;
++		m->crc = get_unaligned_be32(hdr + 0x12c);
++		m->hcrc = crc32(0, hdr, RT_STU_HEADER);
++		memcpy(m->name, hdr + 0x18, 0x28);
++		m->name[0x28] = 0;
++		memcpy(m->tag, hdr + 0xa8, 0x40);
++		m->tag[0x40] = 0;
++		if (m->off + m->size == file) {
++			pkg->n++;
++			return 0;
 +		}
-+		off += RT_STU_HEADER + size - RT_STU_OVERLAP;
++		off = m->off + m->size - RT_STU_OVERLAP;
 +	}
-+	return -ENOENT;
++	return -EBADMSG;
 +}
 +
 +/*
-+ * The statement in Update.stu.sig, verified against the release keys this U-Boot was built
-+ * with and the owner's own key in the environment, when it holds one, and held to what the
-+ * stick takes (soundtap-sig.c, ADR 0048). -ENOKEY: there is no .sig, so the package is
-+ * unsigned. -EKEYREJECTED: there is one, and it is not a signed statement for a SoundTap
-+ * Core package of this image's profile.
++ * Bose's module chains, every family its 27.0.6 packages use. Expected, ExpectedST20 and
++ * ExpectedST300 are app/internal/stu/profiles.go's; the others are the SA-5's (burns), the
++ * adapters' (lisa on either module: WST, Cinemate, LS/VW host firmware last) and the
++ * Lifestyle 650's. The stick writes linuxPatched, ubi.img, MLO and u-boot.img from any of
++ * them and nothing else: BCO, CC2540, STM32, host, soundbar and console firmware stay for
++ * Bose's own software, which updates them itself.
 + */
-+static int rt_check_sig(u8 *buf, struct st_statement *st)
-+{
-+	static unsigned char keys[ARRAY_SIZE(st_release_keys) + 1][32];
-+	const char *owner = env_get(ST_OWNER_KEY_ENV);
-+	loff_t size, got;
-+	int ret, nkeys;
++#define RT_SM2_HEAD	"SoftwareUpdateInstaller", "ARMUpdate", "UbootUpdate"
++#define RT_SCM_HEAD	"SoftwareUpdateInstaller", "ARMUpdate", "CC2540_Update", "SMSC_Update", \
++			"UbootUpdate"
++#define RT_SM2_TAIL	"linuxPatched", "ubi.img", "MLO", "u-boot.img"
++#define RT_SCM_MID	"linuxPatched", "ubi.img", "SCMBLC_CC2540_6.0.18.738.bin", \
++			"Bootloader_CE2_Release_8MB_3.x-3_8_0-942"
++static const char *const rt_bose_chains[][RT_STU_MODULES] = {
++	{ RT_SM2_HEAD, "SCMReset_Update", RT_SM2_TAIL },
++	{ RT_SM2_HEAD, "STM32SoftwareUpdate", "SCMReset_Update", RT_SM2_TAIL,
++	  "STM32_Burns_v1.0.2.182.hex" },
++	{ RT_SM2_HEAD, "ABL_Update", RT_SM2_TAIL, "SEN_FW_update.bos" },
++	{ RT_SM2_HEAD, "ABL_Update", RT_SM2_TAIL, "TRI_shelby_update.tri" },
++	{ RT_SM2_HEAD, "MarconiUpdate", RT_SM2_TAIL, "DEF_CON_02.21.00.r13184.bos" },
++	{ RT_SM2_HEAD, "STP_Update", RT_SM2_TAIL, "ginger_1.16.7.5043495.bos" },
++	{ RT_SM2_HEAD, "ASOCUpdate", "STP_Update", RT_SM2_TAIL, "bardeen_1.16.7.5043495.bos" },
++	{ RT_SCM_HEAD, "SCMReset_Update", RT_SCM_MID, "App_BD_DMP 3.x-3_8_0-9423_ER.bcd", "MLO",
++	  "u-boot.img" },
++	{ RT_SCM_HEAD, "ABL_Update", RT_SCM_MID, "App_BD_DMP 3.x-3_8_0-9423_ER.bcd", "MLO",
++	  "u-boot.img", "SEN_FW_update.bos" },
++	{ RT_SCM_HEAD, "ABL_Update", RT_SCM_MID, "App_BD_DMP 3.x-3_8_0-9423_ER_NoAP.bcd", "MLO",
++	  "u-boot.img", "TRI_shelby_update.tri" },
++	{ RT_SCM_HEAD, "MarconiUpdate", RT_SCM_MID, "App_BD_DMP 3.x-3_8_0-9423_ER_NoAP.bcd", "MLO",
++	  "u-boot.img", "DEF_CON_02.21.00.r13184.bos" },
++};
 +
-+	if (fs_set_blk_dev("usb", rt_part, FS_TYPE_ANY) || fs_size(RT_SIG_NAME, &size)) {
-+		printf("Update.stu.sig not found: the stick takes only a signed SoundTap package\n");
-+		return -ENOKEY;
++/*
++ * Every board, by rt_b, with the variant Bose's ubi.img names it by. The Series III boards
++ * run on the sm2 module under their own names, the adapter on the sm2 is lisa as on the scm.
++ * The ST10 has no name in any tag: it takes the package Bose ships it and the Wireless Link
++ * alike (@sm2/spotty+mojo+binky), and the board decides, as ModelRefusal does for that shared
++ * chain. The Lifestyle 650 has no gesture in this U-Boot, so its row is never reached.
++ * stock_rootfs_limit (os/models.json) is not held here: it is the largest image Bose's timed
++ * streaming installer has written, which the stick does not use; ubi.img has to fit the slot.
++ */
++static const struct rt_bose {
++	const char *board, *stock;
++} rt_bose_boards[] = {
++	{ "rhino", "binky" },
++	{ "spotty3", "spotty" },
++	{ "mojo3", "mojo" },
++	{ "burns", "burns" },
++	{ "lisa2", "lisa" },
++	{ "spotty", "spotty" },
++	{ "mojo", "mojo" },
++	{ "taigan", "taigan" },
++	{ "lisa", "lisa" },
++	{ "binky", "binky" },
++	{ "ginger", "ginger" },
++	{ "bardeen", "bardeen" },
++};
++
++static struct rt_module *rt_module_named(struct rt_pkg *pkg, const char *name)
++{
++	int i;
++
++	for (i = 0; i < pkg->n; i++)
++		if (!strcmp(pkg->m[i].name, name))
++			return &pkg->m[i];
++	return NULL;
++}
++
++/* Whether a version tag (27.0.6.46330.5043500@sm2/spotty+mojo+binky) names module m and,
++ * among its variants, v. */
++static bool rt_tag_names(const char *tag, const char *m, const char *v)
++{
++	const char *p = strchr(tag, '@'), *e;
++	size_t n = strlen(m), k = strlen(v);
++
++	if (!p || strncmp(++p, m, n) || p[n] != '/')
++		return false;
++	for (p += n + 1; *p; p = *e ? e + 1 : e) {
++		for (e = p; *e && *e != '+'; e++)
++			;
++		if ((size_t)(e - p) == k && !strncmp(p, v, k))
++			return true;
 +	}
-+	if (size < 1 || size > ST_SIG_MAX) {
-+		printf("Update.stu.sig: not a SoundTap package statement\n");
-+		return -EKEYREJECTED;
++	return false;
++}
++
++/*
++ * What kind of package this is, and whether this board takes it: SoundTap's (it carries
++ * soundtap-rootfs) on any board with the gesture; Bose's when its chain is a stock family,
++ * its ubi.img's version tag names this board's module (rt_m) and stock variant, and its
++ * payloads fit their partitions. -ENOEXEC: not for this speaker.
++ */
++static int rt_classify(struct rt_pkg *pkg, u32 erasesize)
++{
++	const char *b = env_get("rt_b"), *mod = env_get("rt_m");
++	const struct rt_bose *bose = NULL;
++	struct rt_module *m;
++	int i, j;
++
++	pkg->rootfs = rt_module_named(pkg, "soundtap-rootfs");
++	pkg->bose = !pkg->rootfs;
++	if (pkg->bose) {
++		for (i = 0; b && i < ARRAY_SIZE(rt_bose_boards); i++)
++			if (!strcmp(b, rt_bose_boards[i].board))
++				bose = &rt_bose_boards[i];
++		for (i = 0; i < ARRAY_SIZE(rt_bose_chains); i++) {
++			for (j = 0; j < pkg->n && rt_bose_chains[i][j]; j++)
++				if (strcmp(pkg->m[j].name, rt_bose_chains[i][j]))
++					break;
++			if (j == pkg->n && (j == RT_STU_MODULES || !rt_bose_chains[i][j]))
++				break;
++		}
++		pkg->rootfs = rt_module_named(pkg, "ubi.img");
++		pkg->kernel = rt_module_named(pkg, "linuxPatched");
++		pkg->mlo = rt_module_named(pkg, "MLO");
++		pkg->uboot = rt_module_named(pkg, "u-boot.img");
++		if (!bose || !mod || i == ARRAY_SIZE(rt_bose_chains) || !pkg->rootfs ||
++		    !pkg->kernel || !pkg->mlo || !pkg->uboot ||
++		    !rt_tag_names(pkg->rootfs->tag, mod, bose->stock)) {
++			printf("Update.stu: not a SoundTap package, nor Bose's firmware for this speaker "
++			       "(%s/%s, ubi.img %s); nothing written\n", mod ? mod : "?", b ? b : "?",
++			       pkg->rootfs ? pkg->rootfs->tag : "missing");
++			return -ENOEXEC;
++		}
++		if (pkg->rootfs->size > RT_SLOT_SIZE + RT_STU_OVERLAP || pkg->kernel->size > RT_KERNEL_SIZE ||
++		    pkg->mlo->size > RT_SPL_SIZE || pkg->uboot->size > RT_UBOOT_MAX) {
++			printf("Update.stu: a module of Bose's package does not fit this speaker; "
++			       "nothing written\n");
++			return -ENOEXEC;
++		}
 +	}
-+	if (fs_set_blk_dev("usb", rt_part, FS_TYPE_ANY) ||
-+	    fs_read(RT_SIG_NAME, map_to_sysmem(buf), 0, size, &got) || got != size)
-+		return -EIO;
-+	/* A value that is not a key is no key: the release keys alone, as soundtapd does. */
-+	nkeys = st_trusted_keys(st_release_keys, ARRAY_SIZE(st_release_keys), owner, keys);
-+	if (nkeys > (int)ARRAY_SIZE(st_release_keys))
-+		printf(ST_OWNER_KEY_ENV ": the owner key is trusted as well\n");
-+	else if (owner)
-+		printf(ST_OWNER_KEY_ENV ": not an ed25519 public key; ignored\n");
-+	ret = st_verify((char *)buf, size, (const unsigned char (*)[32])keys, nkeys, "core", st);
-+	if (!ret)
-+		ret = st_stick_policy(st, SOUNDTAP_UBOOT_PROFILE);
-+	if (ret) {
-+		printf("Update.stu.sig: %s; nothing written\n", st_result_text(ret));
-+		return -EKEYREJECTED;
++	/* The module declares its overlap with the next header as its own; the UBI image is
++	 * whichever of the two lengths is whole eraseblocks (ubiBodySize in internal/web). */
++	m = pkg->rootfs;
++	if (m->size % erasesize == 0)
++		m->body = m->size;
++	else if ((m->size - RT_STU_OVERLAP) % erasesize == 0)
++		m->body = m->size - RT_STU_OVERLAP;
++	else
++		m->body = 0;
++	return m->body && m->body <= RT_SLOT_SIZE ? 0 : -EINVAL;
++}
++
++/*
++ * Pass one: all of Update.stu read once, into the SHA-256 and into each module's image CRC,
++ * which covers the module's whole declared size, overlap included (internal/stu's payload).
++ * Nothing is erased before the CRC of every module the stick writes matches. A module it
++ * does not write may differ: Bose's own 27.0.6 packages carry host firmware whose CRC field
++ * does not match its bytes (TRI_shelby_update.tri says 0xffffffff, SEN_FW_update.bos another
++ * value), which Bose's installer evidently does not hold it to; its header CRC still holds
++ * the chain together, and the second pass's digest the whole file.
++ */
++static int rt_check(u8 *buf, const struct rt_pkg *pkg, sha256_context *ctx, loff_t file)
++{
++	u32 crc[RT_STU_MODULES] = {};
++	loff_t off, a, b;
++	u32 n;
++	int i;
++
++	for (off = 0; off < file; off += n) {
++		n = min_t(loff_t, RT_CHUNK, file - off);
++		if (rt_read(buf, off, n))
++			return -EIO;
++		sha256_update(ctx, buf, n);
++		for (i = 0; i < pkg->n; i++) {
++			a = max_t(loff_t, off, pkg->m[i].off);
++			b = min_t(loff_t, off + n, pkg->m[i].off + pkg->m[i].size);
++			if (a < b)
++				crc[i] = crc32(crc[i], buf + (a - off), b - a);
++		}
 +	}
-+	printf("Update.stu.sig: SoundTap Core %s, %s, verified (soundtap-uboot-profile="
-+	       SOUNDTAP_UBOOT_PROFILE ")\n", st->version, st->profile);
++	for (i = 0; i < pkg->n; i++) {
++		const struct rt_module *m = &pkg->m[i];
++
++		if (crc[i] == m->crc)
++			continue;
++		if (m != pkg->rootfs && m != pkg->kernel && m != pkg->mlo && m != pkg->uboot) {
++			printf("Update.stu: %s: image CRC does not match; not written\n", m->name);
++			continue;
++		}
++		printf("Update.stu: %s: image CRC mismatch; nothing written\n", m->name);
++		return -EBADMSG;
++	}
 +	return 0;
++}
++
++/*
++ * Bose's kernel as its updater writes it (flash.ValidateKernel): a uImage whose name fixsig
++ * turns back into Linux, that fits its module. A SoundTap kernel under Bose's module names
++ * is not Bose's firmware (errNotStock in internal/web/firmware): refused.
++ */
++static int rt_kernel_ok(u8 *buf, const struct rt_module *m)
++{
++	char name[33];
++
++	if (m->size < 64 || rt_read(buf, m->off, 64))
++		return m->size < 64 ? -ENOEXEC : -EIO;
++	memcpy(name, buf + 32, 32);
++	name[32] = 0;
++	if (get_unaligned_be32(buf) != 0x27051956 ||
++	    (strncmp(name, "Linux", 5) && strncmp(name, "Linub", 5)) || strstr(name, "SoundTap") ||
++	    get_unaligned_be32(buf + 12) > m->size - 64) {
++		printf("Update.stu: linuxPatched is not Bose's kernel; nothing written\n");
++		return -ENOEXEC;
++	}
++	return 0;
++}
++
++/*
++ * Bose's SPL and U-Boot as soundtapd holds them before it writes either
++ * (install.VerifyBootloaders): an SPL with the header the ROM parses, loading to SRAM and
++ * starting with a branch (ValidateAM335xSPL), and a legacy uImage whose data and header
++ * CRCs check out.
++ */
++static int rt_boot_ok(const u8 *mlo, u32 mlo_len, const u8 *ub, u32 ub_len)
++{
++	u8 h[64];
++	u32 n;
++
++	if (mlo_len < 0x20c || get_unaligned_le32(mlo) != 0x40 ||
++	    get_unaligned_le32(mlo + 0x204) != 0x402f0400 ||
++	    get_unaligned_le32(mlo + 0x200) > mlo_len - 0x200 ||
++	    (mlo[0x20b] != 0xea && mlo[0x20b] != 0xeb))
++		return -ENOEXEC;
++	if (ub_len < 64 || get_unaligned_be32(ub) != 0x27051956)
++		return -ENOEXEC;
++	n = get_unaligned_be32(ub + 12);
++	if (n > ub_len - 64 || crc32(0, ub + 64, n) != get_unaligned_be32(ub + 24))
++		return -ENOEXEC;
++	memcpy(h, ub, sizeof(h));
++	put_unaligned_be32(0, h + 4);
++	return crc32(0, h, sizeof(h)) == get_unaligned_be32(ub + 4) ? 0 : -ENOEXEC;
 +}
 +
 +/* SHA-256 over len bytes of Update.stu from off, a chunk at a time. */
@@ -472,16 +703,17 @@ index 40f3f73ce..468db0c20 100644
 +}
 +
 +/*
-+ * One image eraseblock into the first good block at *blk or after it: erased, the pages that
-+ * are not empty written, all of it read back and compared, as a write that reports success
-+ * proves nothing about the bytes NAND kept. A block the NAND fails to erase or program is
-+ * marked bad and the image block goes into the next one, as ubiformat does; it is all in RAM.
-+ * A read that fails or differs fails the update, and marks nothing.
++ * One image eraseblock into the first good block at *blk or after it, before end: erased,
++ * the pages that are not empty written, all of it read back and compared, as a write that
++ * reports success proves nothing about the bytes NAND kept. A block of a rootfs slot the
++ * NAND fails to erase or program is marked bad and the image block goes into the next one,
++ * as ubiformat does; it is all in RAM. Anywhere else a failing block fails the write
++ * (rt_mark_bad marks nothing outside the two rootfs slots). A read that fails or differs
++ * fails the update, and marks nothing.
 + */
-+static int rt_write_block(struct mtd_info *mtd, const u8 *data, loff_t part, loff_t *blk,
-+			  int *marked)
++static int rt_write_block(struct mtd_info *mtd, const u8 *data, loff_t part, loff_t end,
++			  loff_t *blk, int *marked)
 +{
-+	loff_t end = part + RT_SLOT_SIZE;
 +	size_t ret;
 +	u32 p;
 +	int err;
@@ -522,34 +754,12 @@ index 40f3f73ce..468db0c20 100644
 +	}
 +}
 +
-+/*
-+ * Pass two, what ubiformat does for the installer: every good eraseblock of the slot
-+ * erased, image eraseblocks written to the good ones in order with empty pages left
-+ * erased (rt_write_block), and every block after the image erased too, so no eraseblock of
-+ * the old image survives with a volume header UBI would believe; one that cannot be erased
-+ * is marked bad, which UBI skips. Each chunk goes into the package's hash from the buffer it
-+ * is written from.
-+ */
-+static int rt_write(struct mtd_info *mtd, u8 *buf, const struct rt_rootfs *rf, loff_t part,
-+		    sha256_context *ctx)
++/* Every good block from blk to end erased, so nothing of what was there before survives
++ * behind the image; in a rootfs slot one that cannot be erased is marked bad. */
++static int rt_erase_rest(struct mtd_info *mtd, loff_t part, loff_t blk, loff_t end, int *marked)
 +{
-+	loff_t blk = part, end = part + RT_SLOT_SIZE;
-+	int marked = 0, err;
-+	u32 done, n, b;
++	int err;
 +
-+	if (mtd->writesize > sizeof(rt_page))
-+		return -EINVAL;
-+	for (done = 0; done < rf->body; done += n) {
-+		n = min_t(u32, RT_CHUNK, rf->body - done);
-+		if (rt_read(buf, rf->off + done, n))
-+			return -EIO;
-+		sha256_update(ctx, buf, n);
-+		for (b = 0; b < n; b += mtd->erasesize, blk += mtd->erasesize) {
-+			err = rt_write_block(mtd, buf + b, part, &blk, &marked);
-+			if (err)
-+				return err;
-+		}
-+	}
 +	for (; blk < end; blk += mtd->erasesize) {
 +		struct erase_info ei = { .mtd = mtd, .addr = blk, .len = mtd->erasesize };
 +
@@ -557,8 +767,179 @@ index 40f3f73ce..468db0c20 100644
 +		if (mtd_block_isbad(mtd, blk))
 +			continue;
 +		err = mtd_erase(mtd, &ei);
-+		if (err && rt_mark_bad(mtd, part, blk, "erase", rt_erase_err(&ei, blk, err), &marked))
++		if (err && rt_mark_bad(mtd, part, blk, "erase", rt_erase_err(&ei, blk, err), marked))
 +			return -EIO;
++	}
++	return 0;
++}
++
++/*
++ * Pass two, what ubiformat does for the installer, into the len bytes of NAND at part:
++ * every good eraseblock erased, image eraseblocks written to the good ones in order with
++ * empty pages left erased (rt_write_block), and every block after the image erased too, so
++ * no eraseblock of the old image survives with a volume header UBI would believe; one that
++ * cannot be erased is marked bad, which UBI skips. A kernel, which ends inside a block,
++ * has the rest of that block left erased, as nandwrite -p pads it. Each chunk goes into
++ * the package's hash from the buffer it is written from.
++ */
++static int rt_write(struct mtd_info *mtd, u8 *buf, const struct rt_module *m, loff_t part,
++		    loff_t len, sha256_context *ctx)
++{
++	loff_t blk = part, end = part + len;
++	int marked = 0, err;
++	u32 done, n, b;
++
++	if (mtd->writesize > sizeof(rt_page))
++		return -EINVAL;
++	for (done = 0; done < m->body; done += n) {
++		n = min_t(u32, RT_CHUNK, m->body - done);
++		if (rt_read(buf, m->off + done, n))
++			return -EIO;
++		sha256_update(ctx, buf, n);
++		memset(buf + n, 0xff, roundup(n, mtd->erasesize) - n);
++		for (b = 0; b < n; b += mtd->erasesize, blk += mtd->erasesize) {
++			err = rt_write_block(mtd, buf + b, part, end, &blk, &marked);
++			if (err)
++				return err;
++		}
++	}
++	return rt_erase_rest(mtd, part, blk, end, &marked);
++}
++
++/* Pass two for a module that is written later, from RAM: read into dst, and into the hash
++ * from there, so the bytes written are the bytes hashed. */
++static int rt_capture(u8 *dst, const struct rt_module *m, sha256_context *ctx)
++{
++	u32 done, n;
++
++	for (done = 0; done < m->body; done += n) {
++		n = min_t(u32, RT_CHUNK, m->body - done);
++		if (rt_read(dst + done, m->off + done, n))
++			return -EIO;
++		sha256_update(ctx, dst + done, n);
++	}
++	return 0;
++}
++
++/*
++ * The boot chain copies in the order the way back to stock writes them (stockBootSlots in
++ * app/internal/install/bootloaders.go, ADR 0009): Bose's SPL reads only the first U-Boot
++ * copy, so that goes first, while our SPL still runs and boots our spare instead of a first
++ * copy that is not ours; then Bose's SPL, backups before NAND.SPL, which the ROM moves on
++ * from when it is half written; the spare last, which Bose's chain never reads. No step
++ * runs our SPL with Bose's U-Boot or Bose's SPL with ours.
++ */
++static const struct rt_copy {
++	loff_t start, end;
++	bool uboot;
++	const char *name;
++} rt_stock_copies[] = {
++	{ RT_UBOOT, RT_UBOOT_SPARE, true, "NAND.U-Boot" },
++	{ 1 * RT_SPL_SIZE, 2 * RT_SPL_SIZE, false, "NAND.SPL.backup1" },
++	{ 2 * RT_SPL_SIZE, 3 * RT_SPL_SIZE, false, "NAND.SPL.backup2" },
++	{ 3 * RT_SPL_SIZE, 4 * RT_SPL_SIZE, false, "NAND.SPL.backup3" },
++	{ 0, RT_SPL_SIZE, false, "NAND.SPL" },
++	{ RT_UBOOT_SPARE, RT_ENV_REDUND, true, "the spare NAND.U-Boot" },
++};
++
++/*
++ * Whether the copy in [start, end) holds len bytes of data, read past bad blocks as
++ * nanddump --bb=skipbad does. To decide whether to write (strict), a read the NAND
++ * corrected as many bits in as it calls due for a rewrite (-EUCLEAN) counts as not holding
++ * them, as bootSlot.worn has it; to check a write, a corrected read is a good read.
++ */
++static bool rt_copy_holds(struct mtd_info *mtd, const struct rt_copy *c, const u8 *data, u32 len,
++			  bool strict)
++{
++	loff_t blk;
++	size_t ret;
++	u32 done = 0, p, n;
++	int err;
++
++	for (blk = c->start; done < len; blk += mtd->erasesize) {
++		if (blk >= c->end)
++			return false;
++		if (mtd_block_isbad(mtd, blk))
++			continue;
++		for (p = 0; p < mtd->erasesize && done < len; p += mtd->writesize, done += n) {
++			n = min_t(u32, len - done, mtd->writesize);
++			err = mtd_read(mtd, blk + p, mtd->writesize, &ret, rt_page);
++			if ((err && (strict || !mtd_is_bitflip(err))) || ret != mtd->writesize ||
++			    memcmp(rt_page, data + done, n))
++				return false;
++		}
++	}
++	return true;
++}
++
++/* Whether the good blocks of the copy hold len bytes (ubootGoodBlocks): checked for every
++ * copy before anything of the boot chain is written. */
++static bool rt_copy_fits(struct mtd_info *mtd, const struct rt_copy *c, u32 len)
++{
++	loff_t blk;
++	u32 room = 0;
++
++	for (blk = c->start; blk < c->end; blk += mtd->erasesize)
++		if (!mtd_block_isbad(mtd, blk))
++			room += mtd->erasesize;
++	return room >= len;
++}
++
++/*
++ * One copy written from RAM (data padded with 0xff to whole blocks) into its own range and
++ * nothing past it, as bootSlot.write does: image blocks into the good blocks in order, each
++ * read back, the rest of the range erased. A block that fails fails the write; nothing here
++ * is marked bad.
++ */
++static int rt_put(struct mtd_info *mtd, const struct rt_copy *c, const u8 *data, u32 len)
++{
++	loff_t blk = c->start;
++	int marked = RT_MARK_BAD_MAX, err;
++	u32 b;
++
++	for (b = 0; b < len; b += mtd->erasesize, blk += mtd->erasesize) {
++		rt_kick();
++		err = rt_write_block(mtd, data + b, c->start, c->end, &blk, &marked);
++		if (err)
++			return err;
++	}
++	return rt_erase_rest(mtd, c->start, blk, c->end, &marked);
++}
++
++/*
++ * Bose's boot chain over ours, as install.WriteBootloaders does it: in rt_stock_copies
++ * order, every copy that does not already hold Bose's bytes written and read back, the ones
++ * that do left alone; once anything was written, both U-Boot copies read again, as a block
++ * that went bad shifts what follows it. Stops at the first copy that fails.
++ */
++static int rt_boot_chain(struct mtd_info *mtd, const u8 *mlo, u32 mlo_len, const u8 *ub,
++			 u32 ub_len)
++{
++	const struct rt_copy *c;
++	int wrote = 0, err;
++
++	for (c = rt_stock_copies; c < rt_stock_copies + ARRAY_SIZE(rt_stock_copies); c++) {
++		const u8 *d = c->uboot ? ub : mlo;
++		u32 len = c->uboot ? ub_len : mlo_len;
++
++		if (rt_copy_holds(mtd, c, d, len, true)) {
++			printf("Update.stu: %s holds Bose's already; left alone\n", c->name);
++			continue;
++		}
++		printf("Update.stu: writing Bose's %s into %s\n", c->uboot ? "U-Boot" : "SPL", c->name);
++		err = rt_put(mtd, c, d, len);
++		if (!err && !rt_copy_holds(mtd, c, d, len, false))
++			err = -EIO;
++		if (err) {
++			printf("Update.stu: %s not written (%d)\n", c->name, err);
++			return err;
++		}
++		wrote++;
++	}
++	if (wrote && (!rt_copy_holds(mtd, &rt_stock_copies[0], ub, ub_len, false) ||
++		      !rt_copy_holds(mtd, &rt_stock_copies[5], ub, ub_len, false))) {
++		printf("Update.stu: NAND.U-Boot no longer holds Bose's U-Boot after the boot chain write\n");
++		return -EIO;
 +	}
 +	return 0;
 +}
@@ -592,7 +973,7 @@ index 40f3f73ce..468db0c20 100644
 +/*
 + * A torn environment leaves U-Boot on its built-in one, which holds none of the recipes a
 + * saved bootcmd names, and Bose's names nboot.e. So when any is missing the whole
-+ * set goes in for this board's model (rt_v and rt_m, as rt_board_setup read them), with the
++ * set goes in for this board (rt_b, rt_m, rt_dtb and rt_kernel, as rt_board_setup set them), with the
 + * nand_args pair soundtapd needs to select a slot (rebuiltEnv in internal/flash): the
 + * environment this saves is complete on its own. One that has them all keeps them; its
 + * installer knew the model's variant (a Series III, say) better than the board does.
@@ -600,8 +981,9 @@ index 40f3f73ce..468db0c20 100644
 +static int rt_set_recipes(void)
 +{
 +	static char line[2048];
-+	const char *v = env_get("rt_v"), *m = env_get("rt_m");
-+	char dtb[32], kernel[32], *eq;
++	const char *v = env_get("rt_b"), *m = env_get("rt_m");
++	const char *dtb = env_get("rt_dtb"), *kernel = env_get("rt_kernel");
++	char *eq;
 +	int i, n;
 +
 +	for (i = 0; i < ARRAY_SIZE(rt_env_templates); i++) {
@@ -613,10 +995,8 @@ index 40f3f73ce..468db0c20 100644
 +	}
 +	if (i == ARRAY_SIZE(rt_env_templates))
 +		return 0;
-+	if (!v || !m)
++	if (!v || !m || !dtb || !kernel)
 +		return -ENODEV;
-+	snprintf(dtb, sizeof(dtb), "%s_%s.dtb", v, m);
-+	snprintf(kernel, sizeof(kernel), "uImage-%s", v);
 +	for (i = 0; i < ARRAY_SIZE(rt_env_templates); i++) {
 +		const char *t = rt_env_templates[i];
 +
@@ -639,23 +1019,362 @@ index 40f3f73ce..468db0c20 100644
 +	return 0;
 +}
 +
-+static int rt_usb_update(void)
++/*
++ * The slot this boot would run, as autoboot will pick it: altbootcmd once the coming boot's
++ * count passes bootlimit (bootdelay_process counts it after this spy), bootcmd otherwise.
++ * With no environment both are the built-in defaults, and bootcmd's slot is the one tried.
++ */
++static const char *rt_booting_cmd(void)
 +{
 +	const char *bootcmd = env_get("bootcmd");
++	const char *alt = env_get("altbootcmd");
++	ulong limit = env_get_ulong("bootlimit", 10, 0);
++	ulong count = env_get_ulong("bootcount", 10, 0);
++
++#ifdef CONFIG_BOOTCOUNT_LIMIT
++	count = bootcount_load();
++#endif
++	if (alt && limit && count + 1 > limit)
++		return alt;
++	return bootcmd;
++}
++
++/*
++ * The environment as one 8 KiB copy, the format Bose's U-Boot reads (UseLegacyEnv in
++ * internal/flash): a CRC-32 and the entries, NUL separated, zero padded. margin keeps that
++ * many bytes free, for a check made before the entries that are still to come are set.
++ */
++static u8 rt_env_img[RT_ENV_LEGACY];
++
++static int rt_env_export(int margin)
++{
++	char *data = (char *)rt_env_img + 4;
++
++	memset(rt_env_img, 0, sizeof(rt_env_img));
++	if (hexport_r(&env_htab, '\0', 0, &data, sizeof(rt_env_img) - 4 - margin, 0, NULL) < 0)
++		return -EFBIG;
++	put_unaligned_le32(crc32(0, rt_env_img + 4, sizeof(rt_env_img) - 4), rt_env_img);
++	return 0;
++}
++
++/*
++ * The environment in RAM written as that copy into NAND.U-Boot-Env and read back, then,
++ * with drop_redundant, the redundant copy in the last block of NAND.U-Boot erased and read
++ * back erased, as UseLegacyEnv does. Until that erase our U-Boot boots the redundant copy;
++ * from it on it boots this one (CONFIG_ENV_REDUNDANT_UPGRADE), and Bose's U-Boot reads only
++ * this one. Afterwards a save of this U-Boot goes to the redundant copy, as after a boot
++ * that read this one (env_nand_save writes CONFIG_ENV_OFFSET_REDUND when ENV_VALID), and
++ * never over the copy Bose's U-Boot reads.
++ */
++static int rt_env_legacy(struct mtd_info *mtd, bool drop_redundant)
++{
++	struct erase_info ei = { .mtd = mtd, .addr = RT_ENV_OFFSET, .len = mtd->erasesize };
++	size_t ret;
++	u32 p;
++	int err;
++
++	err = rt_env_export(0);
++	if (err)
++		return err;
++	if (mtd_erase(mtd, &ei) ||
++	    mtd_write(mtd, RT_ENV_OFFSET, sizeof(rt_env_img), &ret, rt_env_img) ||
++	    ret != sizeof(rt_env_img))
++		return -EIO;
++	for (p = 0; p < sizeof(rt_env_img); p += mtd->writesize) {
++		err = mtd_read(mtd, RT_ENV_OFFSET + p, mtd->writesize, &ret, rt_page);
++		if ((err && !mtd_is_bitflip(err)) || ret != mtd->writesize ||
++		    memcmp(rt_page, rt_env_img + p, mtd->writesize))
++			return -EIO;
++	}
++	if (drop_redundant && !mtd_block_isbad(mtd, RT_ENV_REDUND)) {
++		struct erase_info er = { .mtd = mtd, .addr = RT_ENV_REDUND, .len = mtd->erasesize };
++
++		if (mtd_erase(mtd, &er))
++			return -EIO;
++		for (p = 0; p < RT_ENV_SIZE; p += mtd->writesize) {
++			err = mtd_read(mtd, RT_ENV_REDUND + p, mtd->writesize, &ret, rt_page);
++			if ((err && !mtd_is_bitflip(err)) || ret != mtd->writesize ||
++			    !rt_page_empty(rt_page, mtd->writesize))
++				return -EIO;
++		}
++	}
++	gd->env_valid = ENV_VALID;
++	return 0;
++}
++
++/* The two slot recipes the way back writes for Bose's U-Boot (stockRecipes in
++ * app/internal/flash/recipes.go, byte for byte). */
++static const char *const rt_stock_recipes[] = {
++	"nand_boot=run nand_args; mtdparts default; ubi part NAND.File-System-Ping 2048; "
++		"ubifsmount ubi0; ubifsload ${loadaddr} /boot/${variant}_${module_type}.dtb; "
++		"fdt addr ${loadaddr}; nboot.e ${kloadaddr} 0 ${kernel0_nand_address}; fixsig; "
++		"bootm ${kloadaddr} - ${loadaddr}",
++	"nand_boot2=run nand_args2; mtdparts default; ubi part NAND.File-System-Pong 2048; "
++		"ubifsmount ubi0; ubifsload ${loadaddr} /boot/${variant}_${module_type}.dtb; "
++		"fdt addr ${loadaddr}; nboot.e ${kloadaddr} 0 ${kernel1_nand_address}; fixsig; "
++		"bootm ${kloadaddr} - ${loadaddr}",
++};
++
++/* Entries only Bose's own environment defines, which those recipes read. */
++static const char *const rt_stock_vars[] = {
++	"nand_args", "nand_args2", "loadaddr", "kloadaddr", "kernel0_nand_address",
++	"kernel1_nand_address",
++};
++
++/* key's value without the fields a SoundTap install adds (isSoundTapMarker): soundtap.nandroot=1
++ * and a ubi.mtd= naming a partition. ubi.mtd=8,2048 is stock's own and stays. */
++static void rt_strip_markers(const char *key)
++{
++	static char out[1024];
++	const char *v = env_get(key), *f, *e;
++	size_t len = 0, n;
++
++	if (!v || strlen(v) >= sizeof(out))
++		return;
++	for (f = v; *f; f = e) {
++		while (*f == ' ')
++			f++;
++		for (e = f; *e && *e != ' '; e++)
++			;
++		n = e - f;
++		if (!n || (n == 19 && !strncmp(f, "soundtap.nandroot=1", n)) ||
++		    (n > 13 && !strncmp(f, "ubi.mtd=NAND.", 13)))
++			continue;
++		if (len)
++			out[len++] = ' ';
++		memcpy(out + len, f, n);
++		len += n;
++	}
++	out[len] = 0;
++	env_set(key, out);
++}
++
++/*
++ * The environment Bose's U-Boot boots the new slot with, as the way back leaves it: its slot
++ * recipes in place of ours and the entries only our U-Boot reads gone (InstallStockRecipes),
++ * no rollback and no SoundTap markers (SelectBootSlot with none, armRollback, markUnconfirmed).
++ * bootcmd names the new slot already. An environment without Bose's own entries (rebuilt
++ * after it was torn) keeps our recipes, which Bose's U-Boot runs too (replaceBootloaders):
++ * Bose's would read variables that are not there.
++ */
++static void rt_stock_env(void)
++{
++	static char line[512];
++	bool bose = true;
++	int i, n;
++
++	for (i = 0; i < ARRAY_SIZE(rt_stock_vars); i++)
++		if (!env_get(rt_stock_vars[i]))
++			bose = false;
++	if (bose) {
++		for (i = 0; i < ARRAY_SIZE(rt_stock_recipes); i++) {
++			n = strcspn(rt_stock_recipes[i], "=");
++			memcpy(line, rt_stock_recipes[i], n);
++			line[n] = 0;
++			env_set(line, rt_stock_recipes[i] + n + 1);
++		}
++		for (i = 2; i < ARRAY_SIZE(rt_env_templates); i++) {
++			n = strcspn(rt_env_templates[i], "=");
++			memcpy(line, rt_env_templates[i], n);
++			line[n] = 0;
++			env_set(line, NULL);
++		}
++	} else {
++		printf("Update.stu: the environment holds none of Bose's own entries; our slot "
++		       "recipes stay\n");
++	}
++	/* Ours is -2 where UART0 is a link to another processor (rt_board_setup); Bose's
++	 * environment has 1, as InstallStockRecipes puts back. */
++	if (env_get("bootdelay") && !strcmp(env_get("bootdelay"), "-2"))
++		env_set("bootdelay", "1");
++	env_set("altbootcmd", NULL);
++	env_set("bootlimit", NULL);
++	env_set("upgrade_available", NULL);
++	env_set("bootcount", NULL);
++	rt_strip_markers("nand_args");
++	rt_strip_markers("nand_args2");
++}
++
++/*
++ * Select the slot just written, as a normal install leaves it (armRollback in internal/flash,
++ * ADR 0010): the new slot boots, the one it was installed next to is the fallback, and the
++ * count starts over, so a recovered slot that never confirms rolls back instead of
++ * retrying. It is unconfirmed, so the count is kept in the environment too, where a power
++ * cut does not clear it (bootcount_davinci.c), in this same save.
++ */
++static int rt_select(const char *next, const char *prev)
++{
++	int ret;
++
++	env_set("bootcmd", next);
++	env_set("altbootcmd", prev);
++	env_set("bootlimit", "4");
++	env_set("upgrade_available", "1");
++	env_set("bootcount", "0");
++	ret = env_save();
++	if (ret) {
++		/* The environment in RAM names the new slot and the one on NAND does not: reset,
++		 * so the boot reads what is saved, the slot that booted before. */
++		printf("Update.stu: environment not saved (%d); resetting\n", ret);
++		do_reset(NULL, 0, 0, NULL);
++		return ret;
++	}
++#ifdef CONFIG_BOOTCOUNT_LIMIT
++	bootcount_store(0);	/* the RTC: the environment already holds 0 */
++#endif
++	return 0;
++}
++
++/*
++ * Whether this U-Boot reads the SPL the ROM booted, in NAND.SPL, without an ECC error and as
++ * the image the ROM loads. That SPL was written from Linux, in the ECC layout the ROM reads;
++ * read here without an error, this U-Boot's layout is that one, and the SPL copies it writes
++ * are ones the ROM can load. A layout that differed would fail every page.
++ */
++static bool rt_spl_readable(struct mtd_info *mtd)
++{
++	size_t ret;
++	u32 p;
++	int err;
++
++	for (p = 0; p < 4 * mtd->writesize; p += mtd->writesize) {
++		err = mtd_read(mtd, p, mtd->writesize, &ret, rt_page);
++		if ((err && !mtd_is_bitflip(err)) || ret != mtd->writesize)
++			return false;
++		if (!p && (get_unaligned_le32(rt_page) != 0x40 ||
++			   get_unaligned_le32(rt_page + 0x204) != 0x402f0400))
++			return false;
++	}
++	return true;
++}
++
++/*
++ * Before anything of Bose's package is written: its kernel is Bose's, this U-Boot reads the
++ * SPL the ROM booted (rt_spl_readable), NAND.U-Boot-Env is
++ * on a good block (Bose's U-Boot finds no environment elsewhere), every boot chain copy
++ * has the room, and the environment with our recipes -- which our U-Boot boots the new
++ * slot by until Bose's replaces it -- leaves room in 8 KiB for the selection.
++ */
++static int rt_bose_preflight(struct mtd_info *mtd, u8 *buf, struct rt_pkg *pkg)
++{
++	const struct rt_copy *c;
++	int ret;
++
++	ret = rt_kernel_ok(buf, pkg->kernel);
++	if (ret)
++		return ret;
++	if (!rt_spl_readable(mtd)) {
++		printf("Update.stu: NAND.SPL does not read back as the SPL the ROM boots; Bose's boot "
++		       "chain is not written from here, nothing written\n");
++		return -EIO;
++	}
++	if (mtd_block_isbad(mtd, RT_ENV_OFFSET)) {
++		printf("Update.stu: NAND.U-Boot-Env is a bad block, where Bose's U-Boot reads its "
++		       "environment; nothing written\n");
++		return -EIO;
++	}
++	for (c = rt_stock_copies; c < rt_stock_copies + ARRAY_SIZE(rt_stock_copies); c++)
++		if (!rt_copy_fits(mtd, c, c->uboot ? pkg->uboot->size : pkg->mlo->size)) {
++			printf("Update.stu: %s has no room for Bose's copy; nothing written\n", c->name);
++			return -ENOSPC;
++		}
++	ret = rt_set_recipes();
++	if (ret)
++		return ret;
++	if (rt_env_export(128)) {
++		printf("Update.stu: the environment does not fit the 8 KiB Bose's U-Boot reads; "
++		       "nothing written\n");
++		return -EFBIG;
++	}
++	return 0;
++}
++
++/*
++ * Bose's package after pass two: its kernel and ubi.img are in the slot that is not
++ * booting, read back, and nothing selects that slot yet; its SPL and U-Boot are in RAM,
++ * hashed from there. What a power cut leaves at each step:
++ *
++ * 1. Bose's SPL and U-Boot checked. Fails: nothing selected, the old slot boots.
++ * 2. The new slot selected with our recipes, in our redundant environment (rt_select).
++ *    Before the save: the old slot. After: our U-Boot boots the new slot through slot_boot's
++ *    stock_args arm (Bose's kernel from the slot's kernel partition, fixsig, the device tree
++ *    from its /boot), with the old slot as the fallback after four unconfirmed boots.
++ * 3. A second save, so both redundant copies hold that environment, and the one the next
++ *    step overwrites is no older copy that would come back.
++ * 4. The 8 KiB copy into NAND.U-Boot-Env, then the redundant copy erased (rt_env_legacy).
++ *    Cut before the erase: our U-Boot reads the redundant copy, the same entries. After:
++ *    the 8 KiB copy, the same entries again, which Bose's U-Boot reads as well.
++ * 5. Bose's U-Boot, SPLs and spare in rt_stock_copies order, the ones that differ. Cut
++ *    during the first U-Boot copy or the SPL backups: our SPL boots our spare, as in 2.
++ *    During NAND.SPL: the ROM moves on to backup1, Bose's SPL, which boots Bose's U-Boot
++ *    from the first copy; it runs our recipes from the 8 KiB copy (they boot under Bose's
++ *    U-Boot too, as replaceBootloaders relies on) into the new slot. After NAND.SPL the
++ *    same; the spare is never read by Bose's chain.
++ * 6. Bose's recipes into the 8 KiB copy (rt_stock_env). A cut while that one block is
++ *    erased and written leaves Bose's U-Boot on its built-in environment: the window the
++ *    way back through /api/firmware has too.
++ * 7. Reset into Bose's boot chain: our U-Boot, still running, cannot run Bose's recipes.
++ *
++ * A failure from 3 on leaves the new slot selected and the boot going on under this U-Boot,
++ * which still runs our recipes; a failure in 6 resets as well.
++ */
++static int rt_bose_finish(struct mtd_info *mtd, struct rt_pkg *pkg, const u8 *mlo, const u8 *ub,
++			  const char *next, const char *prev)
++{
++	int ret;
++
++	ret = rt_boot_ok(mlo, pkg->mlo->size, ub, pkg->uboot->size);
++	if (ret) {
++		printf("Update.stu: MLO or u-boot.img is not a boot loader this board runs; "
++		       "nothing selected\n");
++		return ret;
++	}
++	ret = rt_set_recipes();
++	if (!ret)
++		ret = rt_select(next, prev);
++	if (ret)
++		return ret;
++	ret = env_save();
++	if (!ret)
++		ret = rt_env_legacy(mtd, true);
++	if (!ret)
++		ret = rt_boot_chain(mtd, mlo, pkg->mlo->size, ub, pkg->uboot->size);
++	if (ret) {
++		printf("Update.stu: Bose's slot selected under this U-Boot; Bose's boot chain not "
++		       "written (%d)\n", ret);
++		return ret;
++	}
++	rt_stock_env();
++	ret = rt_env_legacy(mtd, false);
++	if (ret)
++		printf("Update.stu: Bose's environment not written (%d)\n", ret);
++	else
++		printf("Update.stu: Bose's firmware installed; starting it\n");
++	do_reset(NULL, 0, 0, NULL);
++	return ret;
++}
++
++static int rt_usb_update(void)
++{
++	const char *booting = rt_booting_cmd();
++	const char *bootcmd = env_get("bootcmd");
++	const char *alt = env_get("altbootcmd");
 +	bool st20 = rt_st20();
-+	/* Install into the slot that is not booting; bootcmd says which. */
-+	bool pong = bootcmd && strstr(bootcmd, "nand_boot2");
++	/* Install into the slot that is not booting. */
++	bool pong = booting && strstr(booting, "nand_boot2");
 +	loff_t part = pong ? RT_PING_ROOTFS : RT_PONG_ROOTFS;
++	loff_t kpart = pong ? RT_PING_KERNEL : RT_PONG_KERNEL;
 +	const char *next = pong ? "run nand_boot;" : "run nand_boot2;";
 +	const char *prev = pong ? "run nand_boot2;" : "run nand_boot;";
 +	struct mtd_info *mtd = get_nand_dev_by_index(0);
-+	struct rt_rootfs rf = {};
-+	struct st_statement st;
++	static struct rt_pkg pkg;
++	static u8 hdr[RT_STU_HEADER];
++	struct rt_module *w[4];
 +	sha256_context ctx;
-+	u8 digest[SHA256_SUM_LEN];
-+	loff_t file, head;
-+	u8 *buf;
-+	int ret;
++	u8 digest[SHA256_SUM_LEN], again[SHA256_SUM_LEN];
++	u8 *buf, *mlo = NULL, *ub = NULL;
++	loff_t file, pos;
++	int ret, i, nw = 0;
 +
 +	if (!mtd || mtd->erasesize > RT_CHUNK || RT_CHUNK % mtd->erasesize)
 +		return -ENODEV;
@@ -682,80 +1401,103 @@ index 40f3f73ce..468db0c20 100644
 +		ret = -ENOENT;
 +		goto out;
 +	}
-+	ret = rt_check_sig(buf, &st);
++	memset(&pkg, 0, sizeof(pkg));
++	ret = rt_scan(buf, file, &pkg);
++	if (!ret)
++		ret = rt_classify(&pkg, mtd->erasesize);
++	if (!ret && pkg.bose)
++		ret = rt_bose_preflight(mtd, buf, &pkg);
 +	if (ret)
 +		goto out;
-+	ret = rt_find_rootfs(buf, file, &rf);
-+	if (ret)
-+		goto out;
-+	/* The module declares its overlap with the next header as its own; the UBI image is
-+	 * whichever of the two lengths is whole eraseblocks (ubiBodySize in internal/web). */
-+	if (rf.size % mtd->erasesize == 0)
-+		rf.body = rf.size;
-+	else if ((rf.size - RT_STU_OVERLAP) % mtd->erasesize == 0)
-+		rf.body = rf.size - RT_STU_OVERLAP;
-+	ret = -EINVAL;
-+	if (!rf.body || rf.body > RT_SLOT_SIZE)
-+		goto out;
-+	/* Pass one: nothing is erased before all of Update.stu hashes to the signed digest. */
-+	printf("Update.stu: %lld bytes, rootfs %u, checking\n", file, rf.size);
++	/* Pass one: nothing is erased before every CRC of Update.stu checks out. */
++	printf("Update.stu: %lld bytes, %s, checking\n", file,
++	       pkg.bose ? "Bose's firmware" : "SoundTap");
 +	sha256_starts(&ctx);
-+	ret = rt_hash(buf, &ctx, 0, file);
++	ret = rt_check(buf, &pkg, &ctx, file);
 +	if (ret)
 +		goto out;
 +	sha256_finish(&ctx, digest);
-+	if (st_matches(&st, digest)) {
-+		printf("Update.stu: %s; nothing written\n", st_result_text(ST_WRONG_FILE));
-+		ret = -EKEYREJECTED;
-+		goto out;
++	/* What pass two writes, in the order the package holds it. Bose's SPL and U-Boot go
++	 * into RAM, written only once the whole file has hashed the same twice. */
++	if (pkg.bose) {
++		mlo = malloc_cache_aligned(roundup(RT_SPL_SIZE, mtd->erasesize));
++		ub = malloc_cache_aligned(roundup(RT_UBOOT_MAX, mtd->erasesize));
++		if (!mlo || !ub) {
++			ret = -ENOMEM;
++			goto out;
++		}
++		memset(mlo, 0xff, roundup(RT_SPL_SIZE, mtd->erasesize));
++		memset(ub, 0xff, roundup(RT_UBOOT_MAX, mtd->erasesize));
++		w[nw++] = pkg.kernel;
++	}
++	w[nw++] = pkg.rootfs;
++	if (pkg.bose) {
++		w[nw++] = pkg.mlo;
++		w[nw++] = pkg.uboot;
 +	}
 +	/*
-+	 * Pass two hashes the whole file again, in order, with the rootfs hashed from the very
-+	 * buffers it is written from, and the rootfs header compared with the one that placed
-+	 * it. A stick that reads back otherwise ends with another digest, and nothing is
-+	 * selected. The spare slot is written by then, as an interrupted /api/firmware leaves
-+	 * it; the slot that boots is untouched.
++	 * Nothing may name the slot about to be erased while it is written (ADR 0010): a power
++	 * cut would leave bootcmd or altbootcmd on a half-written slot. Point both at the slot
++	 * that boots first, saved, and start its count over; if that save fails, nothing is
++	 * erased.
++	 */
++	if ((bootcmd && strstr(bootcmd, next)) || (alt && strstr(alt, next))) {
++		env_set("bootcmd", prev);
++		env_set("altbootcmd", prev);
++		env_set("bootcount", "0");
++		ret = env_save();
++		if (ret) {
++			printf("Update.stu: environment not saved (%d); nothing written\n", ret);
++			goto out;
++		}
++#ifdef CONFIG_BOOTCOUNT_LIMIT
++		bootcount_store(0);
++#endif
++	}
++	/*
++	 * Pass two hashes the whole file again, in order, with every module it writes hashed
++	 * from the very buffers it is written from, and each of their headers compared with
++	 * the one that placed it. A stick that reads back otherwise ends with another digest,
++	 * and nothing is selected. The spare slot is written by then, as an interrupted
++	 * /api/firmware leaves it; the slot that boots is untouched.
 +	 */
 +	printf("Update.stu: writing %s\n", pong ? "PING" : "PONG");
-+	head = rf.off - RT_STU_HEADER;
 +	sha256_starts(&ctx);
-+	ret = rt_hash(buf, &ctx, 0, head);
-+	if (!ret)
-+		ret = rt_read(buf, head, RT_STU_HEADER);
-+	if (!ret && memcmp(buf, rf.hdr, RT_STU_HEADER))
-+		ret = -EBADMSG;
-+	if (!ret) {
-+		sha256_update(&ctx, buf, RT_STU_HEADER);
-+		ret = rt_write(mtd, buf, &rf, part, &ctx);
++	for (pos = 0, i = 0; !ret && i < nw; pos = w[i]->off + w[i]->body, i++) {
++		ret = rt_hash(buf, &ctx, pos, w[i]->off - pos);
++		if (!ret)
++			ret = rt_read(hdr, w[i]->off - RT_STU_HEADER, RT_STU_HEADER);
++		if (!ret && crc32(0, hdr, RT_STU_HEADER) != w[i]->hcrc)
++			ret = -EBADMSG;
++		if (ret)
++			break;
++		if (w[i] == pkg.rootfs)
++			ret = rt_write(mtd, buf, w[i], part, RT_SLOT_SIZE, &ctx);
++		else if (w[i] == pkg.kernel)
++			ret = rt_write(mtd, buf, w[i], kpart, RT_KERNEL_SIZE, &ctx);
++		else
++			ret = rt_capture(w[i] == pkg.mlo ? mlo : ub, w[i], &ctx);
 +	}
 +	if (!ret)
-+		ret = rt_hash(buf, &ctx, rf.off + rf.body, file - rf.off - rf.body);
++		ret = rt_hash(buf, &ctx, pos, file - pos);
 +	if (ret)
 +		goto out;
-+	sha256_finish(&ctx, digest);
-+	if (st_matches(&st, digest)) {
-+		ret = -EBADMSG;	/* the stick read back differently the second time */
++	sha256_finish(&ctx, again);
++	if (memcmp(digest, again, SHA256_SUM_LEN)) {
++		printf("Update.stu: read back otherwise the second time; nothing selected\n");
++		ret = -EBADMSG;
++		goto out;
++	}
++	if (pkg.bose) {
++		ret = rt_bose_finish(mtd, &pkg, mlo, ub, next, prev);
 +		goto out;
 +	}
 +	ret = rt_set_recipes();
-+	if (ret)
-+		goto out;
-+	/* As a normal install leaves it (armRollback in internal/flash, ADR 0010): the new
-+	 * slot boots, the one it was installed next to is the fallback, and the count starts
-+	 * over, so a recovered slot that never confirms rolls back instead of retrying. It
-+	 * is unconfirmed, so the count is kept in the environment too, where a power cut
-+	 * does not clear it (bootcount_davinci.c), in this same save. */
-+	env_set("bootcmd", next);
-+	env_set("altbootcmd", prev);
-+	env_set("bootlimit", "4");
-+	env_set("upgrade_available", "1");
-+	env_set("bootcount", "0");
-+	ret = env_save();
-+#ifdef CONFIG_BOOTCOUNT_LIMIT
 +	if (!ret)
-+		bootcount_store(0);	/* the RTC: the environment already holds 0 */
-+#endif
++		ret = rt_select(next, prev);
 +out:
++	free(ub);
++	free(mlo);
 +	free(buf);
 +	return ret;
 +}
@@ -793,6 +1535,28 @@ index 40f3f73ce..468db0c20 100644
 +}
 +
 +/*
++ * The SA-5 (burns) and the SoundTouch adapter (lisa, lisa2) have one button straight on a
++ * GPIO, besides any keypad stock scans: stock's bit 9 (0x200), gpio0_27 on the SM2 and
++ * gpio0_29 on the SCM. Held at power-on, stock runs the emergency update from USB. It is
++ * read with the module's keypad pad mux and no strobe driven, as stock reads it after its scan.
++ */
++static bool rt_single_button_held(void)
++{
++	bool scm = rt_st20();
++	struct gpio_desc in = {};
++	bool held = false;
++
++	configure_module_pin_mux(scm ? rt_st20_keypad_pin_mux : rt_keypad_pin_mux);
++	if (!dm_gpio_lookup_name(scm ? "gpio@44e07000_29" : "gpio@44e07000_27", &in) &&
++	    !dm_gpio_request(&in, "button") &&
++	    !dm_gpio_set_dir_flags(&in, GPIOD_IS_IN))
++		held = dm_gpio_get_value(&in) == 0;
++	if (dm_gpio_is_valid(&in))
++		dm_gpio_free(in.dev, &in);
++	return held;
++}
++
++/*
 + * The ST300 (ginger) has no keypad on the module: its keys and IR live on the LPM, which
 + * raises a module GPIO at power-on when the remote's recovery combo is held (SoundTouch,
 + * then CC held while power comes back; Bose's documented USB update). Stock U-Boot reads
@@ -823,9 +1587,9 @@ index 40f3f73ce..468db0c20 100644
 +
 +/*
 + * Tell Linux the gesture was seen: soundtap.recovery=<result> on the kernel command line,
-+ * 0 for an install, a negative errno otherwise (-19 no stick, -2 no Update.stu, -126 no
-+ * Update.stu.sig, -129 a signature refused, -74 a header that does not check out or a
-+ * stick that read back otherwise). A gesture
++ * 0 for an install, a negative errno otherwise (-19 no stick, -2 no Update.stu, -8 not a
++ * .stu or not a package for this speaker, -74 a header or image CRC that does not check
++ * out or a stick that read back otherwise, -5 a read or NAND error). A gesture
 + * with no stick in is how the trigger is tested without installing anything. It is added
 + * where the command line goes into the device tree (board_fdt_chosen_bootargs), never to
 + * the environment: the boot count of an unconfirmed slot saves the environment after this
@@ -842,10 +1606,11 @@ index 40f3f73ce..468db0c20 100644
 +static int rt_usb_recovery(void)
 +{
 +	/* The model from the board, never from the environment, which may be torn or another
-+	 * board's: rt_board_setup set rt_v from SYSBOOT (the ST20), the manufacturing
-+	 * partition (rhino, binky, ginger) or variant_raw. That spy runs first: the linker list
-+	 * sorts spies by name. */
-+	const char *v = env_get("rt_v");
++	 * board's: rt_board_setup set rt_b from the variant resistor (the SCM boards), the
++	 * manufacturing partition (the SM2 boards) or variant_raw. That spy runs first: the
++	 * linker list sorts spies by name. Every board with the 3x3 keypad takes stock's
++	 * Volume Down + Preset 4, on the scan its module wires (rt_st20). */
++	const char *v = env_get("rt_b");
 +	int ret;
 +
 +	if (!v)
@@ -862,8 +1627,17 @@ index 40f3f73ce..468db0c20 100644
 +		mdelay(50);
 +		if (!rt_wla_both_held())
 +			return 0;
++	} else if (!strcmp(v, "burns") || !strcmp(v, "lisa") || !strcmp(v, "lisa2")) {
++		/* Stock's one button, or the keypad's Volume Down + Preset 4: an ST20 whose
++		 * variant resistor reads in the adapter's range still takes its own gesture. */
++		if (!rt_single_button_held() && rt_keypad_scan() != RT_KEYS_PRESERVE)
++			return 0;
++		mdelay(50);
++		if (!rt_single_button_held() && rt_keypad_scan() != RT_KEYS_PRESERVE)
++			return 0;
 +	} else {
-+		if (strcmp(v, "rhino") && strcmp(v, "spotty"))
++		if (strcmp(v, "rhino") && strcmp(v, "spotty") && strcmp(v, "mojo") &&
++		    strcmp(v, "taigan") && strcmp(v, "spotty3") && strcmp(v, "mojo3"))
 +			return 0;
 +		/* Two sweeps 50 ms apart must agree, as stock's own exact-mask test does. */
 +		if (rt_keypad_scan() != RT_KEYS_PRESERVE)
@@ -876,8 +1650,8 @@ index 40f3f73ce..468db0c20 100644
 +	ret = rt_usb_update();
 +	usb_stop();
 +	if (ret) {
-+		printf("Emergency Update failed (%d); booting the current slot\n", ret);
-+		if (ret == -ENOKEY || ret == -EKEYREJECTED)
++		printf("Emergency Update failed (%d); booting what the environment selects\n", ret);
++		if (ret == -ENOEXEC)
 +			rt_lamp_refused();
 +		else
 +			rt_lamp_fail();
@@ -886,7 +1660,8 @@ index 40f3f73ce..468db0c20 100644
 +	if (!ret)
 +		printf("Emergency Update done; booting it\n");
 +	rt_mark_cmdline(ret);
-+	/* Either way the boot goes on: bootcmd names the new slot only if it checked out. */
++	/* Either way the boot goes on: bootcmd names the new slot only if it checked out
++	 * (a Bose package that got as far as its boot chain has reset by now). */
 +	return 0;
 +}
 +EVENT_SPY_SIMPLE(EVT_LAST_STAGE_INIT, rt_usb_recovery);

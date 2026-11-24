@@ -2,7 +2,7 @@ diff --git a/board/ti/am335x/board.c b/board/ti/am335x/board.c
 index bd1587c1..e89bc36a 100644
 --- a/board/ti/am335x/board.c
 +++ b/board/ti/am335x/board.c
-@@ -1206,3 +1206,69 @@ U_BOOT_DRVINFO(am335x_mmc1) = {
+@@ -1206,3 +1206,159 @@ U_BOOT_DRVINFO(am335x_mmc1) = {
  	.plat = &am335x_mmc1_plat,
  };
  #endif
@@ -12,21 +12,30 @@ index bd1587c1..e89bc36a 100644
 +#include <nand.h>
 +#include <vsprintf.h>
 +/*
-+ * One U-Boot for the ST10, the WLA and the ST20. The ST20 is the one whose ROM boots NAND
-+ * before USB (SYSBOOT 10010b), and its SCM module differs from the SM2 module the other two
++ * One U-Boot for every board in os/models.json. The ST20's SCM module is the one whose ROM
++ * boots NAND before USB (SYSBOOT 10010b), and the SCM differs from the SM2 module the others
 + * carry in two ways that matter here:
 + *
 + * - NAND WP# is wired to gpmc_wpn (stock spotty_scm.dtb muxes it in its NAND group). The
 + *   SM2 modules use that pad for Wi-Fi, so wla_nand_pin_mux leaves it alone. Unmuxed, WP#
 + *   sits low and every erase and write is a silent no-op, which is how the 2026-09-27 ST20
 + *   rescue's first erase "succeeded" without changing a byte. Reads work either way.
-+ * - The default bootcmd, which runs only when the stored environment does not, has to name
-+ *   the kernel, device tree and module type. rt_v and rt_m tell it: spotty/scm on the ST20,
-+ *   otherwise sm2, and the product the manufacturing partition names: rhino (ST10),
-+ *   binky (WLA) or ginger (ST300). Stock's U-Boot reads the same field for its SM2 boards.
-+ *   Only when that field holds none of the three does variant_raw decide, as before:
-+ *   rhino from 0x3100 up, binky below, compared in hex as the bootcmd's itest did.
-+ *   They are set here rather than in the bootcmd because the default environment is full.
++ * - The boards on one module are told apart differently. Stock's 2014.07 (the same binary in
++ *   every SoundTouch package) reads the variant resistor on ADC channel 1 on the SCM and
++ *   looks its count up in a table of decimal ranges: lisa, spotty, mojo or taigan. On the SM2
++ *   it takes the product name at 0x170 of the manufacturing partition instead. rt_boards
++ *   holds both for every board SoundTap boots (os/models.json "detect").
++ *
++ * The default bootcmd, which runs only when the stored environment does not, names the files
++ * as /boot/${rt_v}_${rt_m}.dtb and /boot/uImage-${rt_v}. Its text is compiled into the SPL's
++ * default environment too, so it stays as it was: rt_v is the row's stem, a model whose tree
++ * and kernel both exist under those names (rhino, spotty, binky, ginger), and a preview board
++ * boots its model's files from it, as it did before it had a row. rt_b is the board itself,
++ * and rt_dtb and rt_kernel its own files: the slot recipes rt_set_recipes writes and the
++ * USB-stick recovery go by those. A count or a name no row knows keeps the old fallback:
++ * spotty on the SCM, and on the SM2 rhino from variant_raw 0x3100 up and binky below,
++ * compared in hex as the bootcmd's itest did. They are set here rather than in the bootcmd
++ * because the default environment is full.
 + */
 +#define RT_MFG_PART	0x0fe00000	/* NAND.Manufacturing-Data */
 +#define RT_MFG_SIZE	0x00040000
@@ -37,9 +46,41 @@ index bd1587c1..e89bc36a 100644
 +	{-1},
 +};
 +
-+static const char *rt_mfg_variant(void)
++/* v is the board's variant, stem the model whose files the default bootcmd loads, mfg the
++ * SM2 product name, lo..hi the SCM count. */
++struct rt_board {
++	const char *v, *stem, *m, *mfg;
++	int lo, hi;
++	const char *dtb, *kernel;
++};
++
++static const struct rt_board rt_boards[] = {
++	{ "spotty", "spotty", "scm", NULL, 1025, 2046, "spotty_scm.dtb", "uImage-spotty" },
++	{ "mojo", "spotty", "scm", NULL, 2047, 2867, "spotty_scm.dtb", "uImage-spotty" },
++	{ "taigan", "spotty", "scm", NULL, 2868, 3481, "taigan_scm.dtb", "uImage-spotty" },
++	{ "lisa", "spotty", "scm", NULL, 100, 1024, "lisa_scm.dtb", "uImage-spotty" },
++	{ "rhino", "rhino", "sm2", "rhino", -1, -1, "rhino_sm2.dtb", "uImage-rhino" },
++	{ "binky", "binky", "sm2", "binky", -1, -1, "binky_sm2.dtb", "uImage-binky" },
++	{ "ginger", "ginger", "sm2", "ginger", -1, -1, "ginger_sm2.dtb", "uImage-ginger" },
++	{ "spotty3", "rhino", "sm2", "spotty", -1, -1, "spotty3_sm2.dtb", "uImage-rhino" },
++	{ "mojo3", "rhino", "sm2", "mojo", -1, -1, "spotty3_sm2.dtb", "uImage-rhino" },
++	{ "burns", "rhino", "sm2", "burns", -1, -1, "burns_sm2.dtb", "uImage-rhino" },
++	{ "lisa2", "rhino", "sm2", "lisa", -1, -1, "lisa_sm2.dtb", "uImage-rhino" },
++	{ "bardeen", "ginger", "sm2", "bardeen", -1, -1, "ginger_sm2.dtb", "uImage-ginger" },
++};
++
++static const struct rt_board *rt_board_named(const char *v)
 +{
-+	static const char *const known[] = { "rhino", "binky", "ginger" };
++	unsigned int i;
++
++	for (i = 0; i < ARRAY_SIZE(rt_boards); i++)
++		if (!strcmp(rt_boards[i].v, v))
++			return &rt_boards[i];
++	return NULL;
++}
++
++static const struct rt_board *rt_mfg_variant(void)
++{
 +	static u8 page[2048];
 +	struct mtd_info *mtd = get_nand_dev_by_index(0);
 +	size_t len = sizeof(page);
@@ -47,27 +88,76 @@ index bd1587c1..e89bc36a 100644
 +
 +	if (!mtd || nand_read_skip_bad(mtd, RT_MFG_PART, &len, NULL, RT_MFG_SIZE, page))
 +		return NULL;
-+	for (i = 0; i < ARRAY_SIZE(known); i++)
-+		if (!memcmp(page + RT_MFG_VARIANT, known[i], strlen(known[i]) + 1))
-+			return known[i];
++	for (i = 0; i < ARRAY_SIZE(rt_boards); i++) {
++		const char *mfg = rt_boards[i].mfg;
++
++		if (mfg && !memcmp(page + RT_MFG_VARIANT, mfg, strlen(mfg) + 1))
++			return &rt_boards[i];
++	}
 +	return NULL;
++}
++
++/*
++ * The SCM board the saved environment names, when nothing sampled the variant resistor this
++ * boot (variant_raw unset, as on the ST20 read on 2026-11-24): the variant= its installer
++ * wrote into soundtap_args (mainlineTemplates in internal/flash, installer.c), the exact key
++ * after a space and not variant_raw=. Only an SCM row counts; anything else is no answer.
++ */
++static const struct rt_board *rt_scm_saved(void)
++{
++	const char *args = env_get("soundtap_args"), *v, *e;
++	unsigned int i;
++
++	v = args ? strstr(args, " variant=") : NULL;
++	if (!v)
++		return NULL;
++	v += strlen(" variant=");
++	for (e = v; *e && *e != ' '; e++)
++		;
++	for (i = 0; i < ARRAY_SIZE(rt_boards); i++)
++		if (rt_boards[i].lo >= 0 && strlen(rt_boards[i].v) == (size_t)(e - v) &&
++		    !strncmp(rt_boards[i].v, v, e - v))
++			return &rt_boards[i];
++	return NULL;
++}
++
++/* The SCM board: by the variant resistor's count when one was sampled, else by the saved
++ * environment (rt_scm_saved), else spotty. */
++static const struct rt_board *rt_scm_variant(const char *raw)
++{
++	long count = raw && *raw ? (long)dectoul(raw, NULL) : -1;
++	const struct rt_board *saved;
++	unsigned int i;
++
++	for (i = 0; i < ARRAY_SIZE(rt_boards); i++)
++		if (rt_boards[i].lo >= 0 && count >= rt_boards[i].lo && count <= rt_boards[i].hi)
++			return &rt_boards[i];
++	saved = count < 0 ? rt_scm_saved() : NULL;
++	return saved ? saved : rt_board_named("spotty");
 +}
 +
 +static int rt_board_setup(void)
 +{
 +	const char *raw = env_get("variant_raw");
 +	bool st20 = (readl(0x44e10040) & 0x1f) == 0x12;
-+	const char *mfg = st20 ? NULL : rt_mfg_variant();
++	const struct rt_board *b;
 +
 +	if (st20)
 +		configure_module_pin_mux(scm_nand_wp_pin_mux);
-+	env_set("rt_v", st20 ? "spotty" : mfg ? mfg :
-+		raw && hextoul(raw, NULL) >= 0x3100 ? "rhino" : "binky");
-+	/* The ST300's UART0 is its link to the soundbar processor: a key seen there during
-+	 * bootdelay would stop autoboot. The installed environment says -2 as well. */
-+	if (mfg && !strcmp(mfg, "ginger"))
++	b = st20 ? rt_scm_variant(raw) : rt_mfg_variant();
++	if (!b)
++		b = rt_board_named(raw && hextoul(raw, NULL) >= 0x3100 ? "rhino" : "binky");
++	env_set("rt_v", b->stem);
++	env_set("rt_b", b->v);
++	env_set("rt_m", b->m);
++	env_set("rt_dtb", b->dtb);
++	env_set("rt_kernel", b->kernel);
++	/* The ST300's UART0 is its link to the soundbar processor, the Lifestyle 650's to its
++	 * console and the SoundTouch adapter's to its host's Bose link: a byte seen there
++	 * during bootdelay would stop autoboot. The installed environment says -2 as well. */
++	if (!strcmp(b->v, "ginger") || !strcmp(b->v, "bardeen") || !strcmp(b->v, "lisa") ||
++	    !strcmp(b->v, "lisa2"))
 +		env_set("bootdelay", "-2");
-+	env_set("rt_m", st20 ? "scm" : "sm2");
 +	return 0;
 +}
 +EVENT_SPY_SIMPLE(EVT_LAST_STAGE_INIT, rt_board_setup);

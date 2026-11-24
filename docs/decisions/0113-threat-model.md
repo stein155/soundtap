@@ -95,9 +95,10 @@ Over the network, `POST /api/firmware` and `POST /api/soundtapd` verify the ed25
 before selecting a candidate, and they need a hold. The STU handler authenticates the expected
 digest before streaming and compares the received digest at the end, so replayed authentic
 metadata with different bytes can still overwrite the inactive slot before that final mismatch is
-caught. The power-on USB stick takes only a package signed by a release key or the owner key. The
-one route that accepts an unsigned package is the stock installer on :17008, which needs hands on
-the speaker and runs only on stock firmware.
+caught. Two routes accept an unsigned package, and both need hands on the speaker: the stock
+installer on :17008, which runs only on stock firmware, and the power-on USB stick, whose key chord
+is the authorization and which also takes Bose's own file back to stock
+([ADR 0130](0130-usb-stick-recovery.md)).
 
 ### A stranger with the speaker in hand
 

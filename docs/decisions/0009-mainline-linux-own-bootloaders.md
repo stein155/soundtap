@@ -38,9 +38,10 @@ same shape: our SPL, our U-Boot, our kernel, our rootfs, and no Bose boot code k
   `rt_m`), so the default recipe loads that model's device tree and kernel; the model choice lives
   in C rather than in `bootcmd`, which keeps the default environment small.
 - The installer and soundtapd treat every model alike: the same slot selection, recipes, boot
-  confirmation and way back to stock (a stock package through `/api/firmware`).
+  confirmation and way back to stock (a stock package through `/api/firmware`, or on a stick).
 - Our U-Boot carries the owner's recovery, a USB stick at power-on
-  ([ADR 0130](0130-usb-stick-recovery.md)); on the ST20 it also paints
+  ([ADR 0130](0130-usb-stick-recovery.md)). With Bose's file on it, our U-Boot writes Bose's SPL
+  and U-Boot itself, in the order below; on the ST20 it also paints
   the first boot frame ([ADR 0131](0131-st20-boot-frame.md)).
 
 ### A spare U-Boot, and the first copy written last
