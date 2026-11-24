@@ -11,7 +11,12 @@ file. "files" paths are repository-relative, or start with "/" for a file in the
 The source is a URL or a path to the tool that makes the file, and never a Bose product:
 SoundTap is built without Bose material (ADR 0049).
 
-  check_provenance.py [--rootfs DIR]     the tree always; the image's /lib/firmware with --rootfs
+In the image every binary file is judged, except ELF programs, libraries and modules, which
+Buildroot compiles from pinned source. What the build makes from our tree or a pinned tool
+(kernel and device trees, module indexes, terminfo, the BCO app) is covered by "generated"
+globs, so a prebuilt file that slips in without an entry fails the build.
+
+  check_provenance.py [--rootfs DIR]     the tree always; the whole image with --rootfs
 """
 import argparse
 import fnmatch
@@ -28,8 +33,9 @@ MANIFEST = ROOT / "os/upstream/MANIFEST.json"
 ORIGINS = {"upstream", "generated", "original"}
 # Build and download output, not the repository's own files.
 SKIP = {".git", "node_modules", "buildroot", "dl", "output", "artifacts", ".cache", "dist", "__pycache__", ".gocache", "coverage"}
-# Image directories holding prebuilt files; everything else in the image is compiled by Buildroot.
-IMAGE_DIRS = ("lib/firmware",)
+# Image directories that are generated at run time on the speaker or hold no files of the
+# build's own: nothing to judge there.
+IMAGE_SKIP = {"dev", "proc", "sys", "tmp", "run", "mnt", "var/run"}
 
 
 def sha(path: Path) -> str:
@@ -39,6 +45,22 @@ def sha(path: Path) -> str:
 def is_binary(path: Path) -> bool:
     with open(path, "rb") as f:
         return b"\0" in f.read(8000)
+
+
+def is_elf(path: Path) -> bool:
+    with open(path, "rb") as f:
+        return f.read(4) == b"\x7fELF"
+
+
+def image_files(rootfs: Path):
+    """Every regular file of the image, outside IMAGE_SKIP, in a stable order."""
+    for top, dirs, names in os.walk(rootfs):
+        rel = Path(top).relative_to(rootfs).as_posix()
+        dirs[:] = sorted(d for d in dirs if (d if rel == "." else f"{rel}/{d}") not in IMAGE_SKIP)
+        for n in sorted(names):
+            path = Path(top, n)
+            if path.is_file() and not path.is_symlink():
+                yield path
 
 
 def tree_files(tree):
@@ -91,10 +113,11 @@ def check(manifest, tree=ROOT, rootfs=None) -> list:
         if path.is_file() and not path.is_symlink() and is_binary(path):
             verify(rel, path, rel)
     if rootfs is not None:
-        for d in IMAGE_DIRS:
-            for path in sorted(Path(rootfs, d).rglob("*")):
-                if path.is_file() and not path.is_symlink():
-                    verify("image " + str(path.relative_to(rootfs)), path, "/" + str(path.relative_to(rootfs)))
+        for path in image_files(Path(rootfs)):
+            if is_elf(path) or not is_binary(path):
+                continue
+            rel = path.relative_to(rootfs).as_posix()
+            verify("image " + rel, path, "/" + rel)
     for path in files:
         if path.startswith("/") and rootfs is None:
             continue  # an image file is only judged against an image

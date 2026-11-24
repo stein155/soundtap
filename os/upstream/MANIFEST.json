@@ -111,5 +111,41 @@
   "files": {
    "docs/assets/fonts/montserrat-latin-wght.woff2": "06b16db7a969135d48d38c49183be7fb88d4452e2a3011957c7851941f4e4879"
   }
+ },
+ {
+  "origin": "generated",
+  "source": "built by Buildroot from the pinned kernel and os/board/common/dts (make os): uImages and device trees",
+  "version": "os/VERSION",
+  "license": "GPL-2.0-only (Linux)",
+  "globs": [
+   "/boot/*"
+  ]
+ },
+ {
+  "origin": "generated",
+  "source": "written by depmod (kmod, pinned in Buildroot) for the kernel's modules",
+  "version": "the kernel's",
+  "license": "GPL-2.0-only (Linux)",
+  "globs": [
+   "/lib/modules/*/modules.*"
+  ]
+ },
+ {
+  "origin": "generated",
+  "source": "compiled by tic from the terminfo source of ncurses, pinned in Buildroot",
+  "version": "Buildroot's ncurses",
+  "license": "MIT-like (ncurses)",
+  "globs": [
+   "/usr/share/terminfo/*/*"
+  ]
+ },
+ {
+  "origin": "generated",
+  "source": "built from bco/ by os/package/soundtap-bco-app/soundtap-bco-app.mk",
+  "version": "os/VERSION",
+  "license": "SoundTap project (GPL-3.0-or-later, see LICENSE)",
+  "globs": [
+   "/usr/share/soundtap/bco-app.bcd"
+  ]
  }
 ]
