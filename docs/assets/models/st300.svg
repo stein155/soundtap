@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="SoundTouch 300">
+  <title>SoundTouch 300</title>
+  <!-- Our own drawing of the speaker (app/frontend/src/components/molecules/ModelArt) on the web UI's grey disc. -->
+  <style>.disc{fill:#f0f0f0}@media (prefers-color-scheme:dark){.disc{fill:#2a2a2c}}</style>
+  <defs>
+    <linearGradient id="gb" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2e2f32"/><stop offset="1" stop-color="#36373b"/></linearGradient>
+    <linearGradient id="gt" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#555658"/><stop offset="1" stop-color="#47484a"/></linearGradient>
+    <linearGradient id="gw" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a4a4a"/><stop offset="1" stop-color="#3a3a3a"/></linearGradient>
+    <linearGradient id="gf" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#262626"/><stop offset="1" stop-color="#121212"/></linearGradient>
+    <linearGradient id="gp" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3c3c3e"/><stop offset="1" stop-color="#0a0a0a"/></linearGradient>
+    <linearGradient id="gs" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#8d8d8d"/><stop offset=".5" stop-color="#e4e4e4"/><stop offset="1" stop-color="#8d8d8d"/></linearGradient>
+    <pattern id="grille" width="1.6" height="1.6" patternUnits="userSpaceOnUse"><circle cx=".8" cy=".8" r=".35" fill="#000" opacity=".35"/></pattern>
+  </defs>
+  <circle class="disc" cx="64" cy="64" r="64"/>
+  <g transform="translate(18 18) scale(.92)"><path d="M9 40h82l6 11H3Z" fill="url(#gp)"/><path d="M30 40h40l-18 11H6Z" fill="#fff" opacity=".07"/><path d="M3 51h94v.9H3Z" fill="#7a7a7a"/><path d="M3 51.9h94v9.6q0 1.5-1.5 1.5h-91q-1.5 0-1.5-1.5Z" fill="url(#gb)"/><path d="M3 51.9h94v9.6q0 1.5-1.5 1.5h-91q-1.5 0-1.5-1.5Z" fill="url(#grille)"/></g>
+</svg>

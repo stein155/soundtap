@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="SoundTouch 10">
+  <title>SoundTouch 10</title>
+  <!-- Our own drawing of the speaker (app/frontend/src/components/molecules/ModelArt) on the web UI's grey disc. -->
+  <style>.disc{fill:#f0f0f0}@media (prefers-color-scheme:dark){.disc{fill:#2a2a2c}}</style>
+  <defs>
+    <linearGradient id="gb" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2e2f32"/><stop offset="1" stop-color="#36373b"/></linearGradient>
+    <linearGradient id="gt" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#555658"/><stop offset="1" stop-color="#47484a"/></linearGradient>
+    <linearGradient id="gw" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a4a4a"/><stop offset="1" stop-color="#3a3a3a"/></linearGradient>
+    <linearGradient id="gf" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#262626"/><stop offset="1" stop-color="#121212"/></linearGradient>
+    <linearGradient id="gp" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3c3c3e"/><stop offset="1" stop-color="#0a0a0a"/></linearGradient>
+    <linearGradient id="gs" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#8d8d8d"/><stop offset=".5" stop-color="#e4e4e4"/><stop offset="1" stop-color="#8d8d8d"/></linearGradient>
+    <pattern id="grille" width="1.6" height="1.6" patternUnits="userSpaceOnUse"><circle cx=".8" cy=".8" r=".35" fill="#000" opacity=".35"/></pattern>
+  </defs>
+  <circle class="disc" cx="64" cy="64" r="64"/>
+  <g transform="translate(18 18) scale(.92)"><rect x="23" y="8" width="54" height="84" rx="3.5" fill="url(#gb)"/><rect x="23" y="8" width="54" height="84" rx="3.5" fill="url(#grille)"/><path d="M23 11.5a3.5 3.5 0 0 1 3.5-3.5h47a3.5 3.5 0 0 1 3.5 3.5V32H23Z" fill="url(#gt)"/><path d="M38 8h24v2.4a1 1 0 0 1-1 1H39a1 1 0 0 1-1-1Z" fill="#7a7b7e"/><g fill="#8a8a8a"><circle cx="40.25" cy="14.5" r=".8"/><circle cx="46.75" cy="14.5" r=".8"/><circle cx="53.25" cy="14.5" r=".8"/><circle cx="59.75" cy="14.5" r=".8"/></g><rect x="23" y="32" width="54" height="2.4" fill="url(#gs)"/></g>
+</svg>

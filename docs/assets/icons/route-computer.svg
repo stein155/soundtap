@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <style>.disc{fill:#f0f0f0}g{stroke:#111}@media (prefers-color-scheme:dark){.disc{fill:#2a2a2c}g{stroke:#e6e6e6}}</style>
+  <circle class="disc" cx="32" cy="32" r="32"/>
+  <g transform="translate(16 16) scale(1.333)"><rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2 19h20"/></g>
+</svg>
