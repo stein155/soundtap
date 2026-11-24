@@ -40,19 +40,16 @@ async function setup(fetcher) {
   vm.runInContext(source, ctx);
   await vm.runInContext('tableLoaded', ctx);
   elements.ip.value = '192.168.1.23';
-  elements.model.value = 's0'; elements.version.value = table.supported[0].minimum;
+  elements.model.value = 's0';
   elements.agree.checked = true;
   return {elements, run: code => vm.runInContext(code, ctx)};
 }
 const version = {api: 1, os: '0.1.0', app: '0.1.0', version: 'app-v0.1.0', updatable: true};
 const response = (body, ok = true) => ({ok, json: async () => body});
 (async () => {
-  // Unsupported or unknown model, Bose software below the table's minimum or not typed,
-  // missing risk confirmation and public IP never dispatch.
-  const below = table.supported[0].minimum.replace(/\d+$/, (n) => String(Number(n) - 1));
+  // Unsupported or unknown model, missing risk confirmation and public IP never dispatch.
   for (const change of [e => e.model.value = 'u0', e => e.model.value = 'other',
-                        e => e.model.value = '', e => e.version.value = below,
-                        e => e.version.value = '', e => e.agree.checked = false,
+                        e => e.model.value = '', e => e.agree.checked = false,
                         e => e.ip.value = '8.8.8.8']) {
     let calls = 0;
     const h = await setup(async () => { calls++; }); change(h.elements);
@@ -64,17 +61,17 @@ const response = (body, ok = true) => ({ok, json: async () => body});
   if (table.preview.length >= 2) {
     let calls = 0;
     const p = await setup(async () => { calls++; return response(version); });
-    p.elements.model.value = 'p0'; p.elements.version.value = table.preview[0].minimum;
+    p.elements.model.value = 'p0';
     p.elements.model.input();
     assert.equal(p.elements.go.disabled, true);
     p.elements.previewAgree.checked = true; p.elements.previewAgree.change();
     assert.equal(p.elements.go.disabled, false);
-    p.elements.model.value = 'p1'; p.elements.version.value = table.preview[1].minimum;
+    p.elements.model.value = 'p1';
     p.elements.model.input();
     assert.equal(p.elements.previewAgree.checked, false);
     assert.equal(p.elements.go.disabled, true);
     p.elements.previewAgree.checked = true; p.elements.previewAgree.change();
-    p.elements.model.value = 'p0'; p.elements.version.value = table.preview[0].minimum;
+    p.elements.model.value = 'p0';
     await p.elements.form.submit({preventDefault() {}});
     assert.equal(calls, 0);
   }
@@ -118,7 +115,7 @@ const response = (body, ok = true) => ({ok, json: async () => body});
   if (table.preview.length) {
     const sent = [];
     const p = await setup(async (url, init) => { sent.push([url, init]); return response(version); });
-    p.elements.model.value = 'p0'; p.elements.version.value = table.preview[0].minimum;
+    p.elements.model.value = 'p0';
     p.elements.model.input();
     p.elements.previewAgree.checked = true; p.elements.previewAgree.change();
     await p.elements.form.submit({preventDefault() {}});

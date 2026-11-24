@@ -3,9 +3,9 @@
 This guide takes a SoundTouch from Bose's software to SoundTap, gets it on your Wi-Fi, keeps
 it up to date, and takes it back to Bose if you ever want to. It is written for owners, not
 developers; you need a phone or a computer and about twenty minutes. The
-[installer page](https://stein155.github.io/soundtap/installer/) takes the same six steps, in
-the same order and in the 25 languages of the speaker's own page; this guide adds the detail
-and the troubleshooting.
+[installer page](https://stein155.github.io/soundtap/installer/) walks you through the same
+steps one screen at a time, in the same order and in the 25 languages of the speaker's own page;
+this guide adds the detail and the troubleshooting.
 
 > [!WARNING]
 > **SoundTap is alpha software (0.x).** Installing it replaces everything on the speaker,
@@ -50,14 +50,13 @@ What has run on which speaker, and when, is in the [install records](../hardware
 <a id="before-you-start"></a>
 <a id="which-bose-software"></a>
 
-Pick your model on the installer page; it then shows the Bose software that model needs, its
-setup-mode gesture and what it shows while it starts.
+Pick your model on the installer page; it then shows that model's setup-mode gesture and what
+it shows while it starts.
 
-SoundTap installs from the Bose software a model has been installed from, or anything newer.
-Bose's last release, 27.0.6, works on every supported model; on the Wireless Link and the
-SoundTouch 10 older software works too, so you do not have to update first. The installers
-check this from [one table](../installer/versions.json), which this one repeats; they compare
-versions number by number, so 27.0.10 counts as newer than 27.0.6.
+The installers do not check which Bose software the speaker runs. SoundTap has been installed
+from these versions; older ones have simply not been tried. Bose's last release, 27.0.6, works
+on every supported model. If an install from older software does not start, update Bose in the
+Bose app and try again.
 
 | Model | Oldest Bose software installed from |
 | --- | --- |
@@ -66,7 +65,7 @@ versions number by number, so 27.0.10 counts as newer than 27.0.6.
 | SoundTouch 20 (Series I or II) | 27.0.6 |
 | SoundTouch 300 | 27.0.6 |
 
-Older software on one of these: update Bose first, in the Bose app. The SoundTouch 20 Series
+The SoundTouch 20 Series
 II shares the Series I's row and installs the same way, but its hardware validation is still
 pending: nobody has recorded a run on one. The command-line installers tell a Series III
 SoundTouch 20 by the module its Bose software reports and treat it as a preview (below); in
@@ -117,6 +116,9 @@ SoundTap does not ship Bose's software, and the way back to Bose needs Bose's ow
 for your model (`Update.stu`). Before you install, get the update file your speaker can
 download from Bose and keep it somewhere safe, next to this guide. Without it, you have no
 way back to Bose's software.
+No copy yet? Bose's update files are kept in a public
+[archive on archive.org](https://archive.org/download/bose-soundtouch-software-and-firmware/Firmware/), run by neither Bose nor SoundTap: take
+the file for your own model.
 
 ### Know what happens
 
@@ -131,7 +133,7 @@ later update installs from the speaker's own web page.
 The speaker stays on your Wi-Fi and downloads SoundTap itself. You do not download a package.
 
 1. Open the [installer page](https://stein155.github.io/soundtap/installer/) on a computer on
-   the same network: its step 3 shows the command for that computer. Or use the SoundTap app.
+   the same network: its route "With a computer" shows the command for that computer. Or use the SoundTap app.
    - **One command.** Paste one line into Terminal (macOS, Linux) or PowerShell (Windows):
 
      ```sh
@@ -141,13 +143,12 @@ The speaker stays on your Wi-Fi and downloads SoundTap itself. You do not downlo
 
      It lists every speaker on your network that still runs Bose's software, asks which ones
      get SoundTap and changes only those; nothing is installed on the computer. It skips
-     models that are not supported yet and Bose software older than the
-     [table](#which-bose-software) names, saying which of the two it is.
-   - **In the browser, by IP address** (under *No terminal?* on the page). Chrome and Edge
-     ask once to reach devices on your local network; Firefox and Safari cannot reach the
-     speaker from a web page. Pick the model in step 1, type the Bose software version the
-     Bose app shows, enter its IP address and click install. The page applies the same [table](#which-bose-software), and says so when the
-     speaker never starts the install.
+     models that are not supported yet, saying so.
+   - **In the browser, by IP address** (the route *From this page*). Chrome and Edge ask once
+     to reach devices on your local network; Firefox and Safari cannot reach the speaker from a
+     web page. Pick the model in step 1, enter the speaker's IP address and click install. The
+     page applies the same [table](#which-bose-software), and says so when the speaker never
+     starts the install.
 2. Go on with [What happens next](#5-what-happens-next).
 
 > [!NOTE]

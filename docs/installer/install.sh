@@ -15,8 +15,8 @@ FEED='https://raw.githubusercontent.com/stein155/soundtap/main/updates/soundtouc
 # A preview model installs only from the preview package (ADR 0133), which this feed names; a
 # speaker is sent here only after its owner picked it and typed "preview".
 PREVIEW_FEED='https://raw.githubusercontent.com/stein155/soundtap/main/updates/soundtouch-preview'
-# This script's own site: its versions.json names the models and the oldest Bose software
-# SoundTap installs from, for this script, install.ps1 and the browser installer alike.
+# This script's own site: its versions.json names the models SoundTap installs on, for this
+# script, install.ps1 and the browser installer alike.
 SITE='https://stein155.github.io/soundtap/installer'
 WAIT_MINUTES=10
 
@@ -54,36 +54,20 @@ rule_matches() {
 	[ -z "$_m" ] || [ "$3" = "$_m" ]
 }
 
-# older <version> <minimum>: true when version is below minimum, number by number, so
-# 9.1 < 10.0 < 10.0.10 (not as text). Numbers past the minimum's last (the build) do not count.
-older() {
-	awk -v a="$1" -v b="$2" 'BEGIN {
-		split(a, x, "."); m = split(b, y, ".")
-		for (i = 1; i <= m; i++) if (x[i] + 0 != y[i] + 0) exit !(x[i] + 0 < y[i] + 0)
-		exit 1
-	}'
-}
-
-# classify <versions.json> <type> <moduleType> <softwareVersion>: sets status to ok, preview
-# (installable, but nobody has run SoundTap on the model), old (update Bose first), no (not
-# supported yet) or unread (no version to compare), and note to what the list says about the
-# speaker. Unsupported rules count first, then preview rules, then supported ones: a SoundTouch
-# 20 that reports the Series III's module is the Series III preview, whatever its software.
+# classify <versions.json> <type> <moduleType>: sets status to ok, preview (installable, but
+# nobody has run SoundTap on the model) or no (not supported yet), and note to what the list
+# says about the speaker. The Bose software version does not count. Unsupported rules count
+# first, then preview rules, then supported ones: a SoundTouch 20 that reports the Series III's
+# module is the Series III preview.
 classify() {
 	status=no note='  (not supported yet: SoundTap has not run on this model; skipped)'
-	_v=${4%% *}
 	for _pass in unsupported preview supported; do
 		while IFS= read -r _rule; do
-			case "$_rule" in *'"preview": true'*) _kind=preview ;; *'"minimum"'*) _kind=supported ;; *) _kind=unsupported ;; esac
+			case "$_rule" in *'"preview": true'*) _kind=preview ;; *'"supported": true'*) _kind=supported ;; *) _kind=unsupported ;; esac
 			[ "$_kind" = "$_pass" ] && rule_matches "$_rule" "$2" "$3" || continue
 			_name=$(rule_field model "$_rule")
 			[ "$_kind" != unsupported ] || { note="  ($_name: not supported yet; skipped)"; return 0; }
-			_min=$(rule_field minimum "$_rule")
-			if ! printf '%s\n' "$_v" | grep -Eq '^[0-9]+(\.[0-9]+)*$'; then
-				status=unread note="  ($_name, but its Bose software version could not be read; skipped)"
-			elif older "$_v" "$_min"; then
-				status=old note="  (Bose software $_v; the $_name needs $_min or later: update Bose first, in the Bose app)"
-			elif [ "$_kind" = preview ]; then
+			if [ "$_kind" = preview ]; then
 				status=preview note="  ($_name: preview, worked out from Bose's software; nobody has run SoundTap on this model yet)"
 			else
 				status=ok note=''
@@ -115,7 +99,7 @@ tmp=$(mktemp -d) || exit 1
 trap 'rm -rf "$tmp"' EXIT INT TERM
 
 table=$(curl -fsSL -m 15 "$SITE/versions.json" 2>/dev/null)
-case "$table" in *'"minimum"'*) ;; *)
+case "$table" in *'"supported": true'*) ;; *)
 	say "Could not load the list of supported speakers ($SITE/versions.json). Is this computer online?"
 	exit 1
 	;;
@@ -145,7 +129,7 @@ for f in "$tmp"/*; do
 	[ -n "$id" ] && grep -q "^$id\$" "$tmp/ids" 2>/dev/null && continue
 	echo "$id" >>"$tmp/ids"
 	name=$(tag name "$xml"); type=$(tag type "$xml")
-	classify "$table" "$type" "$(tag moduleType "$xml")" "$(tag softwareVersion "$xml")"
+	classify "$table" "$type" "$(tag moduleType "$xml")"
 	n=$((n + 1))
 	printf '%s|%s|%s|%s|%s\n' "$n" "$ip" "$name" "$type" "$status" >>"$tmp/list"
 	printf '  %d) %s — %s at %s%s\n' "$n" "${name:-unnamed}" "${type:-unknown model}" "$ip" "$note"

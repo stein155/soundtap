@@ -118,8 +118,9 @@ the first step is read-only investigation.
 
 ## Getting started
 
-1. **Install.** Open the [installer](https://stein155.github.io/soundtap/installer/) and follow
-   its six steps, in the same 25 languages as the speaker's own page. With the speaker on your
+1. **Install.** Open the [installer](https://stein155.github.io/soundtap/installer/): it walks
+   you through the install one screen at a time, in the same 25 languages as the speaker's own
+   page. With the speaker on your
    Wi-Fi, one line in Terminal or PowerShell finds every speaker that still runs Bose's
    software and installs the ones you pick; the speaker downloads SoundTap itself. Without
    internet, you put the speaker in setup mode and upload the `.stu` from the

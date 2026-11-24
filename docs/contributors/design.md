@@ -451,8 +451,9 @@ flowchart LR
   build published as a GitHub prerelease and signed without the per-model hardware reports. Only a
   speaker that runs an alpha is offered one; it moves on to newer alphas and to the release.
 - `install.sh`, `install.ps1` and the browser installer admit a stock speaker by one table,
-  `docs/installer/versions.json`: supported models with the oldest Bose software installed
-  from, and the models not supported yet ([ADR 0008](../decisions/0008-one-universal-stu.md)).
+  `docs/installer/versions.json`: the supported models, the previews and the models not
+  supported yet, whatever their Bose software version
+  ([ADR 0008](../decisions/0008-one-universal-stu.md)).
 - The browser installer verifies first boot with a readable `GET /api/version` response.
   This build-metadata route alone permits credential-free cross-origin reads; an opaque
   answer on port 80 never establishes success ([ADR 0113](../decisions/0113-threat-model.md)).

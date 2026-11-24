@@ -41,12 +41,13 @@ flowchart LR
 ```
 
 The installers that start the feed route (`install.sh`, `install.ps1` and the browser installer
-in `docs/installer/`) admit a stock speaker by one table, `docs/installer/versions.json`: per
-model the oldest Bose software with a recorded install, compared number by number, and the
-models not supported (the SoundTouch 20 and 30 Series III, told apart by the `sm2` module their
-`:8090/info` reports, and the SoundTouch 30). A model the table does not name is not supported.
-Older software on a supported model is "update Bose first"; an unsupported model is never sent
-to update Bose.
+in `docs/installer/`) admit a stock speaker by one table, `docs/installer/versions.json`: the
+supported models, the previews and the models not supported, told apart by the `:8090/info`
+type and, where it matters, module (a SoundTouch 20 reporting the Series III's `sm2` module is
+the Series III preview). A model the table does not name is not supported. The installers do
+not check the Bose software version: the browser installer cannot read it (the stock service
+sends no CORS headers), and the oldest version with a recorded install per model is evidence of
+what has worked, not a known limit. The installation guide lists those versions.
 
 ### One model table
 

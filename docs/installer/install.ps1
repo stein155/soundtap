@@ -12,8 +12,8 @@ $feed = 'https://raw.githubusercontent.com/stein155/soundtap/main/updates/soundt
 # A preview model installs only from the preview package (ADR 0133), which this feed names; a
 # speaker is sent here only after its owner picked it and typed "preview".
 $previewFeed = 'https://raw.githubusercontent.com/stein155/soundtap/main/updates/soundtouch-preview'
-# This script's own site: its versions.json names the models and the oldest Bose software
-# SoundTap installs from, for this script, install.sh and the browser installer alike.
+# This script's own site: its versions.json names the models SoundTap installs on, for this
+# script, install.sh and the browser installer alike.
 $site = 'https://stein155.github.io/soundtap/installer'
 $waitMinutes = 10
 
@@ -30,25 +30,11 @@ function Test-Rule($rule, [string]$type, [string]$moduleType) {
     $true
 }
 
-# Test-Older: $version is below $minimum, number by number, so 9.1 < 10.0 < 10.0.10 (not as text).
-# Numbers past the minimum's last (the build) do not count.
-function Test-Older([string]$version, [string]$minimum) {
-    $have = $version.Split('.'); $want = $minimum.Split('.')
-    for ($i = 0; $i -lt $want.Count; $i++) {
-        $a = if ($i -lt $have.Count) { [decimal]$have[$i] } else { [decimal]0 }
-        $b = [decimal]$want[$i]
-        if ($a -ne $b) { return $a -lt $b }
-    }
-    $false
-}
-
-# Get-Verdict: Status ok, preview (installable, but nobody has run SoundTap on the model), old
-# (update Bose first), no (not supported yet) or unread (no version to compare), and Note, what
-# the list says about the speaker. Unsupported rules count first, then preview rules, then
-# supported ones: a SoundTouch 20 that reports the Series III's module is the Series III
-# preview, whatever its software.
-function Get-Verdict($table, [string]$type, [string]$moduleType, [string]$softwareVersion) {
-    $version = ($softwareVersion -split ' ')[0]
+# Get-Verdict: Status ok, preview (installable, but nobody has run SoundTap on the model) or no
+# (not supported yet), and Note, what the list says about the speaker. The Bose software version
+# does not count. Unsupported rules count first, then preview rules, then supported ones: a
+# SoundTouch 20 that reports the Series III's module is the Series III preview.
+function Get-Verdict($table, [string]$type, [string]$moduleType) {
     foreach ($rule in @($table.unsupported)) {
         if (Test-Rule $rule $type $moduleType) {
             return [pscustomobject]@{ Status = 'no'; Note = "  ($($rule.model): not supported yet; skipped)" }
@@ -57,12 +43,6 @@ function Get-Verdict($table, [string]$type, [string]$moduleType, [string]$softwa
     $rules = @(@($table.preview) | Where-Object { $_ }) + @($table.supported)
     foreach ($rule in $rules) {
         if (-not (Test-Rule $rule $type $moduleType)) { continue }
-        if ($version -notmatch '^[0-9]+(\.[0-9]+)*$') {
-            return [pscustomobject]@{ Status = 'unread'; Note = "  ($($rule.model), but its Bose software version could not be read; skipped)" }
-        }
-        if (Test-Older $version $rule.minimum) {
-            return [pscustomobject]@{ Status = 'old'; Note = "  (Bose software $version; the $($rule.model) needs $($rule.minimum) or later: update Bose first, in the Bose app)" }
-        }
         if ($rule.preview) {
             return [pscustomobject]@{ Status = 'preview'; Note = "  ($($rule.model): preview, worked out from Bose's software; nobody has run SoundTap on this model yet)" }
         }
@@ -110,8 +90,7 @@ foreach ($ip in ($tasks.Keys | Sort-Object { [version]$_ })) {
     if (-not $info) { continue }
     if ($info.deviceID -and $seen[$info.deviceID]) { continue }  # one speaker, several addresses
     $seen[$info.deviceID] = $true
-    $version = @($info.components.component)[0].softwareVersion
-    $verdict = Get-Verdict $table $info.type $info.moduleType $version
+    $verdict = Get-Verdict $table $info.type $info.moduleType
     $found += [pscustomobject]@{ N = $found.Count + 1; Ip = $ip; Name = $info.name; Type = $info.type; Model = $verdict.Status; Note = $verdict.Note }
 }
 if (-not $found) {

@@ -1,25 +1,25 @@
 {
-  "about": "The one table of Bose software SoundTap installs from, read by install.sh, install.ps1 and index.html. A rule matches the <type> of the speaker's :8090/info exactly (typeContains: as a substring) and, when it names one, its <moduleType>. minimum is the oldest Bose software with a recorded install on that model (docs/owners/install.md); versions compare number by number. Unsupported rules are checked first, then the preview rules, then the supported ones, so a SoundTouch 20 that reports the Series III's sm2 module is the Series III preview and never reaches the Series I/II rule; a speaker no rule matches is not supported. Preview rules name models SoundTap boots from what Bose's software shows but nobody has run it on (docs/owners/compatibility.md#previews): every installer offers them only when picked by name and after an extra confirmation. The Lifestyle 600/650 module (sm2) has no way back at all and is refused; an SM2 Lifestyle adapter reports what the installers cannot tell from it, so only the SCM adapter is a preview. Keep one rule per line: install.sh reads it line by line.",
+  "about": "The one table of the models SoundTap installs on, read by install.sh, install.ps1 and index.html. A rule matches the <type> of the speaker's :8090/info exactly (typeContains: as a substring) and, when it names one, its <moduleType>. No installer checks the Bose software version: an install has been recorded from 20.0.6 on the Wireless Link, 22.0.3 on the SoundTouch 10 and 27.0.6 on the others (docs/owners/install.md). Unsupported rules are checked first, then the preview rules, then the supported ones (\"supported\": true), so a SoundTouch 20 that reports the Series III's sm2 module is the Series III preview and never reaches the Series I/II rule; a speaker no rule matches is not supported. Preview rules (\"preview\": true) name models SoundTap boots from what Bose's software shows but nobody has run it on (docs/owners/compatibility.md#previews): every installer offers them only when picked by name and after an extra confirmation. The Lifestyle 600/650 module (sm2) has no way back at all and is refused; an SM2 Lifestyle adapter reports what the installers cannot tell from it, so only the SCM adapter is a preview. Keep one rule per line: install.sh reads it line by line.",
   "unsupported": [
     {"model": "Lifestyle 600/650 module", "typeContains": "Lifestyle", "moduleType": "sm2"}
   ],
   "preview": [
-    {"model": "SoundTouch 20 Series III", "type": "SoundTouch 20", "moduleType": "sm2", "minimum": "27.0.6", "preview": true},
-    {"model": "SoundTouch 30 Series III", "type": "SoundTouch 30", "moduleType": "sm2", "minimum": "27.0.6", "preview": true},
-    {"model": "SoundTouch 30 (Series I or II)", "type": "SoundTouch 30", "minimum": "27.0.6", "preview": true},
-    {"model": "SoundTouch Portable", "type": "SoundTouch Portable", "minimum": "27.0.6", "preview": true},
-    {"model": "SoundTouch SA-5", "type": "SoundTouch SA-5", "minimum": "27.0.6", "preview": true},
-    {"model": "SoundTouch SA-4 (adapter)", "type": "SoundTouch SA-4", "minimum": "27.0.6", "preview": true},
-    {"model": "SoundTouch Stereo JC (adapter)", "type": "SoundTouch Stereo JC", "minimum": "27.0.6", "preview": true},
-    {"model": "Wave SoundTouch (adapter)", "type": "Wave SoundTouch", "minimum": "27.0.6", "preview": true},
-    {"model": "CineMate (adapter)", "type": "Cinemate", "minimum": "27.0.6", "preview": true},
-    {"model": "Lifestyle 135/235/525/535 (adapter)", "type": "Lifestyle", "moduleType": "scm", "minimum": "27.0.6", "preview": true},
-    {"model": "VideoWave (adapter)", "type": "VideoWave", "minimum": "27.0.6", "preview": true}
+    {"model": "SoundTouch 20 Series III", "type": "SoundTouch 20", "moduleType": "sm2", "preview": true},
+    {"model": "SoundTouch 30 Series III", "type": "SoundTouch 30", "moduleType": "sm2", "preview": true},
+    {"model": "SoundTouch 30 (Series I or II)", "type": "SoundTouch 30", "preview": true},
+    {"model": "SoundTouch Portable", "type": "SoundTouch Portable", "preview": true},
+    {"model": "SoundTouch SA-5", "type": "SoundTouch SA-5", "preview": true},
+    {"model": "SoundTouch SA-4 (adapter)", "type": "SoundTouch SA-4", "preview": true},
+    {"model": "SoundTouch Stereo JC (adapter)", "type": "SoundTouch Stereo JC", "preview": true},
+    {"model": "Wave SoundTouch (adapter)", "type": "Wave SoundTouch", "preview": true},
+    {"model": "CineMate (adapter)", "type": "Cinemate", "preview": true},
+    {"model": "Lifestyle 135/235/525/535 (adapter)", "type": "Lifestyle", "moduleType": "scm", "preview": true},
+    {"model": "VideoWave (adapter)", "type": "VideoWave", "preview": true}
   ],
   "supported": [
-    {"model": "SoundTouch Wireless Link adapter", "typeContains": "Wireless Link", "minimum": "20.0.6"},
-    {"model": "SoundTouch 10", "type": "SoundTouch 10", "minimum": "22.0.3"},
-    {"model": "SoundTouch 20 (Series I or II)", "type": "SoundTouch 20", "minimum": "27.0.6"},
-    {"model": "SoundTouch 300", "type": "SoundTouch 300", "minimum": "27.0.6"}
+    {"model": "SoundTouch Wireless Link adapter", "typeContains": "Wireless Link", "supported": true},
+    {"model": "SoundTouch 10", "type": "SoundTouch 10", "supported": true},
+    {"model": "SoundTouch 20 (Series I or II)", "type": "SoundTouch 20", "supported": true},
+    {"model": "SoundTouch 300", "type": "SoundTouch 300", "supported": true}
   ]
 }

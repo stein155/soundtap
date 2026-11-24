@@ -2,290 +2,582 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Install SoundTap</title>
 <link rel="icon" href="../assets/logo.svg">
+<script id="wizard-mode">document.documentElement.classList.add('wizard');</script>
 <style>
-  /* The SoundTap web UI's look (app/frontend/src/theme/GlobalStyle.ts): Stockholm greys,
-     black filled controls, small radii, Montserrat. No external CSS or JS: the page and its
-     strings (i18n/<language>.json) are all served from this directory. */
+  /* The SoundTap web UI's Stockholm look (app/frontend/src/theme/GlobalStyle.ts, the Button
+     atom, SheetGroup's section bar, the SetupPage): neutral greys, black filled controls,
+     radius 7/4, small capitals on buttons, Montserrat. No external CSS or JS: the page and its
+     strings (i18n/<language>.json) are all served from this directory.
+     With JavaScript the page is a wizard, one screen at a time (html.wizard); without it every
+     screen shows, one under the other. */
   @font-face {
     font-family: 'Montserrat Variable'; font-style: normal; font-display: swap;
     font-weight: 100 900; src: url(../assets/fonts/montserrat-latin-wght.woff2) format('woff2');
   }
   :root {
-    --bg: #f9f9f9; --surface: #fff; --surface-2: #f0f0f0; --line: rgba(22, 24, 27, .14);
-    --ink: #111; --ink-3: #5e5e5e; --fill: #111; --on-fill: #fff;
-    --ok: #1d7a3e; --bad: #b90000; --warn-bg: #fff4e5; --warn-line: #e8b56a;
-    --radius: 10px; --radius-sm: 6px;
+    color-scheme: light;
+    --bg: #f9f9f9; --surface: #fff; --surface-2: #f0f0f0; --surface-3: #e5e5e5;
+    --section-bar: #ebebeb; --border: rgba(22, 24, 27, .07); --border-strong: rgba(22, 24, 27, .14);
+    --ink: #111; --ink-2: #333; --ink-3: #5e5e5e; --accent: #111; --on-accent: #fff;
+    --ok: #1d7a3e; --danger: #b90000; --warn-bg: #fff4e5; --warn-line: #e8b56a; --warn-ink: #4a3208;
+    --radius: 7px; --radius-sm: 4px; --ease: cubic-bezier(0, .4, .4, 1);
+    --tracking-title: -.018em;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #121212; --surface: #1c1c1e; --surface-2: #2a2a2c; --line: rgba(238, 240, 243, .16);
-      --ink: #fff; --ink-3: #a3a3a3; --fill: #f2f2f2; --on-fill: #111;
-      --ok: #6cc28b; --bad: #ff6b60; --warn-bg: #2b2215; --warn-line: #7a5a2a;
+      color-scheme: dark;
+      --bg: #121212; --surface: #1c1c1e; --surface-2: #2a2a2c; --surface-3: #333;
+      --section-bar: #2a2a2c; --border: rgba(238, 240, 243, .08); --border-strong: rgba(238, 240, 243, .16);
+      --ink: #fff; --ink-2: #e6e6e6; --ink-3: #a3a3a3; --accent: #f2f2f2; --on-accent: #111;
+      --ok: #6cc28b; --danger: #ff6b60; --warn-bg: #2b2215; --warn-line: #7a5a2a; --warn-ink: #f3dcb4;
     }
   }
   * { box-sizing: border-box; }
+  html { background: var(--bg); }
   body {
-    margin: 0; background: var(--bg); color: var(--ink);
-    font: 16px/1.55 'Montserrat Variable', -apple-system, system-ui, 'Segoe UI', sans-serif;
-    -webkit-font-smoothing: antialiased;
-  }
-  main { max-width: 40rem; margin: 0 auto; padding: 20px 16px 56px; }
-  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
-  header img { width: 36px; height: 36px; }
-  h1 { font-size: 26px; font-weight: 700; letter-spacing: -.02em; margin: 0; flex: 1; min-width: 10rem; }
-  .lang { display: flex; align-items: center; gap: 6px; color: var(--ink-3); }
-  .lang svg { width: 20px; height: 20px; flex: none; }
-  .lang select {
-    font: inherit; font-size: 15px; min-height: 44px; padding: 8px 10px; border-radius: var(--radius-sm);
-    border: 1px solid var(--line); background: var(--surface); color: var(--ink); max-width: 11rem;
-  }
-  .intro { color: var(--ink-3); margin: 8px 0 16px; }
-  .alpha {
-    background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: var(--radius);
-    padding: 12px 14px; font-size: 14.5px; margin-bottom: 8px;
-  }
-  .step { margin-top: 28px; }
-  .step > h2 { display: flex; align-items: center; gap: 12px; font-size: 19px; font-weight: 700; margin: 0 0 12px; }
-  .num {
-    flex: none; display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: 50%;
-    background: var(--fill); color: var(--on-fill); font-size: 16px; font-weight: 700;
-  }
-  .badge {
-    padding: 2px 8px; border-radius: var(--radius-sm); background: var(--surface-2);
-    color: var(--ink-3); font-size: 12px; font-weight: 600;
-  }
-  .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
-  .card + .card { margin-top: 12px; }
-  p { margin: 0 0 10px; }
-  p:last-child { margin-bottom: 0; }
-  .muted { color: var(--ink-3); font-size: 14px; line-height: 1.45; }
-  ul.need, ol.steps { margin: 0; padding-left: 22px; }
-  ul.need li, ol.steps li { margin-bottom: 10px; }
-  ul.need li:last-child, ol.steps li:last-child { margin-bottom: 0; }
-  a { color: inherit; text-underline-offset: 2px; }
-  a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible {
-    outline: 2px solid var(--ink); outline-offset: 2px;
+    margin: 0; color: var(--ink);
+    font: 15px/1.5 'Montserrat Variable', -apple-system, system-ui, 'Segoe UI', sans-serif;
+    -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
   }
   [hidden] { display: none !important; }
-  code { font: 14px/1.4 ui-monospace, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
-  kbd { font: 600 13px/1 inherit; padding: 2px 6px; border-radius: 4px; background: var(--surface-2); border: 1px solid var(--line); }
-
-  /* Step 1: the models, one large choice each. */
-  .picks { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 10px; }
-  .pick {
-    display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 12px 14px; cursor: pointer;
-    background: var(--surface); border: 1.5px solid var(--line); border-radius: var(--radius); font-weight: 600;
+  a { color: inherit; text-underline-offset: 2px; }
+  a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible,
+  label:has(input:focus-visible) { outline: 2px solid var(--ink); outline-offset: 2px; }
+  p { margin: 0; }
+  code { font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+  kbd {
+    font: 600 12px/1 inherit; padding: 2px 6px; border-radius: var(--radius-sm);
+    background: var(--surface-2); border: 1px solid var(--border-strong);
   }
-  .pick input { width: 20px; height: 20px; margin: 0; accent-color: var(--fill); flex: none; }
-  .pick:has(input:checked) { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
-  .pick.other { font-weight: 500; color: var(--ink-3); }
-  #pickNote { margin-top: 12px; }
-  #pickNote .line { font-weight: 600; color: var(--bad); }
-
-  /* Buttons and commands. */
-  button, .button {
-    font: inherit; font-weight: 600; display: inline-flex; align-items: center; justify-content: center;
-    gap: 8px; min-height: 48px; padding: 12px 18px; border: 0; border-radius: var(--radius);
-    background: var(--fill); color: var(--on-fill); cursor: pointer; text-decoration: none; text-align: center;
+  .muted { color: var(--ink-3); font-size: 13px; line-height: 1.45; }
+  .visually-hidden {
+    position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
   }
+
+  /* The column: a phone's width, centred on a wider screen. */
+  .app { max-width: 30rem; margin: 0 auto; min-height: 100dvh; display: flex; flex-direction: column; background: var(--bg); }
+  @media (min-width: 40rem) {
+    html { background: var(--surface-2); }
+    .app { box-shadow: 0 0 0 1px var(--border); }
+  }
+
+  /* The bar over every screen: back, the step, the language. */
+  .bar { position: sticky; top: 0; z-index: 2; background: var(--surface); padding-top: env(safe-area-inset-top); }
+  .bar-row { height: 56px; display: grid; grid-template-columns: 44px 1fr auto; align-items: center; gap: 4px; padding: 0 6px; }
+  .icon-button {
+    width: 44px; height: 44px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius);
+    background: transparent; color: var(--ink); cursor: pointer;
+  }
+  .icon-button svg { width: 22px; height: 22px; }
+  .step-label {
+    text-align: center; font-size: 12px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; color: var(--ink-3);
+  }
+  .lang { display: flex; align-items: center; gap: 4px; color: var(--ink-3); }
+  .lang svg { width: 18px; height: 18px; flex: none; }
+  .lang select {
+    font: inherit; font-size: 13px; font-weight: 600; min-height: 44px; max-width: 8.5rem; padding: 0 6px;
+    border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--ink-3); cursor: pointer;
+  }
+  .progress { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; padding: 0 16px 14px; }
+  .progress span { height: 3px; border-radius: 2px; background: var(--surface-3); transition: background .3s var(--ease); }
+  .progress span.on { background: var(--accent); }
+  html:not(.wizard) .bar, html:not(.wizard) .actions .nav-only { display: none; }
+
+  /* A screen: its head on white, then its body on the grey page, its actions at the bottom. */
+  .screen { display: flex; flex-direction: column; flex: 1; }
+  html.wizard .screen:not(.on) { display: none; }
+  html:not(.wizard) .screen + .screen { border-top: 8px solid var(--surface-3); }
+  .screen.on { animation: enter .35s var(--ease); }
+  @keyframes enter { from { opacity: 0; transform: translateY(8px); } }
+  @media (prefers-reduced-motion: reduce) { .screen.on { animation: none; } .progress span { transition: none; } }
+  .head { background: var(--surface); padding: 6px 16px 22px; }
+  .head h1 { margin: 0; font-size: 24px; font-weight: 600; line-height: 1.2; letter-spacing: var(--tracking-title); text-wrap: balance; }
+  .head h1:focus { outline: none; }
+  .head > p { margin-top: 8px; font-size: 14px; color: var(--ink-3); }
+  .hero { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 8px 24px 28px; }
+  .hero h1 { font-size: 26px; margin-top: 14px; }
+  .hero > p { max-width: 30ch; }
+  .model-head { display: flex; align-items: center; gap: 14px; }
+  .eyebrow { font-size: 12px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3); }
+  .model-head h1 { margin-top: 4px; }
+
+  /* Our own drawings of the speakers (app/frontend/src/components/molecules/ModelArt), on a grey disc. */
+  .disc { display: block; flex: none; border-radius: 50%; background: var(--surface-2); }
+  .disc svg { display: block; width: 100%; height: 100%; }
+  .disc.big { width: 148px; height: 148px; padding: 22px; }
+  .disc.big svg { filter: drop-shadow(0 6px 6px rgba(0, 0, 0, .18)); }
+  .disc.small { width: 64px; height: 64px; padding: 8px; }
+
+  /* Stockholm's section bar: grey, edge to edge. */
+  h2.section-bar { margin: 0; }
+  .section-bar {
+    min-height: 43px; display: flex; align-items: center; padding: 4px 16px; background: var(--section-bar);
+    font-size: 13px; font-weight: 700; letter-spacing: .5px; color: var(--ink-2);
+  }
+  .rows { background: var(--surface); }
+  .row { display: flex; gap: 14px; padding: 14px 16px; }
+  .row + .row { border-top: 1px solid var(--border); }
+  .row > svg { flex: none; width: 22px; height: 22px; margin-top: 1px; }
+  .row-title { font-size: 15px; font-weight: 600; }
+  .row .muted { margin-top: 3px; }
+  .row.warn-row { background: var(--warn-bg); box-shadow: inset 0 0 0 1px var(--warn-line); color: var(--warn-ink); }
+  .row.warn-row .muted { color: var(--warn-ink); }
+  .row.warn-row + .row { border-top: 0; }
+  .check {
+    display: flex; gap: 12px; align-items: flex-start; padding: 16px; font-size: 14px; font-weight: 500; line-height: 1.45; cursor: pointer;
+  }
+  .check input { width: 20px; height: 20px; margin: 0; accent-color: var(--accent); flex: none; }
+  .check.boxed { margin: 12px 16px 0; padding: 14px; border-radius: var(--radius); background: var(--warn-bg); box-shadow: inset 0 0 0 1px var(--warn-line); color: var(--warn-ink); }
+
+  /* Step 1: a tile per supported model, rows for the previews and another model. */
+  .tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 16px; }
+  .tile {
+    position: relative; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 16px 10px 14px;
+    background: var(--surface); border-radius: var(--radius); box-shadow: inset 0 0 0 1px var(--border-strong);
+    text-align: center; font-size: 14px; font-weight: 600; line-height: 1.3; cursor: pointer;
+  }
+  .tile .disc { width: 92px; height: 92px; padding: 12px; }
+  .tile input, .pick-row input { position: absolute; opacity: 0; pointer-events: none; }
+  .tile:has(input:checked), .pick-row:has(input:checked) { box-shadow: inset 0 0 0 2px var(--ink); }
+  .tick {
+    position: absolute; top: 8px; right: 8px; width: 22px; height: 22px; border-radius: 50%;
+    background: var(--accent); color: var(--on-accent); display: none; place-items: center;
+  }
+  .tick svg { width: 12px; height: 12px; }
+  .tile:has(input:checked) .tick, .pick-row:has(input:checked) .tick { display: grid; }
+  .picks-list { display: flex; flex-direction: column; gap: 8px; padding: 0 16px 16px; }
+  .picks-list .muted { padding: 0 2px 4px; }
+  .pick-row {
+    position: relative; display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 10px 44px 10px 14px;
+    background: var(--surface); border-radius: var(--radius); box-shadow: inset 0 0 0 1px var(--border);
+    font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  .pick-row .tick { top: 50%; margin-top: -11px; right: 12px; }
+  .pick-row.other { color: var(--ink-3); font-weight: 500; }
+  .picks-title { padding: 8px 2px 0; font-size: 12px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; color: var(--ink-3); }
+  .refused { margin: 0 16px 16px; padding: 14px; border-radius: var(--radius); background: var(--surface); box-shadow: inset 0 0 0 1px var(--border-strong); }
+  .refused .line { font-weight: 600; color: var(--danger); margin-bottom: 6px; }
+
+  /* Step 3: the routes, one tap each. */
+  .choices { display: flex; flex-direction: column; gap: 10px; padding: 16px; }
+  .choice {
+    display: flex; align-items: center; gap: 14px; padding: 16px 14px; background: var(--surface); border-radius: var(--radius);
+    box-shadow: inset 0 0 0 1px var(--border-strong); text-decoration: none; color: var(--ink);
+  }
+  .choice.first { box-shadow: inset 0 0 0 2px var(--ink); }
+  .choice:active { box-shadow: inset 0 0 0 3px var(--ink); }
+  .choice .glyph { width: 48px; height: 48px; border-radius: 50%; background: var(--surface-2); display: grid; place-items: center; flex: none; }
+  .choice .glyph svg { width: 24px; height: 24px; }
+  .choice > svg { width: 18px; height: 18px; flex: none; color: var(--ink-3); }
+  .choice-text { flex: 1; min-width: 0; }
+  .choice-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 15px; font-weight: 600; }
+  .choice-text .muted { display: block; margin-top: 4px; }
+  .badge {
+    padding: 3px 7px; border-radius: var(--radius-sm); background: var(--accent); color: var(--on-accent);
+    font-size: 10px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase;
+  }
+  .note { margin: 0 16px 16px; display: flex; gap: 10px; padding: 12px 14px; border-radius: var(--radius); background: var(--surface-2); color: var(--ink-2); font-size: 13px; line-height: 1.45; }
+  .note svg { width: 18px; height: 18px; flex: none; margin-top: 1px; color: var(--ink-3); }
+  .note.warn { background: var(--warn-bg); box-shadow: inset 0 0 0 1px var(--warn-line); color: var(--warn-ink); }
+  .note.warn svg { color: currentColor; }
+
+  /* Numbered steps. */
+  ol.steps { list-style: none; margin: 0; padding: 0; background: var(--surface); counter-reset: step; border-top: 1px solid var(--border); }
+  ol.steps > li { counter-increment: step; position: relative; padding: 16px 16px 16px 56px; font-size: 14px; }
+  ol.steps > li + li { border-top: 1px solid var(--border); }
+  ol.steps > li::before {
+    content: counter(step); position: absolute; left: 16px; top: 15px; width: 26px; height: 26px; border-radius: 50%;
+    background: var(--accent); color: var(--on-accent); font-size: 12px; font-weight: 700; display: grid; place-items: center;
+  }
+  ol.steps .muted { display: block; margin-top: 6px; }
+  ul.plain { list-style: none; margin: 0; padding: 0; background: var(--surface); }
+  ul.plain > li { padding: 14px 16px; font-size: 14px; }
+  ul.plain > li + li { border-top: 1px solid var(--border); }
+  ul.plain > li.warn { font-weight: 600; color: var(--danger); }
+
+  /* The operating systems, as a segmented control. */
+  .segments {
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0 16px 18px; padding: 3px;
+    border-radius: var(--radius); background: var(--surface-2);
+  }
+  .segments button {
+    min-height: 42px; border: 0; border-radius: 5px; background: transparent; font: inherit; font-size: 13px; font-weight: 600;
+    color: var(--ink-3); cursor: pointer;
+  }
+  .segments button[aria-pressed=true] { background: var(--surface); color: var(--ink); font-weight: 700; box-shadow: 0 1px 2px rgba(31, 24, 20, .12); }
+
+  /* Buttons: Stockholm has one, flat, 54 px, radius 7, small capitals; outlined thickens inset. */
+  .button, button.primary {
+    display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 54px; padding: 11px;
+    border: 0; border-radius: var(--radius); background: var(--accent); color: var(--on-accent); cursor: pointer;
+    font: inherit; font-size: 11px; font-weight: 700; letter-spacing: .2px; text-transform: uppercase; text-decoration: none; text-align: center;
+  }
+  .button:active, button.primary:active:not(:disabled) { opacity: .7; }
   button:disabled { opacity: .4; cursor: default; }
-  .button.wide, button.wide { width: 100%; }
-  .button.quiet { background: var(--surface-2); color: var(--ink); }
-  .tabs { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
-  .tabs button { flex: 1; min-width: 6rem; background: var(--surface-2); color: var(--ink); }
-  .tabs button[aria-pressed=true] { background: var(--fill); color: var(--on-fill); }
-  .cmd { display: flex; gap: 8px; align-items: stretch; margin: 12px 0; }
+  .button.outline { background: transparent; color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--ink); }
+  .button.outline:active { opacity: 1; box-shadow: inset 0 0 0 3px var(--ink); }
+  .button.quiet { background: var(--surface-2); color: var(--ink); text-transform: none; letter-spacing: 0; font-size: 13px; font-weight: 600; }
+  .text-link {
+    display: flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 10px;
+    font-size: 13px; font-weight: 600; color: var(--ink-3);
+  }
+  .actions { margin-top: auto; padding: 16px 16px calc(20px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 6px; }
+  .actions.sticky { position: sticky; bottom: 0; z-index: 1; background: linear-gradient(to bottom, transparent, var(--bg) 16px); }
+  .actions .links { display: flex; justify-content: center; flex-wrap: wrap; }
+
+  /* Commands and checksums. */
+  .cmd { display: flex; gap: 8px; align-items: stretch; margin-top: 10px; }
   .cmd code {
     flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; overflow-wrap: normal; padding: 12px;
-    border-radius: var(--radius-sm); background: var(--surface-2); font-size: 14px; line-height: 24px;
+    border-radius: var(--radius-sm); background: var(--surface-2); line-height: 20px;
   }
-  .cmd button { padding: 0 16px; min-width: 5.5rem; font-size: 14px; border-radius: var(--radius-sm); }
+  .cmd button {
+    min-width: 5.5rem; padding: 0 12px; border: 0; border-radius: var(--radius-sm); background: var(--accent); color: var(--on-accent);
+    font: inherit; font-size: 11px; font-weight: 700; letter-spacing: .2px; text-transform: uppercase; cursor: pointer;
+  }
   pre {
     margin: 8px 0 0; overflow-x: auto; padding: 12px; border-radius: var(--radius-sm);
-    background: var(--surface-2); font: 13px/1.5 ui-monospace, Menlo, Consolas, monospace;
+    background: var(--surface-2); font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace;
   }
-  details > summary { cursor: pointer; font-weight: 600; min-height: 44px; display: flex; align-items: center; }
-  details[open] > summary { margin-bottom: 8px; }
+  .release { margin-top: 10px; }
+  .release .button { background: transparent; color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--ink); min-height: 48px; }
+  .release .meta { margin-top: 6px; }
+  .sum { margin-top: 10px; }
+  details { margin: 12px 16px 0; padding: 0 14px; border-radius: var(--radius); background: var(--surface); box-shadow: inset 0 0 0 1px var(--border); }
+  ol.steps details { margin: 8px 0 0; padding: 0; box-shadow: none; }
+  details > summary { cursor: pointer; font-size: 13px; font-weight: 600; min-height: 44px; display: flex; align-items: center; }
+  details[open] { padding-bottom: 14px; }
+  details > p + p { margin-top: 10px; }
+  .upload { margin: 10px 0 0; }
+  .upload .button code { font-size: 13px; }
 
-  /* The browser route's form. */
-  label.field { display: block; font-weight: 600; margin: 14px 0 6px; }
+  /* The browser route's form: the label above the field, as Stockholm lays it out. */
+  form { display: flex; flex-direction: column; padding: 0 16px; }
+  label.field { margin: 18px 0 8px; font-size: 12px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; color: var(--ink-3); }
   input[type=text] {
-    width: 100%; font: inherit; min-height: 48px; padding: 11px 12px; border-radius: var(--radius-sm);
-    border: 1px solid var(--line); background: var(--surface-2); color: var(--ink);
+    width: 100%; font: inherit; font-size: 15px; min-height: 48px; padding: 0 12px; border: 0; border-radius: var(--radius-sm);
+    background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border-strong); color: var(--ink);
   }
+  input[type=text]:focus { box-shadow: inset 0 0 0 2px var(--ink); outline: none; }
   .hint { margin-top: 6px; }
-  .check { display: flex; gap: 12px; align-items: flex-start; font-weight: 500; margin: 16px 0; cursor: pointer; }
-  .check input { margin: 3px 0 0; width: 20px; height: 20px; accent-color: var(--fill); flex: none; }
-  #status { display: none; margin-top: 14px; }
+  #modelNote { margin-top: 14px; }
+  #status { display: none; margin: 18px 16px 0; padding: 14px; border-radius: var(--radius); background: var(--surface); box-shadow: inset 0 0 0 1px var(--border-strong); }
   #status.on { display: block; }
   #status .line { font-weight: 600; }
+  #status .muted { margin-top: 4px; }
+  #status.ok { box-shadow: inset 0 0 0 2px var(--ok); }
   #status.ok .line { color: var(--ok); }
-  #status.bad .line { color: var(--bad); }
+  #status.bad { box-shadow: inset 0 0 0 2px var(--danger); }
+  #status.bad .line { color: var(--danger); }
 
-  .release .meta { margin-top: 8px; }
-  .sum { margin-top: 12px; }
-  .sum .muted { margin-bottom: 0; }
-  .upload { margin: 8px 0; }
-  .warn { font-weight: 600; }
-  footer { margin-top: 36px; padding-top: 16px; border-top: 1px solid var(--line); }
+  .foot { padding: 4px 16px 0; text-align: center; }
+  .foot p + p { margin-top: 4px; }
 </style>
 </head>
 <body>
-<main>
-  <header>
-    <img src="../assets/logo.svg" alt="">
-    <h1 data-i18n="hero.title">Install SoundTap</h1>
-    <label class="lang">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/></svg>
-      <select id="lang" aria-label="Language" data-i18n-label="lang.label"></select>
-    </label>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><defs>
+  <linearGradient id="gb" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2e2f32"/><stop offset="1" stop-color="#36373b"/></linearGradient>
+  <linearGradient id="gt" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#555658"/><stop offset="1" stop-color="#47484a"/></linearGradient>
+  <linearGradient id="gw" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a4a4a"/><stop offset="1" stop-color="#3a3a3a"/></linearGradient>
+  <linearGradient id="gf" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#262626"/><stop offset="1" stop-color="#121212"/></linearGradient>
+  <linearGradient id="gp" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3c3c3e"/><stop offset="1" stop-color="#0a0a0a"/></linearGradient>
+  <linearGradient id="gs" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#8d8d8d"/><stop offset=".5" stop-color="#e4e4e4"/><stop offset="1" stop-color="#8d8d8d"/></linearGradient>
+  <pattern id="grille" width="1.6" height="1.6" patternUnits="userSpaceOnUse"><circle cx=".8" cy=".8" r=".35" fill="#000" opacity=".35"/></pattern>
+</defs></svg>
+<div class="app">
+  <header class="bar">
+    <div class="bar-row">
+      <button type="button" class="icon-button" id="navBack" aria-label="Back" data-i18n-label="nav.back">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <p class="step-label" id="stepLabel" aria-live="polite"></p>
+      <label class="lang">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/></svg>
+        <select id="lang" aria-label="Language" data-i18n-label="lang.label"></select>
+      </label>
+    </div>
+    <div class="progress" id="progress" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
   </header>
-  <p class="intro" data-i18n="hero.intro">Six short steps take your Bose SoundTouch from Bose's software to SoundTap. The install itself takes about five minutes.</p>
-  <p class="alpha" data-i18n="alpha.text"><b>SoundTap is alpha software.</b> It replaces everything on the speaker, including the part that starts it. There is a way back to Bose (step 6): read it before you start.</p>
 
-  <section class="step" id="speaker">
-    <h2><span class="num">1</span><span id="model-title" data-i18n="s1.title">Which speaker do you have?</span></h2>
-    <div class="picks" id="picks" role="radiogroup" aria-labelledby="model-title">
-      <!-- Filled from versions.json. -->
+  <main>
+  <!-- Welcome: what this is, the risk, the way back, and the one agreement. -->
+  <section class="screen" id="welcome" data-step="0">
+    <div class="head hero">
+      <span class="disc big" id="heroArt"></span>
+      <h1 tabindex="-1" data-i18n="hero.title">Install SoundTap</h1>
+      <p data-i18n="welcome.intro">From Bose's software to SoundTap, in a few short steps. The install itself takes about five minutes.</p>
+    </div>
+    <h2 class="section-bar" data-i18n="welcome.before">Before you start</h2>
+    <div class="rows">
+      <div class="row warn-row">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18h.01"/></svg>
+        <div><p class="row-title" data-i18n="welcome.alphaTitle">SoundTap is alpha software</p>
+          <p class="muted" data-i18n="welcome.alphaText">It replaces everything on the speaker, including the part that starts it.</p></div>
+      </div>
+      <div class="row">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 010 10h-3"/></svg>
+        <div><p class="row-title" data-i18n="welcome.backTitle">There is a way back to Bose</p>
+          <p class="muted" data-i18n="welcome.backText" data-href="#back">It needs Bose's own update file for your model, saved before you start. <a href="#back">How the way back works</a></p>
+          <p class="muted" style="margin-top:6px" data-i18n="back.archive" data-href="https://archive.org/download/bose-soundtouch-software-and-firmware/Firmware/">No copy yet? Bose's update files are kept in a public <a href="https://archive.org/download/bose-soundtouch-software-and-firmware/Firmware/">archive on archive.org</a>, run by neither Bose nor SoundTap.</p></div>
+      </div>
+      <div class="row">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+        <div><p class="row-title" data-i18n="welcome.workTitle">The speaker does the work itself</p>
+          <p class="muted" data-i18n="welcome.workText">It writes SoundTap and restarts. Keep it powered until it is back.</p></div>
+      </div>
+    </div>
+    <label class="check">
+      <input type="checkbox" id="agree">
+      <span data-i18n="welcome.agree">I understand that SoundTap is alpha software that replaces everything on the speaker, and I have read how to go back to Bose.</span>
+    </label>
+    <div class="actions">
+      <button type="button" class="primary nav-only" id="startButton" data-go="speaker" disabled data-i18n="nav.start">Start</button>
+      <div class="foot muted">
+        <p data-i18n="foot.guide" data-href="../owners/install/">The full <a href="../owners/install/">installation guide</a> has every step in more detail, a USB route and troubleshooting.</p>
+        <p data-i18n="foot.source" data-href="https://github.com/stein155/soundtap">SoundTap is open source: <a href="https://github.com/stein155/soundtap">view it on GitHub</a>. Not affiliated with Bose Corporation.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Step 1: the speaker, from versions.json. -->
+  <section class="screen" id="speaker" data-step="1">
+    <div class="head">
+      <h1 tabindex="-1" id="model-title" data-i18n="s1.title">Which speaker do you have?</h1>
+      <p data-i18n="speaker.intro">Pick your model. You then see only the steps that apply to it.</p>
+    </div>
+    <div class="tiles" id="picks" role="radiogroup" aria-labelledby="model-title">
+      <!-- Filled from versions.json: the supported models. -->
+    </div>
+    <div class="picks-list" id="previewPicks" role="radiogroup" aria-labelledby="previews-title" hidden>
+      <p class="picks-title" id="previews-title" data-i18n="speaker.previews">Previews</p>
+      <p class="muted" data-i18n="speaker.previewsText">Worked out from Bose's own software: nobody has run SoundTap on these yet.</p>
+      <!-- Filled from versions.json: the preview models. -->
+    </div>
+    <div class="picks-list" id="otherPicks" role="radiogroup" aria-label="Another model" data-i18n-label="model.other">
+      <!-- Another model. -->
     </div>
     <input type="hidden" id="model" value="">
-    <div class="card" id="pickNote" hidden>
+    <label class="check boxed" id="previewCheck" hidden>
+      <input type="checkbox" id="previewAgree">
+      <span data-i18n="br.previewAgree">This model is a preview: SoundTap is worked out from Bose's own software and nobody has run it on this model yet. It may not play, and its way back may be unproven. I install it anyway.</span>
+    </label>
+    <div class="refused" id="pickNote" role="status" hidden>
       <p class="line" id="pickLine"></p>
       <p class="muted" data-i18n="s1.otherHelp" data-href="https://github.com/stein155/soundtap/issues/new?template=device.yml">Have another model? <a href="https://github.com/stein155/soundtap/issues/new?template=device.yml">Help bring it up</a>: the first step is read-only investigation.</p>
     </div>
-  </section>
-
-  <div id="flow">
-  <section class="step" id="need">
-    <h2><span class="num">2</span><span data-i18n="s2.title">What you need</span></h2>
-    <div class="card">
-      <ul class="need">
-        <li data-i18n="need.speaker">The speaker plugged in and still running Bose's software.</li>
-        <li><span id="needVersion" data-i18n="need.versionAny">Recent Bose software. Pick your speaker above to see which version it needs.</span>
-          <span class="muted" data-i18n="need.versionWhere">The Bose app shows the version under Settings, Speaker settings, your speaker, About.</span></li>
-        <li data-i18n="need.computer">For the easiest route: a computer (Mac, Windows or Linux) on the same Wi-Fi as the speaker, and a speaker that can reach the internet.</li>
-        <li data-i18n="need.phone">Without internet: a phone or computer with a web browser.</li>
-        <li data-i18n="need.boseFile" data-href="../owners/install/#save-boses-update-file">For the way back: Bose's own update file for your model (<code>Update.stu</code>), saved before you start. SoundTap does not ship it. <a href="../owners/install/#save-boses-update-file">Why and how</a></li>
-      </ul>
+    <div class="actions sticky nav-only">
+      <button type="button" class="primary" id="speakerNext" data-go="prepare" disabled data-i18n="nav.next">Next</button>
     </div>
   </section>
 
-  <section class="step" id="auto">
-    <h2><span class="num">3</span><span data-i18n="s3.title">Install automatically</span><span class="badge" data-i18n="s3.badge">Easiest</span></h2>
-    <div class="card">
+  <!-- Step 2: what the speaker needs, and the file for the way back. -->
+  <section class="screen" id="prepare" data-step="2">
+    <div class="head">
+      <div class="model-head">
+        <span class="disc small" id="prepareArt" hidden></span>
+        <div><p class="eyebrow" id="prepareModel"></p>
+          <h1 tabindex="-1" data-i18n="s2.title">What you need</h1></div>
+      </div>
+    </div>
+    <h2 class="section-bar" data-i18n="prep.speaker">The speaker</h2>
+    <div class="rows">
+      <div class="row">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v6M8 4v4M16 4v4"/><rect x="6" y="8" width="12" height="7" rx="2"/><path d="M12 15v7"/></svg>
+        <p data-i18n="need.speaker">The speaker plugged in and still running Bose's software.</p>
+      </div>
+    </div>
+    <h2 class="section-bar" data-i18n="prep.wayBack">For the way back</h2>
+    <div class="rows">
+      <div class="row">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 19h16"/></svg>
+        <div><p data-i18n="need.boseFile" data-href="../owners/install/#save-boses-update-file">For the way back: Bose's own update file for your model (<code>Update.stu</code>), saved before you start. SoundTap does not ship it. <a href="../owners/install/#save-boses-update-file">Why and how</a></p>
+          <p class="muted" style="margin-top:6px" data-i18n="back.archive" data-href="https://archive.org/download/bose-soundtouch-software-and-firmware/Firmware/">No copy yet? Bose's update files are kept in a public <a href="https://archive.org/download/bose-soundtouch-software-and-firmware/Firmware/">archive on archive.org</a>, run by neither Bose nor SoundTap.</p>
+          <p class="muted" id="prepSt20" style="margin-top:6px" data-i18n="back.st20">On a SoundTouch 20 the network chip keeps SoundTap's software; putting Bose's back there is still a developer step.</p>
+          <p class="muted" style="margin-top:6px" data-href="#back" data-i18n="prep.readBack">Read <a href="#back">the way back</a> before you start.</p></div>
+      </div>
+    </div>
+    <div class="actions nav-only">
+      <button type="button" class="primary" data-go="route" data-i18n="nav.next">Next</button>
+    </div>
+  </section>
+
+  <!-- Step 3: the route. -->
+  <section class="screen" id="route" data-step="3">
+    <div class="head">
+      <h1 tabindex="-1" data-i18n="route.title">How do you want to install?</h1>
+      <p data-i18n="route.intro">All three put the same SoundTap on the speaker.</p>
+    </div>
+    <div class="note" style="margin-top:16px" id="mobileNote" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/></svg>
+      <p data-i18n="route.mobile">This looks like a phone or tablet. The computer route needs a computer: choose one of the other two.</p>
+    </div>
+    <nav class="choices" aria-label="How do you want to install?" data-i18n-label="route.title">
+      <a class="choice first" id="routeComputer" href="#computer">
+        <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2 19h20"/></svg></span>
+        <span class="choice-text">
+          <span class="choice-title"><span data-i18n="route.computer">With a computer</span><span class="badge" data-i18n="s3.badge">Easiest</span></span>
+          <span class="muted" data-i18n="route.computerText">One line in a terminal finds your speakers and installs. Mac, Windows or Linux; the speaker needs internet.</span>
+        </span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+      </a>
+      <a class="choice" href="#browser">
+        <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M7 6.5h.01M10 6.5h.01"/></svg></span>
+        <span class="choice-text">
+          <span class="choice-title"><span data-i18n="route.page">From this page</span></span>
+          <span class="muted" data-i18n="route.pageText">With the speaker's IP address, in Chrome or Edge. The speaker needs internet.</span>
+        </span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+      </a>
+      <a class="choice" href="#offline">
+        <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 20h16"/></svg></span>
+        <span class="choice-text">
+          <span class="choice-title"><span data-i18n="route.offline">Without internet</span></span>
+          <span class="muted" data-i18n="route.offlineText">Upload the file over the speaker's own network. A phone is enough.</span>
+        </span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+      </a>
+    </nav>
+  </section>
+
+  <!-- Step 4, the first route: one command on a computer. -->
+  <section class="screen" id="computer" data-step="4">
+    <div class="head">
+      <h1 tabindex="-1" data-i18n="s3.title">Install automatically</h1>
       <p data-i18n="s3.what">One line on your computer finds the SoundTouch speakers on your network that still run Bose's software and asks which ones get SoundTap. Each speaker you pick downloads SoundTap itself and installs it.</p>
-      <p class="muted" id="mobileNote" data-i18n="s3.mobile" hidden>This looks like a phone or tablet. The automatic installer runs on a computer; from a phone, use step 4.</p>
-      <div class="tabs" id="osTabs" role="group" aria-label="Your computer" data-i18n-label="os.label">
+    </div>
+    <div class="head" style="padding-top:0">
+      <div class="segments" id="osTabs" role="group" aria-label="Your computer" data-i18n-label="os.label" style="margin:0">
         <button type="button" data-os="mac" aria-pressed="false">Mac</button>
         <button type="button" data-os="windows" aria-pressed="false">Windows</button>
         <button type="button" data-os="linux" aria-pressed="false">Linux</button>
       </div>
-      <ol class="steps">
-        <li id="os1"></li>
-        <li><span id="os2"></span>
-          <div class="cmd"><code id="cmd"></code><button type="button" data-copy="cmd" data-i18n="copy">Copy</button></div></li>
-        <li data-i18n="os.3">A list of your speakers appears. Answer its questions: each speaker you pick then installs SoundTap, and its setup page opens when it is done.</li>
-      </ol>
-      <p class="muted" style="margin-top:12px" data-i18n="s3.safe" data-href="install.sh install.ps1">Nothing is installed on your computer, and only the speakers you pick are changed. Curious? Read <a href="install.sh">install.sh</a> or <a href="install.ps1">install.ps1</a>.</p>
     </div>
-
-    <details class="card" id="browser">
-      <summary data-i18n="br.summary">No terminal? Install from this page by IP address (Chrome or Edge)</summary>
-      <p data-i18n="br.intro">This page asks a SoundTouch that still runs Bose's software to download SoundTap from SoundTap's update feed and install it. The speaker stays on your Wi-Fi and does the work itself; it restarts as SoundTap after about four minutes.</p>
-      <p class="muted" data-i18n="br.browsers">Chrome and Edge ask you once to let this page reach devices on your local network: allow it. Firefox and Safari cannot reach a speaker from this page; use step 4 instead.</p>
-      <form id="form">
-        <label class="field" for="version" data-i18n="br.version">Its Bose software version</label>
-        <input type="text" id="version" inputmode="decimal" autocomplete="off" placeholder="As the Bose app shows it" data-i18n-placeholder="br.versionPlaceholder">
-        <p class="muted hint" data-i18n="br.versionHint">In the Bose app: Settings, Speaker settings, your speaker, About.</p>
-        <p class="muted hint" id="modelNote">Pick your speaker in step 1 first.</p>
-        <label class="field" for="ip" data-i18n="br.ip">The speaker's IP address</label>
-        <input type="text" id="ip" inputmode="decimal" autocomplete="off" placeholder="192.168.1.23">
-        <p class="muted hint" data-i18n="br.ipHint">In the Bose app: Settings, Speaker settings, your speaker, About. Or look it up in your router.</p>
-        <label class="check">
-          <input type="checkbox" id="agree">
-          <span data-i18n="br.agree">I understand that SoundTap is alpha software that replaces everything on the speaker, and I have read how to go back to Bose (step 6).</span>
-        </label>
-        <label class="check" id="previewCheck" hidden>
-          <input type="checkbox" id="previewAgree">
-          <span data-i18n="br.previewAgree">This model is a preview: SoundTap is worked out from Bose's own software and nobody has run it on this model yet. It may not play, and its way back may be unproven. I install it anyway.</span>
-        </label>
-        <button type="submit" class="wide" id="go" disabled data-i18n="br.go">Install SoundTap</button>
-      </form>
-      <div id="status" role="status" aria-live="polite">
-        <p class="line" id="line"></p>
-        <p class="muted" id="detail"></p>
-      </div>
-    </details>
+    <ol class="steps">
+      <li id="os1"></li>
+      <li><span id="os2"></span>
+        <div class="cmd"><code id="cmd"></code><button type="button" data-copy="cmd" data-i18n="copy">Copy</button></div></li>
+      <li data-i18n="os.3">A list of your speakers appears. Answer its questions: each speaker you pick then installs SoundTap, and its setup page opens when it is done.</li>
+    </ol>
+    <p class="muted" style="padding:14px 16px 0" data-i18n="s3.safe" data-href="install.sh install.ps1">Nothing is installed on your computer, and only the speakers you pick are changed. Curious? Read <a href="install.sh">install.sh</a> or <a href="install.ps1">install.ps1</a>.</p>
+    <div class="actions nav-only">
+      <button type="button" class="primary" data-go="done" data-i18n="nav.started">It is running</button>
+      <div class="links"><a class="text-link" href="#route" data-i18n="nav.otherRoute">Did not work? Choose another route</a></div>
+    </div>
   </section>
 
-  <section class="step" id="offline">
-    <h2><span class="num">4</span><span data-i18n="s4.title">Without internet: upload the file</span></h2>
-    <p class="muted" data-i18n="s4.intro">Use this when the speaker has no internet, or when step 3 did not work. A phone with a browser is enough.</p>
-    <div class="card">
-      <ol class="steps">
-        <li><span data-i18n="s4.step1">Download the SoundTap file. The same file works on every model.</span>
-          <div class="release" id="release" aria-live="polite">
-            <p class="muted" data-i18n="dl.loading">Looking up the latest release…</p>
-          </div>
-          <details class="muted">
-            <summary data-i18n="dl.checkHow">Check the download (optional)</summary>
-            <p data-i18n="dl.checkText">Compare the checksum above with the one your computer prints for the file:</p>
-            <pre>shasum -a 256 SoundTap-Core-*.stu                   # macOS
+  <!-- Step 4, the second route: this page asks the speaker by its IP address. -->
+  <section class="screen" id="browser" data-step="4">
+    <div class="head">
+      <h1 tabindex="-1" data-i18n="br.title">Install from this page</h1>
+      <p data-i18n="br.intro">This page asks a SoundTouch that still runs Bose's software to download SoundTap from SoundTap's update feed and install it. The speaker stays on your Wi-Fi and does the work itself; it restarts as SoundTap after about four minutes.</p>
+    </div>
+    <div class="note" style="margin-top:16px">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/></svg>
+      <p data-i18n="br.browsersNote">Chrome and Edge ask you once to let this page reach devices on your local network: allow it. Firefox and Safari cannot reach a speaker from this page; install without internet instead.</p>
+    </div>
+    <form id="form">
+      <label class="field" for="ip" data-i18n="br.ip">The speaker's IP address</label>
+      <input type="text" id="ip" inputmode="decimal" autocomplete="off" placeholder="192.168.1.23">
+      <p class="muted hint" data-i18n="br.ipHint">In the Bose app: Settings, Speaker settings, your speaker, About. Or look it up in your router.</p>
+      <p class="muted" id="modelNote" aria-live="polite">Pick your speaker in step 1 first.</p>
+    </form>
+    <div id="status" role="status" aria-live="polite">
+      <p class="line" id="line"></p>
+      <p class="muted" id="detail"></p>
+    </div>
+    <div class="actions">
+      <p class="muted" style="text-align:center;margin-bottom:6px" data-i18n="br.final">This starts the install on the speaker. Once it is sent, this page will not send it again.</p>
+      <button type="submit" form="form" class="primary" id="go" disabled data-i18n="br.go">Install SoundTap</button>
+      <div class="links nav-only"><a class="text-link" href="#done" data-i18n="nav.whatNext">What happens next</a><a class="text-link" href="#route" data-i18n="nav.otherRoute">Did not work? Choose another route</a></div>
+    </div>
+  </section>
+
+  <!-- Step 4, the third route: upload the file over the speaker's own network. -->
+  <section class="screen" id="offline" data-step="4">
+    <div class="head">
+      <h1 tabindex="-1" data-i18n="s4.title">Without internet: upload the file</h1>
+      <p data-i18n="off.intro">Use this when the speaker has no internet, or when the other routes did not work. A phone with a browser is enough.</p>
+    </div>
+    <div class="note warn" style="margin-top:16px">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18h.01"/></svg>
+      <p data-i18n="next.noPower">Do not pull the power while it is busy, and do not send the file again.</p>
+    </div>
+    <ol class="steps">
+      <li><span data-i18n="s4.step1">Download the SoundTap file. The same file works on every model.</span>
+        <div class="release" id="release" aria-live="polite">
+          <p class="muted" data-i18n="dl.loading">Looking up the latest release…</p>
+        </div>
+        <details>
+          <summary data-i18n="dl.checkHow">Check the download (optional)</summary>
+          <p class="muted" data-i18n="dl.checkText">Compare the checksum above with the one your computer prints for the file:</p>
+          <pre>shasum -a 256 SoundTap-Core-*.stu                   # macOS
 sha256sum SoundTap-Core-*.stu                       # Linux
 certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
-          </details></li>
-        <li><span data-i18n="s4.step2">Put the speaker in setup mode.</span>
-          <span id="setupHow" data-i18n="setup.any">SoundTouch 10 or 20: hold <b>Preset 2</b> and <b>Volume −</b> together until the speaker opens its setup network. Other models: start setup mode as Bose's manual describes.</span></li>
-        <li data-i18n="s4.step3">Join the speaker's Wi-Fi network, named <i>Bose …</i>, with the phone or computer that has the file.</li>
-        <li><span data-i18n="s4.step4">Open the speaker's upload page in the browser:</span>
-          <div class="upload"><a class="button quiet wide" href="http://192.0.2.1:17008/update.html"><code>http://192.0.2.1:17008/update.html</code></a></div>
-          <span class="muted" data-i18n="s4.gateway">The speaker is that network's router, normally at <code>192.0.2.1</code>; a SoundTouch 20 has used <code>192.168.1.1</code>. If the page does not open, use the router address your phone or computer shows.</span></li>
-        <li data-i18n="s4.step5">Choose the <code>.stu</code> file and send it. The upload takes two to three minutes: keep the page open until it answers.</li>
-      </ol>
-    </div>
-    <div class="card">
+        </details></li>
+      <li><span data-i18n="s4.step2">Put the speaker in setup mode.</span>
+        <span class="muted" id="setupHow" data-i18n="setup.any">SoundTouch 10 or 20: hold <b>Preset 2</b> and <b>Volume −</b> together until the speaker opens its setup network. Other models: start setup mode as Bose's manual describes.</span></li>
+      <li data-i18n="s4.step3">Join the speaker's Wi-Fi network, named <i>Bose …</i>, with the phone or computer that has the file.</li>
+      <li><span data-i18n="s4.step4">Open the speaker's upload page in the browser:</span>
+        <div class="upload"><a class="button quiet" href="http://192.0.2.1:17008/update.html" target="_blank" rel="noopener"><code>192.0.2.1:17008/update.html</code></a></div>
+        <span class="muted" data-i18n="s4.gateway">The speaker is that network's router, normally at <code>192.0.2.1</code>; a SoundTouch 20 has used <code>192.168.1.1</code>. If the page does not open, use the router address your phone or computer shows.</span></li>
+      <li><span data-i18n="s4.step5">Choose the <code>.stu</code> file and send it. The upload takes two to three minutes: keep the page open until it answers.</span>
+        <span class="muted" data-i18n="s4.http500" data-href="../owners/install/#fallback-upload-to-port-17008">A first upload has sometimes answered with an error (HTTP 500). Do not send the file again while the speaker may still be writing; the <a href="../owners/install/#fallback-upload-to-port-17008">install guide</a> says what to do, and has a route over USB.</span></li>
+    </ol>
+    <details>
+      <summary data-i18n="off.trouble">The speaker is already on your Wi-Fi</summary>
       <p class="muted" data-i18n="s4.onWifi">Is the speaker already on your Wi-Fi with Bose's software? Then setup mode is not needed: open the same page on the speaker's own IP address, for example <code>http://192.168.1.23:17008/update.html</code>.</p>
-      <p class="muted" data-i18n="s4.http500" data-href="../owners/install/#fallback-upload-to-port-17008">A first upload has sometimes answered with an error (HTTP 500). Do not send the file again while the speaker may still be writing; the <a href="../owners/install/#fallback-upload-to-port-17008">install guide</a> says what to do, and has a route over USB.</p>
+    </details>
+    <div class="actions nav-only">
+      <button type="button" class="primary" data-go="done" data-i18n="nav.sent">The file is sent</button>
+      <div class="links"><a class="text-link" href="#route" data-i18n="nav.otherRoute">Did not work? Choose another route</a></div>
     </div>
   </section>
 
-  <section class="step" id="next">
-    <h2><span class="num">5</span><span data-i18n="s5.title">What happens next</span></h2>
-    <div class="card">
-      <ul class="need">
-        <li data-i18n="next.wait"><b>Leave the speaker alone and keep it powered.</b> It writes SoundTap, restarts and comes up as SoundTap in about four to six minutes.</li>
-        <li class="warn" data-i18n="next.noPower">Do not pull the power while it is busy, and do not send the file again.</li>
-        <li id="nextSt20" data-i18n="next.st20">A SoundTouch 20 shows the SoundTap splash on its display about a second after it restarts. It then updates its network chip and restarts once more, so allow extra time.</li>
-        <li id="nextSt10" data-i18n="next.st10">A SoundTouch 10 sweeps its lights from side to side while it starts.</li>
-        <li data-i18n="next.wifi">Afterwards the speaker joins the Wi-Fi Bose's software was on. If it does not, it opens its own setup network, named after the speaker (for example <i>SoundTap ST10 A1B2C3</i>): join it, and the setup page lets you pick your Wi-Fi. A SoundTouch 20 needs a 2.4 GHz WPA2 network.</li>
-        <li data-i18n="next.open" data-href="http://soundtap.local">Then open <a href="http://soundtap.local">http://soundtap.local</a> on any phone, tablet or computer on the same network. Updates later come from the speaker's own page.</li>
-        <li data-i18n="next.stuck" data-href="../owners/install/#when-something-goes-wrong">Not back after ten minutes? Keep it powered and see <a href="../owners/install/#when-something-goes-wrong">When something goes wrong</a>.</li>
-      </ul>
+  <!-- Step 5: what happens next. -->
+  <section class="screen" id="done" data-step="5">
+    <div class="head">
+      <h1 tabindex="-1" data-i18n="s5.title">What happens next</h1>
+    </div>
+    <div class="note warn" style="margin-top:16px">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18h.01"/></svg>
+      <p data-i18n="next.noPower">Do not pull the power while it is busy, and do not send the file again.</p>
+    </div>
+    <ul class="plain">
+      <li data-i18n="next.wait"><b>Leave the speaker alone and keep it powered.</b> It writes SoundTap, restarts and comes up as SoundTap in about four to six minutes.</li>
+      <li id="nextSt20" data-i18n="next.st20">A SoundTouch 20 shows the SoundTap splash on its display about a second after it restarts. It then updates its network chip and restarts once more, so allow extra time.</li>
+      <li id="nextSt10" data-i18n="next.st10">A SoundTouch 10 sweeps its lights from side to side while it starts.</li>
+      <li data-i18n="next.wifi">Afterwards the speaker joins the Wi-Fi Bose's software was on. If it does not, it opens its own setup network, named after the speaker (for example <i>SoundTap ST10 A1B2C3</i>): join it, and the setup page lets you pick your Wi-Fi. A SoundTouch 20 needs a 2.4 GHz WPA2 network.</li>
+      <li data-i18n="next.open" data-href="http://soundtap.local">Then open <a href="http://soundtap.local">http://soundtap.local</a> on any phone, tablet or computer on the same network. Updates later come from the speaker's own page.</li>
+      <li data-i18n="next.stuck" data-href="../owners/install/#when-something-goes-wrong">Not back after ten minutes? Keep it powered and see <a href="../owners/install/#when-something-goes-wrong">When something goes wrong</a>.</li>
+    </ul>
+    <div class="actions">
+      <a class="button" href="http://soundtap.local" data-i18n="nav.open">Open SoundTap</a>
+      <div class="links nav-only"><a class="text-link" href="#back" data-i18n="nav.wayBack">The way back to Bose</a></div>
     </div>
   </section>
 
-  <section class="step" id="back">
-    <h2><span class="num">6</span><span data-i18n="s6.title">The way back to Bose</span></h2>
-    <div class="card">
-      <p data-i18n="back.how">On the speaker's own page, open <b>Settings → Updates</b>, choose Bose's <code>Update.stu</code> (the file you saved) and confirm. Hold a button on the speaker for two seconds when it asks, and leave it powered while it writes and restarts.</p>
-      <ul class="need muted">
-        <li data-i18n="back.notReset">It is not a factory reset: Bose's software goes back, but not every byte SoundTap wrote is removed.</li>
-        <li data-i18n="back.st20">On a SoundTouch 20 the network chip keeps SoundTap's software; putting Bose's back there is still a developer step.</li>
-        <li data-i18n="back.rescue" data-href="../owners/install/#going-back-to-bose">If SoundTap no longer starts, a USB stick puts SoundTap back. The <a href="../owners/install/#going-back-to-bose">install guide</a> has the details and every exception.</li>
-        <li data-i18n="back.help" data-href="https://github.com/stein155/soundtap/issues/new?template=install.yml">Stuck? Open an <a href="https://github.com/stein155/soundtap/issues/new?template=install.yml">install or recovery issue</a>: we would much rather help than have a speaker end up in a drawer.</li>
-      </ul>
+  <!-- The way back to Bose: reachable from the welcome screen and the last step. -->
+  <section class="screen" id="back" data-step="0">
+    <div class="head">
+      <h1 tabindex="-1" data-i18n="s6.title">The way back to Bose</h1>
+    </div>
+    <ul class="plain">
+      <li data-i18n="back.how">On the speaker's own page, open <b>Settings → Updates</b>, choose Bose's <code>Update.stu</code> (the file you saved) and confirm. Hold a button on the speaker for two seconds when it asks, and leave it powered while it writes and restarts.</li>
+      <li class="muted" data-i18n="back.archive" data-href="https://archive.org/download/bose-soundtouch-software-and-firmware/Firmware/">No copy yet? Bose's update files are kept in a public <a href="https://archive.org/download/bose-soundtouch-software-and-firmware/Firmware/">archive on archive.org</a>, run by neither Bose nor SoundTap.</li>
+      <li class="muted" data-i18n="back.notReset">It is not a factory reset: Bose's software goes back, but not every byte SoundTap wrote is removed.</li>
+      <li class="muted" data-i18n="back.st20">On a SoundTouch 20 the network chip keeps SoundTap's software; putting Bose's back there is still a developer step.</li>
+      <li class="muted" data-i18n="back.rescue" data-href="../owners/install/#going-back-to-bose">If SoundTap no longer starts, a USB stick puts SoundTap back. The <a href="../owners/install/#going-back-to-bose">install guide</a> has the details and every exception.</li>
+      <li class="muted" data-i18n="back.help" data-href="https://github.com/stein155/soundtap/issues/new?template=install.yml">Stuck? Open an <a href="https://github.com/stein155/soundtap/issues/new?template=install.yml">install or recovery issue</a>: we would much rather help than have a speaker end up in a drawer.</li>
+    </ul>
+    <div class="actions nav-only">
+      <button type="button" class="primary" id="backDone" data-i18n="nav.back">Back</button>
     </div>
   </section>
-  </div>
-
-  <footer class="muted">
-    <p data-i18n="foot.guide" data-href="../owners/install/">The full <a href="../owners/install/">installation guide</a> has every step in more detail, a USB route and troubleshooting.</p>
-    <p data-i18n="foot.source" data-href="https://github.com/stein155/soundtap">SoundTap is open source: <a href="https://github.com/stein155/soundtap">view it on GitHub</a>. Not affiliated with Bose Corporation.</p>
-  </footer>
-</main>
+  </main>
+</div>
 
 <script>
   'use strict';
@@ -314,7 +606,7 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
   const LOOK_FOR_MS = 10 * 60 * 1000;
 
   const $ = (id) => document.getElementById(id);
-  const ip = $('ip'), agree = $('agree'), go = $('go'), model = $('model'), version = $('version');
+  const ip = $('ip'), agree = $('agree'), go = $('go'), model = $('model');
 
   // Only a private IPv4 address: this page talks to a speaker on your own network, nothing else.
   function privateIp(s) {
@@ -326,10 +618,10 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
     return ok ? m.slice(1).map(Number).join('.') : null;
   }
 
-  // versions.json beside this page names the models and the oldest Bose software SoundTap
-  // installs from: the one table install.sh and install.ps1 read too. The model is the
-  // hidden #model field: s<i> a supported rule, p<i> a preview rule, u<i> an unsupported one,
-  // "other" none of them.
+  // versions.json beside this page names the models SoundTap installs on: the one table
+  // install.sh and install.ps1 read too. No installer checks the Bose software version. The
+  // model is the hidden #model field: s<i> a supported rule, p<i> a preview rule, u<i> an
+  // unsupported one, "other" none of them.
   let table = null;
   const tableLoaded = Promise.all([
     fetch('versions.json', { cache: 'no-store' })
@@ -344,28 +636,12 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
     $('modelNote').textContent = t('br.tableFailed');
   });
 
-  // older: version is below minimum, number by number, so 9.1 < 10.0 < 10.0.10 (not as text).
-  // Numbers past the minimum's last (the build) do not count.
-  function older(version, minimum) {
-    const have = version.split('.').map(Number), want = minimum.split('.').map(Number);
-    for (let i = 0; i < want.length; i++) {
-      const a = have[i] || 0;
-      if (a !== want[i]) return a < want[i];
-    }
-    return false;
-  }
-
-  // What the table says about a rule (null: a model it does not name) on the typed version:
-  // ok, old (update Bose first), no (not supported yet) or unread (nothing to compare), as
-  // install.sh and install.ps1 say it about the speakers they find.
-  function judge(rule, typed) {
-    if (!rule || !rule.minimum) {
+  // What the table says about a rule (null: a model it does not name): ok, preview (installable
+  // once its own box is ticked) or no (not supported yet), as install.sh and install.ps1 say it
+  // about the speakers they find.
+  function judge(rule) {
+    if (!rule || !(rule.supported || rule.preview)) {
       return { status: 'no', text: rule ? t('judge.noModel', { model: rule.model }) : t('judge.no') };
-    }
-    const v = String(typed).trim().split(/\s+/)[0];
-    if (!/^[0-9]+(\.[0-9]+)*$/.test(v)) return { status: 'unread', text: t('judge.unread') };
-    if (older(v, rule.minimum)) {
-      return { status: 'old', text: t('judge.old', { version: v, model: rule.model, minimum: rule.minimum }) };
     }
     if (rule.preview) return { status: 'preview', text: t('judge.preview', { model: rule.model }) };
     return { status: 'ok', text: '' };
@@ -385,7 +661,7 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
   let confirmedModel = '';
   const installable = (status) => status === 'ok' ||
     (status === 'preview' && $('previewAgree').checked && confirmedModel === model.value);
-  const ready = () => table && model.value && installable(judge(chosenRule(), version.value).status) &&
+  const ready = () => table && model.value && installable(judge(chosenRule()).status) &&
     agree.checked && privateIp(ip.value);
   function refresh() {
     if (model.value !== confirmedModel) {
@@ -394,11 +670,11 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
     }
     go.disabled = busy || !ready();
     if (!table) return;
-    const verdict = model.value ? judge(chosenRule(), version.value) : null;
+    const verdict = model.value ? judge(chosenRule()) : null;
     $('modelNote').textContent = verdict && verdict.text ? verdict.text
       : model.value ? t('br.trust') : t('br.pickModel');
   }
-  for (const el of [ip, agree, model, version]) el.addEventListener('input', refresh);
+  for (const el of [ip, agree, model]) el.addEventListener('input', refresh);
   agree.addEventListener('change', refresh);
   $('previewAgree').addEventListener('change', refresh);
   model.addEventListener('change', refresh);
@@ -469,7 +745,7 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
     const host = privateIp(ip.value);
     if (busy || !host || !ready()) return;
     // Taken now, with the confirmation: ready() passed a preview only with its box ticked.
-    const feed = judge(chosenRule(), version.value).status === 'preview' ? PREVIEW_FEED : FEED;
+    const feed = judge(chosenRule()).status === 'preview' ? PREVIEW_FEED : FEED;
     busy = true;
     go.disabled = true;
     say(t('st.asking'), t('st.askingDetail'));
@@ -499,8 +775,8 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
 
 <script>
   'use strict';
-  // The page around the installer: language, the model choice, the command for this
-  // computer and the current release's download.
+  // The page around the installer: language, the wizard's screens, the model choice, the
+  // command for this computer and the current release's download.
   (() => {
     // The web UI's languages, each named in itself (app/frontend/src/lib/i18n/index.ts);
     // os/tests/docs/test_installer_i18n.py holds the two lists and the string files equal.
@@ -578,6 +854,7 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
       personalize();
       showOs(currentOs);
       showRelease();
+      showStep();
       refresh();
     }
     const picker = $('lang');
@@ -592,7 +869,44 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
       setLang(picker.value);
     });
 
-    // Step 1: the supported models from versions.json, then "another model".
+    // Our own drawings of the speakers (app/frontend/src/components/molecules/ModelArt),
+    // filled from the gradients at the top of the page.
+    const BUTTONS = [0, 1, 2, 3].map((i) => '<circle cx="' + (40.25 + i * 6.5) + '" cy="14.5" r=".8"/>').join('');
+    const ST20_BODY = 'M8 24q0-3 3-3h78q3 0 3 3l.7 25.5-.7 25.5q0 3-3 3H11q-3 0-3-3L7.3 49.5Z';
+    const ST300_FRONT = 'M3 51.9h94v9.6q0 1.5-1.5 1.5h-91q-1.5 0-1.5-1.5Z';
+    const WLA_TOP = 'M26 21h48q9 0 11 8l6 21q1 5-5 5H14q-6 0-5-5l6-21q2-8 11-8Z';
+    const DRAWINGS = {
+      st10: '<rect x="23" y="8" width="54" height="84" rx="3.5" fill="url(#gb)"/>' +
+        '<rect x="23" y="8" width="54" height="84" rx="3.5" fill="url(#grille)"/>' +
+        '<path d="M23 11.5a3.5 3.5 0 0 1 3.5-3.5h47a3.5 3.5 0 0 1 3.5 3.5V32H23Z" fill="url(#gt)"/>' +
+        '<path d="M38 8h24v2.4a1 1 0 0 1-1 1H39a1 1 0 0 1-1-1Z" fill="#7a7b7e"/>' +
+        '<g fill="#8a8a8a">' + BUTTONS + '</g><rect x="23" y="32" width="54" height="2.4" fill="url(#gs)"/>',
+      st20: '<path d="' + ST20_BODY + '" fill="url(#gb)"/><path d="' + ST20_BODY + '" fill="url(#grille)"/>' +
+        '<path d="M11 21h78q3 0 3 3v2.4H8V24q0-3 3-3Z" fill="url(#gs)"/>' +
+        '<rect x="36" y="22.3" width="28" height="2" rx="1" fill="#2a2a2a"/>' +
+        '<rect x="43" y="31.5" width="14.5" height="37.5" rx="1.6" fill="url(#gp)"/>' +
+        '<rect x="44.5" y="65.5" width="11.5" height="2" rx=".6" fill="url(#gs)"/>' +
+        '<circle cx="50.2" cy="36" r=".7" fill="#cfcfcf"/>',
+      st300: '<path d="M9 40h82l6 11H3Z" fill="url(#gp)"/><path d="M30 40h40l-18 11H6Z" fill="#fff" opacity=".07"/>' +
+        '<path d="M3 51h94v.9H3Z" fill="#7a7a7a"/><path d="' + ST300_FRONT + '" fill="url(#gb)"/>' +
+        '<path d="' + ST300_FRONT + '" fill="url(#grille)"/>',
+      wla: '<path d="M9 52h82l-.5 17q-.5 10-10 10H19.5q-9.5 0-10-10Z" fill="url(#gf)"/>' +
+        '<path d="' + WLA_TOP + '" fill="url(#gw)"/>' +
+        '<path d="' + WLA_TOP + '" fill="none" stroke="#8a8a8a" stroke-opacity=".55" stroke-width=".7"/>' +
+        '<rect x="43" y="36" width="14" height="5" rx="2.5" fill="#2b2b2b"/>' +
+        '<path d="M14 55h72" stroke="#262626" stroke-width=".8"/>' +
+        '<circle cx="50" cy="60.5" r=".8" fill="#e6e6e6"/><circle cx="50" cy="69" r=".8" fill="#e6e6e6"/>',
+    };
+    function draw(el, kind) {
+      el.hidden = !DRAWINGS[kind];
+      el.innerHTML = DRAWINGS[kind] ? '<svg viewBox="0 0 100 100" aria-hidden="true">' + DRAWINGS[kind] + '</svg>' : '';
+    }
+    draw($('heroArt'), 'st20');
+    const TICK = '<span class="tick" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+      'stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"/></svg></span>';
+
+    // Step 1: the supported models as tiles, the previews and "another model" as rows, all
+    // from versions.json.
     const ORDER = ['st10', 'st20', 'st300', 'wla'];
     function kindOf(rule) {
       if (!rule) return '';
@@ -600,9 +914,9 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
       return /Wireless Link/.test(name) ? 'wla' : name === 'SoundTouch 10' ? 'st10'
         : name === 'SoundTouch 20' ? 'st20' : name === 'SoundTouch 300' ? 'st300' : '';
     }
-    function pickCard(value, label, extra) {
+    function pickCard(value, label, className, kind) {
       const card = document.createElement('label');
-      card.className = 'pick' + (extra ? ' ' + extra : '');
+      card.className = className;
       const input = document.createElement('input');
       input.type = 'radio';
       input.name = 'pick';
@@ -611,41 +925,130 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
         $('model').value = value;
         personalize();
         refresh();
+        gate();
+        // What the choice asks for next (the preview box, or why it stops here) sits under
+        // the lists: bring it into view.
+        const ask = !$('previewCheck').hidden ? $('previewCheck') : !$('pickNote').hidden ? $('pickNote') : null;
+        if (ask) ask.scrollIntoView({ block: 'center', behavior: 'smooth' });
       });
+      card.append(input);
+      if (kind) {
+        const disc = document.createElement('span');
+        disc.className = 'disc';
+        draw(disc, kind);
+        card.append(disc);
+      }
       const span = document.createElement('span');
       if (value === 'other') span.dataset.i18n = 'model.other';
       span.textContent = label;
-      card.append(input, span);
+      card.append(span);
+      card.insertAdjacentHTML('beforeend', TICK);
       return card;
     }
     tableLoaded.then(() => {
       if (!table) return;
-      const picks = $('picks');
       table.supported.map((rule, i) => [rule, i])
         .sort((a, b) => ORDER.indexOf(kindOf(a[0])) - ORDER.indexOf(kindOf(b[0])))
-        .forEach(([rule, i]) => picks.append(pickCard('s' + i, rule.model)));
-      table.preview.forEach((rule, i) => picks.append(pickCard('p' + i, t('model.preview', { model: rule.model }), 'preview')));
-      picks.append(pickCard('other', t('model.other'), 'other'));
+        .forEach(([rule, i]) => $('picks').append(pickCard('s' + i, rule.model, 'tile', kindOf(rule))));
+      table.preview.forEach((rule, i) => $('previewPicks').append(pickCard('p' + i, rule.model, 'pick-row')));
+      $('previewPicks').hidden = !table.preview.length;
+      $('otherPicks').append(pickCard('other', t('model.other'), 'pick-row other'));
     });
 
     // What the chosen model changes: the version it needs, how it enters setup mode, what
-    // it shows while it starts. An unsupported model gets no steps at all.
+    // it shows while it starts. An unsupported model goes no further than step 1.
     function personalize() {
       const value = $('model').value, rule = chosenRule(), kind = kindOf(rule);
-      const supported = !!(rule && rule.minimum);
+      const supported = !!(rule && (rule.supported || rule.preview));
       const refused = !!value && !supported;
-      $('flow').hidden = refused;
       $('pickNote').hidden = !refused;
       $('previewCheck').hidden = !(rule && rule.preview);
-      if (refused) $('pickLine').textContent = judge(rule, '').text;
-      if (supported) show($('needVersion'), 'need.version', { minimum: rule.minimum, model: rule.model });
-      else show($('needVersion'), 'need.versionAny');
+      if (refused) $('pickLine').textContent = judge(rule).text;
+      $('prepareModel').textContent = rule ? rule.model : '';
+      draw($('prepareArt'), rule && !rule.preview ? kind : '');
+      $('prepSt20').hidden = kind !== 'st20';
       show($('setupHow'), kind === 'st10' || kind === 'st20' ? 'setup.st1020' : kind ? 'setup.manual' : 'setup.any');
       $('nextSt20').hidden = !!kind && kind !== 'st20';
       $('nextSt10').hidden = !!kind && kind !== 'st10';
+      gate();
     }
 
-    // Step 3: the command for this computer, with the other systems one tap away.
+    // The wizard: one screen at a time, each its own address (#speaker, #route…), so the
+    // browser's back button and a shared link work. Older links named the routes: #command
+    // and #upload.
+    const ALIAS = { command: 'computer', upload: 'offline' };
+    const PARENT = { speaker: 'welcome', prepare: 'speaker', route: 'prepare', computer: 'route',
+      browser: 'route', offline: 'route', done: 'route', back: 'welcome' };
+    const screens = [...document.querySelectorAll('.screen')];
+    let current = '', previous = '';
+    const agreed = () => $('agree').checked;
+    function modelChosen() {
+      const rule = chosenRule();
+      return !!(rule && (rule.supported || (rule.preview && $('previewAgree').checked)));
+    }
+    // A screen past the agreement or the model shows only once they are given: anything
+    // else lands on the screen that asks for them.
+    function allowed(name) {
+      if (!screens.some((s) => s.id === name)) return 'welcome';
+      if (name === 'welcome' || name === 'back') return name;
+      if (!agreed()) return 'welcome';
+      if (name !== 'speaker' && !modelChosen()) return 'speaker';
+      return name;
+    }
+    function gate() {
+      $('startButton').disabled = !agreed();
+      $('speakerNext').disabled = !modelChosen();
+    }
+    function showStep() {
+      const screen = $(current);
+      if (!screen) return;
+      const step = Number(screen.dataset.step);
+      $('navBack').style.visibility = current === 'welcome' ? 'hidden' : '';
+      if (step) show($('stepLabel'), 'nav.step', { n: step, total: 5 });
+      else { $('stepLabel').textContent = ''; delete $('stepLabel').dataset.i18n; }
+      [...$('progress').children].forEach((bar, i) => bar.classList.toggle('on', i < step));
+      $('progress').style.visibility = step ? '' : 'hidden';
+    }
+    function open(wanted, first) {
+      const name = allowed(ALIAS[wanted] || wanted || 'welcome');
+      if (name !== wanted) history.replaceState(null, '', '#' + name);
+      if (name === current) { window.scrollTo(0, 0); return; }
+      previous = current;
+      current = name;
+      screens.forEach((s) => s.classList.toggle('on', s.id === name));
+      showStep();
+      // The screens are the page's anchors too: the browser would scroll to the section.
+      window.scrollTo(0, 0);
+      if (!first) {
+        const heading = $(name).querySelector('h1');
+        if (heading) heading.focus({ preventScroll: true });
+      }
+    }
+    // Moving between screens through the history, not by jumping to an anchor: the browser
+    // would scroll to the section first.
+    const go = (name) => {
+      if (name === current) return;
+      history.pushState(null, '', '#' + name);
+      open(name);
+    };
+    if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+    window.addEventListener('popstate', () => open(location.hash.slice(1)));
+    window.addEventListener('hashchange', () => open(location.hash.slice(1)));
+    document.addEventListener('click', (e) => {
+      const link = e.target.closest('a[href^="#"]');
+      const name = link && link.getAttribute('href').slice(1);
+      if (!name || !$(name) || !$(name).classList.contains('screen')) return;
+      e.preventDefault();
+      go(name);
+    });
+    document.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => go(b.dataset.go)));
+    $('navBack').addEventListener('click', () => go(current === 'back' && previous ? previous : PARENT[current] || 'welcome'));
+    $('backDone').addEventListener('click', () => go(previous && previous !== 'back' ? previous : 'welcome'));
+    $('agree').addEventListener('change', gate);
+    $('previewAgree').addEventListener('change', gate);
+
+    // Step 4, the first route: the command for this computer, with the other systems one tap
+    // away. On a phone the computer route is not the first choice.
     const COMMANDS = {
       mac: 'curl -fsSL ' + SITE + 'install.sh | sh',
       windows: 'irm ' + SITE + 'install.ps1 | iex',
@@ -654,7 +1057,9 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
     const ua = navigator.userAgent;
     const platform = (navigator.userAgentData && navigator.userAgentData.platform) || ua;
     let currentOs = /Win/.test(platform) ? 'windows' : /Mac|iPhone|iPad/.test(platform) ? 'mac' : 'linux';
-    $('mobileNote').hidden = !(/Android|iPhone|iPad|iPod/.test(ua) || (/Mac/.test(ua) && navigator.maxTouchPoints > 1));
+    const mobile = /Android|iPhone|iPad|iPod/.test(ua) || (/Mac/.test(ua) && navigator.maxTouchPoints > 1);
+    $('mobileNote').hidden = !mobile;
+    $('routeComputer').classList.toggle('first', !mobile);
     function showOs(os) {
       currentOs = os;
       document.querySelectorAll('[data-os]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.os === os)));
@@ -674,9 +1079,10 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
       setTimeout(() => { b.textContent = t('copy'); }, 2000);
     });
 
-    // Step 4: the newest published SoundTap Core release (os-v*, not a draft or withdrawn, as
-    // soundtapd's update check reads them) and its package's checksum. A prerelease (an alpha,
-    // ADR 0035) only while no release is out: until then the alpha is what new owners install.
+    // Step 4, the third route: the newest published SoundTap Core release (os-v*, not a draft
+    // or withdrawn, as soundtapd's update check reads them) and its package's checksum. A
+    // prerelease (an alpha, ADR 0035) only while no release is out: until then the alpha is
+    // what new owners install.
     let release; // undefined while looking, null when there is none, false when the lookup failed
     fetch('https://api.github.com/repos/' + REPO + '/releases?per_page=50', {
       headers: { Accept: 'application/vnd.github+json' }, credentials: 'omit',
@@ -720,7 +1126,7 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
       if (release === null) { p('dl.none', null, 'https://github.com/' + REPO + '/releases'); return; }
       if (release === false) { p('dl.error', null, 'https://github.com/' + REPO + '/releases'); return; }
       const a = document.createElement('a');
-      a.className = 'button wide';
+      a.className = 'button';
       a.href = release.stu.browser_download_url;
       show(a, 'dl.button', { file: release.stu.name });
       box.append(a);
@@ -751,11 +1157,8 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
       }
     }
 
-    // Older links named the routes: #command and #browser are step 3, #upload is step 4.
-    const route = { '#command': 'auto', '#browser': 'auto', '#upload': 'offline' }[location.hash];
-    if (location.hash === '#browser') $('browser').open = true;
-    if (route) $(route).scrollIntoView();
-
+    open(location.hash.slice(1), true);
+    gate();
     // Every string waits for English, so the page never shows a bare key.
     setLang(initialLang());
   })();
