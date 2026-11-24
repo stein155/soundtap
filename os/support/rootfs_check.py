@@ -279,10 +279,17 @@ def validate(root, allow_baked_wifi=False, profile="alpha", accounts=None):
                      '[tcp-control]\nenabled = true\nbind_to_address = 127.0.0.1',
                      'bind_to_address = 0.0.0.0',
                      'port = 1705', 'port = 1704',
-                     'pipe:///run/soundtap/snapcast.pcm?name=SoundTap&sampleformat=46875:16:2&codec=pcm&chunk_ms=20',
+                     'pipe:///run/soundtap/snapcast.pcm?name=SoundTap&sampleformat=46875:16:2&codec=flac:1&chunk_ms=20',
                      'buffer = 1000'):
         if contract not in snapserver:
             fail(f"Snapserver configuration contract missing: {contract}")
+    # The group stream is FLAC (ADR 0013): a snapserver without libFLAC refuses the stream,
+    # and a snapclient without it exits at the codec header, so a follower stays silent.
+    if not any((root / "usr/lib").glob("libFLAC.so.*")):
+        fail("libFLAC missing: the FLAC group stream cannot be encoded or decoded")
+    for name in ("usr/bin/snapserver", "usr/bin/snapclient"):
+        if b"libFLAC.so" not in inside(root, root / name).read_bytes():
+            fail(f"{name} is not linked with libFLAC (BUILD_WITH_FLAC)")
     if (root / "usr/share/snapserver/snapweb").exists() or "port = 1780" in snapserver:
         fail("Snapweb must not be shipped")
     for contract in ('AUDIO_DEV="alsa:$SNAPCLIENT_SOUNDCARD"', 'AUDIO_TAP=/run/soundtap/snapcast.pcm',

@@ -186,7 +186,7 @@ func runMediaDaemons(ctx context.Context, home string, source func() string, log
 		seedSnapserverState(snapserverDataDir, snapserverKeepDir, log)
 		ownTree(snapserverDataDir, procUser["snapserver"], log)
 		go keepSnapserverState(ctx, snapserverDataDir, snapserverKeepDir, log)
-		run("snapserver", "snapserver", func() []string { return []string{"-c", conf} })
+		run("snapserver", "nice", func() []string { return snapserverArgs(conf) })
 		// The arguments are read at every start, so following another speaker is a restart.
 		server, id := filepath.Join(home, "multiroom-server"), os.Getenv("SOUNDTAP_SNAPCLIENT_ID")
 		wg.Add(1)
@@ -203,6 +203,18 @@ func runMediaDaemons(ctx context.Context, home string, source func() string, log
 		log.Info("snapcast skipped: no snapserver configuration")
 	}
 	wg.Wait()
+}
+
+// mediaNice is the niceness of the media daemons that feed the Mixer or the group but are
+// not on the path to the DAC: snapserver and the decoder. On the ST20's one CPU, a
+// multiroom leader at full priority let snapserver and ffmpeg take the CPU aplay needed,
+// and aplay ran dry ("underrun!!!", heard as a pop, 2026-11-24). Both keep seconds of
+// buffer behind them; aplay keeps a ring of a few hundred milliseconds.
+const mediaNice = "5"
+
+// snapserverArgs is nice's command line for snapserver.
+func snapserverArgs(conf string) []string {
+	return []string{"-n", mediaNice, "snapserver", "-c", conf}
 }
 
 // snapclientPoke tells the snapclient gate (RunWhileWanted) to look again whether it runs.
@@ -252,7 +264,10 @@ func snapclientWanted(serverFile, source string, anchorWanted bool) bool {
 // drives the card; a client that played here would fight it for the PCM. The anchor takes
 // the stream's own format, since resampling into /dev/null cost the ST20 a third of its CPU
 // (2026-09-24), and runs at nice 19: at full priority it took the CPU librespot needs at
-// every track start on a Spotify leader (2026-09-29).
+// every track start on a Spotify leader (2026-09-29). The stream is FLAC (ADR 0013), so the
+// anchor decodes it as every follower does; snapclient has no way to receive without
+// decoding. That is libFLAC's cheap direction, estimated at 1-2 % of the CPU, still to be
+// measured on a leader.
 //
 // Following another speaker, it writes that speaker's stream into the bus FIFO, which the
 // Mixer reads at audio.SampleRate. The channel field must be "*": snapclient 0.35 exits on

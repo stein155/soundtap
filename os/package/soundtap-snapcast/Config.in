@@ -11,11 +11,12 @@ config BR2_PACKAGE_SOUNDTAP_SNAPCAST
 	select BR2_PACKAGE_BOOST
 	select BR2_PACKAGE_DBUS
 	select BR2_PACKAGE_EXPAT
+	select BR2_PACKAGE_FLAC
 	select BR2_PACKAGE_LIBSOXR
 	select BR2_PACKAGE_OPENSSL
 	help
 	  Snapcast 0.35 client and server for SoundTap synchronized
-	  multiroom PCM playback.
+	  multiroom playback; the group stream is FLAC.
 
 	  https://github.com/badaix/snapcast
 

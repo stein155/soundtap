@@ -31,6 +31,10 @@ def fixture(root):
     struct.pack_into("<H", elf, 18, 40)
     for name in check.EXECUTABLES:
         write(root / name, elf if name in ("opt/soundtap/soundtapd", "usr/bin/ffmpeg") else b"#!/bin/sh\n", True)
+    # Snapcast built with FLAC names libFLAC in its dynamic section (ADR 0013).
+    for name in ("usr/bin/snapserver", "usr/bin/snapclient"):
+        write(root / name, bytes(elf) + b"\0libFLAC.so.12\0", True)
+    write(root / "usr/lib/libFLAC.so.12", elf)
     write(root / "etc/init.d/gadget-console",
           b"#!/bin/sh\nmount -t proc proc /proc\ncat /proc/cmdline\n", True)
     for name in check.BUSYBOX_APPLETS:
@@ -86,7 +90,7 @@ def fixture(root):
           b'[server]\ndatadir = /run/soundtap/snapserver\nmdns_enabled = false\n[http]\nenabled = false\n'
           b'[tcp-control]\nenabled = true\nbind_to_address = 127.0.0.1\nport = 1705\n'
           b'[tcp-streaming]\nbind_to_address = 0.0.0.0\nport = 1704\n[stream]\n'
-          b'source = pipe:///run/soundtap/snapcast.pcm?name=SoundTap&sampleformat=46875:16:2&codec=pcm&chunk_ms=20\n'
+          b'source = pipe:///run/soundtap/snapcast.pcm?name=SoundTap&sampleformat=46875:16:2&codec=flac:1&chunk_ms=20\n'
           b'buffer = 1000\n')
     return root
 
@@ -236,6 +240,21 @@ n=$(cat "$STATE/ntpd" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"$STATE/n
             with self.assertRaisesRegex(SystemExit, "mnt/nv"):
                 check.validate(tmp)
 
+    def test_rejects_snapcast_built_without_flac(self):
+        # The group stream is FLAC (ADR 0013): an old follower's snapclient exits at its header.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture(tmp)
+            write(root / "usr/bin/snapclient", b"\x7fELF no flac here", True)
+            with self.assertRaisesRegex(SystemExit, "snapclient is not linked with libFLAC"):
+                check.validate(root)
+
+    def test_rejects_image_without_libflac(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture(tmp)
+            (root / "usr/lib/libFLAC.so.12").unlink()
+            with self.assertRaisesRegex(SystemExit, "libFLAC missing"):
+                check.validate(root)
+
     def test_gadget_console_mounts_proc_before_reading_cmdline(self):
         script = (ROOT / "os/overlay/etc/init.d/gadget-console").read_text()
         self.assertLess(script.index("mount -t proc"), script.index("/proc/cmdline"))
@@ -288,8 +307,23 @@ n=$(cat "$STATE/ntpd" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"$STATE/n
         self.assertIn("datadir = /run/soundtap/snapserver", config)
         self.assertIn("mdns_enabled = false", config)  # its Avahi poll woke it 20 times a second
         self.assertIn("[http]\nenabled = false", config)
-        self.assertIn("codec=pcm&chunk_ms=20", config)
+        self.assertIn("codec=flac:1&chunk_ms=20", config)
         self.assertIn("buffer = 1000", config)
+        # The group stream is FLAC, encoded and decoded through libFLAC (ADR 0013).
+        self.assertIn("-DBUILD_WITH_FLAC=ON", snapcast)
+        self.assertIn("\tflac \\", snapcast)
+        self.assertIn("select BR2_PACKAGE_FLAC",
+                      (ROOT / "os/package/soundtap-snapcast/Config.in").read_text())
+
+    def test_init_announces_the_bus_rate_and_keeps_the_flac_codec(self):
+        # start_snapserver rewrites the rate in the shipped configuration; run its sed on it.
+        init = (ROOT / "os/overlay/etc/init.d/soundtap").read_text()
+        line = next(l for l in init.splitlines() if 'sed "s|sampleformat=' in l)
+        expr = line.split('"')[1].replace("$snap_rate", "48000")
+        out = subprocess.run(["sed", expr, str(ROOT / "os/overlay/etc/snapserver.conf")],
+                             check=True, capture_output=True, text=True).stdout
+        self.assertIn("?name=SoundTap&sampleformat=48000:16:2&codec=flac:1&chunk_ms=20\n", out)
+        self.assertNotIn("46875", out)
 
     def test_source_build_includes_bluetooth_runtime(self):
         runtime = (ROOT / "os/package/soundtap-runtime/Config.in").read_text()

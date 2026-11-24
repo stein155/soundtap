@@ -47,6 +47,7 @@ Built by Buildroot from upstream recipes:
 | dbus | AFL-2.1 or GPL-2.0+ |
 | dropbear | MIT, BSD-2-Clause, public domain (alpha images only) |
 | expat | MIT |
+| flac | Xiph BSD-like (libFLAC, the only part installed), GPL-2.0+ (tools), LGPL-2.1+ (other libraries) |
 | gcc-final | GCC runtime libraries: GPL-3.0+ with the GCC Runtime Library Exception |
 | hostapd | BSD-3-Clause |
 | ifupdown-scripts | GPL-2.0-or-later |

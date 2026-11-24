@@ -16,11 +16,22 @@ import (
 	"github.com/stein155/soundtap/app/internal/supervise"
 )
 
-// decoderCommand is the decoder process Run starts, run as user. A variable so a test can
-// start a stand-in instead of ffmpeg and drive the loop.
+// DecoderNice is the niceness the decoder runs at: below the Mixer and aplay, which must
+// not run dry while ffmpeg has seconds of stream buffered (a pop on the ST20's one CPU,
+// 2026-11-24).
+const DecoderNice = "5"
+
+// decoderCommand is the decoder process Run starts, run as user at DecoderNice. A variable
+// so a test can start a stand-in instead of ffmpeg and drive the loop.
 var decoderCommand = func(ctx context.Context, user, name string, args ...string) (*exec.Cmd, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := exec.CommandContext(ctx, "nice", decoderArgs(name, args)...)
 	return cmd, childproc.RunAs(cmd, user)
+}
+
+// decoderArgs is nice's command line for the decoder: nice execs it, so the process
+// soundtapd stops is the decoder itself.
+func decoderArgs(name string, args []string) []string {
+	return append([]string{"-n", DecoderNice, name}, args...)
 }
 
 // tailMax bounds how long after a UPnP track's end the next one still continues

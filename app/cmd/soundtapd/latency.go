@@ -18,7 +18,10 @@ import (
 )
 
 // snapcastBuffer is snapserver.conf's [stream] buffer: a chunk the server reads at t is
-// due at t+1000 ms on every client.
+// due at t+1000 ms on every client. The FLAC encoder (ADR 0013) holds up to one 1152-frame
+// block (24 ms) before it sends, but snapserver stamps audio by when it was read, not when
+// it was encoded, so the delay stays the same; the wait comes out of the followers' network
+// headroom instead.
 const snapcastBuffer = 1000 * time.Millisecond
 
 // blockDuration is one Mixer block, the unit the leader's delay is set in.

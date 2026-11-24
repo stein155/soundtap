@@ -23,8 +23,8 @@ flowchart LR
     SRC[any source] --> LMIX[Mixer] --> LDAC[/DAC/]
     LMIX -- pre-volume tap --> SS[snapserver :1704]
   end
-  SS -- TCP --> F1[snapclient] --> B1[(bus)] --> M1[Mixer + own volume] --> D1[/DAC/]
-  SS -- TCP --> F2[snapclient] --> B2[(bus)] --> M2[Mixer + own volume] --> D2[/DAC/]
+  SS -- TCP, FLAC --> F1[snapclient] --> B1[(bus)] --> M1[Mixer + own volume] --> D1[/DAC/]
+  SS -- TCP, FLAC --> F2[snapclient] --> B2[(bus)] --> M2[Mixer + own volume] --> D2[/DAC/]
 ```
 
 ### The stream
@@ -40,6 +40,41 @@ there is a group to serve:
   whenever another client is connected, and stops one minute (`AnchorHold`) after the last of
   these; a membership change waits up to 5 s for snapserver to know the anchor. It runs at
   `nice 19` so it does not take the CPU a Spotify leader needs at a track start.
+
+The stream between speakers is FLAC at compression level 1
+(`codec=flac:1&chunk_ms=20` in `snapserver.conf`), at the tap's 48000 Hz, 16-bit stereo
+(the init script writes the rate). PCM was 192000 B/s, about 1.5 Mbit/s, to every follower,
+and an ST20 leader, whose uploads go through the BCO, retransmitted about one TCP segment in
+ten until followers dropped out. Stock Bose also sent compressed audio between speakers, never
+PCM. FLAC is lossless, so the group plays the same samples as before; typical music takes
+roughly half to two thirds of the PCM bytes, loud modern masters the most, silence almost
+none. Levels 0 to 2 are libFLAC's cheap ones: fixed predictors and no LPC, in blocks of
+1152 frames (24 ms at 48 kHz). Level 1 adds the adaptive mid-side choice, a few percent fewer
+bytes than level 0 for little more CPU; level 2 tries every stereo mode exhaustively.
+snapserver encodes once for the whole group; every snapclient, the leader's anchor included,
+decodes. libFLAC comes from Buildroot's `flac` package (its C library only; the tools and
+libFLAC++ are removed from the image), and `rootfs_check.py` refuses an image whose
+snapserver or snapclient does not link it.
+
+The encoder sends a chunk only when a block is complete, so a chunk leaves the leader up to
+24 ms later than the same PCM did. snapserver stamps audio by when it read it, not when it
+encoded it, so the playout time, and with it the leader's delay below, does not change; the
+wait comes out of the followers' network headroom (about 650 ms after a follower's own
+chain). One exception, read from the 0.35 source and not yet measured: when snapserver
+restarts its read schedule after a pause in the tap, the encoder still holds the tail of the
+last block (up to 24 ms), which then plays first and shifts the rest of that stream's
+timestamps by as much, until the next restart.
+
+CPU, an estimate to be measured ([hardware test](../hardware/hardware-test.md), section D.6):
+libFLAC at levels 0 to 2 encodes 16-bit stereo hundreds of times faster than real time on a
+current desktop core. An AM335x Cortex-A8 is about 15 to 25 times slower per core on this
+integer code, and with no LPC at these levels the missing ARMv7 SIMD hardly matters. That
+puts the level 1 encode of one 48 kHz stereo stream at about 2 to 5 % of the leader's CPU,
+once per group, and a decode at about 1 to 2 % on each follower and on the leader's anchor.
+Against that, the leader writes a third to a half fewer bytes per follower to its network
+stack, and on the ST20 to the BCO link. An ST10 leading two followers already ran at 89 to
+100 % with PCM, so the leader's CPU is the first thing to measure; level 0 is the fallback if
+the encode shows.
 
 In plain standby, and on a follower in its group's standby, no snapclient runs. Every model,
 the ST20 included, may lead; nothing in soundtapd, the init script or the web app treats a model
@@ -94,14 +129,30 @@ custom RTP stream (Snapcast already solves clock sync and buffering); resolving 
 time (keeps the buffers stacked, and every speaker must know the tree); following
 `<slug>.local` (snapclient and BusyBox resolve no mDNS names on the speaker, and avahi renames on
 conflict); retrying a lost leader forever (a silent speaker on MULTIROOM looks broken);
-per-model fixed sync offsets (they break whenever a buffer size changes and miss a follower that
+PCM between speakers (the ST20's upload through the BCO could not carry it to two followers);
+Opus or Ogg Vorbis (lossy, and Vorbis's floating-point decoder costs an AM335x more than
+FLAC); a FLAC level above 2 (blocks of 4096 frames, 85 ms, and LPC for a few percent fewer
+bytes); per-model fixed sync offsets (they break whenever a buffer size changes and miss a follower that
 just re-prebuffered); followers playing through snapclient's ALSA player (a second DAC writer,
 against ADR 0012); a larger Snapcast buffer (every play and group change would start later).
 
 ## Consequences
 
 - The ST20 depends on our BCO app for this, as for everything else on the network.
-- The leader does the source work and the snapserver encode for the whole group.
+- The leader does the source work and the snapserver FLAC encode for the whole group; every
+  follower and the leader's anchor decode. Both are estimates until measured (above).
+- A follower on an older SoundTap Core, whose snapclient is built without FLAC, cannot play a
+  FLAC leader: by the 0.35 source its snapclient stops at the stream's codec header
+  (`codec not supported: "flac"`), soundtapd restarts it with backoff
+  ([ADR 0121](0121-one-supervisor-per-process.md)), and the follower stays silent while the
+  group looks formed. The other way round works: a FLAC-capable follower plays an older
+  leader's PCM. snapserver, snapclient, libFLAC and `snapserver.conf` are all in the Core image,
+  so this is a Core-lane change and no app update brings or breaks it. The Core release notes
+  and `CHANGELOG.md` must say: update every SoundTap speaker in the house to this Core before
+  grouping them; a speaker left on an older Core can still lead a group but cannot follow one
+  led by an updated speaker. A third-party Snapcast client built with FLAC, as upstream builds
+  are by default, keeps working.
+- Grouping is lossless as before; quiet passages and silence now cost almost no bandwidth.
 - An idle speaker in standby runs no snapclient. A leader's anchor is not on the audio path:
   snapserver keeps its client record, and so its group, while it is disconnected.
 - nqptp keeps running whenever AirPlay 2 can: shairport-sync registers with it once, at its own
@@ -129,4 +180,7 @@ against ADR 0012); a larger Snapcast buffer (every play and group change would s
 - `app/cmd/soundtapd/latency.go`: `runChainMeter` and `leaderDelayBlocks`.
 - `app/cmd/soundtapd/procs.go:snapclientArgs`: follower and anchor command lines.
 - `app/internal/snapcast`: the snapserver control client.
-- `os/overlay/etc/snapserver.conf`: no mDNS announcement, the 1000 ms buffer.
+- `os/overlay/etc/snapserver.conf`: the FLAC stream (`codec=flac:1`), no mDNS announcement,
+  the 1000 ms buffer.
+- `os/package/soundtap-snapcast/`: Snapcast built with FLAC (`BUILD_WITH_FLAC=ON`, `flac`);
+  `os/support/rootfs_check.py` checks that both binaries link libFLAC.
