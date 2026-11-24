@@ -57,7 +57,28 @@ a warning, because refusing it would take the ST20 off the LAN through which a n
 The app answers a resent state-changing request (same type and seq) with the reply it kept,
 instead of running it again, and keeps only the reply, never the request, because SET_PROFILE
 carries the PMK. The level goes up in the commit that changes a message's layout or meaning, and
-a contract test holds the app and the driver to the same framing values.
+a contract test holds the app and the driver to the same framing values. An addition the other
+side may ignore keeps the level and gets a capability bit instead: the driver uses it only when
+HELLO announces it, and the app sends nothing new until the driver asks, so an older app with a
+newer driver and the other way round keep working as before.
+
+### Wi-Fi frames wait on the SCM, not on the BCO
+
+The BCO has seven Wi-Fi transmit buffers; the radio empties them far slower than USB fills them.
+An app with the flow capability (`BCOLINK_CAP_FLOW`) reports, once the driver switches it on with
+FLOW, how many buffers the SCM may fill (one stays for the app's own authentication, association
+and EAPOL frames) and how many channel-1 messages it has taken off the link. The driver counts its
+own channel-1 frames against that and stops `wlan0`'s (or `wlan1`'s) queue while none is free, so
+frames wait in the qdisc, where TCP sees them, instead of being dropped on the BCO and lost to a
+retransmission. The app reports when buffers came free that the driver cannot know of yet and every
+100 ms. A queue held for a second without credit (a lost report or frame), and `bcolink0` coming
+back up, make the driver ask again and count from the answer; a BCO that does not answer leaves
+Wi-Fi without flow control, as with an older app. The wired port has no flow control.
+
+The app's transmit and link counters (`BCOLINK_CAP_STATS`, LINK_STATS) and the driver's
+flow-control state are read-only files in `/sys/class/net/bcolink0/bco/`; the driver asks the BCO
+at most once a second. soundtapd reads them without privileges into `bco` in `/api/health`. The
+core gives up on a unicast frame after seven attempts, 802.11's default retry limit.
 
 ### Wi-Fi runs in our own WiLD core, and the keys stay on the BCO
 
@@ -134,6 +155,11 @@ Alternatives that lost:
   would stay Bose-free, but the BCO would still run Bose's first stage.
 - **Keeping the BCO app out of SoundTap Core.** The driver and the app drift apart, and a
   converted speaker never gets the network card.
+- **Leaving the buffers' state to the BCO alone.** Dropped frames cost a TCP retransmission
+  each: about one segment in ten of a multiroom leader's upload (alpha.3, ST20), and the follower
+  lost its stream in the bursts.
+- **Back-pressure by not reading the bulk OUT endpoint.** No protocol change, but control
+  messages and wired frames would wait behind a full Wi-Fi queue.
 - **Judging the radio by a ping alone.** It tests the gateway, not the radio: a router that drops
   ICMP or has lost its uplink makes a working BCO look wedged.
 
@@ -143,7 +169,10 @@ Alternatives that lost:
   kernel driver, the image install and the link recovery in `internal/bco`.
 - SoundTap does not support stock BCO firmware: without our BCO app the ST20 has no network.
 - We must not add a port filter or IP service on the BCO's data path.
-- A newer or older protocol level stops the driver until the matching app is flashed.
+- A newer or older protocol level stops the driver until the matching app is flashed; a newer or
+  older capability does not.
+- Flow control and the counters need the app and the driver of the same build or newer; with an
+  older app the queue is never held and `/api/health` has no `bco`.
 - The release stays free of Bose bytes, and so does the BCO above BFL/BSL.
 - The BCO needs a USB vendor/product ID of its own. Development uses the pid.codes test ID
   `1209:0001`; allocating a real one is the maintainer's call.
@@ -160,7 +189,11 @@ Alternatives that lost:
   `soundtap_bco` (`bcolink0`, `wlan0`, `wlan1`, `eth0`).
 - `bco/app/src/bcolink.h`: the link framing, channels, protocol level and capability bits;
   `bco/app/src/netcard.c` demultiplexes, `bco/app/src/usblink.c` is the USB device side.
-- `bco/app/src/mgmt.c`: the control messages and the kept reply for resent requests.
+- `bco/app/src/mgmt.c`: the control messages, the kept reply for resent requests, FLOW's credit
+  reports and LINK_STATS; `bco/app/src/netcard.c` counts the channel-1 messages and sends the
+  reports.
+- `app/internal/bco/linkstats.go`: `bco.ReadLinkStats`, read by `/api/health`
+  (`app/internal/web/health.go`).
 - `bco/app/src/wifi.c` (station and setup access point), `bco/app/src/wpa.c` (handshakes),
   `bco/app/src/wired.c` (the wired port).
 - `bco/wild/fw`: our WiLD core; `bco/wild/fw/src/xport.c` (cipher engine, backoff, rate

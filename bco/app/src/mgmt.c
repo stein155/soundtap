@@ -3,11 +3,55 @@
 
 #include "bcolink.h"
 #include "mgmt.h"
+#include "netcard.h"
 #include "wifi.h"
 
 /* The management server on top of the station in wifi.c (host tests: a fake wifi). */
 unsigned char mgmt_wifi_mac[6];
 volatile unsigned mgmt_uptime;
+
+static unsigned char *put32(unsigned char *o, unsigned v)
+{
+    for (unsigned i = 0; i < 32; i += 8)
+        *o++ = v >> i;
+    return o;
+}
+
+/* ---- flow control (MGMT_FLOW_LEN in mgmt.h) ---- */
+unsigned mgmt_flow, mgmt_taken;
+static unsigned rep_free, rep_taken, rep_ms; /* what the last report told the driver, and when */
+
+static unsigned char *put_flow(unsigned char *o)
+{
+    unsigned f = wifi_tx_free();
+    *o++ = 0;
+    *o++ = f;
+    *o++ = WIFI_TX_BUFS;
+    *o++ = mgmt_flow;
+    o = put32(o, mgmt_taken);
+    rep_free = f, rep_taken = mgmt_taken, rep_ms = mgmt_uptime;
+    return o;
+}
+
+unsigned mgmt_flow_due(unsigned char *r)
+{
+    if (!mgmt_flow)
+        return 0;
+    /* What the driver may still send as far as the app can tell: the last report's free buffers,
+     * less what arrived since. Its frames still in flight only make that smaller, and once they are
+     * all taken the app's count equals the driver's, so a freed buffer is always reported. */
+    unsigned seen = mgmt_taken - rep_taken, known = rep_free > seen ? rep_free - seen : 0;
+    if (wifi_tx_free() <= known && mgmt_uptime - rep_ms < MGMT_FLOW_HEARTBEAT_MS)
+        return 0;
+    put_flow(r + MGMT_HDR);
+    r[0] = 1, r[1] = 13 | 0x80, r[2] = 0, r[3] = 0, r[4] = 0, r[5] = MGMT_FLOW_LEN;
+    return MGMT_HDR + MGMT_FLOW_LEN;
+}
+
+void mgmt_flow_lost(void)
+{
+    rep_free = 0, rep_ms = mgmt_uptime - MGMT_FLOW_HEARTBEAT_MS;
+}
 
 static unsigned char *put_bss(unsigned char *o, const struct wifi_bss *b)
 {
@@ -75,8 +119,7 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
         for (unsigned i = 0; i < 32; i += 8) /* uptime in ms, le32 */
             *o++ = mgmt_uptime >> i;
         *o++ = BCOLINK_PROTO;
-        for (unsigned i = 0; i < 32; i += 8) /* capabilities, le32 */
-            *o++ = (BCOLINK_CAP_AP | BCOLINK_CAP_REPLAY) >> i;
+        o = put32(o, BCOLINK_CAPS); /* capabilities, le32 */
         break;
     case 2: { /* SCAN [start]: status (3 = still scanning), count, entries */
         int n = wifi_scan(len >= 1 && a[0] == 1);
@@ -129,6 +172,22 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
         for (unsigned i = 0; i < c * 6; i++) *o++ = m[i / 6][i % 6];
         wifi_ap_counters(k);
         for (unsigned i = 0; i < WIFI_AP_COUNTERS * 32; i += 8) *o++ = k[i / 32] >> i % 32;
+        break;
+    }
+    case 13: /* FLOW: on (1) or off (0); the reply is a credit report (mgmt.h) */
+        if (len != 1 || a[0] > 1) {
+            *o++ = 1;
+            break;
+        }
+        mgmt_flow = a[0];
+        o = put_flow(o);
+        break;
+    case 14: { /* LINK_STATS: status, MGMT_STATS_N le32 counters (mgmt.h) */
+        unsigned k[3];
+        wifi_tx_counters(k);
+        *o++ = 0;
+        o = put32(put32(put32(o, k[0]), k[1]), k[2]);
+        o = put32(put32(o, netcard_dropped), netcard_to_wifi);
         break;
     }
     case 12: { /* WIRED_PROBE: status (1 = no wired port in this build), then wired_probe's bytes */

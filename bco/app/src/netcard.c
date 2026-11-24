@@ -31,6 +31,8 @@ static int is_eth(unsigned n)
 void usblink_rx(unsigned ch, const unsigned char *p, unsigned n)
 {
     static unsigned char rsp[MGMT_MAX];
+    if (ch == BCOLINK_CH_WIFI)
+        mgmt_taken++; /* every one, taken or dropped: the driver's credit counts them all */
     if (ch == BCOLINK_CH_CTRL) {
         unsigned m = mgmt_handle(p, n, rsp);
         netcard_mgmt++;
@@ -52,6 +54,15 @@ void netcard_from_port(unsigned ch, const unsigned char *f, unsigned n)
         netcard_dropped++;
     else
         netcard_to_scm++;
+}
+
+/* Flow control (mgmt.h): send the credit report that is due, once per main-loop pass. */
+void netcard_flow_poll(void)
+{
+    static unsigned char r[MGMT_HDR + MGMT_FLOW_LEN];
+    unsigned m = mgmt_flow_due(r);
+    if (m && usblink_send(BCOLINK_CH_CTRL, r, m))
+        mgmt_flow_lost();
 }
 
 #ifdef NETCARD_HW
@@ -116,6 +127,7 @@ void app_main(void)
         usblink_poll();
         if (!w)
             wifi_poll(mgmt_uptime);
+        netcard_flow_poll();
         wired_poll(mgmt_uptime);
     }
 }

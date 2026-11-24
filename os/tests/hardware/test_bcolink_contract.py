@@ -35,6 +35,24 @@ class BcoLinkContract(unittest.TestCase):
     def test_protocol_level(self):
         self.assertEqual(self.app["BCOLINK_PROTO"], self.drv["BCO_LINK_PROTO"])
 
+    def test_capabilities_and_layouts(self):
+        # Flow control and the counters are capabilities, not a new level: both sides name the
+        # same bits and the same reply layouts (ADR 0031).
+        for app, drv in (("BCOLINK_CAP_FLOW", "BCOLINK_CAP_FLOW"), ("BCOLINK_CAP_STATS", "BCOLINK_CAP_STATS"),
+                         ("MGMT_FLOW_LEN", "BCO_FLOW_LEN"), ("MGMT_STATS_N", "BCO_STATS_N")):
+            self.assertEqual(self.app[app], self.drv[drv], app)
+
+    def test_held_queue_is_watched(self):
+        # A queue stopped for want of credit must not stay stopped when a report or a frame is
+        # lost: whatever stops it also schedules the watch that counts afresh.
+        funcs = re.findall(r"\n\+static [^\n]*\b(\w+)\([^)]*\)\n\+\{(.*?)\n\+\}", self.patch, re.S)
+        stoppers = [name for name, body in funcs if "netif_stop_queue" in body]
+        self.assertTrue(stoppers)
+        for name, body in funcs:
+            if name in stoppers:
+                self.assertIn("schedule_delayed_work(&b->flow_work", body, name)
+        self.assertIn("INIT_DELAYED_WORK(&b->flow_work, bco_flow_watch)", self.patch)
+
     def test_usb_match(self):
         want = "USB_DEVICE_AND_INTERFACE_INFO(0x%04x, 0x%04x, USB_CLASS_VENDOR_SPEC, 0x%02x, %d)" % (
             self.app["BCOLINK_USB_VID"], self.app["BCOLINK_USB_PID"],

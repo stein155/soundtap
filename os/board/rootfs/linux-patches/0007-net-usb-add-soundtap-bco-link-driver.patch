@@ -16,6 +16,13 @@ eth0 on channel 2, so userspace sees the same interfaces as on an ST10.
 It replaces the earlier wlan0 face that rode on cdc_ether. Stock BCOs
 still enumerate as CDC-ECM and never bind here.
 
+A BCO app that announces flow control in HELLO reports its free Wi-Fi
+transmit buffers; while it has none, wlan0 and wlan1 stop their queues
+and frames wait in the qdisc instead of being dropped on the BCO. The
+BCO's transmit and link counters and the flow-control state are under
+/sys/class/net/bcolink0/bco/. An app without these capabilities works
+as before.
+
 Upstream: Not applicable (SoundTap hardware support)
 Signed-off-by: Stein Milder <info@steinmilder.nl>
 ---
@@ -51,7 +58,7 @@ diff -Nru a/drivers/net/usb/Makefile b/drivers/net/usb/Makefile
 diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 --- a/drivers/net/usb/soundtap_bco.c	1970-01-01 01:00:00.000000000 +0100
 +++ b/drivers/net/usb/soundtap_bco.c	2026-10-06 18:06:43.454816079 +0200
-@@ -0,0 +1,1028 @@
+@@ -0,0 +1,1308 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * SoundTap BCO link: the SoundTouch 20's Wi-Fi and wired ports, which live on the BCO co-processor
@@ -68,6 +75,10 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 + *		whose data is channel 1 while it beacons (ADR 0031); the BCO answers probes,
 + *		authentication and association itself (AP SME in the device).
 + * so userspace sees the same interfaces as on a SoundTouch 10.
++ *
++ * A BCO app with BCOLINK_CAP_FLOW reports its free Wi-Fi transmit buffers; channel-1 frames then
++ * wait in wlan0's (or wlan1's) qdisc while it has none, instead of being dropped on the BCO. Its
++ * counters (BCOLINK_CAP_STATS) are in /sys/class/net/bcolink0/bco/.
 + *
 + * The protocol constants mirror bco/app/src/bcolink.h in the SoundTap tree.
 + */
@@ -102,8 +113,18 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +#define BCO_LINK_POLL		(5 * HZ)
 +#define BCO_WIRED_POLL		(2 * HZ)
 +
++/* HELLO's capability bits this driver uses; bco/app/src/bcolink.h BCOLINK_CAP_*. */
++#define BCOLINK_CAP_FLOW	0x4
++#define BCOLINK_CAP_STATS	0x8
++/* FLOW's reply and the BCO's unasked credit reports: status, free, total, on, le32 taken. */
++#define BCO_FLOW_LEN		8
++/* LINK_STATS: status, then this many le32 counters. */
++#define BCO_STATS_N		5
++/* Wi-Fi held for want of credit this long means a lost report or frame: count afresh. */
++#define BCO_FLOW_STUCK		HZ
++
 +enum { T_HELLO = 1, T_SCAN, T_SET_PROFILE, T_FORGET, T_STATUS, T_AP_START, T_AP_STOP, T_AP_STATUS,
-+	T_WIRED_PROBE = 12 };
++	T_WIRED_PROBE = 12, T_FLOW, T_LINK_STATS };
 +enum { S_IDLE, S_SCANNING, S_JOINING, S_UP, S_FAILED, S_AP };
 +
 +struct bco {
@@ -130,6 +151,28 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +	struct cfg80211_scan_request *scan_req;	/* under lock */
 +	unsigned long join_deadline;
 +	bool joining, connected, running;
++
++	/*
++	 * Flow control on channel 1 (BCOLINK_CAP_FLOW): the BCO reports how many Wi-Fi transmit
++	 * buffers it has free and how many channel-1 messages it has taken off the link. Ours in
++	 * flight are tx_sent - bco_taken; while that reaches bco_free, wlan0 and wlan1 stop their
++	 * queues and frames wait in the qdisc instead of being dropped on the BCO.
++	 */
++	u32 caps;			/* HELLO's capability bits */
++	spinlock_t flow_lock;
++	bool flow;			/* credit counted; else every frame goes down at once */
++	bool flow_resync;		/* bcolink0 came back up: count afresh */
++	u32 tx_sent, bco_taken;
++	u8 bco_free;
++	unsigned long stopped_at;	/* when credit last ran out */
++	unsigned long flow_stops;	/* times a queue stopped for want of credit */
++	unsigned long flow_resyncs;	/* counted afresh after BCO_FLOW_STUCK */
++	struct delayed_work flow_work;
++
++	/* LINK_STATS, read at most once a second for sysfs (under lock) */
++	u32 stats[BCO_STATS_N];
++	unsigned long stats_at;
++	bool stats_ok;
 +};
 +
 +struct bco_port {
@@ -157,6 +200,81 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +	return dev->driver_priv;
 +}
 +
++/* ---- flow control on channel 1 ---- */
++
++/* Whether a channel-1 frame may go down now. Under flow_lock. */
++static bool bco_credit(const struct bco *b)
++{
++	return !b->flow || (s32)(b->tx_sent - b->bco_taken) < b->bco_free;
++}
++
++/* Let wlan0 and wlan1 send again. Under flow_lock; wlan1 is gone only after a synchronize_net. */
++static void bco_flow_wake(struct bco *b)
++{
++	struct net_device *d[] = { READ_ONCE(b->wlan), READ_ONCE(b->ap) };
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(d); i++)
++		if (d[i] && netif_queue_stopped(d[i]))
++			netif_wake_queue(d[i]);
++}
++
++/*
++ * A credit report: status, free, total, on, le32 taken. A resync (FLOW's own reply) starts counting
++ * from it, as if nothing of ours were in flight; a later report only moves the count forward.
++ */
++static void bco_flow_apply(struct bco *b, const u8 *p, bool resync)
++{
++	u32 taken = get_unaligned_le32(p + 4);
++	unsigned long flags;
++	bool held = false;
++
++	spin_lock_irqsave(&b->flow_lock, flags);
++	if (resync) {
++		b->flow = true;
++		b->tx_sent = taken;
++		b->stopped_at = jiffies;
++	}
++	if (b->flow && (resync || (s32)(taken - b->bco_taken) >= 0)) {
++		b->bco_taken = taken;
++		b->bco_free = p[1];
++		/* frames sent while a resync was on its way were never counted */
++		if ((s32)(b->tx_sent - taken) < 0)
++			b->tx_sent = taken;
++	}
++	held = resync && !bco_credit(b);
++	if (bco_credit(b))
++		bco_flow_wake(b);
++	spin_unlock_irqrestore(&b->flow_lock, flags);
++	if (held)
++		schedule_delayed_work(&b->flow_work, BCO_FLOW_STUCK);
++}
++
++/*
++ * Count a channel-1 frame against the credit. False when there is none: the queue is stopped and
++ * the frame goes back to the qdisc. Called with BHs off (ndo_start_xmit).
++ */
++static bool bco_flow_take(struct bco *b, struct net_device *dev)
++{
++	unsigned long flags;
++	bool ok, stop;
++
++	spin_lock_irqsave(&b->flow_lock, flags);
++	ok = bco_credit(b);
++	if (ok)
++		b->tx_sent++;
++	stop = !bco_credit(b);
++	if (stop && !netif_queue_stopped(dev)) {
++		netif_stop_queue(dev);
++		b->stopped_at = jiffies;
++		b->flow_stops++;
++	}
++	spin_unlock_irqrestore(&b->flow_lock, flags);
++	if (stop)
++		schedule_delayed_work(&b->flow_work, BCO_FLOW_STUCK);
++	return ok;
++}
++
 +/* ---- control channel ---- */
 +
 +static void bco_ctrl_rx(struct bco *b, const u8 *p, unsigned int n)
@@ -170,6 +288,9 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +	len = get_unaligned_be16(p + 4);
 +	if (len > n - BCO_MGMT_HDR)
 +		return;
++	/* the BCO's unasked credit reports (seq 0); FLOW's reply is also handled as one below */
++	if (p[1] == (T_FLOW | 0x80) && len >= BCO_FLOW_LEN && !p[BCO_MGMT_HDR])
++		bco_flow_apply(b, p + BCO_MGMT_HDR, false);
 +	spin_lock_irqsave(&b->rx_lock, flags);
 +	if (b->armed && p[1] == b->want_type && get_unaligned_be16(p + 2) == b->want_seq) {
 +		memcpy(b->rsp, p + BCO_MGMT_HDR, len);
@@ -240,6 +361,65 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +	return err;
 +}
 +
++/*
++ * FLOW on, and count from its reply. A BCO that refuses or does not answer leaves channel 1
++ * without flow control, as with an app from before BCOLINK_CAP_FLOW. Caller holds b->lock.
++ */
++static int bco_flow_on(struct bco *b)
++{
++	unsigned long flags;
++	int err = bco_req(b, T_FLOW, (const u8[]){ 1 }, 1);
++
++	if (!err && b->rsp_len < BCO_FLOW_LEN)
++		err = -EPROTO;
++	if (!err) {
++		bco_flow_apply(b, b->rsp, true);
++		return 0;
++	}
++	spin_lock_irqsave(&b->flow_lock, flags);
++	b->flow = false;
++	bco_flow_wake(b);
++	spin_unlock_irqrestore(&b->flow_lock, flags);
++	return err;
++}
++
++/*
++ * Wi-Fi held without credit for BCO_FLOW_STUCK (a lost report or a frame lost on the link keeps
++ * the count off), or bcolink0 came back up: ask for a fresh report and count from it.
++ */
++static void bco_flow_watch(struct work_struct *w)
++{
++	struct bco *b = container_of(to_delayed_work(w), struct bco, flow_work);
++	unsigned long flags, due;
++	bool force, held;
++	int err;
++
++	if (!(READ_ONCE(b->caps) & BCOLINK_CAP_FLOW))
++		return;
++	spin_lock_irqsave(&b->flow_lock, flags);
++	force = b->flow_resync;
++	b->flow_resync = false;
++	held = b->flow && !bco_credit(b);
++	due = b->stopped_at + BCO_FLOW_STUCK;
++	spin_unlock_irqrestore(&b->flow_lock, flags);
++	if (!force) {
++		if (!held)
++			return;
++		if (time_before(jiffies, due)) {
++			schedule_delayed_work(&b->flow_work, due - jiffies);
++			return;
++		}
++	}
++	mutex_lock(&b->lock);
++	err = bco_flow_on(b);
++	mutex_unlock(&b->lock);
++	if (err)
++		netdev_warn(b->usb->net, "BCO gives no transmit credit (%d): Wi-Fi without flow control\n",
++			    err);
++	else if (!force)
++		WRITE_ONCE(b->flow_resyncs, b->flow_resyncs + 1);
++}
++
 +/* ---- usbnet minidriver: framing ---- */
 +
 +static int bco_rx_fixup(struct usbnet *dev, struct sk_buff *skb)
@@ -304,6 +484,9 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +		dev_kfree_skb_any(skb);
 +		return NETDEV_TX_OK;
 +	}
++	/* no transmit buffer free on the BCO: the frame waits in our qdisc, not dropped there */
++	if (p->ch == BCOLINK_CH_WIFI && READ_ONCE(p->b->flow) && !bco_flow_take(p->b, dev))
++		return NETDEV_TX_BUSY;
 +	put_unaligned_le16(p->ch << 12 | len, skb_push(skb, BCOLINK_HDR));
 +	skb->dev = net;
 +	skb->protocol = BCO_SKB_PROTO;
@@ -318,6 +501,7 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +	struct bco_port *p = netdev_priv(dev);
 +	struct net_device *net = p->b->usb->net;
 +
++	netif_start_queue(dev);	/* stopped for credit when it went down, perhaps */
 +	return netif_running(net) ? 0 : dev_open(net, NULL);
 +}
 +
@@ -889,7 +1073,17 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +			netdev_err(net, "BCO app speaks link protocol %u, this kernel %d; flash a matching BCO app\n",
 +				   b->rsp[at], BCO_LINK_PROTO);
 +			err = -EPROTONOSUPPORT;
++		} else if (b->rsp_len >= at + 1 + 4) {
++			WRITE_ONCE(b->caps, get_unaligned_le32(b->rsp + at + 1));
 +		}
++	}
++	/* an app without BCOLINK_CAP_FLOW takes every frame and drops what finds no buffer */
++	if (!err && (b->caps & BCOLINK_CAP_FLOW)) {
++		if (bco_flow_on(b))
++			netdev_warn(net, "BCO refused flow control: Wi-Fi frames may be dropped on the BCO\n");
++		else
++			netdev_info(net, "BCO transmit flow control on, %u of %u buffers free\n",
++				    b->rsp[1], b->rsp[2]);
 +	}
 +	mutex_unlock(&b->lock);
 +	if (err)
@@ -960,6 +1154,84 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +	netdev_info(net, "no SoundTap BCO app on this link (%d)\n", err);
 +}
 +
++/*
++ * ---- sysfs: /sys/class/net/bcolink0/bco/ ----
++ * The BCO's LINK_STATS counters (since the BCO app started; u32, they wrap), asked of it at most
++ * once a second, and this driver's flow-control state. Read-only, for /api/health and the bench.
++ */
++
++static struct bco *bco_of_dev(struct device *d)
++{
++	return bco_of(netdev_priv(to_net_dev(d)));
++}
++
++static ssize_t bco_stat_show(struct device *d, char *buf, unsigned int i)
++{
++	struct bco *b = bco_of_dev(d);
++	ssize_t ret;
++	int err = 0, j;
++
++	if (!(READ_ONCE(b->caps) & BCOLINK_CAP_STATS))
++		return -EOPNOTSUPP;
++	if (mutex_lock_interruptible(&b->lock))
++		return -EINTR;
++	if (!b->stats_ok || time_after(jiffies, b->stats_at + HZ)) {
++		err = bco_req(b, T_LINK_STATS, NULL, 0);
++		if (!err && b->rsp_len < 1 + 4 * BCO_STATS_N)
++			err = -EPROTO;
++		b->stats_ok = !err;
++		for (j = 0; !err && j < BCO_STATS_N; j++)
++			b->stats[j] = get_unaligned_le32(b->rsp + 1 + 4 * j);
++		b->stats_at = jiffies;
++	}
++	ret = err ? err : sysfs_emit(buf, "%u\n", b->stats[i]);
++	mutex_unlock(&b->lock);
++	return ret;
++}
++
++#define BCO_STAT(name, i)								\
++static ssize_t name##_show(struct device *d, struct device_attribute *a, char *buf)	\
++{											\
++	return bco_stat_show(d, buf, i);						\
++}											\
++static DEVICE_ATTR_RO(name)
++
++BCO_STAT(tx_ok, 0);		/* Wi-Fi frames the peer acknowledged */
++BCO_STAT(tx_failed, 1);		/* lost on air after the retries */
++BCO_STAT(tx_dropped, 2);	/* never sent: no free transmit buffer, not joined */
++BCO_STAT(link_dropped, 3);	/* messages the BCO dropped at the link, any channel */
++BCO_STAT(tx_frames, 4);		/* frames from the SCM the radio took */
++
++static ssize_t flow_show(struct device *d, struct device_attribute *a, char *buf)
++{
++	return sysfs_emit(buf, "%d\n", READ_ONCE(bco_of_dev(d)->flow));
++}
++static DEVICE_ATTR_RO(flow);
++
++static ssize_t flow_stops_show(struct device *d, struct device_attribute *a, char *buf)
++{
++	return sysfs_emit(buf, "%lu\n", READ_ONCE(bco_of_dev(d)->flow_stops));
++}
++static DEVICE_ATTR_RO(flow_stops);
++
++static ssize_t flow_resyncs_show(struct device *d, struct device_attribute *a, char *buf)
++{
++	return sysfs_emit(buf, "%lu\n", READ_ONCE(bco_of_dev(d)->flow_resyncs));
++}
++static DEVICE_ATTR_RO(flow_resyncs);
++
++static struct attribute *bco_attrs[] = {
++	&dev_attr_tx_ok.attr, &dev_attr_tx_failed.attr, &dev_attr_tx_dropped.attr,
++	&dev_attr_link_dropped.attr, &dev_attr_tx_frames.attr,
++	&dev_attr_flow.attr, &dev_attr_flow_stops.attr, &dev_attr_flow_resyncs.attr,
++	NULL
++};
++
++static const struct attribute_group bco_attr_group = {
++	.name = "bco",
++	.attrs = bco_attrs,
++};
++
 +static int bco_bind(struct usbnet *dev, struct usb_interface *intf)
 +{
 +	struct net_device *net = dev->net;
@@ -986,11 +1258,14 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +	INIT_WORK(&b->scan_work, bco_scan_work);
 +	INIT_DELAYED_WORK(&b->join_work, bco_join_poll);
 +	INIT_DELAYED_WORK(&b->wired_work, bco_wired_poll);
++	spin_lock_init(&b->flow_lock);
++	INIT_DELAYED_WORK(&b->flow_work, bco_flow_watch);
 +	dev->driver_priv = b;
 +
 +	/* bcolink0 is a transport, not a LAN: no addresses, no ARP, no IPv6 autoconfiguration */
 +	strscpy(net->name, "bcolink%d", sizeof(net->name));
 +	net->priv_flags |= IFF_NO_ADDRCONF;
++	net->sysfs_groups[0] = &bco_attr_group;	/* the device-specific group, as qmi_wwan */
 +	dev->hard_mtu = BCOLINK_HDR + BCOLINK_MAX;
 +	dev->rx_urb_size = dev->hard_mtu;
 +	/* the two-byte link header then leaves the IP header of a received frame 4-byte aligned */
@@ -1014,24 +1289,36 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +		/* the transport is already unregistered, so no RX path runs any more */
 +		unregister_netdev(b->wlan);	/* runs bco_wlan_stop: works cancelled */
 +		unregister_netdev(b->eth);
++		cancel_delayed_work_sync(&b->flow_work);	/* no port sends any more */
 +		free_netdev(b->wlan);
 +		free_netdev(b->eth);
 +		wiphy_unregister(b->wiphy);
 +	}
 +	cancel_delayed_work_sync(&b->join_work);
 +	cancel_work_sync(&b->scan_work);
++	cancel_delayed_work_sync(&b->flow_work);
 +	wiphy_free(b->wiphy);
 +}
 +
-+/* bcolink0 came (back) up: an eth0 that is up asks the BCO for its link again. */
++/*
++ * bcolink0 came (back) up: an eth0 that is up asks the BCO for its link again, and the credit is
++ * counted afresh, since frames queued while it was down never reached the BCO.
++ */
 +static int bco_reset(struct usbnet *dev)
 +{
 +	struct bco *b = bco_of(dev);
 +	struct net_device *eth = READ_ONCE(b->eth);
++	unsigned long flags;
 +
 +	if (eth && netif_running(eth)) {
 +		netif_carrier_on(eth);
 +		mod_delayed_work(system_wq, &b->wired_work, 0);
++	}
++	if (READ_ONCE(b->caps) & BCOLINK_CAP_FLOW) {
++		spin_lock_irqsave(&b->flow_lock, flags);
++		b->flow_resync = true;
++		spin_unlock_irqrestore(&b->flow_lock, flags);
++		mod_delayed_work(system_wq, &b->flow_work, 0);
 +	}
 +	return 0;
 +}

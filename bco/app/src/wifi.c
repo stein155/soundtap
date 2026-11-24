@@ -106,12 +106,15 @@ static volatile struct wring tx, rx, frm[4], sup;
 
 #define RXBUF 0x6c0u /* stock pool list 1 + 8: frames arrive still enciphered (CCMP header + MIC) */
 #define NRXBUF 7
-/* TX: 8 + 0xc4 descriptor + LLC/SNAP + 1500, from UMR0 +0x4100 (RX ends +0x3f40, rings at +0x7220). */
+/* TX: 8 + 0xc4 descriptor + LLC/SNAP + 1500 + the CCMP header and MIC the core adds in place, from
+ * UMR0 +0x4100 (RX ends +0x3f40, rings at +0x7220): 7 x 0x6c0 end at +0x7040, and an eighth would
+ * not fit below the rings (the SRAM budget is in stacks.h). */
 #define TXFOFF 0x4100u
 #define TXFBUF 0x6c0u
-#define NTXFBUF 6
+#define NTXFBUF WIFI_TX_BUFS
+_Static_assert(TXFOFF + NTXFBUF * TXFBUF <= 0x7220u, "TX buffers run into the command rings");
 static unsigned rxfree[NRXBUF], nfree, rxfbase;
-static unsigned txfbuf[NTXFBUF], txnfree, txfbase, txbusy[NTXFBUF];
+static unsigned txfbuf[NTXFBUF], txnfree, txfbase, txbusy[NTXFBUF], txready;
 unsigned wifi_rx_frames, wifi_tx_frames, wifi_tx_drop, wifi_rx_drop, wifi_tx_ok, wifi_tx_failed;
 #ifdef WILD_OWN
 /* RX diagnostics, for when the hardware finds fewer networks than the emulator: these count,
@@ -158,8 +161,11 @@ static void rings(unsigned host_umr)
     for (nfree = 0; nfree < NRXBUF; nfree++)
         rxfree[nfree] = rxfbase + nfree * RXBUF;
     txfbase = host_umr + TXFOFF;
-    for (txnfree = 0; txnfree < NTXFBUF; txnfree++)
+    for (txnfree = 0; txnfree < NTXFBUF; txnfree++) {
         txfbuf[txnfree] = txfbase + txnfree * TXFBUF;
+        txbusy[txnfree] = 0;
+    }
+    txready = 1;
 }
 
 static void rx_refill(void)
@@ -192,6 +198,19 @@ static void tx_reclaim(void)
         wr_tx_status(&frm[c], &ok, &failed);
     }
     wifi_tx_ok += ok, wifi_tx_failed += failed;
+}
+
+unsigned wifi_tx_free(void)
+{
+    if (!txready)
+        return 0;
+    tx_reclaim();
+    return txnfree > 1 ? txnfree - 1 : 0;
+}
+
+void wifi_tx_counters(unsigned c[3])
+{
+    c[0] = wifi_tx_ok, c[1] = wifi_tx_failed, c[2] = wifi_tx_drop;
 }
 
 /* ---- station state ---- */

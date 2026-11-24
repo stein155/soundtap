@@ -13,11 +13,12 @@ observation on one board, not approval of a later image: release evidence belong
 1. [The link](#the-link)
 2. [Control messages](#control-messages)
 3. [Protocol level and resent requests](#protocol-level-and-resent-requests)
-4. [The card's clock](#the-cards-clock)
-5. [The setup access point on the WiLD core](#the-setup-access-point-on-the-wild-core)
-6. [CCMP on the core's cipher engine](#ccmp-on-the-cores-cipher-engine)
-7. [Medium access and rate adaptation](#medium-access-and-rate-adaptation)
-8. [Measurements on the bench ST20](#measurements-on-the-bench-st20)
+4. [Flow control and the counters](#flow-control-and-the-counters)
+5. [The card's clock](#the-cards-clock)
+6. [The setup access point on the WiLD core](#the-setup-access-point-on-the-wild-core)
+7. [CCMP on the core's cipher engine](#ccmp-on-the-cores-cipher-engine)
+8. [Medium access and rate adaptation](#medium-access-and-rate-adaptation)
+9. [Measurements on the bench ST20](#measurements-on-the-bench-st20)
 
 ## The link
 
@@ -66,13 +67,20 @@ and the BCO answers with the same `seq` and `type|0x80`, status first.
   `STATUS` reports state, network, channel and RSSI.
 - `AP_START` (6: channel, beacon interval in TU, beacon body), `AP_STOP` (7) and `AP_STATUS` (8:
   the associated clients) drive the setup access point.
+- `FLOW` (13: `1` on, `0` off) switches the credit reports of
+  [flow control](#flow-control-and-the-counters) on or off; its reply is a report.
+- `LINK_STATS` (14): status, then five le32 counters since the app started: Wi-Fi frames
+  acknowledged, failed on air after the retries, dropped before the air (no free transmit buffer,
+  not joined), messages the link dropped on any channel, and frames from the SCM the radio took.
 
 ## Protocol level and resent requests
 
 - HELLO ends with a one-byte protocol level and le32 capability bits (`BCOLINK_CAP_AP`,
-  `BCOLINK_CAP_REPLAY`). The level is `BCOLINK_PROTO` in `bco/app/src/bcolink.h` (the version
-  string is `link-<level>`), and it goes up in the commit that changes a message's layout or
-  meaning.
+  `BCOLINK_CAP_REPLAY`, `BCOLINK_CAP_FLOW`, `BCOLINK_CAP_STATS`). The level is `BCOLINK_PROTO` in
+  `bco/app/src/bcolink.h` (the version string is `link-<level>`), and it goes up in the commit that
+  changes a message's layout or meaning. A message the other side may ignore keeps the level and
+  adds a capability bit: the driver sends it only to an app that announces the bit, and the app
+  sends nothing unasked until the driver switched it on.
 - The driver compares the level with its own `BCO_LINK_PROTO`. A different level is refused with
   a log line naming both levels and saying to flash a matching BCO app. A reply without the field
   is accepted with a warning: refusing it would take the ST20 off the LAN, which is also the way a
@@ -84,7 +92,66 @@ and the BCO answers with the same `seq` and `type|0x80`, status first.
   of running the request; queries run again. Only the reply is kept, never the request, because
   SET_PROFILE carries the PMK.
 - `os/tests/hardware/test_bcolink_contract.py` holds both sides to the same framing values,
-  protocol level, message numbers and USB match, and checks the patch's hunk count.
+  protocol level, capability bits, report layouts, message numbers and USB match, and checks the
+  patch's hunk count.
+
+## Flow control and the counters
+
+The radio sends one frame at a time and retries it; USB delivers frames far faster. Before flow
+control the app dropped a channel-1 frame that found no free transmit buffer (`wifi_tx_drop`), and
+the SCM never knew: on the owner's ST20 leading one Snapcast follower (alpha.3, about 1.5 Mbit/s
+up) about one TCP segment in ten was retransmitted, with no drops in the kernel, and the follower
+disconnected during the bursts.
+
+- The app has seven transmit buffers (`WIFI_TX_BUFS`). It reports `free`, the buffers the SCM may
+  fill now (the free ones less one kept for its own authentication, association and EAPOL frames),
+  and `taken`, the channel-1 messages it has taken off the link since it started, accepted or
+  dropped. A report is the reply to `FLOW` and a control message the app sends unasked:
+  `type 13 | 0x80`, seq 0, payload `status 0, free, total, on, le32 taken`.
+- The driver counts the channel-1 frames it sends (`tx_sent`). While `tx_sent - taken` reaches
+  `free`, it stops the sending port's queue (`wlan0`, or `wlan1` while the access point runs); the
+  next report with credit wakes both. Frames then wait in that port's qdisc, where TCP Small Queues
+  hold each flow back, instead of being dropped on the BCO.
+- The app sends a report when buffers came free that the driver cannot know of yet (its last report's
+  `free` less what was taken since), at most once per main-loop pass, and every 100 ms while
+  reports are on. A report the link cannot take is sent again on the next pass.
+- `FLOW`'s reply starts the count afresh, as if nothing were in flight. The driver asks again when
+  a queue has been held for a second without credit (a lost report or a frame lost on the link)
+  and when `bcolink0` comes back up. A BCO that refuses or does not answer leaves Wi-Fi without flow
+  control until the link comes back.
+- An app without `BCOLINK_CAP_FLOW` is never asked, and an older driver never asks, so either keeps
+  the old behaviour. The wired port has no flow control: its MAC sends far faster than the radio.
+
+The driver shows the app's `LINK_STATS` counters and its own state, read-only, in
+`/sys/class/net/bcolink0/bco/`: `tx_ok`, `tx_failed`, `tx_dropped`, `link_dropped`, `tx_frames`
+(asked of the BCO at most once a second; an app without `BCOLINK_CAP_STATS` answers `EOPNOTSUPP`),
+`flow` (1 while frames are held for credit), `flow_stops` (times a queue was stopped) and
+`flow_resyncs` (counts started afresh after a held second). The BCO counters are 32 bits from the
+app's start, so they wrap and start over after a BCO power cycle. `/api/health` carries them as
+`bco` on an ST20.
+
+### The SRAM budget
+
+The WiLD core reaches the app's buffers only through UMR0, the 64 KB internal SRAM
+(`bco/app/src/stacks.h`); the 16 MB SDRAM is out of its reach. A transmit buffer is `0x6c0` bytes:
+the 8-byte record, the `0xc4` descriptor, LLC/SNAP, 1500 bytes and the CCMP header and MIC the core
+adds in place.
+
+| SRAM | Use |
+|---|---|
+| `0x0000-0x0fff` | vectors and trampolines |
+| `0x1000-0x3f3f` | 7 receive buffers |
+| `0x4100-0x703f` | 7 transmit buffers (6 until flow control) |
+| `0x7220-0x959f` | the core's command rings |
+| `0x9600-0xa13f` | frame and supply rings |
+| `0xa200-0xd01f` | the wired port's MACB rings and buffers (`wired.c`) |
+| `0xd020-0xd9e7` | unused by the app; the first stage's stack before the app runs |
+| from `0xd9e8` | where BFL loads the first stage (960 bytes); unused by the app |
+
+An eighth transmit buffer would have to go into the `0xd020` gap or above the first stage, apart
+from the other seven, and neither area is proven free of BFL's use on hardware; the gaps at
+`0x3f40` and `0x7040` are too small. `wifi.c` asserts at build time that the seven end below the
+command rings.
 
 ## The card's clock
 
@@ -172,6 +239,8 @@ itself (`tx_kick`, `ACK_LATE`, `rate_cls` in `bco/wild/fw/src/xport.c`):
    that value a start with backoff slots never goes out.
 2. Every attempt of a host frame starts with a DCF backoff: `0x20000 | slots` on `0x674`. The
    slots are random in [0, CW]; CW starts at the core's CWmin and doubles per retry, up to 1023.
+   A unicast frame gets seven attempts (`TX_RETRY` 6), 802.11's `dot11ShortRetryLimit`, which
+   counts attempts; until flow control it got five.
 3. Without an ACK 1 ms after the TX-done, the attempt is retried (`ACK_LATE`). The 5 ms limit from
    the start of the attempt stays as the upper bound. At the basic rate the wait after the TX-done
    is 3 ms.

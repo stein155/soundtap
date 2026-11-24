@@ -36,6 +36,15 @@ int wifi_wild_peek(unsigned off, unsigned n);
 /* The network joined or being joined; 0 (and an empty entry) when idle. */
 int wifi_current(struct wifi_bss *b);
 
+/* Transmit buffers (flow control, ADR 0031): WIFI_TX_BUFS in all, shared by the station and the
+ * access point. wifi_tx_free() is how many the SCM may fill now: the free ones less one kept for the
+ * app's own frames (authentication, association, EAPOL), 0 before the core is up. */
+#define WIFI_TX_BUFS 7u
+unsigned wifi_tx_free(void);
+/* Frames acknowledged, failed on air after the retries, dropped before the air (no free buffer,
+ * not joined, a frame the station cannot send). */
+void wifi_tx_counters(unsigned c[3]);
+
 /* Open access point (setup AP, ADR 0031): channel 1..13, beacon interval in TU, and the beacon
  * body the SCM's hostapd built (timestamp, interval, capability, IEs including TIM). Leaves any
  * station link first. The core beacons and answers probes from it; open-system authentication

@@ -59,6 +59,31 @@ int main(void)
     link_busy = 1;
     netcard_from_port(BCOLINK_CH_WIRED, f, 60);                        /* link busy: counted, not lost silently */
     assert(netcard_to_scm == 1 && netcard_dropped == 6);
+    /* every channel-1 message counts for the driver's credit, taken or dropped */
+    assert(mgmt_taken == 3);
+
+    /* flow control: a due report goes out on channel 0; one the link refuses is sent again */
+    extern unsigned fake_tx_free;
+    link_busy = 0, sent_n = 0;
+    netcard_flow_poll();
+    assert(sent_n == 0);                                               /* reports are off */
+    unsigned char on[MGMT_HDR + 1] = {1, 13, 0, 10, 0, 1, 1};
+    usblink_rx(BCOLINK_CH_CTRL, on, sizeof on);                        /* FLOW on */
+    assert(sent_ch == BCOLINK_CH_CTRL && sent[1] == (13 | 0x80) && sent[3] == 10 && mgmt_flow);
+    sent_n = 0;
+    netcard_flow_poll();
+    assert(sent_n == 0);                                               /* the reply told it all */
+    usblink_rx(BCOLINK_CH_WIFI, f, 60);                                /* one frame, one buffer */
+    fake_tx_free--;
+    netcard_flow_poll();
+    assert(sent_n == 0);
+    fake_tx_free++;                                                    /* its buffer came back */
+    link_busy = 1;
+    netcard_flow_poll();
+    link_busy = 0;
+    netcard_flow_poll();
+    assert(sent_ch == BCOLINK_CH_CTRL && sent_n == MGMT_HDR + MGMT_FLOW_LEN && sent[1] == (13 | 0x80) &&
+           sent[2] == 0 && sent[3] == 0 && sent[MGMT_HDR + 1] == fake_tx_free && sent[MGMT_HDR + 4] == 4);
     puts("netcard ok");
     return 0;
 }

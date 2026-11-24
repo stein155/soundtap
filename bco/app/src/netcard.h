@@ -13,5 +13,7 @@ int usblink_send(unsigned ch, const unsigned char *p, unsigned n);
 void usblink_rx(unsigned ch, const unsigned char *p, unsigned n);
 /* A port received frame f: send it to the SCM on channel ch (BCOLINK_CH_WIFI or BCOLINK_CH_WIRED). */
 void netcard_from_port(unsigned ch, const unsigned char *f, unsigned n);
+/* Send the flow-control credit report that is due (mgmt_flow_due); call once per main-loop pass. */
+void netcard_flow_poll(void);
 
 extern unsigned netcard_to_wifi, netcard_to_wired, netcard_to_scm, netcard_mgmt, netcard_dropped;

@@ -199,7 +199,10 @@ static volatile int tx_busy;
  * A group frame gets no ACK: the next one waits TX_GAP (3 ms measured best). */
 #define ACK_WAIT 5000 /* R_TIMER ticks from the start of an attempt; an ACK takes ~0.3 ms, 30 ms
                        * here cut a download on the ST20 to a third */
-#define TX_RETRY 4
+#define TX_RETRY 6     /* retries after the first attempt: 7 attempts, 802.11's dot11ShortRetryLimit
+                       * (which counts attempts). It was 4 (5 attempts); a frame that fails here is
+                       * lost to TCP, which then backs off, and an extra retry costs at most
+                       * ACK_WAIT plus its backoff (doubled CW, up to 1023 slots) */
 #define ACK_LATE 1000 /* R_TIMER ticks after the TX-done: an ACK at the data rate comes ~0.55 ms after
                        * it, later than 1 ms in 4 of 3000 frames; with the backoff a retry
                        * this early cost no extra retries and cut their wait from 5 ms to 2 ms */

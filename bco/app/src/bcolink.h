@@ -23,6 +23,11 @@
 #define BCOLINK_PROTO        2u
 #define BCOLINK_CAP_AP       0x1u          /* AP_START/AP_STOP/AP_STATUS */
 #define BCOLINK_CAP_REPLAY   0x2u          /* a resent state-changing request gets the cached reply */
+/* Additions a driver may ignore keep the level and add a capability bit: an older driver never asks
+ * for them and an older app never announces them (ADR 0031). */
+#define BCOLINK_CAP_FLOW     0x4u          /* FLOW: credit reports of the free Wi-Fi transmit buffers */
+#define BCOLINK_CAP_STATS    0x8u          /* LINK_STATS: the transmit and link counters */
+#define BCOLINK_CAPS (BCOLINK_CAP_AP | BCOLINK_CAP_REPLAY | BCOLINK_CAP_FLOW | BCOLINK_CAP_STATS)
 
 #define BCOLINK_USB_VID  0x1209u           /* pid.codes; 0x0001 is its test PID: allocate one before release */
 #define BCOLINK_USB_PID  0x0001u

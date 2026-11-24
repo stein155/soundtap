@@ -67,3 +67,8 @@ void wifi_ap_counters(unsigned c[WIFI_AP_COUNTERS])
     for (unsigned i = 0; i < WIFI_AP_COUNTERS; i++)
         c[i] = 0x11 * (i + 1);
 }
+
+/* Transmit buffers and counters (flow control and LINK_STATS). */
+unsigned fake_tx_free = WIFI_TX_BUFS - 1;
+unsigned wifi_tx_free(void) { return fake_tx_free; }
+void wifi_tx_counters(unsigned c[3]) { c[0] = 0x101, c[1] = 0x202, c[2] = 0x303; }
