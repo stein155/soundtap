@@ -16,7 +16,9 @@
 #   fixed in/before V      the package version we ship already has the fix
 #   not built for Linux    a package's file only another platform builds (the kernel names
 #                          its CONFIG_ symbol instead)
-#   ffmpeg filter X not built  a libavfilter filter SOUNDTAP_FFMPEG_FILTERS leaves out
+#   ffmpeg filter X not built  a filter, muxer, demuxer or protocol soundtap-ffmpeg.mk
+#                          leaves out (also 'ffmpeg muxer X', 'ffmpeg demuxer X',
+#                          'ffmpeg protocol X')
 #   maintainer accepted    open, with the maintainer's recorded acceptance and why
 
 # Linux 6.12.117 (BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE in os/configs/soundtap_defconfig).
@@ -233,3 +235,9 @@ SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-135739 # ffmpeg filter scale not built
 SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-135740 # ffmpeg filter readeia608 not built
 SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-135742 # ffmpeg filters zmq, azmq not built
 SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-135743 # ffmpeg filter dynaudnorm not built
+# libavformat code our ffmpeg leaves out, from the same 2026-11-24 batch, fixed upstream in
+# 9.1: wavenc.c is the WAV and W64 muxers (we mux pcm_s16le only; the WAV demuxer is
+# wavdec.c), rtmppkt.c only the RTMP protocols, imf_cpl.c only the IMF demuxer.
+SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-135722 # ffmpeg muxers wav, w64 not built
+SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-135723 # ffmpeg demuxer imf not built
+SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-135725 # ffmpeg protocols rtmp, rtmpe, rtmps, rtmpt, rtmpte, rtmpts not built

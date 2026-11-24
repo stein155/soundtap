@@ -17,8 +17,9 @@ file's header lists. What is checked:
 - CONFIG_X=m: linux.fragment does not build X in; with --kernel-config, X is =m or off;
 - fixed by our patch: a patch of ours for that package names the CVE;
 - not built for Linux: only for a package other than the kernel, which names a CONFIG_ symbol.
-- ffmpeg filter X not built: only for soundtap-ffmpeg, and X is not in the filters
-  SOUNDTAP_FFMPEG_FILTERS enables (its build is --disable-everything).
+- ffmpeg <kind> X not built: only for soundtap-ffmpeg, and X is not in the list of that kind
+  (filter, muxer, demuxer or protocol) soundtap-ffmpeg.mk enables, SOUNDTAP_FFMPEG_FILTERS,
+  _MUXERS, _DEMUXERS or _PROTOCOLS (its build is --disable-everything).
 
 "fixed in/before V" for a package other than the kernel, "not built for Linux" (the file and
 the build condition it names) and "maintainer accepted" are records, not checked further.
@@ -40,7 +41,7 @@ OFF = re.compile(r"\b(CONFIG_\w+) off\b")
 MODULE = re.compile(r"\b(CONFIG_\w+)=m\b")
 PATCH = re.compile(r"\bfixed by our patch\b")
 NOT_BUILT = re.compile(r"\bnot built for Linux\b")
-FFMPEG_FILTER = re.compile(r"\bffmpeg filters? ([\w ,]+?) not built\b")
+FFMPEG_PART = re.compile(r"\bffmpeg (filter|muxer|demuxer|protocol)s? ([\w ,]+?) not built\b")
 FFMPEG_MK = "os/package/soundtap-ffmpeg/soundtap-ffmpeg.mk"
 OTHER = re.compile(r"\bfixed (?:in|before) \d[\w.]*|\bmaintainer accepted\b")
 
@@ -119,26 +120,27 @@ def entry_problems(ctx: Context, package: str, cve: str, reason: str) -> list[st
         forms += 1
         if package == "LINUX":
             out.append(f"{cve}: code the kernel does not build names its symbol, 'CONFIG_X off'")
-    if m := FFMPEG_FILTER.search(reason):
+    if m := FFMPEG_PART.search(reason):
         forms += 1
-        out += ffmpeg_filter_problems(ctx.root, package, cve, m.group(1))
+        out += ffmpeg_part_problems(ctx.root, package, cve, m.group(1), m.group(2))
     forms += len(OTHER.findall(reason))
     if forms == 0:
         out.append(f"{cve}: the reason {reason!r} is none of the forms the header lists")
     return out
 
 
-def ffmpeg_filter_problems(root: Path, package: str, cve: str, names: str) -> list[str]:
-    """The filters a reason names must be ones our ffmpeg leaves out."""
+def ffmpeg_part_problems(root: Path, package: str, cve: str, kind: str, names: str) -> list[str]:
+    """The filters, muxers, demuxers or protocols a reason names must be ones our ffmpeg
+    leaves out."""
     if package != "SOUNDTAP_FFMPEG":
-        return [f"{cve}: 'ffmpeg filter ... not built' is for soundtap-ffmpeg only"]
+        return [f"{cve}: 'ffmpeg {kind} ... not built' is for soundtap-ffmpeg only"]
     mk = (root / FFMPEG_MK).read_text() if (root / FFMPEG_MK).exists() else ""
-    m = re.search(r"^SOUNDTAP_FFMPEG_FILTERS\s*=\s*(.*)$", mk, re.M)
+    m = re.search(rf"^SOUNDTAP_FFMPEG_{kind.upper()}S\s*=\s*(.*)$", mk, re.M)
     if not m or "--disable-everything" not in mk:
-        return [f"{cve}: {FFMPEG_MK} lists no filters or does not build --disable-everything"]
+        return [f"{cve}: {FFMPEG_MK} lists no {kind}s or does not build --disable-everything"]
     built = set(m.group(1).split())
     named = {n for n in re.split(r"[\s,]+", names) if n and n != "and"}
-    return [f"{cve}: our ffmpeg builds the {n} filter" for n in sorted(named & built)]
+    return [f"{cve}: our ffmpeg builds the {n} {kind}" for n in sorted(named & built)]
 
 
 def problems(root: Path, kernel_config: str | None = None) -> list[str]:

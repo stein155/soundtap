@@ -59,6 +59,25 @@ class IgnoreCvesTest(unittest.TestCase):
         self.assertIn("builds the volume filter", found[0])
         self.assertIn("soundtap-ffmpeg only", found[1])
 
+    def test_an_ffmpeg_muxer_demuxer_or_protocol_reason_reads_that_kind_s_list(self):
+        mk = ("SOUNDTAP_FFMPEG_MUXERS = pcm_s16le\n"
+              "SOUNDTAP_FFMPEG_DEMUXERS = wav pcm_s16le\n"
+              "SOUNDTAP_FFMPEG_PROTOCOLS = http tcp\n"
+              "SOUNDTAP_FFMPEG_CONF_OPTS = --disable-everything\n")
+        files = {"os/package/soundtap-ffmpeg/soundtap-ffmpeg.mk": mk}
+        self.assertEqual(self.check("SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-1001 # ffmpeg muxers wav, w64 not built\n"
+                                    "SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-1002 # ffmpeg demuxer imf not built\n"
+                                    "SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-1003 # ffmpeg protocol rtmp not built\n",
+                                    files=files), [])
+        found = self.check("SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-1004 # ffmpeg demuxer wav not built\n"
+                           "SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-1005 # ffmpeg protocol tcp not built\n"
+                           "SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-1006 # ffmpeg filter zmq not built\n",
+                           files=files)
+        self.assertEqual(len(found), 3, found)
+        self.assertIn("builds the wav demuxer", found[0])
+        self.assertIn("builds the tcp protocol", found[1])
+        self.assertIn("lists no filters", found[2])
+
     def test_a_6_12_fix_must_be_in_the_pinned_kernel(self):
         self.assertEqual(self.check("LINUX_IGNORE_CVES += CVE-2026-1000 # fixed in 6.12.117\n"), [])
         found = self.check("LINUX_IGNORE_CVES += CVE-2026-1000 # fixed in 6.12.118\n")
