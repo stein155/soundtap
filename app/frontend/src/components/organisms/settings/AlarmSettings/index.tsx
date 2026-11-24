@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { CheckRow } from '../../../molecules/CheckRow';
+import { SetSwitch } from '../../../molecules/SetItem';
+import { SetMenu } from '../../../molecules/SetMenu';
 import { FieldCard } from '../../../molecules/FieldCard';
 import { FieldRow, RowSelect, RowTime } from '../../../molecules/FieldRow';
 import { Hint } from '../../../atoms/Hint';
@@ -30,15 +31,17 @@ export function AlarmSettings({ alarm, presets, speakerName, onChange }: Props) 
   const shown = { ...alarm, slot: slot ?? alarm.slot };
   return (
     <>
-      <CheckRow
-        on={alarm.enabled}
-        title={t('alarmEnable')}
-        desc={t('alarmDesc', { name: speakerName })}
-        // Without presets it can't be switched on, but one that is on must always be able to
-        // go off: the speaker then wakes with its fallback tone.
-        disabled={!stored.length && !alarm.enabled}
-        onToggle={() => onChange({ ...shown, enabled: !alarm.enabled })}
-      />
+      <SetMenu>
+        <SetSwitch
+          on={alarm.enabled}
+          label={t('alarmEnable')}
+          desc={t('alarmDesc', { name: speakerName })}
+          // Without presets it can't be switched on, but one that is on must always be able
+          // to go off: the speaker then wakes with its fallback tone.
+          disabled={!stored.length && !alarm.enabled}
+          onToggle={() => onChange({ ...shown, enabled: !alarm.enabled })}
+        />
+      </SetMenu>
       {!stored.length && <Hint>{t('alarmNeedsPreset')}</Hint>}
       {alarm.enabled && slot !== undefined && (
         <Stack offset={8}>

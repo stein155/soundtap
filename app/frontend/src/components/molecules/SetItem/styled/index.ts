@@ -55,14 +55,21 @@ export const Meta = styled.span`
   color: var(--ink-3);
 `;
 
-export const Row = styled.button`
+export const Row = styled.button<{ $danger?: boolean }>`
   width: 100%;
-  min-height: 59px;
+  min-height: 52px;
   display: flex;
   align-items: center;
   gap: 14px;
   padding: 8px var(--page-gutter, 14px);
   text-align: left;
+
+  ${({ $danger }) => ($danger ? '& span { color: var(--danger); }' : '')}
+
+  &:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
 
   @media (hover: hover) {
     transition: background 140ms ease;
@@ -113,4 +120,21 @@ export const Switch = styled.span<{ $on: boolean }>`
     transform: translateX(${({ $on }) => ($on ? '20px' : '0')});
     transition: transform 180ms ease;
   }
+`;
+
+// The row's "opens a page" sign.
+export const Chevron = styled.span`
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  margin-left: -6px;
+  color: var(--ink-3);
+`;
+
+// A line under the label that says what the row does.
+export const Desc = styled.span`
+  flex-basis: 100%;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--ink-3);
 `;

@@ -46,6 +46,8 @@ interface Props {
   onRecent: () => void;
   onSpotify: () => void;
   onTuneIn: () => void;
+  // The DLNA/UPnP servers on the network, a source like the others.
+  onMediaServers: () => void;
   onSettings: () => void;
 }
 
@@ -59,6 +61,7 @@ export function DrawerMenu({
   onRecent,
   onSpotify,
   onTuneIn,
+  onMediaServers,
   onSettings,
 }: Props) {
   const { t } = useI18n();
@@ -96,6 +99,9 @@ export function DrawerMenu({
           onPress={() => go(onTuneIn)}
         >
           TuneIn
+        </Row>
+        <Row icon={<Icon.folder />} onPress={() => go(onMediaServers)}>
+          {t('page_mediaservers')}
         </Row>
         <hr />
         <Row icon={<Icon.cog />} onPress={() => go(onSettings)}>

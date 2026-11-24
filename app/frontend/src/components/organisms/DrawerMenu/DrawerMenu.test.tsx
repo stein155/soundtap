@@ -9,7 +9,13 @@ import { DrawerMenu } from '.';
 describe('DrawerMenu', () => {
   it('drops a pick still waiting when the menu reopens or another row is picked', () => {
     vi.useFakeTimers();
-    const on = { onRecent: vi.fn(), onSpotify: vi.fn(), onTuneIn: vi.fn(), onSettings: vi.fn() };
+    const on = {
+      onRecent: vi.fn(),
+      onSpotify: vi.fn(),
+      onTuneIn: vi.fn(),
+      onMediaServers: vi.fn(),
+      onSettings: vi.fn(),
+    };
     const view = renderWithI18n(<DrawerMenu open onClose={() => {}} {...on} />);
     fireEvent.click(view.getByText('Settings'));
     view.rerender(<DrawerMenu open={false} onClose={() => {}} {...on} />);

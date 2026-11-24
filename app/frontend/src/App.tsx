@@ -5,7 +5,7 @@ import { lazy, Suspense } from 'react';
 import { HomePage } from './pages/HomePage';
 import { PressPrompt } from './components/molecules/PressPrompt';
 import { useLanguage } from './hooks/useLanguage';
-import { ThemeContext, useThemeMode } from './hooks/useThemeMode';
+import { useThemeMode } from './hooks/useThemeMode';
 import { I18nContext } from './lib/i18n';
 
 // Only the speaker's own setup access point opens it: other visits do not load it.
@@ -16,19 +16,17 @@ const isSetup = () => new URLSearchParams(window.location.search).get('setup') =
 
 export default function App() {
   const i18n = useLanguage();
-  const theme = useThemeMode();
+  useThemeMode();
   return (
     <I18nContext.Provider value={i18n}>
-      <ThemeContext.Provider value={theme}>
-        {isSetup() ? (
-          <Suspense fallback={null}>
-            <SetupPage />
-          </Suspense>
-        ) : (
-          <HomePage />
-        )}
-        <PressPrompt />
-      </ThemeContext.Provider>
+      {isSetup() ? (
+        <Suspense fallback={null}>
+          <SetupPage />
+        </Suspense>
+      ) : (
+        <HomePage />
+      )}
+      <PressPrompt />
     </I18nContext.Provider>
   );
 }

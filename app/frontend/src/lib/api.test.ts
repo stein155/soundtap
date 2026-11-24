@@ -11,7 +11,7 @@ import {
   getRecent,
   setVolume,
   setWifi,
-  restoreBackup,
+  factoryReset,
 } from './api';
 import { PRESS_WINDOW_MS } from './base';
 import { loadLanguage } from './i18n';
@@ -46,7 +46,7 @@ describe('press routes', () => {
     mockFetch(null);
     const timeout = vi.spyOn(AbortSignal, 'timeout');
     await setWifi({ ssid: 'home', security: 'none', password: '' });
-    await restoreBackup(new File(['{}'], 'backup.json'));
+    await factoryReset();
     // wifiJoinDeadline and restoreDeadline on the speaker.
     expect(timeout.mock.calls[0][0]).toBeGreaterThan(PRESS_WINDOW_MS + 60000);
     expect(timeout.mock.calls[1][0]).toBeGreaterThan(PRESS_WINDOW_MS + 20000);

@@ -279,10 +279,10 @@ describe('App integration', () => {
     expect(await screen.findByText('Jazz Live')).toBeInTheDocument();
   }, 30000);
 
-  it('plays a custom station from settings, and says what is wrong with the form', async () => {
+  it('plays a custom station from TuneIn, and says what is wrong with the form', async () => {
     render(<App />);
-    await openSettings();
-    await userEvent.click(await screen.findByRole('button', { name: /Stream Custom Radio URL/ }));
+    await openTuneIn();
+    await userEvent.click(await screen.findByRole('button', { name: /Add your own station/ }));
     await userEvent.click(screen.getByRole('button', { name: 'Stream Station' }));
     expect(screen.getAllByRole('alert').map((a) => a.textContent)).toEqual([
       'Required field',
@@ -303,7 +303,7 @@ describe('App integration', () => {
       'https://radio.example/live',
       'My radio',
     ]);
-    expect(await screen.findByRole('button', { name: /Stream Custom Radio URL/ })).toBeTruthy();
+    await waitFor(() => expect(screen.queryByLabelText('Stream URL')).toBeNull());
   }, 30000);
 
   // An unreachable TuneIn offers a retry instead of a dead end.
@@ -338,24 +338,22 @@ describe('App integration', () => {
   }, 30000);
 
   // Settings open on the overview; each speaker is a page as Stockholm's Speaker Details,
-  // with updates and the other technical pages behind Advanced Setup.
-  async function openSpeakerSection(section: RegExp, advanced = true) {
+  // its rows in groups, each opening a page of its own.
+  async function openSpeakerSection(section: RegExp) {
     render(<App />);
     await openSettings();
     const sheet = await screen.findByRole('region', { name: 'Settings' });
     await userEvent.click(within(sheet).getByRole('button', { name: /Kitchen/ }));
-    if (advanced)
-      await userEvent.click(await screen.findByRole('button', { name: /^Advanced Setup/ }));
     await userEvent.click(await screen.findByRole('button', { name: section }));
   }
 
-  it('offers firmware upload under Updates on a flashed speaker', async () => {
+  it('offers firmware upload for developers on a flashed speaker', async () => {
     api.getVersion.mockResolvedValue({
       version: '1.2.3',
       updatable: false,
       updateMode: 'firmware',
     });
-    await openSpeakerSection(/^Updates/);
+    await openSpeakerSection(/^For developers/);
     expect(
       await screen.findByText(
         "Pick a firmware image. It is checked before anything is written to NAND. Select its .sig file with it. Bose's own update file needs none."
@@ -380,7 +378,7 @@ describe('App integration', () => {
       .mockResolvedValueOnce(report)
       .mockResolvedValueOnce({ ...report, installed: true, slot: 'Pong' });
     api.reboot.mockResolvedValue(null);
-    await openSpeakerSection(/^Updates/);
+    await openSpeakerSection(/^For developers/);
     fireEvent.change(document.querySelector('input[accept=".stu,.sig"]')!, {
       target: { files: [new File(['firmware'], 'Update_soundtap-firmware.stu')] },
     });
@@ -408,7 +406,7 @@ describe('App integration', () => {
       modules: [],
       installable: false,
     });
-    await openSpeakerSection(/^Updates/);
+    await openSpeakerSection(/^For developers/);
     fireEvent.change(document.querySelector('input[accept=".stu,.sig"]')!, {
       target: { files: [new File(['fw'], 'A.stu'), new File(['sigA'], 'A.stu.sig')] },
     });
@@ -426,7 +424,7 @@ describe('App integration', () => {
       updateMode: 'firmware',
     });
     api.uploadFirmware.mockRejectedValue(new Error('truncated package'));
-    await openSpeakerSection(/^Updates/);
+    await openSpeakerSection(/^For developers/);
     fireEvent.change(document.querySelector('input[accept=".stu,.sig"]')!, {
       target: { files: [new File(['broken'], 'broken.stu')] },
     });
@@ -449,7 +447,7 @@ describe('App integration', () => {
       installable: false,
       reason: 'This is the mainline ST10 package; this ST20 needs another image.',
     });
-    await openSpeakerSection(/^Updates/);
+    await openSpeakerSection(/^For developers/);
     fireEvent.change(document.querySelector('input[accept=".stu,.sig"]')!, {
       target: { files: [new File(['x'], 'st10.stu')] },
     });
@@ -458,8 +456,8 @@ describe('App integration', () => {
   }, 30000);
 
   it('saves name, bass and the alarm together with Save', async () => {
-    await openSpeakerSection(/^Alarm/, false);
-    await userEvent.click(screen.getByRole('checkbox', { name: /Alarm on/ }));
+    await openSpeakerSection(/^Alarm/);
+    await userEvent.click(screen.getByRole('switch', { name: /Alarm on/ }));
     fireEvent.change(screen.getByLabelText('Time'), { target: { value: '06:45' } });
     await userEvent.selectOptions(screen.getByLabelText('Station'), '2');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
@@ -493,14 +491,14 @@ describe('App integration', () => {
     await openSettings();
     const sheet = await screen.findByRole('region', { name: 'Settings' });
     await userEvent.click(within(sheet).getByRole('button', { name: /Kitchen/ }));
-    expect(await screen.findByRole('switch', { name: 'Auto-off' })).toBeInTheDocument();
+    expect(await screen.findByRole('switch', { name: /^Auto-off/ })).toBeInTheDocument();
     expect(screen.queryByRole('slider', { name: 'Bass' })).not.toBeInTheDocument();
   }, 30000);
 
   // Leaving a page with unsaved edits asks first; cancelling keeps them.
   it('asks before back throws away unsaved settings', async () => {
-    await openSpeakerSection(/^Alarm/, false);
-    await userEvent.click(screen.getByRole('checkbox', { name: /Alarm on/ }));
+    await openSpeakerSection(/^Alarm/);
+    await userEvent.click(screen.getByRole('switch', { name: /Alarm on/ }));
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     const sheet = screen.getByRole('region', { name: 'Settings' });
     // Back from the alarm's page returns to the speaker's list: the edit is still there.
@@ -508,14 +506,16 @@ describe('App integration', () => {
     expect(confirm).not.toHaveBeenCalled();
     await userEvent.click(within(sheet).getByRole('button', { name: 'Back' }));
     expect(confirm).toHaveBeenCalledWith('Discard unsaved changes?');
+    // Still on the speaker's page, with the edit waiting on the alarm's own Save.
+    await userEvent.click(screen.getByRole('button', { name: /^Alarm/ }));
     expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
     confirm.mockRestore();
   }, 30000);
 
   // Every way out of Settings asks too, not only Back.
   it('asks before Close throws away unsaved settings', async () => {
-    await openSpeakerSection(/^Alarm/, false);
-    await userEvent.click(screen.getByRole('checkbox', { name: /Alarm on/ }));
+    await openSpeakerSection(/^Alarm/);
+    await userEvent.click(screen.getByRole('switch', { name: /Alarm on/ }));
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     const sheet = screen.getByRole('region', { name: 'Settings' });
     await userEvent.click(within(sheet).getByRole('button', { name: 'Close' }));
@@ -675,7 +675,7 @@ describe('App integration', () => {
     await openSettings();
     await userEvent.click(await screen.findByRole('button', { name: /Integrations/ }));
     await userEvent.click(await screen.findByRole('button', { name: /MQTT/ }));
-    await userEvent.click(await screen.findByRole('checkbox', { name: /Connect MQTT/ }));
+    await userEvent.click(await screen.findByRole('switch', { name: /Connect MQTT/ }));
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(api.saveSettings).toHaveBeenCalledTimes(2));
     expect(api.saveSettings).toHaveBeenCalledWith(
@@ -699,6 +699,7 @@ describe('App integration', () => {
     await openSettings();
     await userEvent.click(await screen.findByRole('button', { name: /Integrations/ }));
     await userEvent.click(await screen.findByRole('button', { name: /MQTT/ }));
+    await userEvent.click(await screen.findByRole('button', { name: 'More options' }));
     const port = await screen.findByLabelText('Port');
     await userEvent.clear(port);
     await userEvent.type(port, '70000');

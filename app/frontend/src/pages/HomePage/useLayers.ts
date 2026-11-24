@@ -5,11 +5,13 @@ import { useState } from 'react';
 import type { SearchMode } from '../../components/organisms/SearchSheet';
 import type { FavoriteEntry } from '../../lib/types';
 
-type Layer = 'drawer' | 'presets' | 'settings' | 'speaker' | 'nowPlaying' | 'volume';
+type Layer =
+  'drawer' | 'presets' | 'settings' | 'mediaServers' | 'speaker' | 'nowPlaying' | 'volume';
 const NONE: Record<Layer, boolean> = {
   drawer: false,
   presets: false,
   settings: false,
+  mediaServers: false,
   speaker: false,
   nowPlaying: false,
   volume: false,

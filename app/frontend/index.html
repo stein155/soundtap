@@ -128,19 +128,12 @@
          stylesheet load. Without it the body briefly shows the UA margin + a window
          scrollbar, so the app jumps on refresh. Keep in sync with
          styles/tokens.css. -->
-    <!-- Apply the saved colour scheme before the first paint so a dark-mode
-         device never flashes the light theme. Mirrors theme/hooks/useThemeMode.ts — keep
-         the storage key (PREF.theme in lib/storage.ts) + resolution in sync with it. -->
+    <!-- Apply the system's colour scheme before the first paint so a dark-mode
+         device never flashes the light theme. Mirrors hooks/useThemeMode.ts. -->
     <script>
       (function () {
         try {
-          var m = localStorage.getItem('soundtap-theme');
-          var mode = m === 'light' || m === 'dark' ? m : 'system';
-          var dark =
-            mode === 'dark' ||
-            (mode === 'system' &&
-              window.matchMedia &&
-              window.matchMedia('(prefers-color-scheme: dark)').matches);
+          var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
           document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
           var meta = document.querySelector('meta[name="theme-color"]');
           if (meta) meta.setAttribute('content', dark ? '#121212' : '#f9f9f9');

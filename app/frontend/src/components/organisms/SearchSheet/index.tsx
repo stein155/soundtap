@@ -7,6 +7,10 @@ import type * as React from 'react';
 import { Icon } from '../../atoms/Icon';
 import { EntryRow, SearchEntry } from '../../molecules/SearchEntry';
 import { Sheet } from '../../molecules/Sheet';
+import { SheetModal } from '../../molecules/SheetModal';
+import { SetItem } from '../../molecules/SetItem';
+import { SetMenu } from '../../molecules/SetMenu';
+import { CustomStation } from '../settings/CustomStation';
 import { TopBar } from '../TopBar';
 import { TuneInResults } from '../TuneInResults';
 import { SpotifyLibrary } from '../SpotifyLibrary';
@@ -144,9 +148,12 @@ function TuneInPage({
   onHold?: (station: Station) => void;
 }) {
   const { t } = useI18n();
+  const atTop = !inSearch && !tunein.canGoUp;
+  // A stream TuneIn does not list, by its URL: a way to play, so it lives with the radio.
+  const [custom, setCustom] = useState(false);
   return (
     <>
-      {!inSearch && !tunein.canGoUp && (
+      {atTop && (
         <EntryRow>
           <SearchEntry
             label={t('searchTuneIn')}
@@ -158,6 +165,28 @@ function TuneInPage({
       {(!inSearch || tunein.query.trim()) && (
         <TuneInResults tunein={tunein} speaker={speaker} onPick={onPick} onHold={onHold} />
       )}
+      {atTop && (
+        <SetMenu>
+          <SetItem icon="plus" label={t('customStationAdd')} onClick={() => setCustom(true)} />
+        </SetMenu>
+      )}
+      <SheetModal
+        open={custom}
+        onClose={() => setCustom(false)}
+        label={t('customStation')}
+        variant="page"
+      >
+        {(close) => (
+          <Sheet onExit={close} headline={t('customStation')} label={t('customStation')}>
+            <CustomStation
+              onStream={(station) => {
+                onPick(station);
+                close();
+              }}
+            />
+          </Sheet>
+        )}
+      </SheetModal>
     </>
   );
 }

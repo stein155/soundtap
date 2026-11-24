@@ -5,12 +5,11 @@ import { afterEach, describe, it, expect, vi } from 'vitest';
 import { fireEvent, waitFor } from '@testing-library/react';
 import { renderWithI18n } from '../../../../test/render';
 import * as api from '../../../../lib/api';
-import { SystemSettings } from '.';
+import { SupportSettings } from '.';
 
 vi.mock('../../../../lib/api', () => ({
   getSupportBundle: vi.fn(),
   factoryReset: vi.fn(),
-  restoreBackup: vi.fn(),
 }));
 
 describe('SystemSettings support bundle', () => {
@@ -41,7 +40,7 @@ describe('SystemSettings support bundle', () => {
       saved.push({ href: this.href, download: this.download });
     });
 
-    const { getByRole } = renderWithI18n(<SystemSettings speaker="kitchen" />);
+    const { getByRole } = renderWithI18n(<SupportSettings speaker="kitchen" />);
     fireEvent.click(getByRole('button', { name: 'Support bundle' }));
 
     await waitFor(() => expect(saved).toHaveLength(1));
@@ -57,7 +56,7 @@ describe('SystemSettings support bundle', () => {
     vi.mocked(api.getSupportBundle).mockRejectedValue(
       Object.assign(new Error('press a button'), { status: 403, code: 'not_confirmed' })
     );
-    const { getByRole, findByRole } = renderWithI18n(<SystemSettings speaker="" />);
+    const { getByRole, findByRole } = renderWithI18n(<SupportSettings speaker="" />);
     const button = getByRole('button', { name: 'Support bundle' });
     fireEvent.click(button);
 

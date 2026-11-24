@@ -2,7 +2,8 @@
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
 import { useEffect, useState } from 'react';
-import { Button } from '../../../atoms/Button';
+import { SetItem } from '../../../molecules/SetItem';
+import { SetMenu } from '../../../molecules/SetMenu';
 import { TextButton } from '../../../atoms/TextButton';
 import {
   dismissWifiFellBack,
@@ -174,8 +175,8 @@ function SavedNetworks({
   );
 }
 
-// The Network accordion of a speaker: what it is on and, as in Stockholm, a big button
-// that opens the page for joining another network. No survey runs until it is pressed.
+// The Wi-Fi page of a speaker: what it is on, the networks it remembers and a row that
+// opens the page for joining another network. No survey runs until it is pressed.
 export function NetworkSettings({
   network,
   speaker,
@@ -198,9 +199,9 @@ export function NetworkSettings({
       <FellBackNotice speaker={speaker} />
       <NetworkStatus network={network} />
       <SavedNetworks network={network} speaker={speaker} speakerName={speakerName} />
-      <Button variant="stockholm" wide onClick={() => setJoining(true)}>
-        {t('wifiConnectTitle')}
-      </Button>
+      <SetMenu>
+        <SetItem icon="wifi" label={t('wifiConnectTitle')} onClick={() => setJoining(true)} />
+      </SetMenu>
     </>
   );
 }

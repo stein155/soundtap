@@ -11,9 +11,7 @@ import { Stack } from '../../../atoms/Stack';
 import { FieldCard } from '../../../molecules/FieldCard';
 import { FieldRow } from '../../../molecules/FieldRow';
 import { StatusCard } from '../../../molecules/StatusCard';
-import { FirmwareUpload } from '../FirmwareUpload';
 import { CoreUpdate } from './CoreUpdate';
-import { OwnerKey } from './OwnerKey';
 import { useSelfUpdate, type UpdatePhase } from '../../../../hooks/useSelfUpdate';
 import { useUpdateAll, type UpdateAllState } from '../../../../hooks/useUpdateAll';
 import type { Room } from '../../../../hooks/useRooms';
@@ -147,8 +145,6 @@ export function UpdateSettings({
           {version.updatable && <SelfUpdate speaker={speaker} version={version} />}
           <UpdateAll rooms={rooms} />
           <CoreUpdate key={speaker} speaker={speaker} />
-          <FirmwareUpload speaker={speaker} />
-          <OwnerKey key={speaker} speaker={speaker} />
         </>
       ) : (
         <Hint>{t('updatesOnSpeaker')}</Hint>

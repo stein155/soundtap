@@ -11,7 +11,6 @@ import { ChoiceList } from '../../../molecules/ChoiceList';
 import { SetItem, SetSwitch } from '../../../molecules/SetItem';
 import { SetMenu } from '../../../molecules/SetMenu';
 import { useHouseholdPrefs } from '../../../../hooks/useHouseholdPrefs';
-import { useTheme, type ThemeMode } from '../../../../hooks/useThemeMode';
 import { useI18n, LANGS } from '../../../../lib/i18n';
 import { getVersion } from '../../../../lib/api';
 import { versionLabel } from '../../../../lib/version';
@@ -25,30 +24,23 @@ import { ModelArt } from '../../../molecules/ModelArt';
 const shortModel = (model?: string) =>
   (model || '').replace(/^SoundTouch Wireless Link( Adapter)?$/, 'Wireless Link');
 
-type OverviewSection = 'language' | 'theme' | 'about';
+type OverviewSection = 'language' | 'about';
 
 interface Props {
   rooms: Room[];
   onSpeaker: (id: string) => void;
   onIntegrations: () => void;
-  onCustomStation: () => void;
 }
 
-// The first level of settings, one plain list as in Stockholm: every speaker, then the
-// household's settings, then this app's own.
-export function SettingsOverview({ rooms, onSpeaker, onIntegrations, onCustomStation }: Props) {
+// The first level of settings, as Stockholm's: every speaker, then the household's
+// settings, then this app's own, each a group with its title.
+export function SettingsOverview({ rooms, onSpeaker, onIntegrations }: Props) {
   const { t, lang, setLang, langFailed } = useI18n();
-  const theme = useTheme();
   const section = useAccordionGroup<OverviewSection>();
   const prefs = useHouseholdPrefs(rooms);
-  const themes: { value: ThemeMode; label: string }[] = [
-    { value: 'system', label: t('themeSystem') },
-    { value: 'light', label: t('themeLight') },
-    { value: 'dark', label: t('themeDark') },
-  ];
   return (
     <>
-      <SetMenu>
+      <SetMenu title={t('speakers')}>
         {rooms.map((room) => (
           <SetItem
             key={room.id}
@@ -58,12 +50,15 @@ export function SettingsOverview({ rooms, onSpeaker, onIntegrations, onCustomSta
             onClick={() => onSpeaker(room.id)}
           />
         ))}
+      </SetMenu>
+      <SetMenu title={t('household')}>
         <SetItem
           label={t('integrations')}
           meta={integrationsSummary(prefs, t('off'))}
           onClick={onIntegrations}
         />
-        <SetItem label={t('customStationMenu')} onClick={onCustomStation} />
+      </SetMenu>
+      <SetMenu title={t('thisApp')}>
         <Accordion
           {...section('language')}
           title={t('language')}
@@ -80,18 +75,6 @@ export function SettingsOverview({ rooms, onSpeaker, onIntegrations, onCustomSta
               {t('languageFailed')}
             </Hint>
           )}
-        </Accordion>
-        <Accordion
-          {...section('theme')}
-          title={t('appearance')}
-          summary={themes.find((o) => o.value === theme.mode)?.label}
-        >
-          <ChoiceList
-            label={t('appearance')}
-            value={theme.mode}
-            options={themes}
-            onChange={theme.setMode}
-          />
         </Accordion>
         <Accordion {...section('about')} title={t('about')}>
           <About rooms={rooms} />

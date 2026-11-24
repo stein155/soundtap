@@ -13,6 +13,7 @@ const v = (fields: Partial<VersionInfo>): VersionInfo => ({
   updatable: false,
   updateMode: 'unmanaged',
   api: 1,
+  capabilities: [],
   ...fields,
 });
 

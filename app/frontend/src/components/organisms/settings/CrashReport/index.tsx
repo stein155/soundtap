@@ -6,7 +6,8 @@ import { Button, ButtonLink } from '../../../atoms/Button';
 import { Hint } from '../../../atoms/Hint';
 import { Note } from '../../../atoms/Note';
 import { TextButton } from '../../../atoms/TextButton';
-import { CheckRow } from '../../../molecules/CheckRow';
+import { SetSwitch } from '../../../molecules/SetItem';
+import { SetMenu } from '../../../molecules/SetMenu';
 import { useI18n } from '../../../../lib/i18n';
 import { getCrashReport, recordCrashReport, saveSettings } from '../../../../lib/api';
 import type { CrashReport } from '../../../../lib/types';
@@ -35,12 +36,14 @@ export function CrashReportSwitch({
   };
   return (
     <>
-      <CheckRow
-        on={on}
-        title={t('crashReportsSetting')}
-        desc={t('crashReportsSettingHint')}
-        onToggle={() => void toggle()}
-      />
+      <SetMenu>
+        <SetSwitch
+          on={on}
+          label={t('crashReportsSetting')}
+          desc={t('crashReportsSettingHint')}
+          onToggle={() => void toggle()}
+        />
+      </SetMenu>
       {failed && (
         <Hint error role="alert">
           {t('crashReportsSettingFailed')}
@@ -84,7 +87,7 @@ export function CrashNotice({ speaker, enabled }: { speaker: string; enabled: bo
           <Label>{t('crashReportBodyLabel')}</Label>
           <Preview data-testid="crash-body">{crash.body}</Preview>
           <Note>
-            {t('crashReportAttach', { path: `${t('page_advanced')} › ${t('page_system')}` })}
+            {t('crashReportAttach', { path: `${t('maintenance')} › ${t('helpSupport')}` })}
           </Note>
           <Actions>
             <ButtonLink

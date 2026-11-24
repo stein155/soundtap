@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { apiFetch, apiURL, PRESS_TIMEOUT_MS, PRESS_WINDOW_MS } from '../base';
+import { apiFetch, apiURL, PRESS_TIMEOUT_MS } from '../base';
 import { deadline, apiFailure, getJSON, send, sendWithin, SLOW_READ_TIMEOUT_MS } from './http';
-import type { CrashReport, Settings, Tone, WifiNetwork, Place } from '../types';
+import type { CrashReport, Settings, Tone, WifiNetwork } from '../types';
 
 // Settings: name, bass (with its range), network, display, alarm, multiroom and MQTT.
 export async function getSettings(speaker?: string): Promise<Settings | null> {
@@ -90,12 +90,6 @@ export function recordCrashReport(id: string, outcome: 'reported' | 'dismissed',
   return send('/api/crash-report', 'POST', { id, outcome }, speaker);
 }
 
-// geocode looks a town up by name for the standby clock (via the speaker, which
-// returns each match with its timezone).
-export async function geocode(q: string, speaker?: string): Promise<Place[]> {
-  return getJSON<Place[]>('/api/geocode?q=' + encodeURIComponent(q), speaker, SLOW_READ_TIMEOUT_MS);
-}
-
 // The support archive (GET /api/debug?download=1): logs, the previous boot's records,
 // diagnostics, versions and health in one zip, redacted on the speaker. It waits for a
 // press on the speaker (ADR 0055), which apiFetch announces while it waits.
@@ -108,20 +102,9 @@ export async function getSupportBundle(speaker?: string): Promise<{ blob: Blob; 
   return { blob: await r.blob(), name };
 }
 
-// After the key press the speaker gives a restore or factory reset up to 20 s
-// (restoreDeadline).
+// After the key press the speaker gives a factory reset up to 20 s (restoreDeadline, which
+// also bounds POST /api/restore; the UI no longer offers a restore).
 const RESTORE_TIMEOUT_MS = 35000;
-
-// Restores a backup file made by GET /api/backup: presets and settings.
-export async function restoreBackup(file: File, speaker?: string): Promise<void> {
-  const r = await apiFetch(apiURL('/api/restore', speaker), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: await file.text(),
-    signal: deadline(PRESS_WINDOW_MS + RESTORE_TIMEOUT_MS),
-  });
-  if (!r.ok) throw await apiFailure(r, 'POST /api/restore');
-}
 
 // factoryReset clears presets, settings, the speaker's name, paired devices and
 // Wi-Fi, then restarts into setup mode. The firmware is not touched.

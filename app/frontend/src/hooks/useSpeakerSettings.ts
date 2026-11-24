@@ -29,11 +29,11 @@ const differs = (a: SpeakerForm, b: SpeakerForm, field: keyof SpeakerForm) =>
 
 const browserZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
 
-// The standby clock shows without a town, as on stock, in this browser's zone. A panel
-// that has no zone yet gets it once, without waiting for a Save.
+// The standby clock shows, as on stock, in this browser's zone. A panel that has no zone
+// yet gets it once, without waiting for a Save.
 const giveClockAZone = (d: DisplayConfig | null, speaker: string) => {
   const zone = browserZone();
-  if (d && !d.city && !d.timezone && !d.clockOff && zone)
+  if (d && !d.timezone && !d.clockOff && zone)
     void saveSettings({ display: { ...d, timezone: zone } }, speaker).catch(() => {});
 };
 
@@ -134,11 +134,11 @@ export function useSpeakerSettings(speaker: string, fallbackName: string) {
       if (differs(sent, base.form, field) && sent[field] !== null)
         patch[field] = field === 'name' ? sent.name.trim() : sent[field];
     if (patch.name === '') delete patch.name;
-    // A speaker without a display has no town to take a zone from, and its own clock is
-    // UTC: the alarm is read in the zone of the browser it was set from.
+    // A speaker's own clock is UTC: the alarm is read in the zone of the browser it was
+    // set from.
     if (patch.alarm) patch.alarm = { ...sent.alarm, timezone: browserZone() };
-    // Without a town the clock keeps this browser's time, like the alarm.
-    if (sent.display && !sent.display.city && patch.display)
+    // The standby clock keeps this browser's time, like the alarm.
+    if (sent.display && patch.display)
       patch.display = { ...sent.display, timezone: browserZone() ?? '' };
     if (Object.keys(patch).length) {
       await saveSettings(patch, speaker);
@@ -167,5 +167,36 @@ export function useSpeakerSettings(speaker: string, fallbackName: string) {
   const set = <K extends keyof SpeakerForm>(field: K, value: SpeakerForm[K]) =>
     setForm((f) => (f ? { ...f, [field]: value } : f));
 
-  return { settings, presets, bluetooth, version, form, set, dirty: FIELDS.some(changed), save };
+  // A switch, a slider or a choice goes to the speaker at once: this field alone, against
+  // what the speaker accepted last, so an unsaved name typed elsewhere is not sent with it.
+  // In the same queue as save. Rejects with the speaker's reason when it refuses.
+  const commit = <K extends keyof SpeakerForm>(field: K, value: SpeakerForm[K]) => {
+    set(field, value);
+    const turn = queue.current
+      .catch(() => {})
+      .then(() => {
+        const base = baseline.current;
+        if (base?.speaker !== speaker) return false;
+        return send({ ...base.form, [field]: value }).catch((e: unknown) => {
+          // Refused: the control goes back to what the speaker still has.
+          const kept = baseline.current?.form[field];
+          if (kept !== undefined) set(field, kept);
+          throw e;
+        });
+      });
+    queue.current = turn;
+    return turn;
+  };
+
+  return {
+    settings,
+    presets,
+    bluetooth,
+    version,
+    form,
+    set,
+    commit,
+    dirty: FIELDS.some(changed),
+    save,
+  };
 }

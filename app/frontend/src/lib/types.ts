@@ -109,12 +109,8 @@ export type Tone = Schemas['Tone'];
 
 export type NetworkInfo = Schemas['NetworkInfo'];
 
-// DisplayConfig is the ST20 standby screen. With a town, city, lat, lon and timezone all
-// come from one geocoder match; without one the timezone is the browser's.
+// DisplayConfig is the ST20 standby screen; its timezone is the browser's.
 export type DisplayConfig = Schemas['Display'];
-
-// Place is one geocoder match for the standby clock's town.
-export type Place = Schemas['Place'];
 
 export type MqttConfig = Schemas['Settings']['mqtt'];
 

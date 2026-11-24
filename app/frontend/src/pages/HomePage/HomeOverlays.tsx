@@ -9,16 +9,22 @@ import { Toast } from '../../components/molecules/Toast';
 import { TopLayer } from '../../components/molecules/TopLayer';
 import { DrawerMenu } from '../../components/organisms/DrawerMenu';
 import { SheetLoading } from '../../components/molecules/SheetLoading';
+import { Sheet } from '../../components/molecules/Sheet';
 import type { useErrorReporter } from '../../hooks/useErrorReporter';
-import type { usePlayback } from '../../hooks/usePlayback';
 import type { SelectedRoom } from '../../hooks/useSelectedRoom';
 import { useI18n } from '../../lib/i18n';
 import type { Layers } from './useLayers';
 
-// Settings is the largest part of the UI and the least visited: it loads when first opened.
+// Settings is the largest part of the UI and the least visited: it loads when first opened,
+// as do the media servers.
 const SettingsSheet = lazy(() =>
   import('../../components/organisms/settings/SettingsSheet').then((m) => ({
     default: m.SettingsSheet,
+  }))
+);
+const MediaServers = lazy(() =>
+  import('../../components/organisms/settings/MediaServers').then((m) => ({
+    default: m.MediaServers,
   }))
 );
 
@@ -26,11 +32,57 @@ interface HomeOverlaysProps {
   layers: Layers;
   selected: SelectedRoom;
   errors: ReturnType<typeof useErrorReporter>;
-  playback: ReturnType<typeof usePlayback>;
   // Re-reads what the speaker's settings changed (a rename).
   reloadInfo: () => void;
   // The layers of the selected room's player.
   children: ReactNode;
+}
+
+// The banner when the speaker is out of reach (lost: its name), and the toast.
+function Notices({
+  lost,
+  errors,
+}: {
+  lost: string | null;
+  errors: ReturnType<typeof useErrorReporter>;
+}) {
+  const { t } = useI18n();
+  return (
+    <TopLayer>
+      {lost !== null && <ConnectionBanner message={t('connectionLost', { name: lost })} />}
+      {errors.message && (
+        <Toast
+          message={errors.message}
+          onDismiss={errors.dismiss}
+          onUndo={errors.undo ?? undefined}
+        />
+      )}
+    </TopLayer>
+  );
+}
+
+// The media servers on the network, a source of their own from the menu.
+function MediaServersPage({
+  open,
+  onClose,
+  speaker,
+}: {
+  open: boolean;
+  onClose: () => void;
+  speaker: string;
+}) {
+  const { t } = useI18n();
+  return (
+    <SheetModal open={open} onClose={onClose} label={t('page_mediaservers')} variant="page">
+      {(close) => (
+        <Suspense fallback={<SheetLoading />}>
+          <Sheet onExit={close} headline={t('page_mediaservers')} label={t('page_mediaservers')}>
+            <MediaServers speaker={speaker} />
+          </Sheet>
+        </Suspense>
+      )}
+    </SheetModal>
+  );
 }
 
 // Everything above the page: the connection banner and toast, the menu, the settings and
@@ -39,13 +91,21 @@ export function HomeOverlays({
   layers,
   selected,
   errors,
-  playback,
   reloadInfo,
   children,
 }: HomeOverlaysProps) {
   const { t } = useI18n();
-  const { open, hide, search, settingsFor, setSearch, setAllRecent, showSettings, openSearch } =
-    layers;
+  const {
+    open,
+    show,
+    hide,
+    search,
+    settingsFor,
+    setSearch,
+    setAllRecent,
+    showSettings,
+    openSearch,
+  } = layers;
   const { rooms, lead, live, roomsState } = selected;
   // Every way out of Settings (its X, Escape, the phone's back, a tap outside) asks before
   // dropping unsaved edits, as its own back button does.
@@ -60,18 +120,7 @@ export function HomeOverlays({
   };
   return (
     <>
-      <TopLayer>
-        {live.unreachable && (
-          <ConnectionBanner message={t('connectionLost', { name: lead?.name || 'SoundTap' })} />
-        )}
-        {errors.message && (
-          <Toast
-            message={errors.message}
-            onDismiss={errors.dismiss}
-            onUndo={errors.undo ?? undefined}
-          />
-        )}
-      </TopLayer>
+      <Notices lost={live.unreachable ? lead?.name || 'SoundTap' : null} errors={errors} />
       <ErrorPage
         open={errors.blocked.open}
         message={errors.blocked.text}
@@ -87,6 +136,7 @@ export function HomeOverlays({
         }}
         onSpotify={() => openSearch({ service: 'spotify' })}
         onTuneIn={() => openSearch({})}
+        onMediaServers={() => show('mediaServers')}
         onSettings={() => showSettings(null)}
       />
       <SheetModal open={open.settings} onClose={closeSettings} label={t('settings')} variant="page">
@@ -101,11 +151,15 @@ export function HomeOverlays({
               }}
               onExit={close}
               onDirty={onSettingsDirty}
-              onStream={(station) => void playback.pick(station, null)}
             />
           </Suspense>
         )}
       </SheetModal>
+      <MediaServersPage
+        open={open.mediaServers}
+        onClose={() => hide('mediaServers')}
+        speaker={selected.speaker}
+      />
       {children}
     </>
   );

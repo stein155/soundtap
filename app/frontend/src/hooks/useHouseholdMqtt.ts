@@ -25,7 +25,7 @@ const LOAD_RETRY_MS = 5000;
 // The form only shows them: it saves an empty port as 0, so the speaker picks by TLS.
 export const DEFAULT_PORT = 1883;
 export const DEFAULT_TLS_PORT = 8883;
-const DEFAULT_DISCOVERY_PREFIX = 'homeassistant';
+export const DEFAULT_DISCOVERY_PREFIX = 'homeassistant';
 
 // The form as a speaker's stored settings fill it; the password is never sent back.
 function toForm(m: MqttConfig | undefined): MqttForm {

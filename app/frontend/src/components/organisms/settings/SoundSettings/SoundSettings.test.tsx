@@ -20,12 +20,8 @@ vi.mock('../../../../lib/api/settings', () => api);
 const props = {
   bass: 0,
   caps: { actual: 0, target: 0, min: 0, max: 0, default: 0 },
-  autoOff: 0,
-  auxName: null,
   soundbar: null,
   onBass: () => {},
-  onAutoOff: () => {},
-  onAuxName: () => {},
 };
 
 const render = () =>
@@ -33,12 +29,8 @@ const render = () =>
     <SoundSettings
       bass={0}
       caps={{ actual: 0, target: 0, min: 0, max: 0, default: 0 }}
-      autoOff={0}
-      auxName={null}
       soundbar={null}
       onBass={() => {}}
-      onAutoOff={() => {}}
-      onAuxName={() => {}}
     />
   );
 
@@ -161,5 +153,24 @@ describe('SoundSettings switching soundbars', () => {
     view.rerender(<SoundSettings {...props} speaker="B" />);
     expect(view.queryByRole('slider', { name: 'Lip sync (sound delay)' })).toBeNull();
     expect(view.queryByRole('radio', { name: 'Dialogue' })).toBeNull();
+  });
+});
+
+describe('SoundSettings group', () => {
+  it('shows nothing on a speaker without bass, soundbar or stereo choice', () => {
+    const { container } = renderWithI18n(
+      <SoundSettings {...props} soundbar={undefined} caps={props.caps} />
+    );
+    expect(container.textContent).toBe('');
+  });
+
+  it('puts bass under the Sound title, with the mono note only where stock has the switch', () => {
+    const caps = { actual: 0, target: 0, min: -9, max: 0, default: 0 };
+    const plain = renderWithI18n(<SoundSettings {...props} soundbar={undefined} caps={caps} />);
+    expect(plain.getByText('Sound')).toBeTruthy();
+    expect(plain.queryByText('Turn off for mono')).toBeNull();
+    plain.unmount();
+    const st10 = renderWithI18n(<SoundSettings {...props} soundbar={undefined} caps={caps} mono />);
+    expect(st10.getByText('Turn off for mono')).toBeTruthy();
   });
 });

@@ -26,11 +26,7 @@ export const settingsFixture = ({ mqtt, ...rest }: Overrides = {}): Settings => 
   display: {
     clockOff: false,
     hour12: false,
-    city: '',
-    lat: 0,
-    lon: 0,
     timezone: '',
-    weatherOn: false,
   },
   alarm: { enabled: false, time: '07:00', slot: 1 },
   multiroom: { keepGroups: false, syncVolume: false },

@@ -3,11 +3,9 @@
 
 import styled from 'styled-components';
 
-export const Card = styled.div<{ $shadow: string }>`
-  padding: 16px 18px 14px;
-  border-radius: var(--radius);
-  background: var(--surface);
-  box-shadow: ${({ $shadow }) => $shadow};
+// One control of the Sound group, as a row of its group's card.
+export const Card = styled.div`
+  padding: 14px var(--page-gutter, 14px) 12px;
 `;
 
 export const Head = styled.div`

@@ -5,31 +5,24 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Sheet } from '../../../molecules/Sheet';
 import { Integration, Integrations, SettingsOverview, type Receiver } from '../SettingsOverview';
 import { SpeakerSettings } from '../SpeakerSettings';
-import { MediaServers } from '../MediaServers';
 import { Mqtt } from '../Mqtt';
-import { CustomStation } from '../CustomStation';
 import { useI18n, type I18nKey } from '../../../../lib/i18n';
-import { speakerArg, type Room } from '../../../../hooks/useRooms';
+import type { Room } from '../../../../hooks/useRooms';
 import { SubPageContext, type SubPage } from '../../../../hooks/useSubPage';
-import type { Station } from '../../../../lib/types';
 
 interface Props {
   rooms: Room[];
   onRenamed: () => void;
   onExit: () => void;
-  // Play a station on the selected room.
-  onStream: (station: Station) => void;
   // Open at this speaker's page instead of the overview.
   speakerId?: string | null;
   // Whether the page on screen holds unsaved edits, for whatever closes the sheet.
   onDirty?: (dirty: boolean) => void;
 }
 
-type Page = 'mediaservers' | 'integrations' | 'customstation' | 'mqtt' | Receiver;
+type Page = 'integrations' | 'mqtt' | Receiver;
 const PAGE_TITLE: Record<Page, I18nKey | { brand: string }> = {
-  mediaservers: 'page_mediaservers',
   integrations: 'integrations',
-  customstation: 'customStation',
   mqtt: 'page_mqtt',
   spotify: { brand: 'Spotify Connect' },
   airplay: { brand: 'AirPlay' },
@@ -77,14 +70,13 @@ function integrationPage(
   return null;
 }
 
-// The Settings tab, in two levels: an overview and one page per speaker; Media servers
+// The Settings tab, in two levels: an overview and one page per speaker; the integrations
 // and MQTT open as pages of their own. The back button goes up one level.
 // Every visit starts afresh, at the overview or at the speaker it was opened for.
 export function SettingsSheet({
   rooms,
   onRenamed,
   onExit,
-  onStream,
   speakerId = null,
   onDirty: tellDirty,
 }: Props) {
@@ -114,16 +106,6 @@ export function SettingsSheet({
   const back = sub ? sub.back : up;
 
   const settingsPage = () => {
-    if (at.page === 'mediaservers' && room) return <MediaServers speaker={speakerArg(room)} />;
-    if (at.page === 'customstation')
-      return (
-        <CustomStation
-          onStream={(station) => {
-            onStream(station);
-            setAt(OVERVIEW);
-          }}
-        />
-      );
     if (room)
       return (
         // Keyed by speaker: no section may carry one speaker's state onto another.
@@ -133,7 +115,6 @@ export function SettingsSheet({
           rooms={rooms}
           onRenamed={onRenamed}
           onDirty={onDirty}
-          onMediaServers={leave(() => setAt({ ...at, page: 'mediaservers' }))}
         />
       );
     return (
@@ -141,7 +122,6 @@ export function SettingsSheet({
         rooms={rooms}
         onSpeaker={(speakerId) => setAt({ speakerId, page: null })}
         onIntegrations={() => setAt({ speakerId: null, page: 'integrations' })}
-        onCustomStation={() => setAt({ speakerId: null, page: 'customstation' })}
       />
     );
   };

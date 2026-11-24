@@ -49,7 +49,7 @@ describe('CrashNotice', () => {
     // Word for word what the link carries, and no link opened yet.
     expect(getByTestId('crash-title').textContent).toBe(crash.title);
     expect(getByTestId('crash-body').textContent).toBe(crash.body);
-    expect(container.textContent).toContain('Advanced Setup › System');
+    expect(container.textContent).toContain('Maintenance › Help and support');
     expect(api.recordCrashReport).not.toHaveBeenCalled();
 
     const open = getByRole('link', { name: 'Open the report on GitHub' });
@@ -105,7 +105,7 @@ describe('CrashReportSwitch', () => {
     const { getByRole, rerender, findByRole } = renderWithI18n(
       <CrashReportSwitch speaker="kitchen" on={false} onChange={onChange} />
     );
-    const row = getByRole('checkbox', { name: /Offer crash reports/ });
+    const row = getByRole('switch', { name: /Offer crash reports/ });
     expect(row.getAttribute('aria-checked')).toBe('false');
     fireEvent.click(row);
     await waitFor(() => expect(onChange).toHaveBeenCalledWith(true));
@@ -113,7 +113,7 @@ describe('CrashReportSwitch', () => {
 
     vi.mocked(api.saveSettings).mockRejectedValue(new Error('offline'));
     rerender(<CrashReportSwitch speaker="kitchen" on onChange={onChange} />);
-    fireEvent.click(getByRole('checkbox', { name: /Offer crash reports/ }));
+    fireEvent.click(getByRole('switch', { name: /Offer crash reports/ }));
     expect((await findByRole('alert')).textContent).toBe('Crash reports could not be switched');
     expect(onChange).toHaveBeenCalledTimes(1);
   });

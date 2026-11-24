@@ -2878,46 +2878,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/geocode": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Look up a town */
-        get: {
-            parameters: {
-                query: {
-                    /** @description Town name. */
-                    q: string;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Place"][];
-                    };
-                };
-                default: components["responses"]["Error"];
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/info": {
         parameters: {
             query?: never;
@@ -4965,8 +4925,10 @@ export interface components {
             updatable: boolean;
             /** @enum {string} */
             updateMode: "firmware" | "unmanaged";
-            /** @description API level (ADR 0091). */
+            /** @description API level (ADR 0108). */
             api: number;
+            /** @description What this speaker has: bluetooth (an adapter is present), ir, keypad, aux, display, battery. An open list: ignore values you do not know. */
+            capabilities: string[];
         };
         /** @description The running boot, for bench scripts without a shell (tools/hil/, ADR 0119). */
         Boot: {
@@ -5095,14 +5057,6 @@ export interface components {
             centre: components["schemas"]["ToneControl"];
             rear: components["schemas"]["ToneControl"];
         };
-        Place: {
-            name: string;
-            region: string;
-            country: string;
-            lat: number;
-            lon: number;
-            timezone: string;
-        };
         UPnPServer: {
             usn: string;
             friendlyName: string;
@@ -5176,12 +5130,7 @@ export interface components {
         Display: {
             clockOff: boolean;
             hour12: boolean;
-            /** @description The picked town; empty is none. */
-            city: string;
-            lat: number;
-            lon: number;
             timezone: string;
-            weatherOn: boolean;
             /** @description Clock peak in percent; absent is the default. */
             brightness?: number;
         };
@@ -5257,6 +5206,37 @@ export interface components {
                 bytes: number;
             }[];
             ampFault: boolean;
+            /** @description The SoundTouch Portable's battery pack and charger; absent on every other model. */
+            battery?: {
+                present: boolean;
+                maker?: string;
+                level: number;
+                milliVolts: number;
+                milliAmps: number;
+                celsius: number;
+                onDC: boolean;
+                charging: boolean;
+                full: boolean;
+                low: boolean;
+                fault: number;
+            };
+            /** @description The SoundTouch 20's network card (ADR 0031): the BCO app's transmit and link counters, which count from the BCO app's start in 32 bits and wrap, and whether the driver holds Wi-Fi frames in its queue for want of a free BCO transmit buffer. Absent on every other model and with a BCO app without counters. */
+            bco?: {
+                /** @description Wi-Fi frames the peer acknowledged. */
+                txOk: number;
+                /** @description Frames lost on air after the retries. */
+                txFailed: number;
+                /** @description Frames the BCO never sent: no free transmit buffer, or not joined. */
+                txDropped: number;
+                /** @description Messages the BCO dropped at the USB link, on any channel. */
+                linkDropped: number;
+                /** @description Frames from the speaker the radio took. */
+                txFrames: number;
+                /** @description The driver counts the BCO's free transmit buffers and holds frames while there are none. */
+                flowControl: boolean;
+                /** @description Times the driver held a Wi-Fi queue for want of a free buffer. */
+                flowStops: number;
+            };
             /**
              * @description The production inbound filter (ADR 0066): loaded; missing, on a production image whose filter did not load, so every listening port is open (a warning says so too); n/a on an alpha image, which loads none, and off a speaker. Checked at most once a minute by a bounded, read-only nft run.
              * @enum {string}

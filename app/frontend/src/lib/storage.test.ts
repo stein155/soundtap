@@ -7,10 +7,10 @@ import html from '../../index.html?raw';
 import { PREF } from './storage';
 
 describe('PREF.theme', () => {
-  // index.html applies the saved theme before the bundle loads; with another key there
-  // a dark-mode choice flashes light on every load (it read the old name's key after a
-  // rename).
-  it('is the key the first-paint script in index.html reads', () => {
-    expect(html).toContain(`localStorage.getItem('${PREF.theme}')`);
+  // The colour scheme follows the system and has no setting: the first-paint script must
+  // not apply a choice an older build saved, or a phone would stay dark with no way back.
+  it('is not read by the first-paint script in index.html', () => {
+    expect(html).not.toContain(`localStorage.getItem('${PREF.theme}')`);
+    expect(html).toContain('prefers-color-scheme: dark');
   });
 });

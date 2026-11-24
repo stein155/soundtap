@@ -13,7 +13,7 @@ export const REQUEST_TIMEOUT_MS = 8000;
 // A write waits on the speaker doing it: playing a station or preset takes up to 12 s
 // there, and a write cut off at 8 s said "not responding" while the station started.
 export const WRITE_TIMEOUT_MS = 15000;
-// A read the speaker cannot answer by itself: TuneIn, the geocoder, a media server and
+// A read the speaker cannot answer by itself: TuneIn, a media server and
 // BlueZ get up to 12 s there (slowReadDeadline), and a read cut off at 8 s showed an error
 // for an answer that was on its way.
 export const SLOW_READ_TIMEOUT_MS = 15000;

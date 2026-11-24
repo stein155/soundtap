@@ -4,7 +4,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Hint } from '../../../atoms/Hint';
 import { SegmentedControl } from '../../../molecules/SegmentedControl';
-import { cardShadow, useSurface } from '../../../../hooks/useSurface';
 import { useI18n, type I18nKey } from '../../../../lib/i18n';
 import { failureText } from '../../../../lib/failure';
 import {
@@ -51,7 +50,6 @@ function SoundbarChoiceCard({
   options: readonly (readonly [string, I18nKey | null])[];
 }) {
   const { t } = useI18n();
-  const surface = useSurface();
   const [mode, setOwn] = useState<string | null>(null);
   const [error, setError] = useState('');
   const latest = useRef(0); // only the newest choice may undo itself on a failure
@@ -77,7 +75,7 @@ function SoundbarChoiceCard({
     }
   };
   return (
-    <Card $shadow={cardShadow(surface)}>
+    <Card>
       <Head>
         <Name>{t(title)}</Name>
       </Head>
