@@ -143,16 +143,8 @@ const S = {
   standby(ctx, t, st = {}) {
     const drift = Math.floor(t / 60000) % 4;
     const dx = (drift % 2) * 2 - 1, dy = Math.floor(drift / 2) * 2;
-    text(ctx, "08:42", 64 + dx, 54 + dy, { size: 32, weight: 700, level: 10, align: "center" });
-    if (st.temp) {
-      ctx.font = "700 32px " + FONT;
-      const w = ctx.measureText("08:42").width;
-      const l = Math.round(64 - w / 2) + dx, r = Math.round(64 + w / 2) + dx;
-      text(ctx, "do 25 sep", l, 76 + dy, { size: 9, weight: 600, level: 8 });
-      text(ctx, "14°", r, 76 + dy, { size: 9, weight: 700, level: 9, align: "right" });
-    } else {
-      text(ctx, "donderdag 25 sep", 64 + dx, 76 + dy, { size: 9, weight: 600, level: 8, align: "center" });
-    }
+    text(ctx, st.h12 ? "8:42" : "08:42", 64 + dx, 54 + dy, { size: 32, weight: 700, level: 10, align: "center" });
+    if (st.h12) text(ctx, "PM", 64 + dx, 76 + dy, { size: 9, weight: 600, level: 8, align: "center" });
   },
   offline(ctx, t) {
     statusBar(ctx, { src: "wifi" });

@@ -15,6 +15,7 @@ import (
 	"github.com/stein155/soundtap/app/internal/btctl"
 	"github.com/stein155/soundtap/app/internal/favorites"
 	"github.com/stein155/soundtap/app/internal/flash"
+	"github.com/stein155/soundtap/app/internal/hw/battery"
 	"github.com/stein155/soundtap/app/internal/install"
 	"github.com/stein155/soundtap/app/internal/multiroom"
 	"github.com/stein155/soundtap/app/internal/nowplaying"
@@ -257,6 +258,8 @@ type AudioHooks struct {
 	EventChime func(name string)
 	// AmpFault reports whether the amp fault GPIO is asserted, for the health warning.
 	AmpFault func() bool
+	// Battery is the battery as last read, for /api/health; false on a model without one.
+	Battery func() (battery.Status, bool)
 }
 
 // attached is every group handed over after New, as last attached.
@@ -274,7 +277,7 @@ func (s *Server) AttachAudio(a AudioHooks) {
 	s.channel, s.downstream, s.multiroomActive = a.Channel, a.Downstream, a.MultiroomActive
 	s.selectSource, s.leaderLive, s.leaderNow, s.selfAddress = a.SelectSource, a.LeaderLive, a.LeaderNow, a.SelfAddress
 	s.restartSnapclient, s.wantAnchor = a.RestartSnapclient, a.WantAnchor
-	s.eventChime, s.ampFaultFn = a.EventChime, a.AmpFault
+	s.eventChime, s.ampFaultFn, s.batteryFn = a.EventChime, a.AmpFault, a.Battery
 }
 
 // SpotifyHooks are Spotify browsing and playback through the receiver's own session, and

@@ -7,6 +7,7 @@
 
   "s1.title": "Quelle enceinte avez-vous ?",
   "model.other": "Un autre modèle",
+  "model.preview": "{model} (préversion)",
   "s1.otherHelp": "Vous avez un autre modèle ? <a>Aidez-nous à le faire fonctionner</a> : la première étape est une investigation en lecture seule.",
 
   "s2.title": "Ce qu’il vous faut",
@@ -44,6 +45,7 @@
   "br.ip": "L’adresse IP de l’enceinte",
   "br.ipHint": "Dans l’application Bose : Paramètres, Paramètres de l’enceinte, votre enceinte, À propos. Ou cherchez-la dans votre routeur.",
   "br.agree": "Je comprends que SoundTap est un logiciel alpha qui remplace tout ce qui se trouve sur l’enceinte, et j’ai lu comment revenir à Bose (étape 6).",
+  "br.previewAgree": "Ce modèle est une préversion : SoundTap est déduit du logiciel de Bose lui-même et personne ne l’a encore fait fonctionner sur ce modèle. Il se peut qu’il ne joue pas, et le retour en arrière n’est peut-être pas éprouvé. Je l’installe quand même.",
   "br.go": "Installer SoundTap",
   "br.pickModel": "Choisissez d’abord votre enceinte à l’étape 1.",
   "br.trust": "La page ne peut lire ni le modèle ni son logiciel sur l’enceinte : elle vous croit donc sur parole pour les deux.",
@@ -52,6 +54,7 @@
   "judge.noModel": "{model} : pas encore pris en charge. SoundTap n’a pas encore fonctionné dessus, donc cette page ne l’installera pas.",
   "judge.no": "Pas encore pris en charge. SoundTap n’a pas encore fonctionné sur ce modèle, donc cette page ne l’installera pas.",
   "judge.unread": "Saisissez la version du logiciel Bose que l’application Bose affiche pour cette enceinte.",
+  "judge.preview": "{model} : une préversion. SoundTap est déduit du logiciel de Bose lui-même et personne ne l’a encore fait fonctionner sur ce modèle ; cochez la case préversion ci-dessous pour l’installer quand même.",
   "judge.old": "Logiciel Bose {version} : votre {model} demande la version {minimum} ou plus récente. Mettez d’abord Bose à jour, dans l’application Bose.",
 
   "st.asking": "Interrogation de l’enceinte…",

@@ -1,0 +1,114 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: 2026 SoundTap contributors
+/*
+ * SoundTouch SA-5 amplifier (burns): the ST10's Shelby 2 module on an amplifier board with
+ * an STM32 controller. Preview, never booted. Compared with the stock rhino_sm2 tree, stock's
+ * burns_sm2 changes these, so this is the ST10's tree with them:
+ *
+ * - The rear Ethernet port, wired exactly as on the ST300 and the Series III (stock
+ *   rmii1_pins_default, davinci_mdio_default, RMII with the PHY at 0, rmii-clock-ext).
+ * - The amplifier board's STM32 at 0x1d on I2C1 (stock burnspa@1d, bose,snd_burnspa), next to
+ *   the NCP6922 the ST10 tree already has there. No kernel driver binds: soundtapd talks to it
+ *   over /dev/i2c-1 as stock's snd-burnspa did (internal/hw/stm32amp). stm32reset (gpio2_6) is
+ *   held high: the STM32 runs its own firmware from power-up, and SoundTap never resets it.
+ * - Two lamps: uledw on DM timer 4 (the ST10's wifi-white PWM) and uledy on gpio2_17 (the
+ *   ST10's wifi-amber), as on the Series III.
+ * - The codec script (variant= below): burns_sm2_normal.cfg, the speaker's own.
+ * - UART0 is off, and McASP1's pads are parked on a disabled McASP1 as stock parks them.
+ */
+#include "am335x-soundtap-st10.dts"
+
+/ {
+	model = "Bose SoundTouch SA-5 (SoundTap burns)";
+	compatible = "bose,burns-sm2", "ti,am33xx";
+
+	chosen {
+		bootargs = "console=ttyS3,115200n8 root=ubi0:rootfs ro rootfstype=ubifs ubi.mtd=9,2048 rootwait init=/init mem=128M cma=8M panic=10 omap_wdt.early_enable=1 variant=burns module_type=sm2 country=GB region=GB soundtap.nandroot=1 soundtap.watchdog=90";
+	};
+
+	leds {
+		pinctrl-0 = <&wifi_amber_pins>;
+		/delete-node/ bt-white;
+		/delete-node/ soundtouch-white;
+		/delete-node/ soundtouch-amber;
+		/delete-node/ bt-blue;
+		/delete-node/ aux-white;
+	};
+};
+
+&am33xx_pinmux {
+	wifi_amber_pins: pinmux-wifi-amber-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_LCD_DATA11, PIN_OUTPUT_PULLDOWN, MUX_MODE7) /* gpio2_17 wifi amber */
+		>;
+	};
+
+	stm32_pins: pinmux-stm32-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_LCD_DATA0, PIN_OUTPUT, MUX_MODE7) /* gpio2_6 stm32reset (stock gpiodev_burns_default 0xa0) */
+			/* Stock burns_mcasp1_pins_default: parked on McASP1, which stays disabled. */
+			AM33XX_PADCONF(AM335X_PIN_MII1_RX_DV, PIN_OUTPUT, MUX_MODE4) /* 0x118 0x0c */
+			AM33XX_PADCONF(AM335X_PIN_MII1_TXD3, PIN_INPUT_PULLDOWN, MUX_MODE4) /* 0x11c 0x24 */
+			AM33XX_PADCONF(AM335X_PIN_MII1_TXD2, PIN_INPUT_PULLDOWN, MUX_MODE4) /* 0x120 0x24 */
+		>;
+	};
+
+	/* Stock rmii1_pins_default and davinci_mdio_default, as on the ST300. */
+	rmii1_pins: pinmux-rmii1-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_MII1_CRS, PIN_INPUT_PULLDOWN, MUX_MODE1) /* rmii1_crs_dv */
+			AM33XX_PADCONF(AM335X_PIN_MII1_RX_ER, PIN_INPUT_PULLDOWN, MUX_MODE1) /* rmii1_rx_er */
+			AM33XX_PADCONF(AM335X_PIN_MII1_TX_EN, PIN_OUTPUT_PULLDOWN, MUX_MODE1) /* rmii1_tx_en */
+			AM33XX_PADCONF(AM335X_PIN_MII1_TXD1, PIN_OUTPUT_PULLDOWN, MUX_MODE1) /* rmii1_txd1 */
+			AM33XX_PADCONF(AM335X_PIN_MII1_TXD0, PIN_OUTPUT_PULLDOWN, MUX_MODE1) /* rmii1_txd0 */
+			AM33XX_PADCONF(AM335X_PIN_MII1_RXD1, PIN_INPUT_PULLDOWN, MUX_MODE1) /* rmii1_rxd1 */
+			AM33XX_PADCONF(AM335X_PIN_MII1_RXD0, PIN_INPUT_PULLDOWN, MUX_MODE1) /* rmii1_rxd0 */
+			AM33XX_PADCONF(AM335X_PIN_RMII1_REF_CLK, PIN_INPUT_PULLDOWN, MUX_MODE0) /* rmii1_refclk */
+		>;
+	};
+
+	mdio_pins: pinmux-mdio-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_MDIO, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_MDC, PIN_OUTPUT_PULLUP, MUX_MODE0)
+		>;
+	};
+};
+
+&gpio2 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&keypad_pins &stm32_pins>;
+
+	stm32reset-hog {
+		gpio-hog;
+		gpios = <6 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "stm32reset";
+	};
+};
+
+/* Rear Ethernet: RMII, PHY at address 0, reference clock from the board (stock rmii-clock-ext). */
+&mac_sw {
+	pinctrl-names = "default";
+	pinctrl-0 = <&rmii1_pins>;
+	status = "okay";
+};
+
+&davinci_mdio_sw {
+	pinctrl-names = "default";
+	pinctrl-0 = <&mdio_pins>;
+
+	ethphy0: ethernet-phy@0 {
+		reg = <0>;
+	};
+};
+
+&cpsw_port1 {
+	phy-handle = <&ethphy0>;
+	phy-mode = "rmii";
+	ti,dual-emac-pvid = <1>;
+};
+
+&cpsw_port2 {
+	status = "disabled";
+};

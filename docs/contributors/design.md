@@ -33,6 +33,19 @@ drivers, userland, update path and app. Bose-free has one definition:
 | SoundTouch 20 (ST20) | `spotty` / scm | fully SoundTap incl. SPL/U-Boot; BCO runs our app and WiLD core (its BFL/BSL stay stock) |
 | SoundTouch 300 | `ginger` / sm2 | fully SoundTap incl. SPL/U-Boot; the soundbar processor (LPM) keeps its own firmware and drives the bass module, rears and HDMI |
 
+Previews ([ADR 0133](../decisions/0133-more-soundtouch-models-from-stock.md)), worked out from the
+stock packages alone and never run on hardware. The installers offer them only after an
+explicit preview confirmation, and their recovery gestures are implemented, not proven:
+
+| Model | Stock variant | Runs as |
+|---|---|---|
+| SoundTouch 30 Series I/II | `mojo` / scm | the ST20 |
+| SoundTouch 20/30 Series III | `spotty3`, `mojo3` (stock `spotty`, `mojo`) / sm2 | the ST10, with its panel and rear Ethernet port |
+| SoundTouch Portable | `taigan` / scm | the ST20, with its smart battery (`hw/battery`) |
+| SoundTouch SA-5 | `burns` / sm2 | the ST10, with its amplifier controller (`hw/stm32amp`) |
+| SoundTouch adapter (SA-4, Stereo JC, Wave, CineMate, Lifestyle, VideoWave) | `lisa` / scm, `lisa2` / sm2 | the ST20 or the ST10, master of the Bose link to the host (`abl`); the installers refuse an sm2 Lifestyle, so on a Lifestyle only `lisa` is offered |
+| Lifestyle 600/650 module | `bardeen` / sm2 | the ST300; in the code, refused by the installers and the STU installer (no way back) |
+
 What tells the models apart (variant, module type, the modules and boot chain each takes, the
 device tree, kernel and codec script each boots) is one table, `os/models.json`
 ([ADR 0008](../decisions/0008-one-universal-stu.md)); soundtapd's copy is generated from it and
@@ -59,7 +72,7 @@ attenuated against AUX; holding AUX switches to Bluetooth; Bluetooth selected wi
 volume keys in a group; volume steps without a glide; start in standby after a power cut; a factory
 reset clears user settings and credentials and keeps the speaker's codec calibration and
 manufacturing data ([ADR 0012](../decisions/0012-single-dac-writer.md)). Different from stock on
-purpose: Snapcast multiroom instead of Bose zones, the ST20 clock and weather,
+purpose: Snapcast multiroom instead of Bose zones, the ST20 standby clock,
 every extra (alarm, sleep timer, notifications, MQTT), updates started only by hand, no low-power
 standby on a long POWER hold, the Volume down + preset chords only for presets 1 and 2, and no
 stock `:8090` API.
@@ -114,7 +127,9 @@ flowchart TB
   [ADR 0114](../decisions/0114-bluetooth-agent-in-soundtapd.md)), `tunein`, `hw` (keypad, remote, lamps,
   amplifier lines and the hardware watchdog behind small interfaces) with `hw/model` (the
   hardware profile per model), `modeltable` (the model table, generated from `os/models.json`), `player` (radio and UPnP through ffmpeg), `panel` (the ST20 panel), `lpm` (the ST300's
-  soundbar processor, [ADR 0109](../decisions/0109-st300-soundbar-processor-link.md)), `supervise`
+  soundbar processor, [ADR 0109](../decisions/0109-st300-soundbar-processor-link.md)), `hw/battery` (the Portable's
+  smart battery: gauge, charger and stock's SHIP rules), `hw/stm32amp` (the SA-5's amplifier
+  controller), `abl` (the Bose link master for the SoundTouch adapter, [ADR 0133](../decisions/0133-more-soundtouch-models-from-stock.md)), `supervise`
   (the media daemons' supervisor), `counters` (the counts `/api/health` reports,
   [ADR 0127](../decisions/0127-health-counters-and-alpha-pprof.md)) and `wifi` (the Wi-Fi manager: the
   station join over wpa_supplicant's control socket through `wpactrl`, the fallback to the last
@@ -161,6 +176,12 @@ flowchart LR
     TV4[TV / HDMI / optical] --> P4
     P4 --- OUT4[bar / bass module / rear speakers]
   end
+  subgraph Previews["Previews (ADR 0133, never run)"]
+    PT[Portable: ST20 board + smart battery on I2C0]
+    SA[SA-5: ST10 module + STM32 amplifier controller]
+    AD[SoundTouch adapter: SCM or SM2 + Bose link UART to the host]
+    S3[Series III: ST10 module + panel + rear Ethernet]
+  end
   W1 --- LAN
   W2 --- LAN
 ```
@@ -192,20 +213,20 @@ flowchart TB
     r3[ROM<br/>USB via busy pad: development restore] --> s3[our SPL<br/>USB first, then NAND] --> u3[our U-Boot<br/>bootcmd + bootcount] --> k3[our kernel]
     u3 -. bootcount exceeds bootlimit .-> o3[other slot]
   end
-  u1 -. physical button chord .-> USB[USB stick: signed SoundTap rootfs recovery<br/>Update.stu + Update.stu.sig]
+  u1 -. physical button chord .-> USB[USB stick: Update.stu, no signature<br/>SoundTap rootfs, or Bose's file back to stock]
   u3 -. physical button chord .-> USB
 ```
 
 The ST10, ST20 and Wireless Link run our SPL, U-Boot, kernel and rootfs since 2026-09-30
 ([ADR 0009](../decisions/0009-mainline-linux-own-bootloaders.md)), the ST300 since its first install
 (2026-11-15). Our U-Boot implements
-USB-stick recovery with Vol- + Preset 4 (ST10/ST20) or both buttons (WLA). It takes only a
-signed SoundTap package: `Update.stu.sig` must verify against a release key compiled into
-U-Boot, or the owner key in its environment (`soundtap_owner_key`), name SoundTap Core for the image's profile and the SHA-256 of `Update.stu`, which is
-hashed before anything is erased and again while it is written
-([ADR 0048](../decisions/0048-signed-updates.md)). It writes the SoundTap rootfs, including
-`/boot`, without replacing bootloaders, and never installs Bose's software: the way back to
-Bose is the Updates page. This implementation
+USB-stick recovery with Vol- + Preset 4 (ST10/ST20) or both buttons (WLA). The ST300 starts it
+with its remote's combo, passed on by the soundbar processor. Holding the keys is the
+authorization: no signature is read ([ADR 0130](../decisions/0130-usb-stick-recovery.md)).
+`Update.stu` must check out CRC for CRC and is hashed before anything is erased and again
+while it is written. A SoundTap package writes the SoundTap rootfs, including `/boot`,
+without replacing bootloaders; Bose's own file for the board goes back to stock, its SPL and
+U-Boot included. This implementation
 still needs exact-candidate, per-model recovery validation. Below a damaged boot chain,
 ROM-USB plus the board's verified NAND backup is the development restore route
 (`tools/recovery/rom-usb-restore.py`, ADR 0009): it writes the release's SPL and U-Boot in the
@@ -235,8 +256,10 @@ into the speaker:
 
 ```mermaid
 flowchart LR
-  CI[build.yml] --> STU[SoundTap-Core-*.stu]
+  CI[build.yml] --> STU[SoundTap-Core-X.Y.Z.stu]
+  CI --> PRE["SoundTap-Core-X.Y.Z-preview.stu<br/>same payloads, preview installer"]
   STU -->|first install| S17[stock updater :17008] --> INST[soundtap-installer]
+  PRE -->|first install, preview models only| S17
   STU -->|every later update| API["POST /api/firmware"] --> INST
   STU -->|newer os-v release, key held on the speaker| CORE["POST /api/core-update<br/>downloads and streams"] --> API
   INST --> SLOT[inactive slot] --> RB[reboot] --> CONF{"alive after 60 s?<br/>ST20: BCO link up"}
@@ -245,6 +268,8 @@ flowchart LR
 ```
 
 A/B rules and the confirm sequence: [ADR 0010](../decisions/0010-ab-slots-boot-confirm-rollback.md).
+A preview model installs only from the preview package, which differs from the main one in its
+installer (module 0) alone and has its own `.sig` and feed ([ADR 0133](../decisions/0133-more-soundtouch-models-from-stock.md)).
 "Alive" means soundtapd has run a minute and its API answers on loopback; on the ST20 also
 that its BCO install step is over and our BCO app's link (`bcolink0`) is up. The network is
 never checked, so a speaker on a broken LAN keeps a good image. On every model,
@@ -333,8 +358,8 @@ Announcements duck the bus.
 flowchart LR
   P[Phone: soundtap.local] --> any[any speaker]
   any -->|/api/devices via mDNS| list[all SoundTap speakers]
-  L[Leader ST10/WLA/ST20] -- snapserver :1704 --> F1[Follower ST10/WLA]
-  L -- snapserver :1704 --> F2[Follower ST20]
+  L[Leader ST10/WLA/ST20] -- snapserver :1704, FLAC --> F1[Follower ST10/WLA]
+  L -- snapserver :1704, FLAC --> F2[Follower ST20]
 ```
 
 There is no permanent master. Relations carry a reachable address and, when known, a device
@@ -344,7 +369,9 @@ a channel selected per speaker ([ADR 0107](../decisions/0107-stereo-pair-acts-as
 Every speaker runs snapserver; a snapclient runs only on a follower whose source is
 MULTIROOM and, as a muted anchor holding the group, on a leader while it has or is about
 to have followers and for a minute after. An idle speaker in standby runs none
-([ADR 0013](../decisions/0013-multiroom-through-snapcast.md)).
+([ADR 0013](../decisions/0013-multiroom-through-snapcast.md)). The stream between speakers
+is lossless FLAC (level 1, 48 kHz 16-bit stereo), not PCM: the leader encodes once, every
+snapclient decodes, and a follower on a Core without FLAC cannot follow.
 
 Snapcast lines up the clients' outputs; what comes after that differs per speaker. Each
 speaker measures its own chain (bus FIFO, Mixer queue, aplay's pipe, ALSA ring). A
@@ -389,14 +416,14 @@ flowchart LR
   REL & APP --> SIGN[sign.yml in the release environment, main only:<br/>release key secret, still a draft]
   REP -. a Core release X.Y.Z: the four reports on main .-> SIGN
   SIGN --> OWN[maintainer's bench speakers: signed upload]
-  OWN --> PUB[sign.yml publish=true; Core: update feed PR]
+  OWN --> PUB[sign.yml publish=true; Core: update feeds PR]
   LINT -. must have passed on the commit .-> REL
   LINT -. must have passed on the commit .-> APP
 ```
 
 - Every workflow runs on GitHub-hosted runners and calls the repository's own entry points, `tools/ci/run-ci.sh` and `tools/ci/run-build.sh`, which a developer's own build machine runs too ([ADR 0011](../decisions/0011-one-buildroot-pipeline.md)).
 - Only `sign.yml` reads the release key: an encrypted secret of the GitHub Actions environment `release`, whose deployment branches are `main` alone. `release.yml` makes drafts without it and has `sign.yml` sign an alpha's at once; a Core release is signed against its four hardware reports in `releases/os-vX.Y.Z/` ([ADR 0035](../decisions/0035-releases.md)).
-- Speakers trust two compiled release keys, the active one and a reserve, in soundtapd and in U-Boot for the USB stick. An owner can add a key of their own, set and removed on the Updates page behind a hold and kept in both U-Boot environment copies; builds signed with it install under a release's rules, and a factory reset removes it. The first-install feed `updates/soundtouch` is held to a signed release by code-owner review and `feed.yml` ([ADR 0048](../decisions/0048-signed-updates.md), [RELEASING.md](../../RELEASING.md#the-first-install-feed)).
+- Speakers trust two compiled release keys, the active one and a reserve, in soundtapd; the USB stick at power-on checks no signature ([ADR 0130](../decisions/0130-usb-stick-recovery.md)). An owner can add a key of their own, set and removed on the Updates page behind a hold and kept in both U-Boot environment copies; builds signed with it install under a release's rules, and a factory reset removes it. The first-install feed `updates/soundtouch` and the preview models' `updates/soundtouch-preview` are held to a signed release by code-owner review and `feed.yml` ([ADR 0048](../decisions/0048-signed-updates.md), [ADR 0133](../decisions/0133-more-soundtouch-models-from-stock.md), [RELEASING.md](../../RELEASING.md#the-first-install-feed)).
 - One pipeline: Buildroot, one profile `os/configs/soundtap_defconfig` ([ADR 0011](../decisions/0011-one-buildroot-pipeline.md)). `make os` builds it, `make stu` packages it with
   `os/installer/build-universal-stu.sh`. Neither the repository nor the STU holds Bose files
   ([ADR 0049](../decisions/0049-no-stock-bytes.md)).
@@ -503,3 +530,8 @@ For setup soundtapd's Wi-Fi manager adds `wlan1` as `__ap` and starts `hostapd`,
 ([ADR 0031](../decisions/0031-bco-network-card.md)). The driver passes hostapd's beacon to the BCO. The WiLD core
 beacons from it with the BCO's own MAC as BSSID and answers probes; our BCO app answers authentication and
 association (AP SME in the device). Channel 1 then carries `wlan1`'s frames.
+
+The BCO reports its free Wi-Fi transmit buffers as credit; the driver stops `wlan0`'s (or `wlan1`'s) queue
+while there is none, so frames wait in the SCM's qdisc instead of being dropped on the BCO. The BCO's transmit
+counters and the flow-control state are in `/sys/class/net/bcolink0/bco/` and in `bco` in `/api/health`
+([detail](../hardware/st20/bco-network-card.md#flow-control-and-the-counters)).

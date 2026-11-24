@@ -176,32 +176,29 @@ func TestDisplaySettingsRoundTrip(t *testing.T) {
 	var before struct {
 		HasDisplay bool `json:"hasDisplay"`
 		Display    struct {
-			Hour12    bool    `json:"hour12"`
-			City      string  `json:"city"`
-			Lat       float64 `json:"lat"`
-			Timezone  string  `json:"timezone"`
-			WeatherOn bool    `json:"weatherOn"`
+			Hour12   bool   `json:"hour12"`
+			Timezone string `json:"timezone"`
 		} `json:"display"`
 	}
 	decodeBody(t, do(t, h, "GET", "/api/settings", ""), &before)
 	if before.HasDisplay {
 		t.Error("hasDisplay is true with no panel wired")
 	}
-	if before.Display.City != "" || before.Display.WeatherOn {
-		t.Errorf("display defaults to %+v, want no town and no weather", before.Display)
+	if before.Display.Timezone != "" || before.Display.Hour12 {
+		t.Errorf("display defaults to %+v, want no zone, 24-hour", before.Display)
 	}
 
-	const utrecht = `{"display":{"hour12":true,"city":"Utrecht","lat":52.09,"lon":5.12,"timezone":"Europe/Amsterdam","weatherOn":true}}`
-	if rec := do(t, h, "PUT", "/api/settings", utrecht); rec.Code != 200 {
+	const amsterdam = `{"display":{"hour12":true,"timezone":"Europe/Amsterdam"}}`
+	if rec := do(t, h, "PUT", "/api/settings", amsterdam); rec.Code != 200 {
 		t.Fatalf("put display: %d %s", rec.Code, rec.Body)
 	}
 	decodeBody(t, do(t, h, "GET", "/api/settings", ""), &before)
-	if d := before.Display; !d.Hour12 || d.City != "Utrecht" || d.Lat != 52.09 || d.Timezone != "Europe/Amsterdam" || !d.WeatherOn {
+	if d := before.Display; !d.Hour12 || d.Timezone != "Europe/Amsterdam" {
 		t.Fatalf("display = %+v", d)
 	}
 
 	if rec := do(t, h, "PUT", "/api/settings", `{"display":{"clockOff":false}}`); rec.Code != 400 {
-		t.Fatalf("clock without a town gave %d, want 400", rec.Code)
+		t.Fatalf("clock without a zone gave %d, want 400", rec.Code)
 	}
 }
 
@@ -213,5 +210,38 @@ func TestSupportBundleTailsAllRetainedBootLogs(t *testing.T) {
 		if !slices.Contains(have, filepath.Join(home, want)) {
 			t.Errorf("%s missing from the support bundle logs", want)
 		}
+	}
+}
+
+// The ST20's BCO counters and flow control are in /api/health as the soundtap_bco driver shows
+// them under /sys/class/net/bcolink0/bco (ADR 0031); without that directory there is no bco.
+func TestHealthReportsBCOLink(t *testing.T) {
+	root := t.TempDir()
+	t.Cleanup(web.SetSystemRootForTest(root))
+	h, _ := newServer(t)
+	var none map[string]any
+	decodeBody(t, do(t, h, "GET", "/api/health", ""), &none)
+	if _, ok := none["bco"]; ok {
+		t.Fatalf("bco = %v without a BCO link", none["bco"])
+	}
+
+	dir := filepath.Join(root, "sys/class/net/bcolink0/bco")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, v := range map[string]string{"tx_ok": "1200", "tx_failed": "3", "tx_dropped": "17",
+		"link_dropped": "19", "tx_frames": "1220", "flow": "1", "flow_stops": "42"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(v+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var got struct {
+		BCO map[string]any `json:"bco"`
+	}
+	decodeBody(t, do(t, h, "GET", "/api/health", ""), &got)
+	want := map[string]any{"txOk": float64(1200), "txFailed": float64(3), "txDropped": float64(17),
+		"linkDropped": float64(19), "txFrames": float64(1220), "flowControl": true, "flowStops": float64(42)}
+	if !reflect.DeepEqual(got.BCO, want) {
+		t.Errorf("bco = %v, want %v", got.BCO, want)
 	}
 }

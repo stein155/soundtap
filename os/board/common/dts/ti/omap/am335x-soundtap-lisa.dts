@@ -1,0 +1,153 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: 2026 SoundTap contributors
+/*
+ * The SoundTouch adapter on the Shelby 2 module (stock lisa, lisa2 under SoundTap), for the SA-4, SoundTouch Stereo JC,
+ * Wave SoundTouch, CineMate and older Lifestyle and VideoWave hosts. Preview, never booted.
+ * Compared with the stock rhino_sm2 tree, stock's lisa_sm2 changes these, so this is the ST10's
+ * tree with them:
+ *
+ * - UART0 is the Bose link to the host (stock uart0_pins_default, 0x170 0x30 0x174 0x00), not
+ *   the infrared receiver's line: soundtapd is the link's master over /dev/ttyS0
+ *   (internal/abl). There is no IR receiver.
+ * - No codec: stock disables the AIC3256 and sends I2S from McASP0 at 46875 Hz, on the ST10's
+ *   pads, to a converter on the adapter board. The ST10's McASP output node stays. Stock's
+ *   APConfig-<host> drives the converter through DacAdcReset (dac_adc_reset, gpio2_10, high
+ *   enables it, 3 s after power-up) and mutes through the host (ABLMute), never mute_out: this
+ *   tree holds the converter enabled and mute_out (gpio2_8) low, as stock's gpiodev boots it.
+ * - The rear Ethernet port, wired as on the ST300 (stock rmii1_pins_default, RMII, PHY at 0).
+ * - Two lamps, the Series III's: white PWM on DM timer 4, amber gpio2_17.
+ * - The rear micro-B mux (gpiodev microbsel, gpio0_4) held low as stock boots it.
+ */
+#include "am335x-soundtap-st10.dts"
+
+/ {
+	model = "Bose SoundTouch adapter (SoundTap lisa)";
+	compatible = "bose,lisa-sm2", "ti,am33xx";
+
+	chosen {
+		bootargs = "console=ttyS3,115200n8 root=ubi0:rootfs ro rootfstype=ubifs ubi.mtd=9,2048 rootwait init=/init mem=128M cma=8M panic=10 omap_wdt.early_enable=1 variant=lisa2 module_type=sm2 country=GB region=GB soundtap.nandroot=1 soundtap.watchdog=90";
+	};
+
+	/delete-node/ ir-receiver;
+
+	leds {
+		pinctrl-0 = <&wifi_amber_pins>;
+		/delete-node/ bt-white;
+		/delete-node/ soundtouch-white;
+		/delete-node/ soundtouch-amber;
+		/delete-node/ bt-blue;
+		/delete-node/ aux-white;
+	};
+};
+
+&am33xx_pinmux {
+	/delete-node/ pinmux-ir-pins;
+
+	wifi_amber_pins: pinmux-wifi-amber-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_LCD_DATA11, PIN_OUTPUT_PULLDOWN, MUX_MODE7) /* gpio2_17 wifi amber */
+		>;
+	};
+
+	/* The Bose link: stock uart0_pins_default. */
+	uart0_pins: pinmux-uart0-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_UART0_RXD, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_UART0_TXD, PIN_OUTPUT, MUX_MODE0)
+		>;
+	};
+
+	microbsel_pins: pinmux-microbsel-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_SPI0_D1, PIN_OUTPUT, MUX_MODE7) /* gpio0_4 microbsel */
+			AM33XX_PADCONF(AM335X_PIN_GPMC_CLK, PIN_INPUT_PULLDOWN, MUX_MODE7) /* gpio2_1 microbdet (stock 0x8c 0x27) */
+		>;
+	};
+
+	/* Stock rmii1_pins_default and davinci_mdio_default, as on the ST300. */
+	rmii1_pins: pinmux-rmii1-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_MII1_CRS, PIN_INPUT_PULLDOWN, MUX_MODE1) /* rmii1_crs_dv */
+			AM33XX_PADCONF(AM335X_PIN_MII1_RX_ER, PIN_INPUT_PULLDOWN, MUX_MODE1) /* rmii1_rx_er */
+			AM33XX_PADCONF(AM335X_PIN_MII1_TX_EN, PIN_OUTPUT_PULLDOWN, MUX_MODE1) /* rmii1_tx_en */
+			AM33XX_PADCONF(AM335X_PIN_MII1_TXD1, PIN_OUTPUT_PULLDOWN, MUX_MODE1) /* rmii1_txd1 */
+			AM33XX_PADCONF(AM335X_PIN_MII1_TXD0, PIN_OUTPUT_PULLDOWN, MUX_MODE1) /* rmii1_txd0 */
+			AM33XX_PADCONF(AM335X_PIN_MII1_RXD1, PIN_INPUT_PULLDOWN, MUX_MODE1) /* rmii1_rxd1 */
+			AM33XX_PADCONF(AM335X_PIN_MII1_RXD0, PIN_INPUT_PULLDOWN, MUX_MODE1) /* rmii1_rxd0 */
+			AM33XX_PADCONF(AM335X_PIN_RMII1_REF_CLK, PIN_INPUT_PULLDOWN, MUX_MODE0) /* rmii1_refclk */
+		>;
+	};
+
+	mdio_pins: pinmux-mdio-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_MDIO, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_MDC, PIN_OUTPUT_PULLUP, MUX_MODE0)
+		>;
+	};
+};
+
+&uart0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart0_pins>;
+	status = "okay";
+};
+
+&gpio0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&microbsel_pins>;
+
+	microbsel-hog {
+		gpio-hog;
+		gpios = <4 GPIO_ACTIVE_HIGH>;
+		output-low;
+		line-name = "microbsel";
+	};
+};
+
+&gpio1 {
+	/delete-node/ ir-power-hog;
+};
+
+&gpio2 {
+	/* The converter enabled: stock's DacAdcReset, polarity true. */
+	dac-reset-hog {
+		gpio-hog;
+		gpios = <10 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "dac_adc_reset";
+	};
+
+	/* mute_out as stock's gpiodev boots it (initial 0); nothing on the adapter drives it. */
+	mute-out-hog {
+		gpio-hog;
+		gpios = <8 GPIO_ACTIVE_HIGH>;
+		output-low;
+		line-name = "mute_out";
+	};
+};
+
+/* Rear Ethernet: RMII, PHY at address 0, reference clock from the board (stock rmii-clock-ext). */
+&mac_sw {
+	pinctrl-names = "default";
+	pinctrl-0 = <&rmii1_pins>;
+	status = "okay";
+};
+
+&davinci_mdio_sw {
+	pinctrl-names = "default";
+	pinctrl-0 = <&mdio_pins>;
+
+	ethphy0: ethernet-phy@0 {
+		reg = <0>;
+	};
+};
+
+&cpsw_port1 {
+	phy-handle = <&ethphy0>;
+	phy-mode = "rmii";
+	ti,dual-emac-pvid = <1>;
+};
+
+&cpsw_port2 {
+	status = "disabled";
+};

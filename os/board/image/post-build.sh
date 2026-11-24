@@ -39,6 +39,10 @@ test "$size" -le 4980736 || {
 rm -f "$target/boot/zImage"
 install -m 0644 "$BINARIES_DIR/am335x-soundtap-st20.dtb" "$target/boot/spotty_scm.dtb"
 install -m 0644 "$BINARIES_DIR/am335x-soundtap-st20.dtb" "$target/boot/am335x-soundtap-st20.dtb"
+# SoundTouch Portable preview: the ST20's board with its battery gauge.
+install -m 0644 "$BINARIES_DIR/am335x-soundtap-portable.dtb" "$target/boot/taigan_scm.dtb"
+# SoundTouch adapter preview on the SCM: the ST20's board with the Bose link on UART0.
+install -m 0644 "$BINARIES_DIR/am335x-soundtap-lisa-scm.dtb" "$target/boot/lisa_scm.dtb"
 kver=$(sed -n 's/^BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="\(.*\)"$/\1/p' "${BR2_CONFIG:?}")
 # 4 KiB of headroom in the ST10 tree for what U-Boot writes into it at boot.
 "${BUILD_DIR:?}/linux-$kver/scripts/dtc/dtc" -q -I dtb -O dtb -p 4096 \
@@ -50,6 +54,12 @@ install -m 0644 "$BINARIES_DIR/am335x-soundtap-st300.dtb" "$target/boot/ginger_s
 # pads are other things on these boards. Same 4 KiB headroom as the ST10's.
 "${BUILD_DIR:?}/linux-$kver/scripts/dtc/dtc" -q -I dtb -O dtb -p 4096 \
 	-o "$target/boot/spotty3_sm2.dtb" "$BINARIES_DIR/am335x-soundtap-st20-iii.dtb"
+# SoundTouch SA-5 preview: the ST10's module on its amplifier board. Same headroom.
+"${BUILD_DIR:?}/linux-$kver/scripts/dtc/dtc" -q -I dtb -O dtb -p 4096 \
+	-o "$target/boot/burns_sm2.dtb" "$BINARIES_DIR/am335x-soundtap-sa5.dtb"
+# SoundTouch adapter preview on the SM2: the ST10's module without its codec. Same headroom.
+"${BUILD_DIR:?}/linux-$kver/scripts/dtc/dtc" -q -I dtb -O dtb -p 4096 \
+	-o "$target/boot/lisa_sm2.dtb" "$BINARIES_DIR/am335x-soundtap-lisa.dtb"
 
 conf=$target/lib/firmware/ti-connectivity
 # linux-firmware's TI_WL18XX also brings older firmware revisions and WiLink6/7 files; the
@@ -64,7 +74,7 @@ rm -f "$conf/wl18xx-fw.bin" "$conf/wl18xx-fw-2.bin" "$conf/wl18xx-fw-3.bin" \
 test -f "$conf/wl18xx-conf.bin" || { echo "post-build: wl18xx-conf.bin missing" >&2; exit 1; }
 
 for f in uImage-rhino uImage-binky uImage-ginger uImage-spotty rhino_sm2.dtb binky_sm2.dtb \
-	ginger_sm2.dtb spotty_scm.dtb spotty3_sm2.dtb; do
+	ginger_sm2.dtb spotty_scm.dtb spotty3_sm2.dtb taigan_scm.dtb burns_sm2.dtb lisa_scm.dtb lisa_sm2.dtb; do
 	test -s "$target/boot/$f" || { echo "post-build: /boot/$f missing" >&2; exit 1; }
 done
 

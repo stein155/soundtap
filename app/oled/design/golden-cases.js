@@ -19,6 +19,6 @@ const CASES = [
   ["pairing", "pairing", 0, {}],
   ["standby", "standby", 0, {}],
   ["standby-drift", "standby", 180000, {}],
-  ["standby-temp", "standby", 0, { temp: true }],
+  ["standby-12h", "standby", 0, { h12: true }],
   ["offline", "offline", 0, {}],
 ];

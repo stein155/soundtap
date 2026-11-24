@@ -191,6 +191,7 @@ func main() {
 	recents := recentStations(sp, opt.home)
 	spot := spotify.New()
 	disp := display.New(ctx, displayPath(), func(context.Context) bool { return sp.IsStandby() }, log.With("comp", "display"))
+	takeStockClock(set, fromStock, disp.Available(), log)
 	gate := newBootGate()
 	wifiConf := filepath.Join(filepath.Dir(opt.home), "wifi.conf")
 	changes, nameUpdates, receiverUpdates := changeNotifiers()

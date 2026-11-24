@@ -40,6 +40,8 @@
 #ifdef SOUNDTAP_INSTALL_NAND
 #include <sys/reboot.h>
 #include "mtd.h"
+
+static const char *board_variant(void);
 #endif
 
 /* Stock connects to :40015, so that is what the installed binary must listen on. The
@@ -601,11 +603,20 @@ static const struct model_boot model_boots[] = {
     { "spotty", "spotty_scm.dtb", "uImage-spotty", "scm" },
     /* SoundTouch 30 Series I: the ST20's board (see board_variant). */
     { "mojo", "spotty_scm.dtb", "uImage-spotty", "scm" },
+    /* SoundTouch Portable: the ST20's board with a battery, its own tree. */
+    { "taigan", "taigan_scm.dtb", "uImage-spotty", "scm" },
+    /* The SoundTouch adapter: lisa on the SCM (the ST20's board), lisa2 on the SM2. */
+    { "lisa", "lisa_scm.dtb", "uImage-spotty", "scm" },
+    { "lisa2", "lisa_sm2.dtb", "uImage-rhino", "sm2" },
     /* ST20 and ST30 Series III: the ST10's module and kernel, their own tree (no lamps). */
     { "spotty3", "spotty3_sm2.dtb", "uImage-rhino", "sm2" },
     { "mojo3", "spotty3_sm2.dtb", "uImage-rhino", "sm2" },
+    /* SoundTouch SA-5: the ST10's module on an amplifier board, its own tree. */
+    { "burns", "burns_sm2.dtb", "uImage-rhino", "sm2" },
     /* SoundTouch 300, proof of concept. */
     { "ginger", "ginger_sm2.dtb", "uImage-ginger", "sm2" },
+    /* Lifestyle 600/650: the ST300's module and tree (see board_variant). */
+    { "bardeen", "ginger_sm2.dtb", "uImage-ginger", "sm2" },
 };
 
 /* The recipes for the board this is running on, filled once. NULL means a rendered entry did
@@ -697,7 +708,7 @@ static int switch_bootcmd(int to_pong, int with_bootloaders, int redundant)
      * then points bootcmd back at stock and saves it before it loads our kernel: every
      * SoundTap boot there is a one-shot. saveenv is in that U-Boot's command table and writes
      * the same 0x2000 environment (fw_env.config, CRC over 0x2000). Ours counts boots. */
-    if (!strcmp(running_variant(), "ginger") && !with_bootloaders)
+    if (!strcmp(board_variant(), "ginger") && !with_bootloaders)
         want = to_pong ? "bootcmd=setenv bootcmd run nand_boot; saveenv; run nand_boot2;"
                        : "bootcmd=setenv bootcmd run nand_boot2; saveenv; run nand_boot;";
     char persistent[96];
@@ -713,10 +724,11 @@ static int switch_bootcmd(int to_pong, int with_bootloaders, int redundant)
     int replaced = 0;
     int nand_args = 0;
 #ifdef SOUNDTAP_INSTALL_BOOTLOADERS
-    /* Our U-Boot's console is UART0, which on the ST300 is the soundbar processor's 921600 link.
-     * Any byte it sends during the factory bootdelay=1 window would stop autoboot at a prompt
+    /* Our U-Boot's console is UART0, which on the ST300 is the soundbar processor's 921600 link
+     * and on the SoundTouch adapter (stock variant lisa, either module) its host's Bose link.
+     * Any byte there during the factory bootdelay=1 window would stop autoboot at a prompt
      * nobody can reach. -2 boots without looking at the console at all. */
-    int lpm_on_console = !strcmp(running_variant(), "ginger");
+    int lpm_on_console = !strcmp(board_variant(), "ginger") || !strcmp(running_variant(), "lisa");
     int carried[MAINLINE_ENV_COUNT];
     memset(carried, 0, sizeof carried);
 #endif
@@ -939,15 +951,28 @@ static const char *running_module(void)
  *   - The ST20 and ST30 Series III say spotty and mojo too, on the ST10's Shelby 2 module,
  *     and stock's spotty_sm2 and mojo_sm2 trees wire the amplifier, codec, keypad and IR as
  *     rhino_sm2 does, so they take the ST10's. Under SoundTap they are spotty3 and mojo3.
+ *   - burns, the SoundTouch SA-5, is the ST10's module on an amplifier board with an STM32
+ *     controller: the ST10's kernel, boot chain and payloads, its own tree.
+ *   - lisa, the SoundTouch adapter, says lisa on both modules: on the SCM it is the ST20's
+ *     board (its tree, UART0 as the host link), on the SM2 the ST10's module without a codec,
+ *     lisa2 under SoundTap.
+ *   - taigan, the SoundTouch Portable, is the ST20's board too, with a battery gauge on I2C0
+ *     and its own codec script: the ST20's kernel, boot chain and payloads, its own tree.
+ *   - bardeen, the Lifestyle 600/650's module, is the ST300's: stock's bardeen_sm2 and
+ *     ginger_sm2 trees hold the same properties, and stock runs the same A4VServer on the same
+ *     UART0 link to its console. It takes the ST300's kernel, tree, boot chain and payloads.
  * soundtap_variant() is the name each keeps on the command line, for its own codec script
  * and its name. */
 static const char *board_variant(void)
 {
     const char *v = running_variant();
     int sm2 = !strcmp(running_module(), "sm2");
-    if (!strcmp(v, "spotty3") || !strcmp(v, "mojo3")) return "rhino";
+    if (!strcmp(v, "spotty3") || !strcmp(v, "mojo3") || !strcmp(v, "burns") || !strcmp(v, "lisa2"))
+        return "rhino";
+    if (!strcmp(v, "lisa")) return sm2 ? "rhino" : "spotty";
     if ((!strcmp(v, "spotty") || !strcmp(v, "mojo")) && sm2) return "rhino";
-    if (!strcmp(v, "mojo")) return "spotty";
+    if (!strcmp(v, "mojo") || !strcmp(v, "taigan")) return "spotty";
+    if (!strcmp(v, "bardeen")) return "ginger";
     return v;
 }
 
@@ -957,6 +982,7 @@ static const char *soundtap_variant(void)
     if (!strcmp(running_module(), "sm2")) {
         if (!strcmp(v, "spotty")) return "spotty3";
         if (!strcmp(v, "mojo")) return "mojo3";
+        if (!strcmp(v, "lisa")) return "lisa2";
     }
     return v;
 }
@@ -968,12 +994,37 @@ static int known_variant(void)
                 !strcmp(variant, "spotty") || !strcmp(variant, "ginger");
     const char *want = !strcmp(variant, "spotty") ? "scm" : "sm2";
     const char *module = running_module();
+    /* A board always names its module in its device tree; one that cannot be read is no
+     * board this package knows. Only the offline tests, which force the variant and give no
+     * tree at all, leave it out. */
+    if (known && !module[0] && !(getenv("SOUNDTAP_VARIANT") && !getenv("SOUNDTAP_DT_COMPATIBLE"))) {
+        swu_log("variant %s with no readable module type: refusing", running_variant());
+        return 0;
+    }
     if (known && module[0] && strcmp(module, want)) {
         swu_log("variant %s on a %s module: not a board this package was built for",
                 running_variant(), module);
         return 0;
     }
     return known;
+}
+
+/* The Preview boards (ADR 0133): worked out from Bose's software, never run on hardware.
+ * They install only from the preview package. */
+#ifdef SOUNDTAP_PREVIEW_PACKAGE
+static const int preview_package = 1;
+#else
+static const int preview_package = 0;
+#endif
+
+static int preview_board(void)
+{
+    const char *v = running_variant();
+    int sm2 = !strcmp(running_module(), "sm2");
+    if ((!strcmp(v, "spotty") || !strcmp(v, "mojo")) && sm2) return 1; /* Series III */
+    return !strcmp(v, "mojo") || !strcmp(v, "spotty3") || !strcmp(v, "mojo3") ||
+           !strcmp(v, "taigan") || !strcmp(v, "burns") || !strcmp(v, "lisa") ||
+           !strcmp(v, "lisa2");
 }
 
 /* A module name may carry a model suffix: "ubi.img.binky" is for the Wireless Link only.
@@ -1588,6 +1639,22 @@ int main(int argc, char **argv)
 #ifdef SOUNDTAP_INSTALL_NAND
     if (!known_variant()) {
         swu_log("unknown hardware variant; refusing before NAND is opened");
+        swu_failure(&link);
+        return 1;
+    }
+    /* The Lifestyle 600/650 module has no recovery route at all (ADR 0133): no stick gesture
+     * and no known ROM-USB entry. Its code is carried, but nothing installs on one until a
+     * way back is proven. */
+    if (!strcmp(running_variant(), "bardeen")) {
+        swu_log("Lifestyle 600/650 module: no proven way back; refusing before NAND is opened");
+        swu_failure(&link);
+        return 1;
+    }
+    /* A Preview board (ADR 0133) installs only from the preview package, whose installer is
+     * built with SOUNDTAP_PREVIEW_PACKAGE: the owner picked it by name and confirmed it. */
+    if (preview_board() && !preview_package) {
+        swu_log("Preview board %s: this is not the preview package; refusing before NAND is opened",
+                running_variant());
         swu_failure(&link);
         return 1;
     }

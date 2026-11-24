@@ -36,9 +36,9 @@ var golden = map[string]func() *Frame{
 	},
 	"aux":           func() *Frame { return Aux(Bar{Time: "08:42"}, "Externe ingang") },
 	"pairing":       func() *Frame { return Pairing("Koppelen…", "Zoek naar Keuken") },
-	"standby":       func() *Frame { return Standby("08:42", "donderdag 25 sep", "", "", 0) },
-	"standby-drift": func() *Frame { return Standby("08:42", "donderdag 25 sep", "", "", 3) },
-	"standby-temp":  func() *Frame { return Standby("08:42", "", "do 25 sep", "14°", 0) },
+	"standby":       func() *Frame { return Standby("08:42", "", 0) },
+	"standby-drift": func() *Frame { return Standby("08:42", "", 3) },
+	"standby-12h":   func() *Frame { return Standby("8:42", "PM", 0) },
 	"offline":       func() *Frame { return Offline(Bar{Time: "08:42"}, "Geen verbinding", "Opnieuw proberen", 0) },
 }
 
@@ -146,4 +146,33 @@ func abs(n int) int {
 		return -n
 	}
 	return n
+}
+
+// The Portable's battery sits left of the time, in stock's bands; without one nothing is
+// drawn there and the stereo mark keeps its place.
+func TestStatusBarBattery(t *testing.T) {
+	lit := func(f *Frame, x0, x1 int) float64 {
+		var sum float64
+		for y := 2; y < 14; y++ {
+			for x := x0; x < x1; x++ {
+				sum += f.lum[y*W+x]
+			}
+		}
+		return sum
+	}
+	bar := func(b Bar) *Frame { f := &Frame{}; f.statusBar(b); return f }
+	plain := bar(Bar{Time: "12:00"})
+	low := bar(Bar{Time: "12:00", Battery: 10})
+	full := bar(Bar{Time: "12:00", Battery: 100})
+	if lit(plain, 60, 96) != 0 {
+		t.Fatal("something drawn where the battery goes, without a battery")
+	}
+	if l, f := lit(low, 60, 96), lit(full, 60, 96); l == 0 || f <= l {
+		t.Fatalf("battery icon light %v at 10 %%, %v at 100 %%: want more bars when full", l, f)
+	}
+	mark := bar(Bar{Time: "12:00", Mark: "L"})
+	markBattery := bar(Bar{Time: "12:00", Mark: "L", Battery: 50})
+	if lit(mark, 60, 120) == lit(markBattery, 60, 120) {
+		t.Fatal("the battery did not change the bar with a stereo mark")
+	}
 }

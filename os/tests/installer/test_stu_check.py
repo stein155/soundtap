@@ -144,6 +144,25 @@ class ValidateSTUTest(unittest.TestCase):
             found = checker.validate(output.read_bytes(), "soundtap-tri")
         self.assertEqual([module[3] for module in found], bstu.SOUNDTAP_TRI_MODULES)
 
+    def test_preview_package_differs_only_in_its_installer(self):
+        """ADR 0133: the preview package is the universal one with module 0 swapped; a
+        different payload anywhere after it is refused."""
+        payloads = {name: (name.encode() + b"x" * 64) for name in bstu.SOUNDTAP_TRI_MODULES}
+        with tempfile.TemporaryDirectory() as tmp:
+            main, preview = Path(tmp) / "main.stu", Path(tmp) / "preview.stu"
+            bstu.assemble_self_contained_stu(payloads, main, "soundtap-tri")
+            # A longer installer moves every later header; that alone is no difference.
+            bstu.assemble_self_contained_stu(
+                {**payloads, "soundtap-installer": b"preview installer" * 9}, preview, "soundtap-tri")
+            self.assertTrue(checker.same_payloads(main, preview, "soundtap-tri"))
+            for name in ("soundtap-rootfs", "soundtap-spl.spotty"):
+                bstu.assemble_self_contained_stu(
+                    {**payloads, "soundtap-installer": b"preview", name: payloads[name] + b"y"},
+                    preview, "soundtap-tri")
+                with self.assertRaisesRegex(ValueError, "after the installer differs", msg=name):
+                    checker.validate_same_payloads(main.read_bytes(), preview.read_bytes())
+                self.assertFalse(checker.same_payloads(main, preview, "soundtap-tri"))
+
     def test_tri_model_uses_each_models_existing_rootfs_limit(self):
         self.assertEqual(bstu.MODEL_ROOTFS_LIMITS, {
             "rhino": bstu.PROFILES["st10"]["stock_ubi_module_size"],

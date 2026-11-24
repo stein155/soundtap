@@ -26,14 +26,9 @@ done
 grep -qx 'CONFIG_CMDLINE=""' "$images/kernel.config" \
 	|| ! grep -q '^CONFIG_CMDLINE=' "$images/kernel.config" \
 	|| { echo "kernel carries a built-in command line" >&2; exit 1; }
-# U-Boot holds a USB stick to the image's profile (ADR 0048). A tree built for the other
-# profile keeps its U-Boot, so check the one going into the package says what the image says.
-profile=$(cat "${TARGET_DIR:?}/etc/soundtap/profile")
-LC_ALL=C grep -aqF "soundtap-uboot-profile=$profile)" "$images/wla-uboot/u-boot.img" \
-	|| { echo "wla-uboot/u-boot.img is not built for the $profile profile; rebuild host-soundtap-bootloaders" >&2; exit 1; }
 (
 	cd "$images"
 	sha256sum zImage uImage-st10 uImage-st20 kernel.config rootfs.ubi \
 		am335x-soundtap-st10.dtb am335x-soundtap-wla.dtb am335x-soundtap-st20.dtb am335x-soundtap-st300.dtb \
-		am335x-soundtap-st20-iii.dtb wla-spl/MLO wla-uboot/u-boot.img st20-spl/MLO >SHA256SUMS
+		am335x-soundtap-st20-iii.dtb am335x-soundtap-portable.dtb am335x-soundtap-sa5.dtb am335x-soundtap-lisa.dtb am335x-soundtap-lisa-scm.dtb wla-spl/MLO wla-uboot/u-boot.img st20-spl/MLO >SHA256SUMS
 )

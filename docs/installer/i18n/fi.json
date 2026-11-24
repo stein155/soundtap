@@ -7,6 +7,7 @@
 
   "s1.title": "Mikä kaiutin sinulla on?",
   "model.other": "Muu malli",
+  "model.preview": "{model} (esiversio)",
   "s1.otherHelp": "Onko sinulla muu malli? <a>Auta saamaan se toimimaan</a>: ensimmäinen vaihe on tutkimus, joka vain lukee tietoja.",
 
   "s2.title": "Mitä tarvitset",
@@ -44,6 +45,7 @@
   "br.ip": "Kaiuttimen IP-osoite",
   "br.ipHint": "Bose-sovelluksessa: Asetukset, Kaiuttimen asetukset, oma kaiuttimesi, Tietoja. Tai katso se reitittimestäsi.",
   "br.agree": "Ymmärrän, että SoundTap on alfavaiheen ohjelmisto, joka korvaa kaiken kaiuttimessa, ja olen lukenut, miten palataan Boseen (vaihe 6).",
+  "br.previewAgree": "Tämä malli on esiversio: SoundTap on päätelty Bosen omasta ohjelmistosta, eikä kukaan ole vielä ajanut sitä tässä mallissa. Se ei ehkä soi, eikä paluutietä ole ehkä todennettu. Asennan sen silti.",
   "br.go": "Asenna SoundTap",
   "br.pickModel": "Valitse ensin kaiuttimesi vaiheessa 1.",
   "br.trust": "Sivu ei voi lukea mallia eikä sen ohjelmistoa kaiuttimesta, joten se luottaa ilmoitukseesi molempien osalta.",
@@ -52,6 +54,7 @@
   "judge.noModel": "{model}: ei vielä tuettu. SoundTapia ei ole ajettu siinä, joten tämä sivu ei asenna sitä.",
   "judge.no": "Ei vielä tuettu. SoundTapia ei ole ajettu tässä mallissa, joten tämä sivu ei asenna sitä.",
   "judge.unread": "Kirjoita Bose-ohjelmiston versio, jonka Bose-sovellus näyttää tälle kaiuttimelle.",
+  "judge.preview": "{model}: esiversio. SoundTap on päätelty Bosen omasta ohjelmistosta, eikä kukaan ole vielä ajanut sitä tässä mallissa; valitse alta esiversion valintaruutu, jos haluat asentaa sen silti.",
   "judge.old": "Bosen ohjelmisto {version}: {model} tarvitsee version {minimum} tai uudemman. Päivitä ensin Bose Bose-sovelluksessa.",
 
   "st.asking": "Kysytään kaiuttimelta…",

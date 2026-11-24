@@ -101,3 +101,8 @@ nav:
           - Audio configuration: hardware/wla/audio-config.md
       - SoundTouch 300:
           - hardware/st300/README.md
+      - Previews:
+          - SoundTouch Portable: hardware/portable/README.md
+          - SoundTouch SA-5: hardware/sa5/README.md
+          - Lifestyle 600/650 module: hardware/ls650/README.md
+          - SoundTouch adapter: hardware/lisa/README.md

@@ -483,7 +483,7 @@ func TestRestoreRoundTripsEverySetting(t *testing.T) {
 			BaseTopic: "soundtap/keuken", DiscoveryPrefix: "ha", TLS: true,
 		},
 		Audio:        settings.Audio{Volume: 23, Bass: -3, HasVolume: true, AutoOff: 45},
-		Display:      settings.Display{ClockOff: true, Hour12: true, City: "Amsterdam", Lat: 52.37, Lon: 4.89, Timezone: "Europe/Amsterdam", WeatherOn: true, Brightness: 50},
+		Display:      settings.Display{ClockOff: true, Hour12: true, Timezone: "Europe/Amsterdam", Brightness: 50},
 		Alarm:        settings.Alarm{Enabled: true, Time: "06:45", Slot: 3, Timezone: "Europe/Amsterdam"},
 		Multiroom:    settings.Multiroom{DissolveGroups: true, SyncVolume: true},
 		Integrations: settings.Integrations{SpotifyOff: true, AirPlayOff: true},

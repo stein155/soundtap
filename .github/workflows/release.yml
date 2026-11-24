@@ -6,7 +6,9 @@ name: Release
 # Two release lanes, named and numbered per ADR 0035:
 #   os:  SoundTap Core, the universal STU, tagged os-vX.Y.Z from os/VERSION. It publishes the
 #        package build.yml built for the commit being released, byte for byte; it never
-#        rebuilds. Run build.yml on that commit first.
+#        rebuilds. Run build.yml on that commit first. Beside it goes the preview package
+#        (ADR 0133), the same payloads with the preview build of the installer, with its own
+#        checksum and, from sign.yml, its own .sig.
 #   app: the SoundTap app, soundtapd with the UI embedded, tagged app-vX.Y.Z from
 #        app/VERSION. Installed through the speaker's app upload (/api/soundtapd), which
 #        refuses it on a Core whose /etc/soundtap/os-api is below what the app needs.
@@ -88,7 +90,7 @@ jobs:
           version=$(tr -d ' \n' < os/VERSION)
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-alpha\.[1-9][0-9]*)?$ ]] ||
             { echo "os/VERSION must be X.Y.Z or X.Y.Z-alpha.N" >&2; exit 2; }
-          tag=os-v$version stu=SoundTap-Core-$version.stu
+          tag=os-v$version stu=SoundTap-Core-$version.stu preview=SoundTap-Core-$version-preview.stu
           pre=()
           if [[ "$version" == *-alpha.* ]]; then pre=(--prerelease); fi
           ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null ||
@@ -110,21 +112,27 @@ jobs:
             echo "candidate is the $profile profile: run Build with profile=production" >&2
             exit 1
           }
-          (cd dist && sha256sum -c "$stu.sha256")
+          # The preview package (ADR 0133): built with the candidate, the only package a
+          # Preview board installs from, and the main package's bytes but for module 0.
+          test -s "dist/$preview" || { echo "candidate lacks $preview: Build from this commit makes it" >&2; exit 1; }
+          (cd dist && sha256sum -c "$stu.sha256" && sha256sum -c "$preview.sha256")
           python3 os/support/stu_check.py accept "dist/$stu"
+          python3 os/support/stu_check.py accept "dist/$preview"
+          python3 os/support/stu_check.py same-payloads "dist/$stu" "dist/$preview"
           # The tag the notes compare with, alphas sorted before their release: for an alpha
           # the newest tag, for a release the previous release, whose owners saw no alpha.
           previous=$(git -c versionsort.suffix=-alpha. tag -l 'os-v*' --sort=-v:refname |
             { if ((${#pre[@]})); then cat; else grep -v -e -alpha. || true; fi; } | head -1)
           python3 tools/release/notes.py os "$version" "$stu" \
-            "$(cut -d ' ' -f 1 "dist/$stu.sha256")" $previous > dist/notes.md
+            "$(cut -d ' ' -f 1 "dist/$stu.sha256")" $previous \
+            --preview "$preview" "$(cut -d ' ' -f 1 "dist/$preview.sha256")" > dist/notes.md
           # The GPL's sources and the SBOM travel with every release that ships the binaries.
           for f in "SoundTap-Core-$version-sources.tar" "SoundTap-Core-$version.cdx.json"; do
             test -s "dist/$f" || { echo "candidate lacks $f: Build with profile=production makes it" >&2; exit 1; }
           done
           gh release create "$tag" --target "$GITHUB_SHA" --title "SoundTap Core $version" \
             --notes-file dist/notes.md --draft "${pre[@]}" \
-            "dist/$stu" "dist/$stu.sha256" \
+            "dist/$stu" "dist/$stu.sha256" "dist/$preview" "dist/$preview.sha256" \
             "dist/SoundTap-Core-$version-sources.tar" "dist/SoundTap-Core-$version.cdx.json"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 

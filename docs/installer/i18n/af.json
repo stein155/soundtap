@@ -7,6 +7,7 @@
 
   "s1.title": "Watter luidspreker het jy?",
   "model.other": "’n Ander model",
+  "model.preview": "{model} (voorskou)",
   "s1.otherHelp": "Het jy ’n ander model? <a>Help om dit aan die gang te kry</a>: die eerste stap is ’n ondersoek wat net lees.",
 
   "s2.title": "Wat jy nodig het",
@@ -44,6 +45,7 @@
   "br.ip": "Die luidspreker se IP-adres",
   "br.ipHint": "In die Bose-toep: Instellings, Luidsprekerinstellings, jou luidspreker, Oor. Of soek dit in jou router op.",
   "br.agree": "Ek verstaan dat SoundTap alfa-sagteware is wat alles op die luidspreker vervang, en ek het gelees hoe om terug te gaan na Bose (stap 6).",
+  "br.previewAgree": "Hierdie model is ’n voorskou: SoundTap is uit Bose se eie sagteware afgelei en niemand het dit nog op hierdie model laat loop nie. Dit speel dalk nie, en die pad terug is dalk onbewese. Ek installeer dit tog.",
   "br.go": "Installeer SoundTap",
   "br.pickModel": "Kies eers jou luidspreker in stap 1.",
   "br.trust": "Die bladsy kan nie die model of sy sagteware van die luidspreker af lees nie, so dit neem jou woord vir albei.",
@@ -52,6 +54,7 @@
   "judge.noModel": "{model}: nog nie ondersteun nie. SoundTap het nog nie daarop geloop nie, so hierdie bladsy sal dit nie installeer nie.",
   "judge.no": "Nog nie ondersteun nie. SoundTap het nog nie op hierdie model geloop nie, so hierdie bladsy sal dit nie installeer nie.",
   "judge.unread": "Tik die Bose-sagtewareweergawe wat die Bose-toep vir hierdie luidspreker wys.",
+  "judge.preview": "{model}: ’n voorskou. SoundTap is uit Bose se eie sagteware afgelei en niemand het dit nog op hierdie model laat loop nie; merk die voorskou-blokkie hieronder om dit tog te installeer.",
   "judge.old": "Bose-sagteware {version}: die {model} het {minimum} of nuwer nodig. Werk eers Bose op, in die Bose-toep.",
 
   "st.asking": "Vra die luidspreker…",

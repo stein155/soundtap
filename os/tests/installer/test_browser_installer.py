@@ -59,6 +59,25 @@ const response = (body, ok = true) => ({ok, json: async () => body});
     await h.elements.form.submit({preventDefault() {}});
     assert.equal(calls, 0);
   }
+  // A preview installs only with its own box ticked, and the tick is for one model: picking
+  // another clears it, and a model changed without an event never inherits it.
+  if (table.preview.length >= 2) {
+    let calls = 0;
+    const p = await setup(async () => { calls++; return response(version); });
+    p.elements.model.value = 'p0'; p.elements.version.value = table.preview[0].minimum;
+    p.elements.model.input();
+    assert.equal(p.elements.go.disabled, true);
+    p.elements.previewAgree.checked = true; p.elements.previewAgree.change();
+    assert.equal(p.elements.go.disabled, false);
+    p.elements.model.value = 'p1'; p.elements.version.value = table.preview[1].minimum;
+    p.elements.model.input();
+    assert.equal(p.elements.previewAgree.checked, false);
+    assert.equal(p.elements.go.disabled, true);
+    p.elements.previewAgree.checked = true; p.elements.previewAgree.change();
+    p.elements.model.value = 'p0'; p.elements.version.value = table.preview[0].minimum;
+    await p.elements.form.submit({preventDefault() {}});
+    assert.equal(calls, 0);
+  }
   // HTTP success, unrelated JSON, HTML, empty versions and errors cannot mean Done.
   for (const body of [{}, {version: '1'}, {...version, os: ''}, {...version, api: '1'}, null]) {
     const h = await setup(async () => response(body));
@@ -92,6 +111,19 @@ const response = (body, ok = true) => ({ok, json: async () => body});
   uncertain.elements.ip.input();
   assert.equal(uncertain.elements.go.disabled, true);
   assert.equal(posts, 1);
+  // ADR 0133: a confirmed preview goes to the preview feed, the one that names the preview
+  // package; a supported model never does.
+  const FEED = 'https://raw.githubusercontent.com/stein155/soundtap/main/updates/soundtouch';
+  const posted = (calls) => calls.filter(([, init]) => init && init.method === 'POST').map(([, init]) => init.body);
+  if (table.preview.length) {
+    const sent = [];
+    const p = await setup(async (url, init) => { sent.push([url, init]); return response(version); });
+    p.elements.model.value = 'p0'; p.elements.version.value = table.preview[0].minimum;
+    p.elements.model.input();
+    p.elements.previewAgree.checked = true; p.elements.previewAgree.change();
+    await p.elements.form.submit({preventDefault() {}});
+    assert.deepEqual(posted(sent), ['<swUpdateStart indexUrl="' + FEED + '-preview"/>']);
+  }
   let calls = [];
   const h = await setup(async (url, init) => {
     calls.push([url, init]);
@@ -99,6 +131,7 @@ const response = (body, ok = true) => ({ok, json: async () => body});
   });
   await h.elements.form.submit({preventDefault() {}});
   assert.match(h.elements.line.textContent, /^Done/);
+  assert.deepEqual(posted(calls), ['<swUpdateStart indexUrl="' + FEED + '"/>']);
   const check = calls.find(([url]) => url.endsWith('/api/version'))[1];
   assert.equal(check.mode, 'cors'); assert.equal(check.credentials, 'omit');
   assert.equal(check.redirect, 'error'); assert.ok(check.signal);

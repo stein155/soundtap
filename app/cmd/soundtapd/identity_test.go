@@ -222,6 +222,106 @@ func TestStockPresets(t *testing.T) {
 	}
 }
 
+// stockClockFiles points the stock clock paths at a temporary /mnt/nv and writes what is
+// given: the ClockDisplay.xml text ("" for none) and the localtime link target ("" for none).
+func stockClockFiles(t *testing.T, doc, link string) {
+	t.Helper()
+	dir := t.TempDir()
+	oldClock, oldLocal := stockClockPath, stockLocaltimePath
+	t.Cleanup(func() { stockClockPath, stockLocaltimePath = oldClock, oldLocal })
+	stockClockPath = filepath.Join(dir, "ClockDisplay.xml")
+	stockLocaltimePath = filepath.Join(dir, "localtime")
+	if doc != "" {
+		if err := os.WriteFile(stockClockPath, []byte(doc), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if link != "" {
+		if err := os.Symlink(link, stockLocaltimePath); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// clockXML is stock's ClockDisplay.xml as it stands on an ST20: every field an attribute.
+func clockXML(attrs string) string {
+	return `<?xml version="1.0" encoding="UTF-8" ?>
+<clockDisplay>
+    <clockConfig ` + attrs + ` />
+</clockDisplay>`
+}
+
+func TestStockClock(t *testing.T) {
+	for _, tc := range []struct {
+		name, doc, link string
+		want            settings.Display
+		ok              bool
+	}{
+		{"nothing left", "", "", settings.Display{}, false},
+		{"off, 24 hours",
+			clockXML(`timezoneInfo="Europe/Amsterdam" userEnable="false" timeFormat="TIME_FORMAT_24HOUR_ID" userOffsetMinute="0" brightnessLevel="70" userUtcTime="0"`),
+			"/usr/share/zoneinfo/Europe/Amsterdam",
+			settings.Display{ClockOff: true, Timezone: "Europe/Amsterdam"}, true},
+		{"on, 12 hours, stock's brightness to the default",
+			clockXML(`timezoneInfo="America/New_York" userEnable="true" timeFormat="TIME_FORMAT_12HOUR_ID" brightnessLevel="40"`), "",
+			settings.Display{Hour12: true, Timezone: "America/New_York"}, true},
+		{"brightness 0 is off",
+			clockXML(`timezoneInfo="Europe/Berlin" userEnable="true" timeFormat="TIME_FORMAT_24HOUR_ID" brightnessLevel="0"`), "",
+			settings.Display{ClockOff: true, Timezone: "Europe/Berlin"}, true},
+		{"zone from the link alone", clockXML(`userEnable="true" timeFormat="TIME_FORMAT_24HOUR_ID"`),
+			"/usr/share/zoneinfo/Europe/Amsterdam", settings.Display{Timezone: "Europe/Amsterdam"}, true},
+		{"no file, only the link", "", "/usr/share/zoneinfo/Europe/London",
+			settings.Display{Timezone: "Europe/London"}, true},
+		{"an unknown zone is left out, so an on clock is not taken",
+			clockXML(`timezoneInfo="Mars/Olympus" userEnable="true"`), "", settings.Display{}, false},
+		{"a link outside zoneinfo is no zone", clockXML(`userEnable="false"`), "/etc/passwd",
+			settings.Display{ClockOff: true}, true},
+		{"a broken file still gives the link's zone", "<clockDisplay", "/usr/share/zoneinfo/Europe/Paris",
+			settings.Display{Timezone: "Europe/Paris"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stockClockFiles(t, tc.doc, tc.link)
+			got, ok := stockClock()
+			if got != tc.want || ok != tc.ok {
+				t.Errorf("stockClock() = %+v, %v; want %+v, %v", got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
+// The clock is taken from stock only on the first start after an install, only with a
+// panel, and never over settings the clock already has.
+func TestTakeStockClock(t *testing.T) {
+	stockClockFiles(t, clockXML(`timezoneInfo="Europe/Amsterdam" userEnable="false" timeFormat="TIME_FORMAT_24HOUR_ID" brightnessLevel="70"`), "")
+	want := settings.Display{ClockOff: true, Timezone: "Europe/Amsterdam"}
+	open := func() *settings.Store { return settings.Open(filepath.Join(t.TempDir(), "s.json")) }
+
+	set := open()
+	takeStockClock(set, true, true, quietLog())
+	if got := set.Get().Display; got != want {
+		t.Errorf("first start with a panel: display = %+v, want %+v", got, want)
+	}
+	for name, run := range map[string]func(*settings.Store){
+		"not from stock": func(s *settings.Store) { takeStockClock(s, false, true, quietLog()) },
+		"no panel":       func(s *settings.Store) { takeStockClock(s, true, false, quietLog()) },
+	} {
+		s := open()
+		run(s)
+		if got := s.Get().Display; got != (settings.Display{}) {
+			t.Errorf("%s: display = %+v, want untouched", name, got)
+		}
+	}
+	own := open()
+	mine := settings.Display{Hour12: true, Timezone: "Asia/Tokyo"}
+	if err := own.SetDisplay(mine); err != nil {
+		t.Fatal(err)
+	}
+	takeStockClock(own, true, true, quietLog())
+	if got := own.Get().Display; got != mine {
+		t.Errorf("own settings replaced by stock's: %+v", got)
+	}
+}
+
 // Stock's name and presets are taken over on the first start after an install, once: a
 // factory reset followed by a restart must not bring them back.
 func TestStockTakenOverOnceNotAfterReset(t *testing.T) {

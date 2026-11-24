@@ -16,7 +16,7 @@ The update check asks the GitHub API over TLS, which checks GitHub's certificate
 speaker's clock. Before NTP has answered, that check fails with an error that says nothing useful
 to the owner, or, with a clock far enough behind, accepts a certificate that is no longer valid.
 The standby clock and the alarm already wait for the first sync
-([ADR 0111](0111-st20-standby-clock-and-weather.md)).
+([ADR 0111](0111-st20-standby-clock.md)).
 
 ## Decision
 

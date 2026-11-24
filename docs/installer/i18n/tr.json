@@ -7,6 +7,7 @@
 
   "s1.title": "Hangi hoparlörünüz var?",
   "model.other": "Başka bir model",
+  "model.preview": "{model} (önizleme)",
   "s1.otherHelp": "Başka bir modeliniz mi var? <a>SoundTap’i onda çalıştırmamıza yardım edin</a>: ilk adım yalnızca okuma yapan bir incelemedir.",
 
   "s2.title": "Neye ihtiyacınız var",
@@ -44,6 +45,7 @@
   "br.ip": "Hoparlörün IP adresi",
   "br.ipHint": "Bose uygulamasında: Ayarlar, Hoparlör ayarları, hoparlörünüz, Hakkında. Ya da yönlendiricinizden bakın.",
   "br.agree": "SoundTap’in hoparlördeki her şeyi değiştiren, alfa aşamasında bir yazılım olduğunu anlıyorum ve Bose’a nasıl geri dönüleceğini okudum (6. adım).",
+  "br.previewAgree": "Bu model bir önizlemedir: SoundTap, Bose’un kendi yazılımından çıkarıldı ve henüz kimse onu bu modelde çalıştırmadı. Ses çalmayabilir ve geri dönüş yolu kanıtlanmamış olabilir. Yine de yüklüyorum.",
   "br.go": "SoundTap’i yükle",
   "br.pickModel": "Önce 1. adımda hoparlörünüzü seçin.",
   "br.trust": "Sayfa, modeli veya yazılımını hoparlörden okuyamaz; bu yüzden ikisi için de sizin söylediğinize güvenir.",
@@ -52,6 +54,7 @@
   "judge.noModel": "{model}: henüz desteklenmiyor. SoundTap henüz bu modelde çalıştırılmadı, bu yüzden bu sayfa onu yüklemez.",
   "judge.no": "Henüz desteklenmiyor. SoundTap henüz bu modelde çalıştırılmadı, bu yüzden bu sayfa onu yüklemez.",
   "judge.unread": "Bose uygulamasının bu hoparlör için gösterdiği Bose yazılım sürümünü yazın.",
+  "judge.preview": "{model}: bir önizleme. SoundTap, Bose’un kendi yazılımından çıkarıldı ve henüz kimse onu bu modelde çalıştırmadı; yine de yüklemek için aşağıdaki önizleme kutusunu işaretleyin.",
   "judge.old": "Bose yazılımı {version}: {model} için {minimum} veya daha yenisi gerekir. Önce Bose uygulamasından Bose yazılımını güncelleyin.",
 
   "st.asking": "Hoparlöre soruluyor…",

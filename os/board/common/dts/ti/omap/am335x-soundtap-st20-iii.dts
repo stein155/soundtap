@@ -14,13 +14,12 @@
  *   its supply on gpio2_23 (the PMIC's "disp" regulator). soundtapd drives the panel over
  *   /dev/spidev1.0, which the ST10 tree already has.
  * - gpio0_4 is microbsel, the rear micro-B port's mux, held low as stock holds it.
- * - The rear Ethernet port (RMII, PHY at 0, the SoundTouch 300's pads) stays off. The kernel
- *   has the CPSW switch driver the ST300 uses (ti_cpsw_new, davinci_mdio, phy-gmii-sel, as
- *   modules), but the init script loads them on the ST300 only, where eth0 took a lease on
- *   2026-11-16. Nothing on this board has been seen: not the PHY, its strap or the reference
- *   clock. Turning the port on takes the ST300's mac_sw, mdio and cpsw_port nodes here and the
- *   modprobe and eth0 watcher for variant spotty3 in init.d/soundtap, after a read-only look
- *   at a Series III.
+ * - The rear Ethernet port: stock spotty_sm2 and mojo_sm2 describe it exactly as ginger_sm2
+ *   (the SoundTouch 300) does, property for property: rmii1_pins_default, davinci_mdio_default,
+ *   one slave in RMII with the PHY at address 0 (phy_id 0x3f:00) and the reference clock from
+ *   the board (rmii-clock-ext). So this tree takes the ST300's mac_sw, mdio and cpsw_port nodes,
+ *   which took a lease on the ST300 on 2026-11-16, and init.d/soundtap loads the CPSW modules
+ *   and runs the eth0 watcher for spotty3 and mojo3 as for the ST300. Not seen on a Series III.
  */
 #include "am335x-soundtap-st10.dts"
 
@@ -49,6 +48,27 @@
 		>;
 	};
 
+	/* Stock rmii1_pins_default and davinci_mdio_default, as on the ST300. */
+	rmii1_pins: pinmux-rmii1-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_MII1_CRS, PIN_INPUT_PULLDOWN, MUX_MODE1) /* rmii1_crs_dv */
+			AM33XX_PADCONF(AM335X_PIN_MII1_RX_ER, PIN_INPUT_PULLDOWN, MUX_MODE1) /* rmii1_rx_er */
+			AM33XX_PADCONF(AM335X_PIN_MII1_TX_EN, PIN_OUTPUT_PULLDOWN, MUX_MODE1) /* rmii1_tx_en */
+			AM33XX_PADCONF(AM335X_PIN_MII1_TXD1, PIN_OUTPUT_PULLDOWN, MUX_MODE1) /* rmii1_txd1 */
+			AM33XX_PADCONF(AM335X_PIN_MII1_TXD0, PIN_OUTPUT_PULLDOWN, MUX_MODE1) /* rmii1_txd0 */
+			AM33XX_PADCONF(AM335X_PIN_MII1_RXD1, PIN_INPUT_PULLDOWN, MUX_MODE1) /* rmii1_rxd1 */
+			AM33XX_PADCONF(AM335X_PIN_MII1_RXD0, PIN_INPUT_PULLDOWN, MUX_MODE1) /* rmii1_rxd0 */
+			AM33XX_PADCONF(AM335X_PIN_RMII1_REF_CLK, PIN_INPUT_PULLDOWN, MUX_MODE0) /* rmii1_refclk */
+		>;
+	};
+
+	mdio_pins: pinmux-mdio-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_MDIO, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_MDC, PIN_OUTPUT_PULLUP, MUX_MODE0)
+		>;
+	};
+
 	/* Stock ssdspi_pins_default and ncp6922_pins_default, and gpiodev's microbsel. */
 	panel_pins: pinmux-panel-pins {
 		pinctrl-single,pins = <
@@ -57,6 +77,7 @@
 			AM33XX_PADCONF(AM335X_PIN_LCD_DATA6, PIN_OUTPUT, MUX_MODE7) /* gpio2_12 panel D/C */
 			AM33XX_PADCONF(AM335X_PIN_LCD_HSYNC, PIN_OUTPUT, MUX_MODE7) /* gpio2_23 panel supply */
 			AM33XX_PADCONF(AM335X_PIN_SPI0_D1, PIN_OUTPUT, MUX_MODE7) /* gpio0_4 microbsel */
+			AM33XX_PADCONF(AM335X_PIN_GPMC_CLK, PIN_INPUT_PULLDOWN, MUX_MODE7) /* gpio2_1 microbdet (stock 0x8c 0x27) */
 		>;
 	};
 };
@@ -83,4 +104,30 @@
 		output-high;
 		line-name = "panel_supply";
 	};
+};
+
+/* Rear Ethernet: RMII, PHY at address 0, reference clock from the board (stock rmii-clock-ext). */
+&mac_sw {
+	pinctrl-names = "default";
+	pinctrl-0 = <&rmii1_pins>;
+	status = "okay";
+};
+
+&davinci_mdio_sw {
+	pinctrl-names = "default";
+	pinctrl-0 = <&mdio_pins>;
+
+	ethphy0: ethernet-phy@0 {
+		reg = <0>;
+	};
+};
+
+&cpsw_port1 {
+	phy-handle = <&ethphy0>;
+	phy-mode = "rmii";
+	ti,dual-emac-pvid = <1>;
+};
+
+&cpsw_port2 {
+	status = "disabled";
 };

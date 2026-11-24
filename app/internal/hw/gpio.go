@@ -155,3 +155,29 @@ func openGPIOLine(n int, direction string) (gpioLine, error) {
 	}
 	return &sysfsGPIO{n: n, f: f, dir: d}, nil
 }
+
+// Line is one GPIO line for a driver outside this package (internal/hw/battery).
+type Line struct{ l gpioLine }
+
+// BankLine opens line offset of the GPIO bank at the physical address addr ("44e07000" is
+// gpio0), exporting it first; direction is as openGPIOLine takes it.
+func BankLine(addr string, offset int, direction string) (*Line, error) {
+	base, err := gpioBankBase(addr)
+	if err != nil {
+		return nil, err
+	}
+	l, err := openGPIOLine(base+offset, direction)
+	if err != nil {
+		return nil, err
+	}
+	return &Line{l: l}, nil
+}
+
+// Read is the line's level.
+func (l *Line) Read() (int, error) { return l.l.read() }
+
+// Write sets an output line's level.
+func (l *Line) Write(v int) error { return l.l.write(v) }
+
+// Close releases the line's attribute files.
+func (l *Line) Close() error { return l.l.Close() }

@@ -5,32 +5,17 @@
 package panel
 
 import (
-	"strconv"
 	"strings"
-	"time"
 )
 
 // st20Lang is the ST20 panel design's own text in one language: sentence case, as the
 // design writes it. The words
 // PRESET, LIVE and BUFFERING stay capitals: the design sets them in a pixel font.
 type st20Lang struct {
-	words  map[string]string
-	days   [7]string // Sunday first, as time.Weekday counts
-	dshort [7]string
-	months [12]string                              // short
-	date   func(day, month, weekday string) string // nil: "weekday day month"
+	words map[string]string
 }
 
-// cjkDate and koDate put the month first, as Japanese, Chinese and Korean write dates.
-func cjkDate(day, month, weekday string) string { return month + day + "日 " + weekday }
-
-func koDate(day, month, weekday string) string { return month + " " + day + "일 " + weekday }
-
-var st20English = st20Lang{
-	days:   [7]string{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"},
-	dshort: [7]string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"},
-	months: [12]string{"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"},
-}
+var st20English = st20Lang{}
 
 // st20Words is keyed by language, then by the English text.
 var st20Words = map[string]st20Lang{
@@ -76,9 +61,6 @@ var st20Words = map[string]st20Lang{
 			"Station unavailable":      "Stasie nie beskikbaar nie",
 			"Action unavailable":       "Nie beskikbaar nie",
 		},
-		days:   [7]string{"Sondag", "Maandag", "Dinsdag", "Woensdag", "Donderdag", "Vrydag", "Saterdag"},
-		dshort: [7]string{"So", "Ma", "Di", "Wo", "Do", "Vr", "Sa"},
-		months: [12]string{"Jan", "Feb", "Mrt", "Apr", "Mei", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Des"},
 	},
 	"cs": {
 		words: map[string]string{
@@ -122,9 +104,6 @@ var st20Words = map[string]st20Lang{
 			"Station unavailable":      "Stanice nedostupná",
 			"Action unavailable":       "Není k dispozici",
 		},
-		days:   [7]string{"neděle", "pondělí", "úterý", "středa", "čtvrtek", "pátek", "sobota"},
-		dshort: [7]string{"ne", "po", "út", "st", "čt", "pá", "so"},
-		months: [12]string{"led", "úno", "bře", "dub", "kvě", "čvn", "čvc", "srp", "zář", "říj", "lis", "pro"},
 	},
 	"da": {
 		words: map[string]string{
@@ -168,9 +147,6 @@ var st20Words = map[string]st20Lang{
 			"Station unavailable":      "Station utilgængelig",
 			"Action unavailable":       "Ikke tilgængelig",
 		},
-		days:   [7]string{"søndag", "mandag", "tirsdag", "onsdag", "torsdag", "fredag", "lørdag"},
-		dshort: [7]string{"søn", "man", "tir", "ons", "tor", "fre", "lør"},
-		months: [12]string{"jan", "feb", "mar", "apr", "maj", "jun", "jul", "aug", "sep", "okt", "nov", "dec"},
 	},
 	"de": {
 		words: map[string]string{
@@ -214,9 +190,6 @@ var st20Words = map[string]st20Lang{
 			"Station unavailable":      "Sender nicht verfügbar",
 			"Action unavailable":       "Nicht verfügbar",
 		},
-		days:   [7]string{"Sonntag", "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag"},
-		dshort: [7]string{"So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"},
-		months: [12]string{"Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"},
 	},
 	"el": {
 		words: map[string]string{
@@ -260,9 +233,6 @@ var st20Words = map[string]st20Lang{
 			"Station unavailable":      "Σταθμός μη διαθέσιμος",
 			"Action unavailable":       "Μη διαθέσιμο",
 		},
-		days:   [7]string{"Κυριακή", "Δευτέρα", "Τρίτη", "Τετάρτη", "Πέμπτη", "Παρασκευή", "Σάββατο"},
-		dshort: [7]string{"Κυρ", "Δευ", "Τρί", "Τετ", "Πέμ", "Παρ", "Σάβ"},
-		months: [12]string{"Ιαν", "Φεβ", "Μαρ", "Απρ", "Μαΐ", "Ιουν", "Ιουλ", "Αυγ", "Σεπ", "Οκτ", "Νοε", "Δεκ"},
 	},
 	"es": {
 		words: map[string]string{
@@ -306,9 +276,6 @@ var st20Words = map[string]st20Lang{
 			"Station unavailable":      "Emisora no disponible",
 			"Action unavailable":       "No disponible",
 		},
-		days:   [7]string{"domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"},
-		dshort: [7]string{"dom", "lun", "mar", "mié", "jue", "vie", "sáb"},
-		months: [12]string{"ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"},
 	},
 	"fi": {
 		words: map[string]string{
@@ -352,9 +319,6 @@ var st20Words = map[string]st20Lang{
 			"Station unavailable":      "Asema ei saatavilla",
 			"Action unavailable":       "Ei käytettävissä",
 		},
-		days:   [7]string{"sunnuntai", "maanantai", "tiistai", "keskiviikko", "torstai", "perjantai", "lauantai"},
-		dshort: [7]string{"su", "ma", "ti", "ke", "to", "pe", "la"},
-		months: [12]string{"tammi", "helmi", "maalis", "huhti", "touko", "kesä", "heinä", "elo", "syys", "loka", "marras", "joulu"},
 	},
 	"fr": {
 		words: map[string]string{
@@ -398,9 +362,6 @@ var st20Words = map[string]st20Lang{
 			"Station unavailable":      "Station indisponible",
 			"Action unavailable":       "Indisponible",
 		},
-		days:   [7]string{"dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"},
-		dshort: [7]string{"dim", "lun", "mar", "mer", "jeu", "ven", "sam"},
-		months: [12]string{"janv", "févr", "mars", "avr", "mai", "juin", "juil", "août", "sept", "oct", "nov", "déc"},
 	},
 	"hu": {
 		words: map[string]string{
@@ -444,9 +405,6 @@ var st20Words = map[string]st20Lang{
 			"Station unavailable":      "Az adó nem elérhető",
 			"Action unavailable":       "Nem elérhető",
 		},
-		days:   [7]string{"vasárnap", "hétfő", "kedd", "szerda", "csütörtök", "péntek", "szombat"},
-		dshort: [7]string{"V", "H", "K", "Sze", "Cs", "P", "Szo"},
-		months: [12]string{"jan", "febr", "márc", "ápr", "máj", "jún", "júl", "aug", "szept", "okt", "nov", "dec"},
 	},
 	"it": {
 		words: map[string]string{
@@ -490,9 +448,6 @@ var st20Words = map[string]st20Lang{
 			"Station unavailable":      "Stazione non disponibile",
 			"Action unavailable":       "Non disponibile",
 		},
-		days:   [7]string{"domenica", "lunedì", "martedì", "mercoledì", "giovedì", "venerdì", "sabato"},
-		dshort: [7]string{"dom", "lun", "mar", "mer", "gio", "ven", "sab"},
-		months: [12]string{"gen", "feb", "mar", "apr", "mag", "giu", "lug", "ago", "set", "ott", "nov", "dic"},
 	},
 	"nb": {
 		words: map[string]string{
@@ -536,9 +491,6 @@ var st20Words = map[string]st20Lang{
 			"Station unavailable":      "Stasjon utilgjengelig",
 			"Action unavailable":       "Ikke tilgjengelig",
 		},
-		days:   [7]string{"søndag", "mandag", "tirsdag", "onsdag", "torsdag", "fredag", "lørdag"},
-		dshort: [7]string{"søn", "man", "tir", "ons", "tor", "fre", "lør"},
-		months: [12]string{"jan", "feb", "mar", "apr", "mai", "jun", "jul", "aug", "sep", "okt", "nov", "des"},
 	},
 	"nl": {
 		words: map[string]string{
@@ -582,9 +534,6 @@ var st20Words = map[string]st20Lang{
 			"Station unavailable":      "Zender niet beschikbaar",
 			"Action unavailable":       "Niet beschikbaar",
 		},
-		days:   [7]string{"zondag", "maandag", "dinsdag", "woensdag", "donderdag", "vrijdag", "zaterdag"},
-		dshort: [7]string{"zo", "ma", "di", "wo", "do", "vr", "za"},
-		months: [12]string{"jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec"},
 	},
 	"pl": {
 		words: map[string]string{
@@ -628,9 +577,6 @@ var st20Words = map[string]st20Lang{
 			"Station unavailable":      "Stacja niedostępna",
 			"Action unavailable":       "Niedostępne",
 		},
-		days:   [7]string{"niedziela", "poniedziałek", "wtorek", "środa", "czwartek", "piątek", "sobota"},
-		dshort: [7]string{"nie", "pon", "wt", "śr", "czw", "pt", "sob"},
-		months: [12]string{"sty", "lut", "mar", "kwi", "maj", "cze", "lip", "sie", "wrz", "paź", "lis", "gru"},
 	},
 	"pt": {
 		words: map[string]string{
@@ -674,9 +620,6 @@ var st20Words = map[string]st20Lang{
 			"Station unavailable":      "Estação indisponível",
 			"Action unavailable":       "Indisponível",
 		},
-		days:   [7]string{"domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"},
-		dshort: [7]string{"dom", "seg", "ter", "qua", "qui", "sex", "sáb"},
-		months: [12]string{"jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"},
 	},
 	"ro": {
 		words: map[string]string{
@@ -720,9 +663,6 @@ var st20Words = map[string]st20Lang{
 			"Station unavailable":      "Post indisponibil",
 			"Action unavailable":       "Indisponibil",
 		},
-		days:   [7]string{"duminică", "luni", "marți", "miercuri", "joi", "vineri", "sâmbătă"},
-		dshort: [7]string{"dum", "lun", "mar", "mie", "joi", "vin", "sâm"},
-		months: [12]string{"ian", "feb", "mar", "apr", "mai", "iun", "iul", "aug", "sep", "oct", "nov", "dec"},
 	},
 	"ru": {
 		words: map[string]string{
@@ -766,9 +706,6 @@ var st20Words = map[string]st20Lang{
 			"Station unavailable":      "Станция недоступна",
 			"Action unavailable":       "Недоступно",
 		},
-		days:   [7]string{"воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"},
-		dshort: [7]string{"вс", "пн", "вт", "ср", "чт", "пт", "сб"},
-		months: [12]string{"янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"},
 	},
 	"sl": {
 		words: map[string]string{
@@ -812,9 +749,6 @@ var st20Words = map[string]st20Lang{
 			"Station unavailable":      "Postaja ni na voljo",
 			"Action unavailable":       "Ni na voljo",
 		},
-		days:   [7]string{"nedelja", "ponedeljek", "torek", "sreda", "četrtek", "petek", "sobota"},
-		dshort: [7]string{"ned", "pon", "tor", "sre", "čet", "pet", "sob"},
-		months: [12]string{"jan", "feb", "mar", "apr", "maj", "jun", "jul", "avg", "sep", "okt", "nov", "dec"},
 	},
 	"sv": {
 		words: map[string]string{
@@ -858,9 +792,6 @@ var st20Words = map[string]st20Lang{
 			"Station unavailable":      "Station otillgänglig",
 			"Action unavailable":       "Inte tillgänglig",
 		},
-		days:   [7]string{"söndag", "måndag", "tisdag", "onsdag", "torsdag", "fredag", "lördag"},
-		dshort: [7]string{"sön", "mån", "tis", "ons", "tor", "fre", "lör"},
-		months: [12]string{"jan", "feb", "mar", "apr", "maj", "jun", "jul", "aug", "sep", "okt", "nov", "dec"},
 	},
 	"tr": {
 		words: map[string]string{
@@ -904,9 +835,6 @@ var st20Words = map[string]st20Lang{
 			"Station unavailable":      "İstasyon kullanılamıyor",
 			"Action unavailable":       "Kullanılamıyor",
 		},
-		days:   [7]string{"Pazar", "Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi"},
-		dshort: [7]string{"Paz", "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt"},
-		months: [12]string{"Oca", "Şub", "Mar", "Nis", "May", "Haz", "Tem", "Ağu", "Eyl", "Eki", "Kas", "Ara"},
 	},
 	"ja": {
 		words: map[string]string{
@@ -950,10 +878,6 @@ var st20Words = map[string]st20Lang{
 			"Station unavailable":      "局を利用できません",
 			"Action unavailable":       "利用できません",
 		},
-		days:   [7]string{"日曜日", "月曜日", "火曜日", "水曜日", "木曜日", "金曜日", "土曜日"},
-		dshort: [7]string{"日", "月", "火", "水", "木", "金", "土"},
-		months: [12]string{"1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"},
-		date:   cjkDate,
 	},
 	"ko": {
 		words: map[string]string{
@@ -997,10 +921,6 @@ var st20Words = map[string]st20Lang{
 			"Station unavailable":      "방송국 사용 불가",
 			"Action unavailable":       "사용 불가",
 		},
-		days:   [7]string{"일요일", "월요일", "화요일", "수요일", "목요일", "금요일", "토요일"},
-		dshort: [7]string{"일", "월", "화", "수", "목", "금", "토"},
-		months: [12]string{"1월", "2월", "3월", "4월", "5월", "6월", "7월", "8월", "9월", "10월", "11월", "12월"},
-		date:   koDate,
 	},
 	"th": {
 		words: map[string]string{
@@ -1044,9 +964,6 @@ var st20Words = map[string]st20Lang{
 			"Station unavailable":      "สถานีไม่พร้อมใช้งาน",
 			"Action unavailable":       "ไม่พร้อมใช้งาน",
 		},
-		days:   [7]string{"วันอาทิตย์", "วันจันทร์", "วันอังคาร", "วันพุธ", "วันพฤหัสบดี", "วันศุกร์", "วันเสาร์"},
-		dshort: [7]string{"อา.", "จ.", "อ.", "พ.", "พฤ.", "ศ.", "ส."},
-		months: [12]string{"ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."},
 	},
 	"zh-hans": {
 		words: map[string]string{
@@ -1090,10 +1007,6 @@ var st20Words = map[string]st20Lang{
 			"Station unavailable":      "电台不可用",
 			"Action unavailable":       "不可用",
 		},
-		days:   [7]string{"星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"},
-		dshort: [7]string{"周日", "周一", "周二", "周三", "周四", "周五", "周六"},
-		months: [12]string{"1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"},
-		date:   cjkDate,
 	},
 	"zh-hant": {
 		words: map[string]string{
@@ -1137,10 +1050,6 @@ var st20Words = map[string]st20Lang{
 			"Station unavailable":      "電台無法使用",
 			"Action unavailable":       "無法使用",
 		},
-		days:   [7]string{"星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"},
-		dshort: [7]string{"週日", "週一", "週二", "週三", "週四", "週五", "週六"},
-		months: [12]string{"1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"},
-		date:   cjkDate,
 	},
 }
 
@@ -1169,18 +1078,6 @@ func Text(en string, arg ...string) string {
 		s = strings.Replace(s, "%s", arg[0], 1)
 	}
 	return s
-}
-
-// Dates is the standby screen's long date ("donderdag 25 sep") and short one
-// ("do 25 sep").
-func Dates(t time.Time) (long, short string) {
-	l := st20LangOf(language())
-	day, month := strconv.Itoa(t.Day()), l.months[t.Month()-1]
-	date := l.date
-	if date == nil {
-		date = func(day, month, weekday string) string { return weekday + " " + day + " " + month }
-	}
-	return date(day, month, l.days[t.Weekday()]), date(day, month, l.dshort[t.Weekday()])
 }
 
 // Untranslated lists the languages that have no words for en, a text the panel shows;

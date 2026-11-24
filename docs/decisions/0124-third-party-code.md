@@ -61,9 +61,11 @@ Code copied into the repository rather than fetched by a package manager is list
 source, version, licence and the SHA-256 of each file as taken. It stays byte-identical; our
 changes go around it, not into it.
 
-**TweetNaCl, the ed25519 check of U-Boot's USB-stick recovery.** U-Boot verifies
-`Update.stu.sig` before the stick recovery writes anything ([ADR 0048](0048-signed-updates.md)),
-and mainline U-Boot has no ed25519.
+**TweetNaCl, the ed25519 check written for U-Boot's USB-stick recovery.** U-Boot verified
+`Update.stu.sig` with it until 2026-11-24; the stick now checks no signature
+([ADR 0130](0130-usb-stick-recovery.md)), U-Boot no longer compiles it, and the files remain
+for the host-built verifier test (`app/internal/release/uboot_test.go`). Mainline U-Boot has
+no ed25519.
 
 - **Source:** TweetNaCl by Bernstein, van Gastel, Janssen, Lange, Schwabe and Smetsers,
   <https://tweetnacl.cr.yp.to/20140427/tweetnacl.c> and `.../tweetnacl.h`, version 20140427.

@@ -31,13 +31,13 @@ cannot approve another.
 - **SoundTap update:** use the signed `/api/firmware` route. Kernel/rootfs go to the inactive
   slot; shared bootloaders are written only if different. Establish the actual write set
   before seeking permission; a version update is not necessarily a rootfs-only update.
-- **SoundTap USB-stick recovery:** with working SPL/U-Boot, test the model's gesture and a
-  compatible SoundTap `Update.stu` with its `Update.stu.sig` (the release's `.sig`, signed for
-  the installed image's profile). The current U-Boot path verifies that statement and the
-  file's SHA-256 before it erases anything, writes `soundtap-rootfs` (with its `/boot` files)
-  and selects that slot. It does not restore Bose or replace bootloaders, and it refuses a
-  stick without the `.sig`, with Bose's file or with an alpha package on a production image
-  (ADR 0048).
+- **SoundTap USB-stick recovery:** with working SPL/U-Boot, test the model's gesture with a
+  SoundTap `Update.stu` and with Bose's `Update.stu` for that model; no `.sig` (ADR 0130). The
+  U-Boot path checks every CRC and reads the file twice to the same SHA-256 before it selects
+  anything. A SoundTap package writes `soundtap-rootfs` (with its `/boot` files); Bose's file
+  writes Bose's kernel and rootfs, then Bose's SPL and U-Boot where they differ. The Bose run
+  writes `mtd0`-`mtd4`: it needs that board's full NAND backup and its ROM-USB route checked
+  first, like any bootloader change.
 - **Return to stock:** use the model-specific procedure and separately approved input in
   [Going back to Bose](install-records.md#going-back-to-bose). This changes shared bootloaders;
   ST20 needs its stock BCO app restored separately. Test subsequent stock boot explicitly.
@@ -164,6 +164,17 @@ line pointing at the bus config.
    (Snapcast cannot correct more), and the leader's `GET /api/multiroom` must show the same
    value as that client's `latency`. The leader logs `multiroom leader delay` when it moves
    its own delay. Underruns: `audio pcm health` lines in `/tmp/soundtap.log`, `underruns_delta`.
+6. FLAC stream ([ADR 0013](../decisions/0013-multiroom-through-snapcast.md#the-stream)): an
+   ST20 leader and an ST10 leader, each with two followers, 30 minutes of music each. Record
+   the leader's busy share and snapserver's and the anchor snapclient's CPU
+   ([Measuring CPU](#measuring-cpu)), and a follower's snapclient CPU; the bytes per second a
+   follower receives (PCM was 192000 B/s); the leader's TCP retransmissions (`RetransSegs`
+   against `OutSegs` in `/proc/net/snmp`, before and after); and follower dropouts
+   ("Not enough frames", hard resyncs, `underruns_delta`). For the comparison, run the same
+   minutes with `codec=pcm` in `/run/soundtap/snapserver.conf` and snapserver restarted (an
+   alpha image; nothing is written to NAND). Then stop and restart the source three times and
+   check by ear and with `GET /api/multiroom` that the followers stay in step with the leader:
+   the encoder may carry up to one 24 ms block across a pause (ADR 0013).
 
 ### Multiroom measurements
 
@@ -395,6 +406,7 @@ Before a release, every cell must carry the release candidate's version and SHA-
 | Rollback after 4 unconfirmed boots (`bootlimit=4`, ADR 0010) | open | open | open | open |
 | A new slot kept through 3 power cuts during its trial boots, each before the confirm; the fourth boot confirms it | open | open | open | open |
 | Wi-Fi take-over from stock (earlier passes ran on `wifi.sh`; rerun on soundtapd's Wi-Fi manager, ADR 0063) | open | open | open | open |
+| Standby clock take-over from stock (ADR 0129): `ClockDisplay.xml` on/off, 12/24 h and zone on the first boot; the clock shows without opening the settings | n/a | n/a | open | n/a |
 | Wi-Fi through soundtapd's manager (ADR 0063): join, fallback to the last network that worked, setup AP and its retry, network kept across a soundtapd restart | open | open | open | open |
 | 10 install+reboot cycles (`/api/firmware?install=1`, then `POST /api/reboot`): every new slot boots at U-Boot count 1 (init's `nand boot:` log line) and keeps `upgrade_available=1` until its confirm (ADR 0010, 0052) | pass 2026-11-21 (dev STU sha256 55fc3874: 10/10 at count 1, back in 36-48 s) | open | open | open |
 | BCO flash (ST20 only) | n/a | n/a | 2026-11-11 | n/a |
@@ -404,15 +416,16 @@ Before a release, every cell must carry the release candidate's version and SHA-
 | Reboot loop, 20 reboots + 5 installs | 2026-11-13 | 2026-11-13 | 2026-11-13 | 2026-11-13 |
 | Multiroom leader | 2026-11-13 | 2026-11-14 | 2026-11-14 | open |
 | Multiroom follower | 2026-11-14 | 2026-11-13 | 2026-11-14 | 2026-11-15 |
+| Multiroom on the FLAC stream (section D.6): leader CPU and follower dropouts against PCM, steady through source restarts | open | open | open | open |
 | TuneIn | 2026-11-13 | 2026-10-21 | 2026-10-21 | 2026-11-13 |
-| Spotify | 2026-11-04 | 2026-10-21 | 2026-10-21 | open |
+| Spotify | 2026-11-04 | 2026-10-21 | 2026-10-21 | 2026-11-24 (owner's report) |
 | AirPlay (via Music Assistant) | 2026-11-04 | open | open | open |
 | Bluetooth | 2026-11-12 | 2026-11-17 | n/a (Series I) | 2026-11-17 |
-| AUX | open | 2026-11-12 | 2026-11-12 | n/a |
+| AUX | 2026-11-24 (owner's report) | 2026-11-12 | 2026-11-12 | n/a |
 | DLNA | 2026-11-13 | 2026-11-14 | 2026-11-14 | 2026-11-15 |
 | Confirmation on the speaker: volume held 5 s does not confirm, and the volume changes | open | open | open | open |
 | Confirmation on the speaker: a short press (under 2 s) of another key does not confirm and does nothing else | open | open | open | open |
-| Confirmation on the speaker: a key held 2 s confirms, and no preset plays or stores (ST300: a bar button and a remote key both confirm) | open | open | open | open |
+| Confirmation on the speaker: a key held 2 s confirms, and no preset plays or stores (ST300: the bar has no buttons; a remote key confirms) | open | open | open | open |
 | Confirmation on the speaker: the IR remote does not confirm | n/a (no IR) | open | open | n/a (no buttons: the remote confirms) |
 | Confirmation on the speaker: read the `producer` soundtapd logs for a remote key held to confirm | n/a | n/a | n/a | pass 2026-11-20 (bench bar, dev STU sha256 b202cb87: Preset 1 held 2.0 s confirmed GET /api/debug, producer=2; the bar has no buttons) |
 | Confirmation on the speaker: a second request replaces the first (409 `confirm_superseded`), and a hold confirms the second | open | open | open | open |
@@ -453,8 +466,8 @@ prohibited and historical results are not silently counted as pending executable
 | Prove on the speaker | Status |
 |---|---|
 | soundtapd runs as `soundtapd` (ADR 0066): `ps` shows soundtapd as that user and `soundtap-root serve` as root, `/proc/$(pidof soundtapd)/status` has `CapEff`, `CapPrm` and `CapBnd` `00000000000034e0` and `CapAmb` 0, the media daemons run as their users with `CapEff` 0 (nqptp: `CAP_NET_BIND_SERVICE` only), and the log has `soundtap-root up` and every `soundtap-root` request it answered; on the first boot after the update from a build that ran it as root, `/mnt/nv/soundtap` and `wifi.conf*` turn soundtapd's and presets, settings, Wi-Fi and Spotify survive; then, as soundtapd: a signed STU install (the log shows each `flash_erase`, `nandwrite`, `ubiformat` and `fw_setenv` via soundtap-root and the readback passes), the boot confirm after the reboot (boot count cleared), `POST /api/reboot`, a Wi-Fi change and the setup AP, a factory reset (Spotify and pairings gone, the speaker comes back in setup), an app upload through `/api/soundtapd`, the keypad, the IR remote, both lamps and the hardware watchdog (no reset in an hour); audio at the agreed volume | open: passed 2026-11-22 (dev STU sha256 b1394fa8): user, capabilities and the media daemons' users as listed; state migrated (presets, settings, Wi-Fi, Spotify kept); an unsigned dev install through soundtap-root with readback, the boot confirm (count cleared) and `POST /api/reboot`; keypad, IR, lamps and the watchdog up as soundtapd (not pressed); audio at volume 2. Still to do: a signed install, a Wi-Fi change, the setup AP, a factory reset, `/api/soundtapd`, presses and an hour without reset |
-| owner key (ADR 0048): set one on the Updates page with a hold and read `soundtap_owner_key` back from both environment copies (`fw_printenv`, `nanddump` of `mtd5` and of `mtd4`+0x1c0000); a production STU signed with it installs through `/api/firmware` and from a USB stick at power-on (Volume Down + Preset 4), the stick's console saying `the owner key is trusted as well`; after removing it on the Updates page, and again after a factory reset, `/api/firmware` refuses it with 403 and the stick writes nothing (`soundtap.recovery=-129`); a release-signed STU still installs with a key set | open |
-| signed USB stick at power-on: `Update.stu` with its `Update.stu.sig` installs and boots the other slot; without the `.sig`, with a changed `Update.stu`, or with an alpha package on a production image nothing is written, the Wi-Fi lamp blinks slowly three times, the old slot boots and the kernel command line says `soundtap.recovery=-126` or `-129`; record the time from power-on to the new slot (ADR 0009) | open |
+| owner key (ADR 0048): set one on the Updates page with a hold and read `soundtap_owner_key` back from both environment copies (`fw_printenv`, `nanddump` of `mtd5` and of `mtd4`+0x1c0000); a production STU signed with it installs through `/api/firmware`; after removing it on the Updates page, and again after a factory reset, `/api/firmware` refuses it with 403 (the USB stick checks no key, ADR 0130); a release-signed STU still installs with a key set | open |
+| USB stick at power-on (ADR 0130, no `.sig`): a SoundTap `Update.stu` installs and boots the other slot; Bose's `Update.stu` for this model goes back to Bose, bootloaders included, and Bose's software starts; a file for another model, or one with a broken CRC, writes nothing and the old slot boots (`soundtap.recovery=-8` or `-74`); record the time from power-on to the new slot (ADR 0009) | open |
 | radio plays through a Wi-Fi stall (read-ahead) | open |
 | Spotify artist context playback against a live session | open |
 | install writes the full chain; a second install leaves mtd0-mtd4 identical | historical pass, second install identical: 2026-11-15 |
@@ -498,15 +511,15 @@ prohibited and historical results are not silently counted as pending executable
 | a new slot confirms with the router switched off: the boot confirm checks no network (ADR 0010) | open |
 | ROM-USB restore of the release's boot chain (`tools/recovery/rom-usb-restore.py`, [recovery tools](install-records.md#repairing-the-boot-chain-over-rom-usb)) | open |
 
-### ST20 (39 open)
+### ST20 (40 open)
 
 | Prove on the speaker | Status |
 |---|---|
 | soundtapd runs as `soundtapd` (ADR 0066): `ps` shows soundtapd as that user and `soundtap-root serve` as root, `/proc/$(pidof soundtapd)/status` has `CapEff`, `CapPrm` and `CapBnd` `00000000000034e0` and `CapAmb` 0, the media daemons run as their users with `CapEff` 0 (nqptp: `CAP_NET_BIND_SERVICE` only), and the log has `soundtap-root up` and every `soundtap-root` request it answered; on the first boot after the update from a build that ran it as root, `/mnt/nv/soundtap` and `wifi.conf*` turn soundtapd's and presets, settings, Wi-Fi and Spotify survive; then, as soundtapd: a signed STU install (the log shows each `flash_erase`, `nandwrite`, `ubiformat` and `fw_setenv` via soundtap-root and the readback passes), the boot confirm after the reboot (boot count cleared), `POST /api/reboot`, a Wi-Fi change and the setup AP, a factory reset (Spotify and pairings gone, the speaker comes back in setup), an app upload through `/api/soundtapd`, the keypad, the IR remote, the panel (OLED over spidev), the amplifier fault line and the hardware watchdog; the BCO install (power switched through soundtap-root, `bco-image` ` ok`), its LAN watch; audio at the agreed volume | open: passed 2026-11-22 (dev STU sha256 b1394fa8): user, capabilities and the media daemons' users as listed; state migrated (presets, settings, Wi-Fi, Spotify kept); an unsigned dev install through soundtap-root with readback, the boot confirm (count cleared) and `POST /api/reboot`; the OLED, keypad, IR and amplifier lines exported through soundtap-root, the BCO link up, volume in the codec DSP; audio at volume 2. Still to do: a signed install, a BCO image install through soundtap-root, a Wi-Fi change, the setup AP, a factory reset, `/api/soundtapd`, presses and an hour without reset |
-| owner key (ADR 0048): set one on the Updates page with a hold and read `soundtap_owner_key` back from both environment copies (`fw_printenv`, `nanddump` of `mtd5` and of `mtd4`+0x1c0000); a production STU signed with it installs through `/api/firmware` and from a USB stick at power-on (Volume Down + Preset 4), the stick's console saying `the owner key is trusted as well`; after removing it on the Updates page, and again after a factory reset, `/api/firmware` refuses it with 403 and the stick writes nothing (`soundtap.recovery=-129`); a release-signed STU still installs with a key set | open |
-| signed USB stick at power-on: `Update.stu` with its `Update.stu.sig` installs and boots the other slot; without the `.sig`, with a changed `Update.stu`, or with an alpha package on a production image nothing is written, the speaker shows nothing (no lamp, no display), the old slot boots and the kernel command line says `soundtap.recovery=-126` or `-129`; record the time from power-on to the new slot (ADR 0009) | open |
+| owner key (ADR 0048): set one on the Updates page with a hold and read `soundtap_owner_key` back from both environment copies (`fw_printenv`, `nanddump` of `mtd5` and of `mtd4`+0x1c0000); a production STU signed with it installs through `/api/firmware`; after removing it on the Updates page, and again after a factory reset, `/api/firmware` refuses it with 403 (the USB stick checks no key, ADR 0130); a release-signed STU still installs with a key set | open |
+| USB stick at power-on (ADR 0130, no `.sig`): a SoundTap `Update.stu` installs and boots the other slot; Bose's `Update.stu` for this model goes back to Bose, bootloaders included, and Bose's software starts; a file for another model, or one with a broken CRC, writes nothing and the old slot boots (`soundtap.recovery=-8` or `-74`); record the time from power-on to the new slot (ADR 0009) | open |
 | Historical stock-BCO Wi-Fi join path | not applicable: stock BCO networking is unsupported (ADR 0031) |
-| TODO Series III (spotty3, mojo3): which model our U-Boot takes the board for without a stored environment. Read only, on a Series III under stock: the product name at 0x170 of `NAND.Manufacturing-Data` (stock calls the board `variant=spotty` or `mojo`) and the `variant_raw` U-Boot samples. `rt_board_setup` (`uboot-2026.07-scm-nand-wp.patch`) knows only rhino, binky and ginger there and falls back to `variant_raw`: rhino (`rhino_sm2.dtb`, `uImage-rhino`) from 0x3100, binky (the WLA's tree and kernel, no preset chord) below. That is the default `bootcmd`, the recipes the USB-stick recovery saves into a torn environment, and the variant soundtapd repairs with afterwards; an installed environment keeps the installer's spotty3 recipes. Once the value is measured, the board code maps it to rt_v spotty3 or mojo3, and `rt_set_recipes` and the default `bootcmd` take `spotty3_sm2.dtb` with `uImage-rhino` (as `flash/recipes.go` and `installer.c` do), not `uImage-spotty3` | unavailable: no Series III board; nothing in the repository records either value |
+| Series III (spotty3, mojo3): our U-Boot takes the board for it without a stored environment. Stock's U-Boot (identical in every package) reads the product name at 0x170 of `NAND.Manufacturing-Data` on the SM2, and the Series III say `spotty` or `mojo` there; `rt_boards` maps them to spotty3 and mojo3 with `spotty3_sm2.dtb` and `uImage-rhino` ([ADR 0133](../decisions/0133-more-soundtouch-models-from-stock.md)). Read only, on a Series III under stock: confirm the name at 0x170 and that the default bootcmd boots the Series III tree | unavailable: no Series III board; offline-covered by the U-Boot probe tests |
 | radio plays through a Wi-Fi stall (read-ahead) | open |
 | Spotify artist context playback against a live session | open |
 | install writes the full chain; a second install leaves mtd0-mtd4 identical | historical pass, second install identical: 2026-11-15 |
@@ -524,6 +537,7 @@ prohibited and historical results are not silently counted as pending executable
 | Bluetooth selection gates stream, track and volume; phone connect/play cannot take another source; leaving pauses/disconnects | unavailable: Series I; Series III has offline coverage only (scope above) |
 | Wi-Fi returns within a minute after a router power cut | open |
 | Wi-Fi returns within 30 minutes after a router power cut with a phone left on the setup network | open |
+| multiroom leader upload over Wi-Fi with BCO flow control (ADR 0031): the kernel log says `BCO transmit flow control on, 6 of 7 buffers free` and `/sys/class/net/bcolink0/bco/flow` reads 1; the ST20 leads one follower on Snapcast PCM at the agreed volume for 10 minutes; the `Tcp:` lines of `/proc/net/snmp` (`OutSegs`, `RetransSegs`) before and after (alpha.3 baseline about 12 retransmissions per second, 1 in 10 segments) and `tx_dropped`, `tx_failed`, `tx_ok`, `link_dropped` and `flow_stops` from that directory (or `bco` in `/api/health`) before and after: `tx_dropped` grows by a few at most while `flow_stops` grows, the retransmission rate falls, and the follower does not disconnect | open |
 | Wi-Fi through soundtapd's manager (ADR 0063, section E): clean provision, wrong password back to the last network, setup AP channel and country, network kept across `kill $(pidof soundtapd)` with the station and with the setup AP, clock synced after the join; the BCO's `wlan0` and `wlan1` (ADR 0031), channel 6 without a country element | open |
 | play a media-server folder as a queue (real UPnP server) | open |
 | radio station song name in now playing | open |
@@ -558,8 +572,8 @@ prohibited and historical results are not silently counted as pending executable
 | Prove on the speaker | Status |
 |---|---|
 | soundtapd runs as `soundtapd` (ADR 0066): `ps` shows soundtapd as that user and `soundtap-root serve` as root, `/proc/$(pidof soundtapd)/status` has `CapEff`, `CapPrm` and `CapBnd` `00000000000034e0` and `CapAmb` 0, the media daemons run as their users with `CapEff` 0 (nqptp: `CAP_NET_BIND_SERVICE` only), and the log has `soundtap-root up` and every `soundtap-root` request it answered; on the first boot after the update from a build that ran it as root, `/mnt/nv/soundtap` and `wifi.conf*` turn soundtapd's and presets, settings, Wi-Fi and Spotify survive; then, as soundtapd: a signed STU install (the log shows each `flash_erase`, `nandwrite`, `ubiformat` and `fw_setenv` via soundtap-root and the readback passes), the boot confirm after the reboot (boot count cleared), `POST /api/reboot`, a Wi-Fi change and the setup AP, a factory reset (Spotify and pairings gone, the speaker comes back in setup), an app upload through `/api/soundtapd`, both buttons, both lamps and the hardware watchdog; line out at the agreed volume | open: passed 2026-11-22 (dev STU sha256 b1394fa8): user, capabilities and the media daemons' users as listed; state migrated (presets, settings, Wi-Fi, Spotify kept); an unsigned dev install through soundtap-root with readback, the boot confirm (count cleared) and `POST /api/reboot`; buttons, lamps and the watchdog up as soundtapd (not pressed); line out at volume 2. Still to do: a signed install, a Wi-Fi change, the setup AP, a factory reset, `/api/soundtapd`, presses and an hour without reset |
-| owner key (ADR 0048): set one on the Updates page with a hold and read `soundtap_owner_key` back from both environment copies (`fw_printenv`, `nanddump` of `mtd5` and of `mtd4`+0x1c0000); a production STU signed with it installs through `/api/firmware` and from a USB stick at power-on (both buttons), the stick's console saying `the owner key is trusted as well`; after removing it on the Updates page, and again after a factory reset, `/api/firmware` refuses it with 403 and the stick writes nothing (`soundtap.recovery=-129`); a release-signed STU still installs with a key set | open |
-| signed USB stick at power-on: `Update.stu` with its `Update.stu.sig` installs and boots the other slot; without the `.sig`, with a changed `Update.stu`, or with an alpha package on a production image nothing is written, the lamp blinks slowly three times, the old slot boots and the kernel command line says `soundtap.recovery=-126` or `-129`; record the time from power-on to the new slot (ADR 0009) | open |
+| owner key (ADR 0048): set one on the Updates page with a hold and read `soundtap_owner_key` back from both environment copies (`fw_printenv`, `nanddump` of `mtd5` and of `mtd4`+0x1c0000); a production STU signed with it installs through `/api/firmware`; after removing it on the Updates page, and again after a factory reset, `/api/firmware` refuses it with 403 (the USB stick checks no key, ADR 0130); a release-signed STU still installs with a key set | open |
+| USB stick at power-on (ADR 0130, no `.sig`): a SoundTap `Update.stu` installs and boots the other slot; Bose's `Update.stu` for this model goes back to Bose, bootloaders included, and Bose's software starts; a file for another model, or one with a broken CRC, writes nothing and the old slot boots (`soundtap.recovery=-8` or `-74`); record the time from power-on to the new slot (ADR 0009) | open |
 | both buttons at power-on install Update.stu from USB | open |
 | radio plays through a Wi-Fi stall (read-ahead) | open |
 | Spotify artist context playback against a live session | open |
@@ -602,14 +616,14 @@ prohibited and historical results are not silently counted as pending executable
 | a new slot confirms with the router switched off: the boot confirm checks no network (ADR 0010) | open |
 | ROM-USB restore of the release's boot chain (`tools/recovery/rom-usb-restore.py`, [recovery tools](install-records.md#repairing-the-boot-chain-over-rom-usb)) | open |
 
-### ST300 (20 open)
+### ST300 (19 open)
 
 | Prove on the speaker | Status |
 |---|---|
 | soundtapd runs as `soundtapd` (ADR 0066): `ps` shows soundtapd as that user and `soundtap-root serve` as root, `/proc/$(pidof soundtapd)/status` has `CapEff`, `CapPrm` and `CapBnd` `00000000000034e0` and `CapAmb` 0, the media daemons run as their users with `CapEff` 0 (nqptp: `CAP_NET_BIND_SERVICE` only), and the log has `soundtap-root up` and every `soundtap-root` request it answered; on the first boot after the update from a build that ran it as root, `/mnt/nv/soundtap` and `wifi.conf*` turn soundtapd's and presets, settings, Wi-Fi and Spotify survive; then, as soundtapd: a signed STU install (the log shows each `flash_erase`, `nandwrite`, `ubiformat` and `fw_setenv` via soundtap-root and the readback passes), the boot confirm after the reboot (boot count cleared), `POST /api/reboot`, a Wi-Fi change and the setup AP, a factory reset (Spotify and pairings gone, the speaker comes back in setup), an app upload through `/api/soundtapd`, the LPM serial link to the soundbar processor (no op `0x08`) and the hardware watchdog; audio at the agreed volume | open |
-| owner key (ADR 0048): set one on the Updates page with a hold and read `soundtap_owner_key` back from both environment copies (`fw_printenv`, `nanddump` of `mtd5` and of `mtd4`+0x1c0000); a production STU signed with it installs through `/api/firmware` and from a USB stick at power-on (the remote's recovery combo), the stick's console saying `the owner key is trusted as well`; after removing it on the Updates page, and again after a factory reset, `/api/firmware` refuses it with 403 and the stick writes nothing (`soundtap.recovery=-129`); a release-signed STU still installs with a key set | open |
-| signed USB stick at power-on: `Update.stu` with its `Update.stu.sig` installs and boots the other slot; without the `.sig`, with a changed `Update.stu`, or with an alpha package on a production image nothing is written and the old slot boots (what the bar shows is not known; record it) and the kernel command line says `soundtap.recovery=-126` or `-129`; record the time from power-on to the new slot (ADR 0009) | open |
-| Bluetooth pairing/playback with a nearby phone; Pi range prevented the prior run (scope) | open: pairing with the Pi passed 2026-11-15; playback needs a phone |
+| owner key (ADR 0048): set one on the Updates page with a hold and read `soundtap_owner_key` back from both environment copies (`fw_printenv`, `nanddump` of `mtd5` and of `mtd4`+0x1c0000); a production STU signed with it installs through `/api/firmware`; after removing it on the Updates page, and again after a factory reset, `/api/firmware` refuses it with 403 (the USB stick checks no key, ADR 0130); a release-signed STU still installs with a key set | open |
+| USB stick at power-on (ADR 0130, no `.sig`): a SoundTap `Update.stu` installs and boots the other slot; Bose's `Update.stu` for this model goes back to Bose, bootloaders included, and Bose's software starts; a file for another model, or one with a broken CRC, writes nothing and the old slot boots (`soundtap.recovery=-8` or `-74`); record the time from power-on to the new slot (ADR 0009) | open |
+| Bluetooth pairing/playback with a nearby phone; Pi range prevented the prior run (scope) | pass 2026-11-24 by the owner's report: pairing and playback from a phone (pairing with the Pi passed 2026-11-15) |
 | install writes the full chain; a second install leaves mtd0-mtd4 identical | open |
 | join a hidden network; visible networks still join | open |
 | remote's mute shows in SoundTap | open |
@@ -629,6 +643,32 @@ prohibited and historical results are not silently counted as pending executable
 | a new slot confirms with the router switched off: the boot confirm checks no network (ADR 0010) | open |
 | ROM-USB restore of the release's boot chain (`tools/recovery/rom-usb-restore.py`, [recovery tools](install-records.md#repairing-the-boot-chain-over-rom-usb)): first find how its ROM reaches USB | open |
 
+
+### Previews
+
+The boards of [ADR 0133](../decisions/0133-more-soundtouch-models-from-stock.md), worked out from
+the stock packages. Nothing has run on any of them, so every cell is open. They are not release
+models: the release checklist and the counts above leave them out, and a pass here makes a
+preview a candidate for support, not a release. Each row needs that board's own owner and
+recovery plan under [the contract](../../CONTRIBUTING.md#the-contract); one preview proves nothing
+about another, nor about the model it runs as. The Lifestyle 600/650 module (`bardeen`) is refused
+by the installers: its column stays read-only until a way back exists. The installers also refuse
+an SM2 Lifestyle adapter (`lisa2`), which they cannot tell apart from it.
+
+| Prove on the board | Portable (`taigan`) | SA-5 (`burns`) | SoundTouch adapter (`lisa`, `lisa2`) | Series III (`spotty3`, `mojo3`) | Lifestyle 600/650 module (`bardeen`) |
+|---|---|---|---|---|---|
+| Read only, under stock: the variant our U-Boot would pick (`variant_raw` on the SCM, the name at 0x170 of `NAND.Manufacturing-Data` on the SM2) | open | open | open | open | open |
+| A full per-partition NAND backup with OOB and the ROM-USB route checked with `rom-usb-restore.py --dry-run`, before any write | open | open | open | open | open: no ROM-USB route known |
+| Install from stock (update feed), with the actual bootloader write set shown first | open | open | open | open | not offered |
+| U-Boot loads the board's own tree and Linux runs `/init` | open | open | open | open | not offered |
+| Recovery gesture at power-on with a stick (ADR 0130, no `.sig`): a SoundTap `Update.stu` installs and boots the other slot; a file for another board, or one with a broken CRC, writes nothing | open: Volume Down + Preset 4 | open: the one button | open: the one button | open: Volume Down + Preset 4 | none: no gesture in stock or ours |
+| Back to Bose (`/api/firmware`, unsigned Bose STU) and back through the update feed | open | open | open | open | not offered |
+| Audio at the agreed volume, the codec script copied from the speaker | open | open | open: through the host | open | not offered |
+| Keypad, lamps and display as mapped from stock | open | open | open | open: panel, Wi-Fi lamp | not offered |
+| Wired Ethernet takes a lease, where the board has a port | unknown: not mapped | open | unknown: not mapped | open: rear port | not offered |
+| Board-specific: the gauge reads, the charger polarity, charging by stock's rules, standby after 20 idle minutes on battery; SHIP only on stock's three conditions | open | n/a | n/a | n/a | n/a |
+| Board-specific: the amplifier controller's state and faults read, writes only at 0x06 and 0x11 | n/a | open | n/a | n/a | n/a |
+| Board-specific: the Bose link master selects the adapter, hands the volume over and takes the host remote's keys | n/a | n/a | open | n/a | n/a |
 
 ### Prohibited and historical checks
 

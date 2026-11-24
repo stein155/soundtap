@@ -84,7 +84,6 @@ func (s *Server) Handler() http.Handler { //nolint:funlen // route table, moved 
 	mux.HandleFunc("GET /api/multiroom/downstream", s.getMultiroomDownstream)
 	mux.HandleFunc("GET /api/multiroom/leader", s.getMultiroomLeader)
 	mux.HandleFunc("GET /api/settings", s.getSettings)
-	mux.HandleFunc("GET /api/geocode", s.geocode)
 	mux.HandleFunc("PUT /api/settings", s.putSettings)
 	mux.HandleFunc("GET /api/mqtt/status", s.mqttStatus)
 	mux.HandleFunc("GET /api/bluetooth", s.getBluetooth)

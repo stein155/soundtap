@@ -7,6 +7,7 @@
 
   "s1.title": "Welke speaker heb je?",
   "model.other": "Een ander model",
+  "model.preview": "{model} (preview)",
   "s1.otherHelp": "Heb je een ander model? <a>Help het aan de praat te krijgen</a>: de eerste stap is onderzoek dat alleen leest.",
 
   "s2.title": "Wat je nodig hebt",
@@ -44,6 +45,7 @@
   "br.ip": "Het IP-adres van de speaker",
   "br.ipHint": "In de Bose-app: Instellingen, Speakerinstellingen, je speaker, Info. Of zoek het op in je router.",
   "br.agree": "Ik begrijp dat SoundTap alfasoftware is die alles op de speaker vervangt, en ik heb gelezen hoe ik terug kan naar Bose (stap 6).",
+  "br.previewAgree": "Dit model is een preview: SoundTap is afgeleid uit de eigen software van Bose en niemand heeft het op dit model gedraaid. Het speelt misschien niet en de weg terug kan onbewezen zijn. Ik installeer het toch.",
   "br.go": "SoundTap installeren",
   "br.pickModel": "Kies eerst je speaker in stap 1.",
   "br.trust": "De pagina kan het model en de software niet van de speaker uitlezen, dus gaat voor allebei af op wat jij zegt.",
@@ -52,6 +54,7 @@
   "judge.noModel": "{model}: nog niet ondersteund. SoundTap heeft er nog niet op gedraaid, dus deze pagina installeert het niet.",
   "judge.no": "Nog niet ondersteund. SoundTap heeft nog niet op dit model gedraaid, dus deze pagina installeert het niet.",
   "judge.unread": "Typ de versie van de Bose-software die de Bose-app voor deze speaker toont.",
+  "judge.preview": "{model}: een preview. SoundTap is afgeleid uit de eigen software van Bose en niemand heeft het op dit model gedraaid; vink hieronder het preview-vakje aan om het toch te installeren.",
   "judge.old": "Bose-software {version}: de {model} heeft {minimum} of nieuwer nodig. Werk eerst Bose bij, in de Bose-app.",
 
   "st.asking": "Contact zoeken met de speaker…",

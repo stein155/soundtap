@@ -36,7 +36,6 @@ import (
 	"github.com/stein155/soundtap/app/internal/tunein"
 	"github.com/stein155/soundtap/app/internal/update"
 	"github.com/stein155/soundtap/app/internal/upnp"
-	"github.com/stein155/soundtap/app/internal/weather"
 	"github.com/stein155/soundtap/app/internal/web"
 )
 
@@ -335,6 +334,7 @@ func wireAudioPath(ctx context.Context, a audioWiring) audioTap {
 		WantAnchor:        anchor.Want,
 		EventChime:        a.eventChime,
 		AmpFault:          ampFaulted,
+		Battery:           batteryStatus,
 	})
 	goSafe("watchMultiroom", func() { webSrv.WatchMultiroom(ctx, 3*time.Second) })
 	goSafe("watchLeader", func() { webSrv.WatchLeader(ctx, 30*time.Second) })
@@ -420,9 +420,15 @@ func startPanel(ctx context.Context, a audioWiring) {
 	if board.Name == model.ST300 {
 		wireSoundbar(ctx, webSrv, sp, log.With("comp", "lpm"))
 	}
+	if board.Battery { // before Run, which reads it every frame
+		frontPanel.Battery = func() (int, bool, bool) {
+			b, ok := batteryStatus()
+			return b.Level, b.Charging, ok && b.Present
+		}
+	}
 	goSafe("display", func() { frontPanel.Run(ctx, sp, disp, panel.Clock(set), log.With("comp", "oled")) })
 	goSafe("clockScreen", func() {
-		panel.RunClockScreen(ctx, disp, weather.New(), func() settings.Display { return set.Get().Display }, log.With("comp", "clock"))
+		panel.RunClockScreen(ctx, disp, func() settings.Display { return set.Get().Display }, log.With("comp", "clock"))
 	})
 	goSafe("mediaDaemons", func() {
 		runMediaDaemons(ctx, a.home, func() string { return sp.StatusSnapshot().Source }, log.With("comp", "proc"))
@@ -442,4 +448,14 @@ func startPanel(ctx context.Context, a audioWiring) {
 	goSafe("upnpFolder", func() { runUPnPFolder(ctx, sp, log.With("comp", "upnp")) })
 	goSafe("discover", func() { reg.Discover(ctx, func(msg string, kv ...any) { log.Info(msg, kv...) }) })
 	goSafe("ampFault", func() { runAmpFault(ctx, log.With("comp", "ampfault")) })
+	if board.HostLink {
+		goSafe("adapterLink", func() { runAdapterLink(ctx, sp, btPair, log.With("comp", "abl")) })
+	}
+	if board.STM32Amp {
+		goSafe("sa5Amp", func() { runSA5Amp(ctx, log.With("comp", "sa5amp")) })
+	}
+	if board.Battery {
+		goSafe("battery", func() { runBattery(ctx, log.With("comp", "battery")) })
+		goSafe("batteryUI", func() { runBatteryUI(ctx, sp, log.With("comp", "battery")) })
+	}
 }

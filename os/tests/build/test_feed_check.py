@@ -20,7 +20,7 @@ from unittest import mock
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "tools/release"))
 import feed_check  # noqa: E402
-from mock_update_server import build_index, MODELS  # noqa: E402
+from mock_update_server import build_index, MODELS, PREVIEW_MODELS  # noqa: E402
 
 REPO = "stein155/soundtap"
 VERSION = "0.4.0"
@@ -28,6 +28,9 @@ NAME = f"SoundTap-Core-{VERSION}.stu"
 URLPATH = f"{REPO}/releases/download/os-v{VERSION}"
 URL = f"https://github.com/{URLPATH}/{NAME}"
 PACKAGE = b"a Core package for the feed test; not firmware\n" * 64
+PREVIEW_NAME = f"SoundTap-Core-{VERSION}-preview.stu"
+PREVIEW_URL = f"https://github.com/{URLPATH}/{PREVIEW_NAME}"
+PREVIEW_PACKAGE = b"the preview package for the feed test; not firmware\n" * 64
 
 
 def ed25519_available():
@@ -263,6 +266,98 @@ class FeedCheckTest(unittest.TestCase):
         with patch, self.assertRaises(feed_check.FeedError):
             self.check(assets=False)
         self.assertEqual(fetched, [])
+
+    # ADR 0133: the preview feed offers the release's preview package to the preview models,
+    # and no model is in both feeds.
+    def preview_feed(self, devices=PREVIEW_MODELS, name=PREVIEW_NAME, data=PREVIEW_PACKAGE):
+        """The preview package and its .sig in the assets, and the preview feed as the release
+        steps write it, through the script itself."""
+        (self.assets / name).write_bytes(data)
+        self.sign(self.active, data=data)
+        (self.assets / f"{NAME}.sig").rename(self.assets / f"{name}.sig")
+        self.index = self.tmp / "soundtouch-preview"
+        if devices is PREVIEW_MODELS:
+            subprocess.run([sys.executable, str(ROOT / "tools/release/mock_update_server.py"),
+                            "--serve", str(self.assets / name), "--write-index", str(self.index),
+                            "--host", "https://github.com", "--urlpath", URLPATH, "--preview"],
+                           check=True)
+        else:
+            self.index.write_bytes(build_index(str(self.assets / name), devices, "99.0.0.1.1",
+                                               "https://github.com", URLPATH))
+
+    def check_preview(self, assets=True):
+        return feed_check.check(self.index, self.assets if assets else None, root=self.tmp,
+                                preview=True)
+
+    def test_the_preview_feed_of_a_signed_release_passes(self):
+        self.preview_feed()
+        self.assertEqual(self.check_preview(), (PREVIEW_URL, VERSION))
+        # The supported feed's rules do not pass it, nor the preview rules the supported feed.
+        with self.assertRaises(feed_check.FeedError):
+            self.check()
+        self.index = self.tmp / "soundtouch"
+        with self.assertRaises(feed_check.FeedError):
+            self.check_preview()
+
+    def test_the_preview_feed_names_the_preview_package(self):
+        # The main package to the preview models: their installer check would refuse it.
+        self.preview_feed(name=NAME, data=PACKAGE)
+        with self.assertRaises(feed_check.FeedError) as e:
+            self.check_preview()
+        self.assertIn(f"not {PREVIEW_NAME}", str(e.exception))
+
+    def test_the_preview_packages_sig_is_over_its_own_bytes(self):
+        self.preview_feed()
+        self.sign(self.active, data=PACKAGE)
+        (self.assets / f"{NAME}.sig").replace(self.assets / f"{PREVIEW_NAME}.sig")
+        with self.assertRaises(feed_check.FeedError) as e:
+            self.check_preview()
+        self.assertIn("the .sig states", str(e.exception))
+
+    def test_no_model_is_in_both_feeds(self):
+        self.assertFalse({i for i, _ in MODELS} & {i for i, _ in PREVIEW_MODELS})
+        # The ST20 Series III (0x093B) comes from the preview feed only.
+        self.assertIn("0x093B", {i for i, _ in PREVIEW_MODELS})
+        series_iii = [d for d in PREVIEW_MODELS if d[0] == "0x093B"]
+        self.write_index(devices=MODELS + series_iii)
+        self.refused("each model is in one feed only")
+        self.preview_feed(devices=PREVIEW_MODELS + MODELS[:1])
+        with self.assertRaises(feed_check.FeedError) as e:
+            self.check_preview()
+        self.assertIn("each model is in one feed only", str(e.exception))
+        self.preview_feed(devices=PREVIEW_MODELS[:-1])
+        with self.assertRaises(feed_check.FeedError) as e:
+            self.check_preview()
+        self.assertIn("not the preview", str(e.exception))
+
+    def test_the_preview_feed_leaves_out_what_the_installers_refuse(self):
+        """The Lifestyle ids on the sm2 (0x093F, 0x0947), the Lifestyle 600/650 module (0x0948)
+        and 0x094B are in no feed."""
+        ids = {i for i, _ in MODELS + PREVIEW_MODELS}
+        for refused in ("0x093F", "0x0947", "0x0948", "0x094B"):
+            self.assertNotIn(refused, ids)
+
+    def test_the_preview_command_line(self):
+        self.preview_feed()
+        run = [sys.executable, str(ROOT / "tools/release/feed_check.py"), str(self.index),
+               "--preview", "--assets", str(self.assets)]
+        done = subprocess.run(run, capture_output=True, text=True)
+        # Past the device list and the name: it stops at the real tree's keys.
+        self.assertEqual(done.returncode, 1, done.stdout)
+        self.assertIn("does not verify", done.stderr)
+
+
+class RepositoryFeedsTest(unittest.TestCase):
+    """The feeds on this commit, without the network: each lists its own models and offers one
+    image of the right name (feed.yml checks the rest against the published release)."""
+
+    def test_the_feeds_list_their_own_models(self):
+        repo = feed_check.go_const(ROOT / "app/internal/update/update.go", "Repo")
+        for path, preview in ((ROOT / "updates/soundtouch", False),
+                              (ROOT / "updates/soundtouch-preview", True)):
+            if path.exists():
+                with self.subTest(path=path.name):
+                    feed_check.read_index(path, repo, preview)
 
 
 if __name__ == "__main__":

@@ -140,8 +140,8 @@ Back to the guide: [Going back to Bose](../owners/install.md#going-back-to-bose)
   treat it as a full soundbar factory restore.
 - **When SoundTap does not start but its SPL/U-Boot still work:** our bootloader implements
   USB-stick recovery. Prove it on the exact model and candidate before relying on it. Put an
-  `Update.stu` and its `Update.stu.sig` (the release's `.sig`, signed for the installed
-  image's profile) on a FAT USB stick, plug it into the micro-B port through an OTG adapter, and
+  `Update.stu` (a SoundTap release, or Bose's file for that model; no `.sig`, ADR 0130) on a
+  FAT USB stick, plug it into the micro-B port through an OTG adapter, and
   hold **Volume − and Preset 4** (ST10, ST20) or **both buttons** (Wireless Link) while
   powering on. ST300's remote-triggered code path has no completed recovery run and is not
   an approved recovery guarantee. This route reads a compatible SoundTap package's `soundtap-rootfs`, including

@@ -15,7 +15,10 @@
     "runs as; product the name /api/info reports; dtb and kernel what the slot recipes load from",
     "/boot; dts the source tree the dtb is built from; codec_script the speaker's own codec script,",
     "null on a board without a codec; stock_only a name only stock firmware reports, which no recipe",
-    "of ours writes, so it has no dtb, kernel or tree.",
+    "of ours writes, so it has no dtb, kernel or tree. detect is how our U-Boot tells the board apart",
+    "before any environment says what it is, as stock's 2014.07 does: {\"mfg\": name} for the product",
+    "name at 0x170 of NAND.Manufacturing-Data (SM2 boards), {\"variant_raw\": [lo, hi]} for the decimal",
+    "range of the variant resistor on ADC channel 1 (SCM boards), null when it is not detected.",
     "boot_images: where the build leaves each SPL and U-Boot, by suffix, under output/os/images."
   ],
   "models": {
@@ -68,7 +71,8 @@
       "dtb": "rhino_sm2.dtb",
       "kernel": "uImage-rhino",
       "dts": "am335x-soundtap-st10",
-      "codec_script": "rhino_sm2_normal.cfg"
+      "codec_script": "rhino_sm2_normal.cfg",
+      "detect": {"mfg": "rhino"}
     },
     "spotty3": {
       "model": "st10",
@@ -77,7 +81,8 @@
       "dtb": "spotty3_sm2.dtb",
       "kernel": "uImage-rhino",
       "dts": "am335x-soundtap-st20-iii",
-      "codec_script": "spotty_sm2_normal.cfg"
+      "codec_script": "spotty_sm2_normal.cfg",
+      "detect": {"mfg": "spotty"}
     },
     "mojo3": {
       "model": "st10",
@@ -86,7 +91,18 @@
       "dtb": "spotty3_sm2.dtb",
       "kernel": "uImage-rhino",
       "dts": "am335x-soundtap-st20-iii",
-      "codec_script": "mojo_sm2_normal.cfg"
+      "codec_script": "mojo_sm2_normal.cfg",
+      "detect": {"mfg": "mojo"}
+    },
+    "burns": {
+      "model": "st10",
+      "product": "SoundTouch SA-5",
+      "module_type": "sm2",
+      "dtb": "burns_sm2.dtb",
+      "kernel": "uImage-rhino",
+      "dts": "am335x-soundtap-sa5",
+      "codec_script": "burns_sm2_normal.cfg",
+      "detect": {"mfg": "burns"}
     },
     "spotty": {
       "model": "st20",
@@ -95,7 +111,8 @@
       "dtb": "spotty_scm.dtb",
       "kernel": "uImage-spotty",
       "dts": "am335x-soundtap-st20",
-      "codec_script": "spotty_scm_normal.cfg"
+      "codec_script": "spotty_scm_normal.cfg",
+      "detect": {"variant_raw": [1025, 2046]}
     },
     "mojo": {
       "model": "st20",
@@ -104,17 +121,38 @@
       "dtb": "spotty_scm.dtb",
       "kernel": "uImage-spotty",
       "dts": "am335x-soundtap-st20",
-      "codec_script": "mojo_scm_normal.cfg"
+      "codec_script": "mojo_scm_normal.cfg",
+      "detect": {"variant_raw": [2047, 2867]}
+    },
+    "taigan": {
+      "model": "st20",
+      "product": "SoundTouch Portable",
+      "module_type": "scm",
+      "dtb": "taigan_scm.dtb",
+      "kernel": "uImage-spotty",
+      "dts": "am335x-soundtap-portable",
+      "codec_script": "taigan_scm_normal.cfg",
+      "detect": {"variant_raw": [2868, 3481]}
     },
     "lisa": {
       "model": "st20",
-      "product": "SoundTouch 20",
+      "product": "SoundTouch adapter",
       "module_type": "scm",
-      "dtb": null,
-      "kernel": null,
-      "dts": null,
-      "codec_script": "spotty_scm_normal.cfg",
-      "stock_only": true
+      "dtb": "lisa_scm.dtb",
+      "kernel": "uImage-spotty",
+      "dts": "am335x-soundtap-lisa-scm",
+      "codec_script": "lisa_scm_normal.cfg",
+      "detect": {"variant_raw": [100, 1024]}
+    },
+    "lisa2": {
+      "model": "st10",
+      "product": "SoundTouch adapter",
+      "module_type": "sm2",
+      "dtb": "lisa_sm2.dtb",
+      "kernel": "uImage-rhino",
+      "dts": "am335x-soundtap-lisa",
+      "codec_script": null,
+      "detect": {"mfg": "lisa"}
     },
     "binky": {
       "model": "wla",
@@ -123,7 +161,8 @@
       "dtb": "binky_sm2.dtb",
       "kernel": "uImage-binky",
       "dts": "am335x-soundtap-wla",
-      "codec_script": null
+      "codec_script": null,
+      "detect": {"mfg": "binky"}
     },
     "ginger": {
       "model": "st300",
@@ -132,7 +171,18 @@
       "dtb": "ginger_sm2.dtb",
       "kernel": "uImage-ginger",
       "dts": "am335x-soundtap-st300",
-      "codec_script": null
+      "codec_script": null,
+      "detect": {"mfg": "ginger"}
+    },
+    "bardeen": {
+      "model": "st300",
+      "product": "Lifestyle 650",
+      "module_type": "sm2",
+      "dtb": "ginger_sm2.dtb",
+      "kernel": "uImage-ginger",
+      "dts": "am335x-soundtap-st300",
+      "codec_script": null,
+      "detect": {"mfg": "bardeen"}
     }
   },
   "boot_images": {

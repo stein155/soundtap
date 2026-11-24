@@ -18,11 +18,15 @@ var Variants = []Variant{
 	{Name: "rhino", Model: "st10", Product: "SoundTouch 10", ModuleType: "sm2", DTB: "rhino_sm2.dtb", Kernel: "uImage-rhino", CodecScript: "rhino_sm2_normal.cfg", StockOnly: false},
 	{Name: "spotty3", Model: "st10", Product: "SoundTouch 20", ModuleType: "sm2", DTB: "spotty3_sm2.dtb", Kernel: "uImage-rhino", CodecScript: "spotty_sm2_normal.cfg", StockOnly: false},
 	{Name: "mojo3", Model: "st10", Product: "SoundTouch 30", ModuleType: "sm2", DTB: "spotty3_sm2.dtb", Kernel: "uImage-rhino", CodecScript: "mojo_sm2_normal.cfg", StockOnly: false},
+	{Name: "burns", Model: "st10", Product: "SoundTouch SA-5", ModuleType: "sm2", DTB: "burns_sm2.dtb", Kernel: "uImage-rhino", CodecScript: "burns_sm2_normal.cfg", StockOnly: false},
 	{Name: "spotty", Model: "st20", Product: "SoundTouch 20", ModuleType: "scm", DTB: "spotty_scm.dtb", Kernel: "uImage-spotty", CodecScript: "spotty_scm_normal.cfg", StockOnly: false},
 	{Name: "mojo", Model: "st20", Product: "SoundTouch 30", ModuleType: "scm", DTB: "spotty_scm.dtb", Kernel: "uImage-spotty", CodecScript: "mojo_scm_normal.cfg", StockOnly: false},
-	{Name: "lisa", Model: "st20", Product: "SoundTouch 20", ModuleType: "scm", DTB: "", Kernel: "", CodecScript: "spotty_scm_normal.cfg", StockOnly: true},
+	{Name: "taigan", Model: "st20", Product: "SoundTouch Portable", ModuleType: "scm", DTB: "taigan_scm.dtb", Kernel: "uImage-spotty", CodecScript: "taigan_scm_normal.cfg", StockOnly: false},
+	{Name: "lisa", Model: "st20", Product: "SoundTouch adapter", ModuleType: "scm", DTB: "lisa_scm.dtb", Kernel: "uImage-spotty", CodecScript: "lisa_scm_normal.cfg", StockOnly: false},
+	{Name: "lisa2", Model: "st10", Product: "SoundTouch adapter", ModuleType: "sm2", DTB: "lisa_sm2.dtb", Kernel: "uImage-rhino", CodecScript: "", StockOnly: false},
 	{Name: "binky", Model: "wla", Product: "SoundTouch Wireless Link Adapter", ModuleType: "sm2", DTB: "binky_sm2.dtb", Kernel: "uImage-binky", CodecScript: "", StockOnly: false},
 	{Name: "ginger", Model: "st300", Product: "SoundTouch 300", ModuleType: "sm2", DTB: "ginger_sm2.dtb", Kernel: "uImage-ginger", CodecScript: "", StockOnly: false},
+	{Name: "bardeen", Model: "st300", Product: "Lifestyle 650", ModuleType: "sm2", DTB: "ginger_sm2.dtb", Kernel: "uImage-ginger", CodecScript: "", StockOnly: false},
 }
 
 // The largest ubi.img Bose's own installer has streamed to each model.

@@ -63,6 +63,9 @@ type Panel struct {
 	// Pairing reports the open Bluetooth pairing window, Calling that the speaker is calling
 	// its paired phones. Set them before Run.
 	Pairing, Calling func() bool
+	// Battery, when set, is the pack's level and whether it charges, for the status bar; ok
+	// is false while there is no reading. The Portable sets it.
+	Battery func() (level int, charging, ok bool)
 
 	holdToStore time.Duration // how long a preset key is held to store
 	// channel is the stored channel ("left", "right", ...): half of a stereo pair puts
@@ -241,6 +244,11 @@ func (p *Panel) Run(ctx context.Context, sp *speakerstate.Speaker, disp *display
 		standby = false
 		at, hour12 := clock()
 		bar := screen.Bar{Time: clockText(at, hour12)}
+		if p.Battery != nil {
+			if level, charging, ok := p.Battery(); ok {
+				bar.Battery, bar.Charging = max(level, 1), charging
+			}
+		}
 		dim := 15
 		if now.Sub(input) > dimAfter {
 			dim = dimLevel

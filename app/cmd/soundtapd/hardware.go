@@ -37,8 +37,26 @@ var ampLines = struct {
 	mute  func(muted bool, log *slog.Logger)
 	power func(powered bool, log *slog.Logger) bool
 }{
-	func(muted bool, log *slog.Logger) { amplifier.SetMute(muted, log) },
+	func(muted bool, log *slog.Logger) {
+		if !muted && !mayUnmute() {
+			muted = true
+		}
+		amplifier.SetMute(muted, log)
+	},
 	func(powered bool, log *slog.Logger) bool { return amplifier.SetPowered(powered, log) },
+}
+
+// unmuteGate, when set, must agree before the amplifier unmutes: the SA-5's controller says
+// when its amplifier is on (sa5.go).
+var unmuteGate atomic.Pointer[func() bool]
+
+// mayUnmute is the gate's answer. A model whose controller must agree (the SA-5) stays muted
+// until the controller is read, and for good when it cannot be.
+func mayUnmute() bool {
+	if g := unmuteGate.Load(); g != nil {
+		return (*g)()
+	}
+	return !board.STM32Amp
 }
 
 // ampFault watches the amplifier's fault input, where the model has one with hardware
@@ -48,7 +66,7 @@ var ampFault = hw.NewAmpFault(board.AmpFaultGPIO)
 // ampFaulted reports whether the amp fault is latched. Read by trackOwnership on every
 // mute decision, by the panel, and surfaced in the web health status. A variable so a
 // test can assert a fault.
-var ampFaulted = ampFault.Active
+var ampFaulted = func() bool { return ampFault.Active() || sa5Faulted() }
 
 // runAmpFault watches the fault input; a fault mutes at once.
 func runAmpFault(ctx context.Context, log *slog.Logger) {

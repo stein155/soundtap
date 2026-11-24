@@ -7,6 +7,7 @@
 
   "s1.title": "Kateri zvočnik imate?",
   "model.other": "Drug model",
+  "model.preview": "{model} (predogled)",
   "s1.otherHelp": "Imate drug model? <a>Pomagajte, da bo SoundTap tekel tudi na njem</a>: prvi korak je preiskava, ki samo bere.",
 
   "s2.title": "Kaj potrebujete",
@@ -44,6 +45,7 @@
   "br.ip": "Naslov IP zvočnika",
   "br.ipHint": "V aplikaciji Bose: Nastavitve, Nastavitve zvočnika, vaš zvočnik, O napravi. Lahko ga poiščete tudi v usmerjevalniku.",
   "br.agree": "Razumem, da je SoundTap programska oprema v različici alfa, ki na zvočniku zamenja vse, in prebral(-a) sem, kako se vrniti na Bose (6. korak).",
+  "br.previewAgree": "Ta model je predogled: SoundTap je izpeljan iz Bosejeve lastne programske opreme in ga na tem modelu še nihče ni zagnal. Morda ne bo predvajal, pot nazaj pa morda ni preverjena. Vseeno ga namestim.",
   "br.go": "Namesti SoundTap",
   "br.pickModel": "Najprej v 1. koraku izberite svoj zvočnik.",
   "br.trust": "Stran z zvočnika ne more prebrati modela ali njegove programske opreme, zato vam pri obojem verjame na besedo.",
@@ -52,6 +54,7 @@
   "judge.noModel": "{model}: še ni podprt. SoundTap na njem še ni tekel, zato ga ta stran ne bo namestila.",
   "judge.no": "Še ni podprt. SoundTap na tem modelu še ni tekel, zato ga ta stran ne bo namestila.",
   "judge.unread": "Vnesite različico Bosejeve programske opreme, ki jo aplikacija Bose prikazuje za ta zvočnik.",
+  "judge.preview": "{model}: predogled. SoundTap je izpeljan iz Bosejeve lastne programske opreme in ga na tem modelu še nihče ni zagnal; če ga želite vseeno namestiti, spodaj označite polje za predogled.",
   "judge.old": "Bosejeva programska oprema {version}: {model} potrebuje {minimum} ali novejšo. Najprej posodobite Bose v aplikaciji Bose.",
 
   "st.asking": "Poizvedovanje pri zvočniku …",

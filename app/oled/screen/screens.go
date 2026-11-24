@@ -45,6 +45,35 @@ type Bar struct {
 	State string
 	// Mark is "L" or "R" on half of a stereo pair, drawn left of the time.
 	Mark string
+	// Battery is the pack's level in percent on a speaker with one (the Portable), drawn
+	// left of the time in stock's bands; 0 draws nothing. Charging adds a plus.
+	Battery  int
+	Charging bool
+}
+
+// batteryBars are stock's battery icon bands: one bar per band reached, up to four.
+var batteryBars = []int{20, 40, 60, 75}
+
+// battery draws the battery icon with its right edge at x and returns its left edge.
+func (f *Frame) battery(x float64, level int, charging bool) float64 {
+	w, h, y := 16.0, 8.0, 4.0
+	left := x - w
+	f.Rect(left, y, w, 1, 8)
+	f.Rect(left, y+h-1, w, 1, 8)
+	f.Rect(left, y, 1, h, 8)
+	f.Rect(x-1, y, 1, h, 8)
+	f.Rect(x, y+2, 1.5, h-4, 8) // the terminal
+	for i, band := range batteryBars {
+		if level > band || i == 0 && level > 0 {
+			f.Rect(left+2+float64(i)*3.25, y+2, 2.5, h-4, 12)
+		}
+	}
+	if charging {
+		left -= 7
+		f.Rect(left+1, y+3.5, 5, 1, 12)
+		f.Rect(left+3, y+1.5, 1, 5, 12)
+	}
+	return left
 }
 
 // Source values with an icon or pixel-font label instead of their name.
@@ -76,8 +105,12 @@ func (f *Frame) statusBar(b Bar) {
 		f.Text(b.Room, x, 11, Font{Face: j600s8, Level: 8, Max: 80})
 	}
 	f.Text(b.Time, 124, 11, Font{Face: j600s8, Level: 8, Align: Right})
+	right := 124 - Width(j600s8, b.Time) - 4
+	if b.Battery > 0 {
+		right = f.battery(right-2, b.Battery, b.Charging) - 4
+	}
 	if b.Mark != "" {
-		mx := 124 - Width(j600s8, b.Time) - 12
+		mx := right - 8
 		f.RRect(mx-2, 3, 10, 10, 2, 4)
 		f.TextMid(b.Mark, mx+3, 8, Font{Face: pix7, Level: 15, Align: Center})
 	}
@@ -257,27 +290,15 @@ func Pairing(title, sub string) *Frame {
 	return f
 }
 
-// Standby is the dimmed clock. minute drives the anti burn-in drift. With temp set the
-// short date goes left under the clock and the temperature right; else the long date
-// is centred.
-func Standby(clock, date, shortDate, temp string, minute int) *Frame {
+// Standby is the dimmed clock: the time alone, as stock's, with AM/PM under it on a
+// 12-hour clock (marker; "" for none). minute drives the anti burn-in drift.
+func Standby(clock, marker string, minute int) *Frame {
 	f := &Frame{}
 	drift := minute % 4
 	dx, dy := float64(drift%2*2-1), float64(drift/2*2)
 	f.Text(clock, 64+dx, 54+dy, Font{Face: j700s32, Level: 10, Align: Center})
-	if temp != "" {
-		// As the design: the line spans the clock. A 12-hour "8:42" would leave the date
-		// no room, so a short clock spans as a four-digit one.
-		w := Width(j700s32, clock)
-		if len(clock) < len("00:00") {
-			w = Width(j700s32, "00:00")
-		}
-		l, r := math.Floor(64-w/2+0.5)+dx, math.Floor(64+w/2+0.5)+dx
-		tw := Width(j700s9, temp)
-		f.Text(shortDate, l, 76+dy, Font{Face: j600s9, Level: 8, Max: r - l - tw - 4})
-		f.Text(temp, r, 76+dy, Font{Face: j700s9, Level: 9, Align: Right})
-	} else if date != "" {
-		f.Text(date, 64+dx, 76+dy, Font{Face: j600s9, Level: 8, Align: Center})
+	if marker != "" {
+		f.Text(marker, 64+dx, 76+dy, Font{Face: j600s9, Level: 8, Align: Center})
 	}
 	return f
 }

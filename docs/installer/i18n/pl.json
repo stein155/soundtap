@@ -7,6 +7,7 @@
 
   "s1.title": "Jaki masz głośnik?",
   "model.other": "Inny model",
+  "model.preview": "{model} (wersja zapoznawcza)",
   "s1.otherHelp": "Masz inny model? <a>Pomóż go uruchomić</a>: pierwszym krokiem jest badanie tylko do odczytu.",
 
   "s2.title": "Czego potrzebujesz",
@@ -44,6 +45,7 @@
   "br.ip": "Adres IP głośnika",
   "br.ipHint": "W aplikacji Bose: Ustawienia, Ustawienia głośnika, Twój głośnik, Informacje. Albo sprawdź go w routerze.",
   "br.agree": "Rozumiem, że SoundTap to oprogramowanie w wersji alfa, które zastępuje wszystko na głośniku, i zapoznałem(-am) się z tym, jak wrócić do Bose (krok 6).",
+  "br.previewAgree": "Ten model to wersja zapoznawcza: SoundTap opracowano na podstawie oprogramowania Bose i nikt jeszcze nie uruchomił go na tym modelu. Może nie grać, a droga powrotu może być niesprawdzona. Mimo to instaluję.",
   "br.go": "Zainstaluj SoundTap",
   "br.pickModel": "Najpierw wybierz swój głośnik w kroku 1.",
   "br.trust": "Strona nie może odczytać z głośnika ani modelu, ani jego oprogramowania, więc w obu sprawach wierzy Ci na słowo.",
@@ -52,6 +54,7 @@
   "judge.noModel": "{model}: jeszcze nieobsługiwany. SoundTap jeszcze na nim nie działał, więc ta strona go nie zainstaluje.",
   "judge.no": "Jeszcze nieobsługiwany. SoundTap jeszcze nie działał na tym modelu, więc ta strona go nie zainstaluje.",
   "judge.unread": "Wpisz wersję oprogramowania Bose, którą aplikacja Bose pokazuje dla tego głośnika.",
+  "judge.preview": "{model}: wersja zapoznawcza. SoundTap opracowano na podstawie oprogramowania Bose i nikt jeszcze nie uruchomił go na tym modelu; zaznacz poniżej pole wersji zapoznawczej, aby mimo to zainstalować.",
   "judge.old": "Oprogramowanie Bose {version}: {model} wymaga wersji {minimum} lub nowszej. Najpierw zaktualizuj Bose w aplikacji Bose.",
 
   "st.asking": "Odpytywanie głośnika…",

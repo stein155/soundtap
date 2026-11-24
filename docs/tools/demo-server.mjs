@@ -188,7 +188,7 @@ const settings = {
   auxName: '',
   mqtt: { enabled: false, host: '', port: 1883, username: '', hasPassword: false, baseTopic: '', discoveryPrefix: '', tls: false },
   hasDisplay: false,
-  display: { clockOff: false, hour12: false, city: '', lat: 0, lon: 0, timezone: '', weatherOn: false },
+  display: { clockOff: false, hour12: false, timezone: '' },
   alarm: { enabled: false, time: '07:00', slot: 1 },
   multiroom: { keepGroups: false, syncVolume: false },
 };

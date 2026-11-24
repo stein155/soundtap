@@ -11,6 +11,9 @@ name: Sign
 #   SOUNDTAP_RELEASE_KEY_PASSPHRASE  its passphrase
 # tools/release/sign-release.sh does the work, as on a maintainer's machine: it checks the
 # draft's digest, signs with sign.sh and uploads <asset>.sig, and the release stays a draft.
+# A Core draft also holds the preview package (ADR 0133), SoundTap-Core-X.Y.Z-preview.stu: it
+# gets its own .sig, the same statement fields over its own digest, only when its bytes after
+# module 0 are the main package's.
 # A Core release X.Y.Z is signed only against the four hardware reports committed in
 # releases/os-vX.Y.Z/; an alpha needs none. Install the signed draft on your own speakers,
 # then dispatch again with publish=true: ed25519 signs the same statement to the same bytes,

@@ -44,7 +44,9 @@ so a Core install never needs an app update afterwards.
 ### Names and versions
 
 The Core release is **SoundTap Core X.Y.Z**, file `SoundTap-Core-X.Y.Z.stu` (with `-sources.tar`,
-`.cdx.json` and `.sha256` beside it). The app release is **SoundTap app X.Y.Z**, file
+`.cdx.json` and `.sha256` beside it), and the preview package `SoundTap-Core-X.Y.Z-preview.stu`
+with its own `.sha256` and `.sig`, the only one the preview models install from
+([ADR 0133](0133-more-soundtouch-models-from-stock.md)). The app release is **SoundTap app X.Y.Z**, file
 `SoundTap-app-X.Y.Z-armv7.bin`. "SoundTap" alone is the product; "soundtapd" is not shown to users.
 The layer is called Core rather than OS because "OS" reads as a claim to be a general-purpose
 operating system and collides with the plain word in prose. The user-facing word is Core
@@ -122,7 +124,7 @@ A version may carry one prerelease suffix, `X.Y.Z-alpha.N`, in `os/VERSION` and 
 alike: N is a positive number of at most nine digits without a leading zero, and no other suffix
 is a version. Versions order by semver precedence, an alpha before the release of its number:
 `0.1.0-alpha.1 < 0.1.0-alpha.2 < 0.1.0 < 0.1.1-alpha.1`. soundtapd (`release.Version`), the
-signed statement and U-Boot's USB-stick check ([ADR 0048](0048-signed-updates.md)), the release
+signed statement ([ADR 0048](0048-signed-updates.md)), the release
 tooling and the installer page read this one grammar. An "alpha" is a kind of release; the
 alpha *profile* of [ADR 0011](0011-one-buildroot-pipeline.md) is unrelated: an alpha is always
 a production candidate, never an image with SSH.

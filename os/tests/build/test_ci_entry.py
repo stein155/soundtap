@@ -19,7 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 
 # Records its arguments; fails for the targets named in FAIL; `make stu` leaves the
-# package and the images the stu step expects.
+# package, the preview package (ADR 0133) and the images the stu step expects.
 STUB_MAKE = """#!/bin/sh
 echo "$*" >>"$TREE/make.calls"
 for a in "$@"; do last=$a; done
@@ -27,6 +27,7 @@ case " $FAIL " in *" $last "*) echo "stub: $last fails"; exit 3 ;; esac
 if [ "$last" = stu ]; then
 	mkdir -p "$TREE/dist" "$TREE/output/os/images"
 	printf 'package bytes' >"$TREE/dist/Update-soundtap-buildroot.stu"
+	printf 'preview bytes' >"$TREE/dist/Update-soundtap-buildroot-preview.stu"
 	echo sums >"$TREE/output/os/images/SHA256SUMS"
 	echo config >"$TREE/output/os/images/kernel.config"
 fi
@@ -119,6 +120,13 @@ class RunBuildTest(unittest.TestCase):
             digest = hashlib.sha256(b"package bytes").hexdigest()
             self.assertEqual((dist / "SoundTap-Core-0.3.1.stu.sha256").read_text(),
                              f"{digest}  SoundTap-Core-0.3.1.stu\n")
+            # The preview package beside it, named after the same version, with its own sum.
+            preview = dist / "SoundTap-Core-0.3.1-preview.stu"
+            self.assertEqual(preview.read_bytes(), b"preview bytes")
+            self.assertFalse((dist / "Update-soundtap-buildroot-preview.stu").exists())
+            digest = hashlib.sha256(b"preview bytes").hexdigest()
+            self.assertEqual((dist / "SoundTap-Core-0.3.1-preview.stu.sha256").read_text(),
+                             f"{digest}  SoundTap-Core-0.3.1-preview.stu\n")
             self.assertEqual((dist / "commit").read_text(), "c0ffee\n")
             self.assertEqual((dist / "profile").read_text(), "production\n")
             self.assertEqual((dist / "SHA256SUMS").read_text(), "sums\n")

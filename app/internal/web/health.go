@@ -16,8 +16,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/stein155/soundtap/app/internal/bco"
 	"github.com/stein155/soundtap/app/internal/counters"
 	"github.com/stein155/soundtap/app/internal/flash"
+	"github.com/stein155/soundtap/app/internal/hw/battery"
 	"github.com/stein155/soundtap/app/internal/install"
 )
 
@@ -101,6 +103,11 @@ type health struct {
 	Processes int        `json:"processes"`
 	Logs      []logUsage `json:"logs"`
 	AmpFault  bool       `json:"ampFault"`
+	// Battery is the Portable's pack and charger; absent on every other model.
+	Battery *battery.Status `json:"battery,omitempty"`
+	// BCO is the ST20's network card: its transmit and link counters and the driver's flow
+	// control (ADR 0031); absent on every other model and with a BCO app without counters.
+	BCO *bco.LinkStats `json:"bco,omitempty"`
 	// Firewall is FirewallLoaded, FirewallMissing or FirewallNA (firewall.go).
 	Firewall string   `json:"firewall"`
 	Warnings []string `json:"warnings"`
@@ -213,6 +220,22 @@ func (s *Server) collectHealth(ctx context.Context) health {
 	if s.ampFaultFn != nil && s.ampFaultFn() {
 		h.AmpFault = true
 		h.Warnings = append(h.Warnings, "amp fault detected: output muted")
+	}
+	if s.batteryFn != nil {
+		if b, ok := s.batteryFn(); ok {
+			h.Battery = &b
+			switch {
+			case !b.Present:
+				h.Warnings = append(h.Warnings, "the battery pack does not answer: charging is off")
+			case b.Fault != 0:
+				h.Warnings = append(h.Warnings, fmt.Sprintf("the battery pack reports fault 0x%04x: charging is off", b.Fault))
+			case b.Low:
+				h.Warnings = append(h.Warnings, fmt.Sprintf("battery low: %d %%", b.Level))
+			}
+		}
+	}
+	if st, ok := bco.ReadLinkStats(sysPath("/sys/class/net")); ok {
+		h.BCO = &st
 	}
 	if s.daemonProblems != nil {
 		h.Warnings = append(h.Warnings, s.daemonProblems()...)

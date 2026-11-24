@@ -671,19 +671,20 @@ start_snapserver() {
 # Hardware identity wins over writable persistent settings. Stock lisa and mainline
 # spotty are ST20, and so is mojo (the SoundTouch 30 Series I, the same board); rhino is
 # ST10, and so are spotty3 and mojo3 (the ST20 and ST30 Series III, the ST10's module);
-# binky is the Wireless Link Adapter and ginger is the SoundTouch 300
-# (PoC).
+# binky is the Wireless Link Adapter, ginger is the SoundTouch 300 (PoC) and bardeen the
+# Lifestyle 600/650's module, which is the ST300's.
 detect_model() {
 PROC_MODEL=""
 CMD_MODEL=""
+CMD_VARIANT=""
 IDENTITY_INVALID=0
 if [ -r "$PROC_DIR/variant" ]; then
 	read -r PROC_VARIANT <"$PROC_DIR/variant" || PROC_VARIANT=""
 	case "$PROC_VARIANT" in
-		spotty|lisa|mojo) PROC_MODEL=st20 ;;
-		rhino|spotty3|mojo3) PROC_MODEL=st10 ;;
+		spotty|lisa|mojo|taigan) PROC_MODEL=st20 ;;
+		rhino|spotty3|mojo3|burns|lisa2) PROC_MODEL=st10 ;;
 		binky) PROC_MODEL=wla ;;
-		ginger) PROC_MODEL=st300 ;;
+		ginger|bardeen) PROC_MODEL=st300 ;;
 		"") ;;
 		*) IDENTITY_INVALID=1 ;;
 	esac
@@ -692,9 +693,10 @@ for field in $(cat "$PROC_DIR/cmdline" 2>/dev/null); do  # always readable; quie
 	case "$field" in
 		variant=*)
 			value=${field#variant=}
-			case "$value" in spotty|lisa|mojo) value_model=st20;; rhino|spotty3|mojo3) value_model=st10;; binky) value_model=wla;; ginger) value_model=st300;; *) IDENTITY_INVALID=1; continue;; esac
+			case "$value" in spotty|lisa|mojo|taigan) value_model=st20;; rhino|spotty3|mojo3|burns|lisa2) value_model=st10;; binky) value_model=wla;; ginger|bardeen) value_model=st300;; *) IDENTITY_INVALID=1; continue;; esac
 			if [ -n "$CMD_MODEL" ] && [ "$CMD_MODEL" != "$value_model" ]; then IDENTITY_INVALID=1; fi
 			CMD_MODEL=$value_model
+			CMD_VARIANT=$value
 			;;
 	esac
 done
@@ -717,6 +719,8 @@ export MODEL
 # into its soundbar both come up as card 0 from a built-in driver and share one path.
 NOCODEC=0
 case "$MODEL" in wla|st300) NOCODEC=1 ;; esac
+# The SoundTouch adapter on the SM2 sends I2S to a converter: stock disables its AIC3256.
+[ "${CMD_VARIANT:-${PROC_VARIANT:-}}" = lisa2 ] && NOCODEC=1
 if [ "$MODEL" = unknown ]; then
 	log "ERROR: refusing hardware and network bring-up without one trusted model"
 	exit 1
@@ -763,16 +767,19 @@ codec_script_from_other_slot() {
 	log "ERROR: no codec script $name in $CODEC_DIR or mtd$other; audio stays muted"
 	return 1
 }
-# The SoundTouch 30 Series I runs the ST20's board with its own codec script.
+# The SoundTouch 30 Series I and the Portable run the ST20's board with their own codec scripts.
 copy_codec_script() {
 ST20_CODEC=spotty_scm_normal.cfg
 grep -qw 'variant=mojo' /proc/cmdline 2>/dev/null && ST20_CODEC=mojo_scm_normal.cfg  # always readable; quiet anyway
-# The ST20 and ST30 Series III run the ST10's board with theirs.
+grep -qw 'variant=taigan' /proc/cmdline 2>/dev/null && ST20_CODEC=taigan_scm_normal.cfg  # always readable; quiet anyway
+grep -qw 'variant=lisa' /proc/cmdline 2>/dev/null && ST20_CODEC=lisa_scm_normal.cfg  # always readable; quiet anyway
+# The ST20 and ST30 Series III and the SA-5 run the ST10's board with theirs.
 ST10_CODEC=rhino_sm2_normal.cfg
 grep -qw 'variant=spotty3' /proc/cmdline 2>/dev/null && ST10_CODEC=spotty_sm2_normal.cfg  # always readable; quiet anyway
 grep -qw 'variant=mojo3' /proc/cmdline 2>/dev/null && ST10_CODEC=mojo_sm2_normal.cfg  # always readable; quiet anyway
+grep -qw 'variant=burns' /proc/cmdline 2>/dev/null && ST10_CODEC=burns_sm2_normal.cfg  # always readable; quiet anyway
 case "$MODEL" in
-st10) codec_script_from_other_slot "$ST10_CODEC" || true ;;
+st10) [ "$NOCODEC" = 1 ] || codec_script_from_other_slot "$ST10_CODEC" || true ;;
 st20) codec_script_from_other_slot "$ST20_CODEC" || true ;;
 esac
 }
@@ -1252,6 +1259,8 @@ mkdir -p "$RUN_DIR/snapserver" && chown "snapcast:$SOUNDTAPD_USER" "$RUN_DIR/sna
 grant 0660 "$DEV_DIR"/watchdog "$DEV_DIR"/watchdog0 "$DEV_DIR"/lirc0 "$DEV_DIR"/ir "$DEV_DIR"/shelby-keypad \
 	"$DEV_DIR"/input/event* "$DEV_DIR"/spidev* "$DEV_DIR"/i2c-* "$DEV_DIR"/ttyS0 "$DEV_DIR"/snd/* \
 	"$DEV_DIR"/shelby-leds/* "$DEV_DIR"/fb0
+# The SCM adapter's Bose link: ttyS0 is its BCO, as on every SCM board, and UART0 is ttyS1.
+[ "${CMD_VARIANT:-${PROC_VARIANT:-}}" != lisa ] || grant 0660 "$DEV_DIR"/ttyS1
 # NAND read-only: the readback of every write, fw_printenv, the serial and the Wi-Fi
 # calibration. A write needs soundtap-root.
 grant 0640 "$DEV_DIR"/mtd[0-9]*
@@ -1337,16 +1346,20 @@ fi
 start_wired() {
 # --- network: loopback, wired, then WiFi (wl18xx) -----------------------------
 ifconfig lo 127.0.0.1 up 2>/dev/null
-# The CPSW switch is a module, and only the ST300 dts enables it. TV audio starts about
-# 30 s after a cold boot with or without it (measured).
-if [ "$MODEL" = st300 ]; then
+# The CPSW switch is a module, and only the ST300, Series III (spotty3, mojo3) and SA-5 (burns)
+# trees enable it: stock wires the same rear port on all of them. TV audio starts about 30 s after a cold boot
+# with or without it (measured on the ST300).
+CPSW_PORT=0
+[ "$MODEL" = st300 ] && CPSW_PORT=1
+grep -qwE 'variant=(spotty3|mojo3|burns|lisa2)' /proc/cmdline 2>/dev/null && CPSW_PORT=1  # always readable; quiet anyway
+if [ "$CPSW_PORT" = 1 ]; then
 	for m in phy-gmii-sel davinci_mdio ti_cpsw_new; do
 		modprobe "$m" 2>>"$LOG" && log "loaded $m" || log "WARNING: $m did not load, no wired port"
 	done
 fi
-if { [ "$MODEL" = st20 ] && [ "$BCO_OWN" = 1 ]; } || [ "$MODEL" = st300 ]; then
+if { [ "$MODEL" = st20 ] && [ "$BCO_OWN" = 1 ]; } || [ "$CPSW_PORT" = 1 ]; then
 	# The own BCO: wlan0 like on the ST10 (soundtapd's Wi-Fi manager); eth0 is the BCO's wired port.
-	# The ST300: eth0 is the AM335x CPSW's rear port, on the same watcher.
+	# The ST300 and the Series III: eth0 is the AM335x CPSW's rear port, on the same watcher.
 	# DHCP in the background so a speaker without a cable goes on with Wi-Fi. Two things make
 	# a running udhcpc wrong (measured), so it is restarted on either:
 	# - a BCO reset or flash replaces the netdev: the new eth0 is down, and a udhcpc BOUND on

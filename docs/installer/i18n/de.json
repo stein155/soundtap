@@ -7,6 +7,7 @@
 
   "s1.title": "Welchen Lautsprecher haben Sie?",
   "model.other": "Ein anderes Modell",
+  "model.preview": "{model} (Vorschau)",
   "s1.otherHelp": "Sie haben ein anderes Modell? <a>Helfen Sie mit, es zum Laufen zu bringen</a>: Der erste Schritt ist eine Untersuchung, die nur ausliest.",
 
   "s2.title": "Was Sie brauchen",
@@ -44,6 +45,7 @@
   "br.ip": "Die IP-Adresse des Lautsprechers",
   "br.ipHint": "In der Bose-App: Einstellungen, Lautsprechereinstellungen, Ihr Lautsprecher, Info. Oder schauen Sie in Ihrem Router nach.",
   "br.agree": "Ich verstehe, dass SoundTap Alpha-Software ist, die alles auf dem Lautsprecher ersetzt, und ich habe gelesen, wie ich zu Bose zurückkehre (Schritt 6).",
+  "br.previewAgree": "Dieses Modell ist eine Vorschau: SoundTap ist aus Boses eigener Software abgeleitet, und niemand hat es bisher auf diesem Modell laufen lassen. Es spielt vielleicht nicht, und der Weg zurück ist möglicherweise unerprobt. Ich installiere es trotzdem.",
   "br.go": "SoundTap installieren",
   "br.pickModel": "Wählen Sie zuerst in Schritt 1 Ihren Lautsprecher.",
   "br.trust": "Die Seite kann Modell und Software nicht vom Lautsprecher auslesen und verlässt sich deshalb bei beidem auf Ihre Angabe.",
@@ -52,6 +54,7 @@
   "judge.noModel": "{model}: noch nicht unterstützt. SoundTap lief darauf noch nie, deshalb installiert diese Seite es nicht.",
   "judge.no": "Noch nicht unterstützt. SoundTap lief auf diesem Modell noch nie, deshalb installiert diese Seite es nicht.",
   "judge.unread": "Geben Sie die Bose-Softwareversion ein, die die Bose-App für diesen Lautsprecher anzeigt.",
+  "judge.preview": "{model}: eine Vorschau. SoundTap ist aus Boses eigener Software abgeleitet, und niemand hat es bisher auf diesem Modell laufen lassen; setzen Sie unten das Häkchen für die Vorschau, um es trotzdem zu installieren.",
   "judge.old": "Bose-Software {version}: Der {model} braucht {minimum} oder neuer. Aktualisieren Sie zuerst Bose, in der Bose-App.",
 
   "st.asking": "Lautsprecher wird gefragt…",

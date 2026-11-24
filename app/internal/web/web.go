@@ -24,6 +24,7 @@ import (
 	"github.com/stein155/soundtap/app/internal/btctl"
 	"github.com/stein155/soundtap/app/internal/favorites"
 	"github.com/stein155/soundtap/app/internal/household"
+	"github.com/stein155/soundtap/app/internal/hw/battery"
 	"github.com/stein155/soundtap/app/internal/install"
 	"github.com/stein155/soundtap/app/internal/multiroom"
 	"github.com/stein155/soundtap/app/internal/nowplaying"
@@ -153,6 +154,8 @@ type Server struct {
 	// ampFaultFn reports whether the amp fault GPIO is currently asserted.
 	// nil off-device (no hardware to read).
 	ampFaultFn func() bool
+	// batteryFn is the Portable's battery as last read; false where there is none.
+	batteryFn func() (battery.Status, bool)
 	// daemonProblems lists faults soundtapd found in itself (an unidentified model, a
 	// failed Wi-Fi restart); /api/health shows them as warnings. nil reports none.
 	daemonProblems func() []string

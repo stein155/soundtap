@@ -19,7 +19,8 @@ func TestSetHomeMovesEveryPersistentPath(t *testing.T) {
 		"hostnameFile": hostnameFile, "soundbarHome": soundbarHome,
 		"snapserverKeepDir": snapserverKeepDir, "bcoImageMarker": bcoImageMarker,
 		"stockConfigPath": stockConfigPath, "stockPresetsPath": stockPresetsPath,
-		"stockProfilesPath": stockProfilesPath, "spotifyDir": spotifyDir,
+		"stockProfilesPath": stockProfilesPath, "stockClockPath": stockClockPath,
+		"stockLocaltimePath": stockLocaltimePath, "spotifyDir": spotifyDir,
 		"spotifySystemDir": spotifySystemDir, "irUserMap": irUserMap, "buttonsUserMap": buttonsUserMap,
 	}
 	for name, path := range paths {
@@ -31,16 +32,18 @@ func TestSetHomeMovesEveryPersistentPath(t *testing.T) {
 	// on the volume above it.
 	setHome(defaultHome)
 	for got, want := range map[string]string{
-		hostnameFile:      "/mnt/nv/soundtap/hostname",
-		soundbarHome:      "/mnt/nv/soundtap",
-		snapserverKeepDir: "/mnt/nv/soundtap/snapserver",
-		bcoImageMarker:    "/mnt/nv/soundtap/bco-image",
-		stockConfigPath:   "/mnt/nv/BoseApp-Persistence/1/SystemConfigurationDB.xml",
-		stockPresetsPath:  "/mnt/nv/BoseApp-Persistence/1/Presets.xml",
-		stockProfilesPath: "/mnt/nv/BoseApp-Persistence/1/NetworkProfiles.xml",
-		spotifySystemDir:  "/mnt/nv/spotify/system",
-		irUserMap:         "/mnt/nv/ir.map",
-		buttonsUserMap:    "/mnt/nv/buttons.map",
+		hostnameFile:       "/mnt/nv/soundtap/hostname",
+		soundbarHome:       "/mnt/nv/soundtap",
+		snapserverKeepDir:  "/mnt/nv/soundtap/snapserver",
+		bcoImageMarker:     "/mnt/nv/soundtap/bco-image",
+		stockConfigPath:    "/mnt/nv/BoseApp-Persistence/1/SystemConfigurationDB.xml",
+		stockPresetsPath:   "/mnt/nv/BoseApp-Persistence/1/Presets.xml",
+		stockProfilesPath:  "/mnt/nv/BoseApp-Persistence/1/NetworkProfiles.xml",
+		stockClockPath:     "/mnt/nv/BoseApp-Persistence/1/ClockDisplay.xml",
+		stockLocaltimePath: "/mnt/nv/localtime",
+		spotifySystemDir:   "/mnt/nv/spotify/system",
+		irUserMap:          "/mnt/nv/ir.map",
+		buttonsUserMap:     "/mnt/nv/buttons.map",
 	} {
 		if got != want {
 			t.Errorf("default path %q, want %q", got, want)

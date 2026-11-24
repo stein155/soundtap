@@ -18,6 +18,7 @@ path = [
   "app/VERSION",
   "os/VERSION",
   "updates/soundtouch",
+  "updates/soundtouch-preview",
   "app/go.mod",
   "app/go.sum",
   "app/vendor/modules.txt",

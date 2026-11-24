@@ -26,7 +26,7 @@ mount -t sysfs sysfs /sys 2>/dev/null || true # already mounted
 mount -t devtmpfs devtmpfs /dev 2>/dev/null || true # already mounted
 
 case "$(sed -n 's/.*[ ]variant=\([a-z0-9][a-z0-9]*\).*/\1/p' /proc/cmdline)" in
-binky|ginger|mojo|mojo3|rhino|spotty|spotty3) ;;
+bardeen|binky|burns|ginger|lisa|lisa2|mojo|mojo3|rhino|spotty|spotty3|taigan) ;;
 *) exit 0 ;;
 esac
 

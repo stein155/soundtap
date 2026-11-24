@@ -4,9 +4,11 @@
 
 """sign-release.sh signs an OS release only with passing reports for all four models made
 against the exact asset, and leaves it a draft; --publish makes public only a draft whose
-.sig states that release. gh and sign.sh are stubbed: nothing reaches GitHub and no key is
-used."""
+.sig states that release. An OS release carries the preview package (ADR 0133) beside it,
+signed alike only when it differs from the asset in its installer alone. gh and sign.sh are
+stubbed: nothing reaches GitHub and no key is used; the packages are real STU chains, small."""
 import hashlib
+import importlib.util
 import json
 import os
 import shutil
@@ -20,7 +22,24 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 from tools.release import release_approval as ra  # noqa: E402
 
-ASSET = b"universal STU bytes"
+_spec = importlib.util.spec_from_file_location("bstu", ROOT / "os/installer/build-stu.py")
+bstu = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(bstu)
+
+
+def package(**changed):
+    """A small soundtap-tri chain, as build-stu.py assembles it; changed swaps payloads."""
+    payloads = {name: name.encode() + b"x" * 64 for name in bstu.SOUNDTAP_TRI_MODULES}
+    payloads.update(changed)
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "Update.stu"
+        bstu.assemble_self_contained_stu(payloads, out, "soundtap-tri")
+        return out.read_bytes()
+
+
+ASSET = package()
+# The preview package: the preview build of the installer as module 0, nothing else changed.
+PREVIEW = package(**{"soundtap-installer": b"the preview package's installer"})
 
 
 def sha(data: bytes) -> str:
@@ -56,7 +75,10 @@ def statement(kind="core", version="1.0.0", profile="production", data=ASSET):
 
 
 class SignReleaseTests(unittest.TestCase):
-    def run_sign(self, tag, reports, publish=False, sig=None, draft=True):
+    def run_sign(self, tag, reports, publish=False, sig=None, draft=True, preview="same",
+                 preview_sig=None):
+        """preview: the preview package of an OS release, "same" (only its installer differs),
+        "other" (a payload differs too), "missing", or "extra" (a second -preview asset)."""
         tmp = Path(self.enterContextTemp())
         release = tmp / "release"
         release.mkdir()
@@ -65,6 +87,17 @@ class SignReleaseTests(unittest.TestCase):
             f"{sha(ASSET)}  Update-soundtap.stu\n")
         if sig is not None:
             (release / "Update-soundtap.stu.sig").write_text(sig)
+        if tag.startswith("os-v") and preview != "missing":
+            data = PREVIEW if preview != "other" else package(
+                **{"soundtap-installer": b"preview", "soundtap-rootfs": b"another rootfs" * 5})
+            names = ["Update-soundtap-preview.stu", *(["Other-preview.stu"] if preview == "extra" else [])]
+            for name in names:
+                (release / name).write_bytes(data)
+                (release / f"{name}.sha256").write_text(f"{sha(data)}  {name}\n")
+            if preview_sig is None and sig:
+                preview_sig = sig.replace(sha(ASSET), sha(data))
+            if preview_sig is not None:
+                (release / "Update-soundtap-preview.stu.sig").write_text(preview_sig)
         bin_ = tmp / "bin"
         bin_.mkdir()
         log = tmp / "gh.log"
@@ -83,10 +116,11 @@ esac
         (tmp / "os/board").mkdir(parents=True)
         shutil.copy(ROOT / "os/board/nand-geometry.json", tmp / "os/board")
         signed = tmp / "sign.log"
+        signed_files = tmp / "signed-files.log"
         (tools / "release" / "sign.sh").write_text(
             "#!/bin/sh\n"
             f'echo "$SOUNDTAP_PACKAGE_KIND $SOUNDTAP_SIGN_PROFILE $SOUNDTAP_PACKAGE_VERSION" >> {signed}\n'
-            'touch "$1.sig"\n')
+            f'for a in "$@"; do basename "$a" >> {signed_files}; touch "$a.sig"; done\n')
         (tools / "release" / "sign.sh").chmod(0o755)
         env = dict(os.environ, PATH=f"{bin_}:{os.environ['PATH']}")
         args = ["sh", str(tools / "release/sign-release.sh")]
@@ -99,6 +133,7 @@ esac
         self.calls = log.read_text() if log.exists() else ""
         self.uploaded = "release upload" in self.calls
         self.signed = signed.read_text() if signed.exists() else ""
+        self.signed_files = signed_files.read_text().split() if signed_files.exists() else []
         return done, "--draft=false" in self.calls
 
     def enterContextTemp(self):
@@ -250,6 +285,55 @@ esac
                                         draft=False)
         self.assertIn("not a draft", done.stderr)
         self.assertFalse(published)
+
+    # ADR 0133: the preview package is signed with the release, as the same kind, profile and
+    # version over its own bytes, and only when it is the asset with its installer swapped.
+    def test_the_preview_package_is_signed_with_the_release(self):
+        for tag, reports in (("os-v1.0.0", self.reports()), ("os-v1.0.0-alpha.1", None)):
+            with self.subTest(tag=tag):
+                done, published = self.run_sign(tag, reports)
+                self.assertEqual(done.returncode, 0, done.stderr)
+                self.assertEqual(self.signed, f"core production {tag[4:]}\n")
+                self.assertEqual(self.signed_files, ["Update-soundtap.stu", "Update-soundtap-preview.stu"])
+                upload = next(line for line in self.calls.splitlines() if line.startswith("release upload"))
+                self.assertIn("Update-soundtap.stu.sig", upload)
+                self.assertIn("Update-soundtap-preview.stu.sig", upload)
+                self.assertFalse(published)
+
+    def test_an_os_release_without_its_preview_package_is_not_signed(self):
+        for preview in ("missing", "extra"):
+            with self.subTest(preview=preview):
+                done, _ = self.run_sign("os-v1.0.0", self.reports(), preview=preview)
+                self.assertNotEqual(done.returncode, 0)
+                self.assertIn("preview package", done.stderr)
+                self.assertEqual(self.signed, "")
+                self.assertFalse(self.uploaded)
+
+    def test_a_preview_package_with_other_payloads_is_not_signed(self):
+        done, _ = self.run_sign("os-v1.0.0", self.reports(), preview="other")
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("only its installer swapped", done.stderr)
+        self.assertEqual(self.signed, "")
+        self.assertFalse(self.uploaded)
+
+    def test_an_app_release_carries_no_preview_package(self):
+        done, _ = self.run_sign("app-v2.3.4", None)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(self.signed_files, ["Update-soundtap.stu"])
+
+    def test_publish_needs_the_preview_packages_statement_too(self):
+        for name, preview_sig in {
+            "no .sig": None,
+            "the asset's statement": statement(),
+            "another version": statement(version="0.9.0", data=PREVIEW),
+            "alpha": statement(profile="alpha", data=PREVIEW),
+        }.items():
+            with self.subTest(name=name):
+                done, published = self.run_sign("os-v1.0.0", None, publish=True, sig=statement(),
+                                                preview_sig=preview_sig or "")
+                self.assertNotEqual(done.returncode, 0, name)
+                self.assertIn("Update-soundtap-preview.stu.sig", done.stderr)
+                self.assertFalse(published, name)
 
 
 if __name__ == "__main__":

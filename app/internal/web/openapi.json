@@ -1,5 +1,16 @@
 {
   "openapi": "3.0.3",
+  "x-soundtap-internal": {
+    "description": "Routes the server registers that are not part of the stable API (ADR 0108): loopback hooks for the co-located player and receivers, the UI itself. They may change or vanish in any release.",
+    "routes": [
+      "POST /api/source",
+      "POST /api/nowplaying",
+      "POST /api/position",
+      "POST /api/bluetooth/connected",
+      "GET /api/speaker/audio/{name}",
+      "GET /"
+    ]
+  },
   "info": {
     "title": "Speaker HTTP API",
     "version": "1",
@@ -2692,43 +2703,6 @@
         }
       }
     },
-    "/api/geocode": {
-      "get": {
-        "tags": [
-          "Settings"
-        ],
-        "summary": "Look up a town",
-        "parameters": [
-          {
-            "name": "q",
-            "in": "query",
-            "required": true,
-            "description": "Town name.",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/Place"
-                  }
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
     "/api/info": {
       "get": {
         "tags": [
@@ -5009,7 +4983,14 @@
           },
           "api": {
             "type": "integer",
-            "description": "API level (ADR 0091)."
+            "description": "API level (ADR 0108)."
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What this speaker has: bluetooth (an adapter is present), ir, keypad, aux, display, battery. An open list: ignore values you do not know."
           }
         },
         "required": [
@@ -5019,7 +5000,8 @@
           "commit",
           "updatable",
           "updateMode",
-          "api"
+          "api",
+          "capabilities"
         ]
       },
       "Boot": {
@@ -5441,37 +5423,6 @@
           "rear"
         ]
       },
-      "Place": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string"
-          },
-          "region": {
-            "type": "string"
-          },
-          "country": {
-            "type": "string"
-          },
-          "lat": {
-            "type": "number"
-          },
-          "lon": {
-            "type": "number"
-          },
-          "timezone": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "region",
-          "country",
-          "lat",
-          "lon",
-          "timezone"
-        ]
-      },
       "UPnPServer": {
         "type": "object",
         "properties": {
@@ -5715,21 +5666,8 @@
           "hour12": {
             "type": "boolean"
           },
-          "city": {
-            "type": "string",
-            "description": "The picked town; empty is none."
-          },
-          "lat": {
-            "type": "number"
-          },
-          "lon": {
-            "type": "number"
-          },
           "timezone": {
             "type": "string"
-          },
-          "weatherOn": {
-            "type": "boolean"
           },
           "brightness": {
             "type": "integer",
@@ -5739,11 +5677,7 @@
         "required": [
           "clockOff",
           "hour12",
-          "city",
-          "lat",
-          "lon",
-          "timezone",
-          "weatherOn"
+          "timezone"
         ]
       },
       "Alarm": {
@@ -5995,6 +5929,100 @@
           },
           "ampFault": {
             "type": "boolean"
+          },
+          "battery": {
+            "type": "object",
+            "description": "The SoundTouch Portable's battery pack and charger; absent on every other model.",
+            "properties": {
+              "present": {
+                "type": "boolean"
+              },
+              "maker": {
+                "type": "string"
+              },
+              "level": {
+                "type": "integer"
+              },
+              "milliVolts": {
+                "type": "integer"
+              },
+              "milliAmps": {
+                "type": "integer"
+              },
+              "celsius": {
+                "type": "number"
+              },
+              "onDC": {
+                "type": "boolean"
+              },
+              "charging": {
+                "type": "boolean"
+              },
+              "full": {
+                "type": "boolean"
+              },
+              "low": {
+                "type": "boolean"
+              },
+              "fault": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "present",
+              "level",
+              "milliVolts",
+              "milliAmps",
+              "celsius",
+              "onDC",
+              "charging",
+              "full",
+              "low",
+              "fault"
+            ]
+          },
+          "bco": {
+            "type": "object",
+            "description": "The SoundTouch 20's network card (ADR 0031): the BCO app's transmit and link counters, which count from the BCO app's start in 32 bits and wrap, and whether the driver holds Wi-Fi frames in its queue for want of a free BCO transmit buffer. Absent on every other model and with a BCO app without counters.",
+            "properties": {
+              "txOk": {
+                "type": "integer",
+                "description": "Wi-Fi frames the peer acknowledged."
+              },
+              "txFailed": {
+                "type": "integer",
+                "description": "Frames lost on air after the retries."
+              },
+              "txDropped": {
+                "type": "integer",
+                "description": "Frames the BCO never sent: no free transmit buffer, or not joined."
+              },
+              "linkDropped": {
+                "type": "integer",
+                "description": "Messages the BCO dropped at the USB link, on any channel."
+              },
+              "txFrames": {
+                "type": "integer",
+                "description": "Frames from the speaker the radio took."
+              },
+              "flowControl": {
+                "type": "boolean",
+                "description": "The driver counts the BCO's free transmit buffers and holds frames while there are none."
+              },
+              "flowStops": {
+                "type": "integer",
+                "description": "Times the driver held a Wi-Fi queue for want of a free buffer."
+              }
+            },
+            "required": [
+              "txOk",
+              "txFailed",
+              "txDropped",
+              "linkDropped",
+              "txFrames",
+              "flowControl",
+              "flowStops"
+            ]
           },
           "firewall": {
             "type": "string",

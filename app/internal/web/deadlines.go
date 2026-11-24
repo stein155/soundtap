@@ -11,7 +11,7 @@ import "time"
 // then finishes. TestDeadlinesEndBeforeTheWebUIGivesUp holds the two
 // sides together; the UI's numbers are named beside each one.
 const (
-	// TuneIn, the geocoder, a media server and BlueZ answer in their own time.
+	// TuneIn, a media server and BlueZ answer in their own time.
 	// The UI allows SLOW_READ_TIMEOUT_MS.
 	slowReadDeadline = 12 * time.Second
 	// Starting a station or storing a preset. The UI allows WRITE_TIMEOUT_MS.

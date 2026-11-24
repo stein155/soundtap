@@ -1,12 +1,13 @@
-# 0129. A first install keeps the speaker's name, presets and Wi-Fi
+# 0129. A first install keeps the speaker's name, presets, Wi-Fi and clock
 
-Status: accepted — 2026-11-11
+Status: accepted — 2026-11-11, revised 2026-11-24
 
 ## Context
 
 A first install from Bose's software leaves stock's files in `/mnt/nv/BoseApp-Persistence/1/`:
-the speaker's name in `SystemConfigurationDB.xml`, its presets in `Presets.xml` and its networks
-in `NetworkProfiles.xml`. Without them the speaker comes up unnamed, with empty presets, on its
+the speaker's name in `SystemConfigurationDB.xml`, its presets in `Presets.xml`, its networks
+in `NetworkProfiles.xml` and, on the ST20, its standby clock in `ClockDisplay.xml` with the
+zone also as the `/mnt/nv/localtime` link. Without them the speaker comes up unnamed, with empty presets, on its
 setup network, and the owner sets it up again.
 
 Stock keeps each Wi-Fi passphrase AES-256-CBC encrypted (base64, PKCS#7) and no plain copy. The
@@ -18,7 +19,11 @@ nor the image may hold Bose bytes ([ADR 0049](0049-no-stock-bytes.md)).
 
 On its first boot after an install from stock, soundtapd takes the name stock knew the speaker
 by and stock's TuneIn presets (stock's other sources need its accounts or cloud, so those slots
-stay empty), once.
+stay empty), once. On a speaker with a panel (the ST20) whose clock has no settings yet it also
+takes stock's clock: off when stock had it off or at brightness 0, 12 or 24 hours, and the zone
+(`timezoneInfo`, else the `localtime` link) when this build knows it; stock's brightness, which
+it never used to dim, becomes SoundTap's default
+([standby clock](../hardware/st20/standby-clock.md#where-stock-keeps-the-clocks-settings)).
 
 For the Wi-Fi, the installer runs under stock, so it reads the key and IV from the NetManager
 that is running: of all its runs of 12 or more ASCII digits there must be exactly two, one of 32
@@ -40,6 +45,8 @@ bytes in git); the owner typing the password again after the install.
 - A NetManager with any other digit pattern, a passphrase that does not decrypt to a valid WPA
   passphrase, or a missing file leaves the speaker on its setup network.
 - An update between SoundTap versions finds `wifi.conf` and does none of this.
+- An ST20 installed from stock shows its clock, in stock's zone, without the settings first being
+  opened in a browser ([ADR 0111](0111-st20-standby-clock.md)).
 - The take-over is a row of the release checklist in
   [`docs/hardware/hardware-test.md`](../hardware/hardware-test.md#release-checklist-per-model).
 
@@ -48,4 +55,5 @@ bytes in git); the owner typing the password again after the install.
 - `os/installer/module/installer.c`: `stock_wifi_key` and the `--stock-wifi-key` self-test.
 - `app/cmd/soundtapd/stock_wifi.go`: `adoptStockWifi`, `readStockNetwork`,
   `decryptStockPassphrase`, and `adoptStockBCOWifi` for the ST20 (`bco.ReadStockProfile`).
-- `app/cmd/soundtapd/identity.go`: `stockDeviceName`, `stockPresets` and `takeStockOnce`.
+- `app/cmd/soundtapd/identity.go`: `stockDeviceName`, `stockPresets`, `stockClock`,
+  `takeStockClock` and `takeStockOnce`.

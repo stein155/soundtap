@@ -35,6 +35,9 @@ var (
 	stockPresetsPath string
 	// stockProfilesPath holds the networks stock saved, like stockConfigPath.
 	stockProfilesPath string
+	// stockClockPath holds the ST20 standby clock's settings stock kept; stockLocaltimePath
+	// is its timezone as a link into /usr/share/zoneinfo.
+	stockClockPath, stockLocaltimePath string
 	// spotifyDir is librespot's cache and credentials; spotifySystemDir its system cache.
 	spotifyDir, spotifySystemDir string
 	// irUserMap and buttonsUserMap are an owner's own key maps, replacing the built-in ones.
@@ -57,6 +60,8 @@ func setHome(home string) {
 	stockConfigPath = filepath.Join(stock, "SystemConfigurationDB.xml")
 	stockPresetsPath = filepath.Join(stock, "Presets.xml")
 	stockProfilesPath = filepath.Join(stock, "NetworkProfiles.xml")
+	stockClockPath = filepath.Join(stock, "ClockDisplay.xml")
+	stockLocaltimePath = filepath.Join(nv, "localtime")
 	spotifyDir = filepath.Join(nv, "spotify")
 	spotifySystemDir = filepath.Join(spotifyDir, "system")
 	irUserMap = filepath.Join(nv, "ir.map")

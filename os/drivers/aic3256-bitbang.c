@@ -182,8 +182,9 @@ static int load_config(struct gpio *g, const char *path, int mode)
 	return 0;
 }
 
-/* gain is words 0 and 1 of the block, the 48-bit coefficient stock writes per volume
- * step (0x400000000000 is unity). */
+/* gain is words 0 and 1 of the block, word 0 in the high 24 bits: the gain in Q22 and the
+ * same level in dB times 65536, the pair stock writes per volume step (0x400000000000 is
+ * unity). */
 static int set_volume(struct gpio *g, int mode, unsigned long long gain)
 {
 	unsigned char volume[] = {

@@ -3,7 +3,9 @@
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
 # dry-run.sh <package.stu> <commit> [sbom.cdx.json [package.stu.sig]]: every pre-publish
-# check of a Core release on one machine, stopping before anything is published.
+# check of a Core release on one machine, stopping before anything is published. The preview
+# package (ADR 0133) is read from beside the package, <package>-preview.stu, and its .sig
+# from beside the .sig; a missing one is reported like a missing .sig.
 # Never reads the private key (signing stays tools/release/sign.sh, run by the reviewer) and
 # never talks to GitHub. Versions and the public key are read from <commit>; the checks run from this checkout. Exit 0 only when all steps ran
 # and passed; a missing SBOM or .sig is reported and exits 3, never counted as a pass.
@@ -12,6 +14,9 @@ stu=${1:?usage: dry-run.sh <package.stu> <commit> [sbom.cdx.json [package.stu.si
 commit=${2:?usage: dry-run.sh <package.stu> <commit> [sbom.cdx.json [package.stu.sig]]}
 sbom=${3:-}
 sig=${4:-}
+preview=${stu%.stu}-preview.stu
+preview_sig=
+[ -z "$sig" ] || preview_sig=$(dirname "$sig")/$(basename "$preview").sig
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
 tmp=$(mktemp -d)
@@ -46,6 +51,18 @@ python3 -I "$here/screenshots.py" check "$commit"
 step "package structure"
 python3 "$root/os/support/stu_check.py" accept "$stu"
 
+step "preview package (ADR 0133)"
+if [ -f "$preview" ]; then
+	python3 "$root/os/support/stu_check.py" accept "$preview"
+	python3 "$root/os/support/stu_check.py" same-payloads "$stu" "$preview"
+	echo "package name for the release: SoundTap-Core-$version-preview.stu"
+else
+	echo "INCOMPLETE: no $preview; make stu builds it beside the package"
+	incomplete=1
+	preview=
+	preview_sig=
+fi
+
 step "SBOM against known CVEs"
 if [ -n "$sbom" ]; then
 	python3 -I "$here/os_cves.py" "$sbom"
@@ -71,18 +88,30 @@ if [ -n "$sig" ]; then
 	# An ed25519 public key in DER is this fixed prefix plus the 32 raw bytes.
 	python3 -I -c 'import base64, sys; sys.stdout.buffer.write(bytes.fromhex("302a300506032b6570032100") + base64.b64decode(sys.argv[1]))' "$key" |
 		openssl pkey -pubin -inform DER -out "$tmp/pub.pem"
-	# The one statement a Core release may carry (ADR 0048): these bytes, this version,
-	# production.
-	openssl dgst -sha256 -binary "$stu" >"$tmp/digest"
-	hex=$(od -An -v -tx1 "$tmp/digest" | tr -d ' \n')
-	expected="soundtap-package v1 kind=core profile=production version=$version sha256=$hex"
-	line=$(cat "$sig")
-	statement=${line% sig=*}
-	[ "$statement" = "$expected" ] ||
-		{ echo "dry-run.sh: the .sig states '$statement'; this release needs '$expected'" >&2; exit 1; }
-	printf '%s' "${line##* sig=}" | base64 -d >"$tmp/s"
-	printf '%s' "$statement" >"$tmp/statement"
-	openssl pkeyutl -verify -pubin -inkey "$tmp/pub.pem" -rawin -in "$tmp/statement" -sigfile "$tmp/s"
+	# verify <package> <sig>: the one statement a Core release may carry (ADR 0048): these
+	# bytes, this version, production. The preview package carries the same over its own.
+	verify() {
+		openssl dgst -sha256 -binary "$1" >"$tmp/digest"
+		hex=$(od -An -v -tx1 "$tmp/digest" | tr -d ' \n')
+		expected="soundtap-package v1 kind=core profile=production version=$version sha256=$hex"
+		line=$(cat "$2")
+		statement=${line% sig=*}
+		[ "$statement" = "$expected" ] ||
+			{ echo "dry-run.sh: $2 states '$statement'; this release needs '$expected'" >&2; exit 1; }
+		printf '%s' "${line##* sig=}" | base64 -d >"$tmp/s"
+		printf '%s' "$statement" >"$tmp/statement"
+		openssl pkeyutl -verify -pubin -inkey "$tmp/pub.pem" -rawin -in "$tmp/statement" -sigfile "$tmp/s"
+	}
+	verify "$stu" "$sig"
+	if [ -n "$preview" ]; then
+		if [ -f "$preview_sig" ]; then
+			verify "$preview" "$preview_sig"
+		else
+			echo "INCOMPLETE: no $preview_sig for the preview package"
+			incomplete=1
+			preview_sig=
+		fi
+	fi
 else
 	echo "SKIPPED: no .sig given; the reviewer signs offline with tools/release/sign.sh"
 	incomplete=1
@@ -105,12 +134,25 @@ print(f"feed parses: {len(devices)} devices, {image.get('FILENAME')}, {image.get
 PY
 # The check the feed PR gets (feed.yml), on the local files: release URL, length, CRC and
 # a .sig that verifies with the keys compiled into soundtapd.
+mkdir "$tmp/assets"
 if [ -n "$sig" ]; then
-	mkdir "$tmp/assets"
 	name=$(basename "$stu")
 	ln -s "$(cd "$(dirname "$stu")" && pwd)/$name" "$tmp/assets/$name"
 	cp "$sig" "$tmp/assets/$name.sig"
 	python3 "$here/feed_check.py" "$tmp/updates/soundtouch" --assets "$tmp/assets"
+fi
+# And the preview feed, for the preview models (ADR 0133).
+if [ -n "$preview" ]; then
+	python3 "$root/tools/release/mock_update_server.py" --serve "$preview" --preview \
+		--write-index "$tmp/updates/soundtouch-preview" --host https://github.com \
+		--urlpath "stein155/soundtap/releases/download/os-v$version"
+	echo "preview feed written: $(grep -c '<DEVICE ' "$tmp/updates/soundtouch-preview") devices"
+	if [ -n "$preview_sig" ]; then
+		name=$(basename "$preview")
+		ln -s "$(cd "$(dirname "$preview")" && pwd)/$name" "$tmp/assets/$name"
+		cp "$preview_sig" "$tmp/assets/$name.sig"
+		python3 "$here/feed_check.py" --preview "$tmp/updates/soundtouch-preview" --assets "$tmp/assets"
+	fi
 fi
 
 if [ $incomplete -ne 0 ]; then

@@ -40,10 +40,11 @@ artist and the cover of each track. The trade-offs:
 
 ### AirPlay
 
-AirPlay works, and Music Assistant keeps AirPlay players in sync with each other. That makes
-it the choice for a Music Assistant group that mixes SoundTap with other speakers. Music
-Assistant sets each member's volume when it starts a group, so check the volume after
-grouping.
+Music Assistant finds each speaker as an AirPlay receiver too, and AirPlay from Music
+Assistant has played on the Wireless Link, with pause, resume and seek. The recorded checks
+are DLNA checks: keeping AirPlay players in sync with each other, and a Music Assistant group
+that mixes SoundTap with other speakers, have no recorded run. Music Assistant sets each
+member's volume when it starts a group, so check the volume after grouping.
 
 ## Groups
 

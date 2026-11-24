@@ -36,6 +36,7 @@ than what it runs.
   mock_update_server.py <port> <out.stu> [model] [--serve package.stu] [--bind ADDR]
                         [--product NAME] [--device-id ID] [--version V] [--all-models]
   mock_update_server.py --serve package.stu --write-index index.xml --host URL [--urlpath P]
+                        [--preview]
 """
 import argparse
 import http.server
@@ -61,13 +62,41 @@ INDEX_PAGE = (b"<!doctype html><title>SoundTouch Software Update</title>"
 
 # Every model SoundTap supports, as Bose's own index names them (downloads.bose.com
 # .../index.xml, archived 2023): one index holds a DEVICE per product and every product
-# points its swUpdateUrl at that same file. The ST20 has two ids, one per generation.
+# points its swUpdateUrl at that same file. updates/soundtouch lists these.
 MODELS = [
     ("0x0939", "SoundTouch 10"),
     ("0x0923", "SoundTouch 20"),
-    ("0x093B", "SoundTouch 20"),
     ("0x0949", "SoundTouch 300"),
     ("0x094A", "SoundTouch Wireless Link adapter"),
+]
+
+# The preview models (ADR 0133), with the ids and names of the same Bose index:
+# updates/soundtouch-preview lists these, offering the preview package, the only one they
+# install from. The ST20 Series III (0x093B, sm2) is here, not above. Not listed: the
+# Lifestyle ids on the sm2 (0x093F, 0x0947), which the installers refuse, the Lifestyle
+# 600/650 module (0x0948) and 0x094B.
+PREVIEW_MODELS = [
+    ("0x0924", "SoundTouch 30"),            # Series I/II, scm
+    ("0x093B", "SoundTouch 20"),            # Series III, sm2
+    ("0x093C", "SoundTouch 30"),            # Series III, sm2
+    ("0x0925", "SoundTouch Portable"),
+    ("0x093A", "SoundTouch SA-5"),
+    # The SoundTouch adapter on the scm
+    ("0x0932", "Wave SoundTouch"),
+    ("0x0933", "VideoWave"),
+    ("0x0944", "VideoWave"),
+    ("0x0934", "Lifestyle"),
+    ("0x0945", "Lifestyle"),
+    ("0x0935", "SoundTouch Stereo JC"),
+    ("0x0936", "SoundTouch SA-4"),
+    ("0x0938", "Cinemate"),
+    # and on the sm2
+    ("0x093D", "Wave SoundTouch"),
+    ("0x093E", "VideoWave"),
+    ("0x0946", "VideoWave"),
+    ("0x0940", "SoundTouch Stereo JC"),
+    ("0x0941", "SoundTouch SA-4"),
+    ("0x0942", "Cinemate"),
 ]
 
 
@@ -162,14 +191,18 @@ def main(argv):
     ap.add_argument("--write-index", metavar="FILE", help="write a static all-model index")
     ap.add_argument("--host", help="HTTPHOST for --write-index")
     ap.add_argument("--urlpath", default=URLPATH, help="URLPATH for --write-index")
+    ap.add_argument("--preview", action="store_true",
+                    help="--write-index for the preview models (updates/soundtouch-preview)")
     options = ap.parse_args(argv)
     if options.write_index:
         if not (options.serve and options.host):
             raise SystemExit("--write-index needs --serve <package> and --host")
         with open(options.write_index, "wb") as f:
-            f.write(build_index(options.serve, MODELS, options.version, options.host,
-                                options.urlpath))
+            f.write(build_index(options.serve, PREVIEW_MODELS if options.preview else MODELS,
+                                options.version, options.host, options.urlpath))
         return
+    if options.preview:
+        raise SystemExit("--preview goes with --write-index")
     if options.serve and not os.path.isfile(options.serve):
         raise SystemExit(f"no package at {options.serve}")
     where = f"http://{options.bind}:{options.port}"

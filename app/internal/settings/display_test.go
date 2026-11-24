@@ -4,52 +4,52 @@
 package settings
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
 
-func TestDisplayDefaultsToDarkUntilATownIsPicked(t *testing.T) {
+func TestDisplayDefaultsToDarkUntilAZoneIsKnown(t *testing.T) {
 	st := Open(filepath.Join(t.TempDir(), "s.json"))
 	d := st.Get().Display
-	if d.ClockOn() || d.WeatherEnabled() || d.Hour12 {
+	if d.ClockOn() || d.Hour12 {
 		t.Errorf("default display = %+v, want dark, 24-hour", d)
 	}
 }
 
-func TestSetDisplayNeedsATown(t *testing.T) {
+func TestSetDisplayNeedsAZone(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "s.json")
 	st := Open(path)
 
 	if err := st.SetDisplay(Display{}); err == nil {
 		t.Error("clock turned on without a timezone")
 	}
-	if err := st.SetDisplay(Display{City: "X", Lat: 91, Timezone: "UTC"}); err == nil {
-		t.Error("latitude 91 accepted")
-	}
-	if err := st.SetDisplay(Display{City: "X", Lat: 1, Lon: 1}); err == nil {
-		t.Error("town without timezone accepted")
-	}
-	if err := st.SetDisplay(Display{City: "X", Lat: 1, Lon: 1, Timezone: "Mars/Olympus"}); err == nil {
+	if err := st.SetDisplay(Display{Timezone: "Mars/Olympus"}); err == nil {
 		t.Error("unknown timezone accepted")
 	}
-	utrecht := Display{City: "Utrecht, Nederland", Lat: 52.09, Lon: 5.12, Timezone: "Europe/Amsterdam", WeatherOn: true, Hour12: true}
-	if err := st.SetDisplay(utrecht); err != nil {
+	if err := st.SetDisplay(Display{ClockOff: true}); err != nil {
+		t.Errorf("clock off without a zone refused: %v", err)
+	}
+	amsterdam := Display{Timezone: "Europe/Amsterdam", Hour12: true, Brightness: 50}
+	if err := st.SetDisplay(amsterdam); err != nil {
 		t.Fatal(err)
 	}
-	if got := Open(path).Get().Display; got != utrecht || !got.ClockOn() || !got.WeatherEnabled() {
+	if got := Open(path).Get().Display; got != amsterdam || !got.ClockOn() {
 		t.Fatalf("reloaded display = %+v", got)
 	}
+}
 
-	// Clearing the town drops the place and the weather; the zone keeps the clock.
-	if err := st.SetDisplay(Display{Lat: 52.09, Lon: 5.12, Timezone: "Europe/Amsterdam", WeatherOn: true}); err != nil {
+// A settings file from before the weather line went still loads: its town, location and
+// weather switch are ignored and the clock keeps its zone.
+func TestDisplayIgnoresTheOldWeatherFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.json")
+	old := `{"display":{"clockOff":false,"hour12":true,"city":"Utrecht, Nederland","lat":52.09,"lon":5.12,"timezone":"Europe/Amsterdam","weatherOn":true,"brightness":50}}`
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got := st.Get().Display
-	if got != (Display{Timezone: "Europe/Amsterdam"}) || !got.ClockOn() || got.WeatherEnabled() {
-		t.Fatalf("display after clearing the town = %+v", got)
-	}
-	if err := st.SetDisplay(Display{Timezone: "Mars/Olympus"}); err == nil {
-		t.Error("unknown timezone accepted without a town")
+	got := Open(path).Get().Display
+	if got != (Display{Hour12: true, Timezone: "Europe/Amsterdam", Brightness: 50}) || !got.ClockOn() {
+		t.Fatalf("display from an old file = %+v", got)
 	}
 }
 

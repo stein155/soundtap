@@ -111,7 +111,9 @@ class InitScriptTable(unittest.TestCase):
     def test_each_variant_runs_as_its_model(self):
         for name, v in VARIANTS.items():
             codec = v["codec_script"] or "-"
-            nocodec = "0" if own_variant(v["model"])["codec_script"] else "1"
+            # A board without a codec script has no codec: the WLA, the ST300, the Lifestyle
+            # module and the SM2 adapter (lisa2), whatever its model's own variant has.
+            nocodec = "0" if v["codec_script"] else "1"
             want = (0, f"{v['model']} {nocodec} {codec}")
             with self.subTest(variant=name):
                 self.assertEqual(self.identity(f"variant={name} soundtap.nandroot=1"), want)
@@ -147,8 +149,8 @@ class InstallerTable(unittest.TestCase):
 
     def ask(self, variant, *args, success=True):
         out = subprocess.run([str(self.binary), *args], capture_output=True, text=True,
-                             env=dict(os.environ, SOUNDTAP_VARIANT=variant,
-                                      SOUNDTAP_DT_COMPATIBLE="/nonexistent"))
+                             env={**{k: v for k, v in os.environ.items() if k != "SOUNDTAP_DT_COMPATIBLE"},
+                                  "SOUNDTAP_VARIANT": variant})  # no device tree: the module is not judged
         self.assertEqual(out.returncode == 0, success, out.stderr)
         return out.stdout.strip()
 
@@ -166,7 +168,6 @@ class InstallerTable(unittest.TestCase):
                                  [v["dtb"], v["kernel"]])
                 self.assertIn(f" variant={name} module_type={v['module_type']} ", env["soundtap_args"])
                 self.assertIn(f" variant={name} ", env["stock_args"])
-        self.ask("lisa", "--print-env", success=False)
 
     def test_it_takes_its_models_modules_and_no_others(self):
         for name, v in BOOTED.items():
@@ -185,6 +186,11 @@ class InstallerTable(unittest.TestCase):
                 with self.subTest(variant=name, kernel=kernel):
                     want = "yes" if kernel == MODELS[v["model"]]["kernel_name"] else "no"
                     self.assertEqual(self.ask(name, "--kernel-fits", kernel), want)
+
+
+def unq(s):
+    """A C string literal's text, None for NULL."""
+    return None if s == "NULL" else s.strip('"')
 
 
 @unittest.skipUnless(shutil.which("cc"), "needs a C compiler")
@@ -206,11 +212,14 @@ class UBootTable(unittest.TestCase):
                         self.assertEqual(self.probe(name, raw, ""), want)
 
     def test_the_names_it_builds_are_the_tables(self):
-        # rt_set_recipes and the default bootcmd load /boot/${rt_v}_${rt_m}.dtb and
-        # /boot/uImage-${rt_v}: each model's own variant has to have exactly those.
+        # The default bootcmd, compiled into the SPL's environment as well, loads
+        # /boot/${rt_v}_${rt_m}.dtb and /boot/uImage-${rt_v}: every row's stem is a model's own
+        # variant, whose files have exactly those names. rt_set_recipes writes the board's own
+        # files (rt_dtb, rt_kernel) and its variant (rt_b).
         recovery = uboot_tests.patch_function(uboot_tests.PATCH, "static int rt_set_recipes(void)")
-        self.assertIn('snprintf(dtb, sizeof(dtb), "%s_%s.dtb", v, m);', recovery)
-        self.assertIn('snprintf(kernel, sizeof(kernel), "uImage-%s", v);', recovery)
+        self.assertIn('env_get("rt_dtb")', recovery)
+        self.assertIn('env_get("rt_kernel")', recovery)
+        self.assertIn('env_get("rt_b")', recovery)
         bootcmd = (ROOT / "os/bootloader/build-wla-uboot.sh").read_text()
         self.assertIn("/boot/${rt_v}_${rt_m}.dtb", bootcmd)
         self.assertIn("/boot/uImage-${rt_v};", bootcmd)
@@ -219,6 +228,61 @@ class UBootTable(unittest.TestCase):
             with self.subTest(model=name):
                 self.assertEqual(v["dtb"], f"{m['variant']}_{v['module_type']}.dtb")
                 self.assertEqual(v["kernel"], f"uImage-{m['variant']}")
+        own = {m["variant"] for m in MODELS.values()}
+        for v, row in self.board_rows().items():
+            with self.subTest(board=v):
+                self.assertIn(row[0], own)
+                self.assertEqual(VARIANTS[row[0]]["module_type"], VARIANTS[v]["module_type"])
+
+    def board_rows(self):
+        """rt_boards as the patch has it: {variant: (stem, module, mfg, lo, hi, dtb, kernel)}."""
+        block = re.search(r"^\+static const struct rt_board rt_boards\[\] = \{(.*?)^\+\};",
+                          uboot_tests.SCM_PATCH, re.M | re.S).group(1)
+        rows = {}
+        for row in re.findall(r"\{ (.*?) \},", block):
+            v, stem, m, mfg, lo, hi, dtb, kernel = [f.strip() for f in row.split(",")]
+            rows[unq(v)] = (unq(stem), unq(m), unq(mfg), int(lo), int(hi), unq(dtb), unq(kernel))
+        return rows
+
+    def test_its_board_rows_are_the_tables(self):
+        want = {}
+        for name, v in VARIANTS.items():
+            d = v["detect"]
+            if d is None:
+                continue
+            lo, hi = d.get("variant_raw", [-1, -1])
+            want[name] = (v["module_type"], d.get("mfg"), lo, hi, v["dtb"], v["kernel"])
+        self.assertEqual({k: r[1:] for k, r in self.board_rows().items()}, want)
+        # The stem is the model's own variant: the board runs as that model.
+        for name, row in self.board_rows().items():
+            self.assertEqual(row[0], MODELS[VARIANTS[name]["model"]]["variant"], name)
+
+    def test_it_takes_each_detectable_board_for_its_variant(self):
+        for name, v in VARIANTS.items():
+            d = v["detect"]
+            if d is None:
+                continue
+            board = "st20" if v["module_type"] == "scm" else "st10"
+            if "variant_raw" in d:
+                lo, hi = d["variant_raw"]
+                cases = [(str(lo), ""), (str(hi), ""), (str((lo + hi) // 2), "")]
+            else:
+                cases = [("", d["mfg"])]
+            for raw, mfg in cases:
+                with self.subTest(variant=name, variant_raw=raw, mfg=mfg):
+                    r = uboot_tests.UsbRecoveryProbe().run_probe(board, False, raw, mfg=mfg)
+                    self.assertEqual(r["env"].get("rt_b"), name)
+                    self.assertEqual(r["rt_v"], MODELS[v["model"]]["variant"])
+                    self.assertEqual(r["env"].get("rt_m"), v["module_type"])
+                    self.assertEqual(r["env"].get("rt_dtb"), v["dtb"])
+                    self.assertEqual(r["env"].get("rt_kernel"), v["kernel"])
+
+    def test_an_scm_count_no_row_knows_stays_an_st20(self):
+        # Below 100 (stock's "mfg"), above taigan (stock's "sm2") and no sample: the ST20's files.
+        for raw in ("", "50", "4000"):
+            with self.subTest(variant_raw=raw):
+                r = uboot_tests.UsbRecoveryProbe().run_probe("st20", False, raw, mfg="")
+                self.assertEqual((r["rt_v"], r["env"].get("rt_dtb")), ("spotty", "spotty_scm.dtb"))
 
 
 class ImageTable(unittest.TestCase):

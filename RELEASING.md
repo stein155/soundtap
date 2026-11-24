@@ -121,7 +121,10 @@ under either. Look at the images, then commit `docs/assets`. Both lanes of `rele
 again. The check proves which UI the images come from, not that they look right.
 
 1. On `main`, run **Build** (`build.yml`) with `profile=production`. It builds SoundTap Core (`make os`)
-   (kernel, root filesystem, WLA and ST20 bootloaders) and packages it with `make stu`. The result is the run's `candidate` artifact,
+   (kernel, root filesystem, WLA and ST20 bootloaders) and packages it with `make stu`, which
+   also builds the preview package `SoundTap-Core-X.Y.Z-preview.stu`: the same payloads with
+   the preview build of the installer, the only package a preview model installs from
+   ([ADR 0133](docs/decisions/0133-more-soundtouch-models-from-stock.md)). The result is the run's `candidate` artifact,
    together with the commit it was built from and its profile. Release refuses an alpha
    candidate ([ADR 0011](docs/decisions/0011-one-buildroot-pipeline.md)); pushes to
    `main` build alpha. Each hosted run starts with a fresh Buildroot output tree. It restores only source
@@ -147,15 +150,19 @@ again. The check proves which UI the images come from, not that they look right.
    `releases/os-vX.Y.Z/` and open a PR with them (see [Hardware approval](#hardware-approval)).
    Merge it only after step 4: it moves `main`, and step 4 releases the candidate's own commit.
 4. Run **Release** (`release.yml`) on the same `main` commit. It checks that the candidate
-   was built from that commit, verifies the checksum and the STU structure, and creates a
-   **draft** release with the package, its `.sha256`, sources, SBOM and the release notes.
+   was built from that commit, verifies the checksums and the STU structure, checks that the
+   preview package differs from the package in its installer alone (`stu_check.py
+   same-payloads`), and creates a **draft** release with the package, the preview package,
+   each with its `.sha256`, sources, SBOM and the release notes.
    The hosted job allows 60 minutes for downloading and uploading the sources archive;
    actual transfer time still needs measuring on the production candidate.
 5. Sign: merge the reports PR, then run **Sign** (`sign.yml`) on `main` with the tag. In the
    [release environment](#the-release-environment) it runs `tools/release/sign-release.sh`,
-   which downloads the draft, checks the digest, refuses to sign unless all four reports in
-   `releases/os-vX.Y.Z/` pass against those exact bytes and uploads `<asset>.sig`. The release
-   stays a **draft**: no speaker but the maintainer's can see it.
+   which downloads the draft, checks the digests, refuses to sign unless all four reports in
+   `releases/os-vX.Y.Z/` pass against those exact bytes and uploads `<asset>.sig`. It signs
+   the preview package too, with the same statement fields over its own digest, once
+   `stu_check.py same-payloads` shows its payloads are the package's, and uploads its `.sig`.
+   The release stays a **draft**: no speaker but the maintainer's can see it.
 6. **Staged rollout: the maintainer's bench speakers first.** Download the signed draft
    (`gh release download os-vX.Y.Z -p 'SoundTap-Core-*'`) and install it on each of the
    maintainer's bench speakers through its Updates page, choosing the `.stu` and its `.sig`
@@ -165,15 +172,19 @@ again. The check proves which UI the images come from, not that they look right.
    here stops the release: fix it, and the fix is a new candidate from step 1.
 7. Publish: run **Sign** again with `publish=true`. It signs again, which gives the same
    `.sig` (an ed25519 signature is deterministic), and `sign-release.sh --publish` checks that
-   the draft holds the `.sig` that states this tag's kind, version and digest, then makes the
+   the draft holds the `.sig` that states this tag's kind, version and digest, for the package
+   and for the preview package, then makes the
    release public and latest (an [alpha](#alphas): a prerelease, never latest). From now on speakers on SoundTap see it on their Updates page (within
    the ten minutes soundtapd caches the release list).
-8. Point the update feed at it, in a PR. A speaker still on Bose's software installs from
+8. Point the update feeds at it, in a PR. A speaker still on Bose's software installs from
    `updates/soundtouch` on `main`: the SoundTap app and `docs/installer` name that file
-   in `swUpdateStart`, and it names the release asset. Until this PR merges they install the
+   in `swUpdateStart`, and it names the release asset. A preview model installs from
+   `updates/soundtouch-preview`, which names the preview package; the installers send a
+   speaker there only after its owner confirmed the preview. Until this PR merges they install the
    previous release. The repository has to be public for this route to work. Run
-   `tools/release/feed_check.py updates/soundtouch` before opening the PR; the **Update feed**
-   workflow runs it again on the PR (see [The first-install feed](#the-first-install-feed)).
+   `tools/release/feed_check.py updates/soundtouch` and
+   `tools/release/feed_check.py --preview updates/soundtouch-preview` before opening the PR; the **Update feed**
+   workflow runs both again on the PR (see [The first-install feed](#the-first-install-feed)).
 
 ```sh
 # raise os/VERSION and give the tag its CHANGELOG.md section in a PR, merge it
@@ -191,7 +202,11 @@ mkdir -p updates
 python3 tools/release/mock_update_server.py --serve /tmp/feed/SoundTap-Core-X.Y.Z.stu \
   --write-index updates/soundtouch --host https://github.com \
   --urlpath stein155/soundtap/releases/download/os-vX.Y.Z
+python3 tools/release/mock_update_server.py --serve /tmp/feed/SoundTap-Core-X.Y.Z-preview.stu \
+  --preview --write-index updates/soundtouch-preview --host https://github.com \
+  --urlpath stein155/soundtap/releases/download/os-vX.Y.Z
 python3 tools/release/feed_check.py updates/soundtouch
+python3 tools/release/feed_check.py --preview updates/soundtouch-preview
 ```
 
 An app draft is signed separately with `gh workflow run sign.yml -f tag=app-vX.Y.Z`, which
@@ -256,7 +271,8 @@ and files stay, so it is clear what was out there and why it went.
    If it was GitHub's latest release, make the previous good one latest
    (`gh release edit os-vPREV --latest`).
 2. **Pull it from the update feed.** If `updates/soundtouch` names it, point the feed back at
-   the previous good Core release, or on to the fix, in a PR (see
+   the previous good Core release, or on to the fix, in a PR, and `updates/soundtouch-preview`
+   with it (see
    [Steps](#steps), step 8). Until that PR merges, speakers still on Bose's software
    install the withdrawn release. GitHub may serve the old file for a few minutes after the
    merge. The feed check refuses an index that names a withdrawn release, so the PR that
@@ -286,7 +302,8 @@ What withdrawing does not do:
 
 ## The first-install feed
 
-`updates/soundtouch` on `main` is the one input that reaches a speaker without our
+`updates/soundtouch` on `main`, with its twin for the preview models,
+`updates/soundtouch-preview`, is the one input that reaches a speaker without our
 signature. A speaker still on Bose's software installs whatever package that index names, and
 Bose's updater checks only the length and CRC32 the index states (ADR 0048). Whoever can
 change that file on `main` chooses the software every speaker started from the installers
@@ -305,7 +322,11 @@ gets. It is protected in three ways:
   compiled into soundtapd. The **Update feed** workflow (`feed.yml`) runs it on every PR and
   push that touches the feed, the keys or the check; `dry-run.sh` runs it on the local
   candidate. A failing check means the feed names something no speaker on SoundTap would
-  accept.
+  accept. The preview feed `updates/soundtouch-preview`
+  ([ADR 0133](docs/decisions/0133-more-soundtouch-models-from-stock.md)) gets the same check
+  with `--preview`: the preview models only, and the release's
+  `SoundTap-Core-X.Y.Z-preview.stu` with its own `.sig`. Neither feed may list a model of the
+  other.
 - **Branch protection (maintainer, after the move to the public repository).** CODEOWNERS
   only asks for a review; it blocks nothing until `main` is protected. In the public
   repository's settings, protect `main` with: require a pull request, require review from
@@ -445,9 +466,9 @@ SOUNDTAP_OWNER_KEY_FILE=~/soundtap-owner-key.pem SOUNDTAP_SIGN_PROFILE=productio
 the same rules (a production signature needs a key under a passphrase), and prints
 `owner key <base64>, fingerprint <hex>`. Paste the base64 on the speaker's Updates page under
 *Your own signing key* and hold a button on the speaker; the page then shows the same
-fingerprint. From then on the `.stu` with its `.sig` installs through the Updates page, and
-renamed `Update.stu` and `Update.stu.sig` from a USB stick, under the version and profile
-rules of a release. `sign-release.sh` clears `SOUNDTAP_OWNER_KEY_FILE` and signs a release
+fingerprint. From then on the `.stu` with its `.sig` installs through the Updates page, under
+the version and profile rules of a release. A USB stick at power-on takes the `.stu` renamed
+`Update.stu` without any signature ([ADR 0130](docs/decisions/0130-usb-stick-recovery.md)). `sign-release.sh` clears `SOUNDTAP_OWNER_KEY_FILE` and signs a release
 with the release key only. The key goes with *Remove the key* on the Updates page, or with a
 factory reset; a backup and its restore never carry it.
 
@@ -516,9 +537,10 @@ A **leaked** key is rotated at once, and its secrets are deleted from the releas
 environment first (`gh secret delete SOUNDTAP_RELEASE_KEY --env release`), so nothing signs
 with it in the meantime. A **lost** active key is
 rotated the same way; nothing is lost but the key. If **both** keys are lost, no release can
-be signed for speakers in the field: their update page is closed for good, and so is the
-power-on USB update, which takes only a package signed with a key compiled into U-Boot. What
-remains is the way back through Bose's software on the Updates page, and from Bose's software
+be signed for speakers in the field: their update page is closed for good. What remains is
+the power-on USB stick, which needs no signature
+([ADR 0130](docs/decisions/0130-usb-stick-recovery.md)), and the way back through Bose's
+software on the Updates page, and from Bose's software
 a first install of a release signed with the new keys ([`docs/owners/install.md`](docs/owners/install.md)).
 That this works on a production speaker is not proven on every model.
 
@@ -534,11 +556,9 @@ rewritten:
 - **Both Core slots.** A Core release writes only the inactive slot. The other slot keeps the
   old soundtapd until the next Core install overwrites it, and a boot fallback to it brings
   the old list back.
-- **U-Boot.** U-Boot checks `Update.stu.sig` for the USB recovery (ADR 0048), and the keys
-  compiled into it stay trusted for that route until U-Boot itself is rewritten. A
-  Core install writes U-Boot only when it differs, so revoking a key there needs a Core
-  release whose U-Boot carries the new list; a speaker that never installs it keeps
-  accepting a USB stick signed with the revoked key.
+- **Not U-Boot.** The USB stick at power-on checks no signature (ADR 0130), so U-Boot holds no
+  key list and a revoked key changes nothing there: whoever holds the speaker's keys at
+  power-on can install from a stick, with or without a key.
 
 So a revoked key stays usable against a speaker until it has installed two Core releases
 carrying the new list (one per slot); until then someone holding the key and with the

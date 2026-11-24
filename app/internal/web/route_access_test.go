@@ -47,7 +47,7 @@ var routeAccess = map[string]string{
 
 	// Fetches on the owner's behalf. The logo and TuneIn proxies refuse non-public hosts.
 	"GET /api/search": open, "GET /api/tunein/": open, "GET /api/logo": open,
-	"GET /api/geocode": open, "POST /api/upnp/search": open,
+	"POST /api/upnp/search": open,
 
 	// The device proxy forwards to a speaker that announced itself; each of those
 	// applies its own classes to the forwarded request.

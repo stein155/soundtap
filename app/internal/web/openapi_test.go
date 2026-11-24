@@ -16,16 +16,31 @@ import (
 	"testing"
 )
 
-// internalRoutes are registered but deliberately absent from the public reference:
-// loopback hooks used by the co-located player and receivers,
-// the UI itself and the profiler.
-var internalRoutes = map[string]bool{
-	"POST /api/source":              true,
-	"POST /api/nowplaying":          true,
-	"POST /api/position":            true,
-	"POST /api/bluetooth/connected": true,
-	"GET /api/speaker/audio/{name}": true,
-	"GET /":                         true,
+// internalRoutes are registered but deliberately absent from the public reference, as
+// openapi.json's x-soundtap-internal lists them (ADR 0108): loopback hooks used by the
+// co-located player and receivers, and the UI itself.
+func internalRoutes(t *testing.T) map[string]bool {
+	t.Helper()
+	b, err := os.ReadFile("openapi.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Internal struct {
+			Routes []string `json:"routes"`
+		} `json:"x-soundtap-internal"`
+	}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Internal.Routes) == 0 {
+		t.Fatal("openapi.json has no x-soundtap-internal routes")
+	}
+	out := map[string]bool{}
+	for _, r := range doc.Internal.Routes {
+		out[r] = true
+	}
+	return out
 }
 
 // registeredRoutes is every "METHOD /path" pattern the server's Handler registers, as
@@ -65,16 +80,16 @@ func specRoutes(t *testing.T) map[string]bool {
 // The reference must not rot: every registered public route is documented and every
 // documented route exists.
 func TestOpenAPIMatchesRoutes(t *testing.T) {
-	reg, spec := registeredRoutes(t), specRoutes(t)
+	reg, spec, internal := registeredRoutes(t), specRoutes(t), internalRoutes(t)
 	if len(reg) < 50 {
 		t.Fatalf("found only %d registered routes; the scanner is broken", len(reg))
 	}
 	var problems []string
 	for r := range reg {
-		if !spec[r] && !internalRoutes[r] {
-			problems = append(problems, "route missing from openapi.json (document it or add to internalRoutes): "+r)
+		if !spec[r] && !internal[r] {
+			problems = append(problems, "route missing from openapi.json (document it or add to x-soundtap-internal): "+r)
 		}
-		if spec[r] && internalRoutes[r] {
+		if spec[r] && internal[r] {
 			problems = append(problems, "internal route is documented: "+r)
 		}
 	}
@@ -83,9 +98,9 @@ func TestOpenAPIMatchesRoutes(t *testing.T) {
 			problems = append(problems, "openapi.json names a route that is not registered: "+r)
 		}
 	}
-	for r := range internalRoutes {
+	for r := range internal {
 		if !reg[r] {
-			problems = append(problems, "internalRoutes names a route that is not registered: "+r)
+			problems = append(problems, "x-soundtap-internal names a route that is not registered: "+r)
 		}
 	}
 	sort.Strings(problems)

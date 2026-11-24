@@ -27,7 +27,7 @@ and the troubleshooting.
 | [5. What happens next](#5-what-happens-next) | Leave it powered; it joins your Wi-Fi and you open `http://soundtap.local` |
 | [6. Going back to Bose](#6-going-back-to-bose) | Bose's own update file on the speaker's Updates page |
 
-A USB stick is the last resort when steps 3 and 4 both failed: see [USB stick](#usb-stick).
+A USB stick is the last resort when steps 3 and 4 both failed, and is untested: see [USB stick](#usb-stick).
 
 What has run on which speaker, and when, is in the [install records](../hardware/install-records.md).
 
@@ -38,7 +38,7 @@ What has run on which speaker, and when, is in the [install records](../hardware
 3. [Install automatically](#3-install-automatically)
 4. [Without internet: upload the file](#4-without-internet-upload-the-file)
 5. [What happens next](#5-what-happens-next): [Wi-Fi](#put-the-speaker-on-your-wi-fi), [start playing](#start-playing)
-6. [Going back to Bose](#6-going-back-to-bose)
+6. [Going back to Bose](#going-back-to-bose)
 7. [Updating](#updating)
 8. [Buttons that always work](#buttons-that-always-work)
 9. [SoundTouch 300](#soundtouch-300)
@@ -66,15 +66,39 @@ versions number by number, so 27.0.10 counts as newer than 27.0.6.
 | SoundTouch 20 (Series I or II) | 27.0.6 |
 | SoundTouch 300 | 27.0.6 |
 
-Older software on one of these: update Bose first, in the Bose app. Not supported yet: the
-SoundTouch 20 Series III, the SoundTouch 30 Series III, the SoundTouch 30 and every model not
-in the table above, whatever their software. The command-line installers tell a Series III
-SoundTouch 20 by the module its Bose software reports and skip it; in the browser you pick
-the model yourself.
+Older software on one of these: update Bose first, in the Bose app. The SoundTouch 20 Series
+II shares the Series I's row and installs the same way, but its hardware validation is still
+pending: nobody has recorded a run on one. The command-line installers tell a Series III
+SoundTouch 20 by the module its Bose software reports and treat it as a preview (below); in
+the browser you pick the model yourself. A model that is neither in the table nor a preview is
+not supported, whatever its software.
+
+**Previews.** The package also carries more models, none of them ever run on hardware:
+- the SoundTouch 30 (Series I, II and III) and SoundTouch 20 Series III;
+- the Portable and the SA-5;
+- the SoundTouch adapter of the SA-4, Stereo JC, Wave, CineMate, VideoWave and Lifestyle
+  135/235/525/535 (the older adapter only for a Lifestyle: see below).
+
+They are worked out from Bose's own software alone ([compatibility](compatibility.md#previews)).
+Their recovery gestures exist in code only and have never been tried, so a preview may have no
+working way back. The installers list them as previews and need Bose software 27.0.6:
+- the command-line installers include one only when you type its number, then ask you to type
+  `preview`;
+- the installer page shows them as "(preview)" and needs a second box ticked.
+
+Once confirmed, the installers send the speaker to the preview feed, which names the release's
+preview package, `SoundTap-Core-X.Y.Z-preview.stu`: the same system with an installer that also
+installs on previews, while the plain package refuses them.
+
+The installers refuse the Lifestyle 600/650 module. The code carries it, but it has no
+recovery gesture at all, in Bose's software or ours. A Lifestyle with the newer (Bluetooth)
+adapter reports the same module, and the installers cannot tell the two apart, so they refuse
+that adapter too; only a Lifestyle with the older adapter is offered as a preview.
 
 ## 2. What you need
 
-- a SoundTouch 10, SoundTouch 20, SoundTouch 300 or Wireless Link adapter, still running
+- a SoundTouch 10, SoundTouch 20, SoundTouch 300 or Wireless Link adapter, or one of the
+  [previews](#1-which-speaker-you-have), still running
   Bose's software (or already running SoundTap: then skip to [Updating](#updating)), with the
   Bose software of [step 1](#which-bose-software) or newer. Other models are listed on the
   [home page](../../README.md#supported-speakers);
@@ -142,7 +166,8 @@ its SHA-256 checksum.
 ### 1. Download and check the package
 
 SoundTap comes as one file for every model, `SoundTap-Core-X.Y.Z.stu`. The speaker picks the
-parts that belong to it.
+parts that belong to it. A [preview](#1-which-speaker-you-have) takes
+`SoundTap-Core-X.Y.Z-preview.stu` from the same release instead, with its own `.sha256`.
 
 1. Open the [newest release](https://github.com/stein155/soundtap/releases) and
    download `SoundTap-Core-X.Y.Z.stu` and `SoundTap-Core-X.Y.Z.stu.sha256`.
@@ -304,15 +329,15 @@ What to know first:
   not known yet. Putting Bose's back there is a developer step for now.
 - **SoundTouch 300:** the soundbar's own processor keeps the firmware it has, so this is not a
   full soundbar restore either.
-- **When SoundTap does not start any more:** the USB stick route of
-  [USB stick](#usb-stick) also works as a rescue: `Update.stu` and `Update.stu.sig`
-  from a SoundTap release on the stick, then hold **Volume − and Preset 4** (SoundTouch 10,
-  20) or **both buttons** (Wireless Link) while powering on. It puts SoundTap back, never
-  Bose's software: SoundTap's rescue installs only a package with SoundTap's signature, and
-  any version of it, an older one too. Without the `.sig`, with Bose's file, or with a test
-  build on a speaker running a release, it writes nothing; on a SoundTouch 10 or Wireless
-  Link the light then blinks slowly three times and the speaker starts as before. It has
-  not been proven on every model yet.
+- **With a USB stick, also when SoundTap does not start any more:** SoundTap's bootloader has
+  a USB stick route built in, but no install from a stick has run on any model yet, so do not
+  count on it. It is meant to work like this: put a file on the stick named `Update.stu`, then
+  hold **Volume − and Preset 4** (SoundTouch 10, 20) or **both buttons** (Wireless Link) while
+  powering on. A SoundTap release's `.stu` puts SoundTap back, any version of it. Bose's own
+  update file for your model puts Bose's software back, its bootloader included; on a
+  SoundTouch 20 Bose's software then updates the network module itself. Holding the keys is the
+  permission, so no `.sig` is needed. Only the gesture itself has been seen, on a SoundTouch 10
+  without a stick. The SoundTouch 300 has no proven rescue at all.
 - **When the speaker does not start at all:** that needs a developer's rescue over USB from a
   computer, and on a SoundTouch 20 opening the speaker. See the
   [developer recovery tools](../hardware/install-records.md#developer-recovery-tools).
@@ -330,8 +355,8 @@ SoundTap updates in two parts, each from the speaker's *Settings → Updates* pa
   half of the speaker's storage while the current one keeps running. The new version has to
   stay up for a minute before the speaker keeps it (a SoundTouch 20 also waits until its
   network chip runs SoundTap's app, longer when that app is new); if it does not, the
-  speaker goes back to the previous version after a few restarts. Your network does not have
-  to work for that.
+  speaker goes back to the previous version after a few restarts. The check is designed not to
+  need your network; that has not been tested on a speaker yet.
 - **SoundTap app** (`SoundTap-app-X.Y.Z-armv7.bin`): the player and this web page, without
   touching the system.
 
@@ -371,8 +396,9 @@ not touched ([ADR 0008](../decisions/0008-one-universal-stu.md)).
 
 ## Buttons that always work
 
-On the SoundTouch 10 and 20 these work without network and without the web page. Hold both
-buttons for **ten seconds**:
+On the SoundTouch 10 and 20 these are built to work without network and without the web page;
+they have been seen working on the SoundTouch 10, while the SoundTouch 20's keypad is built but
+has no recorded run. Hold both buttons for **ten seconds**:
 
 | Hold | What happens |
 | --- | --- |
@@ -392,7 +418,8 @@ has run on it is in the [install records](../hardware/install-records.md#soundto
 - After the install the bar takes over the Wi-Fi Bose's software was on. If it opens its own
   setup network (`SoundTap ST300 …`) instead, connect it again from there.
 - The soundbar's own processor and its firmware are never touched. The bass module, rear
-  speakers, HDMI, ADAPTiQ, the remote and the bar's buttons keep their pairing and settings.
+  speakers, HDMI, ADAPTiQ and the remote keep their pairing and settings. The bar has no
+  buttons: SoundTap is controlled from the app and the bar's remote.
 - When SoundTap starts playing it asks the bar to switch to its input. Starting something on
   the TV while SoundTap plays does not switch back by itself: pick TV in the app or on the remote.
 - If the bar does not come back after an install or update, keep it powered and open an
@@ -404,22 +431,25 @@ has run on it is in the [install records](../hardware/install-records.md#soundto
 <a id="route-3-usb-stick"></a>
 <a id="fallback-usb-stick"></a>
 
-Use this only when steps 3 and 4 both failed; it has not yet been shown to work as a first
-install. On a SoundTouch 10 or 20:
+Use this only when steps 3 and 4 both failed. No install from a stick has run on any model
+yet, as a first install or later; only the gesture itself has been seen, on a SoundTouch 10
+without a stick. On a SoundTouch 10 or 20:
 
-1. Put the package on a FAT USB stick, named `Update.stu`, and its signature next to it, named
-   `Update.stu.sig`: download `SoundTap-Core-X.Y.Z.stu.sig` from the same release and rename
-   it. Bose's software does not need the `.sig`; SoundTap's own rescue, once SoundTap is
-   installed, takes nothing without it (see [Going back to Bose](#going-back-to-bose)).
+1. Put the package on a FAT USB stick, named `Update.stu`. No `.sig` is needed: neither Bose's
+   software nor SoundTap's own stick route asks for one (see
+   [Going back to Bose](#going-back-to-bose)).
 2. Plug the stick into the micro-B port through an OTG adapter.
 3. Hold **Volume − and Preset 4** while powering on.
 
-On a SoundTouch 300 the gesture is on the remote, as in Bose's own USB update: put the stick
-in the **SETUP** port, unplug the power, press **SoundTouch** on the remote, then hold **CC**
-while you plug the power back in, and let go after about five seconds.
+The speaker should then install the package and start it; this is untested. The Wireless
+Link's Bose software has no such gesture; once SoundTap runs, its bootloader is built to take
+**both buttons** instead, also untested.
 
-The speaker installs the package and starts it. The Wireless Link's Bose software has no such
-gesture; once SoundTap runs, it uses **both buttons** instead.
+On the SoundTouch 300 the stick starts from the remote, as Bose's own USB update does: put the
+stick in the bar's USB port, hold **SoundTouch** and **CC** on the remote while power comes back.
+With Bose's update file for the bar it goes back to Bose; with a SoundTap release it puts
+SoundTap back. This is untested on a bar, and if writing its bootloader fails the bar has no
+known way back: do not rely on it yet.
 
 ## When something goes wrong
 

@@ -24,7 +24,20 @@ GO_FILE = ROOT / "app/internal/modeltable/table_gen.go"
 
 MODEL_KEYS = {"variant", "module_suffix", "spl", "uboot", "kernel_name", "stock_rootfs_limit",
               "mfg_product", "variant_raw"}
-VARIANT_KEYS = {"model", "product", "module_type", "dtb", "kernel", "dts", "codec_script"}
+VARIANT_KEYS = {"model", "product", "module_type", "dtb", "kernel", "dts", "codec_script", "detect"}
+
+
+def check_detect(name, variant, stock_only):
+    """detect is how our U-Boot finds the board: SM2 boards by name, SCM boards by count."""
+    detect = variant["detect"]
+    if detect is None:
+        return
+    if stock_only:
+        raise ValueError(f"variant {name}: our U-Boot cannot detect a board it does not boot")
+    if variant["module_type"] == "sm2" and set(detect) != {"mfg"}:
+        raise ValueError(f"variant {name}: an SM2 board is detected by its manufacturing name")
+    if variant["module_type"] == "scm" and (set(detect) != {"variant_raw"} or len(detect["variant_raw"]) != 2):
+        raise ValueError(f"variant {name}: an SCM board is detected by a variant_raw range")
 
 
 def load(path=TABLE):
@@ -48,6 +61,7 @@ def load(path=TABLE):
         stock_only = bool(variant.get("stock_only"))
         if any((variant[k] is None) != stock_only for k in ("dtb", "kernel", "dts")):
             raise ValueError(f"variant {name}: dtb, kernel and dts are null exactly when it is stock_only")
+        check_detect(name, variant, stock_only)
     for kind in ("spl", "uboot"):
         used = {model[kind] for model in models.values()}
         if used != set(table["boot_images"][kind]):

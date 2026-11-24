@@ -259,11 +259,11 @@ def await_listener(process, port, deadline=20.0):
     return None
 
 
-def build_installer(tmp, nand=False, bootloaders=False, port=None):
+def build_installer(tmp, nand=False, bootloaders=False, port=None, preview=False):
     """Build the real installer for this host. The NAND build talks to the same code the board
     runs; with no /proc/mtd around it falls back to the file backend, which is what lets the
     transaction be tested without hardware."""
-    binary = Path(tmp) / ("wla-installer-nand" if nand else "wla-installer")
+    binary = Path(tmp) / (("wla-installer-nand" if nand else "wla-installer") + ("-preview" if preview else ""))
     port = port or PORT
     command = ["cc", "-O2", "-Wall", "-Wextra", f"-DLISTEN_PORT={port}", "-o", str(binary),
                str(SOURCE / "installer.c"), str(SOURCE / "swupdate.c")]
@@ -272,6 +272,8 @@ def build_installer(tmp, nand=False, bootloaders=False, port=None):
         command.append(str(SOURCE / "mtd.c"))
     if bootloaders:
         command.insert(1, "-DSOUNDTAP_INSTALL_BOOTLOADERS")
+    if preview:
+        command.insert(1, "-DSOUNDTAP_PREVIEW_PACKAGE")
     compile_with(command, tmp)
     return binary
 
@@ -649,6 +651,17 @@ class TestInstallerTransaction(unittest.TestCase):
                          b"nand_args2=run bootargs_defaults;setenv bootargs ${bootargs} ubi.mtd=9,2048"
                          b" soundtap.nandroot=1 ubi.mtd=NAND.Persistent-Storage,2048",
                          log)
+
+    def test_the_lifestyle_650_module_is_refused_before_nand_is_opened(self):
+        """bardeen has no way back (ADR 0133): nothing is erased and the environment stays."""
+        root = self.flash()
+        env_before = (root / "NAND.U-Boot-Env").read_bytes()
+        kernel_before = (root / "NAND.Kernel-Pong").read_bytes()
+        code, log = self.drive(root, variant="bardeen")
+        self.assertNotEqual(code, 0, log)
+        self.assertIn("no proven way back", log)
+        self.assertEqual((root / "NAND.Kernel-Pong").read_bytes(), kernel_before, log)
+        self.assertEqual((root / "NAND.U-Boot-Env").read_bytes(), env_before, log)
 
     def test_bad_blocks_are_skipped_on_write_and_on_readback(self):
         """A bad first kernel block moves the deferred block's home; a bad rootfs block past the
@@ -1048,6 +1061,8 @@ class TestBootloaderPhase(unittest.TestCase):
         cls.tmp = scratch_dir()
         cls.port = free_port()
         cls.binary = build_installer(cls.tmp.name, nand=True, bootloaders=True, port=cls.port)
+        cls.preview_binary = build_installer(cls.tmp.name, nand=True, bootloaders=True, port=cls.port,
+                                             preview=True)
         cls.stream, cls.payloads = make_package(cls.tmp.name, {
             "soundtap-kernel.rhino": cls.KERNEL,
             "soundtap-kernel.binky": cls.KERNEL,
@@ -1062,8 +1077,8 @@ class TestBootloaderPhase(unittest.TestCase):
     def tearDownClass(cls):
         cls.tmp.cleanup()
 
-    def run_install(self, variant="binky", compatible=None, bad=None, faults=None):
-        """bad maps a partition file to the blocks of it that are marked bad, faults to the
+    def run_install(self, variant="binky", compatible=None, bad=None, faults=None, preview=False):
+        """preview runs the preview package's installer. bad maps a partition file to the blocks of it that are marked bad, faults to the
         lines of its .fail file (TestBadBlockMarking)."""
         root = Path(tempfile.mkdtemp(dir=self.tmp.name))
         (root / "NAND.Kernel-Pong").write_bytes(b"\x00" * (5 * 1024 * 1024))
@@ -1078,11 +1093,11 @@ class TestBootloaderPhase(unittest.TestCase):
             (root / f"{name}.fail").write_text("\n".join(lines) + "\n")
         coordinator = Coordinator(self.stream)
         env = dict(os.environ, SOUNDTAP_MTD_DIR=str(root), SOUNDTAP_CANDIDATE_ROOTFS="9",
-                   SOUNDTAP_NO_REBOOT="1", SOUNDTAP_VARIANT=variant,
-                   SOUNDTAP_DT_COMPATIBLE=str(root / "compatible"))
+                   SOUNDTAP_NO_REBOOT="1", SOUNDTAP_VARIANT=variant)
         if compatible is not None:
             (root / "compatible").write_bytes(compatible)
-        process = subprocess.Popen([str(self.binary)], stdout=subprocess.PIPE,
+            env["SOUNDTAP_DT_COMPATIBLE"] = str(root / "compatible")
+        process = subprocess.Popen([str(self.preview_binary if preview else self.binary)], stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, env=env)
         conn = None
         try:
@@ -1300,7 +1315,7 @@ class TestBootloaderPhase(unittest.TestCase):
     def test_mojo_installs_as_the_st20_with_its_own_name(self):
         """SoundTouch 30 Series I: the ST20's board, so the ST20's payloads, with "mojo" kept
         on the command line for its own codec script."""
-        root, code, log = self.run_install("mojo")
+        root, code, log = self.run_install("mojo", preview=True)
         self.assertEqual(code, 0, log)
         self.assertEqual((root / "NAND.Kernel-Pong").read_bytes()[:self.KERNEL],
                          self.payloads["soundtap-kernel.spotty"])
@@ -1315,7 +1330,7 @@ class TestBootloaderPhase(unittest.TestCase):
         the ST10's Shelby 2 module: it takes the ST10's payloads, never the Series I's boot
         chain, and boots as spotty3 or mojo3 with its own tree."""
         for variant, name in (("spotty", b"spotty3"), ("mojo", b"mojo3")):
-            root, code, log = self.run_install(variant, compatible=b"bose,sm2\x00")
+            root, code, log = self.run_install(variant, compatible=b"bose,sm2\x00", preview=True)
             self.assertEqual(code, 0, log)
             self.assertEqual((root / "NAND.Kernel-Pong").read_bytes()[:self.KERNEL],
                              self.payloads["soundtap-kernel.rhino"], variant)
@@ -1324,6 +1339,33 @@ class TestBootloaderPhase(unittest.TestCase):
             env = (root / "NAND.U-Boot-Env").read_bytes()
             self.assertIn(b"variant=" + name + b" module_type=sm2", env, log)
             self.assertIn(b"/boot/spotty3_sm2.dtb", env, log)
+
+    def test_a_preview_board_takes_only_the_preview_package(self):
+        """ADR 0133: the Series III, the SoundTouch 30 and the other Preview boards refuse the
+        plain package before NAND is opened; the supported boards take either."""
+        for variant, compatible in (("spotty", b"bose,sm2\x00"), ("mojo", b"bose,scm\x00"),
+                                    ("taigan", b"bose,scm\x00"), ("burns", b"bose,sm2\x00"),
+                                    ("lisa", b"bose,sm2\x00"), ("lisa", b"bose,scm\x00")):
+            with self.subTest(variant=variant, compatible=compatible):
+                root, code, log = self.run_install(variant, compatible=compatible)
+                self.assertNotEqual(code, 0, log)
+                self.assertIn("not the preview package", log)
+                self.assertEqual((root / "NAND.U-Boot-Env").read_bytes(), env_image())
+                self.assertEqual(set((root / "NAND.Kernel-Pong").read_bytes()), {0}, log)
+        for variant, compatible in (("rhino", b"bose,sm2\x00"), ("spotty", b"bose,scm\x00")):
+            with self.subTest(variant=variant, preview=True):
+                _, code, log = self.run_install(variant, compatible=compatible, preview=True)
+                self.assertEqual(code, 0, log)
+
+    def test_an_unreadable_module_type_is_refused_on_a_board(self):
+        """A board names its module in its device tree; without the offline tests' forced
+        variant, an unreadable one is refused (alpha review, 2026-11-23)."""
+        for variant in ("rhino", "binky", "spotty", "ginger"):
+            with self.subTest(variant=variant):
+                out = subprocess.run([str(self.binary), "--board"], capture_output=True, text=True,
+                                     env=dict(os.environ, SOUNDTAP_VARIANT=variant,
+                                              SOUNDTAP_DT_COMPATIBLE="/nonexistent"))
+                self.assertTrue(out.stdout.strip().endswith(" unknown"), out.stdout + out.stderr)
 
     def test_module_mismatch_is_refused_before_any_nand_mutation(self):
         root, code, log = self.run_install("rhino", compatible=b"bose,scm\x00")

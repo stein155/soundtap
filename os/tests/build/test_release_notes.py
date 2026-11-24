@@ -42,6 +42,16 @@ class ReleaseNotes(unittest.TestCase):
             self.assertIn(f"**{asset}.sig**", text)
             self.assertIn("both files together", text)
 
+    def test_the_preview_package_has_its_section_and_checksum(self):
+        """ADR 0133: the preview package is an asset of its own, with its own signature."""
+        preview = ("SoundTap-Core-0.1.0-preview.stu", "cd" * 32)
+        text = notes.render("os", "0.1.0", "SoundTap-Core-0.1.0.stu", "ab" * 32, "", [],
+                            preview=preview)
+        self.assertIn("### Preview package", text)
+        self.assertIn("**SoundTap-Core-0.1.0-preview.stu.sig**", text)
+        self.assertIn(f"`{'cd' * 32}  SoundTap-Core-0.1.0-preview.stu`", text)
+        self.assertNotIn("Preview package", notes.render("os", "0.1.0", "a", "00", "", []))
+
 
 if __name__ == "__main__":
     unittest.main()

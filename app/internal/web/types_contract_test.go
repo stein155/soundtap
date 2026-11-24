@@ -19,7 +19,6 @@ import (
 	"github.com/stein155/soundtap/app/internal/speaker"
 	"github.com/stein155/soundtap/app/internal/store"
 	"github.com/stein155/soundtap/app/internal/upnp"
-	"github.com/stein155/soundtap/app/internal/weather"
 	"github.com/stein155/soundtap/app/internal/web/apierror"
 	"github.com/stein155/soundtap/app/internal/web/firmware"
 )
@@ -61,7 +60,6 @@ var schemaContract = map[string]any{
 	"WifiNetwork":       speaker.WifiNetwork{},
 	"Display":           settings.Display{},
 	"Alarm":             settings.Alarm{},
-	"Place":             weather.Place{},
 	"MultiroomClient":   multiroom.Client{},
 	"FirmwareReport":    firmware.Report{},
 	"UPnPServer":        upnp.MediaServer{},

@@ -85,12 +85,13 @@ attempted; treating it as disposable cache can cause another hardware write.
 | `buttons.map` | User, written by hand | soundtapd (`internal/hw/keymap.go`) | `index = ACTION` lines, `#` comments | none |
 | `ntp-servers` | User, written by hand | `clock.sh` | NTP host names or addresses separated by white space, `#` comments. Asked after the DHCP lease's servers, instead of the default; a word that is not a name or an address is ignored. Absent or without a name: the default | none |
 | `soundtap-clock` | Machine | The init script | Seconds since 1970, one line. Lost: the clock waits for NTP | none |
+| `charger_active_level` | Other (Portable) | Stock's file; soundtapd reads it (`cmd/soundtapd/battery.go`) and never writes or removes it | One character, `1` or `0`: the charge enable's active level. Anything but `0`, or no file, means active high ([portable](../hardware/portable/README.md)) | none |
 | `model` | Machine | Read by the init script, written by nothing of ours | A model name; one that conflicts with the hardware is logged and ignored | none |
 | `soundtap-boot.log`, `soundtap-netfail.log` | Log | The init script | Text | — |
 | `bluetooth/`, `bluealsa/` | Other | BlueZ (pairings), bluealsa (volumes per device) | Theirs | — |
 | `spotify/` | Other | librespot (`system/credentials.json`, `cache/`) | Theirs | — |
 | `dropbear/` | Other, alpha only | `ssh.sh`, Dropbear | The host key | — |
-| `BoseApp-Persistence/1/` | Other | Bose's software; soundtapd reads the name, presets and Wi-Fi once after an install from stock | Stock's XML; never written | — |
+| `BoseApp-Persistence/1/` | Other | Bose's software; soundtapd reads the name, presets, Wi-Fi and, on the ST20, the clock (`ClockDisplay.xml`, with `/mnt/nv/localtime`) once after an install from stock | Stock's XML; never written | — |
 
 The support bundle ([`redact.go`](../../app/internal/web/redact.go)) reads `wifi.conf`,
 `wifi.conf.good`, `wifi.conf.known`, `spotify/*/credentials.json` and `soundtap/api-token`

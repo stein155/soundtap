@@ -187,10 +187,11 @@ static int poll_flip(int fd, uint8_t page)
  * docs/hardware/st10/stock-audio-path.md. */
 static int dsp_word_index = -1;
 static uint32_t dsp_word_value;
-/* --volume HEX48 / --volume-blind HEX48: words 0 and 1 as one 48-bit coefficient, which is
- * how stock's two tables pair up (volume 50 = 0x01c0a9e0c000 = -31.25 dB against unity
- * 0x400000000000). soundtapd sends one per volume step, so the DSP does the volume as on
- * stock and the PCM stays at full scale. */
+/* --volume HEX48 / --volume-blind HEX48: words 0 and 1, word 0 in the high 24 bits. They are
+ * stock's two tables side by side, not one number: word 0 the gain in Q22 (0x400000 unity),
+ * word 1 the same level in dB times 65536 (volume 50 = 0x01c0a9 0xe0c000, -31.25 dB).
+ * soundtapd sends one pair per volume step, so the DSP does the volume as on stock and the
+ * PCM stays at full scale. */
 static uint64_t dsp_gain = 0x400000000000ULL;
 
 static int set_volume_full(int fd, bool blind)
@@ -384,22 +385,29 @@ int main(int argc, char **argv)
 			command_line[0] = '\0';
 		fclose(cmdline);
 	}
-	/* mojo, the SoundTouch 30 Series I, is the ST20's board with its own codec script;
-	 * spotty3 and mojo3, the ST20 and ST30 Series III, are the ST10's board with theirs.
+	/* mojo, the SoundTouch 30 Series I, and taigan, the Portable, are the ST20's board with
+	 * their own codec scripts;
+	 * spotty3 and mojo3, the ST20 and ST30 Series III, and burns, the SA-5, are the ST10's board
+	 * with theirs.
 	 * Compare the whole value: "variant=spotty" is a prefix of "variant=spotty3". */
 	char variant[16] = "";
 	const char *v = strstr(command_line, "variant=");
 	if (v)
 		sscanf(v + strlen("variant="), "%15[a-z0-9]", variant);
-	bool mojo = !strcmp(variant, "mojo");
+	bool mojo = !strcmp(variant, "mojo"), taigan = !strcmp(variant, "taigan");
+	bool lisa = !strcmp(variant, "lisa");
 	bool spotty3 = !strcmp(variant, "spotty3"), mojo3 = !strcmp(variant, "mojo3");
-	spotty = mojo || !strcmp(variant, "spotty");
-	rhino = spotty3 || mojo3 || !strcmp(variant, "rhino");
+	bool burns = !strcmp(variant, "burns");
+	spotty = mojo || taigan || lisa || !strcmp(variant, "spotty");
+	rhino = spotty3 || mojo3 || burns || !strcmp(variant, "rhino");
 	spi_device = spotty ? ST20_SPI_DEVICE : ST10_SPI_DEVICE;
 	config_file = mojo ? CODEC_DIR "mojo_scm_normal.cfg"
+		: taigan ? CODEC_DIR "taigan_scm_normal.cfg"
+		: lisa ? CODEC_DIR "lisa_scm_normal.cfg"
 		: spotty ? CODEC_DIR "spotty_scm_normal.cfg"
 		: spotty3 ? CODEC_DIR "spotty_sm2_normal.cfg"
-		: mojo3 ? CODEC_DIR "mojo_sm2_normal.cfg" : CODEC_DIR "rhino_sm2_normal.cfg";
+		: mojo3 ? CODEC_DIR "mojo_sm2_normal.cfg"
+		: burns ? CODEC_DIR "burns_sm2_normal.cfg" : CODEC_DIR "rhino_sm2_normal.cfg";
 	gpio_address = spotty ? "481ae000" : "481ac000";
 
 	if (argc == 3 && !strcmp(argv[1], "--mode")) {

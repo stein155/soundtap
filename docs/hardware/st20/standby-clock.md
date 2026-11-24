@@ -23,5 +23,28 @@ The stock clock in standby is drawn by BoseApp (`CClockScreenTO`, moved by
   goes dark only with the clock switched off, or when the low-power standby cuts the
   display's power.
 
+## Where stock keeps the clock's settings
+
+BoseApp keeps them in `/mnt/nv/BoseApp-Persistence/1/ClockDisplay.xml` (its persistable
+`ClockDisplay`), one `clockConfig` element inside `clockDisplay` with every field an attribute
+(seen on the owner's ST20, 2026-11-24):
+
+| Attribute | Default (`ClockConfiguration.proto` in `libCore.so`) | Meaning |
+| --- | --- | --- |
+| `timezoneInfo` | empty | IANA zone, as `Europe/Amsterdam` |
+| `userEnable` | `true` | the clock on or off |
+| `timeFormat` | `TIME_FORMAT_12HOUR_ID` | or `TIME_FORMAT_24HOUR_ID` |
+| `brightnessLevel` | 70 | 0 switches the clock off; other values draw the same |
+| `userOffsetMinute`, `userUtcTime` | 0 | a hand-set time |
+
+It also links `/mnt/nv/localtime` to `/usr/share/zoneinfo/<zone>`. On the first start after an
+install from stock soundtapd takes these over once
+([ADR 0129](../../decisions/0129-first-install-keeps-settings.md)).
+
+## SoundTap
+
 SoundTap's clock (`app/internal/panel/clock.go`) walks the same way over the free area of
-the panel, one pixel diagonally every 5 s, and keeps its brightness setting on top.
+the panel, one pixel diagonally every 5 s, and keeps its brightness setting on top. Like
+stock it shows the time alone, with AM/PM under it on a 12-hour clock: no date and no
+weather, which would light more pixels for the whole of standby and leave the walk less room
+([ADR 0111](../../decisions/0111-st20-standby-clock.md)).

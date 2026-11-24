@@ -1,0 +1,56 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: 2026 SoundTap contributors
+/*
+ * The SoundTouch adapter on the Shelby Common Module (lisa/scm), for the SA-4, SoundTouch
+ * Stereo JC, Wave SoundTouch, CineMate and older Lifestyle and VideoWave hosts. Preview, never
+ * booted. Stock's lisa_scm and spotty_scm trees differ in five things, so this is the ST20's
+ * tree with them:
+ *
+ * - UART0 is the Bose link to the host (stock uart0_pins_default), not the infrared receiver:
+ *   soundtapd is the link's master over /dev/ttyS1 (internal/abl). No IR receiver. The alias
+ *   below names it: /dev/ttyS0 is the BCO's UART5 on every SCM tree, and without an alias
+ *   UART0 would take line 0 from it.
+ * - The codec script, lisa_scm_normal.cfg (variant= below; the speaker's own). Unlike the SM2
+ *   adapter this one keeps the ST20's AIC3256.
+ * - USB0 is peripheral only, as the ST20 tree already has it.
+ * - spidev@0 and the sync-out: no change that matters here.
+ * The network is the ST20's: the BCO runs SoundTap's own BCO app (ADR 0031).
+ */
+#include "am335x-soundtap-st20.dts"
+
+/ {
+	model = "Bose SoundTouch adapter (SoundTap lisa)";
+	compatible = "bose,lisa-scm", "ti,am33xx";
+
+	aliases {
+		serial1 = &uart0;
+	};
+
+	chosen {
+		bootargs = "console=ttyS3,115200n8 root=ubi0:rootfs ro rootfstype=ubifs ubi.mtd=9,2048 rootwait init=/init mem=128M cma=8M panic=10 omap_wdt.early_enable=1 variant=lisa module_type=scm country=GB region=GB soundtap.nandroot=1 soundtap.watchdog=90";
+	};
+
+	/delete-node/ ir-receiver;
+};
+
+&am33xx_pinmux {
+	/delete-node/ pinmux-ir-pins;
+
+	/* The Bose link: stock uart0_pins_default. */
+	uart0_pins: pinmux-uart0-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_UART0_RXD, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_UART0_TXD, PIN_OUTPUT, MUX_MODE0)
+		>;
+	};
+};
+
+&uart0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart0_pins>;
+	status = "okay";
+};
+
+&gpio1 {
+	/delete-node/ ir-power-hog;
+};

@@ -7,6 +7,7 @@
 
   "s1.title": "¿Qué altavoz tienes?",
   "model.other": "Otro modelo",
+  "model.preview": "{model} (versión preliminar)",
   "s1.otherHelp": "¿Tienes otro modelo? <a>Ayuda a ponerlo en marcha</a>: el primer paso es una investigación de solo lectura.",
 
   "s2.title": "Qué necesitas",
@@ -44,6 +45,7 @@
   "br.ip": "La dirección IP del altavoz",
   "br.ipHint": "En la app de Bose: Ajustes, Ajustes del altavoz, tu altavoz, Acerca de. O búscala en tu router.",
   "br.agree": "Entiendo que SoundTap es software en fase alfa que sustituye todo lo que hay en el altavoz, y he leído cómo volver a Bose (paso 6).",
+  "br.previewAgree": "Este modelo es una versión preliminar: SoundTap se ha deducido del propio software de Bose y nadie lo ha ejecutado todavía en este modelo. Puede que no suene, y puede que la vuelta atrás no esté probada. Lo instalo de todos modos.",
   "br.go": "Instalar SoundTap",
   "br.pickModel": "Primero elige tu altavoz en el paso 1.",
   "br.trust": "La página no puede leer el modelo ni su software desde el altavoz, así que se fía de lo que indiques en ambos casos.",
@@ -52,6 +54,7 @@
   "judge.noModel": "{model}: todavía no es compatible. SoundTap no ha funcionado en él, así que esta página no lo instalará.",
   "judge.no": "Todavía no es compatible. SoundTap no ha funcionado en este modelo, así que esta página no lo instalará.",
   "judge.unread": "Escribe la versión del software de Bose que muestra la app de Bose para este altavoz.",
+  "judge.preview": "{model}: una versión preliminar. SoundTap se ha deducido del propio software de Bose y nadie lo ha ejecutado todavía en este modelo; marca abajo la casilla de versión preliminar para instalarlo de todos modos.",
   "judge.old": "Software de Bose {version}: el {model} necesita {minimum} o posterior. Actualiza primero Bose en la app de Bose.",
 
   "st.asking": "Preguntando al altavoz…",

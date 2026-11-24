@@ -11,7 +11,10 @@ the date and the tested artifact (version and SHA-256) of the result. A design c
 Status on 2026-11-24. The models are the ST10, the ST20, the Wireless Link and the
 SoundTouch 300: the ST300 ships in the first release (project decision 2026-11-12), the signing
 gate requires its hardware report since 2026-11-15, and since 2026-11-20 it has full support
-like the other three ([install records](../hardware/install-records.md#soundtouch-300)).
+like the other three ([install records](../hardware/install-records.md#soundtouch-300)). The
+package also carries previews for other SoundTouch models, worked out from Bose's software and
+never run on hardware ([ADR 0133](../decisions/0133-more-soundtouch-models-from-stock.md)); a
+preview becomes a supported model once an owner has run its hardware checklist.
 
 ## Blocks the first release
 
@@ -99,10 +102,10 @@ like the other three ([install records](../hardware/install-records.md#soundtouc
     2026-11-14 from Bose 22.0.3: taken over as well.
   - SoundTouch 300: 2026-11-15, taken over from Bose's software.
 - [ ] **USB stick recovery** (Volume Down + Preset 4, or both buttons on the Wireless Link, at
-      power-on) installs the stick's `Update.stu` with settings kept, on each model, only
-      with its `Update.stu.sig`, and refuses a stick without it (ADR 0048).
-      So far only the trigger is proven, without a stick: ST10 and SoundTouch 300 on
-      2026-11-08 (`soundtap.recovery=-19`). An install from a stick, and the refusals, are still
+      power-on) installs the stick's `Update.stu` with settings kept, on each model: a SoundTap
+      package, and Bose's file back to stock with its bootloaders; no `.sig` (ADR 0130).
+      So far only the trigger is proven, without a stick: the ST10 on 2026-11-08
+      (`soundtap.recovery=-19`). The SoundTouch 300 has no proven trigger. An install from a stick, and the refusals, are still
       to run on every model.
 - [ ] **Back to Bose's software and back again** on each model from the candidate.
       Done outside a candidate on every model: the Wireless Link and the ST20 on 2026-11-11,
@@ -148,14 +151,15 @@ like the other three ([install records](../hardware/install-records.md#soundtouc
     EEPROM data that nothing initialises on these boards and saved that SRAM with the boot
     count (an ST10, 2026-11-23). soundtapd reads such values since 0.1.0-alpha.2, and U-Boot
     no longer sets them since 0.1.0-alpha.3 (booted on the Wireless Link, 2026-11-23).
-  - The USB-stick recovery picks its target slot from `bootcmd` alone. After a failed update
-    that is the slot U-Boot would fall back to, and with no environment it is the slot the
-    built-in `bootcmd` tries first; it should take the slot `altbootcmd` names once the count
-    passed `bootlimit`, point `altbootcmd` away from the slot it erases, and reset when its
-    final `env_save` fails.
-  - The first-install module treats an unreadable module type as a match, and maps the
-    Preview models onto the ST10's and ST20's boot chains; it should refuse both until a
-    Preview model is opted in.
+  - The USB-stick recovery picked its target slot from `bootcmd` alone. Changed in the code
+    2026-11-24, still to RAM-boot and run on a speaker: it takes the slot `altbootcmd` names
+    once the coming boot passes `bootlimit`, points `bootcmd` and `altbootcmd` at the booting
+    slot (saved) before it erases the other, and resets when its final `env_save` fails
+    (`os/tests/boot/test_uboot_usb_recovery.py`).
+  - The first-install module treated an unreadable module type as a match, and mapped the
+    Preview models onto the ST10's and ST20's boot chains. Changed in the code 2026-11-24: an
+    unreadable module type is refused, and a Preview board installs only from the preview
+    package, whose installer is built for it (ADR 0133); still to run from a candidate.
 - [x] **AUX latency**: about 0.19 s since 2026-11-12, with a clean 10-minute run on
       the ST10 and the ST20; stock is about 30 ms. Project decision 2026-11-12: about 190 ms
       is acceptable for the first release.
@@ -164,12 +168,21 @@ like the other three ([install records](../hardware/install-records.md#soundtouc
 
 - [ ] First install from Bose software older than 27.0.6. The Wi-Fi key search was
       checked offline against every stock release on 2026-11-11: found from 9.0.41 on; older
-      Series I software has none and falls back to the setup network.
-- [ ] Tests that fail by timing under load.
+      Series I software has none and falls back to the setup network. The 9.0.41 finding
+      concerns only that NetManager Wi-Fi key search, not the install. The installers' minimums
+      stay the oldest recorded install per model: Wireless Link 20.0.6, ST10 22.0.3, ST20 and
+      SoundTouch 300 27.0.6 ([versions.json](../installer/versions.json)).
+- [ ] Tests that fail by timing under load. On 2026-11-24 the Go suite ran three times on one
+      CPU at low priority: the only failures were four tests that kept process state between
+      runs (`bcoflash`, `multiroom`, `supervise`), now fixed. Still to do: the same run on the
+      CI runner, and the Python suite under load.
 - [x] Executed tests for the init script and the installer instead of text checks. The init
       script, the installer and the boot chain's checkers run against fakes; the
       [test map](../contributors/testing/README.md) says why each remaining text check stays one.
-- [ ] User docs claim no more than the hardware evidence shows.
+- [ ] User docs claim no more than the hardware evidence shows. Owner docs checked against the
+      checklist and the install records on 2026-11-24 and reworded. Where the two disagreed
+      (ST300 Spotify and Bluetooth playback, Wireless Link AUX), the owner's report of
+      2026-11-24 settled it in the checklist.
 - [ ] **Spotify presets** are slow to start. The timing logs from an earlier fix say where the time
       goes; measure on the Wireless Link and fix.
 - [ ] **Multiroom sync** ([ADR 0013](../decisions/0013-multiroom-through-snapcast.md)): followers
@@ -215,12 +228,15 @@ like the other three ([install records](../hardware/install-records.md#soundtouc
       | ST20 leads the other two | 41% / 17% | 61% / 25% | 42% / 18% |
       | Wireless Link leads the other two | 39% / 17% | 35% / 21% | 77% / 26% |
 
-- [ ] **API stability tooling** ([ADR 0108](../decisions/0108-http-api-compatibility-for-1-0.md)):
-      a machine-readable stable-versus-internal marker in `openapi.json` (today the internal set
-      is only the Go list in `app/internal/web/openapi_test.go`); a capabilities field in
-      `/api/version` or `/api/info`, so clients need not probe routes; a CI check that fails a pull
-      request that removes or retypes a documented path or field without raising `web.APILevel`.
-- [ ] Every blob in the image has recorded upstream provenance, checked in CI.
+- [x] **API stability tooling** ([ADR 0108](../decisions/0108-http-api-compatibility-for-1-0.md)):
+      `openapi.json` lists the internal routes in `x-soundtap-internal`; `GET /api/version` lists
+      `capabilities`; `TestAPIContract` compares the API with the level's recorded contract
+      (`app/internal/web/testdata/api-contract-1.json`) and fails a removed or retyped path or
+      field without a raised `web.APILevel`. Level 1 is re-recorded until 0.1.0.
+- [x] Every blob in the image has recorded upstream provenance, checked in CI:
+      `check_provenance.py --rootfs` judges every binary file of the image but ELF, as part of
+      `make os` (`image-check`); what the build makes itself is covered by generated entries.
+      Checked against the rootfs of a build of 2026-11-22.
 - [ ] PR CI under 15 minutes; a cold `build.yml` under an hour on a GitHub-hosted runner, 30
       minutes as the goal. So far: a build without any cache took about 142 minutes on a hosted
       runner (2026-10-07); on the build host a cold image build that also built gcc took 53

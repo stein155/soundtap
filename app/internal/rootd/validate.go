@@ -258,6 +258,9 @@ var exportableGPIO = []gpioLine{
 	// The Series III panel (ST20 and ST30 Series III): chip select gpio0_12, reset gpio2_9,
 	// data/command gpio2_12.
 	{gpio0, 12}, {gpio2, 9}, {gpio2, 12},
+	// The SoundTouch Portable's charger (stock taigan_scm gpiodev): charge enable gpio3_8; DC
+	// present is gpio0_27, the ST10 keypad input above.
+	{gpio3, 8},
 }
 
 // CheckHostname holds sethostname to one DNS label, as soundtapd's dhcpHostname makes it.

@@ -7,6 +7,7 @@
 
   "s1.title": "Jaký reproduktor máte?",
   "model.other": "Jiný model",
+  "model.preview": "{model} (náhled)",
   "s1.otherHelp": "Máte jiný model? <a>Pomozte ho rozběhnout</a>: prvním krokem je průzkum, který pouze čte.",
 
   "s2.title": "Co budete potřebovat",
@@ -44,6 +45,7 @@
   "br.ip": "IP adresa reproduktoru",
   "br.ipHint": "V aplikaci Bose: Nastavení, Nastavení reproduktoru, váš reproduktor, Informace. Nebo ji najděte ve svém routeru.",
   "br.agree": "Rozumím, že SoundTap je software ve fázi alfa, který nahradí vše v reproduktoru, a přečetl(a) jsem si, jak se vrátit k Bose (krok 6).",
+  "br.previewAgree": "Tento model je náhled: SoundTap je odvozen ze softwaru Bose a na tomto modelu ho zatím nikdo nespustil. Nemusí hrát a cesta zpět nemusí být ověřená. Přesto ho instaluji.",
   "br.go": "Nainstalovat SoundTap",
   "br.pickModel": "Nejprve vyberte svůj reproduktor v kroku 1.",
   "br.trust": "Stránka nedokáže z reproduktoru zjistit model ani jeho software, takže v obou případech spoléhá na vaše slovo.",
@@ -52,6 +54,7 @@
   "judge.noModel": "{model}: zatím nepodporováno. SoundTap na něm ještě neběžel, takže ho tato stránka nenainstaluje.",
   "judge.no": "Zatím nepodporováno. SoundTap na tomto modelu ještě neběžel, takže ho tato stránka nenainstaluje.",
   "judge.unread": "Zadejte verzi softwaru Bose, kterou pro tento reproduktor zobrazuje aplikace Bose.",
+  "judge.preview": "{model}: náhled. SoundTap je odvozen ze softwaru Bose a na tomto modelu ho zatím nikdo nespustil; pokud ho chcete přesto nainstalovat, zaškrtněte níže políčko náhledu.",
   "judge.old": "Software Bose {version}: {model} potřebuje {minimum} nebo novější. Nejprve aktualizujte Bose v aplikaci Bose.",
 
   "st.asking": "Ptám se reproduktoru…",

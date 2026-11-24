@@ -35,9 +35,10 @@ The active private half, under its passphrase, is a secret of the GitHub Actions
 `release`, limited to `main`, where `sign.yml` runs `tools/release/sign-release.sh` to sign and
 publish ([ADR 0035](0035-releases.md)); the release workflow builds the draft assets without a
 key. The reserve's private half stays offline with the maintainer, apart from the active one. Both public halves are compiled into
-soundtapd, which accepts a statement signed by either and skips an empty one. U-Boot carries
-the same keys for the USB stick (`os/bootloader/uboot/soundtap-keys.h`, generated from
-`release.PublicKeys`; a test fails when the two differ). A speaker can trust one more key, its
+soundtapd, which accepts a statement signed by either and skips an empty one. U-Boot checks
+no statement ([ADR 0130](0130-usb-stick-recovery.md)); the C verifier and key header in
+`os/bootloader/uboot/` are no longer compiled into it and remain only for the tests that hold
+them to `release.PublicKeys`. A speaker can trust one more key, its
 owner's ([below](#the-owners-own-key)).
 
 ### The signed statement
@@ -92,7 +93,7 @@ warning and sends that confirmation.
 | `POST /api/soundtapd` (upload, press) | app | image's | `soundtapd` | `soundtapd` | `downgrade` | no |
 | `POST /api/update` without a tag, Home Assistant (no press, [ADR 0118](0118-update-button-without-press.md)) | app | production | yes | no | no | no |
 | `POST /api/update` with a tag (press, [ADR 0118](0118-update-button-without-press.md)) | app | production | yes | no (current) | yes | no |
-| USB stick, `Update.stu` + `Update.stu.sig` (gesture at power-on, U-Boot) | core | image's | yes | yes | yes | no |
+| USB stick, `Update.stu` (gesture at power-on, U-Boot; no statement, [ADR 0130](0130-usb-stick-recovery.md)) | any | any | yes | yes | yes | yes (Bose's file for this model) |
 
 "Press" is the confirmation on the speaker of [ADR 0055](0055-household-token-and-windows.md).
 The release routes also require the statement's version to be the tag's (`os-vX.Y.Z` or
@@ -103,19 +104,12 @@ streamed digest must match before the new slot is selected. The signature authen
 candidate, not every chunk: a replayed statement with other bytes can still overwrite the
 spare slot before the mismatch shows, and the slot is then not selected.
 
-**The USB stick** reads the same statement from `Update.stu.sig` next to `Update.stu` (the
-release's `.sig` renamed); the STU container stays the one the stock updater and
-`/api/firmware` read. The chord held at power-on is the confirmation, so any version goes in,
-older included, as long as the statement is a valid `core` statement for the image's profile,
-signed by a compiled key or the owner key, and the file hashes to it:
-
-- The image's profile is U-Boot's own, compiled in as `SOUNDTAP_UBOOT_PROFILE` from the
-  build's `SOUNDTAP_PROFILE`; `post-image.sh` fails a build whose `u-boot.img` names another
-  profile than the image.
-- `stock` and unsigned packages are refused, Bose's file included: the stick writes only
-  SoundTap's root filesystem, and at power-on nothing can show what is about to be written.
-- The digest is checked twice: once over all of `Update.stu` before anything is erased, and
-  again while writing, from the buffers written; the slot is selected only when both match.
+**The USB stick** needs no statement ([ADR 0130](0130-usb-stick-recovery.md)). Signatures guard
+what can be started automatically or from the network, where anyone on it can reach the web UI;
+the stick is started by someone holding the speaker's keys at power-on, as stock's was. It takes
+any SoundTap package and Bose's own file for the board, and checks only that the file arrived
+whole: every header and module CRC, and the same SHA-256 over two reads of the stick, the second
+from the very buffers written. The slot is selected only when both match.
 
 What U-Boot shows when it refuses a stick is in [ADR 0009](0009-mainline-linux-own-bootloaders.md).
 
@@ -131,7 +125,9 @@ STU's structure, length and CRC; its trust is the owner's hands on the speaker. 
 feed the installers name (`updates/soundtouch` on `main`) is held to a signed release outside
 the speaker: code-owner review, and `tools/release/feed_check.py`, which requires the index to
 name a published, not withdrawn Core release asset whose `.sig` verifies
-([RELEASING.md](../../RELEASING.md#the-first-install-feed)).
+([RELEASING.md](../../RELEASING.md#the-first-install-feed)). The preview feed
+(`updates/soundtouch-preview`) is held the same way to the release's preview package, which
+carries its own `.sig` in this format ([ADR 0133](0133-more-soundtouch-models-from-stock.md)).
 
 ### Bose's own firmware installs without our signature, behind the press
 
@@ -166,9 +162,9 @@ signatures are kept.
    it; `PUT /api/settings` refuses the field; the MQTT bridge cannot reach the code that writes
    the environment. A factory reset removes it, from the web page and from the front-panel
    chord alike, so a speaker that changes hands trusts the release keys alone again.
-4. **Same rules as a release key.** `/api/firmware`, `/api/soundtapd` and U-Boot's stick
-   verify against the release keys and the owner key (`release.TrustedKeys`,
-   `st_trusted_keys` in `soundtap-sig.c`) under the table above, unchanged. An owner-signed
+4. **Same rules as a release key.** `/api/firmware` and `/api/soundtapd`
+   verify against the release keys and the owner key (`release.TrustedKeys`)
+   under the table above, unchanged; the stick checks no key. An owner-signed
    `profile=production` statement installs on a production image: a production build of
    their own is what the owner means to run. The release routes (`/api/core-update`,
    `/api/update`, Home Assistant) fetch from this project's releases and take the release
@@ -204,19 +200,18 @@ file, not our signature over it).
   the old reserve, which every speaker already trusts; this works whether the active key is
   retired, leaked or lost. Only the loss of both keys needs a route outside the signed
   updater. Revoking a key takes effect only where the software that carries the list is
-  replaced: the app override, each Core slot and U-Boot. A change of keys changes
-  `u-boot.img`, so the Core release that carries it writes `NAND.U-Boot` on every speaker.
+  replaced: the app override and each Core slot. U-Boot holds no keys, so a change of keys
+  does not change `u-boot.img`.
   [RELEASING.md](../../RELEASING.md#release-keys) has the procedures and their limits.
-- A stick needs both files. A bench build signed alpha rescues only an alpha speaker, and
-  switching a speaker between profiles writes `NAND.U-Boot`, since the two U-Boots differ in
-  the profile word.
+- A stick needs `Update.stu` alone, of either profile ([ADR 0130](0130-usb-stick-recovery.md)).
 - The version is only as precise as `os/VERSION`: development builds all say the same version
   and install over each other as "the same".
-- An owner goes back to Bose with a browser, Bose's file and the press. This is the only way
-  back: the stick takes a signed SoundTap package and nothing else. The press is also the only
-  thing that stops a file shaped like Bose's firmware with other content, and such a file
-  writes only the spare slot and the bootloaders stock carries. The ST20's BCO keeps
-  SoundTap's app and is restored separately ([BCO recovery](../hardware/st20/bco-recovery.md)).
+- An owner goes back to Bose with a browser, Bose's file and the press, or with Bose's file on a
+  stick and the chord at power-on. Over the network the press is the only thing that stops a
+  file shaped like Bose's firmware with other content, and such a file writes only the spare slot
+  and the bootloaders stock carries. On the ST20, Bose's software
+  puts its own BCO app back when it finds ours (seen by the owner;
+  [BCO recovery](../hardware/st20/bco-recovery.md) stays the development route).
 - Whoever holds an owner's private key can do on that speaker what a release key can. Adding
   one needs the press; someone with the speaker in their hands could reach it anyway through
   the UART console or a ROM-USB boot. The key survives every update, the slot switch and a
@@ -246,8 +241,8 @@ file, not our signature over it).
   `ClearOwnerKey`; `app/internal/flash/envvar.go:SetEnvEverywhere`.
 - `app/internal/update/update.go:admitApp` and `app/internal/update/update.go:OpenCore`: the
   release routes' policy.
-- `os/bootloader/uboot/soundtap-sig.c`, `os/bootloader/uboot/soundtap-keys.h`,
-  `os/bootloader/uboot/uboot-2026.07-usb-recovery.patch`: the stick's check.
-- `os/board/image/post-image.sh`: U-Boot's profile must be the image's.
+- `os/bootloader/uboot/uboot-2026.07-usb-recovery.patch`: the stick, which checks no
+  statement; `os/bootloader/uboot/soundtap-sig.c` and `soundtap-keys.h` are not compiled into
+  U-Boot and remain for `app/internal/release/uboot_test.go`.
 - `tools/release/sign.sh`, `tools/release/sign-release.sh`, `.github/workflows/sign.yml`,
   `tools/release/feed_check.py`.

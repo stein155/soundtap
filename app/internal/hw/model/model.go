@@ -46,6 +46,14 @@ type Model struct {
 	KeypadDev    string // one-byte ASCII press/release event device
 	IRDev        string // Bose infrared receiver char device ("" = model has none)
 	BTUart       string // Bluetooth HCI UART
+	// Battery is a smart battery pack and charger (internal/hw/battery): the Portable only.
+	Battery bool
+	// STM32Amp is the SA-5's amplifier controller on I2C1 (internal/hw/stm32amp).
+	STM32Amp bool
+	// HostLink is the SoundTouch adapter's Bose link to its host product (internal/abl), and
+	// HostLinkDev the serial device of the UART0 it runs on.
+	HostLink    bool
+	HostLinkDev string
 	// UserSources are the inputs a person may select over the LAN API, as opposed to the
 	// daemon-only /api/source. It lives on the model because it describes hardware: a box
 	// with no analogue input must not offer AUX.
@@ -230,6 +238,76 @@ func seriesIII(variant string) Model {
 	return m
 }
 
+// sa5 is the SoundTouch SA-5 amplifier (burns/sm2): the ST10's module on an amplifier board
+// with an STM32 controller. Stock's burns_sm2 tree is rhino_sm2's with the rear Ethernet port,
+// the controller at 0x1d on I2C1 and two lamps (the Series III's), and its audio runs as the
+// ST10's: McASP0 at 46875 Hz into the AIC3256, which feeds the amplifier board. The controller
+// reports the amplifier's state, faults and a thermal gain the host applies (APConfig-burns
+// AUDIO_DEVICE_TYPE_SHELBY_STM32, PowerAmpWithStatus). Chime 25 is stock's.
+func sa5() Model {
+	m := st10()
+	m.Type = "SoundTouch SA-5"
+	m.AICConfig = "burns_sm2_normal.cfg"
+	m.LEDDir = "/sys/class/leds"
+	m.STM32Amp = true
+	m.ChimeVolume = 25 // APConfig-burns.xml
+	return m
+}
+
+// adapter is the SoundTouch adapter on the Shelby 2 module (lisa2 under SoundTap, lisa/sm2 to stock): the ST10's module
+// without a codec, cabled to a host product (SA-4, Stereo JC, Wave, CineMate, Lifestyle or
+// VideoWave). Audio leaves McASP0 as I2S at 46875 Hz to a converter on the adapter board, and
+// the host plays it: SoundTap selects the adapter on the host, which applies the volume, over
+// the Bose link on UART0 (APConfig-<host> hasAIC=false, hasABL=true, VOLUME_FORWARD_ABL).
+// There is no amplifier, IR receiver or panel, and the mute is the host's (ABLMute): the
+// device tree holds the converter enabled and mute_out where stock leaves it.
+func adapter() Model {
+	m := st10()
+	m.Type = "SoundTouch adapter"
+	m.AICConfigured, m.AICConfigFile, m.AICConfig = "", "", ""
+	m.MuteGPIO = ""
+	m.AmpPowerGPIO = ""
+	m.AmpFaultGPIO = 0
+	m.IRDev = ""
+	m.LEDDir = "/sys/class/leds"
+	m.HostLink, m.HostLinkDev = true, "/dev/ttyS0"
+	return m
+}
+
+// adapterSCM is the SoundTouch adapter on the Shelby Common Module (lisa/scm): the ST20's
+// board with UART0 as the Bose link instead of the IR receiver. Unlike the SM2 adapter it keeps
+// the codec (APConfig-<host> on scm: hasAIC=true, lisa_scm_normal.cfg); the host still applies
+// the volume, so the codec runs at unity once the host is known. No amplifier, IR or panel.
+func adapterSCM() Model {
+	m := st20()
+	m.Type = "SoundTouch adapter"
+	m.AICConfig = "lisa_scm_normal.cfg"
+	m.AmpPowerGPIO = ""
+	m.AmpFaultGPIO = 0
+	m.IRDev = ""
+	m.OLED = ""
+	// ttyS0 is the BCO's UART on every SCM tree (the ST20's serial0 alias); the adapter's
+	// tree names UART0 serial1.
+	m.HostLink, m.HostLinkDev = true, "/dev/ttyS1"
+	return m
+}
+
+// portable is the SoundTouch Portable (taigan/scm): the ST20's board with a battery. Stock's
+// taigan_scm and spotty_scm device trees differ in four things only: the battery gauge at
+// 0x0b on I2C0, the RTC alarm's interrupt, the codec script and no sync-out. APConfig-taigan
+// has no PowerAmp object, so the amplifiers are never put in standby (the device tree holds
+// ampstby high) and a stereo pair is possible; volume 50 and chime 50 are stock's.
+func portable() Model {
+	m := st20()
+	m.Type = "SoundTouch Portable"
+	m.AICConfig = "taigan_scm_normal.cfg"
+	m.AmpPowerGPIO = ""
+	m.Battery = true
+	m.ChimeVolume = 50 // APConfig-taigan.xml
+	m.DefaultVolume = 50
+	return m
+}
+
 // st300 is the SoundTouch 300 (ginger/sm2): the Wireless Link's module inside a
 // soundbar. Its one audio path is S/PDIF into the soundbar's DSP; the
 // buttons, lamps, inputs, amplifiers, ADAPTiQ and the bass module all belong to the
@@ -243,6 +321,17 @@ func st300() Model {
 	m.WakeVolumeMax = 70                                            // BoseApp-ginger.xml thresholdHigh
 	m.DefaultVolume = 30
 	m.WifiAttenuation, m.AuxAttenuation = 1, 1 // APConfig-ginger.xml
+	return m
+}
+
+// lifestyle650 is the Lifestyle 600/650's SoundTouch module (bardeen/sm2): the ST300's
+// module, tree and processor link. Stock's bardeen_sm2 and ginger_sm2 device trees hold the same
+// properties, and stock runs the same A4VServer on the same UART0 at 921600 to the console
+// (device type 8 there, 9 on the ST300), with the same source list, so it runs as the ST300
+// under its own name. BoseApp-bardeen.xml keeps the ST300's thresholdHigh.
+func lifestyle650() Model {
+	m := st300()
+	m.Type = "Lifestyle 650"
 	return m
 }
 
@@ -311,6 +400,21 @@ func forVariants(variants []string) (Model, error) {
 	if slices.Contains(variants, "mojo") {
 		return st30(), nil
 	}
+	if slices.Contains(variants, "lisa2") {
+		return adapter(), nil
+	}
+	if slices.Contains(variants, "lisa") {
+		return adapterSCM(), nil
+	}
+	if slices.Contains(variants, "burns") {
+		return sa5(), nil
+	}
+	if slices.Contains(variants, "taigan") {
+		return portable(), nil
+	}
+	if slices.Contains(variants, "bardeen") {
+		return lifestyle650(), nil
+	}
 	for _, v := range []string{"spotty3", "mojo3"} {
 		if slices.Contains(variants, v) {
 			return seriesIII(v), nil
@@ -372,6 +476,12 @@ func (m Model) Capabilities() []string {
 			caps = append(caps, "aux")
 			break
 		}
+	}
+	if m.OLED != "" {
+		caps = append(caps, "display")
+	}
+	if m.Battery {
+		caps = append(caps, "battery")
 	}
 	return caps
 }

@@ -264,7 +264,7 @@ func alarmServer(t *testing.T, alarm settings.Alarm, tz string) (*Server, *count
 		t.Fatal(err)
 	}
 	if tz != "" {
-		if err := s.settings.SetDisplay(settings.Display{City: "Somewhere", Lat: 1, Lon: 1, Timezone: tz}); err != nil {
+		if err := s.settings.SetDisplay(settings.Display{Timezone: tz}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -357,7 +357,7 @@ func TestAlarmWithoutATownUsesTheZoneItWasSavedIn(t *testing.T) {
 	if !s.checkAlarm(ctx, time.Date(2026, 10, 4, 5, 0, 5, 0, time.UTC)) || len(sp.plays()) != 1 {
 		t.Fatal("did not fire at 07:00 Amsterdam time")
 	}
-	if err := s.settings.SetDisplay(settings.Display{City: "Somewhere", Lat: 1, Lon: 1, Timezone: "Asia/Tokyo"}); err != nil {
+	if err := s.settings.SetDisplay(settings.Display{Timezone: "Asia/Tokyo"}); err != nil {
 		t.Fatal(err)
 	}
 	if !s.checkAlarm(ctx, time.Date(2026, 10, 4, 22, 0, 5, 0, time.UTC)) {

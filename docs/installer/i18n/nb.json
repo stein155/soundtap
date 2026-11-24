@@ -7,6 +7,7 @@
 
   "s1.title": "Hvilken høyttaler har du?",
   "model.other": "En annen modell",
+  "model.preview": "{model} (forhåndsversjon)",
   "s1.otherHelp": "Har du en annen modell? <a>Hjelp til med å få den i gang</a>: første trinn er en undersøkelse som bare leser.",
 
   "s2.title": "Dette trenger du",
@@ -44,6 +45,7 @@
   "br.ip": "Høyttalerens IP-adresse",
   "br.ipHint": "I Bose-appen: Innstillinger, Høyttalerinnstillinger, høyttaleren din, Om. Eller slå den opp i ruteren din.",
   "br.agree": "Jeg forstår at SoundTap er alfaprogramvare som erstatter alt på høyttaleren, og jeg har lest hvordan jeg går tilbake til Bose (trinn 6).",
+  "br.previewAgree": "Denne modellen er en forhåndsversjon: SoundTap er utledet fra Boses egen programvare, og ingen har kjørt det på denne modellen ennå. Den spiller kanskje ikke, og veien tilbake er kanskje ikke bevist. Jeg installerer det likevel.",
   "br.go": "Installer SoundTap",
   "br.pickModel": "Velg høyttaleren din i trinn 1 først.",
   "br.trust": "Siden kan ikke lese modellen eller programvaren fra høyttaleren, så den tar deg på ordet for begge.",
@@ -52,6 +54,7 @@
   "judge.noModel": "{model}: ikke støttet ennå. SoundTap har ikke kjørt på den, så denne siden installerer det ikke.",
   "judge.no": "Ikke støttet ennå. SoundTap har ikke kjørt på denne modellen, så denne siden installerer det ikke.",
   "judge.unread": "Skriv inn versjonen av Bose-programvaren som Bose-appen viser for denne høyttaleren.",
+  "judge.preview": "{model}: en forhåndsversjon. SoundTap er utledet fra Boses egen programvare, og ingen har kjørt det på denne modellen ennå; kryss av i boksen for forhåndsversjon nedenfor for å installere det likevel.",
   "judge.old": "Bose-programvare {version}: {model} trenger {minimum} eller nyere. Oppdater Bose først, i Bose-appen.",
 
   "st.asking": "Spør høyttaleren…",

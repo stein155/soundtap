@@ -79,7 +79,7 @@ moment, silently. What it is not: nothing is decoded or
 heard, and there are no buttons, lamps, panel, IR, Bluetooth, Wi-Fi changes, firmware
 installs, boot confirmation or BCO. Nothing is announced on the LAN (no mDNS name, no
 `_soundtap._tcp`), so other speakers never see it and multiroom has no peers; both servers
-listen on 127.0.0.1 only. Browsing TuneIn and the weather still go out to the internet, as
+listen on 127.0.0.1 only. Browsing TuneIn still goes out to the internet, as
 the UI asks. soundtapd refuses `-dev` on a flashed speaker.
 
 To work against a real speaker instead, run `SOUNDTAP_URL=http://<speaker-ip> npm run dev` in
@@ -183,22 +183,28 @@ reasons and details are in the linked ADRs and docs. The design starts at
 Every hardware action keeps a way back. This is about the way back, not about keeping Bose code.
 
 - **USB stick (the product's recovery).** Our U-Boot, before Linux and without soundtapd,
-  networking or `/mnt/nv`: a FAT/FAT32 stick with `Update.stu` and `Update.stu.sig` at its root
-  (a release's `.stu` and `.sig` renamed, or a build signed with the speaker's owner key), power
-  off, hold **Volume Down + Preset 4** (ST10, ST20) or **both buttons** (WLA), apply power. It
-  verifies the signature and the SHA-256 before anything is erased, writes only `soundtap-rootfs`
-  into the slot that is not booting, and selects it only after a second matching hash. It refuses
-  unsigned packages, Bose's file, a `stock` statement and an alpha package on a production image,
-  and never writes SPL or U-Boot ([ADR 0009](docs/decisions/0009-mainline-linux-own-bootloaders.md),
-  [ADR 0048](docs/decisions/0048-signed-updates.md)). The ST300 has no proven gesture.
+  networking or `/mnt/nv`: a FAT/FAT32 stick with `Update.stu` at its root (a release's `.stu`
+  renamed, or Bose's own update file for that model), power off, hold **Volume Down + Preset 4**
+  (ST10, ST20) or **both buttons** (WLA), apply power. Holding the keys is the authorization: no
+  signature is needed ([ADR 0130](docs/decisions/0130-usb-stick-recovery.md)). It checks every CRC
+  and reads the file twice to the same SHA-256 before anything is selected. A SoundTap package
+  writes only `soundtap-rootfs` into the slot that is not booting. Bose's file for this model goes
+  back to stock on every model whose stock package it is (the rootfs tag names the board): its
+  kernel and rootfs into the slot that is not booting, then Bose's SPL and U-Boot where they
+  differ, in the way-back order of [ADR 0009](docs/decisions/0009-mainline-linux-own-bootloaders.md),
+  each read back. Holding the keys at power-on is the owner's OK for that `mtd0`-`mtd4` write.
+  The ST300 has no proven gesture.
 - An implemented route is not a proven one: prove it on the exact candidate and model before
   relying on it. Stock's chord on stock bootloaders proves nothing about ours.
-- Do not change the physical keypad or button mapping U-Boot reads, and never claim recovery from
-  an IR remote.
-- **Back to Bose.** Only through the Updates page (`POST /api/firmware`, below). Not a full NAND
-  restore: the other slot and `/mnt/nv` remain. On the ST20 the BCO keeps our app; restoring the
-  stock BCO app is a development step with `bcoflash` that needs independent SCM access first
-  ([BCO recovery](docs/hardware/st20/bco-recovery.md)). On the ST300 the soundbar processor keeps its firmware.
+- Do not change the physical keypad or button mapping U-Boot reads. The remote is a recovery
+  trigger only where it starts the USB stick at power-on (the ST300's remote combo, which its
+  soundbar processor passes on, as Bose's own USB update does): a stick still has to be in the
+  speaker, so nobody away from it can start it ([ADR 0130](docs/decisions/0130-usb-stick-recovery.md)).
+  No other remote route counts as recovery.
+- **Back to Bose.** Through the Updates page (`POST /api/firmware`, below) or the USB stick with
+  Bose's file. Not a full NAND restore: the other slot and `/mnt/nv` remain. On the ST20 stock's
+  own software rewrites the BCO when it finds another app on it (seen by the owner); `bcoflash`
+  stays the development route ([BCO recovery](docs/hardware/st20/bco-recovery.md)). On the ST300 the soundbar processor keeps its firmware.
 - **Damaged SPL or U-Boot.** Mask-ROM USB with `tools/recovery/rom-usb-restore.py` and that
   board's own NAND backup ([ADR 0009](docs/decisions/0009-mainline-linux-own-bootloaders.md#repairing-a-damaged-boot-chain-over-rom-usb),
   [developer recovery tools](docs/hardware/install-records.md#developer-recovery-tools)). This is
@@ -208,7 +214,8 @@ Every hardware action keeps a way back. This is about the way back, not about ke
   - ST20: the ROM boots NAND first; USB needs the busy pad held, inside the speaker. Our ST20 SPL
     asks the micro-B port first ([ST20 ROM-USB recovery](docs/hardware/st20/rom-usb-recovery.md)).
   - ST300: how its ROM reaches USB is unknown. No bootloader work on an ST300 until that and a way
-    back are established.
+    back are established, except the owner's own USB stick back to Bose
+    ([ADR 0130](docs/decisions/0130-usb-stick-recovery.md)), at their risk.
 - **Before bootloader work on a board** (anything that may write `mtd0`-`mtd4`, an install
   included): a full per-partition NAND backup of that board including OOB
   (`tools/recovery/nand-backup-ssh.sh`, which needs root SSH and so an alpha image), and that
@@ -267,7 +274,9 @@ and installing SoundTap needs no original Bose STU.
 
 - Every package a running speaker installs is signed: a `.sig` statement with kind, profile,
   version and SHA-256, checked before anything is written, under the per-route policy of
-  [ADR 0048](docs/decisions/0048-signed-updates.md). That table is the contract; do not add a route
+  [ADR 0048](docs/decisions/0048-signed-updates.md). Signatures guard what can be started
+  automatically or from the network; the USB stick, started by holding the keys at power-on,
+  needs none ([ADR 0130](docs/decisions/0130-usb-stick-recovery.md)). That table is the contract; do not add a route
   around the signature or the press on the speaker ([ADR 0055](docs/decisions/0055-household-token-and-windows.md)).
 - Unsigned packages install only on an alpha image with `/mnt/nv/soundtap/allow-unsigned`.
 - An owner may set their own key on their speaker and sign their own builds
@@ -332,7 +341,27 @@ read-only hardware evidence for that model exists.
 - Never send LPM op `0x08`: it reboots the processor. The processor's firmware is never written.
 - ADAPTiQ and tone-control frames are never sent to a bar without its owner's explicit permission
   for that test.
-- Recovery is unproven (no stick gesture, no known ROM-USB entry): resolve a way back before any write.
+- Recovery is unproven (the stick's remote combo has never run on a bar, no known ROM-USB entry):
+  resolve a way back before any write.
+
+#### Previews from the stock packages ([ADR 0133](docs/decisions/0133-more-soundtouch-models-from-stock.md))
+
+`mojo` (ST30 Series I/II), `spotty3`/`mojo3` (Series III), `taigan` (Portable), `burns` (SA-5),
+`bardeen` (Lifestyle 600/650 module) and `lisa`/`lisa2` (the SoundTouch adapter) boot as previews. No hardware evidence exists for any
+of them: every row of their checklist is open, and safety on one is never inferred from the
+board it resembles.
+
+- Portable: gauge writes are SHIP only, on stock's three conditions (pack fault, critical
+  discharge on battery, DC above 13 V); never ManufacturerAccess, BatteryMode or PEC. Never charge a pack that faults or does not answer.
+  Read `/mnt/nv/charger_active_level`, never write or remove it.
+- SA-5: write controller registers 0x06 and 0x11 only, and unmute only once ampState reads 1. Never address 0x1e (the STM32
+  bootloader), never set the driver's update flag, never toggle stm32reset at runtime.
+- Lifestyle 650: the ST300's rules, plus never send op 0x0c or op 0x8c with 1, never write
+  `ProductEco2ControlInfo.dat`, never run the STP or ASOC updates. Stock has no recovery
+  gesture: the installers refuse the board, and a way back must be proven before any write.
+- The SoundTouch adapter (`lisa`, `lisa2`): soundtapd is the Bose link's master. Never build
+  an ABL repository (port 16) or staging message, master command 0x0F or 0x21, or touch host
+  firmware; never announce the speed flags without timing for those speeds.
 
 ### Release and security
 

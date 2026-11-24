@@ -6,13 +6,15 @@ name: Update feed
 # A speaker still on Bose's software installs whatever updates/soundtouch on main names, and
 # checks only the length and CRC the index states. This holds the index to a published,
 # not withdrawn SoundTap Core release whose .sig verifies with the keys compiled into
-# soundtapd (tools/release/feed_check.py; RELEASING.md, "The first-install feed").
+# soundtapd (tools/release/feed_check.py; RELEASING.md, "The first-install feed"). The preview
+# feed updates/soundtouch-preview (ADR 0133) is held the same way to that release's preview
+# package, for the preview models only.
 # Every pull request, without a paths filter: branch protection requires this check, and a
-# required check that never starts blocks the merge. Without updates/soundtouch it takes seconds.
+# required check that never starts blocks the merge. Without the feeds it takes seconds.
 on:
   push:
     branches: [main]
-    paths: [updates/**, app/internal/release/release.go, app/internal/update/update.go, tools/release/feed_check.py, .github/workflows/feed.yml]
+    paths: [updates/**, app/internal/release/release.go, app/internal/update/update.go, tools/release/feed_check.py, tools/release/mock_update_server.py, .github/workflows/feed.yml]
   pull_request:
   workflow_dispatch:
 
@@ -29,10 +31,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: The feed names a published release signed with a compiled key
+      - name: The feeds name a published release signed with a compiled key
         run: |
           if [ -e updates/soundtouch ]; then
             python3 tools/release/feed_check.py updates/soundtouch
           else
             echo "no updates/soundtouch on this commit: nothing to check"
+          fi
+          if [ -e updates/soundtouch-preview ]; then
+            python3 tools/release/feed_check.py --preview updates/soundtouch-preview
+          else
+            echo "no updates/soundtouch-preview on this commit: nothing to check"
           fi

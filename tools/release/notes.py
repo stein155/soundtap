@@ -5,6 +5,7 @@
 """Write the release notes for one SoundTap release (ADR 0035).
 
     notes.py os  0.1.0 SoundTap-Core-0.1.0.stu  <sha256> [previous-tag]
+                 [--preview SoundTap-Core-0.1.0-preview.stu <sha256>]
     notes.py app 0.1.0 SoundTap-app-0.1.0-armv7.bin <sha256> [previous-tag] --os-api N
 
 The notes say what the release is, how to install it, its checksum, and what changed since
@@ -39,7 +40,8 @@ def changes(previous, paths):
     return [s.strip() for s in out.splitlines() if s.strip()]
 
 
-def render(lane, version, asset, sha256, previous, subjects, os_api=None):
+def render(lane, version, asset, sha256, previous, subjects, os_api=None, preview=None):
+    """preview: (asset, sha256) of the preview package (ADR 0133), on the os lane."""
     if lane == "os":
         title = f"SoundTap Core {version}"
         intro = ("One update for every supported speaker: the Bose SoundTouch 10, the SoundTouch 20 "
@@ -85,7 +87,17 @@ def render(lane, version, asset, sha256, previous, subjects, os_api=None):
             if by.get(name):
                 lines += [f"**{name}**", "", *[f"- {s}" for s in by[name]], ""]
         lines.append(f"Compared with {previous}.")
-    lines += ["", "### Checksum", "", f"`{sha256}  {asset}`", ""]
+    if preview:
+        lines += ["", "### Preview package", "",
+                  f"**{preview[0]}** is the same release for the preview models (ADR 0133): models "
+                  "SoundTap was worked out for from Bose's own software, which nobody has run it on "
+                  "yet. Only it installs on them; the installers send a preview model to it after "
+                  "their extra confirmation. On every other model it installs the same system as "
+                  f"**{asset}**. It has its own **{preview[0]}.sig**."]
+    lines += ["", "### Checksum", "", f"`{sha256}  {asset}`"]
+    if preview:
+        lines.append(f"`{preview[1]}  {preview[0]}`")
+    lines.append("")
     return "\n".join(lines)
 
 
@@ -97,10 +109,12 @@ def main():
     p.add_argument("sha256")
     p.add_argument("previous", nargs="?", default="")
     p.add_argument("--os-api")
+    p.add_argument("--preview", nargs=2, metavar=("ASSET", "SHA256"))
     a = p.parse_args()
     # The app lane only changes with soundtap/; Core carries everything.
     paths = ["app"] if a.lane == "app" else ["."]
-    print(render(a.lane, a.version, a.asset, a.sha256, a.previous, changes(a.previous, paths), a.os_api))
+    print(render(a.lane, a.version, a.asset, a.sha256, a.previous, changes(a.previous, paths), a.os_api,
+                 a.preview))
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@
 
   "s1.title": "Quale diffusore hai?",
   "model.other": "Un altro modello",
+  "model.preview": "{model} (anteprima)",
   "s1.otherHelp": "Hai un altro modello? <a>Aiutaci a farlo funzionare</a>: il primo passo è un’indagine in sola lettura.",
 
   "s2.title": "Cosa ti serve",
@@ -44,6 +45,7 @@
   "br.ip": "L’indirizzo IP del diffusore",
   "br.ipHint": "Nell’app Bose: Impostazioni, Impostazioni diffusore, il tuo diffusore, Informazioni. Oppure cercalo nel tuo router.",
   "br.agree": "Ho capito che SoundTap è un software alpha che sostituisce tutto ciò che c’è sul diffusore, e ho letto come tornare a Bose (passaggio 6).",
+  "br.previewAgree": "Questo modello è un’anteprima: SoundTap è ricavato dal software di Bose stesso e nessuno l’ha ancora fatto funzionare su questo modello. Potrebbe non suonare, e la via del ritorno potrebbe non essere collaudata. Lo installo comunque.",
   "br.go": "Installa SoundTap",
   "br.pickModel": "Prima scegli il tuo diffusore al passaggio 1.",
   "br.trust": "La pagina non può leggere dal diffusore né il modello né il suo software, quindi si fida della tua parola per entrambi.",
@@ -52,6 +54,7 @@
   "judge.noModel": "{model}: non ancora supportato. SoundTap non ci ha ancora mai funzionato, quindi questa pagina non lo installerà.",
   "judge.no": "Non ancora supportato. SoundTap non ha ancora mai funzionato su questo modello, quindi questa pagina non lo installerà.",
   "judge.unread": "Inserisci la versione del software Bose che l’app Bose mostra per questo diffusore.",
+  "judge.preview": "{model}: un’anteprima. SoundTap è ricavato dal software di Bose stesso e nessuno l’ha ancora fatto funzionare su questo modello; spunta qui sotto la casella dell’anteprima per installarlo comunque.",
   "judge.old": "Software Bose {version}: il tuo {model} richiede la versione {minimum} o successiva. Aggiorna prima Bose, nell’app Bose.",
 
   "st.asking": "Sto interrogando il diffusore…",

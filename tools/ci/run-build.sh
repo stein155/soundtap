@@ -9,8 +9,9 @@
 #   tools/ci/run-build.sh [--reuse] [step ...]      steps in order; default: os stu
 #
 #   os     make os: kernel, root filesystem and bootloaders in output/os/images
-#   stu    make stu, then the candidate in dist/: SoundTap-Core-<os/VERSION>.stu and its
-#          .sha256, the commit and profile it was built from, SHA256SUMS and kernel.config
+#   stu    make stu, then the candidate in dist/: SoundTap-Core-<os/VERSION>.stu, the preview
+#          package SoundTap-Core-<os/VERSION>-preview.stu (ADR 0133), each with its .sha256,
+#          the commit and profile it was built from, SHA256SUMS and kernel.config
 #   run    install-gate layer 2: the shipped soundtapd from the candidate's own rootfs
 #   gate   install-gate layer 1: the candidate into simulated NAND. MODELS picks the models
 #          (default: all four, two cells each); SCENARIOS, when set, names the cells instead
@@ -55,6 +56,7 @@ fi
 
 version=$(tr -d ' \n' <os/VERSION)
 stu=dist/SoundTap-Core-$version.stu
+preview=dist/SoundTap-Core-$version-preview.stu
 for step in $steps; do
 	echo "== run-build: $step"
 	case $step in
@@ -69,7 +71,9 @@ for step in $steps; do
 		# Named after the version it will be released as (ADR 0035); release.yml publishes
 		# exactly this package, and only for the commit it names.
 		mv dist/Update-soundtap-buildroot.stu "$stu"
+		mv dist/Update-soundtap-buildroot-preview.stu "$preview"
 		(cd dist && sha256sum "${stu#dist/}" >"${stu#dist/}.sha256")
+		(cd dist && sha256sum "${preview#dist/}" >"${preview#dist/}.sha256")
 		echo "${SOUNDTAP_COMMIT:-$(git rev-parse HEAD)}" >dist/commit
 		echo "${SOUNDTAP_PROFILE:-alpha}" >dist/profile
 		cp output/os/images/SHA256SUMS output/os/images/kernel.config dist/

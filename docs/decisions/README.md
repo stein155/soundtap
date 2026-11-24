@@ -85,7 +85,7 @@ Keep it short. Add a Mermaid diagram when a picture says it faster.
 | [0108](0108-http-api-compatibility-for-1-0.md) | HTTP API compatibility from the first public release | accepted |
 | [0109](0109-st300-soundbar-processor-link.md) | The ST300: the Wireless Link's module, and soundtapd speaks to the soundbar processor | accepted |
 | [0110](0110-mqtt-bridge.md) | Home automation goes through one optional MQTT bridge with discovery | accepted |
-| [0111](0111-st20-standby-clock-and-weather.md) | The ST20 standby screen shows a clock, and the weather for a town the owner picks | accepted |
+| [0111](0111-st20-standby-clock.md) | The ST20 standby screen shows the time alone | accepted |
 | [0113](0113-threat-model.md) | What a stranger can do to a production speaker, and what we accept | accepted |
 | [0114](0114-bluetooth-agent-in-soundtapd.md) | soundtapd is the Bluetooth pairing agent, over godbus | accepted |
 | [0115](0115-shell-only-for-boot.md) | Shell runs the boot and the recovery paths; decisions live in Go | accepted |
@@ -102,7 +102,8 @@ Keep it short. Add a Mermaid diagram when a picture says it faster.
 | [0126](0126-opt-in-crash-reports-without-a-server.md) | Crash reports are opt-in GitHub issues the owner submits; there is no server | accepted |
 | [0127](0127-health-counters-and-alpha-pprof.md) | /api/health counts restarts, underruns and failed writes; alpha images serve pprof on loopback | accepted |
 | [0128](0128-bad-block-marking.md) | A slot block that fails to erase or program is marked bad | accepted |
-| [0129](0129-first-install-keeps-settings.md) | A first install keeps the speaker's name, presets and Wi-Fi | accepted |
-| [0130](0130-usb-stick-recovery.md) | A button chord at power-on installs a signed Update.stu from USB, in our U-Boot | accepted |
+| [0129](0129-first-install-keeps-settings.md) | A first install keeps the speaker's name, presets, Wi-Fi and clock | accepted |
+| [0130](0130-usb-stick-recovery.md) | A button chord at power-on installs Update.stu from USB, SoundTap's or Bose's, in our U-Boot | accepted |
 | [0131](0131-st20-boot-frame.md) | The ST20's U-Boot paints the first boot frame on the OLED | accepted |
 | [0132](0132-modules-locked-after-boot.md) | The kernel loads modules only while the speaker boots | accepted |
+| [0133](0133-more-soundtouch-models-from-stock.md) | More SoundTouch models, worked out from the stock packages alone | accepted |

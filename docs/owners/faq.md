@@ -115,19 +115,25 @@ Nothing. No account, no subscription, no ads, and nothing to buy.
 The SoundTouch 10, the SoundTouch 20 Series I, the Wireless Link adapter and the SoundTouch 300
 soundbar, whose own processor keeps driving its bass module, rear speakers and HDMI
 ([notes](install.md#soundtouch-300)). The SoundTouch 20 Series II is waiting for hardware
-validation, and the Series III and the SoundTouch 30 generations are previews. The [list on the home page](../../README.md#supported-speakers)
+validation. The Series III, the SoundTouch 30 generations, the Portable, the SA-5 and the
+SoundTouch adapter (SA-4, Stereo JC, Wave, CineMate, Lifestyle, VideoWave) are previews: worked
+out from Bose's software, offered by the installers after an extra confirmation, and never run
+on hardware, their way back included; on a Lifestyle only the older adapter is offered. The
+Lifestyle 600/650 module is in the code too, but the installers refuse it: it has no recovery
+gesture at all. They refuse a Lifestyle's newer adapter with it, since they cannot tell the two
+apart. The [list on the home page](../../README.md#supported-speakers)
 says which, and the [compatibility matrix](compatibility.md) says what works on each. All run the
 same package. SoundTap is alpha software: "supported" means it runs every day on our own
-speakers and a release goes out only after it has passed that model's hardware checklist, not
-that every feature is proven on every model. What has run on which speaker is in
+speakers and a release goes out only after it has passed that model's hardware checklist (no
+candidate has passed it yet), not that every feature is proven on every model. What has run on which speaker is in
 the [hardware checklist](../hardware/hardware-test.md#release-checklist-per-model); the [road to 1.0](roadmap.md) has
 the details.
 
 ### What about the SoundTouch 30, Portable or Wave?
 
-The SoundTouch 30 installs from the same file as a preview, not yet run on hardware.
-The Portable and Wave are not supported yet. Other models need someone with the speaker and some
-patience. Collecting **read-only** information from a speaker that still runs Bose's software
+The SoundTouch 30, the Portable and the Wave SoundTouch adapter are previews: the release's
+preview package installs them, worked out from Bose's software, but none has run on hardware, and their recovery
+gestures are untested. Other models need someone with the speaker and some patience. Collecting **read-only** information from a speaker that still runs Bose's software
 is the first step, and nothing in it risks the speaker:
 [open a device issue](https://github.com/stein155/soundtap/issues/new?template=device.yml).
 
@@ -147,8 +153,10 @@ SoundTap is designed to make that unlikely: updates go into the half of the stor
 not running, and the speaker keeps a new version only after it has stayed up for a minute;
 otherwise it returns to the previous one after a few restarts. SPL/U-Boot and the boot
 environment are shared, however: a failed bootloader write is outside that A/B protection.
-Below all software, the chip can be started over USB from a computer. That is the safety net, and it is a technical
-one: on the SoundTouch 20 its last resort means opening the speaker. **Alpha means: read the
+Below all software, the chip can be started over USB from a computer. That is a developer's
+tool, not a proven rescue: a full restore that way has not run on any model yet, on the
+SoundTouch 20 it means opening the speaker, and on the SoundTouch 300 nobody knows how to reach
+it at all. **Alpha means: read the
 [install guide](install.md) first, and do not start with your only speaker.**
 
 ### Can I go back to Bose's software?
@@ -156,19 +164,18 @@ one: on the SoundTouch 20 its last resort means opening the speaker. **Alpha mea
 Yes. Download Bose's own update file for your model, choose it on the speaker's Updates page,
 confirm the return to Bose and hold a button on the speaker. No SoundTap signature is needed
 for Bose's file. This way back has run on all four models, though not yet from the release
-candidate. On a SoundTouch 20 it does not put Bose's software back on the network processor;
-that is still a development step. A USB stick does not take you back: once SoundTap is
-installed, the power-on stick gesture installs only a SoundTap package with its signature
-(`Update.stu` and `Update.stu.sig`), and refuses Bose's file. See
+candidate. On a SoundTouch 20 Bose's software then puts its own app back on the network
+processor itself, when it finds another one there (seen by the owner). A USB stick is built to take you back too, untested so far:
+Bose's own update file for your model on a stick as `Update.stu`, and the power-on gesture. See
 [Going back to Bose](install.md#going-back-to-bose).
 
 ### Does the first install need a USB cable?
 
 No. A speaker on your Wi-Fi downloads SoundTap itself from the update server. If that does not
 work, you can upload the package on Bose's own update page (port 17008, in its setup mode) from
-the browser of a phone or a computer. A
-USB stick can use the stock Volume − and Preset 4 gesture on ST10/ST20; stock Wireless
-Link has no USB-stick update gesture. See the per-model routes before choosing recovery. Once SoundTap runs, all later updates
+the browser of a phone or a computer. A first install from a USB stick with Bose's Volume −
+and Preset 4 gesture (ST10, ST20) has not been tried; stock Wireless Link has no USB-stick
+update gesture. Once SoundTap runs, all later updates
 install over Wi-Fi from the speaker's settings page. See the [install guide](install.md).
 
 ### Do I need Linux?
@@ -196,7 +203,7 @@ SoundTap, use the web page served by the speaker. Bose's app is not a supported 
 
 ### Does it need the internet?
 
-Internet services include radio, Spotify, album artwork, weather, time synchronisation and
+Internet services include radio, Spotify, album artwork, time synchronisation and
 update checks/downloads. AirPlay with a local source, Bluetooth, AUX, your own media server
 and multiroom use the home network; an online sender or service still needs its own internet
 connection. With no time sync, the speaker may not have an accurate clock after power loss.
@@ -216,7 +223,6 @@ for updates. These are the external contacts:
 | Spotify | Spotify |
 | Album artwork | Apple's public iTunes search |
 | Clock | the NTP servers your router names through DHCP, then Cloudflare's and Google's public time services (`time.cloudflare.com`, `time.google.com`), which allow any device without registration. Servers of your own in `/mnt/nv/ntp-servers` replace those two |
-| Weather (SoundTouch 20 display) | Open-Meteo |
 | Checking for updates | GitHub releases, once the clock is set |
 
 [Crash reports](#can-the-speaker-report-its-own-crashes) are off unless you turn them on, and
@@ -244,12 +250,14 @@ from audio already queued at the output remains, especially in multiroom.
 
 ### Does AirPlay work? And Apple Home?
 
-Yes, **AirPlay 2**, from iPhone, iPad and Mac. Add the speaker to the **Home** app as an AirPlay
-speaker, group it with HomePods and Apple TV, and ask Siri to play on it. It is not a HomeKit
+**AirPlay 2** is built in, for iPhone, iPad and Mac. It is meant to let you add the speaker to
+the **Home** app as an AirPlay speaker, group it with HomePods and Apple TV, and ask Siri to play
+on it. It is not a HomeKit
 accessory, and the Home tile's play/pause buttons do not work: Apple reserves those for
 certified receivers ([ADR 0003](../decisions/0003-apple-home-via-airplay-no-cast-no-sonos.md)). AirPlay is built for
-every supported model, but so far it has been run on hardware only on the Wireless Link, through
-Music Assistant; an iPhone, the Home app and Siri are untested on any model. On the SoundTouch 20 it needs our own BCO app (ADR 0031), which the
+every supported model. So far it has played on the Wireless Link, from Music Assistant, and on
+the SoundTouch 300 by its owner's report (2026-11-22); an older SoundTouch 10 report has no
+recorded run. An iPhone, HomePods, the Home app and Siri have no recorded run on any model. On the SoundTouch 20 it needs our own BCO app (ADR 0031), which the
 install puts on it.
 
 ### Why no Google Cast, Google Home or Sonos?
@@ -305,13 +313,16 @@ music everywhere, in sync, with a volume per room. As on stock, the volume butto
 remote change only the speaker they belong to; play, pause and skip on a grouped speaker act
 on the whole group. Any SoundTap speaker can lead; the leader
 serves Snapcast on port 1704, so any Snapcast client (a Raspberry Pi, a laptop) can join when you give it the speaker's address; the speakers do not announce Snapcast over mDNS.
+The stream is lossless FLAC, which Snapcast clients play as built upstream. Keep every speaker
+on the same SoundTap Core: one on an older Core stays silent when it follows an updated one.
 SoundTap speakers do not group with speakers that still run Bose's software. On hardware, the
 SoundTouch 10, SoundTouch 20 and Wireless Link have each led the other two (2026-11-14).
 
 ### Does my remote work?
 
 The remote works as before on the SoundTouch 10, including holding a preset to store
-it. On the SoundTouch 20 it is built but not yet tested. Another
+it. On the SoundTouch 20 the remote was seen working (2026-10-10, again on the
+bench 2026-11-20); no full checklist run is recorded yet. Another
 infrared remote can be taught key by key ([runbook](../../RUNBOOK.md#teaching-the-st10-an-ir-remote)).
 
 ### What do the buttons do?
@@ -327,10 +338,10 @@ infrared remote can be taught key by key ([runbook](../../RUNBOOK.md#teaching-th
 
 ### Bluetooth and AUX?
 
-Both are built and available on the models that have them, but neither has been proven end to
-end on every model yet. Bluetooth has run on the SoundTouch 10, the Wireless Link and the
-SoundTouch 300, AUX on the SoundTouch 10 and 20. The Wireless Link has an AUX in too; its
-checklist run is still open, and the rest is untested ([checklist](../hardware/hardware-test.md#release-checklist-per-model)). Of the SoundTouch 20s, only the Series III has Bluetooth; Series I and II do not.
+Both are built for the models that have them, but they are still unproven work, not finished
+features: neither has been proven end to end on any model yet. Bluetooth has played on the
+SoundTouch 10, the Wireless Link and the SoundTouch 300, AUX on the SoundTouch 10, the 20 and
+the Wireless Link; the rest is untested ([checklist](../hardware/hardware-test.md#release-checklist-per-model)). Of the SoundTouch 20s, only the Series III has Bluetooth; Series I and II do not.
 
 To pair a phone, pick Bluetooth on the speaker: with nothing paired yet it opens pairing by
 itself, as the Bose software did. Holding the Bluetooth key, or the button on the web page,
@@ -399,7 +410,7 @@ Yes. Build SoundTap yourself, sign the build with an ed25519 key of your own
 [RELEASING.md](../../RELEASING.md#signing-your-own-builds)), and paste the key's public half on
 the speaker's Updates page under *Your own signing key*; a button held on the speaker confirms
 it. The page then shows the key's fingerprint. From then on that speaker installs what you
-sign, from the Updates page and from a USB stick, under the same rules as a SoundTap release:
+sign from the Updates page, under the same rules as a SoundTap release:
 a production speaker takes a production build, and going back to an older version needs the
 downgrade confirmation. Other speakers are unaffected. *Remove the key* on the same page, or a
 factory reset, takes it away again; a backup never carries it, and neither a restore nor Home
@@ -407,7 +418,7 @@ Assistant can set it ([ADR 0048](../decisions/0048-signed-updates.md#the-owners-
 
 ### Why does the speaker ask me to hold a button?
 
-Resetting, rebooting, changing Wi-Fi, restoring a backup, forgetting the paired Bluetooth
+Resetting, rebooting, changing Wi-Fi, forgetting the paired Bluetooth
 devices, installing firmware, setting or removing your own signing key and reading debug data
 only go ahead after someone holds a button
 on the speaker for two seconds within a minute. Any button on the speaker itself counts except

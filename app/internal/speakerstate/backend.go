@@ -15,6 +15,14 @@ import (
 	"github.com/stein155/soundtap/app/internal/wifi"
 )
 
+// SetType renames the product after the server started, for a model whose name is only known
+// once it runs: the SoundTouch adapter takes its host product's.
+func (s *Speaker) SetType(t string) {
+	s.lock()
+	s.Type = t
+	s.unlock()
+}
+
 func (s *Speaker) Info(ctx context.Context) (*speaker.Info, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

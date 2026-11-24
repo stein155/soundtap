@@ -154,7 +154,7 @@ func trackOwnership(ctx context.Context, sp *speakerstate.Speaker, arb *audio.Ar
 		// Reconciliation only: sp.OnVolume already pushed this the moment it changed.
 		// Kept so a missed hook (a source that mutates state another way) cannot leave
 		// the gain stale for as long as playback lasts.
-		arb.SetVolume(soundbar.MixerLevel(snap.Output()))
+		arb.SetVolume(mixerLevel(snap.Output()))
 		arb.SetBass(snap.Bass)
 		idle := snap.Source == sourceStandby || snap.Source == ""
 		if snap.Source != last { //nolint:nestif // moved unchanged; preempt/ownership only on an actual source change
@@ -174,7 +174,7 @@ func trackOwnership(ctx context.Context, sp *speakerstate.Speaker, arb *audio.Ar
 			last = snap.Source
 			arb.SetLive(liveBuffer(snap.Source))
 			auxOwnsSink.Store(snap.Source == sourceAux)
-			arb.SetSourceGain(board.SourceGain(snap.Source))
+			setSourceTrim(arb, snap.Source)
 			if snap.Source == sourceAux {
 				arb.Unhold() // nothing to sync with; only the fade-in of a held source
 			}

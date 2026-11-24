@@ -7,9 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
-	"strings"
 	"time"
-	"unicode/utf8"
 )
 
 var languageRe = regexp.MustCompile(`^[a-z]{2}(-[A-Za-z]{2,4})?$`)
@@ -88,28 +86,18 @@ func (s *Store) SetMQTT(cfg MQTT) error {
 }
 
 // NormalizeDisplay validates a standby-screen configuration and returns it in the
-// form it is stored in: a trimmed town, and no location left behind without one.
+// form it is stored in.
 func NormalizeDisplay(d Display) (Display, error) {
-	d.City = strings.TrimSpace(d.City)
 	switch d.Brightness {
 	case 0, 25, 50, 80:
 	default:
 		return d, fmt.Errorf("brightness must be 25, 50 or 80")
 	}
-	switch {
-	case d.City == "" && !d.ClockOff && d.Timezone == "":
-		return d, fmt.Errorf("the standby clock needs a timezone")
-	case d.City == "":
-		d.Lat, d.Lon, d.WeatherOn = 0, 0, false
-		if d.Timezone == "" {
-			return d, nil
+	if d.Timezone == "" {
+		if !d.ClockOff {
+			return d, fmt.Errorf("the standby clock needs a timezone")
 		}
-	case utf8.RuneCountInString(d.City) > 120:
-		return d, fmt.Errorf("town name too long")
-	case d.Lat < -90 || d.Lat > 90 || d.Lon < -180 || d.Lon > 180:
-		return d, fmt.Errorf("latitude/longitude out of range")
-	case d.Timezone == "":
-		return d, fmt.Errorf("town has no timezone")
+		return d, nil
 	}
 	if _, err := time.LoadLocation(d.Timezone); err != nil {
 		return d, fmt.Errorf("unknown timezone %q", d.Timezone)

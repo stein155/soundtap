@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/stein155/soundtap/app/internal/atomicjson"
 	"github.com/stein155/soundtap/app/internal/flash"
@@ -367,6 +368,70 @@ func stockPresets() []store.Preset {
 		})
 	}
 	return out
+}
+
+// stockClock is the ST20 standby clock as stock left it (ClockDisplay.xml, every field an
+// attribute of clockConfig; the zone also as the /mnt/nv/localtime link), in SoundTap's
+// form; ok is false when stock left nothing to go by. Stock's clock is on by default and
+// off with userEnable false or brightness 0; it does not dim otherwise, so its brightness
+// maps to SoundTap's default. A zone this build does not know is left out, and without a
+// zone only an off clock is taken.
+func stockClock() (d settings.Display, ok bool) {
+	var doc struct {
+		Config struct {
+			Timezone   string `xml:"timezoneInfo,attr"`
+			Enable     string `xml:"userEnable,attr"`
+			Format     string `xml:"timeFormat,attr"`
+			Brightness string `xml:"brightnessLevel,attr"`
+		} `xml:"clockConfig"`
+	}
+	found := false
+	if f, err := os.Open(stockClockPath); err == nil {
+		found = xml.NewDecoder(io.LimitReader(f, 16<<10)).Decode(&doc) == nil
+		_ = f.Close()
+	}
+	c := doc.Config
+	if found {
+		d.ClockOff = c.Enable == "false" || strings.TrimSpace(c.Brightness) == "0"
+		d.Hour12 = c.Format == "TIME_FORMAT_12HOUR_ID"
+	}
+	zone := strings.TrimSpace(c.Timezone)
+	if zone == "" {
+		if target, err := os.Readlink(stockLocaltimePath); err == nil {
+			zone, _ = strings.CutPrefix(target, "/usr/share/zoneinfo/")
+			if zone == target {
+				zone = ""
+			}
+		}
+	}
+	if zone != "" {
+		if _, err := time.LoadLocation(zone); err == nil {
+			d.Timezone = zone
+		}
+	}
+	if _, err := settings.NormalizeDisplay(d); err != nil {
+		return settings.Display{}, false
+	}
+	return d, found || d.Timezone != ""
+}
+
+// takeStockClock gives the standby clock stock's settings on the first start after an
+// install from Bose's software, so an ST20 shows its clock as before without the settings
+// first being opened in a browser. Only on a speaker with a panel, and only while the
+// clock has no settings of its own.
+func takeStockClock(set *settings.Store, fromStock, panel bool, log *slog.Logger) {
+	if !fromStock || !panel || set.Get().Display != (settings.Display{}) {
+		return
+	}
+	d, ok := stockClock()
+	if !ok {
+		return
+	}
+	if err := set.SetDisplay(d); err != nil {
+		log.Warn("clock settings from stock not kept", "err", err)
+		return
+	}
+	log.Info("clock settings taken over from stock", "off", d.ClockOff, "hour12", d.Hour12, "zone", d.Timezone)
 }
 
 // initialName gives a new speaker its name and returns the one it goes by.

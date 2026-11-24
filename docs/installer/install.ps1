@@ -9,6 +9,9 @@
 & {
 $ErrorActionPreference = 'Stop'
 $feed = 'https://raw.githubusercontent.com/stein155/soundtap/main/updates/soundtouch'
+# A preview model installs only from the preview package (ADR 0133), which this feed names; a
+# speaker is sent here only after its owner picked it and typed "preview".
+$previewFeed = 'https://raw.githubusercontent.com/stein155/soundtap/main/updates/soundtouch-preview'
 # This script's own site: its versions.json names the models and the oldest Bose software
 # SoundTap installs from, for this script, install.sh and the browser installer alike.
 $site = 'https://stein155.github.io/soundtap/installer'
@@ -39,10 +42,11 @@ function Test-Older([string]$version, [string]$minimum) {
     $false
 }
 
-# Get-Verdict: Status ok, old (update Bose first), no (not supported yet) or unread (no
-# version to compare), and Note, what the list says about the speaker. Unsupported rules
-# count first: a SoundTouch 20 that reports the Series III's module is a Series III,
-# whatever its software.
+# Get-Verdict: Status ok, preview (installable, but nobody has run SoundTap on the model), old
+# (update Bose first), no (not supported yet) or unread (no version to compare), and Note, what
+# the list says about the speaker. Unsupported rules count first, then preview rules, then
+# supported ones: a SoundTouch 20 that reports the Series III's module is the Series III
+# preview, whatever its software.
 function Get-Verdict($table, [string]$type, [string]$moduleType, [string]$softwareVersion) {
     $version = ($softwareVersion -split ' ')[0]
     foreach ($rule in @($table.unsupported)) {
@@ -50,7 +54,8 @@ function Get-Verdict($table, [string]$type, [string]$moduleType, [string]$softwa
             return [pscustomobject]@{ Status = 'no'; Note = "  ($($rule.model): not supported yet; skipped)" }
         }
     }
-    foreach ($rule in @($table.supported)) {
+    $rules = @(@($table.preview) | Where-Object { $_ }) + @($table.supported)
+    foreach ($rule in $rules) {
         if (-not (Test-Rule $rule $type $moduleType)) { continue }
         if ($version -notmatch '^[0-9]+(\.[0-9]+)*$') {
             return [pscustomobject]@{ Status = 'unread'; Note = "  ($($rule.model), but its Bose software version could not be read; skipped)" }
@@ -58,9 +63,18 @@ function Get-Verdict($table, [string]$type, [string]$moduleType, [string]$softwa
         if (Test-Older $version $rule.minimum) {
             return [pscustomobject]@{ Status = 'old'; Note = "  (Bose software $version; the $($rule.model) needs $($rule.minimum) or later: update Bose first, in the Bose app)" }
         }
+        if ($rule.preview) {
+            return [pscustomobject]@{ Status = 'preview'; Note = "  ($($rule.model): preview, worked out from Bose's software; nobody has run SoundTap on this model yet)" }
+        }
         return [pscustomobject]@{ Status = 'ok'; Note = '' }
     }
     [pscustomobject]@{ Status = 'no'; Note = '  (not supported yet: SoundTap has not run on this model; skipped)' }
+}
+
+# Get-Feed: the feed to send a listed speaker to. The preview feed only for one whose verdict is
+# preview, which the owner picked and confirmed; every other speaker gets the supported feed.
+function Get-Feed($speaker) {
+    if ($speaker.Model -eq 'preview') { $previewFeed } else { $feed }
 }
 
 # Tests load the functions above without running the installer.
@@ -110,22 +124,35 @@ foreach ($s in $found) {
 }
 
 $ok = @($found | Where-Object { $_.Model -eq 'ok' })
-if (-not $ok) { Write-Host 'None of these speakers can get SoundTap (see above).'; return }
+$previews = @($found | Where-Object { $_.Model -eq 'preview' })
+if (-not $ok -and -not $previews) { Write-Host 'None of these speakers can get SoundTap (see above).'; return }
 Write-Host ''
-if ($ok.Count -eq 1) {
+# A preview speaker is never in "all of them": it is picked by its number, then confirmed.
+$pickedPreview = $false
+if ($ok.Count -eq 1 -and -not $previews) {
     $picked = @($ok[0].Ip)
     if ((Read-Host "Install SoundTap on $($ok[0].Name)? (y/n)") -notmatch '^[yYjJ]') { Write-Host 'Stopped; nothing was changed.'; return }
 } else {
-    $choice = Read-Host 'Which speakers? Press Enter for all of them, or type their numbers (like: 1 3)'
+    $prompt = if ($ok) { 'Which speakers? Press Enter for all supported ones, or type their numbers (like: 1 3)' } else { 'Only previews here. Type the numbers of the speakers to install (like: 1 3), or press Enter to stop' }
+    $choice = Read-Host $prompt
     $numbers = if ($choice.Trim()) { $choice -split '\s+' | Where-Object { $_ } } else { $ok.N }
     $picked = @()
     foreach ($k in $numbers) {
         $s = $found | Where-Object { "$($_.N)" -eq "$k" }
         if (-not $s) { Write-Host "There is no speaker $k."; return }
-        if ($s.Model -ne 'ok') { Write-Host "Speaker $k cannot get SoundTap (see above); skipped."; continue }
+        if ($s.Model -eq 'preview') { $pickedPreview = $true }
+        elseif ($s.Model -ne 'ok') { Write-Host "Speaker $k cannot get SoundTap (see above); skipped."; continue }
         $picked += $s.Ip
     }
     if (-not $picked) { Write-Host 'Nothing to install.'; return }
+}
+if ($pickedPreview) {
+    Write-Host ''
+    Write-Host "A preview model: SoundTap is worked out from Bose's own software and nobody has run it on"
+    Write-Host 'this model yet. It may not play, its buttons or lamps may be wrong, and its way back may be'
+    Write-Host 'unproven. Read first:'
+    Write-Host '  https://stein155.github.io/soundtap/owners/compatibility/#previews'
+    if ((Read-Host 'Type preview to install on it anyway') -cne 'preview') { Write-Host 'Stopped; nothing was changed.'; return }
 }
 
 Write-Host ''
@@ -134,9 +161,10 @@ Write-Host '  https://stein155.github.io/soundtap/owners/install/#going-back-to-
 if ((Read-Host 'Continue? (y/n)') -notmatch '^[yYjJ]') { Write-Host 'Stopped; nothing was changed.'; return }
 
 foreach ($ip in $picked) {
+    $speakerFeed = Get-Feed ($found | Where-Object { $_.Ip -eq $ip } | Select-Object -First 1)
     try {
         Invoke-WebRequest -UseBasicParsing -TimeoutSec 15 -Method Post -ContentType 'text/plain' `
-            -Body "<swUpdateStart indexUrl=`"$feed`"/>" -Uri "http://${ip}:8090/swUpdateStart" | Out-Null
+            -Body "<swUpdateStart indexUrl=`"$speakerFeed`"/>" -Uri "http://${ip}:8090/swUpdateStart" | Out-Null
         Write-Host "${ip}: install started."
     } catch { Write-Host "${ip}: the request was not confirmed; it may still have arrived." }
 }

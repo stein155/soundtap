@@ -208,6 +208,10 @@
           <input type="checkbox" id="agree">
           <span data-i18n="br.agree">I understand that SoundTap is alpha software that replaces everything on the speaker, and I have read how to go back to Bose (step 6).</span>
         </label>
+        <label class="check" id="previewCheck" hidden>
+          <input type="checkbox" id="previewAgree">
+          <span data-i18n="br.previewAgree">This model is a preview: SoundTap is worked out from Bose's own software and nobody has run it on this model yet. It may not play, and its way back may be unproven. I install it anyway.</span>
+        </label>
         <button type="submit" class="wide" id="go" disabled data-i18n="br.go">Install SoundTap</button>
       </form>
       <div id="status" role="status" aria-live="polite">
@@ -303,7 +307,10 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
   // The same feed and request as the SoundTap app: Bose's software installs
   // straight from the index named in indexUrl, with nothing reconfigured on the speaker.
   const FEED = 'https://raw.githubusercontent.com/stein155/soundtap/main/updates/soundtouch';
-  const BODY = '<swUpdateStart indexUrl="' + FEED + '"/>';
+  // A preview model installs only from the preview package (ADR 0133), which this feed names;
+  // the page sends a speaker there only with the preview box ticked for that model.
+  const PREVIEW_FEED = 'https://raw.githubusercontent.com/stein155/soundtap/main/updates/soundtouch-preview';
+  const body = (feed) => '<swUpdateStart indexUrl="' + feed + '"/>';
   const LOOK_FOR_MS = 10 * 60 * 1000;
 
   const $ = (id) => document.getElementById(id);
@@ -321,7 +328,8 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
 
   // versions.json beside this page names the models and the oldest Bose software SoundTap
   // installs from: the one table install.sh and install.ps1 read too. The model is the
-  // hidden #model field: s<i> a supported rule, u<i> an unsupported one, "other" neither.
+  // hidden #model field: s<i> a supported rule, p<i> a preview rule, u<i> an unsupported one,
+  // "other" none of them.
   let table = null;
   const tableLoaded = Promise.all([
     fetch('versions.json', { cache: 'no-store' })
@@ -329,6 +337,7 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
     englishLoaded,
   ]).then(([tab]) => {
     if (!Array.isArray(tab.supported) || !Array.isArray(tab.unsupported)) throw new Error('no table');
+    if (!Array.isArray(tab.preview)) tab.preview = [];
     table = tab;
     refresh();
   }).catch(() => {
@@ -358,19 +367,31 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
     if (older(v, rule.minimum)) {
       return { status: 'old', text: t('judge.old', { version: v, model: rule.model, minimum: rule.minimum }) };
     }
+    if (rule.preview) return { status: 'preview', text: t('judge.preview', { model: rule.model }) };
     return { status: 'ok', text: '' };
   }
   function chosenRule() {
     const kind = model.value.charAt(0), i = Number(model.value.slice(1));
     if (!table) return null;
-    return (kind === 's' ? table.supported[i] : kind === 'u' ? table.unsupported[i] : null) || null;
+    return (kind === 's' ? table.supported[i] : kind === 'p' ? table.preview[i]
+      : kind === 'u' ? table.unsupported[i] : null) || null;
   }
 
   // Only the models SoundTap has run on, from the Bose software it has run on: anything else is refused.
   let busy = false;
-  const ready = () => table && model.value && judge(chosenRule(), version.value).status === 'ok' &&
+  // A preview model installs only with its own confirmation ticked as well. The box confirms
+  // one model: whatever changes the model (a card, the field itself) clears it, so it never
+  // carries over to another preview.
+  let confirmedModel = '';
+  const installable = (status) => status === 'ok' ||
+    (status === 'preview' && $('previewAgree').checked && confirmedModel === model.value);
+  const ready = () => table && model.value && installable(judge(chosenRule(), version.value).status) &&
     agree.checked && privateIp(ip.value);
   function refresh() {
+    if (model.value !== confirmedModel) {
+      confirmedModel = model.value;
+      $('previewAgree').checked = false;
+    }
     go.disabled = busy || !ready();
     if (!table) return;
     const verdict = model.value ? judge(chosenRule(), version.value) : null;
@@ -379,6 +400,7 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
   }
   for (const el of [ip, agree, model, version]) el.addEventListener('input', refresh);
   agree.addEventListener('change', refresh);
+  $('previewAgree').addEventListener('change', refresh);
   model.addEventListener('change', refresh);
 
   function say(line, detail = '', kind = '') {
@@ -446,6 +468,8 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
     e.preventDefault();
     const host = privateIp(ip.value);
     if (busy || !host || !ready()) return;
+    // Taken now, with the confirmation: ready() passed a preview only with its box ticked.
+    const feed = judge(chosenRule(), version.value).status === 'preview' ? PREVIEW_FEED : FEED;
     busy = true;
     go.disabled = true;
     say(t('st.asking'), t('st.askingDetail'));
@@ -459,7 +483,7 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
     }
     try {
       await reach('http://' + host + ':8090/swUpdateStart', {
-        method: 'POST', body: BODY, headers: { 'Content-Type': 'text/plain' },
+        method: 'POST', body: body(feed), headers: { 'Content-Type': 'text/plain' },
         signal: AbortSignal.timeout(15000),
       });
     } catch {
@@ -600,6 +624,7 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
       table.supported.map((rule, i) => [rule, i])
         .sort((a, b) => ORDER.indexOf(kindOf(a[0])) - ORDER.indexOf(kindOf(b[0])))
         .forEach(([rule, i]) => picks.append(pickCard('s' + i, rule.model)));
+      table.preview.forEach((rule, i) => picks.append(pickCard('p' + i, t('model.preview', { model: rule.model }), 'preview')));
       picks.append(pickCard('other', t('model.other'), 'other'));
     });
 
@@ -611,6 +636,7 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
       const refused = !!value && !supported;
       $('flow').hidden = refused;
       $('pickNote').hidden = !refused;
+      $('previewCheck').hidden = !(rule && rule.preview);
       if (refused) $('pickLine').textContent = judge(rule, '').text;
       if (supported) show($('needVersion'), 'need.version', { minimum: rule.minimum, model: rule.model });
       else show($('needVersion'), 'need.versionAny');
@@ -662,7 +688,9 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
         for (const r of Array.isArray(list) ? list : []) {
           if (r.draft || !/^os-v/.test(r.tag_name || '') || /^Withdrawn:/m.test(r.body || '')) continue;
           const assets = Array.isArray(r.assets) ? r.assets : [];
-          const stu = assets.find((a) => /^SoundTap-Core-[\w.+-]+\.stu$/.test(a.name));
+          // The release's own package by name: beside it is the preview package (ADR 0133),
+          // which this download is not.
+          const stu = assets.find((a) => a.name === 'SoundTap-Core-' + r.tag_name.slice('os-v'.length) + '.stu');
           if (!stu) continue;
           const digest = /^sha256:([0-9a-f]{64})$/.exec(stu.digest || '');
           const found = {

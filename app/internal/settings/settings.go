@@ -197,31 +197,26 @@ type SourceName struct {
 	Name    string `json:"name"`
 }
 
-// Display configures the OLED standby screen (ST20 only; the ST10 has no panel).
+// Display configures the OLED standby screen (ST20 only; the ST10 has no panel): the time
+// alone, as stock's.
 //
-// The clock needs a timezone: the picked town's, or without a town the zone of the
-// browser that saved these settings, as stock shows its clock without a place. The
-// weather line needs the town. The speaker never guesses where it stands (the rootfs has
-// no zone and a public-IP lookup is not something a radio should do on its own). Without
-// a zone the standby screen stays dark. The zero value is that state.
+// The clock needs a timezone: the zone of the browser that saved these settings, as stock
+// shows its clock without a place. The speaker never guesses where it stands (the rootfs
+// has no zone and a public-IP lookup is not something a radio should do on its own).
+// Without a zone the standby screen stays dark. The zero value is that state.
+//
+// Files from before 0.1.0 may still hold city, lat, lon and weatherOn from the weather
+// line that is gone; the loader ignores them.
 type Display struct {
-	ClockOff bool    `json:"clockOff"`
-	Hour12   bool    `json:"hour12"`
-	City     string  `json:"city"` // the picked town as shown; "" = none
-	Lat      float64 `json:"lat"`
-	Lon      float64 `json:"lon"`
-	Timezone string  `json:"timezone"` // IANA zone of City, or of the browser without a City
-	// WeatherOn adds the weather line for City under the clock.
-	WeatherOn bool `json:"weatherOn"`
+	ClockOff bool   `json:"clockOff"`
+	Hour12   bool   `json:"hour12"`
+	Timezone string `json:"timezone"` // IANA zone of the browser that saved the settings
 	// Brightness is the clock's peak in percent: 25, 50 or 80. 0 means the default, 80.
 	Brightness int `json:"brightness,omitempty"`
 }
 
 // ClockOn reports whether the standby screen shows the clock.
 func (d Display) ClockOn() bool { return !d.ClockOff && d.Timezone != "" }
-
-// WeatherEnabled reports whether the standby screen may fetch weather at all.
-func (d Display) WeatherEnabled() bool { return d.ClockOn() && d.WeatherOn && d.City != "" }
 
 // Audio is the tuning the speaker comes back up with. Stock firmware keeps volume
 // and bass across a power cut; without this every reboot loses the user's level.

@@ -28,11 +28,7 @@
   "display": {
     "clockOff": true,
     "hour12": true,
-    "city": "Utrecht",
-    "lat": 52.09,
-    "lon": 5.12,
     "timezone": "Europe/Amsterdam",
-    "weatherOn": true,
     "brightness": 50
   },
   "alarm": {

@@ -7,6 +7,7 @@
 
   "s1.title": "Ce difuzor aveți?",
   "model.other": "Alt model",
+  "model.preview": "{model} (previzualizare)",
   "s1.otherHelp": "Aveți alt model? <a>Ajutați-ne să-l aducem la SoundTap</a>: primul pas este o investigație doar cu citire.",
 
   "s2.title": "De ce aveți nevoie",
@@ -44,6 +45,7 @@
   "br.ip": "Adresa IP a difuzorului",
   "br.ipHint": "În aplicația Bose: Setări, Setări difuzor, difuzorul dumneavoastră, Despre. Sau căutați-o în router.",
   "br.agree": "Înțeleg că SoundTap este software în stadiu alfa care înlocuiește tot ce se află pe difuzor și am citit cum mă pot întoarce la Bose (pasul 6).",
+  "br.previewAgree": "Acest model este o previzualizare: SoundTap este dedus din software-ul Bose însuși și nimeni nu l-a rulat încă pe acest model. Este posibil să nu redea sunet, iar drumul înapoi poate fi nedovedit. Îl instalez totuși.",
   "br.go": "Instalare SoundTap",
   "br.pickModel": "Alegeți mai întâi difuzorul la pasul 1.",
   "br.trust": "Pagina nu poate citi de pe difuzor modelul sau software-ul acestuia, așa că se bazează pe ce spuneți dumneavoastră despre amândouă.",
@@ -52,6 +54,7 @@
   "judge.noModel": "{model}: încă nu este acceptat. SoundTap nu a rulat încă pe el, așa că această pagină nu îl va instala.",
   "judge.no": "Încă nu este acceptat. SoundTap nu a rulat încă pe acest model, așa că această pagină nu îl va instala.",
   "judge.unread": "Introduceți versiunea software-ului Bose pe care aplicația Bose o arată pentru acest difuzor.",
+  "judge.preview": "{model}: o previzualizare. SoundTap este dedus din software-ul Bose însuși și nimeni nu l-a rulat încă pe acest model; bifați mai jos caseta de previzualizare pentru a-l instala totuși.",
   "judge.old": "Software Bose {version}: {model} are nevoie de {minimum} sau mai nou. Actualizați mai întâi Bose, din aplicația Bose.",
 
   "st.asking": "Se interoghează difuzorul…",

@@ -122,10 +122,10 @@ def prepare_flash(root: Path, bootloaders: bool):
             (root / name).write_bytes(b"\x00" * 0x20000)
 
 
-def build(work: Path, bootloaders: bool, gate):
+def build(work: Path, bootloaders: bool, gate, preview=False):
     """Reuse the gate's compiler handling: the host one where there is one, a pinned container
-    on a runner that only has Docker."""
-    binary = work / "wla-installer-dryrun"
+    on a runner that only has Docker. preview builds the preview package's installer (ADR 0133)."""
+    binary = work / ("wla-installer-dryrun" + ("-preview" if preview else ""))
     # Same port discipline as the gate: the installed binary listens on :40015 because
     # that is where stock calls it, but a dry run shares a runner with the offline gates
     # and cannot assume that port is free.
@@ -133,6 +133,8 @@ def build(work: Path, bootloaders: bool, gate):
                f"-DLISTEN_PORT={gate.PORT}"]
     if bootloaders:
         command.append("-DSOUNDTAP_INSTALL_BOOTLOADERS")
+    if preview:
+        command.append("-DSOUNDTAP_PREVIEW_PACKAGE")
     command += ["-o", str(binary), str(SOURCE / "installer.c"), str(SOURCE / "swupdate.c"),
                 str(SOURCE / "mtd.c")]
     gate.compile_with(command, str(work))
@@ -265,6 +267,8 @@ def main():
                         help="also exercise the SPL/U-Boot phase")
     parser.add_argument("--variant", default="binky",
                         help="the model the installer believes it is running on")
+    parser.add_argument("--preview", action="store_true",
+                        help="run the preview package's installer (ADR 0133)")
     args = parser.parse_args()
 
     gate = load_gate()
@@ -280,7 +284,7 @@ def main():
     flash = work / "flash"
     flash.mkdir(exist_ok=True)
     prepare_flash(flash, args.bootloaders)
-    binary = build(work, args.bootloaders, gate)
+    binary = build(work, args.bootloaders, gate, args.preview)
     code, log = run(binary, stream, flash, gate, args.variant)
     print(log)
     check = (lambda: check_spotty(flash, log)) if args.variant == "spotty" else \

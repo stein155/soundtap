@@ -228,6 +228,31 @@ def accept(path, target=None):
     return True
 
 
+def validate_same_payloads(main, preview, target=None):
+    """The preview package (ADR 0133) is the universal package with module 0, the installer,
+    swapped for the preview build: the same module chain, and every byte from module 1's
+    header to the end the main package's. Headers carry no offsets, so a longer or shorter
+    installer only moves them."""
+    main_modules = validate(main, target)
+    preview_modules = validate(preview, target)
+    if [m[3] for m in main_modules] != [m[3] for m in preview_modules]:
+        raise ValueError("the two packages carry different module chains")
+    if len(main_modules) < 2:
+        raise ValueError("no module after the installer")
+    if main[main_modules[1][0]:] != preview[preview_modules[1][0]:]:
+        raise ValueError("a module after the installer differs from the main package's")
+
+
+def same_payloads(main_path, preview_path, target=None):
+    try:
+        validate_same_payloads(read(main_path), read(preview_path), target)
+    except (OSError, UnicodeError, ValueError) as err:
+        print(f"REJECT: {err}")
+        return False
+    print("SAME PAYLOADS: only module 0, the installer, differs from the main package")
+    return True
+
+
 def recovery(candidate_path, stock_path, target=None):
     try:
         validate_recovery(read(stock_path), read(candidate_path), target=target)
@@ -452,6 +477,8 @@ if __name__ == "__main__":
     command = sys.argv[1] if len(sys.argv) > 1 else ""
     if command == "accept" and len(sys.argv) in (3, 4):
         sys.exit(0 if accept(sys.argv[2], sys.argv[3] if len(sys.argv) == 4 else None) else 1)
+    if command == "same-payloads" and len(sys.argv) in (4, 5):
+        sys.exit(0 if same_payloads(sys.argv[2], sys.argv[3], sys.argv[4] if len(sys.argv) == 5 else None) else 1)
     if command == "recovery" and len(sys.argv) in (4, 5):
         sys.exit(0 if recovery(sys.argv[2], sys.argv[3], sys.argv[4] if len(sys.argv) == 5 else None) else 1)
     if command == "recovery-mainline" and len(sys.argv) in (4, 5):
@@ -462,4 +489,5 @@ if __name__ == "__main__":
         sys.exit(0 if extract_ubi(sys.argv[2], sys.argv[3], sys.argv[4] if len(sys.argv) == 5 else None) else 1)
     if command == "extract-kernel" and len(sys.argv) in (4, 5):
         sys.exit(0 if extract_kernel(sys.argv[2], sys.argv[3], sys.argv[4] if len(sys.argv) == 5 else "st10") else 1)
-    sys.exit("usage: stu_check.py accept FILE [TARGET] | recovery FILE STOCK [TARGET] | recovery-mainline[-bootloaders] FILE STOCK [TARGET] | extract-{ubi,kernel} FILE OUT [TARGET]")
+    sys.exit("usage: stu_check.py accept FILE [TARGET] | same-payloads FILE PREVIEW [TARGET] | recovery FILE STOCK [TARGET]"
+             " | recovery-mainline[-bootloaders] FILE STOCK [TARGET] | extract-{ubi,kernel} FILE OUT [TARGET]")

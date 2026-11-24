@@ -7,6 +7,7 @@
 
   "s1.title": "Which speaker do you have?",
   "model.other": "Another model",
+  "model.preview": "{model} (preview)",
   "s1.otherHelp": "Have another model? <a>Help bring it up</a>: the first step is read-only investigation.",
 
   "s2.title": "What you need",
@@ -44,6 +45,7 @@
   "br.ip": "The speaker's IP address",
   "br.ipHint": "In the Bose app: Settings, Speaker settings, your speaker, About. Or look it up in your router.",
   "br.agree": "I understand that SoundTap is alpha software that replaces everything on the speaker, and I have read how to go back to Bose (step 6).",
+  "br.previewAgree": "This model is a preview: SoundTap is worked out from Bose's own software and nobody has run it on this model yet. It may not play, and its way back may be unproven. I install it anyway.",
   "br.go": "Install SoundTap",
   "br.pickModel": "Pick your speaker in step 1 first.",
   "br.trust": "The page cannot read the model or its software from the speaker, so it takes your word for both.",
@@ -52,6 +54,7 @@
   "judge.noModel": "{model}: not supported yet. SoundTap has not run on it, so this page will not install it.",
   "judge.no": "Not supported yet. SoundTap has not run on this model, so this page will not install it.",
   "judge.unread": "Type the Bose software version the Bose app shows for this speaker.",
+  "judge.preview": "{model}: a preview. SoundTap is worked out from Bose's own software and nobody has run it on this model yet; tick the preview box below to install it anyway.",
   "judge.old": "Bose software {version}: the {model} needs {minimum} or later. Update Bose first, in the Bose app.",
 
   "st.asking": "Asking the speaker…",

@@ -7,6 +7,7 @@
 
   "s1.title": "Milyen hangszórója van?",
   "model.other": "Másik modell",
+  "model.preview": "{model} (előzetes)",
   "s1.otherHelp": "Másik modellje van? <a>Segítsen életre kelteni</a>: az első lépés csak olvasással járó vizsgálat.",
 
   "s2.title": "Amire szüksége lesz",
@@ -44,6 +45,7 @@
   "br.ip": "A hangszóró IP-címe",
   "br.ipHint": "A Bose alkalmazásban: Beállítások, Hangszóró-beállítások, az Ön hangszórója, Névjegy. Vagy nézze meg a routerében.",
   "br.agree": "Tudomásul veszem, hogy a SoundTap alfa állapotú szoftver, amely mindent lecserél a hangszórón, és elolvastam, hogyan lehet visszatérni a Bose-hoz (6. lépés).",
+  "br.previewAgree": "Ez a modell előzetes változat: a SoundTap a Bose saját szoftveréből lett levezetve, és ezen a modellen még senki sem futtatta. Lehet, hogy nem szól, és a visszaút sem biztos, hogy bizonyított. Ennek ellenére telepítem.",
   "br.go": "SoundTap telepítése",
   "br.pickModel": "Előbb válassza ki a hangszóróját az 1. lépésben.",
   "br.trust": "Az oldal nem tudja kiolvasni a hangszóróból sem a modellt, sem a szoftverét, ezért mindkettőben az Ön szavára hagyatkozik.",
@@ -52,6 +54,7 @@
   "judge.noModel": "{model}: még nem támogatott. A SoundTap még nem futott rajta, ezért ez az oldal nem telepíti.",
   "judge.no": "Még nem támogatott. A SoundTap még nem futott ezen a modellen, ezért ez az oldal nem telepíti.",
   "judge.unread": "Írja be a Bose szoftver verzióját, ahogy a Bose alkalmazás mutatja ennél a hangszórónál.",
+  "judge.preview": "{model}: előzetes változat. A SoundTap a Bose saját szoftveréből lett levezetve, és ezen a modellen még senki sem futtatta; ha mégis telepíteni szeretné, jelölje be lent az előzetes változat jelölőnégyzetét.",
   "judge.old": "Bose szoftver {version}: a {model} esetén {minimum} vagy újabb kell. Előbb frissítse a Bose szoftvert a Bose alkalmazásban.",
 
   "st.asking": "A hangszóró lekérdezése…",

@@ -127,6 +127,15 @@ class HostedDraftTest(unittest.TestCase):
             (candidate / stu).write_bytes(data)
             digest = hashlib.sha256(data).hexdigest()
             (candidate / (stu + '.sha256')).write_text(f'{digest}  {stu}\n')
+            # The preview package (ADR 0133) travels with the candidate, with its own checksum.
+            preview = f'SoundTap-Core-{version}-preview.stu'
+            if scenario != 'missing-preview':
+                pdata = b'local preview fixture; not firmware'
+                (candidate / preview).write_bytes(pdata)
+                (candidate / (preview + '.sha256')).write_text(
+                    f'{hashlib.sha256(pdata).hexdigest()}  {preview}\n')
+            if scenario == 'preview-checksum':
+                (candidate / preview).write_bytes(b'changed')
             (candidate / 'commit').write_text('other' if scenario == 'commit' else 'candidate-sha')
             (candidate / 'profile').write_text('alpha' if scenario == 'alpha' else 'production')
             for asset in (f'SoundTap-Core-{version}-sources.tar', f'SoundTap-Core-{version}.cdx.json'):
@@ -151,8 +160,10 @@ elif args[:2] == ['run', 'download']:
 elif args[:2] == ['release', 'create']:
     assert '--draft' in args
     assert args[args.index('--target') + 1] == 'candidate-sha'
-    stu = 'SoundTap-Core-' + os.environ['VERSION'] + '.stu'
-    assert (base / 'dist' / stu).read_bytes() == (base / 'candidate' / stu).read_bytes()
+    for stu in ('SoundTap-Core-' + os.environ['VERSION'] + '.stu',
+                'SoundTap-Core-' + os.environ['VERSION'] + '-preview.stu'):
+        assert (base / 'dist' / stu).read_bytes() == (base / 'candidate' / stu).read_bytes()
+        assert 'dist/' + stu in args and 'dist/' + stu + '.sha256' in args, args
 else:
     sys.exit('unexpected gh command')
 ''')
@@ -172,7 +183,9 @@ esac
             inspector = base / 'os/support'
             inspector.mkdir(parents=True)
             (inspector / 'stu_check.py').write_text(
-                "import os, sys\nsys.exit(1 if os.environ['SCENARIO'] == 'structure' else 0)\n")
+                "import os, sys\n"
+                "scenario = os.environ['SCENARIO']\n"
+                "sys.exit(1 if scenario == 'structure' or (scenario == 'payloads' and sys.argv[1] == 'same-payloads') else 0)\n")
             (base / 'tools/release').mkdir(parents=True)
             (base / 'tools/release/notes.py').write_text(
                 "import json, pathlib, sys\n"
@@ -201,7 +214,8 @@ esac
     @unittest.skipUnless(shutil.which('sha256sum'), 'GNU checksum tools required')
     def test_hosted_candidate_draft_gates(self):
         for scenario in ('success', 'commit', 'alpha', 'checksum', 'missing-tar',
-                         'missing-json', 'no-build', 'structure', 'no-changelog'):
+                         'missing-json', 'no-build', 'structure', 'no-changelog',
+                         'missing-preview', 'preview-checksum', 'payloads'):
             with self.subTest(scenario=scenario):
                 result, created, _ = self.draft(scenario)
                 self.assertEqual(result.returncode == 0, scenario == 'success', result.stderr)
@@ -241,7 +255,8 @@ esac
                 result, _, notes = self.draft('success', version=version,
                                               tags=tags if previous else 'os-v0.1.0-alpha.1\n')
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(notes[4:5], [previous] if previous else [])
+                self.assertEqual(notes[4:notes.index('--preview')], [previous] if previous else [])
+                self.assertEqual(notes[notes.index('--preview') + 1], f'SoundTap-Core-{version}-preview.stu')
 
 
 # sign.yml, the one workflow that reads the release key (ADR 0035): its job's steps, parsed

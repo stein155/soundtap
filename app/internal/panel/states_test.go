@@ -16,7 +16,6 @@ import (
 
 	"github.com/stein155/soundtap/app/internal/hw"
 	"github.com/stein155/soundtap/app/internal/speaker"
-	"github.com/stein155/soundtap/app/internal/weather"
 	"github.com/stein155/soundtap/app/oled"
 	"github.com/stein155/soundtap/app/oled/screen"
 )
@@ -41,10 +40,9 @@ func TestPanelStates(t *testing.T) {
 		t.Error("connecting and offline share a screen")
 	}
 	update, _ := bootOverlay(false, false, 0, 40, false, false, hw.LinkDown, "08:42")
-	standbyDraw, _ := standbyFrame(time.Date(2026, 9, 25, 8, 42, 0, 0, time.UTC), false, nil)
-	standbyTempDraw, _ := standbyFrame(time.Date(2026, 9, 25, 8, 42, 0, 0, time.UTC), false, &weather.Current{TempC: 14})
-	standby12Draw, _ := standbyFrame(time.Date(2026, 9, 25, 20, 42, 0, 0, time.UTC), true, &weather.Current{TempC: -3})
-	standby, standbyTemp, standby12 := standbyDraw(), standbyTempDraw(), standby12Draw()
+	standbyDraw, _ := standbyFrame(time.Date(2026, 9, 25, 8, 42, 0, 0, time.UTC), false)
+	standby12Draw, _ := standbyFrame(time.Date(2026, 9, 25, 20, 42, 0, 0, time.UTC), true)
+	standby, standby12 := standbyDraw(), standby12Draw()
 	pairing := np("BLUETOOTH", "", "", "", "STOP_STATE")
 	pairing.pairing = true
 	if !bytes.Equal(playing(pairing), screen.Pairing(Text("Pairing…"), Text("Look for %s", "Keuken")).Pix(15)) {
@@ -84,7 +82,6 @@ func TestPanelStates(t *testing.T) {
 		{"saved", screen.Saved(Text("Saved as preset")).Pix(15)},
 		{"pairing", playing(pairing)},
 		{"standby", standby},
-		{"standby-temp", standbyTemp},
 		{"standby-12h", standby12},
 	}
 
@@ -128,7 +125,7 @@ func TestST20WordsFit(t *testing.T) {
 				t.Errorf("%s %q is %.0f px wide", lang, l.words[en], w)
 			}
 		}
-		all := strings.Join(l.days[:], " ") + strings.Join(l.dshort[:], " ") + strings.Join(l.months[:], " ")
+		all := ""
 		for _, w := range l.words {
 			all += w
 		}

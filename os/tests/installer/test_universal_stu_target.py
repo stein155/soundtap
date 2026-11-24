@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-"""`make stu` asks for all three models: a missing ST20 kernel stops it."""
+"""`make stu` asks for all three models: a missing ST20 kernel stops it. Beside the universal
+package it builds the preview package (ADR 0133) from the same inputs."""
 import os
 import subprocess
 import tempfile
@@ -38,6 +39,63 @@ class UniversalTarget(unittest.TestCase):
                            ("SPOTTY_MLO", "st20-spl/MLO"), ("BINKY_MLO", "wla-spl/MLO"),
                            ("BINKY_UBOOT", "wla-uboot/u-boot.img")):
             self.assertIn(f"SOUNDTAP_{name}=/out/images/{path}", lines)
+
+    def test_the_preview_package_is_the_same_build_with_the_preview_installer(self):
+        """The script itself, with the toolchain and Python stubbed: the preview installer
+        (WLA_PREVIEW=1) goes into <name>-preview.stu only, both packages are checked, the pair
+        is compared, and each gets its own .sha256."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            log = tmp / "log"
+            bin_ = tmp / "bin"
+            bin_.mkdir()
+            # build.sh run through sh: write the installer it would name, as build.sh names it.
+            (bin_ / "sh").write_text(f"""#!/bin/sh
+case "$1" in
+*/module/build.sh)
+	name=wla-installer-full
+	[ "${{WLA_PREVIEW:-0}}" = 1 ] && name=$name-preview
+	echo "build.sh $name" >>"{log}"
+	mkdir -p "$2" && echo "$name" >"$2/$name" ;;
+*) exec /bin/sh "$@" ;;
+esac
+""")
+            # Every python3 call is logged; build-stu.py writes its installer's name to --out.
+            (bin_ / "python3").write_text(f"""#!/bin/sh
+echo "python3 $*" >>"{log}"
+case "$*" in *build-stu.py*)
+	while [ $# -gt 0 ]; do
+		case "$1" in --installer) installer=$2 ;; --out) out=$2 ;; esac
+		shift
+	done
+	cat "$installer" >"$out" ;;
+esac
+""")
+            for stub in bin_.iterdir():
+                stub.chmod(0o755)
+            inputs = {}
+            for name in ("RHINO_KERNEL", "RHINO_ROOTFS", "SPOTTY_KERNEL", "SPOTTY_MLO",
+                         "BINKY_MLO", "BINKY_UBOOT"):
+                inputs[f"SOUNDTAP_{name}"] = str(tmp / name)
+                (tmp / name).write_text(name)
+            out = tmp / "dist/Update-soundtap-buildroot.stu"
+            env = dict(os.environ, PATH=f"{bin_}:{os.environ['PATH']}", SOUNDTAP_STU_OUT=str(out),
+                       SOUNDTAP_STU_TARGET="soundtap-tri", **inputs)
+            done = subprocess.run(["/bin/sh", str(SCRIPT)], env=env, capture_output=True,
+                                  text=True, check=False)
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            preview = tmp / "dist/Update-soundtap-buildroot-preview.stu"
+            self.assertEqual(out.read_text(), "wla-installer-full\n")
+            self.assertEqual(preview.read_text(), "wla-installer-full-preview\n")
+            calls = log.read_text().splitlines()
+            for package in (out, preview):
+                self.assertIn(f"python3 {ROOT}/os/support/stu_check.py accept {package} soundtap-tri", calls)
+                digest = (tmp / "dist" / (package.name + ".sha256")).read_text().split()
+                self.assertEqual(digest[1], package.name)
+            self.assertIn(f"python3 {ROOT}/os/support/stu_check.py same-payloads {out} {preview} soundtap-tri",
+                          calls)
+            self.assertIn(f"python3 -B {ROOT}/os/support/wla_stock_route_dryrun.py --bootloaders --preview "
+                          f"--variant binky {preview}", calls)
 
 
 if __name__ == "__main__":

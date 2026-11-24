@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-"""The first-install feed names a published, signed SoundTap Core release.
+"""The first-install feeds name a published, signed SoundTap Core release.
 
 A speaker still on Bose's software installs whatever `updates/soundtouch` on main names, and
 Bose's updater checks only the length and the CRC32 the index states (ADR 0048: the first
@@ -20,7 +20,13 @@ index to one release:
 X.Y.Z may be an alpha, X.Y.Z-alpha.N (ADR 0035): a published GitHub prerelease is a release
 the feed may name, signed like any other.
 
-    feed_check.py <index> [--assets DIR]
+With --preview it checks the preview feed, `updates/soundtouch-preview` (ADR 0133), the same
+way: its devices are the preview models, and its image is that release's preview package,
+`SoundTap-Core-X.Y.Z-preview.stu`, the only one a Preview board installs from, with a .sig of
+its own. Neither feed may list a device of the other: the installer in the main package
+refuses a Preview board, and a supported model has no business in the preview feed.
+
+    feed_check.py <index> [--preview] [--assets DIR]
 
 Without --assets it downloads the asset and its .sig from the URL the index names, which
 works only for a published release, and asks GitHub that the release is not a draft and not
@@ -43,7 +49,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools/release"))
-from mock_update_server import MODELS  # noqa: E402
+from mock_update_server import MODELS, PREVIEW_MODELS  # noqa: E402
 
 HOST = "https://github.com"
 VERSION = r"\d{1,9}\.\d{1,9}\.\d{1,9}(?:-alpha\.[1-9]\d{0,8})?"  # release.Version
@@ -79,8 +85,9 @@ def release_keys(root=ROOT):
     return keys
 
 
-def read_index(path, repo):
-    """The one image the index offers: (url, version, filename, length, crc)."""
+def read_index(path, repo, preview=False):
+    """The one image the index offers: (url, version, filename, length, crc). preview: the
+    preview feed, for the preview models and the preview package."""
     try:
         root = ET.parse(path).getroot()
     except ET.ParseError as e:
@@ -97,9 +104,15 @@ def read_index(path, repo):
         rel, img = releases[0], images[0]
         offers.add((rel.get("HTTPHOST"), rel.get("URLPATH"), img.get("FILENAME"),
                     img.get("LENGTH"), img.get("CRC")))
-    want_ids = {i for i, _ in MODELS}
+    supported, previews = {i for i, _ in MODELS}, {i for i, _ in PREVIEW_MODELS}
+    if supported & previews:
+        raise FeedError(f"devices {sorted(supported & previews)} are both supported and previews")
+    want_ids, other, kind = (previews, supported, "preview") if preview else (supported, previews, "supported")
+    if ids & other:
+        raise FeedError(f"the {kind} feed lists {'supported' if preview else 'preview'} devices "
+                        f"{sorted(ids & other)}; each model is in one feed only")
     if ids != want_ids:
-        raise FeedError(f"the index lists devices {sorted(ids)}, not the supported {sorted(want_ids)}")
+        raise FeedError(f"the index lists devices {sorted(ids)}, not the {kind} {sorted(want_ids)}")
     if len(offers) != 1:
         raise FeedError("the devices do not all offer the same image")
     host, urlpath, name, length, crc = offers.pop()
@@ -107,8 +120,9 @@ def read_index(path, repo):
     if host != HOST or not m:
         raise FeedError(f"the index points at {host}/{urlpath}, not a release of {repo} on {HOST}")
     version = m.group(1)
-    if name != f"SoundTap-Core-{version}.stu":
-        raise FeedError(f"the index names {name}, not SoundTap-Core-{version}.stu")
+    want_name = f"SoundTap-Core-{version}{'-preview' if preview else ''}.stu"
+    if name != want_name:
+        raise FeedError(f"the index names {name}, not {want_name}")
     try:
         length = int(length)
         crc = int(crc, 16)
@@ -171,11 +185,11 @@ def check_published(repo, version):
         raise FeedError(f"{tag} is withdrawn")
 
 
-def check(index, assets=None, root=ROOT):
+def check(index, assets=None, root=ROOT, preview=False):
     """Raises FeedError unless the index names a release the speakers can trust."""
     repo = go_const(root / "app/internal/update/update.go", "Repo")
     keys = release_keys(root)
-    url, version, name, length, crc = read_index(index, repo)
+    url, version, name, length, crc = read_index(index, repo, preview)
     if assets is None:
         check_published(repo, version)
         data = fetch(url, length)
@@ -201,13 +215,16 @@ def main(argv):
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     ap.add_argument("index")
     ap.add_argument("--assets", help="read the asset and its .sig from here instead of downloading")
+    ap.add_argument("--preview", action="store_true",
+                    help="the preview feed: the preview models and the preview package (ADR 0133)")
     args = ap.parse_args(argv)
     try:
-        url, version = check(args.index, args.assets)
+        url, version = check(args.index, args.assets, preview=args.preview)
     except (FeedError, OSError, ValueError) as e:
         print(f"feed_check.py: {e}", file=sys.stderr)
         return 1
-    print(f"feed OK: SoundTap Core {version}, {url}, signed with a compiled release key")
+    what = "preview package" if args.preview else "feed"
+    print(f"{what} OK: SoundTap Core {version}, {url}, signed with a compiled release key")
     return 0
 
 

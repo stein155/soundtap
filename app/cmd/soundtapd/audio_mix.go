@@ -138,7 +138,7 @@ func setupArbiter(ctx context.Context, sp *speakerstate.Speaker, leaveMultiroom 
 	// a safety net, but waiting for that tick put up to 50 ms between the key press
 	// and the gain change, on top of the PCM already queued for the DAC. The hook runs
 	// on the caller's goroutine (keypad, IR, API) and only takes the Mixer's mutex.
-	sp.OnVolume(func(level int) { arb.SetVolume(soundbar.MixerLevel(level)) })
+	sp.OnVolume(func(level int) { arb.SetVolume(mixerLevel(level)) })
 
 	var announcements announcementLifetime
 	sp.OnNotify(func(n *speakerstate.Notification) {

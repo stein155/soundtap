@@ -1,0 +1,58 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: 2026 SoundTap contributors
+/*
+ * SoundTouch Portable (taigan): the ST20's SCM board with a battery. Preview, never booted.
+ * Stock's taigan_scm and spotty_scm trees differ in four things, so this is the ST20's tree
+ * with them:
+ *
+ * - batmon@0b on I2C0 at 100 kHz: a smart battery gauge with no compatible, which stock reads
+ *   from userspace over /dev/i2c-0 (BatteryMonitor). soundtapd does the same
+ *   (internal/hw/battery); no kernel driver binds. Stock's i2c0_pins_default.
+ * - The RTC alarm's interrupt: stock's naps wake on it. am33xx.dtsi already wires it.
+ * - The codec script, taigan_scm_normal.cfg (the variant= below; the speaker's own file).
+ * - No sync-out (divider and match 0): the ST20 tree has no sync-out node to turn off.
+ *
+ * The charger lines are the ST20's gpiodev entries, unused there: dcpresent gpio0_27 (low with
+ * DC) and charge_enable gpio3_8. soundtapd drives charge_enable by stock's rules, so the
+ * ST20's hog on it is deleted here. APConfig-taigan has no PowerAmp object and stock never
+ * puts the amplifiers in standby, so ampstby (gpio1_23) is held high from boot.
+ */
+#include "am335x-soundtap-st20.dts"
+
+/ {
+	model = "Bose SoundTouch Portable (SoundTap taigan)";
+	compatible = "bose,taigan-scm", "ti,am33xx";
+
+	chosen {
+		bootargs = "console=ttyS3,115200n8 root=ubi0:rootfs ro rootfstype=ubifs ubi.mtd=9,2048 rootwait init=/init mem=128M cma=8M panic=10 omap_wdt.early_enable=1 variant=taigan module_type=scm country=GB region=GB soundtap.nandroot=1 soundtap.watchdog=90";
+	};
+};
+
+&am33xx_pinmux {
+	i2c0_pins: pinmux-i2c0-pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_I2C0_SDA, PIN_INPUT_PULLUP, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_I2C0_SCL, PIN_INPUT_PULLUP, MUX_MODE0)
+		>;
+	};
+};
+
+&i2c0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c0_pins>;
+	clock-frequency = <100000>;
+	status = "okay";
+};
+
+&gpio1 {
+	ampstby-hog {
+		gpio-hog;
+		gpios = <23 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "ampstby";
+	};
+};
+
+&gpio3 {
+	/delete-node/ charge-enable-hog;
+};

@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -30,12 +31,17 @@ def matches(rule, type_, module):
             and (not rule.get("moduleType") or module == rule["moduleType"]))
 
 
+PREVIEW = TABLE.get("preview", [])
+
+
 def reference(type_, module, software):
-    """(status, rule): unsupported rules first, then the supported ones, else unknown."""
+    """(status, rule): unsupported rules first, then the preview ones, then the supported
+    ones, else unknown. A preview at or above its minimum is "preview": installable once its
+    owner confirms it."""
     for rule in TABLE["unsupported"]:
         if matches(rule, type_, module):
             return "no", rule
-    for rule in TABLE["supported"]:
+    for rule in PREVIEW + TABLE["supported"]:
         if not matches(rule, type_, module):
             continue
         version = software.split(" ")[0]
@@ -43,7 +49,9 @@ def reference(type_, module, software):
             return "unread", rule
         have, want = numbers(version), numbers(rule["minimum"])
         have += [0] * (len(want) - len(have))
-        return ("old" if have[:len(want)] < want else "ok"), rule
+        if have[:len(want)] < want:
+            return "old", rule
+        return ("preview" if rule.get("preview") else "ok"), rule
     return "no", None
 
 
@@ -54,7 +62,7 @@ def device_type(rule):
 def cases():
     """(type, moduleType, softwareVersion) per model and boundary, from the table alone."""
     out = []
-    for rule in TABLE["supported"]:
+    for rule in PREVIEW + TABLE["supported"]:
         t, m, low = device_type(rule), rule.get("moduleType", ""), rule["minimum"]
         n = numbers(low)
         above = [*n[:-1], n[-1] + 10]  # 27.0.16 > 27.0.6, though "27.0.16" < "27.0.6" as text
@@ -78,20 +86,39 @@ class TableTest(unittest.TestCase):
     def test_rules_are_complete_and_one_per_line(self):
         """The file's layout is install.sh's input format (it reads one rule per line),
         so the layout itself is checked as text."""
-        for rule in TABLE["supported"] + TABLE["unsupported"]:
+        for rule in TABLE["supported"] + PREVIEW + TABLE["unsupported"]:
             self.assertTrue(rule.get("model"), rule)
             self.assertTrue(rule.get("type") or rule.get("typeContains"), rule)
             line = json.dumps(rule, separators=(", ", ": "))
             self.assertIn(line, TABLE_TEXT, "install.sh reads one rule per line")
-        for rule in TABLE["supported"]:
+        for rule in TABLE["supported"] + PREVIEW:
             self.assertRegex(rule["minimum"], VERSION)
+        for rule in PREVIEW:
+            self.assertIs(rule.get("preview"), True, "install.sh tells previews apart by \"preview\": true")
+        for rule in TABLE["supported"]:
+            self.assertNotIn("preview", rule)
         for rule in TABLE["unsupported"]:
             self.assertNotIn("minimum", rule, "install.sh tells the lists apart by minimum")
 
-    def test_series_iii_is_unsupported_and_compares_numerically(self):
-        self.assertEqual(reference("SoundTouch 20", "sm2", "27.0.6")[0], "no")
+    def test_series_iii_is_a_preview_and_compares_numerically(self):
+        self.assertEqual(reference("SoundTouch 20", "sm2", "27.0.6")[0], "preview")
+        self.assertEqual(reference("SoundTouch 20", "sm2", "27.0.3")[0], "old")
         self.assertEqual(reference("SoundTouch 20", "scm", "27.0.6")[0], "ok")
         self.assertEqual(reference("SoundTouch 10", "sm2", "22.0.16")[0], "ok")
+
+    def test_the_lifestyle_module_is_never_offered(self):
+        """The Lifestyle 600/650 module (bardeen, sm2) has no way back: no installer offers it,
+        under any name that says Lifestyle. An SM2 Lifestyle adapter (lisa2) looks the same to
+        the installers, so only the SCM adapter is a preview."""
+        for type_ in ("Lifestyle", "Lifestyle 650", "Lifestyle 600"):
+            for version in ("27.0.6", "99.0.0"):
+                self.assertEqual(reference(type_, "sm2", version)[0], "no", type_)
+        self.assertEqual(reference("Lifestyle", "scm", "27.0.6")[0], "preview")
+        self.assertEqual(reference("Lifestyle", "", "27.0.6")[0], "no")
+        for rule in PREVIEW + TABLE["supported"]:
+            if "Lifestyle" in (rule.get("type") or rule.get("typeContains") or ""):
+                self.assertEqual(rule.get("moduleType"), "scm", rule)
+                self.assertNotRegex(rule["model"], r"600|650|module", rule)
 
     def test_install_guide_repeats_the_table(self):
         """The guide is prose for people; comparing its table with the file is the check."""
@@ -122,6 +149,9 @@ class InstallersAgreeTest(unittest.TestCase):
                 self.assertNotIn("update Bose", note, f"{name}: {case}")
                 if rule:
                     self.assertIn(rule["model"], note, f"{name}: {case}")
+            if want == "preview":
+                self.assertIn("preview", note.lower(), f"{name}: {case}")
+                self.assertIn(rule["model"], note, f"{name}: {case}")
             if want == "old":
                 self.assertIn("Update Bose first".lower(), note.lower(), f"{name}: {case}")
                 self.assertIn(rule["minimum"], note, f"{name}: {case}")
@@ -152,7 +182,9 @@ done
         picks = []
         for case in CASES:
             rule = reference(*case)[1]
-            if rule in TABLE["supported"]:
+            if rule in PREVIEW:
+                pick = "p" + str(PREVIEW.index(rule))
+            elif rule in TABLE["supported"]:
                 pick = "s" + str(TABLE["supported"].index(rule))
             elif rule in TABLE["unsupported"]:
                 pick = "u" + str(TABLE["unsupported"].index(rule))
@@ -186,10 +218,15 @@ vm.runInContext(source, ctx);
   for (const [pick, version] of JSON.parse(fs.readFileSync(0, 'utf8'))) {
     elements.model.value = pick; elements.version.value = version;
     elements.agree.checked = true; elements.ip.value = '192.168.1.23';
+    elements.previewAgree.checked = false;
     elements.model.input();
     const v = vm.runInContext('judge(chosenRule(), version.value)', ctx);
-    // The page dispatches exactly when the table says ok.
+    // The page dispatches exactly when the table says ok; a preview only with its own box ticked.
     if ((v.status === 'ok') === elements.go.disabled) throw new Error('button disagrees: ' + pick + ' ' + version);
+    if (v.status === 'preview') {
+      elements.previewAgree.checked = true; elements.model.input();
+      if (elements.go.disabled) throw new Error('preview not installable with its box ticked: ' + pick);
+    }
     if (v.text && elements.modelNote.textContent !== v.text) throw new Error('note not shown: ' + v.text);
     out.push([v.status, v.text]);
   }
@@ -221,6 +258,65 @@ foreach ($line in [Console]::In.ReadToEnd().Split("`n")) {
         self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
         self.check("install.ps1", [tuple(line.split("|", 1)) for line in out.stdout.splitlines()])
 
+
+FEED = "https://raw.githubusercontent.com/stein155/soundtap/main/updates/soundtouch"
+PREVIEW_FEED = FEED + "-preview"
+
+
+# The installers' list of found speakers (n|ip|name|type|status), and the feed each gets.
+LISTED = ("1|192.168.1.10|Kitchen|SoundTouch 10|ok\n"
+          "2|192.168.1.11|Bedroom|SoundTouch 20|preview\n"
+          "3|192.168.1.110|Den|SoundTouch 30|no\n"
+          "4|192.168.1.1|Hall|SoundTouch 300|ok\n")
+WANT_FEEDS = {"192.168.1.10": FEED, "192.168.1.11": PREVIEW_FEED, "192.168.1.110": FEED,
+              "192.168.1.1": FEED}
+
+
+class FeedTest(unittest.TestCase):
+    """ADR 0133: a preview installs only from the preview package, so a speaker whose verdict
+    is preview, picked and confirmed, is sent to the preview feed; every other one to the
+    supported feed. The browser installer's half is in test_browser_installer.py."""
+
+    def test_every_installer_names_both_feeds(self):
+        for name in ("install.sh", "install.ps1", "index.html"):
+            text = (INSTALLER / name).read_text()
+            self.assertIn(f"'{FEED}'", text, name)
+            self.assertIn(f"'{PREVIEW_FEED}'", text, name)
+
+    def test_install_sh(self):
+        script = r'''
+. docs/installer/install.sh
+for ip in 192.168.1.10 192.168.1.11 192.168.1.110 192.168.1.1; do
+	printf '%s|%s\n' "$ip" "$(feed_for "$ip" "$LIST")"
+done
+'''
+        for shell in ("sh", "dash"):
+            if not shutil.which(shell):
+                continue
+            with self.subTest(shell=shell), tempfile.TemporaryDirectory() as tmp:
+                listed = Path(tmp) / "list"
+                listed.write_text(LISTED)
+                out = subprocess.run([shutil.which(shell), "-c", script], cwd=ROOT, text=True,
+                                     capture_output=True, check=True,
+                                     env={**os.environ, "SOUNDTAP_INSTALLER_FUNCTIONS": "1",
+                                          "LIST": str(listed)})
+                self.assertEqual(dict(line.split("|", 1) for line in out.stdout.splitlines()), WANT_FEEDS)
+
+    @unittest.skipUnless(shutil.which("pwsh"), "install.ps1 runs under PowerShell")
+    def test_install_ps1(self):
+        source = (INSTALLER / "install.ps1").read_text().replace("\n& {\n", "\n. {\n", 1)
+        program = source + r'''
+foreach ($line in [Console]::In.ReadToEnd().Split("`n")) {
+    if (-not $line) { continue }
+    $n, $ip, $name, $type, $status = $line.Split('|')
+    Write-Output "$ip|$(Get-Feed ([pscustomobject]@{ Ip = $ip; Model = $status }))"
+}
+'''
+        out = subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-Command", program],
+                             cwd=ROOT, input=LISTED, text=True, capture_output=True, check=False,
+                             env={**os.environ, "SOUNDTAP_INSTALLER_FUNCTIONS": "1"})
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertEqual(dict(line.split("|", 1) for line in out.stdout.splitlines()), WANT_FEEDS)
 
 if __name__ == "__main__":
     unittest.main()

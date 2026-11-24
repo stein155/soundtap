@@ -12,6 +12,9 @@
 # computer; it needs only curl.
 set -u
 FEED='https://raw.githubusercontent.com/stein155/soundtap/main/updates/soundtouch'
+# A preview model installs only from the preview package (ADR 0133), which this feed names; a
+# speaker is sent here only after its owner picked it and typed "preview".
+PREVIEW_FEED='https://raw.githubusercontent.com/stein155/soundtap/main/updates/soundtouch-preview'
 # This script's own site: its versions.json names the models and the oldest Bose software
 # SoundTap installs from, for this script, install.ps1 and the browser installer alike.
 SITE='https://stein155.github.io/soundtap/installer'
@@ -61,24 +64,27 @@ older() {
 	}'
 }
 
-# classify <versions.json> <type> <moduleType> <softwareVersion>: sets status to ok, old
-# (update Bose first), no (not supported yet) or unread (no version to compare), and note
-# to what the list says about the speaker. Unsupported rules count first: a SoundTouch 20
-# that reports the Series III's module is a Series III, whatever its software.
+# classify <versions.json> <type> <moduleType> <softwareVersion>: sets status to ok, preview
+# (installable, but nobody has run SoundTap on the model), old (update Bose first), no (not
+# supported yet) or unread (no version to compare), and note to what the list says about the
+# speaker. Unsupported rules count first, then preview rules, then supported ones: a SoundTouch
+# 20 that reports the Series III's module is the Series III preview, whatever its software.
 classify() {
 	status=no note='  (not supported yet: SoundTap has not run on this model; skipped)'
 	_v=${4%% *}
-	for _pass in unsupported supported; do
+	for _pass in unsupported preview supported; do
 		while IFS= read -r _rule; do
-			case "$_rule" in *'"minimum"'*) _kind=supported ;; *) _kind=unsupported ;; esac
+			case "$_rule" in *'"preview": true'*) _kind=preview ;; *'"minimum"'*) _kind=supported ;; *) _kind=unsupported ;; esac
 			[ "$_kind" = "$_pass" ] && rule_matches "$_rule" "$2" "$3" || continue
 			_name=$(rule_field model "$_rule")
-			[ "$_kind" = supported ] || { note="  ($_name: not supported yet; skipped)"; return 0; }
+			[ "$_kind" != unsupported ] || { note="  ($_name: not supported yet; skipped)"; return 0; }
 			_min=$(rule_field minimum "$_rule")
 			if ! printf '%s\n' "$_v" | grep -Eq '^[0-9]+(\.[0-9]+)*$'; then
 				status=unread note="  ($_name, but its Bose software version could not be read; skipped)"
 			elif older "$_v" "$_min"; then
 				status=old note="  (Bose software $_v; the $_name needs $_min or later: update Bose first, in the Bose app)"
+			elif [ "$_kind" = preview ]; then
+				status=preview note="  ($_name: preview, worked out from Bose's software; nobody has run SoundTap on this model yet)"
 			else
 				status=ok note=''
 			fi
@@ -87,6 +93,17 @@ classify() {
 $(printf '%s\n' "$1" | grep '{"model"')
 EOF
 	done
+}
+
+# feed_for <ip> <list>: the feed to send that speaker to. The preview feed only for a speaker
+# the list (n|ip|name|type|status) marks preview, which the owner picked and confirmed; every
+# other speaker gets the feed of the supported models.
+feed_for() {
+	if [ "$(awk -F'|' -v ip="$1" '$2 == ip { print $5; exit }' "$2")" = preview ]; then
+		printf '%s\n' "$PREVIEW_FEED"
+	else
+		printf '%s\n' "$FEED"
+	fi
 }
 
 # Tests load the functions above without running the installer.
@@ -140,23 +157,42 @@ done
 }
 
 ok=$(grep -c '|ok$' "$tmp/list")
-[ "$ok" -gt 0 ] || { say "None of these speakers can get SoundTap (see above)."; exit 1; }
+previews=$(grep -c '|preview$' "$tmp/list")
+[ $((ok + previews)) -gt 0 ] || { say "None of these speakers can get SoundTap (see above)."; exit 1; }
 say ""
-if [ "$ok" -eq 1 ]; then
+# A preview speaker is never in "all of them": it is picked by its number, then confirmed.
+picked='' picked_preview=0
+if [ "$ok" -eq 1 ] && [ "$previews" -eq 0 ]; then
 	picked=$(grep '|ok$' "$tmp/list" | cut -d'|' -f2)
 	ask "Install SoundTap on $(grep '|ok$' "$tmp/list" | cut -d'|' -f3)? (y/n) "
 	case "$reply" in [yYjJ]*) ;; *) say "Stopped; nothing was changed."; exit 1 ;; esac
 else
-	ask "Which speakers? Press Enter for all of them, or type their numbers (like: 1 3): "
+	if [ "$ok" -gt 0 ]; then
+		ask "Which speakers? Press Enter for all supported ones, or type their numbers (like: 1 3): "
+	else
+		ask "Only previews here. Type the numbers of the speakers to install (like: 1 3), or press Enter to stop: "
+	fi
 	choice=$reply
 	[ -n "$choice" ] || choice=$(grep '|ok$' "$tmp/list" | cut -d'|' -f1)
-	picked=''
 	for k in $choice; do
 		line=$(grep "^$k|" "$tmp/list") || { say "There is no speaker $k."; exit 1; }
-		[ "$(printf '%s' "$line" | cut -d'|' -f5)" = ok ] || { say "Speaker $k cannot get SoundTap (see above); skipped."; continue; }
+		case "$(printf '%s' "$line" | cut -d'|' -f5)" in
+		ok) ;;
+		preview) picked_preview=1 ;;
+		*) say "Speaker $k cannot get SoundTap (see above); skipped."; continue ;;
+		esac
 		picked="$picked $(printf '%s' "$line" | cut -d'|' -f2)"
 	done
 	[ -n "$picked" ] || { say "Nothing to install."; exit 1; }
+fi
+if [ "$picked_preview" = 1 ]; then
+	say ""
+	say "A preview model: SoundTap is worked out from Bose's own software and nobody has run it on"
+	say "this model yet. It may not play, its buttons or lamps may be wrong, and its way back may be"
+	say "unproven. Read first:"
+	say "  https://stein155.github.io/soundtap/owners/compatibility/#previews"
+	ask "Type preview to install on it anyway: "
+	[ "$reply" = preview ] || { say "Stopped; nothing was changed."; exit 1; }
 fi
 
 say ""
@@ -166,8 +202,9 @@ ask "Continue? (y/n) "
 case "$reply" in [yYjJ]*) ;; *) say "Stopped; nothing was changed."; exit 1 ;; esac
 
 for ip in $picked; do
+	feed=$(feed_for "$ip" "$tmp/list")
 	if curl -sf -m 15 -o /dev/null -X POST -H 'Content-Type: text/plain' \
-		--data "<swUpdateStart indexUrl=\"$FEED\"/>" "http://$ip:8090/swUpdateStart"; then
+		--data "<swUpdateStart indexUrl=\"$feed\"/>" "http://$ip:8090/swUpdateStart"; then
 		say "$ip: install started."
 	else
 		say "$ip: the request was not confirmed; it may still have arrived."

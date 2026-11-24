@@ -35,6 +35,10 @@ func (s *Server) versionInfo(w http.ResponseWriter, _ *http.Request) {
 // versionData is what GET /api/version answers, and version.json in the support archive.
 func (s *Server) versionData() map[string]any {
 	osVersion, osCommit := osBuild()
+	caps := dropBluetooth(s.capabilities, "bluetooth")
+	if caps == nil {
+		caps = []string{} // [] in JSON, never null
+	}
 	return map[string]any{
 		"version": s.version,
 		// The two lanes as people read them: "SoundTap Core 0.1.0 · app 0.1.0". os is empty
@@ -49,6 +53,8 @@ func (s *Server) versionData() map[string]any {
 		// assuming the only reason is "not a speaker".
 		"updateMode": s.update.Mode(),
 		"api":        APILevel,
+		// What this speaker has, so a client need not probe routes (ADR 0108).
+		"capabilities": caps,
 	}
 }
 

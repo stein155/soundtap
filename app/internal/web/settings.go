@@ -10,29 +10,9 @@ import (
 	"net/http"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/stein155/soundtap/app/internal/settings"
-	"github.com/stein155/soundtap/app/internal/weather"
 )
-
-// geocode looks up a town for the standby clock by name. Only the typed name leaves
-// the speaker; the answer carries the town's timezone, which the clock needs.
-func (s *Server) geocode(w http.ResponseWriter, r *http.Request) {
-	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	if q == "" || utf8.RuneCountInString(q) > 80 {
-		s.badRequest(w, "town name required", nil)
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), slowReadDeadline)
-	defer cancel()
-	places, err := weather.Geocode(ctx, q, s.settings.Get().Language)
-	if err != nil {
-		s.fail(w, "lookup failed", err)
-		return
-	}
-	writeJSON(w, 200, places)
-}
 
 // getSettings returns the speaker name + bass (with range) + UI language and its
 // current network connection.

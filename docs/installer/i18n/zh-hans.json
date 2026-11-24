@@ -7,6 +7,7 @@
 
   "s1.title": "您的扬声器是哪一款？",
   "model.other": "其他型号",
+  "model.preview": "{model}（预览）",
   "s1.otherHelp": "您有其他型号？<a>帮助让 SoundTap 在它上面运行</a>：第一步是只读的调查。",
 
   "s2.title": "您需要准备",
@@ -44,6 +45,7 @@
   "br.ip": "扬声器的 IP 地址",
   "br.ipHint": "在 Bose 应用中：设置、扬声器设置、您的扬声器、关于。也可以在路由器中查找。",
   "br.agree": "我了解 SoundTap 是会替换扬声器上所有内容的 Alpha 版软件，并且我已阅读如何恢复到 Bose（第 6 步）。",
+  "br.previewAgree": "此型号为预览：SoundTap 是根据 Bose 自己的软件推导出来的，还没有人在此型号上运行过。它可能无法播放，恢复途径也可能未经验证。我仍要安装。",
   "br.go": "安装 SoundTap",
   "br.pickModel": "请先在第 1 步中选择您的扬声器。",
   "br.trust": "此页面无法从扬声器读取型号或软件版本，因此这两项都以您填写的为准。",
@@ -52,6 +54,7 @@
   "judge.noModel": "{model}：暂不支持。SoundTap 还没有在它上面运行过，因此此页面不会安装。",
   "judge.no": "暂不支持。SoundTap 还没有在此型号上运行过，因此此页面不会安装。",
   "judge.unread": "请输入 Bose 应用为此扬声器显示的 Bose 软件版本。",
+  "judge.preview": "{model}：预览。SoundTap 是根据 Bose 自己的软件推导出来的，还没有人在此型号上运行过；如仍要安装，请勾选下方的预览复选框。",
   "judge.old": "Bose 软件 {version}：{model} 需要 {minimum} 或更高版本。请先在 Bose 应用中更新 Bose 软件。",
 
   "st.asking": "正在询问扬声器…",
