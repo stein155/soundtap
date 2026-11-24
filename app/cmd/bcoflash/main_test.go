@@ -4,6 +4,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"strings"
@@ -15,6 +16,11 @@ import (
 func TestCheckImage(t *testing.T) {
 	img := make([]byte, bco.StockAppSize)
 	img[0] = 0x5a // on no allowlist
+	// Approvals last for the process: an image of its own per run, so a second run
+	// (go test -count) does not find it approved already.
+	if _, err := rand.Read(img[1:17]); err != nil {
+		t.Fatal(err)
+	}
 	sum := sha256.Sum256(img)
 	if _, err := checkImage(img, nil, "", true); err == nil {
 		t.Error("an image on no allowlist was accepted")

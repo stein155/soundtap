@@ -6,12 +6,14 @@ package supervise
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -237,7 +239,7 @@ func TestSuperviseCountsCrashesNotDeliberateStops(t *testing.T) {
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	const name = "counted-daemon"
+	name := uniqueName("counted-daemon")
 	ctx, cancel := context.WithCancel(context.Background())
 	procs := NewProcesses()
 	done := make(chan struct{})
@@ -274,17 +276,24 @@ func TestSuperviseCountsCrashesNotDeliberateStops(t *testing.T) {
 // The 20th short run in a row puts the daemon to rest and records a crash loop, which the
 // crash report offers (ADR 0126).
 func TestSuperviseRecordsCrashLoop(t *testing.T) {
-	s := &supervisor{spec: Spec{Name: "looping-daemon"}}
+	name := uniqueName("looping-daemon")
+	s := &supervisor{spec: Spec{Name: name}}
 	s.counted(true, errors.New("exit status 1"))
-	if _, ok := counters.CrashLoops()["looping-daemon"]; ok {
+	if _, ok := counters.CrashLoops()[name]; ok {
 		t.Fatal("a restart recorded as a crash loop")
 	}
 	s.counted(false, errors.New("exit status 1"))
-	loop, ok := counters.CrashLoops()["looping-daemon"]
+	loop, ok := counters.CrashLoops()[name]
 	if !ok || loop.Err != "exit status 1" || loop.Runs != supervisorMaxRapid || loop.Count != 1 {
 		t.Errorf("crash loop %+v, %v", loop, ok)
 	}
-	if n := counters.DaemonRestarts()["looping-daemon"]; n != 2 {
+	if n := counters.DaemonRestarts()[name]; n != 2 {
 		t.Errorf("%d restarts, want 2", n)
 	}
 }
+
+// The counters are the process's: a daemon name of its own per run, so a second run
+// (go test -count) starts from zero.
+var nameSeq atomic.Int64
+
+func uniqueName(base string) string { return fmt.Sprintf("%s-%d", base, nameSeq.Add(1)) }

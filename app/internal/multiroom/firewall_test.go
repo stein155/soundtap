@@ -8,9 +8,11 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"time"
 )
 
 func TestAllowFollowerRunsNftForIPv4Only(t *testing.T) {
+	forgetAllAllowed(t)
 	orig := runNft
 	t.Cleanup(func() { runNft = orig })
 	var got []string
@@ -31,6 +33,7 @@ func TestAllowFollowerRunsNftForIPv4Only(t *testing.T) {
 
 // A repeated ask inside allowRefresh runs no nft; a failed run is retried.
 func TestAllowFollowerRunsNftOncePerRefresh(t *testing.T) {
+	forgetAllAllowed(t)
 	orig := runNft
 	t.Cleanup(func() { runNft = orig })
 	runs := 0
@@ -51,4 +54,17 @@ func TestAllowFollowerRunsNftOncePerRefresh(t *testing.T) {
 	if runs != 2 {
 		t.Fatalf("nft ran %d times, want 2 (failed try, then one success)", runs)
 	}
+}
+
+// forgetAllAllowed empties the refresh memory before and after a test, so a second run
+// (go test -count) starts as the first did.
+func forgetAllAllowed(t *testing.T) {
+	t.Helper()
+	reset := func() {
+		allowMu.Lock()
+		allowedAt = map[string]time.Time{}
+		allowMu.Unlock()
+	}
+	reset()
+	t.Cleanup(reset)
 }
