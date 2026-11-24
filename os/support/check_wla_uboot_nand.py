@@ -71,6 +71,24 @@ PRODUCT_ONLY = (
 )
 
 
+# The way back's recipes (rt_stock_recipes in uboot-2026.07-usb-recovery.patch): the only
+# nboot.e a U-Boot of ours may carry.
+WAY_BACK = (b"nboot.e ${kloadaddr} 0 ${kernel0_nand_address}; fixsig; ",
+            b"nboot.e ${kloadaddr} 0 ${kernel1_nand_address}; fixsig; ")
+
+
+def bose_boot_path(image: bytes, config: str) -> str:
+    """What makes this U-Boot boot Bose's way, or "" when nothing does."""
+    if b"bootcmd=run " in image:
+        return "bootcmd=run "
+    if image.count(b"nboot.e") != sum(image.count(r) for r in WAY_BACK):
+        return "nboot.e"
+    bootcommand = next((line for line in config.splitlines() if line.startswith("CONFIG_BOOTCOMMAND=")), "")
+    if "nboot.e" in bootcommand:
+        return "nboot.e in CONFIG_BOOTCOMMAND"
+    return ""
+
+
 def main(out: Path, env_in_nand: bool = False) -> None:
     config = (out / ".config").read_text()
     image = (out / "u-boot.img").read_bytes()
@@ -84,14 +102,15 @@ def main(out: Path, env_in_nand: bool = False) -> None:
         raise SystemExit("u-boot.img lacks complete NAND boot command chain")
     if BOOTCOMMAND.encode() not in image:
         raise SystemExit("u-boot.img lacks fixed UBI bootcmd")
-    # Bose's own boot path must not be compiled in whatever the mode. A product U-Boot
-    # will *read* nand_boot out of mtd5 at runtime -- that is how the slot is chosen --
-    # but it must not carry its own copy, or a blank environment would boot Bose's way.
+    # Bose's own boot path must not be what this U-Boot boots, whatever the mode. A product
+    # U-Boot will *read* nand_boot out of mtd5 at runtime -- that is how the slot is chosen --
+    # but it must not carry a default that boots Bose's way. The one place nboot.e may
+    # appear is the USB stick's way back to Bose (ADR 0130), which writes Bose's two slot
+    # recipes into the environment Bose's U-Boot reads; nowhere else.
     # `fixsig` is no longer on this list: the name is theirs, the implementation is ours
     # (cmd/fixsig.c), and a U-Boot without it cannot boot a slot their updater wrote.
-    for forbidden in (b"nboot.e", b"bootcmd=run "):
-        if forbidden in image:
-            raise SystemExit(f"u-boot.img retains Bose boot path: {forbidden.decode()}")
+    if bose_boot_path(image, config):
+        raise SystemExit(f"u-boot.img retains Bose boot path: {bose_boot_path(image, config)}")
     for needed in (b"fixsig", b"variant_raw"):
         if needed not in image:
             raise SystemExit(f"u-boot.img cannot boot stock firmware: {needed.decode()} missing")
