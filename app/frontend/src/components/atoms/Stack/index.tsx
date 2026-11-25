@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import type { ReactNode } from 'react';
+import type { ReactNode, ReactElement } from 'react';
 import { Column } from './styled';
 
 // Children in a column with an even gap; `offset` is the space above it.
@@ -13,7 +13,7 @@ export function Stack({
   gap?: number;
   offset?: number;
   children: ReactNode;
-}) {
+}): ReactElement {
   return (
     <Column $gap={gap} $offset={offset}>
       {children}

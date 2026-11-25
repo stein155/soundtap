@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
+import type { ReactElement } from 'react';
 import { Button } from '../../../atoms/Button';
 import { FormSection } from '../../../atoms/FormSection';
 import { Hint } from '../../../atoms/Hint';
@@ -13,9 +14,9 @@ import { useFirmwareUpload } from './useFirmwareUpload';
 
 // Install a firmware image on a flashed speaker: pick a .stu, let the speaker check it,
 // install into the inactive slot, then reboot into it. Install and reboot each ask first.
-export function FirmwareUpload({ speaker }: { speaker: string }) {
+export function FirmwareUpload({ speaker }: { speaker: string }): ReactElement {
   const { t, lang } = useI18n();
-  const { file, report, progress, outcome, inputRef, onChange, install, restart } =
+  const { file, report, signed, progress, outcome, inputRef, onChange, install, restart } =
     useFirmwareUpload(speaker);
 
   return (
@@ -41,6 +42,7 @@ export function FirmwareUpload({ speaker }: { speaker: string }) {
       {report && (
         <ReportCard
           report={report}
+          signed={signed}
           busy={progress !== null}
           onInstall={install}
           onReboot={restart}

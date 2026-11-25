@@ -2,7 +2,15 @@
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
 import { apiFetch, apiURL, PRESS_TIMEOUT_MS } from '../base';
-import { deadline, apiFailure, getJSON, send, sendWithin, SLOW_READ_TIMEOUT_MS } from './http';
+import {
+  contract,
+  deadline,
+  apiFailure,
+  getJSON,
+  send,
+  sendWithin,
+  SLOW_READ_TIMEOUT_MS,
+} from './http';
 import type { CrashReport, Settings, Tone, WifiNetwork } from '../types';
 
 // Settings: name, bass (with its range), network, display, alarm, multiroom and MQTT.
@@ -35,7 +43,7 @@ export async function getLipSync(
   }
 }
 
-export function setLipSync(ms: number, speaker?: string) {
+export async function setLipSync(ms: number, speaker?: string): Promise<unknown> {
   return send('/api/soundbar/lip-sync', 'PUT', { ms }, speaker);
 }
 
@@ -54,22 +62,32 @@ export async function getSoundbarChoice(
   }
 }
 
-export function setSoundbarChoice(choice: SoundbarChoice, mode: string, speaker?: string) {
+export async function setSoundbarChoice(
+  choice: SoundbarChoice,
+  mode: string,
+  speaker?: string
+): Promise<unknown> {
   return send(`/api/soundbar/${choice}`, 'PUT', { mode }, speaker);
 }
 
 // The soundbar takes all four levels at once.
-export function startAdaptiq(speaker?: string) {
+export async function startAdaptiq(speaker?: string): Promise<unknown> {
   return send('/api/soundbar/adaptiq', 'POST', { confirm: true }, speaker);
 }
 
-export function setTone(levels: Record<keyof Tone, number>, speaker?: string) {
+export async function setTone(
+  levels: Record<keyof Tone, number>,
+  speaker?: string
+): Promise<unknown> {
   return send('/api/soundbar/tone', 'PUT', levels, speaker);
 }
 
 // saveSettings applies any subset of the settings; the speaker validates all of it
 // before it writes any of it.
-export async function saveSettings(patch: Record<string, unknown>, speaker?: string) {
+export async function saveSettings(
+  patch: Record<string, unknown>,
+  speaker?: string
+): Promise<unknown> {
   return send('/api/settings', 'PUT', patch, speaker);
 }
 
@@ -86,7 +104,11 @@ export async function getCrashReport(speaker?: string): Promise<CrashReport | nu
 }
 
 // Records that the owner opened the issue for a crash or dismissed it: it is not offered again.
-export function recordCrashReport(id: string, outcome: 'reported' | 'dismissed', speaker?: string) {
+export async function recordCrashReport(
+  id: string,
+  outcome: 'reported' | 'dismissed',
+  speaker?: string
+): Promise<unknown> {
   return send('/api/crash-report', 'POST', { id, outcome }, speaker);
 }
 
@@ -108,7 +130,7 @@ const RESTORE_TIMEOUT_MS = 35000;
 
 // factoryReset clears presets, settings, the speaker's name, paired devices and
 // Wi-Fi, then restarts into setup mode. The firmware is not touched.
-export async function factoryReset(speaker?: string) {
+export async function factoryReset(speaker?: string): Promise<unknown> {
   return sendWithin('/api/factory-reset', 'POST', {
     body: { confirm: true },
     speaker,
@@ -120,14 +142,18 @@ export async function factoryReset(speaker?: string) {
 // there is an adapter, the name a phone sees, and which devices it remembers. Stock
 // answered this on /bluetoothInfo; SoundTap had no equivalent, so a pairing was
 // invisible until you tried to play something.
-export type BluetoothDevice = { address: string; name: string; connected: boolean };
-export type BluetoothStatus = {
+export interface BluetoothDevice {
+  address: string;
+  name: string;
+  connected: boolean;
+}
+export interface BluetoothStatus {
   adapter: boolean;
   alias: string;
   powered: boolean;
   discoverable: boolean;
   devices?: BluetoothDevice[];
-};
+}
 
 export async function getBluetooth(speaker?: string): Promise<BluetoothStatus | null> {
   try {
@@ -137,21 +163,20 @@ export async function getBluetooth(speaker?: string): Promise<BluetoothStatus | 
   }
 }
 
-// Forget every pairing. On the ST10 this used to be a ten-second key hold; the
-// Wireless Link Adapter has no such key, so there it was not possible at all.
-// The speaker gives BlueZ up to 30 s for it (bluetoothClearDeadline).
-// After the key press (sendWithin adds the press window): the speaker's 30 s, plus a proxied
-// speaker's slack on top.
+// Forget one paired device by its address, as stock's app did. The speaker gives BlueZ up
+// to 30 s for it (bluetoothClearDeadline). After the key press (sendWithin adds the press
+// window): the speaker's 30 s, plus a proxied speaker's slack on top.
 const BLUETOOTH_CLEAR_TIMEOUT_MS = 45000;
 
-export function clearBluetoothPairings(speaker?: string) {
-  return sendWithin('/api/bluetooth/clear', 'POST', {
+export async function forgetBluetoothDevice(address: string, speaker?: string): Promise<unknown> {
+  return sendWithin('/api/bluetooth/forget', 'POST', {
+    body: { address },
     speaker,
     timeoutMs: BLUETOOTH_CLEAR_TIMEOUT_MS,
   });
 }
 
-export function pairBluetooth(speaker?: string) {
+export async function pairBluetooth(speaker?: string): Promise<unknown> {
   return send('/api/bluetooth/pair', 'POST', undefined, speaker);
 }
 
@@ -165,12 +190,9 @@ const WIFI_SCAN_TIMEOUT_MS = 90000;
 export async function scanWifi(speaker?: string): Promise<WifiNetwork[] | null> {
   try {
     // A POST: a survey takes the speaker's radio, so it goes through the write guard.
-    const r = (await sendWithin('/api/wifi/scan', 'POST', {
-      speaker,
-      timeoutMs: WIFI_SCAN_TIMEOUT_MS,
-    })) as {
-      networks?: WifiNetwork[];
-    } | null;
+    const r = await contract<{ networks?: WifiNetwork[] } | null>(
+      sendWithin('/api/wifi/scan', 'POST', { speaker, timeoutMs: WIFI_SCAN_TIMEOUT_MS })
+    );
     return r?.networks ?? [];
   } catch {
     return null;
@@ -193,7 +215,7 @@ export async function setWifi(
     password: string;
   },
   speaker?: string
-) {
+): Promise<unknown> {
   return sendWithin('/api/wifi', 'POST', {
     body: { ssid, security, password },
     speaker,
@@ -235,11 +257,11 @@ export async function getWifiFellBack(speaker?: string): Promise<string> {
   }
 }
 
-export async function dismissWifiFellBack(speaker?: string) {
+export async function dismissWifiFellBack(speaker?: string): Promise<unknown> {
   return send('/api/wifi/fallback/dismiss', 'POST', undefined, speaker);
 }
 
-export async function forgetWifi(id: string, speaker?: string) {
+export async function forgetWifi(id: string, speaker?: string): Promise<unknown> {
   return send('/api/wifi/forget', 'POST', { id }, speaker);
 }
 

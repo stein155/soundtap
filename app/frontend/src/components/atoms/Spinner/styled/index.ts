@@ -4,7 +4,7 @@
 import styled, { css } from 'styled-components';
 import { reducedMotion, spin } from '../../../../theme/keyframes';
 
-export const Ring = styled.span<{ $small?: boolean; $big?: boolean }>`
+export const Ring = styled.span<{ $small?: boolean | undefined; $big?: boolean | undefined }>`
   width: 20px;
   height: 20px;
   flex-shrink: 0;
@@ -15,14 +15,14 @@ export const Ring = styled.span<{ $small?: boolean; $big?: boolean }>`
   animation: ${spin} 0.8s linear infinite;
   ${reducedMotion}
   ${({ $small }) =>
-    $small &&
+    $small === true &&
     css`
       width: 10px;
       height: 10px;
       border-top-color: var(--accent-fill);
     `}
   ${({ $big }) =>
-    $big &&
+    $big === true &&
     css`
       width: 40px;
       height: 40px;

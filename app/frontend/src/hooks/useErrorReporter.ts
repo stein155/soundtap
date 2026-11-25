@@ -6,10 +6,35 @@ import { useI18n } from '../lib/i18n';
 
 const SHOW_MS = 5000;
 
+// The HTTP status an error carries (an ApiError), if any.
+const statusOf = (err: unknown): number | undefined =>
+  typeof err === 'object' && err !== null && 'status' in err && typeof err.status === 'number'
+    ? err.status
+    : undefined;
+
+export type ReportFailure = (
+  roomName: string,
+  key?: 'actionFailed',
+  page?: boolean
+) => (err?: unknown) => void;
+export type Notify = (text: string, takeBack?: () => void) => void;
+export type Block = (text: string) => void;
+
+export interface ErrorReporter {
+  message: string;
+  undo: (() => void) | null;
+  failed: ReportFailure;
+  notify: Notify;
+  dismiss: () => void;
+  blocked: { open: boolean; text: string };
+  block: Block;
+  dismissBlocked: () => void;
+}
+
 // One place where a failed action says so: "Kitchen is not responding", shown for a few
 // seconds. `failed(roomName)` is the catch handler for any request to that room; `key`
 // picks another message about that room.
-export function useErrorReporter() {
+export function useErrorReporter(): ErrorReporter {
   const { t } = useI18n();
   const [message, setMessage] = useState('');
   // The toast's action, when the message is about something that can be taken back.
@@ -37,8 +62,8 @@ export function useErrorReporter() {
     (roomName: string, key: 'actionFailed' = 'actionFailed', page = false) =>
       (err?: unknown) => {
         // A speaker that answered "no" (4xx) is not one that does not respond.
-        const status = (err as { status?: number } | undefined)?.status;
-        const refused = !!status && status >= 400 && status < 500;
+        const status = statusOf(err);
+        const refused = status !== undefined && status >= 400 && status < 500;
         const text = latestT.current(refused ? 'actionRefused' : key, { name: roomName });
         if (page) {
           block(text);
@@ -63,7 +88,3 @@ export function useErrorReporter() {
   );
   return { message, undo, failed, notify, dismiss, blocked, block, dismissBlocked };
 }
-
-export type ReportFailure = ReturnType<typeof useErrorReporter>['failed'];
-export type Notify = ReturnType<typeof useErrorReporter>['notify'];
-export type Block = ReturnType<typeof useErrorReporter>['block'];

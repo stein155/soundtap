@@ -20,12 +20,13 @@ import {
   StatusText,
   Text,
 } from './styled';
+import type { ReactElement } from 'react';
 
 interface Props {
   // "Kitchen", or "Kitchen + Office" for a group.
   name: string;
   // The lead speaker's model, for its drawing when nothing with artwork plays.
-  model?: string;
+  model?: string | undefined;
   playback: PlaybackView;
   on: boolean;
   // The room the player at the bottom controls.
@@ -36,7 +37,15 @@ interface Props {
 
 // A room in the speakers list: the speaker's drawing, name, what it plays, and its own transport button.
 // Tapping it makes it the room the player controls.
-export function RoomCard({ name, model, playback, on, active, onOpen, onTransport }: Props) {
+export function RoomCard({
+  name,
+  model,
+  playback,
+  on,
+  active,
+  onOpen,
+  onTransport,
+}: Props): ReactElement {
   return (
     <Card $active={active}>
       <Row>
@@ -77,10 +86,10 @@ export function OfflineRoomCard({
   onRetry,
 }: {
   name: string;
-  model?: string;
+  model?: string | undefined;
   connecting: boolean;
   onRetry: () => void;
-}) {
+}): ReactElement {
   const { t } = useI18n();
   return (
     <Card $offline>

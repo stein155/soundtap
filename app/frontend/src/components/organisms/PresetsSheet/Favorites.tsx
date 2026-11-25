@@ -1,15 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
+import type { ReactElement } from 'react';
 import { Art } from '../../molecules/Art';
 import { Icon } from '../../atoms/Icon';
+import { useLongPress } from '../../../hooks/useLongPress';
 import { useI18n } from '../../../lib/i18n';
 import { logoURL } from '../../../lib/artwork';
 import type { RecentItem } from '../../../lib/recent';
 
 export interface FavoriteActions {
+  // The speaker's list; the first is the favorite, anything after it is from before the list
+  // offered one and stays out of sight.
   items: RecentItem[];
-  // Saves what is held, or else what plays.
+  // Saves what is held, or else what plays, in place of the favorite.
   onAdd: () => void;
   onPlay: (item: RecentItem) => void;
   onRemove: (item: RecentItem) => void;
@@ -22,36 +26,8 @@ interface Props extends FavoriteActions {
   close: () => void;
 }
 
-// The heart under the presets: it saves what plays, or what a browse list handed over, and
-// says what it does, or that there is nothing to save yet. A long press ends in the same
-// click, so stock's gesture works, and so does a keyboard.
-function AddFavorite({
-  canAdd,
-  saving,
-  onAdd,
-  empty,
-}: Pick<Props, 'canAdd' | 'saving' | 'onAdd'> & { empty: boolean }) {
-  const { t } = useI18n();
-  const ready = canAdd || saving;
-  const hint = ready ? t('favoriteHold') : empty ? t('favoriteNone') : null;
-  return (
-    <button
-      type="button"
-      className="prow-main fav-add"
-      onClick={() => {
-        if (ready) onAdd();
-      }}
-    >
-      <Icon.heart width="24" height="24" />
-      <span className="ptext">
-        <span className="pname">{t('favorites')}</span>
-        {hint && <span className="psrc">{hint}</span>}
-      </span>
-    </button>
-  );
-}
-
-// Stock's favorites: what the six presets have no room for.
+// The one favorite beside the six presets. A tap plays it; a long press saves what plays in
+// its place, as on a preset; while a browse list holds something, a tap saves that.
 export function Favorites({
   items,
   speaker,
@@ -61,52 +37,57 @@ export function Favorites({
   onAdd,
   onPlay,
   onRemove,
-}: Props) {
+}: Props): ReactElement {
   const { t } = useI18n();
+  const item = items.at(0);
+  const save = () => {
+    onAdd();
+    if (saving) close();
+  };
+  const press = useLongPress(canAdd && !saving ? save : null, () => {
+    if (saving) {
+      save();
+      return;
+    }
+    if (!item) return;
+    onPlay(item);
+    close();
+  });
   return (
-    <section className="favs" aria-label={t('favorites')}>
-      <AddFavorite
-        canAdd={canAdd}
-        saving={saving}
-        onAdd={() => {
-          onAdd();
-          if (saving) close();
-        }}
-        empty={!items.length}
-      />
-      <ul className="prows">
-        {items.map((item) => (
-          <li key={item.key} className="prow">
-            <button
-              type="button"
-              className="prow-main"
-              disabled={saving}
-              onClick={() => {
-                onPlay(item);
-                close();
-              }}
-            >
+    <section className="pfav" aria-labelledby="pfav-title">
+      <h2 className="pbar" id="pfav-title">
+        {t('favorite')}
+      </h2>
+      <ul className="pfav-list" aria-labelledby="pfav-title">
+        <li className={`pfav-row${item ? '' : ' empty'}`}>
+          <button type="button" className="pfav-main" {...press}>
+            {item ? (
               <Art
                 src={logoURL({ logo: item.art, tuneInId: item.tuneInId }, speaker)}
                 name={item.name}
-                className="part"
+                className="pfav-art"
               />
-              <span className="ptext">
-                <span className="pname">{item.name}</span>
-                <span className="psrc">{item.spotifyUri ? 'Spotify' : 'TuneIn'}</span>
-              </span>
-            </button>
+            ) : (
+              <span className="pfav-art pempty" aria-hidden="true" />
+            )}
+            <span className="ptext">
+              <span className="pname">{item ? item.name : t('presetOpen')}</span>
+              {item && <span className="psrc">{item.spotifyUri ? 'Spotify' : 'TuneIn'}</span>}
+            </span>
+          </button>
+          {item && !saving && (
             <button
               type="button"
-              className="prow-more"
+              className="pfav-remove"
               aria-label={`${t('remove')} ${item.name}`}
               onClick={() => onRemove(item)}
             >
               <Icon.close />
             </button>
-          </li>
-        ))}
+          )}
+        </li>
       </ul>
+      <p className="pnote">{t('favoriteNote')}</p>
     </section>
   );
 }

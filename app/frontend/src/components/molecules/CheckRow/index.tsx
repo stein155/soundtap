@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import type { ReactNode } from 'react';
+import type { ReactNode, ReactElement } from 'react';
 import { Checkbox } from '../../atoms/Checkbox';
 import { Description, Row, Text, Title } from './styled';
 
@@ -17,7 +17,7 @@ interface Props {
 
 // Something that is on or off: a checkbox, a title and what it means. The whole row is
 // the target.
-export function CheckRow({ on, title, desc, disabled, onToggle, plain }: Props) {
+export function CheckRow({ on, title, desc, disabled, onToggle, plain }: Props): ReactElement {
   return (
     <Row
       type="button"
@@ -30,7 +30,7 @@ export function CheckRow({ on, title, desc, disabled, onToggle, plain }: Props) 
       <Checkbox checked={on} strong={plain} />
       <Text>
         <Title>{title}</Title>
-        {desc && <Description>{desc}</Description>}
+        {Boolean(desc) && <Description>{desc}</Description>}
       </Text>
     </Row>
   );

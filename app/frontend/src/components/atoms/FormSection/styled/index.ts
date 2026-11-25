@@ -4,8 +4,8 @@
 import styled from 'styled-components';
 
 // Small uppercase section label, as in the Stockholm settings.
-export const Heading = styled.h3<{ $spaced?: boolean }>`
-  margin: ${({ $spaced }) => ($spaced ? '22px' : 0)} 0 0;
+export const Heading = styled.h3<{ $spaced?: boolean | undefined }>`
+  margin: ${({ $spaced }) => ($spaced === true ? '22px' : 0)} 0 0;
   padding: 0 0 8px;
   font-size: 12px;
   font-weight: 700;

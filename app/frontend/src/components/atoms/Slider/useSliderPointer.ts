@@ -4,7 +4,7 @@
 import { useRef } from 'react';
 import type * as React from 'react';
 
-export const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+export const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
 // How far a finger moves before it counts as a drag, and how far one tap moves the value.
 const DRAG_SLOP = 6;
 const TAP_STEP = 10;
@@ -18,15 +18,25 @@ interface Range {
 
 type PointerHandler = (e: React.PointerEvent<HTMLDivElement>) => void;
 
+export interface SliderPointer {
+  track: React.RefObject<HTMLDivElement | null>;
+  handlers: {
+    onPointerDown: PointerHandler;
+    onPointerMove: PointerHandler;
+    onPointerUp: PointerHandler;
+    onPointerCancel: () => void;
+  };
+}
+
 // The slider's pointer handling: a mouse drag anywhere on the track (captured, so it keeps
 // tracking outside the element), and a finger that only drags when it moves sideways.
-export function useSliderPointer({ value, min, max, onChange }: Range) {
+export function useSliderPointer({ value, min, max, onChange }: Range): SliderPointer {
   const track = useRef<HTMLDivElement | null>(null);
   const span = Math.max(1, max - min);
 
   const valueAt = (clientX: number) => {
     const box = track.current?.getBoundingClientRect();
-    if (!box?.width) return null;
+    if (box === undefined || box.width === 0 || Number.isNaN(box.width)) return null;
     const ratio = clamp((clientX - box.left) / box.width, 0, 1);
     return clamp(Math.round(min + ratio * span), min, max);
   };
@@ -51,7 +61,7 @@ export function useSliderPointer({ value, min, max, onChange }: Range) {
   };
   const onPointerMove: PointerHandler = (e) => {
     const t = touch.current;
-    if (t && t.id === e.pointerId) {
+    if (t?.id === e.pointerId) {
       if (!t.dragging) {
         const dx = Math.abs(e.clientX - t.x);
         const dy = Math.abs(e.clientY - t.y);
@@ -72,7 +82,7 @@ export function useSliderPointer({ value, min, max, onChange }: Range) {
   const onPointerUp: PointerHandler = (e) => {
     const t = touch.current;
     touch.current = null;
-    if (!t || t.id !== e.pointerId || t.dragging) return;
+    if (t?.id !== e.pointerId || t.dragging) return;
     const target = valueAt(e.clientX);
     if (target !== null)
       onChange(clamp(value + clamp(target - value, -TAP_STEP, TAP_STEP), min, max));

@@ -14,7 +14,7 @@ export const Label = styled.span`
   font-weight: 500;
 `;
 
-export const Row = styled.button<{ $selected?: boolean }>`
+export const Row = styled.button<{ $selected?: boolean | undefined }>`
   ${rowLayout}
   width: 100%;
   text-align: left;
@@ -25,7 +25,7 @@ export const Row = styled.button<{ $selected?: boolean }>`
   }
 
   ${Label} {
-    color: ${({ $selected }) => ($selected ? 'var(--accent)' : 'inherit')};
-    font-weight: ${({ $selected }) => ($selected ? 700 : 500)};
+    color: ${({ $selected }) => ($selected === true ? 'var(--accent)' : 'inherit')};
+    font-weight: ${({ $selected }) => ($selected === true ? 700 : 500)};
   }
 `;

@@ -20,7 +20,7 @@ export function alarmSummary(
 
 // The paired devices by name, or "No devices paired".
 export function bluetoothSummary(status: BluetoothStatus, t: TranslateFn): string {
-  return status.devices?.length
+  return status.devices !== undefined && status.devices.length > 0
     ? status.devices.map((d) => d.name || d.address).join(', ')
     : t('btNone');
 }
@@ -31,4 +31,4 @@ export function networkSummary(network: NetworkInfo | null, t: TranslateFn): str
 }
 
 // Stock's Wireless Link has no bass control: its range is 0..0.
-export const hasBass = (caps: BassCaps) => caps.min < caps.max;
+export const hasBass = (caps: BassCaps): boolean => caps.min < caps.max;

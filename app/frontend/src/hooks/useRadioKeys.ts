@@ -3,20 +3,35 @@
 
 import type { KeyboardEvent } from 'react';
 
-const STEP: Record<string, number> = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+const STEP: Partial<Record<string, number>> = {
+  ArrowRight: 1,
+  ArrowDown: 1,
+  ArrowLeft: -1,
+  ArrowUp: -1,
+};
+
+export interface RadioKeys {
+  tabIndex: (index: number) => 0 | -1;
+  onKeyDown: (e: KeyboardEvent<HTMLElement>) => void;
+}
 
 // Keyboard behaviour of an ARIA radio group: the group is one tab stop (the checked
 // radio, or the first when none is), the arrows move focus and selection, wrapping at the
 // ends, and Home/End jump to the first and last. Space and Enter already click the button.
 // onKeyDown goes on each radio, the element that has the focus.
-export function useRadioKeys(count: number, selected: number, select: (index: number) => void) {
+export function useRadioKeys(
+  count: number,
+  selected: number,
+  select: (index: number) => void
+): RadioKeys {
   const stop = selected >= 0 ? selected : 0;
   const tabIndex = (index: number) => (index === stop ? 0 : -1);
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
+    const step = STEP[e.key];
     let next: number;
     if (e.key === 'Home') next = 0;
     else if (e.key === 'End') next = count - 1;
-    else if (e.key in STEP) next = (stop + STEP[e.key] + count) % count;
+    else if (step !== undefined) next = (stop + step + count) % count;
     else return;
     e.preventDefault();
     select(next);

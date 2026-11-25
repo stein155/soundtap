@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
 import { Slider, SliderThumb, SliderTrack } from 'react-aria-components';
 import { useI18n } from '../../../lib/i18n';
 import { seekTrack, trackPosition, type TrackPosition } from '../../../lib/api/playback';
@@ -19,7 +19,7 @@ export function clock(ms: number): string {
 }
 
 interface Props {
-  speaker?: string;
+  speaker?: string | undefined;
   playing: boolean;
   // Changes with the track and the play status, to read the position again at once.
   nowKey: string;
@@ -27,7 +27,7 @@ interface Props {
 
 // How far the track is, for what has an end: a stream shows nothing. The knob only shows
 // where the speaker can seek, as in Stockholm.
-export function TrackTime({ speaker, playing, nowKey }: Props) {
+export function TrackTime({ speaker, playing, nowKey }: Props): ReactElement | null {
   const { t } = useI18n();
   const [time, setTime] = useState<TrackPosition | null>(null);
   const [dragged, setDragged] = useState<number | null>(null);
@@ -55,7 +55,8 @@ export function TrackTime({ speaker, playing, nowKey }: Props) {
     }, TICK_MS);
     return () => clearInterval(id);
   }, [playing]);
-  if (!time?.durationMs) return null;
+  // No track length (or none yet): nothing to show a position on.
+  if (time === null || time.durationMs === 0 || Number.isNaN(time.durationMs)) return null;
   const seek = (positionMs: number) => {
     seeks.current++;
     setDragged(null);

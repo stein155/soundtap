@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useState } from 'react';
+import { useState, type ReactElement } from 'react';
 import { Icon } from '../../atoms/Icon';
 import { RowInput } from '../FieldRow';
 import { useI18n } from '../../../lib/i18n';
@@ -16,7 +16,13 @@ interface Props {
 }
 
 // A password field with a show/hide toggle, for use inside a FieldRow.
-export function PasswordInput({ id, value, onChange, placeholder, autoComplete = 'off' }: Props) {
+export function PasswordInput({
+  id,
+  value,
+  onChange,
+  placeholder,
+  autoComplete = 'off',
+}: Props): ReactElement {
   const { t } = useI18n();
   const [visible, setVisible] = useState(false);
   return (

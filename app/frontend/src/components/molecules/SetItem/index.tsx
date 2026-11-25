@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import type { ReactNode } from 'react';
+import type { ReactNode, ReactElement } from 'react';
 import { Icon, type IconName } from '../../atoms/Icon';
 import {
+  Badge,
   Chevron,
   Desc,
   Glyph as PlainGlyph,
@@ -18,60 +19,87 @@ import {
 // The icon, label and current value of a settings row; shared by rows that open a page
 // (SetItem, Accordion) and switch rows.
 // art: a picture on its own instead of an icon tile (a speaker's drawing, as on its card).
+// strong: the label in the weight of a name (a speaker), with its desc under it.
+// disc: the icon on a grey disc, the label bold with its desc as a sentence under it (a
+// route to take, as on the Updates page).
 function SettingLabel({
   icon,
   label,
   meta,
   desc,
   art,
+  strong = false,
+  disc = false,
 }: {
-  icon?: IconName;
+  icon?: IconName | undefined;
   label: string;
-  meta?: string;
-  desc?: string;
-  art?: ReactNode;
+  meta?: string | undefined;
+  desc?: string | undefined;
+  art?: ReactNode | undefined;
+  strong?: boolean | undefined;
+  disc?: boolean | undefined;
 }) {
   const Glyph = icon && Icon[icon];
+  const hasArt = Boolean(art);
   return (
     <>
-      {art && <PlainGlyph aria-hidden="true">{art}</PlainGlyph>}
-      {Glyph && !art && (
-        <IconBadge aria-hidden="true">
-          <Glyph width="18" height="18" />
+      {hasArt && <PlainGlyph aria-hidden="true">{art}</PlainGlyph>}
+      {Glyph && !hasArt && (
+        <IconBadge aria-hidden="true" $disc={disc}>
+          <Glyph width="22" height="22" />
         </IconBadge>
       )}
       <Text>
-        <Label>{label}</Label>
+        <Label $strong={strong || disc}>{label}</Label>
         {meta && <Meta>{meta}</Meta>}
-        {desc && <Desc>{desc}</Desc>}
+        {desc && <Desc $close={strong && !disc}>{desc}</Desc>}
       </Text>
     </>
   );
 }
 
 // A settings row that opens a page of its own, with a chevron that says so. `danger` is a
-// row that acts instead (a factory reset): red, and no chevron.
+// row that acts instead (a factory reset): red, and no chevron. A speaker's row names it in
+// bold with its model under it (desc), and a badge before the chevron says what waits.
 export function SetItem({
   icon,
   label,
   meta,
+  desc,
   art,
-  danger,
+  badge,
+  inkBadge,
+  danger = false,
+  disc = false,
   onClick,
 }: {
-  icon?: IconName;
+  icon?: IconName | undefined;
   label: string;
-  meta?: string;
-  art?: ReactNode;
+  meta?: string | undefined;
+  desc?: string | undefined;
+  art?: ReactNode | undefined;
+  badge?: string | undefined;
+  // The badge in ink instead of amber.
+  inkBadge?: boolean;
   danger?: boolean;
+  disc?: boolean | undefined;
   onClick: () => void;
-}) {
+}): ReactElement {
   return (
     <Row type="button" onClick={onClick} $danger={danger}>
-      <SettingLabel icon={icon} label={label} meta={meta} art={art} />
+      <SettingLabel
+        icon={icon}
+        label={label}
+        meta={meta}
+        desc={desc}
+        art={art}
+        strong={!!desc && !disc}
+        disc={disc}
+      />
+      {badge && <Badge $ink={inkBadge}>{badge}</Badge>}
       {!danger && (
         <Chevron aria-hidden="true">
-          <Icon.chevron width="16" height="16" />
+          <Icon.chevron width="18" height="18" />
         </Chevron>
       )}
     </Row>
@@ -88,15 +116,22 @@ export function SetSwitch({
   disabled,
   onToggle,
 }: {
-  icon?: IconName;
+  icon?: IconName | undefined;
   label: string;
-  desc?: string;
+  desc?: string | undefined;
   on: boolean;
   disabled?: boolean;
   onToggle: () => void;
-}) {
+}): ReactElement {
   return (
-    <Row type="button" role="switch" aria-checked={on} disabled={disabled} onClick={onToggle}>
+    <Row
+      type="button"
+      role="switch"
+      aria-checked={on}
+      disabled={disabled}
+      onClick={onToggle}
+      $roomy={!!desc}
+    >
       <SettingLabel icon={icon} label={label} desc={desc} />
       <Switch $on={on} aria-hidden="true" />
     </Row>

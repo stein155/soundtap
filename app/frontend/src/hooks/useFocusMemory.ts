@@ -11,7 +11,7 @@ export function useFocusMemory(
   key: string | undefined,
   page: RefObject<HTMLElement | null>,
   body: RefObject<HTMLElement | null>
-) {
+): (e: FocusEvent<HTMLElement>) => void {
   const rows = useRef(new Map<string | undefined, string>());
   const restore = useEffectEvent(() => {
     const active = document.activeElement;

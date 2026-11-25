@@ -8,7 +8,7 @@ import { loadLanguage, makeT } from './i18n';
 
 const answer = (status: number, body: unknown) => httpError(status, JSON.stringify(body), 'POST');
 
-beforeAll(() => loadLanguage('nl'));
+beforeAll(async () => loadLanguage('nl'));
 
 // Users see a translated message; a refusal the user can act on adds its reason, said by
 // the code of the speaker's answer, never in the speaker's English.

@@ -13,13 +13,21 @@ type Timer = ReturnType<typeof setTimeout>;
 // Empty slots until the speaker has answered. One array, so the player's memo holds.
 const NO_PRESETS: (Preset | null)[] = new Array<Preset | null>(PRESET_COUNT).fill(null);
 
+export interface SpeakerReads {
+  presets: (Preset | null)[];
+  refresh: () => Promise<boolean>;
+  refreshPresets: () => Promise<boolean>;
+  discardInFlight: () => void;
+  nudge: () => void;
+}
+
 // The reads side of useSpeaker: the now-playing + volume read, guarded against answers that
 // arrive late for a speaker or a newer read, and the presets, which the page holds once per
 // speaker (store.ts) so the settings page's alarm sees the same slots.
 export function useSpeakerReads(
   speaker: string,
   applyState: (np: NowPlaying | null | undefined, vol: number | null | undefined) => void
-) {
+): SpeakerReads {
   const presets = useSpeakerResource('presets', speaker) ?? NO_PRESETS;
   // Monotonic id per refresh, so a slow response can't clobber a newer one
   // (refresh is fired concurrently by the poll, nudge timers and action handlers).

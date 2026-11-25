@@ -3,8 +3,9 @@
 
 import { targetDevice } from '../lib/base';
 import { spotifyPlay } from '../lib/spotify';
+import type { SpotifyArtist, SpotifyPlaylist, SpotifyRecent, SpotifyView } from '../lib/spotify';
 import { useSpotifyHome } from './spotify/home';
-import { useLibraryPages, type LibraryPage } from './spotify/pages';
+import { useLibraryPages, type LibraryPage, type LoadedPage } from './spotify/pages';
 import { useSpotifyError, useSpotifySession } from './spotify/session';
 
 export type { LibraryPage, LoadedPage } from './spotify/pages';
@@ -12,7 +13,28 @@ export type { LibraryPage, LoadedPage } from './spotify/pages';
 export interface PlayItem {
   uri: string;
   name: string;
-  artwork?: string;
+  artwork?: string | undefined;
+}
+
+export interface SpotifyLibrary {
+  view: SpotifyView;
+  statusLoaded: boolean;
+  playlists: SpotifyPlaylist[];
+  homeLoaded: boolean;
+  recent: SpotifyRecent[];
+  following: SpotifyArtist[];
+  trail: LibraryPage[];
+  loadingMore: boolean;
+  page: LoadedPage | null;
+  error: string;
+  hold: ((item: PlayItem) => void) | undefined;
+  open: (next: LibraryPage) => void;
+  canGoUp: boolean;
+  goUp: () => void;
+  retry: () => void;
+  loadMore: () => Promise<void>;
+  play: (uri: string | undefined, context: string | undefined, item: PlayItem) => Promise<void>;
+  disconnect: () => Promise<void>;
 }
 
 // The selected speaker's own Spotify library (its librespot session, ADR 0014): Liked
@@ -25,7 +47,7 @@ export function useSpotifyLibrary(
   hold: ((item: PlayItem) => void) | undefined,
   onPlayed: () => void,
   opened = active
-) {
+): SpotifyLibrary {
   const { view, statusLoaded, renew, disconnect } = useSpotifySession(active);
   const home = useSpotifyHome(active && view === 'ready');
   const { error, setError, showError } = useSpotifyError(renew);
@@ -66,5 +88,3 @@ export function useSpotifyLibrary(
     disconnect,
   };
 }
-
-export type SpotifyLibrary = ReturnType<typeof useSpotifyLibrary>;

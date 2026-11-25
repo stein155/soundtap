@@ -21,14 +21,14 @@ const item: RecentItem = {
 describe('RecentList', () => {
   it('lists recent entries with their service, and plays the tapped one', async () => {
     const play = vi.fn();
-    render(<RecentList recent={[item]} speaker="" onPlayRecent={play} onRemoveRecent={() => {}} />);
+    render(<RecentList recent={[item]} speaker="" onPlayRecent={play} onRemoveRecent={vi.fn()} />);
     expect(screen.getByText(/· TuneIn$/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /^Qmusic/ }));
     expect(play).toHaveBeenCalledWith(item);
   });
 
   it('says what the page is for while nothing was played', () => {
-    render(<RecentList recent={[]} speaker="" onPlayRecent={() => {}} onRemoveRecent={() => {}} />);
+    render(<RecentList recent={[]} speaker="" onPlayRecent={vi.fn()} onRemoveRecent={vi.fn()} />);
     expect(screen.getByText(/Speel iets af|Go play something/)).toBeInTheDocument();
   });
 });

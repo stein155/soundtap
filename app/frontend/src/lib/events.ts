@@ -16,13 +16,33 @@ import { apiURL } from './base';
 import type { NowPlaying } from './types';
 
 // The server pings every 5 s; three missed beats is a dead stream.
+// An event's JSON object, or null when it is no JSON or no object: such an event is skipped.
+function eventObject(e: MessageEvent): object | null {
+  try {
+    const parsed: unknown = JSON.parse(String(e.data));
+    return typeof parsed === 'object' && parsed !== null ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+// A reported level, which a muted speaker shows as silence.
+function levelOf(volume: unknown, muted: unknown): number | undefined {
+  if (typeof volume !== 'number') return undefined;
+  return muted === true ? 0 : volume;
+}
+
 const STALE_MS = 15000;
 const STALE_RETRY_MS = 3000;
 
 interface StateHandlers {
-  onState?: (s: { now?: NowPlaying; volume?: number; presets?: string }) => void;
-  onOpen?: () => void;
-  onError?: () => void;
+  onState?: (s: {
+    now?: NowPlaying | undefined;
+    volume?: number | undefined;
+    presets?: string | undefined;
+  }) => void;
+  onOpen?: (() => void) | undefined;
+  onError?: (() => void) | undefined;
 }
 
 // watched opens an EventSource on url and keeps it honest. The server sends a ping every
@@ -31,7 +51,7 @@ interface StateHandlers {
 // open a fresh one. Returns the close function.
 function watched(
   url: string,
-  { onOpen, onError }: { onOpen?: () => void; onError?: () => void },
+  { onOpen, onError }: { onOpen?: (() => void) | undefined; onError?: (() => void) | undefined },
   events: Record<string, (e: MessageEvent) => void>
 ): () => void {
   let es: EventSource;
@@ -98,23 +118,22 @@ export function subscribeState(
   speaker?: string
 ): () => void {
   if (typeof EventSource === 'undefined') {
-    return () => {}; // no SSE support: caller keeps polling
+    return () => {
+      // No SSE support: nothing to close, the caller keeps polling.
+    };
   }
   return watched(
     apiURL('/api/events', speaker),
     { onOpen, onError },
     {
       state: (e) => {
-        let data: { now?: unknown; volume?: unknown; muted?: unknown; presets?: unknown };
-        try {
-          data = JSON.parse(e.data as string) as typeof data;
-        } catch {
-          return;
-        }
+        const parsed = eventObject(e);
+        if (!parsed) return;
+        const data: { now?: unknown; volume?: unknown; muted?: unknown; presets?: unknown } =
+          parsed;
         onState?.({
           now: 'now' in data ? (normalizeNowPlaying(data.now) ?? undefined) : undefined,
-          volume:
-            typeof data.volume === 'number' ? (data.muted === true ? 0 : data.volume) : undefined,
+          volume: levelOf(data.volume, data.muted),
           presets: typeof data.presets === 'string' ? data.presets : undefined,
         });
       },
@@ -129,10 +148,10 @@ export function subscribeState(
 //   followers — the device ids playing along with that speaker, when it reports them.
 //   devices   — a revision of that speaker's device list; it changes when /api/devices does.
 export interface HouseholdState {
-  now?: NowPlaying;
-  volume?: number;
-  followers?: string[];
-  devices?: string;
+  now?: NowPlaying | undefined;
+  volume?: number | undefined;
+  followers?: string[] | undefined;
+  devices?: string | undefined;
 }
 
 export function subscribeHousehold({
@@ -140,38 +159,35 @@ export function subscribeHousehold({
   onOpen,
   onError,
 }: {
-  onState: (who: { id?: string; self: boolean }, s: HouseholdState) => void;
-  onOpen?: () => void;
-  onError?: () => void;
+  onState: (who: { id?: string | undefined; self: boolean }, s: HouseholdState) => void;
+  onOpen?: (() => void) | undefined;
+  onError?: (() => void) | undefined;
 }): () => void {
-  if (typeof EventSource === 'undefined') return () => {};
+  if (typeof EventSource === 'undefined') {
+    return () => {
+      // No SSE support: nothing to close, the caller keeps polling.
+    };
+  }
   return watched(
     apiURL('/api/household/events', ''),
     { onOpen, onError },
     {
       state: (e) => {
-        let data: {
-          id?: unknown;
-          self?: unknown;
-          state?: {
-            now?: unknown;
-            volume?: unknown;
-            muted?: unknown;
-            followers?: unknown;
-            devices?: unknown;
-          };
-        };
-        try {
-          data = JSON.parse(e.data as string) as typeof data;
-        } catch {
-          return;
-        }
-        const s = data.state ?? {};
+        const parsed = eventObject(e);
+        if (!parsed) return;
+        const data: { id?: unknown; self?: unknown; state?: unknown } = parsed;
+        const s: {
+          now?: unknown;
+          volume?: unknown;
+          muted?: unknown;
+          followers?: unknown;
+          devices?: unknown;
+        } = typeof data.state === 'object' && data.state !== null ? data.state : {};
         onState(
           { id: typeof data.id === 'string' ? data.id : undefined, self: data.self === true },
           {
             now: 'now' in s ? (normalizeNowPlaying(s.now) ?? undefined) : undefined,
-            volume: typeof s.volume === 'number' ? (s.muted === true ? 0 : s.volume) : undefined,
+            volume: levelOf(s.volume, s.muted),
             followers: Array.isArray(s.followers)
               ? s.followers.filter((f): f is string => typeof f === 'string')
               : undefined,

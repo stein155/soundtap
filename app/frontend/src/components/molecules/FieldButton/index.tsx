@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import type { ReactNode } from 'react';
+import type { ReactNode, ReactElement } from 'react';
 import { Label, Row } from './styled';
 
 interface Props {
@@ -13,7 +13,13 @@ interface Props {
 }
 
 // A tappable row inside a FieldCard: a network, a town, a folder.
-export function FieldButton({ children, selected, disabled, expanded, onClick }: Props) {
+export function FieldButton({
+  children,
+  selected,
+  disabled,
+  expanded,
+  onClick,
+}: Props): ReactElement {
   return (
     <Row
       type="button"
@@ -28,6 +34,6 @@ export function FieldButton({ children, selected, disabled, expanded, onClick }:
 }
 
 // The main text of a FieldButton, which takes the free width and ellipsizes.
-export function FieldButtonLabel({ children }: { children: ReactNode }) {
+export function FieldButtonLabel({ children }: { children: ReactNode }): ReactElement {
   return <Label>{children}</Label>;
 }

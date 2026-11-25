@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import type { ReactNode } from 'react';
+import type { ReactNode, ReactElement } from 'react';
 import { Label, Row, Value } from './styled';
 
 export { RowInput, RowSelect, RowTime } from './styled';
@@ -19,7 +19,13 @@ interface Props {
 }
 
 // One row inside a FieldCard.
-export function FieldRow({ label, htmlFor, layout = 'input', wideLabel, children }: Props) {
+export function FieldRow({
+  label,
+  htmlFor,
+  layout = 'input',
+  wideLabel,
+  children,
+}: Props): ReactElement {
   return (
     <Row $value={layout === 'value'}>
       <Label as={htmlFor ? 'label' : 'span'} htmlFor={htmlFor} $wide={wideLabel}>

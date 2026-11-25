@@ -6,36 +6,31 @@ import { renderHook, act } from '@testing-library/react';
 import { usePlayback } from './usePlayback';
 import type { SelectedRoom } from './useSelectedRoom';
 import * as api from '../lib/api';
+import { must } from '../test/must';
+import { preset, room as roomFixture, selectedRoom } from './testFixtures';
 
 vi.mock('../lib/api', () => ({ playPreset: vi.fn() }));
 
-const jazz = { tuneInId: 's1', name: 'Jazz' };
+const jazz = preset({ tuneInId: 's1', name: 'Jazz' });
 
 function room(speaker: string): SelectedRoom {
-  return {
+  return selectedRoom({
     speaker,
-    lead: { name: speaker },
-    live: {
-      presets: [jazz],
-      player: { status: 'standby' },
-      playOptimistic: vi.fn(),
-      nudge: vi.fn(),
-      refreshNowPlaying: vi.fn(),
-      cancelPending: vi.fn(),
-    },
-  } as unknown as SelectedRoom;
+    lead: roomFixture({ name: speaker }),
+    live: { presets: [jazz] },
+  });
 }
 
 describe('usePlayback duplicate-tap guard', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('drops a repeat tap on the same speaker but not the same preset on another speaker', async () => {
-    let release: () => void = () => {};
+    let release: () => void = vi.fn();
     vi.mocked(api.playPreset)
-      .mockImplementationOnce(() => new Promise<void>((r) => (release = r)))
+      .mockImplementationOnce(async () => new Promise<void>((r) => (release = r)))
       .mockResolvedValue(undefined);
 
-    const { result, rerender } = renderHook(({ sel }) => usePlayback(sel, () => () => {}), {
+    const { result, rerender } = renderHook(({ sel }) => usePlayback(sel, () => vi.fn()), {
       initialProps: { sel: room('kitchen') },
     });
 
@@ -44,9 +39,9 @@ describe('usePlayback duplicate-tap guard', () => {
     expect(api.playPreset).toHaveBeenCalledTimes(1);
 
     rerender({ sel: room('bedroom') });
-    await act(() => result.current.playSlot(1)); // same name, other speaker: sent
+    await act(async () => result.current.playSlot(1)); // same name, other speaker: sent
     expect(api.playPreset).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(api.playPreset).mock.calls[1][3]).toBe('bedroom');
+    expect(must(vi.mocked(api.playPreset).mock.calls[1], 'the second play')[3]).toBe('bedroom');
 
     await act(async () => release());
   });

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
+import type { ReactElement } from 'react';
 import { Button, Heading } from 'react-aria-components';
 import { Icon } from '../../atoms/Icon';
 import { ModelArt } from '../../molecules/ModelArt';
@@ -70,7 +71,13 @@ function Member({
 // Who plays along with the selected speaker, as the design's "Groep" (from now playing's
 // Group): the volume of the whole group, each speaker that can join as a switch with its
 // own volume once it plays along, and one button for all of them or to end the group.
-export function GroupSheet({ open, onClose, selected, grouping, volume }: Props) {
+export function GroupSheet({
+  open,
+  onClose,
+  selected,
+  grouping,
+  volume,
+}: Props): ReactElement | null {
   const { t } = useI18n();
   const { rooms, lead } = selected;
   if (!lead) return null;
@@ -81,9 +88,10 @@ export function GroupSheet({ open, onClose, selected, grouping, volume }: Props)
   const joined = free.filter((r) => r.linkedTo === lead.id);
   const joinable = free.filter((r) => r.linkedTo !== lead.id);
   return (
-    <SheetModal open={open} onClose={onClose} label={t('group')} variant="page">
+    <SheetModal open={open} onClose={onClose} label={t('group')} className="spks-modal">
       {(close) => (
         <>
+          <span className="ract-grab" aria-hidden="true" />
           <div className="sheet-head">
             <Heading slot="title" className="sheet-title">
               {t('group')}

@@ -14,8 +14,12 @@ export function formatBytes(bytes: number, lang?: string): string {
   return `${bytes} B`;
 }
 
-// Bass with its sign: "+2", "0", "-3".
-export const formatBass = (level: number): string => (level > 0 ? `+${level}` : String(level));
+// Bass with its sign: "+2", "0", "−3" (a minus sign, not a hyphen).
+export function formatBass(level: number): string {
+  if (level > 0) return `+${level}`;
+  if (level < 0) return `−${-level}`;
+  return '0';
+}
 
 // "Bose SoundTouch 10" from the model the speaker reports; the brand is not translated.
 export const modelLabel = (model?: string): string => (model ? `Bose ${model}` : '');

@@ -3,17 +3,23 @@
 
 import styled, { css } from 'styled-components';
 
-export const Row = styled.button<{ $plain?: boolean }>`
+export const Row = styled.button<{ $plain?: boolean | undefined }>`
   width: 100%;
   display: flex;
   align-items: flex-start;
   gap: 13px;
   text-align: left;
   ${({ $plain }) =>
-    $plain
+    $plain === true
       ? css`
           align-items: center;
-          gap: 12px;
+          gap: 10px;
+          min-height: 40px;
+
+          & span {
+            font-size: 14px;
+            font-weight: 400;
+          }
         `
       : css`
           width: calc(100% + 2 * var(--page-gutter, 0px));

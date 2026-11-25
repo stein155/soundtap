@@ -7,7 +7,14 @@ import type { WifiNetwork } from '../../../../lib/types';
 
 // What the speaker hears around it. `networks` is null until the first survey answers, and
 // a failed survey keeps whatever the last one found.
-export function useWifiSurvey(speaker?: string) {
+export interface WifiSurvey {
+  networks: WifiNetwork[] | null;
+  scanning: boolean;
+  failed: boolean;
+  refresh: () => void;
+}
+
+export function useWifiSurvey(speaker?: string): WifiSurvey {
   const [networks, setNetworks] = useState<WifiNetwork[] | null>(null);
   const [scanning, setScanning] = useState(true);
   const [failed, setFailed] = useState(false);

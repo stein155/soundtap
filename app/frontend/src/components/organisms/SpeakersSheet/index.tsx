@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useState } from 'react';
+import { useState, type ReactElement } from 'react';
 import { Button, Heading } from 'react-aria-components';
 import { EqualizerBars } from '../../atoms/EqualizerBars';
 import { Icon } from '../../atoms/Icon';
@@ -115,13 +115,20 @@ function Lead({
 // Which speaker this page controls, as the design's "Speaker wisselen": every speaker as a
 // row (its drawing, what it plays, a tick on the one selected), then the selected one's
 // source, settings and power. Grouping has its own sheet, from now playing's Group.
-export function SpeakersSheet({ open, onClose, selected, playback, onSettings }: Props) {
+export function SpeakersSheet({
+  open,
+  onClose,
+  selected,
+  playback,
+  onSettings,
+}: Props): ReactElement {
   const { t } = useI18n();
   const { rooms, lead } = selected;
   return (
-    <SheetModal open={open} onClose={onClose} label={t('speakers')} variant="page">
+    <SheetModal open={open} onClose={onClose} label={t('speakers')} className="spks-modal">
       {(close) => (
         <>
+          <span className="ract-grab" aria-hidden="true" />
           <div className="sheet-head">
             <Heading slot="title" className="sheet-title">
               {t('speakers')}

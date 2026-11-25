@@ -3,20 +3,21 @@
 
 import styled, { css } from 'styled-components';
 
+// The design's field: grey, a fine edge that turns into a 2 px ink ring on focus. $shadow is
+// kept for the callers that pass it; the edge is drawn the same on every surface.
 const field = css<{ $shadow: string }>`
   width: 100%;
-  padding: 15px 16px;
-  border: 1.5px solid transparent;
-  border-radius: var(--radius);
+  min-height: 48px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-sm);
   outline: none;
-  background: var(--surface);
+  background: var(--surface-2);
   color: var(--ink);
   font-size: 16px; /* no iOS focus zoom */
-  font-weight: 500;
-  box-shadow: ${({ $shadow }) => $shadow};
-  transition:
-    box-shadow 200ms ease,
-    border-color 160ms ease;
+  font-weight: 400;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  transition: box-shadow 160ms ease;
 
   &::placeholder {
     color: var(--ink-3);
@@ -24,8 +25,7 @@ const field = css<{ $shadow: string }>`
   }
 
   &:focus {
-    box-shadow: var(--shadow);
-    border-color: color-mix(in oklab, var(--accent) 55%, transparent);
+    box-shadow: inset 0 0 0 2px var(--ink);
   }
 
   /* The border above is the focus ring; the global outline would add a second one. */
@@ -41,6 +41,7 @@ export const Input = styled.input<{ $shadow: string }>`
 export const Area = styled.textarea<{ $shadow: string }>`
   ${field}
   min-height: 86px;
+  padding: 12px;
   resize: none;
   line-height: 1.45;
 `;

@@ -16,12 +16,16 @@ const api = vi.hoisted(() => ({
   setLipSync: vi.fn(),
 }));
 vi.mock('../../../../lib/api/settings', () => api);
+vi.mock('../../../../lib/api/multiroom', () => ({
+  getChannel: vi.fn(async (): Promise<'stereo' | 'mono' | null> => 'stereo'),
+  setChannel: vi.fn(),
+}));
 
 const props = {
   bass: 0,
   caps: { actual: 0, target: 0, min: 0, max: 0, default: 0 },
   soundbar: null,
-  onBass: () => {},
+  onBass: vi.fn(),
 };
 
 const render = () =>
@@ -30,7 +34,7 @@ const render = () =>
       bass={0}
       caps={{ actual: 0, target: 0, min: 0, max: 0, default: 0 }}
       soundbar={null}
-      onBass={() => {}}
+      onBass={vi.fn()}
     />
   );
 
@@ -56,9 +60,9 @@ describe('SoundSettings audio mode', () => {
     api.getSoundbarChoice.mockImplementation(async (c: string) =>
       c === 'audio-mode' ? 'normal' : null
     );
-    let failFirst: (e: Error) => void = () => {};
+    let failFirst: (e: Error) => void = vi.fn();
     api.setSoundbarChoice
-      .mockImplementationOnce(() => new Promise((_, reject) => (failFirst = reject)))
+      .mockImplementationOnce(async () => new Promise((_, reject) => (failFirst = reject)))
       .mockResolvedValueOnce(undefined);
     const view = render();
     await view.findByRole('radiogroup', { name: 'Audio mode' });
@@ -141,11 +145,12 @@ describe('SoundSettings switching soundbars', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("does not show bar A's values on bar B while B's read is on the way", async () => {
-    api.getSoundbarChoice.mockImplementation(async (c: string, sp?: string) =>
-      sp === 'A' && c === 'audio-mode' ? 'normal' : sp === 'A' ? null : new Promise(() => {})
-    );
+    api.getSoundbarChoice.mockImplementation(async (c: string, sp?: string) => {
+      if (sp !== 'A') return new Promise(vi.fn());
+      return c === 'audio-mode' ? 'normal' : null;
+    });
     api.getLipSync.mockImplementation(async (sp?: string) =>
-      sp === 'A' ? { ms: 40, max: 300 } : new Promise(() => {})
+      sp === 'A' ? { ms: 40, max: 300 } : new Promise(vi.fn())
     );
     const view = renderWithI18n(<SoundSettings {...props} speaker="A" />);
     await view.findByRole('slider', { name: 'Lip sync (sound delay)' });
@@ -164,13 +169,13 @@ describe('SoundSettings group', () => {
     expect(container.textContent).toBe('');
   });
 
-  it('puts bass under the Sound title, with the mono note only where stock has the switch', () => {
+  it('puts bass under the Sound title, with the mono note only where stock has the switch', async () => {
     const caps = { actual: 0, target: 0, min: -9, max: 0, default: 0 };
     const plain = renderWithI18n(<SoundSettings {...props} soundbar={undefined} caps={caps} />);
     expect(plain.getByText('Sound')).toBeTruthy();
     expect(plain.queryByText('Turn off for mono')).toBeNull();
     plain.unmount();
     const st10 = renderWithI18n(<SoundSettings {...props} soundbar={undefined} caps={caps} mono />);
-    expect(st10.getByText('Turn off for mono')).toBeTruthy();
+    expect(await st10.findByText('Turn off for mono')).toBeTruthy();
   });
 });

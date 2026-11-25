@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
+import type { ReactElement } from 'react';
 import { Sheet } from '../../molecules/Sheet';
 import { TopBar } from '../TopBar';
 import { useEscape } from '../../../hooks/useEscape';
@@ -15,10 +16,11 @@ interface Props {
   onPresets: () => void;
   onPlayRecent: (item: RecentItem) => void;
   onRemoveRecent: (item: RecentItem) => void;
+  onHoldRecent?: ((item: RecentItem) => void) | undefined;
 }
 
 // See All under the start page's Recently Played: a main page, with the bars staying.
-export function RecentPage({ onBack, onPresets, ...list }: Props) {
+export function RecentPage({ onBack, onPresets, ...list }: Props): ReactElement {
   const { t } = useI18n();
   useEscape(true, onBack);
   return (

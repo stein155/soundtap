@@ -7,6 +7,27 @@ import type { Station, BrowseCategory, BrowseResult } from '../types';
 
 const MAX_SEARCH_RESULTS = 30;
 
+// One OPML outline as TuneIn sends it: JSON, each field checked before it is used.
+interface Outline {
+  type?: unknown;
+  item?: unknown;
+  key?: unknown;
+  guide_id?: unknown;
+  text?: unknown;
+  name?: unknown;
+  subtext?: unknown;
+  locale?: unknown;
+  image?: unknown;
+  URL?: unknown;
+  children?: unknown;
+}
+
+// outlines reads a list of outlines; anything that is not an object is no outline.
+const outlines = (items: unknown): Outline[] =>
+  Array.isArray(items)
+    ? items.filter((item: unknown): item is Outline => typeof item === 'object' && item !== null)
+    : [];
+
 // TuneIn OPML search via the same-origin /api/tunein proxy. The original walked
 // a nested OPML body, which the same-origin /api/tunein proxy passes through. null when
 // TuneIn could not be reached.
@@ -19,36 +40,43 @@ export async function searchTuneIn(query: string): Promise<Station[] | null> {
       { signal: deadline(SLOW_READ_TIMEOUT_MS) }
     );
     if (!r.ok) throw new Error(`search -> ${r.status}`);
-    const data = (await r.json()) as { body?: unknown };
+    const body = await opmlBody(r);
     const results: Station[] = [];
     const walk = (items: unknown) => {
-      if (!Array.isArray(items)) return;
-      for (const item of items as Record<string, unknown>[]) {
+      for (const item of outlines(items)) {
         const station = itemToStation(item);
         if (station) results.push(station);
-        if (item.children) walk(item.children);
+        walk(item.children); // nothing to walk unless it is a list
       }
     };
-    walk(data.body);
+    walk(body);
     return results.slice(0, MAX_SEARCH_RESULTS);
   } catch {
     return null;
   }
 }
 
+// The outlines of an OPML answer. A null answer fails, as reading its body always did.
+async function opmlBody(r: Response): Promise<unknown> {
+  const json: unknown = await r.json();
+  if (json === null) throw new Error('TuneIn answered null');
+  const fields: { body?: unknown } = typeof json === 'object' ? json : {};
+  return fields.body;
+}
+
 // itemToStation maps a TuneIn OPML "audio" outline to a Station, or null when it
 // isn't a real station (no s-prefixed guide id).
-function itemToStation(item: Record<string, unknown>): Station | null {
-  const isStation =
-    (item.type === 'audio' || item.item === 'station') && text(item.guide_id).startsWith('s');
+function itemToStation(item: Outline): Station | null {
+  const guideId = text(item.guide_id);
+  const isStation = (item.type === 'audio' || item.item === 'station') && guideId.startsWith('s');
   if (!isStation) return null;
   return {
-    tuneInId: item.guide_id as string,
-    name: (item.text as string) || (item.name as string) || '',
-    tagline: (item.subtext as string) || '',
+    tuneInId: guideId,
+    name: text(item.text) || text(item.name),
+    tagline: text(item.subtext),
     genre: '',
-    country: text(item.locale).split('-')[1] || '',
-    logo: (item.image as string) || '',
+    country: text(item.locale).split('-')[1] ?? '',
+    logo: text(item.image),
   };
 }
 
@@ -77,40 +105,40 @@ export async function browseTuneIn(
       signal: deadline(SLOW_READ_TIMEOUT_MS),
     });
     if (!r.ok) throw new Error(`browse -> ${r.status}`);
-    const data = (await r.json()) as { body?: unknown };
+    const body = await opmlBody(r);
     const walk = (items: unknown) => {
-      if (!Array.isArray(items)) return;
-      for (const item of items as Record<string, unknown>[]) {
+      for (const item of outlines(items)) {
         const station = itemToStation(item);
         if (station) {
           stations.push(station);
           continue;
         }
         // A "link" outline with a URL is a drill-down category (genre/region).
-        if (item.type === 'link' && typeof item.URL === 'string' && item.text) {
+        const title = text(item.text);
+        if (item.type === 'link' && typeof item.URL === 'string' && title) {
           // Shows, podcasts and episodes are not radio stations this speaker can play:
           // listed as folders they only led to "no stations found".
           if (isShowLink(item)) continue;
           const p = browsePath(item.URL);
           if (p) {
-            const category = { title: item.text as string, path: p };
+            const category = { title, path: p };
             if (item.key === 'nextStations') more = category;
             else categories.push(category);
             continue;
           }
         }
         // A grouping outline (e.g. "Stations") nests its entries as children.
-        if (item.children) walk(item.children);
+        walk(item.children); // nothing to walk unless it is a list
       }
     };
-    walk(data.body);
+    walk(body);
   } catch {
     return null;
   }
   return { categories, stations, more };
 }
 
-function isShowLink(item: Record<string, unknown>): boolean {
+function isShowLink(item: Outline): boolean {
   const url = text(item.URL);
   return (
     item.item === 'show' ||
@@ -138,9 +166,10 @@ function browsePath(url: string): string {
       c424726: 'sports',
     };
     const id = u.searchParams.get('id');
-    if (id && DEAD_CATEGORY[id] && u.searchParams.has('filter')) {
+    const category = id ? DEAD_CATEGORY[id] : undefined;
+    if (category && u.searchParams.has('filter')) {
       u.searchParams.delete('id');
-      u.searchParams.set('c', DEAD_CATEGORY[id]);
+      u.searchParams.set('c', category);
     }
     return u.pathname + u.search;
   } catch {

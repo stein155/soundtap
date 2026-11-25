@@ -81,4 +81,44 @@ export const sourcesIcons = {
       </>
     ),
   },
+  // A media server on the network (a NAS, a computer).
+  server: {
+    svg: line('1.8'),
+    body: (
+      <>
+        <rect x="4" y="3" width="16" height="7" rx="1.5" />
+        <rect x="4" y="14" width="16" height="7" rx="1.5" />
+        <path d="M8 6.5h.01M8 17.5h.01" strokeWidth="2.4" />
+      </>
+    ),
+  },
+  // A stream's link that does not lead to the stream.
+  linkOff: {
+    svg: line('1.8'),
+    body: (
+      <>
+        <path d="M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" />
+        <path d="M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" />
+        <path d="M3 3l18 18" />
+      </>
+    ),
+  },
+  note: {
+    svg: line('1.8'),
+    body: (
+      <>
+        <path d="M9 18V5l12-2v13" />
+        <circle cx="6" cy="18" r="3" />
+        <circle cx="18" cy="16" r="3" />
+      </>
+    ),
+  },
+  trash: {
+    svg: line('1.8'),
+    body: (
+      <>
+        <path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a1.5 1.5 0 0 0 1.5 1.4h7A1.5 1.5 0 0 0 17 19l1-12M9 7V4.5h6V7" />
+      </>
+    ),
+  },
 } satisfies Record<string, IconSpec>;

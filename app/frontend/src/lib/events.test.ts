@@ -3,6 +3,7 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { subscribeHousehold, subscribeState } from './events';
+import { must } from '../test/must';
 
 class FakeEventSource {
   static readonly CONNECTING = 0;
@@ -26,6 +27,9 @@ class FakeEventSource {
   }
 }
 
+// The i-th stream the code under test opened.
+const stream = (i: number) => must(FakeEventSource.all[i], `stream ${String(i)}`);
+
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
@@ -40,10 +44,10 @@ describe('subscribeState watchdog', () => {
     vi.stubGlobal('EventSource', FakeEventSource);
     const onError = vi.fn();
     const stop = subscribeState({ onError });
-    const first = FakeEventSource.all[0];
+    const first = stream(0);
     first.onopen?.();
     vi.advanceTimersByTime(10000);
-    first.listeners.ping?.({} as MessageEvent);
+    first.listeners['ping']?.(new MessageEvent('ping'));
     vi.advanceTimersByTime(10000);
     expect(onError).not.toHaveBeenCalled();
     vi.advanceTimersByTime(6000);
@@ -52,7 +56,7 @@ describe('subscribeState watchdog', () => {
     vi.advanceTimersByTime(3000);
     expect(FakeEventSource.all).toHaveLength(2);
     stop();
-    expect(FakeEventSource.all[1].closed).toBe(true);
+    expect(stream(1).closed).toBe(true);
   });
 });
 
@@ -64,7 +68,7 @@ describe('subscribeState after the speaker answers an error', () => {
     vi.stubGlobal('EventSource', FakeEventSource);
     const onError = vi.fn();
     const stop = subscribeState({ onError });
-    const first = FakeEventSource.all[0];
+    const first = stream(0);
     first.readyState = FakeEventSource.CLOSED;
     first.onerror?.();
     expect(onError).toHaveBeenCalledTimes(1);
@@ -78,8 +82,8 @@ describe('subscribeState after the speaker answers an error', () => {
   it('leaves a dropped connection to the browser', () => {
     vi.useFakeTimers();
     vi.stubGlobal('EventSource', FakeEventSource);
-    const stop = subscribeState({ onError: () => {} });
-    const first = FakeEventSource.all[0];
+    const stop = subscribeState({ onError: vi.fn() });
+    const first = stream(0);
     first.onerror?.(); // readyState CONNECTING: the browser retries it itself
     vi.advanceTimersByTime(5000);
     expect(FakeEventSource.all).toHaveLength(1);
@@ -89,8 +93,8 @@ describe('subscribeState after the speaker answers an error', () => {
   it('opens one stream, not two, when the watchdog was armed', () => {
     vi.useFakeTimers();
     vi.stubGlobal('EventSource', FakeEventSource);
-    const stop = subscribeState({ onError: () => {} });
-    const first = FakeEventSource.all[0];
+    const stop = subscribeState({ onError: vi.fn() });
+    const first = stream(0);
     first.onopen?.();
     first.readyState = FakeEventSource.CLOSED;
     first.onerror?.();
@@ -102,8 +106,8 @@ describe('subscribeState after the speaker answers an error', () => {
   it('does not reopen after it was stopped', () => {
     vi.useFakeTimers();
     vi.stubGlobal('EventSource', FakeEventSource);
-    const stop = subscribeState({ onError: () => {} });
-    const first = FakeEventSource.all[0];
+    const stop = subscribeState({ onError: vi.fn() });
+    const first = stream(0);
     first.readyState = FakeEventSource.CLOSED;
     first.onerror?.();
     stop();
@@ -115,8 +119,8 @@ describe('subscribeState after the speaker answers an error', () => {
     vi.useFakeTimers();
     vi.stubGlobal('EventSource', FakeEventSource);
     const onError = vi.fn();
-    const stop = subscribeHousehold({ onState: () => {}, onError });
-    const first = FakeEventSource.all[0];
+    const stop = subscribeHousehold({ onState: vi.fn(), onError });
+    const first = stream(0);
     first.readyState = FakeEventSource.CLOSED;
     first.onerror?.();
     vi.advanceTimersByTime(3000);
@@ -135,8 +139,8 @@ describe('subscribeHousehold watchdog', () => {
     vi.useFakeTimers();
     vi.stubGlobal('EventSource', FakeEventSource);
     const onError = vi.fn();
-    const stop = subscribeHousehold({ onState: () => {}, onError });
-    const first = FakeEventSource.all[0];
+    const stop = subscribeHousehold({ onState: vi.fn(), onError });
+    const first = stream(0);
     first.onopen?.();
     vi.advanceTimersByTime(16000);
     expect(first.closed).toBe(true);
@@ -146,7 +150,7 @@ describe('subscribeHousehold watchdog', () => {
     stop();
     vi.advanceTimersByTime(30000);
     expect(FakeEventSource.all).toHaveLength(2);
-    expect(FakeEventSource.all[1].closed).toBe(true);
+    expect(stream(1).closed).toBe(true);
   });
 });
 
@@ -158,16 +162,16 @@ describe('subscribeState after close', () => {
     vi.stubGlobal('EventSource', FakeEventSource);
     const onState = vi.fn();
     const stop = subscribeState({ onState });
-    const first = FakeEventSource.all[0];
+    const first = stream(0);
     first.onopen?.();
     vi.advanceTimersByTime(26000); // watchdog replaces the silent stream
-    first.listeners.state?.({ data: '{"volume":5}' } as MessageEvent);
+    first.listeners['state']?.(new MessageEvent('state', { data: '{"volume":5}' }));
     expect(onState).not.toHaveBeenCalled();
-    const second = FakeEventSource.all[1];
-    second.listeners.state?.({ data: '{"volume":7}' } as MessageEvent);
+    const second = stream(1);
+    second.listeners['state']?.(new MessageEvent('state', { data: '{"volume":7}' }));
     expect(onState).toHaveBeenCalledTimes(1);
     stop();
-    second.listeners.state?.({ data: '{"volume":9}' } as MessageEvent);
+    second.listeners['state']?.(new MessageEvent('state', { data: '{"volume":9}' }));
     expect(onState).toHaveBeenCalledTimes(1);
   });
 });
@@ -180,11 +184,11 @@ describe('subscribeState callbacks from a replaced stream', () => {
     const onError = vi.fn();
     const onOpen = vi.fn();
     const stop = subscribeState({ onError, onOpen });
-    const first = FakeEventSource.all[0];
+    const first = stream(0);
     first.onopen?.();
     vi.advanceTimersByTime(26000); // watchdog replaces the silent stream
     expect(onError).toHaveBeenCalledTimes(1);
-    FakeEventSource.all[1].onopen?.();
+    stream(1).onopen?.();
     first.onerror?.();
     first.onopen?.();
     expect(onError).toHaveBeenCalledTimes(1);

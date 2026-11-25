@@ -1,17 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 vi.mock('../../lib/api');
 import * as apiModule from '../../lib/api';
 
-const api = apiModule as unknown as Record<keyof typeof apiModule, Mock>;
+const api = vi.mocked(apiModule);
 
 import App from '../../App';
 import { settingsFixture } from '../../test/settings';
+import { version } from '../../hooks/testFixtures';
+import { must } from '../../test/must';
 
 const PRESETS = [{ slot: 1, name: 'Radio Foo', tuneInId: 's1', location: '', logo: '' }, null];
 
@@ -38,7 +40,9 @@ beforeEach(() => {
   api.getSettings.mockResolvedValue(
     settingsFixture({ name: 'Kitchen', model: 'ST20', language: 'en' })
   );
-  api.getVersion.mockResolvedValue({ version: '1.2.3', updatable: false });
+  api.getVersion.mockResolvedValue(
+    version({ version: '1.2.3', os: '', app: '', updatable: false, updateMode: 'unmanaged' })
+  );
   api.getReleases.mockResolvedValue({
     current: '1.2.3',
     updatable: false,
@@ -67,10 +71,10 @@ describe('HomePage', () => {
   it('opens the presets from the idle bar and plays the tapped slot', async () => {
     render(<App />);
     await userEvent.click(await screen.findByRole('button', { name: /Pick something to play/ }));
-    const presets = await screen.findByRole('dialog', { name: 'PRESETS & FAVORITES' });
+    const presets = await screen.findByRole('dialog', { name: 'Presets & favorites' });
     await userEvent.click(await screen.findByText('Radio Foo'));
     await waitFor(() => expect(api.playPreset).toHaveBeenCalledTimes(1));
-    expect(api.playPreset.mock.calls[0][0]).toBe(1);
+    expect(must(api.playPreset.mock.calls[0], 'the play')[0]).toBe(1);
     // Playing closes the sheet.
     await waitFor(() => expect(presets).not.toBeInTheDocument());
   }, 30000);

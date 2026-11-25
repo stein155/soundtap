@@ -31,7 +31,7 @@ export const Scroll = styled.main<{ $docked: boolean }>`
   overflow-y: auto;
   animation: ${pageIn} 0.3s var(--ease);
   padding-bottom: ${({ $docked }) =>
-    $docked ? 'calc(158px + env(safe-area-inset-bottom))' : '32px'};
+    $docked ? 'calc(158px + max(0px, env(safe-area-inset-bottom) - 16px))' : '32px'};
   scrollbar-width: none;
 
   &::-webkit-scrollbar {
@@ -46,5 +46,5 @@ export const Main = styled.main<{ $docked: boolean }>`
   display: flex;
   flex-direction: column;
   animation: ${pageIn} 0.3s var(--ease);
-  padding-bottom: ${({ $docked }) => ($docked ? 'calc(128px + env(safe-area-inset-bottom))' : '0')};
+  padding-bottom: ${({ $docked }) => ($docked ? 'calc(128px + max(0px, env(safe-area-inset-bottom) - 16px))' : '0')};
 `;

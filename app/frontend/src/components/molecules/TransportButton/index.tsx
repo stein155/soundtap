@@ -5,6 +5,7 @@ import { Icon } from '../../atoms/Icon';
 import { useI18n, type I18nKey } from '../../../lib/i18n';
 import type { Transport } from '../../../lib/playback';
 import { Round, type TransportVariant } from './styled';
+import type { ReactElement } from 'react';
 
 const LABEL: Record<Transport, I18nKey> = {
   play: 'play',
@@ -12,6 +13,7 @@ const LABEL: Record<Transport, I18nKey> = {
   resume: 'resume',
   stop: 'stop',
 };
+const GLYPH = { play: Icon.play, pause: Icon.pause, resume: Icon.play, stop: Icon.stop };
 const GLYPH_SIZE: Record<TransportVariant, number> = { card: 14, player: 18, full: 22 };
 
 interface Props {
@@ -25,9 +27,15 @@ interface Props {
 }
 
 // The one transport control for what plays: play, pause/resume (Spotify) or stop.
-export function TransportButton({ action, onClick, variant, on = false, target }: Props) {
+export function TransportButton({
+  action,
+  onClick,
+  variant,
+  on = false,
+  target,
+}: Props): ReactElement {
   const { t } = useI18n();
-  const Glyph = action === 'pause' ? Icon.pause : action === 'stop' ? Icon.stop : Icon.play;
+  const Glyph = GLYPH[action];
   const size = GLYPH_SIZE[variant];
   return (
     <Round

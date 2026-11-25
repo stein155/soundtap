@@ -1,8 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useRef, type ChangeEvent } from 'react';
+import { useRef, type ChangeEvent, type RefObject } from 'react';
 import { splitSignature } from '../lib/signature';
+
+export interface SignedPick {
+  inputRef: RefObject<HTMLInputElement | null>;
+  onChange: (e: ChangeEvent<HTMLInputElement>) => Promise<void>;
+  latest: () => () => boolean;
+}
 
 // The file picker both upload flows share: a hidden <input type=file multiple> whose pick is
 // a file with, optionally, its .sig (ADR 0048). Reading a .sig is async, so an older pick can
@@ -12,7 +18,7 @@ import { splitSignature } from '../lib/signature';
 export function useSignedPick(
   onPick: (file: File | null, signature: string | undefined, current: () => boolean) => void,
   onError: (err: unknown) => void
-) {
+): SignedPick {
   const inputRef = useRef<HTMLInputElement>(null);
   const picks = useRef(0);
 

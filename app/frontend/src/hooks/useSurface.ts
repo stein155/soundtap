@@ -10,8 +10,8 @@ export type Surface = 'raised' | 'inset';
 
 const SurfaceContext = createContext<Surface>('raised');
 
-export const useSurface = () => useContext(SurfaceContext);
+export const useSurface = (): Surface => useContext(SurfaceContext);
 
 // The shadow of a card on the current surface.
-export const cardShadow = (surface: Surface) =>
+export const cardShadow = (surface: Surface): string =>
   surface === 'inset' ? '0 0 0 1px var(--border)' : 'var(--shadow-sm)';

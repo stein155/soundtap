@@ -5,6 +5,9 @@ import { useEffect, useEffectEvent } from 'react';
 import { storePreset } from '../lib/api';
 import { isStreamUrl } from '../lib/station';
 import type { Station } from '../lib/types';
+import type { RecentItem } from '../lib/recent';
+import type { Source } from '../lib/rooms';
+import type { Room } from './useRooms';
 import { useI18n } from '../lib/i18n';
 import type { Block, Notify, ReportFailure } from './useErrorReporter';
 import type { SelectedRoom } from './useSelectedRoom';
@@ -13,6 +16,27 @@ import { presetStores } from './playback/presets';
 import { roomTransporter, useSourcePicks } from './playback/rooms';
 import { starters } from './playback/starters';
 import { transports } from './playback/transport';
+
+// The HTTP status a failed request carries, if any.
+const statusOf = (err: unknown) =>
+  typeof err === 'object' && err !== null && 'status' in err ? err.status : undefined;
+
+export interface Playback {
+  playSlot: (slot: number) => Promise<void>;
+  pick: (station: Station, slot: number | null) => Promise<void>;
+  playRecent: (item: RecentItem) => Promise<void>;
+  transport: () => Promise<void>;
+  skip: (dir: 'previous' | 'next') => Promise<void>;
+  canStore: boolean;
+  storeCurrent: (slot: number) => Promise<void>;
+  storeSpotify: (
+    slot: number,
+    item: { uri: string; name: string; artwork?: string | undefined }
+  ) => Promise<void>;
+  setSource: (source: Source) => Promise<void>;
+  power: (on: boolean) => Promise<void>;
+  roomTransport: (room: Room) => Promise<'empty' | undefined>;
+}
 
 // Everything that starts, stops or changes what a room plays. The selected room goes
 // through useSpeaker's optimistic state, so a tap shows at once; any other room is
@@ -23,7 +47,7 @@ export function usePlayback(
   failed: ReportFailure,
   notify?: Notify,
   block?: Block
-) {
+): Playback {
   const { t } = useI18n();
   const leadFailed = failed(lead?.name || '');
 
@@ -58,9 +82,9 @@ export function usePlayback(
   const pick = async (station: Station, slot: number | null) => {
     if (!station.tuneInId) return;
     if (slot === null) return playStation(station);
-    await storePreset(slot, station, speaker).catch((err: { status?: number }) =>
+    await storePreset(slot, station, speaker).catch((err: unknown) =>
       // The speaker refused the address itself: say so, not "refused that".
-      err.status === 400 && isStreamUrl(station.tuneInId)
+      statusOf(err) === 400 && isStreamUrl(station.tuneInId)
         ? notify?.(t('customHelpInvalid'))
         : leadFailed(err)
     );

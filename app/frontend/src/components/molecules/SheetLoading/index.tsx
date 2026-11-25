@@ -5,6 +5,7 @@ import styled, { keyframes } from 'styled-components';
 import { Spinner } from '../../atoms/Spinner';
 import { reducedMotion } from '../../../theme/keyframes';
 import { useI18n } from '../../../lib/i18n';
+import type { ReactElement } from 'react';
 
 const hidden = {
   position: 'absolute',
@@ -29,7 +30,7 @@ const centred = { padding: '60px 20px', textAlign: 'center' } as const;
 
 // A sheet's list while it loads. The spinner is decoration; a screen reader hears
 // "Loading…".
-export function SheetLoading() {
+export function SheetLoading(): ReactElement {
   const { t } = useI18n();
   return (
     <div style={centred}>

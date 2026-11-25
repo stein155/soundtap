@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useEffect, useRef, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode, type ReactElement } from 'react';
 import { Button } from 'react-aria-components';
 import { Icon } from '../../atoms/Icon';
 import { SheetModal } from '../../molecules/SheetModal';
@@ -24,9 +24,11 @@ function Row({
   return (
     <Button
       className="mrow"
-      style={color ? ({ '--source': color } as CSSProperties) : undefined}
-      data-active={active || undefined}
-      aria-current={active ? 'page' : undefined}
+      // React Aria's Button takes no undefined style or aria-current: a prop it does not
+      // get stays off, as undefined would.
+      {...(color && { style: { '--source': color } })}
+      data-active={active === true || undefined}
+      {...(active === true && { 'aria-current': 'page' as const })}
       onPress={onPress}
     >
       <span className="mico">{icon}</span>
@@ -42,7 +44,7 @@ interface Props {
   open: boolean;
   onClose: () => void;
   // The main page showing: the start page unless a source is open.
-  at?: 'spotify' | 'tunein';
+  at?: 'spotify' | 'tunein' | undefined;
   onRecent: () => void;
   onSpotify: () => void;
   onTuneIn: () => void;
@@ -63,7 +65,7 @@ export function DrawerMenu({
   onTuneIn,
   onMediaServers,
   onSettings,
-}: Props) {
+}: Props): ReactElement {
   const { t } = useI18n();
   // The drawer leaves first: a page swapped in under it, or a settings page opened over it,
   // cut across its slide. Only the latest pick goes: reopening the menu, or another row,
@@ -104,7 +106,7 @@ export function DrawerMenu({
           {t('page_mediaservers')}
         </Row>
         <hr />
-        <Row icon={<Icon.cog />} onPress={() => go(onSettings)}>
+        <Row icon={<Icon.settings />} onPress={() => go(onSettings)}>
           {t('settings')}
         </Row>
       </nav>

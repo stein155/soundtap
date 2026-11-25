@@ -5,18 +5,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { usePlayback } from './usePlayback';
 import type { SelectedRoom } from './useSelectedRoom';
-import type { Room } from './useRooms';
 import * as api from '../lib/api';
+import { nowPlaying, room, selectedRoom } from './testFixtures';
 
 vi.mock('../lib/api', () => ({ stopPlayback: vi.fn() }));
 
 function selected(patch: () => void): SelectedRoom {
-  return {
+  return selectedRoom({
     speaker: 'kitchen',
-    lead: { id: 'kitchen', name: 'Kitchen' },
-    live: { presets: [], player: { status: 'idle' }, refreshNowPlaying: vi.fn() },
-    roomsState: { patch, loadState: vi.fn() },
-  } as unknown as SelectedRoom;
+    lead: room({ id: 'kitchen', name: 'Kitchen' }),
+    roomsState: { patch },
+  });
 }
 
 describe('usePlayback stop failure', () => {
@@ -25,9 +24,9 @@ describe('usePlayback stop failure', () => {
   it('puts a room back as it was when stopping it failed', async () => {
     vi.mocked(api.stopPlayback).mockRejectedValue(new Error('down'));
     const patch = vi.fn();
-    const now = { standby: false, source: 'TUNEIN', stationName: 'Jazz', playStatus: 'PLAY_STATE' };
-    const other = { id: 'office', name: 'Office', self: false, now } as unknown as Room;
-    const { result } = renderHook(() => usePlayback(selected(patch), () => () => {}));
+    const now = nowPlaying({ source: 'TUNEIN', stationName: 'Jazz', playStatus: 'PLAY_STATE' });
+    const other = room({ id: 'office', name: 'Office', now });
+    const { result } = renderHook(() => usePlayback(selected(patch), () => vi.fn()));
     await act(async () => {
       await result.current.roomTransport(other);
     });
@@ -35,13 +34,13 @@ describe('usePlayback stop failure', () => {
   });
 
   it('ignores a repeat tap on a room card until the first has settled', async () => {
-    let finish = () => {};
+    let finish: () => void = vi.fn();
     vi.mocked(api.stopPlayback).mockImplementation(
-      () => new Promise<void>((resolve) => (finish = resolve))
+      async () => new Promise<void>((resolve) => (finish = resolve))
     );
-    const now = { standby: false, source: 'TUNEIN', stationName: 'Jazz', playStatus: 'PLAY_STATE' };
-    const other = { id: 'office', name: 'Office', self: false, now } as unknown as Room;
-    const { result } = renderHook(() => usePlayback(selected(vi.fn()), () => () => {}));
+    const now = nowPlaying({ source: 'TUNEIN', stationName: 'Jazz', playStatus: 'PLAY_STATE' });
+    const other = room({ id: 'office', name: 'Office', now });
+    const { result } = renderHook(() => usePlayback(selected(vi.fn()), () => vi.fn()));
     let first: Promise<unknown> = Promise.resolve();
     await act(async () => {
       first = result.current.roomTransport(other);

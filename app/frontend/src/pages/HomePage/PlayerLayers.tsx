@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
+import type { ReactElement } from 'react';
 import { NowPlayingSheet } from '../../components/organisms/NowPlayingSheet';
 import { PresetsSheet } from '../../components/organisms/PresetsSheet';
 import { SpeakersSheet } from '../../components/organisms/SpeakersSheet';
@@ -54,7 +55,7 @@ export function PlayerLayers({
   favorites,
   starting,
   onMute,
-}: PlayerLayersProps) {
+}: PlayerLayersProps): ReactElement | null {
   const { open, show, hide, saving, setSaving, showSettings, openSearch } = layers;
   const { lead, members, speaker, live } = selected;
   if (!lead) return null;

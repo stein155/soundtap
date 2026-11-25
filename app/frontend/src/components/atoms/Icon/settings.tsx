@@ -67,9 +67,7 @@ export const settingsIcons = {
     svg: line(),
     body: (
       <>
-        <path d="M4 11 12 4l8 7" />
-        <path d="M6 9.5V20h12V9.5" />
-        <path d="M10 20v-5h4v5" />
+        <path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z" />
       </>
     ),
   },
@@ -80,6 +78,25 @@ export const settingsIcons = {
         <path d="M12 4v11" />
         <path d="m7.5 10.5 4.5 4.5 4.5-4.5" />
         <path d="M5 20h14" />
+      </>
+    ),
+  },
+  upload: {
+    svg: line('1.8'),
+    body: (
+      <>
+        <path d="M12 16V4M7 9l5-5 5 5" />
+        <path d="M4 20h16" />
+      </>
+    ),
+  },
+  // Back the way it came: the way back to Bose.
+  undo: {
+    svg: line('1.8'),
+    body: (
+      <>
+        <path d="M9 14 4 9l5-5" />
+        <path d="M4 9h11a5 5 0 0 1 0 10h-3" />
       </>
     ),
   },
@@ -123,6 +140,16 @@ export const settingsIcons = {
     body: (
       <>
         <path d="M12 3.5 5 6v5.5c0 4.3 3 7.6 7 9 4-1.4 7-4.7 7-9V6l-7-2.5Z" />
+      </>
+    ),
+  },
+  // A paired phone or tablet, on the Bluetooth page.
+  phone: {
+    svg: line(),
+    body: (
+      <>
+        <rect x="6" y="2" width="12" height="20" rx="2.5" />
+        <path d="M11 18h2" />
       </>
     ),
   },
@@ -174,19 +201,54 @@ export const settingsIcons = {
       </>
     ),
   },
+  // A mains plug: is the speaker plugged in.
+  plug: {
+    svg: capped('1.8'),
+    body: (
+      <>
+        <path d="M12 2v6M8 4v4M16 4v4" />
+        <rect x="6" y="8" width="12" height="7" rx="2" />
+        <path d="M12 15v7" />
+      </>
+    ),
+  },
+  // A hand pressing: the speaker asks for a press on its button.
+  press: {
+    svg: { ...capped('1.8'), strokeLinejoin: 'round' },
+    body: (
+      <>
+        <path d="M9 11V5.5a1.5 1.5 0 0 1 3 0V11" />
+        <path d="M12 10.5V4.5a1.5 1.5 0 0 1 3 0V11" />
+        <path d="M15 10.5V6.5a1.5 1.5 0 0 1 3 0V14a7 7 0 0 1-7 7h-.5a6 6 0 0 1-4.6-2.2L3 15.3a1.5 1.5 0 0 1 2.3-1.9L9 16V11" />
+      </>
+    ),
+  },
+  // Two speakers of different heights: play together (now playing's Group).
+  group: {
+    svg: line('2'),
+    body: (
+      <>
+        <rect x="2" y="7" width="8" height="13" rx="1.5" />
+        <rect x="14" y="4" width="8" height="16" rx="1.5" />
+      </>
+    ),
+  },
   stereo: {
     svg: line('1.8'),
     body: (
       <>
-        <rect x="2" y="6" width="8" height="14" rx="1.5" />
-        <rect x="14" y="6" width="8" height="14" rx="1.5" />
-        <circle cx="6" cy="14" r="2" />
-        <circle cx="18" cy="14" r="2" />
+        <rect x="2" y="7" width="8" height="13" rx="1.5" />
+        <rect x="14" y="7" width="8" height="13" rx="1.5" />
       </>
     ),
   },
   code: {
     svg: line('1.8'),
     body: <path d="m8 8-4 4 4 4M16 8l4 4-4 4M13.5 5l-3 14" />,
+  },
+  // Take care: a triangle with an exclamation mark.
+  warning: {
+    svg: line('2'),
+    body: <path d="M12 3 22 21H2ZM12 10v5M12 18h.01" />,
   },
 } satisfies Record<string, IconSpec>;

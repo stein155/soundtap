@@ -3,7 +3,7 @@
 
 import styled, { css } from 'styled-components';
 
-export const Box = styled.span<{ $checked: boolean; $strong?: boolean }>`
+export const Box = styled.span<{ $checked: boolean; $strong?: boolean | undefined }>`
   width: 22px;
   height: 22px;
   flex-shrink: 0;
@@ -18,9 +18,12 @@ export const Box = styled.span<{ $checked: boolean; $strong?: boolean }>`
     background 160ms ease,
     border-color 160ms ease;
   ${({ $strong }) =>
-    $strong &&
+    $strong === true &&
     css`
+      width: 20px;
+      height: 20px;
       margin-top: 0;
+      border-radius: var(--radius-sm);
       border-color: var(--ink-3);
       background: transparent;
     `}

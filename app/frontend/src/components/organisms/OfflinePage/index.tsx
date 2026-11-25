@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
+import type { ReactElement } from 'react';
 import { Heading } from 'react-aria-components';
 import { Icon } from '../../atoms/Icon';
 import { Spinner } from '../../atoms/Spinner';
@@ -12,7 +13,7 @@ import { useI18n } from '../../../lib/i18n';
 interface Props {
   open: boolean;
   name: string;
-  model?: string;
+  model?: string | undefined;
   // Away with the page until the speaker is lost again (the banner stays meanwhile).
   onClose: () => void;
   // Another speaker to control instead (the speakers sheet).
@@ -21,7 +22,7 @@ interface Props {
 
 // What to look at, with the line drawing the design gives each.
 const TIPS = [
-  ['offlineTipPower', 'power'],
+  ['offlineTipPower', 'plug'],
   ['offlineTipWifi', 'wifi'],
   ['offlineTipRouter', 'clock'],
 ] as const;
@@ -30,7 +31,7 @@ const TIPS = [
 // design's "Speaker weg": the speaker greyed out, that this page keeps trying and goes on
 // where it was, what to check, and a way to another speaker. It closes by itself once the
 // speaker answers again; the button only tries at once.
-export function OfflinePage({ open, name, model, onClose, onOther }: Props) {
+export function OfflinePage({ open, name, model, onClose, onOther }: Props): ReactElement {
   const { t } = useI18n();
   return (
     <SheetModal open={open} onClose={onClose} label={t('offlineTitle')} variant="full">

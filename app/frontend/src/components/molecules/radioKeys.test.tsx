@@ -6,6 +6,7 @@ import { render } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ChoiceList } from './ChoiceList';
 import { SegmentedControl } from './SegmentedControl';
+import { must } from '../../test/must';
 
 const options = [
   { value: '12', label: '12h' },
@@ -25,7 +26,7 @@ describe.each([
     );
     const radios = view.getAllByRole('radio');
     expect(radios.map((r) => r.tabIndex)).toEqual([0, -1]);
-    radios[0].focus();
+    must(radios[0], 'the first radio').focus();
     await user.keyboard('{ArrowRight}');
     expect(onChange).toHaveBeenCalledWith('24');
     expect(document.activeElement).toBe(radios[1]);

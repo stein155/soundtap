@@ -4,7 +4,7 @@
 import styled, { css } from 'styled-components';
 
 export type ButtonVariant =
-  'primary' | 'stockholm' | 'ghost' | 'danger' | 'delete' | 'inline' | 'dashed' | 'spotify';
+  'primary' | 'stockholm' | 'ghost' | 'danger' | 'delete' | 'inline' | 'dashed';
 
 // Stockholm has one button: flat, 54 px, radius 7, small capitals, no lift or shadow. Solid
 // dims when pressed; outlined thickens its border, drawn inset so nothing moves.
@@ -71,25 +71,13 @@ const variants: Record<ButtonVariant, ReturnType<typeof css>> = {
     margin-top: 10px;
     ${outline('var(--ink)')}
   `,
-  // Spotify's brand rule: its green, with dark text, which white would fail on.
-  spotify: css`
-    margin-top: 10px;
-    min-height: 40px;
-    padding: 7px 26px;
-    border-radius: 999px;
-    background: #1db954;
-    color: #121212;
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: 1px;
-    text-transform: uppercase;
-    &:active {
-      opacity: 0.7;
-    }
-  `,
 };
 
-type Look = { $variant: ButtonVariant; $wide?: boolean; $small?: boolean };
+interface Look {
+  $variant: ButtonVariant;
+  $wide?: boolean | undefined;
+  $small?: boolean | undefined;
+}
 
 const base = css<Look>`
   display: inline-flex;
@@ -99,13 +87,13 @@ const base = css<Look>`
   text-decoration: none;
   ${({ $variant }) => variants[$variant]}
   ${({ $wide }) =>
-    $wide &&
+    $wide === true &&
     css`
       width: 100%;
       margin-top: 12px;
     `}
   ${({ $small }) =>
-    $small &&
+    $small === true &&
     css`
       align-self: flex-start;
       margin-top: 6px;

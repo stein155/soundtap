@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
+import type { ReactElement } from 'react';
 import { SetSwitch } from '../../../molecules/SetItem';
 import { SetMenu } from '../../../molecules/SetMenu';
-import { FieldCard } from '../../../molecules/FieldCard';
-import { FieldRow, RowSelect, RowTime } from '../../../molecules/FieldRow';
+import { LabeledField } from '../../../molecules/LabeledField';
+import { SelectField } from '../../../molecules/SelectField';
 import { Hint } from '../../../atoms/Hint';
-import { Stack } from '../../../atoms/Stack';
+import { Note } from '../../../atoms/Note';
+import { TextField } from '../../../atoms/TextField';
 import { useI18n } from '../../../../lib/i18n';
 import type { AlarmConfig, Preset } from '../../../../lib/types';
+import { Fields } from './styled';
 
 interface Props {
   alarm: AlarmConfig;
@@ -17,13 +20,23 @@ interface Props {
   onChange: (alarm: AlarmConfig) => void;
 }
 
+// The services a preset can hold besides radio, named after the preset so a playlist
+// reads as one: "4 · Sunday morning (Spotify)". Brand names, not translated.
+const SERVICE: Record<string, string> = { SPOTIFY: 'Spotify', UPNP: 'UPnP' };
+
+// "slot · name", and the service when it is not radio.
+export function presetChoice(slot: number, preset: Pick<Preset, 'name' | 'source'>): string {
+  const service = SERVICE[preset.source ?? ''];
+  return `${slot} · ${preset.name}${service ? ` (${service})` : ''}`;
+}
+
 const storedPresets = (presets: (Preset | null)[]) =>
-  presets.flatMap((p, i) => (p ? [{ slot: i + 1, name: p.name }] : []));
+  presets.flatMap((p, i) => (p ? [{ slot: i + 1, label: presetChoice(i + 1, p) }] : []));
 
 // The wake-up alarm: on/off, a time and the preset it plays. It runs on the speaker,
 // so it goes off with every phone asleep. When the preset it was set to has since been
 // cleared, the first stored one is offered instead.
-export function AlarmSettings({ alarm, presets, speakerName, onChange }: Props) {
+export function AlarmSettings({ alarm, presets, speakerName, onChange }: Props): ReactElement {
   const { t } = useI18n();
   const stored = storedPresets(presets);
   const slot = stored.some((p) => p.slot === alarm.slot) ? alarm.slot : stored.at(0)?.slot;
@@ -31,8 +44,10 @@ export function AlarmSettings({ alarm, presets, speakerName, onChange }: Props) 
   const shown = { ...alarm, slot: slot ?? alarm.slot };
   return (
     <>
+      <Note>{t('alarmIntro')}</Note>
       <SetMenu>
         <SetSwitch
+          icon="alarm"
           on={alarm.enabled}
           label={t('alarmEnable')}
           desc={t('alarmDesc', { name: speakerName })}
@@ -44,31 +59,27 @@ export function AlarmSettings({ alarm, presets, speakerName, onChange }: Props) 
       </SetMenu>
       {!stored.length && <Hint>{t('alarmNeedsPreset')}</Hint>}
       {alarm.enabled && slot !== undefined && (
-        <Stack offset={8}>
-          <FieldCard>
-            <FieldRow label={t('alarmTime')} htmlFor="alarm-time" layout="value">
-              <RowTime
+        <SetMenu title={t('alarmWhen')}>
+          <Fields>
+            <LabeledField id="alarm-time" label={t('alarmTime')}>
+              <TextField
                 id="alarm-time"
                 type="time"
                 value={alarm.time}
                 onChange={(e) => e.target.value && onChange({ ...shown, time: e.target.value })}
               />
-            </FieldRow>
-            <FieldRow label={t('alarmStation')} htmlFor="alarm-slot" layout="value">
-              <RowSelect
+            </LabeledField>
+            <LabeledField id="alarm-slot" label={t('alarmPreset')}>
+              <SelectField
                 id="alarm-slot"
-                value={slot}
-                onChange={(e) => onChange({ ...shown, slot: Number(e.target.value) })}
-              >
-                {stored.map((p) => (
-                  <option key={p.slot} value={p.slot}>
-                    {p.slot} · {p.name}
-                  </option>
-                ))}
-              </RowSelect>
-            </FieldRow>
-          </FieldCard>
-        </Stack>
+                label={t('alarmPreset')}
+                value={String(slot)}
+                options={stored.map((p) => ({ value: String(p.slot), label: p.label }))}
+                onChange={(v) => onChange({ ...shown, slot: Number(v) })}
+              />
+            </LabeledField>
+          </Fields>
+        </SetMenu>
       )}
     </>
   );

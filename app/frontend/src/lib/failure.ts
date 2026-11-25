@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
 import type { I18nKey, TranslateFn } from './i18n';
-import type { ApiError, ApiErrorCode } from './types';
+import type { ApiErrorCode } from './types';
 
 // The reason a speaker gives for a code the user can act on, in the page's language. An
 // outage, a timeout or a failure inside the speaker has nothing to add to the fallback.
@@ -25,12 +25,16 @@ const REASONS: Partial<Record<ApiErrorCode, I18nKey>> = {
   storage_full: 'errStorageFull',
 };
 
+// The reason for a code as the speaker sent it: any string, a newer speaker's too.
+const REASON_OF = new Map(Object.entries(REASONS));
+const reasonOf = (code: string): I18nKey | undefined => REASON_OF.get(code);
+
 // What a failed action says: always the translated `fallback`, followed by the
 // translated reason when the speaker's error code has one (ADR 0091). The speaker's own
 // English message never reaches the page: a code from a newer speaker, or none from an
 // older one, leaves the fallback on its own.
 export function failureText(err: unknown, fallback: string, t: TranslateFn): string {
-  const code = (err as Partial<ApiError> | null)?.code;
-  const key = code ? REASONS[code as ApiErrorCode] : undefined;
+  const fields: { code?: unknown } = typeof err === 'object' && err !== null ? err : {};
+  const key = typeof fields.code === 'string' ? reasonOf(fields.code) : undefined;
   return key ? `${fallback} (${t(key)})` : fallback;
 }

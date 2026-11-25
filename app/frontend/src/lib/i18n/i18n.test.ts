@@ -15,12 +15,18 @@ import {
 const files = import.meta.glob<{ default: Record<string, string> }>('./messages/*.ts', {
   eager: true,
 });
-const I18N: Record<string, Record<string, string>> = Object.fromEntries(
+const I18N = new Map(
   Object.entries(files).map(([path, file]) => [path.replace(/.*\/|\.ts$/g, ''), file.default])
 );
+// One language's messages; a language without a file fails the test.
+const messages = (lang: string): Record<string, string> => {
+  const found = I18N.get(lang);
+  if (!found) throw new Error(`no messages/${lang}.ts`);
+  return found;
+};
 
 describe('makeT', () => {
-  beforeAll(() => Promise.all(['de', 'fr', 'nl'].map(loadLanguage)));
+  beforeAll(async () => Promise.all(['de', 'fr', 'nl'].map(loadLanguage)));
 
   it('returns strings in the requested language', () => {
     const t = makeT('en');
@@ -31,7 +37,7 @@ describe('makeT', () => {
   it('translates the same key differently per language', () => {
     expect(makeT('nl')('settings')).toBe('Instellingen');
     expect(makeT('de')('settings')).toBe('Einstellungen');
-    expect(makeT('fr')('settings')).toBe('Réglages');
+    expect(makeT('fr')('settings')).toBe('Paramètres');
   });
 
   it('falls back to English for an unknown language', () => {
@@ -47,7 +53,9 @@ describe('makeT', () => {
   });
 
   it('returns the key itself when it is unknown in every dictionary', () => {
-    expect(makeT('en')('nope_not_a_key' as I18nKey)).toBe('nope_not_a_key');
+    // A key from outside the type, as stale stored data could hold: unchecked JSON.
+    const stale: I18nKey = JSON.parse('"nope_not_a_key"');
+    expect(makeT('en')(stale)).toBe('nope_not_a_key');
   });
 });
 
@@ -62,9 +70,9 @@ describe('interpolation', () => {
 describe('dictionaries', () => {
   it('every language ships every key (no silent fallbacks)', () => {
     const langs = LANGS.map((l) => l.code);
-    const reference = Object.keys(I18N[DEFAULT_LANG]).sort();
+    const reference = Object.keys(messages(DEFAULT_LANG)).sort();
     for (const lang of langs) {
-      expect(Object.keys(I18N[lang]).sort(), `keys for ${lang}`).toEqual(reference);
+      expect(Object.keys(messages(lang)).sort(), `keys for ${lang}`).toEqual(reference);
     }
   });
 });
@@ -115,7 +123,7 @@ describe('translation quality', () => {
   it('has no empty values', () => {
     const empty: string[] = [];
     for (const lang of langs) {
-      for (const [key, value] of Object.entries(I18N[lang])) {
+      for (const [key, value] of Object.entries(messages(lang))) {
         if (typeof value !== 'string' || value.trim() === '') empty.push(`${lang}.${key}`);
       }
     }
@@ -225,14 +233,17 @@ describe('translation quality', () => {
     'singles', // de, fr, nl
     'compilations', // fr
     'tone',
+    'preset', // de, it, nl: the word Bose's app uses
+    'update  name', // "Update · {name}" in de and nl
+    'volume n', // "volume {n}" in af, fr, it, nl, pt
   ]);
 
   it('does not silently reuse the English string', () => {
     const untranslated: string[] = [];
     for (const lang of langs) {
       if (lang === 'en') continue;
-      for (const [key, value] of Object.entries(I18N[lang])) {
-        const en = I18N.en[key];
+      for (const [key, value] of Object.entries(messages(lang))) {
+        const en = messages('en')[key];
         if (!en || en !== value) continue;
         const word = value
           .toLowerCase()

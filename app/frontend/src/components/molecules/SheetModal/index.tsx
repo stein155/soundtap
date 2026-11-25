@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode, type ReactElement } from 'react';
 import { Dialog, Modal, ModalOverlay } from 'react-aria-components';
 import { useEscape } from '../../../hooks/useEscape';
 import { swipeToClose } from './swipe';
 
-export type SheetVariant = 'sheet' | 'full' | 'page' | 'drawer';
+export type SheetVariant = 'sheet' | 'full' | 'page' | 'drawer' | 'dialog';
 
 interface Props {
   open: boolean;
@@ -21,7 +21,8 @@ interface Props {
 }
 
 // A layer over the page: a sheet from the bottom, a full-height one, the drawer from the
-// left, or a plain page from the right, as Stockholm's settings. It traps focus, closes on
+// left, a plain page from the right, as Stockholm's settings, or a dialog in the middle for
+// a question. It traps focus, closes on
 // Escape and on the phone's back, and animates in and out (the styles are in
 // pages/HomePage/home.css). All but the page also dim what is under them and close on a tap
 // outside and on a swipe (a sheet down, the drawer left).
@@ -32,12 +33,18 @@ export function SheetModal({
   variant = 'sheet',
   className,
   children,
-}: Props) {
+}: Props): ReactElement {
   // Only useEscape closes on Escape, one level at a time: the overlay's own handling would
   // take the key first and close every level at once.
   useEscape(open, onClose, true);
-  const cls = { sheet: 'sheet', full: 'sheet full', page: 'sheet full page', drawer: 'drawer' };
-  const overlay = { sheet: '', full: '', page: ' bare', drawer: ' left' };
+  const cls = {
+    sheet: 'sheet',
+    full: 'sheet full',
+    page: 'sheet full page',
+    drawer: 'drawer',
+    dialog: 'sheet dialog',
+  };
+  const overlay = { sheet: '', full: '', page: ' bare', drawer: ' left', dialog: ' center' };
   return (
     <ModalOverlay
       className={`overlay${overlay[variant]}`}
@@ -48,9 +55,9 @@ export function SheetModal({
     >
       <Modal className={`${cls[variant]}${className ? ` ${className}` : ''}`}>
         <Dialog className="dlg" aria-label={label}>
-          {({ close }) => {
+          {({ close }): ReactNode => {
             const body = typeof children === 'function' ? children(close) : children;
-            if (variant === 'page') return body;
+            if (variant === 'page' || variant === 'dialog') return body;
             return (
               <SwipeClose drawer={variant === 'drawer'} onClose={close}>
                 {body}

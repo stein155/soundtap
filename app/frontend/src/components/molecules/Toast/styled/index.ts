@@ -27,7 +27,11 @@ export const Bubble = styled.div`
   color: var(--on-ink);
   font-size: 13.5px;
   font-weight: 600;
-  box-shadow: var(--shadow-lg);
+  /* The design dims the page a little behind the message; a spread shadow does that
+     without a layer that would catch taps. */
+  box-shadow:
+    var(--shadow-lg),
+    0 0 0 100vmax rgba(17, 17, 17, 0.25);
   animation: ${rise} 160ms var(--ease);
   pointer-events: auto;
 
@@ -52,11 +56,13 @@ export const Close = styled.button`
   opacity: 0.8;
 `;
 
+// Underlined in the toast's own colour: the accent is the toast's background.
 export const UndoButton = styled.button`
   flex-shrink: 0;
   min-height: 32px;
   padding: 0 10px;
   border-radius: var(--radius-sm);
-  color: var(--accent-fill);
+  color: inherit;
   font-weight: 700;
+  text-decoration: underline;
 `;

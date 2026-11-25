@@ -5,11 +5,14 @@ import styled from 'styled-components';
 
 export const Field = styled.div`
   display: grid;
-  gap: 6px;
+  gap: 8px;
 `;
 
+// The design's field label: small capitals in grey.
 export const Label = styled.label`
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--ink-3);
 `;

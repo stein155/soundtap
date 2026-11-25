@@ -6,11 +6,28 @@ import { spotifyPlay } from '../../lib/spotify';
 import type { RecentItem } from '../../lib/recent';
 import type { PlaybackContext } from './context';
 
-export type Playable = { tuneInId: string; name: string; logo?: string };
+export interface Playable {
+  tuneInId: string;
+  name: string;
+  logo?: string;
+}
+
+export interface Starters {
+  playSlot: (slot: number) => Promise<void>;
+  playStation: (station: Playable) => Promise<void>;
+  playRecent: (item: RecentItem) => Promise<void>;
+}
 
 // Starting something on the selected room: shown as playing at once, a repeat tap ignored
 // until the request has settled.
-export function starters({ live, speaker, lead, failed, begin, settle }: PlaybackContext) {
+export function starters({
+  live,
+  speaker,
+  lead,
+  failed,
+  begin,
+  settle,
+}: PlaybackContext): Starters {
   // A failed request withdraws the target it set, not a newer tap's.
   const playFailed = (mine: ReturnType<typeof live.playOptimistic>) => (err?: unknown) => {
     live.cancelPending(mine);

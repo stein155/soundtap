@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactElement } from 'react';
 import styled from 'styled-components';
 import { onPressWait } from '../../../lib/base';
 import { useI18n } from '../../../lib/i18n';
@@ -14,7 +14,7 @@ const Pinned = styled(Bubble)`
 `;
 
 // While a request waits for a key held on the speaker, say so.
-export function PressPrompt() {
+export function PressPrompt(): ReactElement | null {
   const { t } = useI18n();
   const [waiting, setWaiting] = useState(false);
   useEffect(() => onPressWait(setWaiting), []);

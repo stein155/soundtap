@@ -6,7 +6,6 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { useSpeakerInfo } from './useSpeakerInfo';
 import { useSpeakerSettings } from './useSpeakerSettings';
 import * as api from '../lib/api';
-import type { Settings } from '../lib/types';
 import { settingsFixture } from '../test/settings';
 
 vi.mock('../lib/api', () => ({
@@ -19,10 +18,10 @@ vi.mock('../lib/api', () => ({
 
 describe('useSpeakerInfo', () => {
   it('does not lend one room’s settings to the next while it loads', async () => {
-    const a = { multiroom: { syncVolume: true } } as Settings;
+    const a = settingsFixture({ multiroom: { keepGroups: false, syncVolume: true } });
     vi.mocked(api.getVersion).mockResolvedValue(null);
-    vi.mocked(api.getSettings).mockImplementation((speaker) =>
-      speaker === 'a' ? Promise.resolve(a) : new Promise(() => {})
+    vi.mocked(api.getSettings).mockImplementation(async (speaker) =>
+      speaker === 'a' ? Promise.resolve(a) : new Promise(vi.fn())
     );
     const { result, rerender } = renderHook(({ speaker }) => useSpeakerInfo(speaker), {
       initialProps: { speaker: 'a' },
@@ -37,7 +36,10 @@ describe('useSpeakerInfo', () => {
   // the one shows on the other without a reload.
   it('shows what the settings page saved', async () => {
     const before = settingsFixture({ name: 'Kitchen' });
-    const after = settingsFixture({ name: 'Kitchen', bass: { actual: 3 } as Settings['bass'] });
+    const after = settingsFixture({
+      name: 'Kitchen',
+      bass: { actual: 3, target: 3, min: -9, max: 0, default: 0 },
+    });
     vi.mocked(api.getVersion).mockResolvedValue(null);
     vi.mocked(api.getSettings).mockResolvedValue(before);
     const { result } = renderHook(() => ({
@@ -48,7 +50,7 @@ describe('useSpeakerInfo', () => {
     expect(result.current.home.settings).toBe(before);
     vi.mocked(api.getSettings).mockResolvedValue(after);
     act(() => result.current.page.set('bass', 3));
-    await act(() => result.current.page.save());
+    await act(async () => result.current.page.save());
     await waitFor(() => expect(result.current.home.settings).toBe(after));
   });
 });

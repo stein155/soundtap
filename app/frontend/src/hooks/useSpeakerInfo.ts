@@ -6,12 +6,20 @@ import { spotifyStatus, statusView } from '../lib/spotify';
 import { versionLabel } from '../lib/version';
 import { useSpeakerResource } from './speaker/resource';
 import { ensureResource, refreshResource } from './speaker/store';
+import type { Settings } from '../lib/types';
+
+export interface SpeakerInfo {
+  settings: Settings | null;
+  version: string;
+  spotifyReady: boolean;
+  reload: () => void;
+}
 
 // Slow-changing facts about the selected speaker: its settings, the soundtapd version. They
 // are the page's one copy (speaker/store.ts), kept per speaker: after a room switch the
 // previous room's facts (its group-volume policy above all) must not stand in for the new
 // one's while it loads, and a save on the settings page shows here without a reload.
-export function useSpeakerInfo(speaker: string) {
+export function useSpeakerInfo(speaker: string): SpeakerInfo {
   const settings = useSpeakerResource('settings', speaker);
   const version = useSpeakerResource('version', speaker);
   const [spotifyReady, setSpotifyReady] = useState(false);

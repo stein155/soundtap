@@ -17,14 +17,17 @@ const UNMUTE_FALLBACK = 25;
 export function useMute(
   setVolume: (room: Room, volume: number) => void,
   volumeStamp: (id: string) => number = () => 0
-) {
+): (room: Room) => Promise<void> {
   const [lastAudible, setLastAudible] = useState<Record<string, number>>({});
   return async (room: Room) => {
     if (room.volume === 0) {
       const stamp = volumeStamp(room.id);
       const level = await getMutedLevel(speakerArg(room));
       if (volumeStamp(room.id) !== stamp) return;
-      return setVolume(room, level || (lastAudible[room.id] ?? UNMUTE_FALLBACK));
+      // No level kept (or a kept 0): the last level heard here, else a quiet default.
+      const back = level !== null && level !== 0 ? level : undefined;
+      setVolume(room, back ?? lastAudible[room.id] ?? UNMUTE_FALLBACK);
+      return;
     }
     setLastAudible((levels) => ({ ...levels, [room.id]: room.volume }));
     setVolume(room, 0);

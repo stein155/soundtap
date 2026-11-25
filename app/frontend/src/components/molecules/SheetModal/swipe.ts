@@ -5,7 +5,7 @@
 const closeDistance = 110;
 const closeSpeed = 0.5;
 
-type Drag = {
+interface Drag {
   layer: HTMLElement;
   x: number;
   y: number;
@@ -14,7 +14,7 @@ type Drag = {
   last: number;
   speed: number;
   on?: boolean;
-};
+}
 
 // How far the finger moved toward closing, and across that.
 const away = (t: Touch, d: Drag, drawer: boolean) => (drawer ? d.x - t.clientX : t.clientY - d.y);
@@ -34,17 +34,19 @@ function put(layer: HTMLElement, px: number, drawer: boolean) {
 // grab starts a drag on one finger on the layer, unless it is in a text field or, for a
 // sheet, in a list scrolled away from its top.
 function grab(e: TouchEvent, drawer: boolean): Drag | null {
-  const t = e.target as HTMLElement;
+  const t = e.target;
+  if (!(t instanceof Element)) return null;
   const layer = t.closest<HTMLElement>(drawer ? '.drawer' : '.sheet');
   if (!layer || e.touches.length !== 1 || t.closest('input:not([type="range"]), textarea')) {
     return null;
   }
   if (!drawer) {
-    for (let n: HTMLElement | null = t; n && n !== layer; n = n.parentElement) {
+    for (let n: Element | null = t; n && n !== layer; n = n.parentElement) {
       if (n.scrollTop > 0) return null;
     }
   }
   const p = e.touches[0];
+  if (!p) return null;
   return { layer, x: p.clientX, y: p.clientY, at: e.timeStamp, last: 0, speed: 0 };
 }
 
@@ -52,6 +54,7 @@ function grab(e: TouchEvent, drawer: boolean): Drag | null {
 // went across instead.
 function follow(e: TouchEvent, d: Drag, drawer: boolean): Drag | null {
   const t = e.touches[0];
+  if (!t) return d;
   const a = away(t, d, drawer);
   if (d.on === undefined) {
     const b = across(t, d, drawer);
@@ -74,7 +77,8 @@ function follow(e: TouchEvent, d: Drag, drawer: boolean): Drag | null {
 
 // release says whether a let-go closes the layer; if not, the layer springs back.
 function release(e: TouchEvent, g: Drag, drawer: boolean): boolean {
-  const a = away(e.changedTouches[0], g, drawer);
+  const lifted = e.changedTouches[0];
+  const a = lifted ? away(lifted, g, drawer) : 0;
   const fresh = e.timeStamp - g.at < 100; // a finger that stopped before lifting is no fling
   if (e.type !== 'touchcancel' && (a > closeDistance || (a > 30 && fresh && g.speed > closeSpeed)))
     return true;
@@ -85,7 +89,7 @@ function release(e: TouchEvent, g: Drag, drawer: boolean): boolean {
 
 // swipeToClose lets a finger on el drag a sheet down, or the drawer to the left, and
 // calls close when it lets go far or fast enough. It returns the cleanup.
-export function swipeToClose(el: HTMLElement, drawer: boolean, close: () => void) {
+export function swipeToClose(el: HTMLElement, drawer: boolean, close: () => void): () => void {
   let d: Drag | null = null;
   const start = (e: TouchEvent) => {
     d = grab(e, drawer);
@@ -96,7 +100,7 @@ export function swipeToClose(el: HTMLElement, drawer: boolean, close: () => void
   const end = (e: TouchEvent) => {
     const g = d;
     d = null;
-    if (g?.on && release(e, g, drawer)) close();
+    if (g?.on === true && release(e, g, drawer)) close();
   };
   el.addEventListener('touchstart', start, { passive: true });
   el.addEventListener('touchmove', move, { passive: false });

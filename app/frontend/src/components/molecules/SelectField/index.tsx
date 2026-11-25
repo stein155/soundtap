@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import type { ReactNode } from 'react';
+import type { ReactNode, ReactElement } from 'react';
 import { Icon } from '../../atoms/Icon';
 import { cardShadow, useSurface } from '../../../hooks/useSurface';
 import { Chevron, Select, Trail, Wrap } from './styled';
@@ -27,15 +27,19 @@ export function SelectField<V extends string>({
   disabled,
   id,
   trail,
-}: Props<V>) {
+}: Props<V>): ReactElement {
   return (
     <Wrap>
       <Select
         id={id}
         $shadow={cardShadow(useSurface())}
-        $trail={!!trail}
+        $trail={Boolean(trail)}
         value={value}
-        onChange={(e) => onChange(e.target.value as V)}
+        onChange={(e) => {
+          // The select only offers these options: the one picked is always among them.
+          const picked = options.find((o) => o.value === e.target.value);
+          if (picked) onChange(picked.value);
+        }}
         aria-label={id ? undefined : label}
         disabled={disabled}
       >
@@ -45,7 +49,7 @@ export function SelectField<V extends string>({
           </option>
         ))}
       </Select>
-      {trail && <Trail>{trail}</Trail>}
+      {Boolean(trail) && <Trail>{trail}</Trail>}
       <Chevron aria-hidden="true">
         <Icon.chevron width="18" height="18" />
       </Chevron>

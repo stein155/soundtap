@@ -4,14 +4,20 @@
 import type { FavoriteEntry, PlayerStation, Station } from './types';
 
 // What each way of saving a favorite hands the speaker.
-export const stationEntry = (station: Pick<Station, 'tuneInId' | 'name' | 'logo'>) => ({
+export const stationEntry = (
+  station: Pick<Station, 'tuneInId' | 'name' | 'logo'>
+): FavoriteEntry => ({
   source: 'TUNEIN',
   name: station.name,
   location: station.tuneInId,
   art: station.logo,
 });
 
-export const spotifyEntry = (item: { uri: string; name: string; artwork?: string }) => ({
+export const spotifyEntry = (item: {
+  uri: string;
+  name: string;
+  artwork?: string | undefined;
+}): FavoriteEntry => ({
   source: 'SPOTIFY',
   name: item.name,
   location: item.uri,

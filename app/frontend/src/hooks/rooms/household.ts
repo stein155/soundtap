@@ -76,7 +76,7 @@ export function useHousehold(devices: SpeakerDevice[], skip: string | null): Hou
 }
 
 // The stream is gone: what it said no longer counts.
-export function forgetStream(household: Household) {
+export function forgetStream(household: Household): void {
   household.live = false;
   household.pushed.clear();
   household.pushedFollowers = {};

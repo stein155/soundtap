@@ -12,7 +12,7 @@ vi.mock('../lib/api', () => ({
   setVolume: vi.fn(),
   normalizeNowPlaying: (x: unknown) => x,
 }));
-vi.mock('../lib/events', () => ({ subscribeState: () => () => {} }));
+vi.mock('../lib/events', () => ({ subscribeState: () => vi.fn() }));
 
 describe('useSpeaker on a room switch', () => {
   it('drops the volume of the old room when the new room gives none', async () => {

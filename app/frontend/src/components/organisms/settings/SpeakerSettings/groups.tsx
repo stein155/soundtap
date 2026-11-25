@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import type { ReactNode } from 'react';
+import type { ReactNode, ReactElement } from 'react';
 import { Accordion, SubPage, type useAccordionGroup } from '../../../molecules/Accordion';
 import { SetSwitch } from '../../../molecules/SetItem';
 import { SetMenu } from '../../../molecules/SetMenu';
@@ -54,7 +54,7 @@ export function SpeakerHeader({
   model: string;
   open: ReturnType<Open>;
   saveBar: ReactNode;
-}) {
+}): ReactElement {
   const { t } = useI18n();
   return (
     <>
@@ -64,7 +64,13 @@ export function SpeakerHeader({
         </Disc>
         <HeroText>
           <Name>{name}</Name>
-          <HeroMeta>{[model, versionLabel(page.version)].filter(Boolean).join(' · ')}</HeroMeta>
+          <HeroMeta>
+            {[model, versionLabel(page.version)]
+              .filter((line) => line !== '')
+              .map((line) => (
+                <span key={line}>{line}</span>
+              ))}
+          </HeroMeta>
         </HeroText>
         <Pencil aria-hidden="true">
           <Icon.pencil width="20" height="20" />
@@ -102,7 +108,7 @@ export function SpeakerGroup({
   commit: Commit;
   saveBar: ReactNode;
   onRenamed: () => void;
-}) {
+}): ReactElement {
   const { t } = useI18n();
   const speaker = speakerArg(room);
   const display = form.display;
@@ -142,7 +148,7 @@ export function SpeakerGroup({
           />
         </Accordion>
       )}
-      {page.bluetooth?.adapter && (
+      {page.bluetooth?.adapter === true && (
         <Accordion
           {...section('bluetooth')}
           icon="bluetooth"
@@ -165,7 +171,6 @@ export function SpeakerGroup({
 export function SystemGroups({
   page,
   room,
-  rooms,
   model,
   network,
   section,
@@ -174,19 +179,18 @@ export function SystemGroups({
 }: {
   page: Page;
   room: Room;
-  rooms: Room[];
   model: string;
   network: NetworkInfo | null;
   section: Open;
   crashReports: boolean;
   onCrashReports: (on: boolean) => void;
-}) {
+}): ReactElement {
   const { t } = useI18n();
   const speaker = speakerArg(room);
   const newer = useUpdateAvailable(speaker, page.version);
   return (
     <>
-      <SetMenu title={t('connection')}>
+      <SetMenu title={t('connectionMaintenance')}>
         <Accordion
           {...section('wifi')}
           icon="wifi"
@@ -195,15 +199,14 @@ export function SystemGroups({
         >
           <NetworkSettings network={network} speaker={speaker} speakerName={room.name} />
         </Accordion>
-      </SetMenu>
-      <SetMenu title={t('maintenance')}>
         <Accordion
           {...section('updates')}
           icon="refresh"
           title={t('page_updates')}
-          summary={newer ? t('updateAvailable') : versionLabel(page.version)}
+          summary={newer ? undefined : versionLabel(page.version)}
+          badge={newer ? t('updatesNewBadge') : undefined}
         >
-          <UpdateSettings speaker={speaker} model={model} version={page.version} rooms={rooms} />
+          <UpdateSettings speaker={speaker} name={room.name} model={model} version={page.version} />
         </Accordion>
         <Accordion {...section('support')} icon="help" title={t('helpSupport')}>
           <SupportSettings speaker={speaker} />
@@ -211,7 +214,6 @@ export function SystemGroups({
         <Accordion {...section('developer')} icon="code" title={t('forDevelopers')}>
           <DeveloperSettings
             speaker={speaker}
-            version={page.version}
             crashReports={crashReports}
             onCrashReports={onCrashReports}
           />

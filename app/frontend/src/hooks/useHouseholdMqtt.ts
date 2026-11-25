@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useEffect, useEffectEvent, useRef, useState } from 'react';
+import {
+  useEffect,
+  useEffectEvent,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from 'react';
 import { getMqttStatus, getSettings, saveSettings } from '../lib/api';
 import type { MqttConfig } from '../lib/types';
 import { speakerArg, type Room } from './useRooms';
@@ -16,7 +23,10 @@ export interface MqttForm {
   tls: boolean;
 }
 
-export type BrokerLink = { connected: boolean; lastError: string };
+export interface BrokerLink {
+  connected: boolean;
+  lastError: string;
+}
 
 const STATUS_POLL_MS = 4000;
 // How soon a failed settings read is tried again.
@@ -30,19 +40,29 @@ export const DEFAULT_DISCOVERY_PREFIX = 'homeassistant';
 // The form as a speaker's stored settings fill it; the password is never sent back.
 function toForm(m: MqttConfig | undefined): MqttForm {
   return {
-    enabled: !!m?.enabled,
+    enabled: m?.enabled === true,
     host: m?.host || '',
-    port: m?.port ? String(m.port) : '',
+    port: m?.port !== undefined && m.port !== 0 ? String(m.port) : '',
     username: m?.username || '',
     password: '',
     discoveryPrefix: m?.discoveryPrefix || DEFAULT_DISCOVERY_PREFIX,
-    tls: !!m?.tls,
+    tls: m?.tls === true,
   };
 }
 
 // The settings patch a form saves. A blank password keeps each speaker's stored one.
-function toPatch(form: MqttForm): Record<string, unknown> {
-  const patch: Record<string, unknown> = {
+interface MqttPatch {
+  enabled: boolean;
+  host: string;
+  port: number;
+  username: string;
+  discoveryPrefix: string;
+  tls: boolean;
+  password?: string;
+}
+
+function toPatch(form: MqttForm): MqttPatch {
+  const patch: MqttPatch = {
     enabled: form.enabled,
     host: form.host.trim(),
     port: Number(form.port) || 0,
@@ -55,14 +75,14 @@ function toPatch(form: MqttForm): Record<string, unknown> {
 }
 
 // Whether two patches send credentials to the same broker, as the speaker decides it.
-const sameBroker = (a: Record<string, unknown>, b: Record<string, unknown>) =>
+const sameBroker = (a: MqttPatch, b: MqttPatch) =>
   a.host === b.host && a.port === b.port && a.tls === b.tls;
 
 // Each online speaker's link to the broker, polled. It restarts when the online set
 // changes (`key`), not on every poll that hands over a new rooms array.
 function useBrokerLinks(online: Room[], key: string) {
   const [links, setLinks] = useState<Partial<Record<string, BrokerLink>>>({});
-  const readLinks = useEffectEvent(() =>
+  const readLinks = useEffectEvent(async () =>
     Promise.all(online.map(async (r) => [r.id, await getMqttStatus(speakerArg(r))] as const))
   );
   useEffect(() => {
@@ -84,13 +104,26 @@ function useBrokerLinks(online: Room[], key: string) {
   return links;
 }
 
+export interface HouseholdMqtt {
+  form: MqttForm | null;
+  loading: boolean;
+  loadFailed: boolean;
+  setForm: Dispatch<SetStateAction<MqttForm | null>>;
+  dirty: boolean;
+  hasPassword: boolean;
+  links: Partial<Record<string, BrokerLink>>;
+  failedOn: string[];
+  online: Room[];
+  save: () => Promise<void>;
+}
+
 // The MQTT broker settings, for every speaker at once. Each speaker runs its
 // own bridge under its own base topic, so the broker is the same for all of them; the
 // base topic stays per speaker, because one shared topic would collide.
 //
 // The form is read from the speaker serving the page. If that read fails there is no
 // form at all: saving defaults over every speaker's real broker would wipe it.
-export function useHouseholdMqtt(rooms: Room[]) {
+export function useHouseholdMqtt(rooms: Room[]): HouseholdMqtt {
   const online = rooms.filter((r) => r.online);
   const key = online.map((r) => r.id).join(',');
   // undefined while loading; null when the settings could not be read.
@@ -111,11 +144,14 @@ export function useHouseholdMqtt(rooms: Room[]) {
     const seq = ++loadSeq.current;
     void getSettings(speakerArg(source)).then((settings) => {
       if (seq !== loadSeq.current) return;
-      if (!settings) return setSaved(null);
+      if (!settings) {
+        setSaved(null);
+        return;
+      }
       const loaded = toForm(settings.mqtt);
       setSaved(loaded);
       setForm(loaded);
-      setHasPassword(!!settings.mqtt.hasPassword);
+      setHasPassword(settings.mqtt.hasPassword);
     });
   });
   useEffect(() => loadForm(), [key, retry]);
@@ -135,7 +171,7 @@ export function useHouseholdMqtt(rooms: Room[]) {
     const submitted = form;
     const patch = toPatch(submitted);
     const results = await Promise.all(
-      online.map((r) =>
+      online.map(async (r) =>
         saveSettings({ mqtt: patch }, speakerArg(r)).then(
           () => null,
           () => r.name

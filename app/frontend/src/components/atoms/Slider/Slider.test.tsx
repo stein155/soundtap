@@ -7,8 +7,7 @@ import { Slider } from '.';
 
 // jsdom reports a zero-size box, so the geometry is stubbed.
 function stubRect(el: Element, { left = 0, width = 200 } = {}) {
-  el.getBoundingClientRect = () =>
-    ({ left, width, top: 0, height: 24, right: left + width, bottom: 24 }) as DOMRect;
+  el.getBoundingClientRect = () => new DOMRect(left, 0, width, 24);
 }
 
 describe('Slider', () => {

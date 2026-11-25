@@ -1,8 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactElement,
+  type ReactNode,
+} from 'react';
 import { Sheet } from '../../../molecules/Sheet';
+import { useDiscardConfirm } from '../../../molecules/ConfirmSheet';
 import { Integration, Integrations, SettingsOverview, type Receiver } from '../SettingsOverview';
 import { SpeakerSettings } from '../SpeakerSettings';
 import { Mqtt } from '../Mqtt';
@@ -18,6 +26,9 @@ interface Props {
   speakerId?: string | null;
   // Whether the page on screen holds unsaved edits, for whatever closes the sheet.
   onDirty?: (dirty: boolean) => void;
+  // The app's own top bar over the overview, when Settings is a main page: the menu and the
+  // presets, as on every other page, instead of a Close.
+  bar?: ReactNode;
 }
 
 type Page = 'integrations' | 'mqtt' | Receiver;
@@ -37,22 +48,27 @@ const PARENT: Partial<Record<Page, Page>> = {
 };
 
 // Where in settings the sheet is: the overview, a speaker, or a page below either.
-type Location = { speakerId: string | null; page: Page | null };
+interface Location {
+  speakerId: string | null;
+  page: Page | null;
+}
 const OVERVIEW: Location = { speakerId: null, page: null };
 
 type T = ReturnType<typeof useI18n>['t'];
 
 // The small line above the headline.
 function eyebrowOf(t: T, sub: SubPage | null, room: Room | null, page: Page | null) {
-  if (sub) return room?.name || t('settings');
+  if (sub) return sub.eyebrow || room?.name || t('settings');
   if (room) return page ? room.name : t('speaker');
   return page ? t('settings') : null;
 }
 
 function headlineOf(t: T, sub: SubPage | null, room: Room | null, page: Page | null) {
   if (sub) return sub.title;
-  const title = page && PAGE_TITLE[page];
-  if (title) return typeof title === 'string' ? t(title) : title.brand;
+  if (page !== null) {
+    const title = PAGE_TITLE[page];
+    return typeof title === 'string' ? t(title) : title.brand;
+  }
   return room ? room.name : t('settings');
 }
 
@@ -79,7 +95,8 @@ export function SettingsSheet({
   onExit,
   speakerId = null,
   onDirty: tellDirty,
-}: Props) {
+  bar,
+}: Props): ReactElement {
   const { t } = useI18n();
   const [at, setAt] = useState<Location>({ speakerId, page: null });
   // A row's own page (language, Wi-Fi, ...), drawn over the list it came from.
@@ -91,10 +108,12 @@ export function SettingsSheet({
   const [dirty, setDirty] = useState(false);
   const onDirty = useCallback((d: boolean) => setDirty(d), []);
   useEffect(() => tellDirty?.(dirty), [dirty, tellDirty]);
+  const discard = useDiscardConfirm(dirty);
   const leave = (go: () => void) => () => {
-    if (dirty && !window.confirm(t('discardChanges'))) return;
-    setDirty(false);
-    go();
+    discard.ask(() => {
+      setDirty(false);
+      go();
+    });
   };
 
   const room = rooms.find((r) => r.id === at.speakerId) ?? null;
@@ -104,6 +123,10 @@ export function SettingsSheet({
   );
   // A row's page goes back to its list without asking: its edits belong to that list.
   const back = sub ? sub.back : up;
+  // Below the overview: a way back, and no bar of the app's own.
+  const deep = nested || sub !== null;
+  // How the overview is left: the app's own bar, or a Close of its own.
+  const exit = deep || bar !== undefined ? undefined : onExit;
 
   const settingsPage = () => {
     if (room)
@@ -120,7 +143,7 @@ export function SettingsSheet({
     return (
       <SettingsOverview
         rooms={rooms}
-        onSpeaker={(speakerId) => setAt({ speakerId, page: null })}
+        onSpeaker={(id) => setAt({ speakerId: id, page: null })}
         onIntegrations={() => setAt({ speakerId: null, page: 'integrations' })}
       />
     );
@@ -131,18 +154,22 @@ export function SettingsSheet({
 
   return (
     <Sheet
-      onExit={onExit}
-      scrollKey={`${at.speakerId}|${at.page}|${sub?.title}`}
-      onBack={nested || sub ? back : undefined}
+      bar={deep ? undefined : bar}
+      onExit={exit}
+      ownHero={!!room && !at.page && !sub}
+      scrollKey={`${String(at.speakerId)}|${String(at.page)}|${String(sub?.title)}`}
+      onBack={deep ? back : undefined}
       backLabel={t('back')}
       eyebrow={eyebrowOf(t, sub, room, at.page)}
       headline={headlineOf(t, sub, room, at.page)}
       label={t('settings')}
+      action={sub?.action}
     >
       <SubPageContext.Provider value={host}>
         <div hidden={!!sub}>{body}</div>
         <div ref={setLayer} hidden={!sub} />
       </SubPageContext.Provider>
+      {discard.sheet}
     </Sheet>
   );
 }

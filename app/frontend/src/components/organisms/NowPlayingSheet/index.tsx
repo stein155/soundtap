@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import type { ReactNode } from 'react';
+import type { ReactNode, ReactElement } from 'react';
 import { Button } from 'react-aria-components';
 import { Icon } from '../../atoms/Icon';
 import { WashedBlur, PlayArt } from '../../molecules/Art';
@@ -35,7 +35,7 @@ interface Props {
   onSleep: (minutes: number) => void;
   onVolume: (volume: number) => void;
   // Without it the speaker icon is only a picture (a group has no single level to mute).
-  onMute?: () => void;
+  onMute?: (() => void) | undefined;
   onPresets: () => void;
   onSpeaker: () => void;
   // Who plays along: the group sheet.
@@ -48,7 +48,12 @@ interface Props {
 // What plays, in words: a station that names its song shows the station small above, the
 // song as the title and the artist under it, as the design has it; anything else keeps its
 // title and second line.
-function Titles(p: { title: string; track?: string; artist?: string; line: string }) {
+function Titles(p: {
+  title: string;
+  track?: string | undefined;
+  artist?: string | undefined;
+  line: string;
+}) {
   if (!p.track) {
     return (
       <>
@@ -76,7 +81,7 @@ function Extras(p: { modes: ReactNode; sleep: ReactNode; onGroup: () => void }) 
         <div className="np-pills">
           {p.sleep}
           <Button className="np-pill" onPress={p.onGroup}>
-            <Icon.stereo aria-hidden="true" />
+            <Icon.group aria-hidden="true" />
             {t('group')}
           </Button>
         </div>
@@ -93,7 +98,7 @@ export function NowPlayingSheet({
   starting,
   sleepTimer,
   ...cb
-}: Props) {
+}: Props): ReactElement {
   const { t } = useI18n();
   const view = describePlayback(lead.now, t, speakerArg(lead));
   const name = groupName(lead, members);
@@ -115,7 +120,7 @@ export function NowPlayingSheet({
       {(close) => (
         <>
           <WashedBlur src={artSrc(view)} />
-          <TopBar view={view} onClose={close} onPresets={cb.onPresets} />
+          <TopBar view={view} name={name} onClose={close} onPresets={cb.onPresets} />
           <div className="np-body">
             {on && <PlayArt artwork={view.artwork} name={view.title} className="np-art" />}
             <Titles
@@ -136,7 +141,7 @@ export function NowPlayingSheet({
               <TrackTime
                 speaker={speakerArg(lead)}
                 playing={lead.now?.playStatus === 'PLAY_STATE'}
-                nowKey={`${lead.now?.track}|${lead.now?.playStatus}`}
+                nowKey={`${String(lead.now?.track)}|${String(lead.now?.playStatus)}`}
               />
             )}
             <VolumeSlider

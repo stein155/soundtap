@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
+import type { ReactElement } from 'react';
 import { Icon } from '../../atoms/Icon';
 import { useI18n } from '../../../lib/i18n';
 import { Bar, Emoji, Headings, SettingsButton, Subtitle, Title } from './styled';
@@ -17,7 +18,7 @@ interface Props {
 }
 
 // The greeting at the top of the screen, with the settings button.
-export function Header({ emoji, title, subtitle, tint, waving, onSettings }: Props) {
+export function Header({ emoji, title, subtitle, tint, waving, onSettings }: Props): ReactElement {
   const { t } = useI18n();
   return (
     <Bar $tint={tint}>

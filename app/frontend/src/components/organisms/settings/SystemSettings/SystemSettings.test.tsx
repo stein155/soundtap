@@ -29,8 +29,8 @@ describe('SystemSettings support bundle', () => {
     vi.stubGlobal(
       'URL',
       class extends URL {
-        static createObjectURL = createObjectURL;
-        static revokeObjectURL = vi.fn();
+        static override createObjectURL = createObjectURL;
+        static override revokeObjectURL = vi.fn();
       }
     );
     const saved: { href: string; download: string }[] = [];
@@ -41,7 +41,7 @@ describe('SystemSettings support bundle', () => {
     });
 
     const { getByRole } = renderWithI18n(<SupportSettings speaker="kitchen" />);
-    fireEvent.click(getByRole('button', { name: 'Support bundle' }));
+    fireEvent.click(getByRole('button', { name: 'Download support bundle' }));
 
     await waitFor(() => expect(saved).toHaveLength(1));
     expect(api.getSupportBundle).toHaveBeenCalledWith('kitchen');
@@ -57,7 +57,7 @@ describe('SystemSettings support bundle', () => {
       Object.assign(new Error('press a button'), { status: 403, code: 'not_confirmed' })
     );
     const { getByRole, findByRole } = renderWithI18n(<SupportSettings speaker="" />);
-    const button = getByRole('button', { name: 'Support bundle' });
+    const button = getByRole('button', { name: 'Download support bundle' });
     fireEvent.click(button);
 
     const alert = await findByRole('alert');

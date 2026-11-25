@@ -3,43 +3,65 @@
 
 import styled from 'styled-components';
 
-export const Overlay = styled.div`
-  position: fixed;
-  inset: 0;
-  z-index: 90;
-  display: grid;
-  place-items: center;
-  background: rgba(22, 24, 27, 0.4);
-  backdrop-filter: blur(6px);
-`;
-
-export const Card = styled.div`
-  max-width: 300px;
+// A version on a white card; one on offer is outlined in ink.
+export const Card = styled.section<{ $offer?: boolean | undefined }>`
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 10px;
-  padding: 28px 24px;
+  align-items: flex-start;
+  padding: 16px;
   border-radius: var(--radius);
   background: var(--surface);
-  box-shadow: var(--shadow-lg);
-  text-align: center;
+  box-shadow: inset 0 0 0
+    ${({ $offer }) => ($offer === true ? '2px var(--ink)' : '1px var(--border)')};
+
+  & > button {
+    margin-top: 8px;
+  }
 `;
 
-export const Title = styled.h2`
+export const Kicker = styled.p`
   margin: 0;
-  font-size: 18px;
+  font-size: 12px;
   font-weight: 700;
-  letter-spacing: var(--tracking-title);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--ink-3);
 `;
 
-export const Text = styled.p`
-  margin: 0;
-  font-size: 13.5px;
+export const Title = styled.p`
+  margin: 6px 0 0;
+  font-size: 18px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+`;
+
+export const Meta = styled.p`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--ink-3);
+`;
+
+export const Notes = styled.p`
+  margin: 10px 0 0;
+  font-size: 13px;
   line-height: 1.5;
   color: var(--ink-2);
+  white-space: pre-wrap;
 `;
 
-export const ReleaseNotes = styled.span`
-  white-space: pre-wrap;
+// The card's buttons and what they report, full width under the rest.
+export const Actions = styled.div`
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+
+  /* The space above is the row's own; a wide button adds none. */
+  & > button:first-child {
+    margin-top: 0;
+  }
 `;

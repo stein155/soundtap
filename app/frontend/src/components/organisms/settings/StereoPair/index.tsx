@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactElement } from 'react';
 import { Button } from '../../../atoms/Button';
 import { Hint } from '../../../atoms/Hint';
 import { Note } from '../../../atoms/Note';
 import { ChoiceList } from '../../../molecules/ChoiceList';
 import { ConfirmAction } from '../../../molecules/ConfirmAction';
-import { SegmentedControl } from '../../../molecules/SegmentedControl';
+import { ModelArt } from '../../../molecules/ModelArt';
+import { SetMenu } from '../../../molecules/SetMenu';
+import { useRadioKeys } from '../../../../hooks/useRadioKeys';
 import { useI18n } from '../../../../lib/i18n';
 import { failureText } from '../../../../lib/failure';
 import {
@@ -18,6 +20,7 @@ import {
   type Channel,
 } from '../../../../lib/api';
 import { speakerArg, type Room } from '../../../../hooks/useRooms';
+import { Footer, Letter, SideBox, SideButton, Sides, Then } from './styled';
 
 type Side = Extract<Channel, 'left' | 'right'>;
 const other = (side: Side): Side => (side === 'left' ? 'right' : 'left');
@@ -77,7 +80,7 @@ function useStereoPair(room: Room, rooms: Room[], side: Side, onChanged: () => v
       setBusy(false);
     }
   };
-  const pair = (partnerRoom: Room) =>
+  const pair = async (partnerRoom: Room) =>
     run(async () => {
       const them = speakerArg(partnerRoom);
       try {
@@ -94,7 +97,7 @@ function useStereoPair(room: Room, rooms: Room[], side: Side, onChanged: () => v
         throw e;
       }
     });
-  const unpair = () =>
+  const unpair = async () =>
     run(async () => {
       if (partner) {
         const follower = partner.linkedTo === room.id ? partner : room;
@@ -106,7 +109,61 @@ function useStereoPair(room: Room, rooms: Room[], side: Side, onChanged: () => v
   return { channel, partner, busy, error, pair, unpair };
 }
 
-export function StereoPair({ room, rooms, onChanged }: Props) {
+// Which side this speaker plays, as two halves with the side's letter, and what that leaves
+// the partner.
+function SidePicker({
+  name,
+  partner,
+  side,
+  onChange,
+}: {
+  name: string;
+  partner: string;
+  side: Side;
+  onChange: (side: Side) => void;
+}) {
+  const { t } = useI18n();
+  const sides: Side[] = ['left', 'right'];
+  const label: Record<Side, string> = { left: t('stereoSideLeft'), right: t('stereoSideRight') };
+  const keys = useRadioKeys(2, sides.indexOf(side), (i) => {
+    const picked = sides[i];
+    if (picked) onChange(picked);
+  });
+  const title = t('stereoPairThis', { name });
+  return (
+    <SetMenu title={title}>
+      <SideBox>
+        <Sides role="radiogroup" aria-label={title}>
+          {sides.map((s, i) => (
+            <SideButton
+              key={s}
+              type="button"
+              role="radio"
+              aria-checked={s === side}
+              tabIndex={keys.tabIndex(i)}
+              $on={s === side}
+              onClick={() => onChange(s)}
+              onKeyDown={keys.onKeyDown}
+            >
+              <Letter $on={s === side} aria-hidden="true">
+                {label[s].charAt(0).toUpperCase()}
+              </Letter>
+              {label[s]}
+            </SideButton>
+          ))}
+        </Sides>
+        <Then>
+          {t('stereoPairOther', {
+            name: partner,
+            side: side === 'left' ? t('stereo_right') : t('stereo_left'),
+          })}
+        </Then>
+      </SideBox>
+    </SetMenu>
+  );
+}
+
+export function StereoPair({ room, rooms, onChanged }: Props): ReactElement | null {
   const { t } = useI18n();
   const [side, setSide] = useState<Side>('left');
   const candidates = pairCandidates(room, rooms);
@@ -146,24 +203,22 @@ export function StereoPair({ room, rooms, onChanged }: Props) {
       <Note>{t('stereoPairHint')}</Note>
       <ChoiceList
         label={t('stereoPairPartner')}
+        title={t('stereoPairPartner')}
+        marked
         value={chosen.id}
-        options={candidates.map((r) => ({ value: r.id, label: r.name }))}
+        options={candidates.map((r) => ({
+          value: r.id,
+          label: r.name,
+          art: <ModelArt model={r.model} />,
+        }))}
         onChange={setPick}
       />
-      <SegmentedControl
-        label={t('stereoPairThis')}
-        value={side}
-        options={[
-          { value: 'left', label: sideLabel.left },
-          { value: 'right', label: sideLabel.right },
-        ]}
-        onChange={setSide}
-      />
+      <SidePicker name={room.name} partner={chosen.name} side={side} onChange={setSide} />
       <PairButton
         label={t('stereoPairStart')}
         busy={busy}
         error={error}
-        onClick={() => pair(chosen)}
+        onClick={async () => pair(chosen)}
       />
     </>
   );
@@ -176,11 +231,11 @@ function PairButton(props: {
   onClick: () => Promise<void>;
 }) {
   return (
-    <>
-      <Button wide disabled={props.busy} onClick={() => void props.onClick()}>
+    <Footer>
+      {props.error && <Hint error>{props.error}</Hint>}
+      <Button wide variant="stockholm" disabled={props.busy} onClick={() => void props.onClick()}>
         {props.label}
       </Button>
-      {props.error && <Hint error>{props.error}</Hint>}
-    </>
+    </Footer>
   );
 }

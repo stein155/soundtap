@@ -6,10 +6,20 @@ import type * as React from 'react';
 
 const HOLD_MS = 550;
 
+export interface LongPress {
+  onKeyDown: (e: React.KeyboardEvent) => void;
+  onPointerDown: () => void;
+  onPointerUp: () => void;
+  onPointerLeave: () => void;
+  onPointerCancel: () => void;
+  onClick: (e: React.MouseEvent) => void;
+  onContextMenu: (e: React.MouseEvent) => void;
+}
+
 // Tap and long-press on one element. After HOLD_MS the hold fires (with a short buzz)
 // and the click that ends the press is swallowed, so holding a preset to store a
 // station never also plays it. Without onHold it is a plain tap.
-export function useLongPress(onHold: (() => void) | null, onTap: () => void) {
+export function useLongPress(onHold: (() => void) | null, onTap: () => void): LongPress {
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const held = useRef(false);
   useEffect(() => () => clearTimeout(timer.current), []);

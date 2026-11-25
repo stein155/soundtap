@@ -13,26 +13,33 @@ import homeCss from '../pages/HomePage/home.css?raw';
 // Thresholds are WCAG 2.1 AA for body text (4.5:1). Tokens are read out of
 // GlobalStyle rather than duplicated here, so editing a colour is what fails.
 
-function tokens(block: string): Record<string, string> {
+// The block's colour tokens, looked up by name; a token the block lacks fails the test.
+function tokens(block: string): (name: string) => string {
   const start = css.indexOf(block);
   if (start < 0) throw new Error(`no ${block} block in GlobalStyle`);
   const body = css.slice(start, css.indexOf('}', start));
-  const out: Record<string, string> = {};
+  const out = new Map<string, string>();
   for (const [, name, value] of body.matchAll(/--([\w-]+):\s*(#[0-9a-f]{6});/gi)) {
-    out[name] = value;
+    if (name && value) out.set(name, value);
   }
-  return out;
+  return (name) => {
+    const value = out.get(name);
+    if (value === undefined) throw new Error(`no --${name} in ${block}`);
+    return value;
+  };
 }
 
 function luminance(hex: string): number {
-  const channels = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
-  const [r, g, b] = channels.map((c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  const linear = (i: number) => {
+    const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * linear(1) + 0.7152 * linear(3) + 0.0722 * linear(5);
 }
 
 function ratio(a: string, b: string): number {
-  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
-  return (hi + 0.05) / (lo + 0.05);
+  const [x, y] = [luminance(a), luminance(b)];
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
 }
 
 const surfaces = ['bg', 'bg-grey', 'section-bar', 'surface', 'surface-2', 'surface-3'];
@@ -46,13 +53,13 @@ describe.each([
 
   it('danger is readable where it is used', () => {
     for (const surface of ['bg-grey', 'surface']) {
-      expect(ratio(t.danger, t[surface]), `danger on ${surface}`).toBeGreaterThanOrEqual(4.5);
+      expect(ratio(t('danger'), t(surface)), `danger on ${surface}`).toBeGreaterThanOrEqual(4.5);
     }
   });
 
   it.each(inks)('%s is readable on every surface', (ink) => {
     for (const surface of surfaces) {
-      expect(ratio(t[ink], t[surface]), `${ink} on ${surface}`).toBeGreaterThanOrEqual(4.5);
+      expect(ratio(t(ink), t(surface)), `${ink} on ${surface}`).toBeGreaterThanOrEqual(4.5);
     }
   });
 
@@ -61,16 +68,16 @@ describe.each([
   // was hardcoded, and on the dark theme's brighter accent it reads at 2.6:1.
   it('accent works as text and as a filled control', () => {
     for (const surface of surfaces) {
-      expect(ratio(t.accent, t[surface]), `accent on ${surface}`).toBeGreaterThanOrEqual(4.5);
+      expect(ratio(t('accent'), t(surface)), `accent on ${surface}`).toBeGreaterThanOrEqual(4.5);
     }
-    expect(ratio(t.accent, t['on-accent']), 'on-accent over accent').toBeGreaterThanOrEqual(4.5);
+    expect(ratio(t('accent'), t('on-accent')), 'on-accent over accent').toBeGreaterThanOrEqual(4.5);
   });
 
   // --accent-fill only ever carries icons (checkmarks, play/stop glyphs), so the bar is
   // WCAG's 3:1 for graphical objects -- which is what lets it stay the design's orange.
   it('accent fill carries its icons and stands out from a card', () => {
-    expect(ratio(t['accent-fill'], t['on-accent-fill'])).toBeGreaterThanOrEqual(3);
-    expect(ratio(t['accent-fill'], t.surface)).toBeGreaterThanOrEqual(3);
+    expect(ratio(t('accent-fill'), t('on-accent-fill'))).toBeGreaterThanOrEqual(3);
+    expect(ratio(t('accent-fill'), t('surface'))).toBeGreaterThanOrEqual(3);
   });
 });
 
@@ -80,7 +87,7 @@ describe.each([
 it('dark slider thumb stands out from the card and the rail', () => {
   const t = tokens("[data-theme='dark'] {");
   for (const surface of ['surface', 'surface-3']) {
-    expect(ratio(t.thumb, t[surface]), `thumb on ${surface}`).toBeGreaterThanOrEqual(3);
+    expect(ratio(t('thumb'), t(surface)), `thumb on ${surface}`).toBeGreaterThanOrEqual(3);
   }
 });
 

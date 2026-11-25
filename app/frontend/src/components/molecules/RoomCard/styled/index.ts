@@ -4,7 +4,7 @@
 import styled, { css } from 'styled-components';
 
 // A room is a plain full-width row: the page's gutter is its padding, a 1px line closes it.
-export const Card = styled.div<{ $active?: boolean; $offline?: boolean }>`
+export const Card = styled.div<{ $active?: boolean | undefined; $offline?: boolean | undefined }>`
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -17,7 +17,7 @@ export const Card = styled.div<{ $active?: boolean; $offline?: boolean }>`
     border-top: 1px solid var(--border-strong);
   }
   ${({ $offline }) =>
-    $offline &&
+    $offline === true &&
     css`
       opacity: 0.7;
     `}
@@ -74,14 +74,14 @@ export const Name = styled.span`
   text-transform: uppercase;
 `;
 
-export const Status = styled.span<{ $on?: boolean }>`
+export const Status = styled.span<{ $on?: boolean | undefined }>`
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 7px;
   font-size: 12.5px;
   font-weight: 500;
-  color: ${({ $on }) => ($on ? 'var(--ink-2)' : 'var(--ink-3)')};
+  color: ${({ $on }) => ($on === true ? 'var(--ink-2)' : 'var(--ink-3)')};
 `;
 
 export const StatusText = styled.span`

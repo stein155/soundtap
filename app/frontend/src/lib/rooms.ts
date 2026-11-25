@@ -17,7 +17,7 @@ export function sourceOf(np: NowPlaying | null | undefined): Source {
   if (np.source === 'BLUETOOTH') return 'bluetooth';
   if (np.source === 'AUX') return 'aux';
   // The soundbar processor's own inputs (ST300): its HDMI inputs, else TV.
-  if (np.source === 'PRODUCT') return np.stationName?.startsWith('HDMI') ? 'hdmi' : 'tv';
+  if (np.source === 'PRODUCT') return np.stationName?.startsWith('HDMI') === true ? 'hdmi' : 'tv';
   return 'wifi';
 }
 
@@ -68,7 +68,7 @@ function stationLines(np: NowPlaying, name: string, spotify: boolean) {
   const title = (spotify && np.track) || name;
   const sub = [np.artist, np.track && np.track !== title ? np.track : '', np.album]
     .filter(Boolean)
-    .join(' • ');
+    .join(' · ');
   return { title, sub };
 }
 
@@ -96,9 +96,9 @@ export function stationOf(np: NowPlaying | null | undefined): RoomStation | null
 }
 
 // On: playing something, or on an external input.
-export const roomOn = (room: { now: NowPlaying | null }) =>
+export const roomOn = (room: { now: NowPlaying | null }): boolean =>
   !!stationOf(room.now) || sourceOf(room.now) !== 'wifi';
 
 // A group's display name: its speakers, leader first ("Kitchen + Office").
-export const groupName = (lead: { name: string }, members: { name: string }[]) =>
+export const groupName = (lead: { name: string }, members: { name: string }[]): string =>
   [lead, ...members].map((r) => r.name).join(' + ');

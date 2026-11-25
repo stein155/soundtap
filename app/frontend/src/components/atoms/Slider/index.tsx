@@ -4,6 +4,7 @@
 import type * as React from 'react';
 import { Fill, OriginMark, Rail, Thumb, Track } from './styled';
 import { clamp, useSliderPointer } from './useSliderPointer';
+import type { ReactElement } from 'react';
 
 interface Props {
   value: number;
@@ -34,7 +35,7 @@ export function Slider({
   step = 1,
   valueText,
   tall,
-}: Props) {
+}: Props): ReactElement {
   const { track, handlers } = useSliderPointer({ value, min, max, onChange });
   const span = Math.max(1, max - min);
 

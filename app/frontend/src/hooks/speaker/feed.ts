@@ -11,17 +11,17 @@ type Timer = ReturnType<typeof setTimeout>;
 
 const UNREACHABLE_MISSES = 2;
 
-type Feed = {
+interface Feed {
   speaker: string;
   status: PlayerStatus;
   applyState: (np: NowPlaying | null | undefined, vol: number | null | undefined) => void;
   refresh: () => Promise<boolean>;
   refreshPresets: () => Promise<boolean>;
   discardInFlight: () => void;
-};
+}
 
 // What the push and the poll share.
-type Link = {
+interface Link {
   // Reads of now-playing that failed in a row. Two misses (or one with the live stream
   // down) mean the speaker this page talks to is gone (a reboot, an update, the phone off
   // its Wi-Fi): the page says so instead of showing the last state as if it were live.
@@ -32,7 +32,7 @@ type Link = {
   connectedRef: RefObject<boolean>;
   kickRef: RefObject<() => void>;
   setUnreachable: (unreachable: boolean) => void;
-};
+}
 
 // Polling: adaptive (quick while starting / buffering) when the SSE stream is
 // down; a slow safety net while it's live, in case a push is ever missed.
@@ -86,9 +86,16 @@ function usePoll(
     return () => {
       cancelled = true;
       clearTimeout(timer);
-      kickRef.current = () => {};
+      kickRef.current = () => {
+        // Stopped: a kick after cleanup has nothing to wake.
+      };
     };
   }, [refresh, visible, missesRef, connectedRef, kickRef, setUnreachable]);
+}
+
+export interface SpeakerFeed {
+  unreachable: boolean;
+  resetUnreachable: () => void;
 }
 
 // The feed side of useSpeaker: the live SSE push, the poll that backs it up, and the
@@ -100,11 +107,13 @@ export function useSpeakerFeed({
   refresh,
   refreshPresets,
   discardInFlight,
-}: Feed) {
+}: Feed): SpeakerFeed {
   const visible = usePageVisible();
   const missesRef = useRef(0);
   const connectedRef = useRef(false);
-  const kickRef = useRef<() => void>(() => {});
+  const kickRef = useRef<() => void>(() => {
+    // Nothing to wake until the feed's effect has started.
+  });
   const [unreachable, setUnreachable] = useState(false);
   // A new speaker starts without misses.
   useEffect(() => {

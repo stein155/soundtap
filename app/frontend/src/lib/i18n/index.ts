@@ -49,7 +49,10 @@ const LOADERS = import.meta.glob<{ default: Messages }>(['./messages/*.ts', '!./
 const loaded: Partial<Record<string, Messages>> = { en };
 
 export async function loadLanguage(lang: string): Promise<void> {
-  loaded[lang] ??= (await LOADERS[`./messages/${lang}.ts`]()).default;
+  if (loaded[lang]) return;
+  const load = LOADERS[`./messages/${lang}.ts`];
+  if (!load) throw new Error(`no messages for ${lang}`);
+  loaded[lang] = (await load()).default;
 }
 
 // The language a page can actually show: one whose chunk failed to load falls back.
@@ -63,7 +66,7 @@ export const isSupportedLang = (code: string): boolean => LANGS.some((l) => l.co
 
 // A browser's language tag as ours. As in stock, plain zh and the mainland read simplified.
 function langOfTag(tag: string): string {
-  const [base, region] = tag.toLowerCase().split('-');
+  const [base = '', region] = tag.toLowerCase().split('-');
   if (base === 'no' || base === 'nn') return 'nb';
   if (base !== 'zh') return base;
   return !region || ['cn', 'sg', 'hans'].includes(region) ? 'zh-hans' : 'zh-hant';
@@ -74,7 +77,7 @@ export function detectInitialLang(): string {
   const candidates =
     typeof navigator !== 'undefined' ? [...navigator.languages, navigator.language] : [];
   for (const candidate of candidates) {
-    const lang = langOfTag(String(candidate || ''));
+    const lang = langOfTag(candidate || '');
     if (isSupportedLang(lang)) return lang;
   }
   return DEFAULT_LANG;
@@ -92,7 +95,7 @@ export function makeT(lang: string): TranslateFn {
   return (key, vars) => interpolate(messages[key] ?? key, vars);
 }
 
-interface I18n {
+export interface I18n {
   t: TranslateFn;
   lang: string;
   setLang: (lang: string) => void;
@@ -102,7 +105,9 @@ interface I18n {
 export const I18nContext = createContext<I18n>({
   t: makeT(DEFAULT_LANG),
   lang: DEFAULT_LANG,
-  setLang: () => {},
+  setLang: () => {
+    // Outside a provider there is no language to change.
+  },
   langFailed: false,
 });
-export const useI18n = () => useContext(I18nContext);
+export const useI18n = (): I18n => useContext(I18nContext);

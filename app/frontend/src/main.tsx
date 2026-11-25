@@ -18,9 +18,13 @@ const langWait = new Promise((resolve) => setTimeout(resolve, LANG_WAIT_MS));
 
 // The language has to be here before the first paint; without it the page falls back.
 void Promise.race([loadLanguage(initialLang()), langWait])
-  .catch(() => {})
+  .catch(() => {
+    // A language that failed to load: the page opens in the fallback all the same.
+  })
   .finally(() => {
-    ReactDOM.createRoot(document.getElementById('root')!).render(
+    const root = document.getElementById('root');
+    if (!root) throw new Error('index.html has no #root');
+    ReactDOM.createRoot(root).render(
       <React.StrictMode>
         <GlobalStyle />
         <ErrorBoundary>

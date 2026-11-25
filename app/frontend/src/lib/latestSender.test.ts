@@ -6,8 +6,8 @@ import { createLatestSender } from './latestSender';
 
 describe('createLatestSender', () => {
   it('sends the first value, skips the ones in between and always sends the last', async () => {
-    let release: () => void = () => {};
-    const send = vi.fn(() => new Promise<void>((r) => (release = r)));
+    let release: () => void = vi.fn();
+    const send = vi.fn(async () => new Promise<void>((r) => (release = r)));
     const push = createLatestSender(send);
     push(10);
     push(20);
@@ -21,7 +21,9 @@ describe('createLatestSender', () => {
   // A failed send is reported, not swallowed.
   it('reports a failed send', async () => {
     const onError = vi.fn();
-    const push = createLatestSender(() => Promise.reject(new Error('down')), onError);
+    const push = createLatestSender(async () => {
+      throw new Error('down');
+    }, onError);
     push(70);
     await vi.waitFor(() => expect(onError).toHaveBeenCalledWith(70));
   });

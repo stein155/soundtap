@@ -26,13 +26,13 @@ describe('useMute', () => {
   it('does not unmute a room to another room’s level', async () => {
     const setVolume = vi.fn();
     const { result } = renderHook(() => useMute(setVolume));
-    await act(() => result.current(room('a', 80)));
+    await act(async () => result.current(room('a', 80)));
     expect(setVolume).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'a' }), 0);
     // Another room, muted from the start, has nothing to return to.
-    await act(() => result.current(room('b', 0)));
+    await act(async () => result.current(room('b', 0)));
     expect(setVolume).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'b' }), 25);
     // The first room returns to where it was.
-    await act(() => result.current(room('a', 0)));
+    await act(async () => result.current(room('a', 0)));
     expect(setVolume).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'a' }), 80);
   });
 
@@ -40,12 +40,12 @@ describe('useMute', () => {
     vi.mocked(getMutedLevel).mockResolvedValueOnce(6);
     const setVolume = vi.fn();
     const { result } = renderHook(() => useMute(setVolume));
-    await act(() => result.current(room('bar', 0)));
+    await act(async () => result.current(room('bar', 0)));
     expect(setVolume).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'bar' }), 6);
   });
 
   it('drops a late unmute level after a newer slider move', async () => {
-    let resolve: (v: number) => void = () => {};
+    let resolve: (v: number) => void = vi.fn();
     vi.mocked(getMutedLevel).mockReturnValueOnce(new Promise((r) => (resolve = r)));
     let stamp = 0;
     const setVolume = vi.fn();

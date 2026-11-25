@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactElement } from 'react';
 import { Slider } from '../../../atoms/Slider';
 import { Hint } from '../../../atoms/Hint';
 import { SetSwitch } from '../../../molecules/SetItem';
@@ -20,7 +20,7 @@ import {
 } from '../../../../lib/api/settings';
 import { getChannel, setChannel, type Channel } from '../../../../lib/api/multiroom';
 import type { BassCaps, Soundbar, Tone } from '../../../../lib/types';
-import { Card, Head, Level, Name, Scale } from './styled';
+import { Card, Head, Inset, Level, Name, Scale } from './styled';
 import { SoundbarChoices } from './SoundbarChoices';
 
 // The Sound group: on a soundbar its speakers, choices, tone, lip sync and room
@@ -32,58 +32,59 @@ export function SoundSettings({
   caps,
   soundbar,
   speaker,
-  mono,
+  mono = false,
   onBass,
 }: {
   bass: number;
   caps: BassCaps;
-  soundbar?: Soundbar | null;
-  speaker?: string;
+  soundbar?: Soundbar | null | undefined;
+  speaker?: string | undefined;
   mono?: boolean;
   onBass: (bass: number) => void;
-}) {
+}): ReactElement | null {
   const { t } = useI18n();
   const bar = soundbar !== undefined;
   if (!bar && !hasBass(caps) && !mono) return null;
   return (
-    <SetMenu title={t('sound')} note={mono ? t('monoHint') : undefined}>
+    <SetMenu title={t('sound')}>
       {soundbar && <SoundbarSpeakers bar={soundbar} />}
       {/* Keyed by speaker: a card must not show or write one bar's value on the next
           one's screen while its own read is on the way. */}
-      {bar && <SoundbarChoices key={`choices-${speaker}`} speaker={speaker} />}
+      {bar && <SoundbarChoices key={`choices-${String(speaker)}`} speaker={speaker} />}
       {bar && <SoundbarTone speaker={speaker} />}
-      {bar && <SoundbarLipSync key={`lipsync-${speaker}`} speaker={speaker} />}
+      {bar && <SoundbarLipSync key={`lipsync-${String(speaker)}`} speaker={speaker} />}
       {bar && <SoundbarAdaptiq speaker={speaker} />}
       {hasBass(caps) && (
         <Card>
           <Head>
             <Name>{t('bass')}</Name>
-            <Level $changed={bass !== caps.default}>{formatBass(bass)}</Level>
+            <Level>{formatBass(bass)}</Level>
           </Head>
-          <Slider
-            tall
-            value={bass}
-            onChange={onBass}
-            label={t('bass')}
-            min={caps.min}
-            max={caps.max}
-            origin={caps.default}
-            valueText={formatBass(bass)}
-          />
+          <Inset>
+            <Slider
+              tall
+              value={bass}
+              onChange={onBass}
+              label={t('bass')}
+              min={caps.min}
+              max={caps.max}
+              valueText={formatBass(bass)}
+            />
+          </Inset>
           <Scale>
             <span>{formatBass(caps.min)}</span>
             <span>{formatBass(caps.max)}</span>
           </Scale>
         </Card>
       )}
-      {mono && <MonoSwitch key={`mono-${speaker}`} speaker={speaker} />}
+      {mono && <MonoSwitch key={`mono-${String(speaker)}`} speaker={speaker} />}
     </SetMenu>
   );
 }
 
 // Starts the soundbar's room calibration: the bar runs it itself and returns to its last
 // source, so the app only has to ask.
-function SoundbarAdaptiq({ speaker }: { speaker?: string }) {
+function SoundbarAdaptiq({ speaker }: { speaker?: string | undefined }) {
   const { t } = useI18n();
   return (
     <Card>
@@ -102,8 +103,10 @@ function SoundbarAdaptiq({ speaker }: { speaker?: string }) {
 // Whether the soundbar's bass module and rear speakers are paired and connected.
 function SoundbarSpeakers({ bar }: { bar: Soundbar }) {
   const { t } = useI18n();
-  const state = (paired: boolean, connected: boolean) =>
-    !paired ? t('soundbarUnpaired') : connected ? t('soundbarConnected') : t('soundbarOff');
+  const state = (paired: boolean, connected: boolean) => {
+    if (!paired) return t('soundbarUnpaired');
+    return connected ? t('soundbarConnected') : t('soundbarOff');
+  };
   return (
     <Card>
       <Head>
@@ -128,7 +131,7 @@ const TONE_CONTROLS = [
 // The soundbar's bass, treble, centre and rear levels, within the ranges it reports. Sent
 // to the soundbar shortly after the last move, not saved with the form. A control whose
 // range is empty is not shown.
-function SoundbarTone({ speaker }: { speaker?: string }) {
+function SoundbarTone({ speaker }: { speaker?: string | undefined }) {
   const { t } = useI18n();
   const [tone, setOwn] = useState<Tone | null>(null);
   const [error, setError] = useState('');
@@ -203,7 +206,7 @@ function SoundbarTone({ speaker }: { speaker?: string }) {
 
 // How long the soundbar's sound waits for the TV picture. Sent shortly after the
 // last move, like the tone levels; 0 until the bar has said.
-function SoundbarLipSync({ speaker }: { speaker?: string }) {
+function SoundbarLipSync({ speaker }: { speaker?: string | undefined }) {
   const { t } = useI18n();
   const [delay, setOwn] = useState<{ ms: number | null; max: number } | null>(null);
   const [error, setError] = useState('');
@@ -254,7 +257,7 @@ function SoundbarLipSync({ speaker }: { speaker?: string }) {
 
 // Stereo or mono, saved on the speaker at once like the stereo pair: a row of the Sound
 // group. Half of a pair plays one channel already, so the switch is not shown there.
-export function MonoSwitch({ speaker }: { speaker?: string }) {
+export function MonoSwitch({ speaker }: { speaker?: string | undefined }): ReactElement | null {
   const { t } = useI18n();
   const [channel, setOwn] = useState<Channel | null>(null);
   const [error, setError] = useState('');
@@ -274,7 +277,12 @@ export function MonoSwitch({ speaker }: { speaker?: string }) {
   };
   return (
     <div>
-      <SetSwitch label={t('mono')} on={channel === 'stereo'} onToggle={() => void toggle()} />
+      <SetSwitch
+        label={t('mono')}
+        desc={t('monoHint')}
+        on={channel === 'stereo'}
+        onToggle={() => void toggle()}
+      />
       {error && (
         <Card>
           <Hint error>{error}</Hint>

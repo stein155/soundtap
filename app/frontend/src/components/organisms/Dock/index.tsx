@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
+import type { ReactElement } from 'react';
 import { Spinner } from '../../atoms/Spinner';
 import { Button } from 'react-aria-components';
 import { Icon } from '../../atoms/Icon';
@@ -40,11 +41,13 @@ export function Dock({
   onChoose,
   onSpeaker,
   onVolume,
-}: Props) {
+}: Props): ReactElement {
   const { t } = useI18n();
   const view = describePlayback(lead.now, t, speakerArg(lead));
   const name = groupName(lead, members);
-  const miniLine = unreachable ? t('offline') : starting ? t('connecting') : sourceLine(view, t);
+  let miniLine = sourceLine(view, t);
+  if (starting) miniLine = t('connecting');
+  if (unreachable) miniLine = t('offline');
   return (
     <footer className="dock">
       {roomOn(lead) ? (
@@ -104,11 +107,19 @@ export function SpeakerBar({
   onPress: () => void;
   // Opens the volume panel from the icon; without it the icon only shows the state.
   onVolume?: () => void;
-}) {
+}): ReactElement {
   const { t } = useI18n();
   const view = describePlayback(lead.now, t, speakerArg(lead));
   const name = groupName(lead, members);
-  const status = lead.now?.standby || !lead.now ? t('standby') : view.status;
+  const on = lead.now ? !lead.now.standby : false;
+  // On the page: what plays and how loud. Under the player, which already shows the
+  // volume: that it plays, and a sign that the bar opens the speakers.
+  let status = t('standby');
+  if (on) {
+    status = onVolume
+      ? `${view.status} · ${t('volumeLevel', { n: lead.volume })}`
+      : t('playingWhat', { name: view.status });
+  }
   const icon = lead.volume === 0 ? <Icon.mute /> : <Icon.volume />;
   return (
     <div className="spkbar-wrap">
@@ -123,7 +134,11 @@ export function SpeakerBar({
           <span className="spk-name">{name}</span>
           <span className="spk-sub">{status}</span>
         </span>
-        {!onVolume && <span className="spk-vol">{icon}</span>}
+        {!onVolume && (
+          <span className="spk-vol spk-up">
+            <Icon.chevronUp />
+          </span>
+        )}
       </Button>
       {onVolume && (
         <Button className="spk-vol tap" aria-label={`${t('volume')} ${name}`} onPress={onVolume}>

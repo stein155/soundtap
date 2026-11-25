@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
+import type { ReactElement } from 'react';
 import { VolumeSlider } from '../../molecules/VolumeSlider';
 import { useI18n } from '../../../lib/i18n';
 import type { Room } from '../../../hooks/useRooms';
@@ -17,10 +18,10 @@ interface Props {
 }
 
 // One slider for a lone speaker; for a group, one for all of them and one per speaker.
-export function CardVolumes({ group, volume, onMute }: Props) {
+export function CardVolumes({ group, volume, onMute }: Props): ReactElement {
   const { t } = useI18n();
   const [room] = group;
-  if (group.length === 1) {
+  if (room && group.length === 1) {
     return (
       <div className="line vols">
         <VolumeSlider
@@ -44,7 +45,7 @@ export function CardVolumes({ group, volume, onMute }: Props) {
         <div key={member.id}>
           <p className="vname">{member.name}</p>
           <VolumeSlider
-            label={`${member.name} ${t('volume')}`}
+            label={`${t('volume')} ${member.name}`}
             value={member.volume}
             onChange={(v) => volume.setRoomVolume(member, v)}
             onMute={() => onMute(member)}

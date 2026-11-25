@@ -2,20 +2,19 @@
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
 import styled from 'styled-components';
-import { useEffect, useState } from 'react';
-import { FormSection } from '../../../atoms/FormSection';
-import { Stack } from '../../../atoms/Stack';
+import { useEffect, useState, type ReactElement } from 'react';
 import { Hint } from '../../../atoms/Hint';
 import { Accordion, useAccordionGroup } from '../../../molecules/Accordion';
 import { ChoiceList } from '../../../molecules/ChoiceList';
 import { SetItem, SetSwitch } from '../../../molecules/SetItem';
 import { SetMenu } from '../../../molecules/SetMenu';
 import { useHouseholdPrefs } from '../../../../hooks/useHouseholdPrefs';
+import { useUpdateAvailable } from '../../../../hooks/useUpdateAvailable';
 import { useI18n, LANGS } from '../../../../lib/i18n';
 import { getVersion } from '../../../../lib/api';
 import { versionLabel } from '../../../../lib/version';
+import type { VersionInfo } from '../../../../lib/types';
 import { speakerArg, type Room } from '../../../../hooks/useRooms';
-import { FieldCard } from '../../../molecules/FieldCard';
 import { FieldRow } from '../../../molecules/FieldRow';
 import { ModelArt } from '../../../molecules/ModelArt';
 
@@ -34,7 +33,7 @@ interface Props {
 
 // The first level of settings, as Stockholm's: every speaker, then the household's
 // settings, then this app's own, each a group with its title.
-export function SettingsOverview({ rooms, onSpeaker, onIntegrations }: Props) {
+export function SettingsOverview({ rooms, onSpeaker, onIntegrations }: Props): ReactElement {
   const { t, lang, setLang, langFailed } = useI18n();
   const section = useAccordionGroup<OverviewSection>();
   const prefs = useHouseholdPrefs(rooms);
@@ -42,13 +41,7 @@ export function SettingsOverview({ rooms, onSpeaker, onIntegrations }: Props) {
     <>
       <SetMenu title={t('speakers')}>
         {rooms.map((room) => (
-          <SetItem
-            key={room.id}
-            art={<ModelArt model={room.model} />}
-            label={room.name}
-            meta={room.online ? shortModel(room.model) : t('offline')}
-            onClick={() => onSpeaker(room.id)}
-          />
+          <SpeakerRow key={room.id} room={room} onOpen={() => onSpeaker(room.id)} />
         ))}
       </SetMenu>
       <SetMenu title={t('household')}>
@@ -86,60 +79,97 @@ export function SettingsOverview({ rooms, onSpeaker, onIntegrations }: Props) {
   );
 }
 
-// A text page's type, as Stockholm's About.
-const AboutText = styled.p`
-  margin: 0;
-  font-size: 14.4px;
+// A speaker's row: its drawing, its name, and under it the model ("this speaker" for the one
+// serving the page) or that it is offline; an Update badge when a newer release is out.
+function SpeakerRow({ room, onOpen }: { room: Room; onOpen: () => void }) {
+  const { t } = useI18n();
+  const speaker = speakerArg(room);
+  const [version, setVersion] = useState<VersionInfo | null>(null);
+  useEffect(() => {
+    if (!room.online) return undefined;
+    let live = true;
+    void getVersion(speaker).then((v) => live && setVersion(v));
+    return () => {
+      live = false;
+    };
+  }, [speaker, room.online]);
+  const newer = useUpdateAvailable(speaker, version);
+  const model = room.self
+    ? `${shortModel(room.model)} · ${t('thisSpeakerShort')}`
+    : shortModel(room.model);
+  return (
+    <SetItem
+      art={<ModelArt model={room.model} />}
+      label={room.name}
+      desc={room.online ? model : t('offline')}
+      badge={newer ? t('updateBadge') : undefined}
+      onClick={onOpen}
+    />
+  );
+}
+
+// A text page's type, as Stockholm's About: under the speakers, apart from them.
+const AboutText = styled.div`
+  padding-top: 4px;
+  font-size: 14px;
   line-height: 1.5;
+
+  p {
+    margin: 0;
+  }
+
+  p + p {
+    margin-top: 10px;
+  }
 `;
 
-// What this app is, then every speaker as Stockholm's About lists them: model, IP
-// address and the firmware it runs, its licence, and that it is not Bose's.
+// Every speaker as Stockholm's About lists them, each under its name: model, IP address and
+// the software it runs; then the licence, and that SoundTap is not Bose's.
 function About({ rooms }: { rooms: Room[] }) {
   const { t } = useI18n();
   const [versions, setVersions] = useState<Record<string, string>>({});
   useEffect(() => {
-    let live = true;
+    // A ref-like flag, not a reassigned let: the callbacks made in the loop read it.
+    const run = { live: true };
     for (const room of rooms.filter((r) => r.online)) {
       void getVersion(speakerArg(room)).then(
-        (v) => live && setVersions((all) => ({ ...all, [room.id]: versionLabel(v) }))
+        (v) => run.live && setVersions((all) => ({ ...all, [room.id]: versionLabel(v) }))
       );
     }
     return () => {
-      live = false;
+      run.live = false;
     };
   }, [rooms]);
   return (
-    <Stack>
-      {rooms.map((room, i) => (
-        <div key={room.id}>
-          <FormSection spaced={i > 0}>{room.name}</FormSection>
-          <FieldCard>
-            <FieldRow label={t('upModel')} layout="value">
-              {shortModel(room.model)}
+    <>
+      {rooms.map((room) => (
+        <SetMenu key={room.id} title={room.name}>
+          <FieldRow label={t('upModel')} layout="value">
+            {shortModel(room.model)}
+          </FieldRow>
+          <FieldRow label={t('ipAddress')} layout="value">
+            {room.online ? room.ip : t('offline')}
+          </FieldRow>
+          {versions[room.id] && (
+            <FieldRow label={t('upFirmware')} layout="value">
+              {versions[room.id]}
             </FieldRow>
-            <FieldRow label={t('ipAddress')} layout="value">
-              {room.online ? room.ip : t('offline')}
-            </FieldRow>
-            {versions[room.id] && (
-              <FieldRow label={t('upFirmware')} layout="value">
-                {versions[room.id]}
-              </FieldRow>
-            )}
-          </FieldCard>
-        </div>
+          )}
+        </SetMenu>
       ))}
-      <AboutText>{t('aboutLicense')}</AboutText>
-      <AboutText>{t('aboutNotBose')}</AboutText>
-    </Stack>
+      <AboutText>
+        <p>{t('aboutLicense')}</p>
+        <p>{t('aboutNotBose')}</p>
+      </AboutText>
+    </>
   );
 }
 
 // What is switched on, in one line: "Spotify · AirPlay · MQTT".
 const integrationsSummary = (prefs: ReturnType<typeof useHouseholdPrefs>, off: string) =>
   [
-    prefs.integrations?.spotify && 'Spotify',
-    prefs.integrations?.airplay && 'AirPlay',
+    prefs.integrations?.spotify === true && 'Spotify',
+    prefs.integrations?.airplay === true && 'AirPlay',
     prefs.mqttHost && 'MQTT',
   ]
     .filter(Boolean)
@@ -156,14 +186,13 @@ export function Integrations({
 }: {
   rooms: Room[];
   onOpen: (page: Receiver | 'mqtt') => void;
-}) {
+}): ReactElement {
   const { t } = useI18n();
   const { integrations, mqttHost } = useHouseholdPrefs(rooms);
-  const state = (on?: boolean) => (on ? t('stateOn') : t('off'));
+  const state = (on?: boolean) => (on === true ? t('stateOn') : t('off'));
   return (
     <>
-      <FormSection>{t('services')}</FormSection>
-      <SetMenu>
+      <SetMenu title={t('services')}>
         <SetItem
           label="Spotify Connect"
           meta={state(integrations?.spotify)}
@@ -175,8 +204,7 @@ export function Integrations({
           onClick={() => onOpen('airplay')}
         />
       </SetMenu>
-      <FormSection spaced>{t('integrationsMore')}</FormSection>
-      <SetMenu>
+      <SetMenu title={t('integrationsMore')}>
         <SetItem
           label="Apple Home"
           meta={state(integrations?.airplay)}
@@ -194,7 +222,13 @@ export function Integrations({
 
 // One receiver's page: its switch and what switching it off does. Apple Home finds the
 // speakers through the AirPlay receiver, so its page holds the AirPlay switch.
-export function Integration({ rooms, which }: { rooms: Room[]; which: Receiver }) {
+export function Integration({
+  rooms,
+  which,
+}: {
+  rooms: Room[];
+  which: Receiver;
+}): ReactElement | null {
   const { t } = useI18n();
   const prefs = useHouseholdPrefs(rooms);
   const { integrations } = prefs;
@@ -206,17 +240,12 @@ export function Integration({ rooms, which }: { rooms: Room[]; which: Receiver }
     applehome: 'appleHomeHint',
   } as const;
   return (
-    <Stack gap={8}>
-      <SetMenu>
-        <SetSwitch
-          label={{ spotify: 'Spotify Connect', airplay: 'AirPlay', applehome: 'Apple Home' }[which]}
-          on={integrations[key]}
-          onToggle={() =>
-            void prefs.saveIntegrations({ ...integrations, [key]: !integrations[key] })
-          }
-        />
-      </SetMenu>
-      <Hint>{t(hint[which])}</Hint>
-    </Stack>
+    <SetMenu note={t(hint[which])}>
+      <SetSwitch
+        label={{ spotify: 'Spotify Connect', airplay: 'AirPlay', applehome: 'Apple Home' }[which]}
+        on={integrations[key]}
+        onToggle={() => void prefs.saveIntegrations({ ...integrations, [key]: !integrations[key] })}
+      />
+    </SetMenu>
   );
 }

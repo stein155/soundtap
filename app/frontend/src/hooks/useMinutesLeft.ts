@@ -7,14 +7,14 @@ const TICK_MS = 15000;
 const MINUTE_MS = 60000;
 
 // Minutes left until endsAt (ms since epoch), refreshed while shown; 0 without one.
-export function useMinutesLeft(endsAt: number | null) {
+export function useMinutesLeft(endsAt: number | null): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    if (!endsAt) return;
+    if (endsAt === null || endsAt === 0) return;
     const tick = () => setNow(Date.now());
     tick();
     const id = setInterval(tick, TICK_MS);
     return () => clearInterval(id);
   }, [endsAt]);
-  return endsAt ? Math.max(1, Math.ceil((endsAt - now) / MINUTE_MS)) : 0;
+  return endsAt === null || endsAt === 0 ? 0 : Math.max(1, Math.ceil((endsAt - now) / MINUTE_MS));
 }

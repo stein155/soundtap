@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
+import type { ReactElement } from 'react';
 import { Icon } from '../../atoms/Icon';
 import { FloatingHint } from '../../molecules/FloatingHint';
 import { Button } from '../../atoms/Button';
@@ -37,7 +38,10 @@ const art = (name: string, path?: string) => (
 );
 
 // A long press on a row saves that item, if the page offers saving.
-const holdable = (library: Library, item: { uri: string; name: string; artwork?: string }) =>
+const holdable = (
+  library: Library,
+  item: { uri: string; name: string; artwork?: string | undefined }
+) =>
   library.hold && (() => library.hold?.({ uri: item.uri, name: item.name, artwork: item.artwork }));
 
 // Why the library is not available yet, and what to do about it.
@@ -111,7 +115,7 @@ function PageView({ library, page }: { library: Library; page: LoadedPage }) {
           <Heading>{page.title}</Heading>
           {page.sub && <Text>{page.sub}</Text>}
           <Button
-            variant="spotify"
+            variant="primary"
             small
             onClick={() =>
               void library.play(undefined, page.context, {
@@ -121,6 +125,7 @@ function PageView({ library, page }: { library: Library; page: LoadedPage }) {
               })
             }
           >
+            <Icon.play width="12" height="12" aria-hidden="true" />
             {t('spotifyPlayAll')}
           </Button>
         </HeroText>
@@ -130,6 +135,7 @@ function PageView({ library, page }: { library: Library; page: LoadedPage }) {
           <ListRow
             key={track.uri}
             art={art(track.name, track.artwork)}
+            small
             title={track.name}
             subtitle={artistNames(track.artists)}
             onClick={() =>
@@ -148,7 +154,7 @@ function PageView({ library, page }: { library: Library; page: LoadedPage }) {
       </SheetGroup>
       <Releases library={library} albums={page.albums ?? []} />
       <PageArtists library={library} page={page} />
-      {page.next ? (
+      {(page.next ?? 0) !== 0 ? (
         <Button
           variant="dashed"
           disabled={library.loadingMore}
@@ -162,23 +168,24 @@ function PageView({ library, page }: { library: Library; page: LoadedPage }) {
   );
 }
 
-// The Spotify tab's body.
-export function SpotifyLibrary({ library }: { library: Library }) {
+// What the library shows: its home, an opened page, a retry after a failed load, or the
+// spinner while a page loads.
+function LibraryBody({ library }: { library: Library }): ReactElement {
   const { t } = useI18n();
+  if (!library.trail.length) return <Home library={library} />;
+  if (library.page) return <PageView library={library} page={library.page} />;
+  // The load failed and is over: offer it again instead of a spinner.
+  if (library.error) return <LinkButton onClick={library.retry}>{t('reconnect')}</LinkButton>;
+  return <SheetLoading />;
+}
+
+// The Spotify tab's body.
+export function SpotifyLibrary({ library }: { library: Library }): ReactElement {
   if (!library.statusLoaded) return <SheetLoading />;
   if (library.view !== 'ready') return <NotReady view={library.view} />;
   return (
     <>
-      {!library.trail.length ? (
-        <Home library={library} />
-      ) : library.page ? (
-        <PageView library={library} page={library.page} />
-      ) : library.error ? (
-        // The load failed and is over: offer it again instead of a spinner.
-        <LinkButton onClick={library.retry}>{t('reconnect')}</LinkButton>
-      ) : (
-        <SheetLoading />
-      )}
+      <LibraryBody library={library} />
       {library.error && (
         <FloatingHint error role="alert">
           {library.error}

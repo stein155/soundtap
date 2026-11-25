@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode, type ReactElement } from 'react';
 import { Button, Heading, ToggleButton } from 'react-aria-components';
 import { Icon } from '../../atoms/Icon';
 import { TransportGlyph } from '../../molecules/TransportGlyph';
@@ -21,12 +21,14 @@ import { sourceName, type PlaybackView, type Transport } from '../../../lib/play
 
 interface TopBarProps {
   view: PlaybackView;
+  // The speaker or group that plays, after the source.
+  name: string;
   onClose: () => void;
   onPresets: () => void;
 }
 
-// Close, the source with its mark, and the way to the presets.
-export function TopBar({ view, onClose, onPresets }: TopBarProps) {
+// Close, the source and where it plays, and the way to the presets.
+export function TopBar({ view, name, onClose, onPresets }: TopBarProps): ReactElement {
   const { t } = useI18n();
   return (
     <div className="np-top">
@@ -34,9 +36,7 @@ export function TopBar({ view, onClose, onPresets }: TopBarProps) {
         <Icon.chevronDown />
       </Button>
       <Heading slot="title" className="np-src">
-        {view.isSpotify && <Icon.spotifyMark aria-hidden="true" />}
-        {view.source === 'TUNEIN' && <Icon.tuneinMark aria-hidden="true" />}
-        {sourceName(view, t)}
+        {sourceName(view, t)} · {name}
       </Heading>
       <Button className="top-btn" aria-label={t('yourStations')} onPress={onPresets}>
         <Icon.presets />
@@ -64,7 +64,7 @@ export function TransportControls({
   skips,
   onPress,
   onSkip,
-}: TransportProps) {
+}: TransportProps): ReactElement {
   const { t } = useI18n();
   return (
     <div className="np-ctl">
@@ -97,7 +97,13 @@ const MODES_POLL_MS = 5000;
 
 // The + of Stockholm: what plays goes in Liked Songs, a second tap takes it out again.
 // Hidden for what cannot be liked. A tap that fails goes back.
-function LikeButton({ speaker, track }: { speaker?: string; track?: string }) {
+function LikeButton({
+  speaker,
+  track,
+}: {
+  speaker?: string | undefined;
+  track?: string | undefined;
+}) {
   const { t } = useI18n();
   const [state, setState] = useState({ available: false, liked: false });
   // Read again for every track: whether it is liked is the track's.
@@ -144,7 +150,13 @@ const SPOTIFY_MODES: ModesApi = {
 const FOLDER_MODES: ModesApi = { read: upnpModes, shuffle: setUPnPShuffle, repeat: setUPnPRepeat };
 
 // Spotify's shuffle and repeat, with the + before them.
-export function SpotifyModeButtons({ speaker, track }: { speaker?: string; track?: string }) {
+export function SpotifyModeButtons({
+  speaker,
+  track,
+}: {
+  speaker?: string | undefined;
+  track?: string | undefined;
+}): ReactElement {
   return (
     <ModeButtons speaker={speaker} api={SPOTIFY_MODES}>
       <LikeButton speaker={speaker} track={track} />
@@ -153,14 +165,21 @@ export function SpotifyModeButtons({ speaker, track }: { speaker?: string; track
 }
 
 // A media-server folder's shuffle and repeat, as stock's queue had them.
-export function FolderModeButtons({ speaker }: { speaker?: string }) {
+export function FolderModeButtons({ speaker }: { speaker?: string | undefined }): ReactElement {
   return <ModeButtons speaker={speaker} api={FOLDER_MODES} />;
 }
 
 // The shuffle and repeat of what plays: Spotify's, or a media-server folder's.
-export function ModeButtonsFor({ now, speaker }: { now?: NowPlaying | null; speaker?: string }) {
+export function ModeButtonsFor({
+  now,
+  speaker,
+}: {
+  now?: NowPlaying | null;
+  speaker?: string | undefined;
+}): ReactElement | null {
   if (now?.source === 'SPOTIFY') return <SpotifyModeButtons speaker={speaker} track={now.track} />;
-  if (now?.source === 'UPNP' && now.canSkip) return <FolderModeButtons speaker={speaker} />;
+  if (now?.source === 'UPNP' && now.canSkip === true)
+    return <FolderModeButtons speaker={speaker} />;
   return null;
 }
 
@@ -170,7 +189,7 @@ function ModeButtons({
   api,
   children,
 }: {
-  speaker?: string;
+  speaker?: string | undefined;
   api: ModesApi;
   children?: ReactNode;
 }) {

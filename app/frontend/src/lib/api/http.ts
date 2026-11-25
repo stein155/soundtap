@@ -19,12 +19,12 @@ export const WRITE_TIMEOUT_MS = 15000;
 export const SLOW_READ_TIMEOUT_MS = 15000;
 
 // AbortSignal.timeout is unavailable on older WebViews; fall back to a manual signal
-// rather than dropping the deadline.
-export function deadline(ms = REQUEST_TIMEOUT_MS): AbortSignal | undefined {
+// rather than dropping the deadline. null (fetch's "no signal") only where neither exists.
+export function deadline(ms = REQUEST_TIMEOUT_MS): AbortSignal | null {
   if (typeof AbortSignal !== 'undefined' && 'timeout' in AbortSignal) {
     return AbortSignal.timeout(ms);
   }
-  if (typeof AbortController === 'undefined') return undefined;
+  if (typeof AbortController === 'undefined') return null;
   const c = new AbortController();
   setTimeout(() => c.abort(), ms);
   return c.signal;
@@ -33,8 +33,10 @@ export function deadline(ms = REQUEST_TIMEOUT_MS): AbortSignal | undefined {
 // failure builds the ApiError of an error body: {"error": "...", "code": "..."} (ADR 0091).
 // The message stays English for logs and the console; the UI says the code.
 function failure(status: number, body: unknown, msg: string): ApiError {
-  const { error, code } = (body ?? {}) as { error?: unknown; code?: unknown };
-  const err = new Error(typeof error === 'string' && error ? error : msg) as ApiError;
+  const fields: { error?: unknown; code?: unknown } =
+    typeof body === 'object' && body !== null ? body : {};
+  const { error, code } = fields;
+  const err: ApiError = new Error(typeof error === 'string' && error ? error : msg);
   err.status = status;
   if (typeof code === 'string' && code) err.code = code;
   return err;
@@ -64,24 +66,35 @@ export function httpError(status: number, body: string, what: string): ApiError 
   return failure(status, parsed, body.trim() || `${what} -> ${status}`);
 }
 
+// The one place a body is taken at its word: a response whose shape the server's OpenAPI
+// contract (schema.d.ts) fixes. Everything else from the network is checked field by field.
+export async function contract<T>(body: Promise<unknown>): Promise<T> {
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- the server's OpenAPI contract (schema.d.ts) types this body
+  return (await body) as T;
+}
+
 export async function getJSON<T>(path: string, speaker?: string, timeoutMs?: number): Promise<T> {
   const r = await apiFetch(apiURL(path, speaker), {
     headers: { Accept: 'application/json' },
     signal: deadline(timeoutMs),
   });
   if (!r.ok) throw await apiFailure(r, `GET ${path}`);
-  return r.json() as Promise<T>;
+  return contract<T>(r.json());
 }
 
 export interface SendOptions {
   body?: unknown;
-  speaker?: string;
-  timeoutMs?: number;
+  speaker?: string | undefined;
+  timeoutMs?: number | undefined;
 }
 
 // send writes to the API within the usual write timeout.
-export const send = (path: string, method: string, body?: unknown, speaker?: string) =>
-  sendWithin(path, method, { body, speaker });
+export const send = async (
+  path: string,
+  method: string,
+  body?: unknown,
+  speaker?: string
+): Promise<unknown> => sendWithin(path, method, { body, speaker });
 
 // sendWithin is send with a timeout of its own, for the writes that take longer.
 export async function sendWithin(
@@ -92,12 +105,14 @@ export async function sendWithin(
   const url = apiURL(path, speaker);
   // A route held for a key press does its work after the press: timeoutMs is for that
   // work, so the press window comes on top.
-  if (needsPress(method, url)) timeoutMs += PRESS_WINDOW_MS;
+  const hasBody = Boolean(body); // any value that reads as true is sent as JSON
+  const wait = needsPress(method, url) ? timeoutMs + PRESS_WINDOW_MS : timeoutMs;
   const r = await apiFetch(url, {
     method,
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-    signal: deadline(timeoutMs),
+    ...(hasBody
+      ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+      : {}),
+    signal: deadline(wait),
   });
   if (!r.ok) {
     throw await apiFailure(r, `${method} ${path}`);

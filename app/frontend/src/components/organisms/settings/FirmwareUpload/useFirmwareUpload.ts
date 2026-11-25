@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useRef, useState } from 'react';
+import { useRef, useState, type ChangeEvent, type RefObject } from 'react';
 import { failureText } from '../../../../lib/failure';
 import { useI18n, type I18nKey } from '../../../../lib/i18n';
 import { reboot, uploadFirmware } from '../../../../lib/api';
@@ -10,9 +10,22 @@ import type { FirmwareReport } from '../../../../lib/types';
 
 export type Outcome = { text: string; error: boolean } | null;
 
+export interface FirmwareUploadState {
+  file: File | null;
+  report: FirmwareReport | null;
+  // Whether the picked .stu came with its .sig.
+  signed: boolean;
+  progress: number | null;
+  outcome: Outcome;
+  inputRef: RefObject<HTMLInputElement | null>;
+  onChange: (e: ChangeEvent<HTMLInputElement>) => Promise<void>;
+  install: () => void;
+  restart: () => Promise<void>;
+}
+
 // The firmware flow's state: the picked .stu and its signature, the speaker's report on
 // it, upload progress and the last outcome. Install and reboot are the caller's to confirm.
-export function useFirmwareUpload(speaker: string) {
+export function useFirmwareUpload(speaker: string): FirmwareUploadState {
   const { t } = useI18n();
   const [file, setFile] = useState<File | null>(null);
   const [signature, setSignature] = useState<string | undefined>();
@@ -35,7 +48,7 @@ export function useFirmwareUpload(speaker: string) {
     setProgress(0);
     try {
       const confirm = install ? checked.current?.confirm : undefined;
-      const report = await uploadFirmware(target, {
+      const answer = await uploadFirmware(target, {
         install,
         onProgress: setProgress,
         speaker,
@@ -43,8 +56,8 @@ export function useFirmwareUpload(speaker: string) {
         confirm,
       });
       if (current()) {
-        if (!install) checked.current = report;
-        setReport(report);
+        if (!install) checked.current = answer;
+        setReport(answer);
       }
     } catch (err) {
       if (current())
@@ -95,5 +108,8 @@ export function useFirmwareUpload(speaker: string) {
     }
   };
 
-  return { file, report, progress, outcome, inputRef, onChange, install, restart };
+  // Whether the picked .stu came with its .sig: without one, the press is all it installs on.
+  const signed = !!signature;
+
+  return { file, report, signed, progress, outcome, inputRef, onChange, install, restart };
 }

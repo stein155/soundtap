@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
+import type { ReactElement } from 'react';
 import { Dock } from '../../components/organisms/Dock';
 import { VolumePanel } from '../../components/organisms/VolumePanel';
 import { groupName } from '../../lib/rooms';
@@ -27,7 +28,7 @@ export function PlayerDock({
   starting,
   volume,
   onMute,
-}: PlayerDockProps) {
+}: PlayerDockProps): ReactElement | null {
   const { lead, members, live } = selected;
   if (!lead) return null;
   return (

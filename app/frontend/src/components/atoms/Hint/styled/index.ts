@@ -3,10 +3,11 @@
 
 import styled from 'styled-components';
 
-export const Text = styled.div<{ $error?: boolean }>`
-  margin-top: 7px;
-  font-size: 11.5px;
-  color: ${({ $error }) => ($error ? '#d44030' : 'var(--ink-3)')};
+export const Text = styled.div<{ $error?: boolean | undefined }>`
+  margin-top: 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: ${({ $error }) => ($error === true ? '#d44030' : 'var(--ink-3)')};
 
   /* Room before the next row, so the hint reads with the row above it. */
   &:not(:last-child) {

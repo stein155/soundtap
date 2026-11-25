@@ -8,18 +8,20 @@ const FOCUSABLE =
 
 // Modal focus for a dialog while it is open: focus moves into it, Tab cycles inside it,
 // and on close focus returns to whatever opened it.
-export function useDialogFocus(dialog: RefObject<HTMLElement | null>, open: boolean) {
+export function useDialogFocus(dialog: RefObject<HTMLElement | null>, open: boolean): void {
   useEffect(() => {
     const root = dialog.current;
     if (!open || !root) return;
-    const opener = document.activeElement as HTMLElement | null;
+    const active = document.activeElement;
+    // Whatever had focus, a control or a drawing in one, takes it back on close.
+    const opener = active instanceof HTMLElement || active instanceof SVGElement ? active : null;
     root.focus({ preventScroll: true });
     const trap = (e: KeyboardEvent) => {
       if (e.key !== 'Tab') return;
       const items = [...root.querySelectorAll<HTMLElement>(FOCUSABLE)];
-      if (!items.length) return;
-      const first = items[0];
-      const last = items[items.length - 1];
+      const first = items.at(0);
+      const last = items.at(-1);
+      if (!first || !last) return;
       if (e.shiftKey && (document.activeElement === first || document.activeElement === root)) {
         e.preventDefault();
         last.focus();

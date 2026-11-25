@@ -9,7 +9,7 @@ export const LONG_LOST_MS = 15000;
 
 // Whether the speaker has been unreachable for LONG_LOST_MS on end; false again as soon as
 // it answers.
-export function useLongLost(unreachable: boolean, after = LONG_LOST_MS) {
+export function useLongLost(unreachable: boolean, after = LONG_LOST_MS): boolean {
   const [long, setLong] = useState(false);
   useEffect(() => {
     if (!unreachable) return;

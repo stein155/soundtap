@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
 import { apiFetch, apiURL, PRESS_TIMEOUT_MS, whilePress } from '../base';
-import { deadline, httpError, getJSON, send, sendWithin } from './http';
-import type { VersionInfo, Releases, UpdateResult, FirmwareReport, OwnerKey } from '../types';
+import { contract, deadline, httpError, getJSON, send } from './http';
+import type { VersionInfo, Releases, UpdateResult, FirmwareReport } from '../types';
 
 // getVersion returns { version, updatable }. updatable is true only on an installed
 // speaker (where SoundTap can replace its own binary). Returns null if unreachable.
@@ -30,7 +30,7 @@ export async function getReleases(speaker?: string): Promise<Releases | null> {
 // it installs the latest stable; pass a release tag to install that one instead. On a real update the speaker restarts, so the next
 // /api/version may briefly fail until it comes back — the caller polls for that.
 export async function startUpdate(tag?: string, speaker?: string): Promise<UpdateResult> {
-  // The tag also rides in the query so the UI knows to show the press prompt.
+  // The tag also rides in the query, as the speaker's logs show it; no press either way.
   const path = tag ? `/api/update?tag=${encodeURIComponent(tag)}` : '/api/update';
   const r = await apiFetch(apiURL(path, speaker), {
     method: 'POST',
@@ -39,12 +39,12 @@ export async function startUpdate(tag?: string, speaker?: string): Promise<Updat
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ tag, confirm: true }),
-    // With a tag the speaker answers once its key is pressed, before it downloads.
+    // The speaker answers before it downloads.
     signal: deadline(PRESS_TIMEOUT_MS),
   });
   let body: UpdateResult['body'] | null = null;
   try {
-    body = (await r.json()) as UpdateResult['body'];
+    body = await contract<UpdateResult['body']>(r.json());
   } catch {
     /* ignore */
   }
@@ -63,7 +63,7 @@ type UploadOutcome =
   { kind: 'load'; status: number; body: string } | { kind: 'error' | 'abort' | 'timeout' };
 
 // upload posts a file with XMLHttpRequest: fetch has no upload-progress API yet.
-function upload(u: Upload): Promise<UploadOutcome> {
+async function upload(u: Upload): Promise<UploadOutcome> {
   return new Promise((resolve) => {
     const req = new XMLHttpRequest();
     req.open('POST', u.url);
@@ -81,16 +81,19 @@ function upload(u: Upload): Promise<UploadOutcome> {
   });
 }
 
-const uploadWithPress = (u: Upload) => whilePress('POST', u.url, () => upload(u));
+// An install upload waits for the press on the speaker and says so, signed or not
+// (ADR 0048); a check without install=1 needs none.
+const uploadWithPress = async (u: Upload): Promise<UploadOutcome> =>
+  whilePress('POST', u.url, async () => upload(u));
 
 export interface FirmwareUpload {
   // With install the package is also written to the inactive slot; without, only checked.
   install: boolean;
   onProgress: (percent: number) => void;
   speaker?: string;
-  signature?: string;
+  signature?: string | undefined;
   // The confirmation the check's report asked for.
-  confirm?: FirmwareReport['confirm'];
+  confirm?: FirmwareReport['confirm'] | undefined;
 }
 
 // Firmware uploads are raw STU streams.
@@ -124,16 +127,17 @@ export async function uploadFirmware(
   }
   if (r.status < 200 || r.status >= 300) throw httpError(r.status, r.body, 'POST /api/firmware');
   try {
-    return JSON.parse(r.body) as FirmwareReport;
+    return await contract<FirmwareReport>(Promise.resolve(JSON.parse(r.body)));
   } catch {
     throw new Error('Firmware response was invalid.');
   }
 }
 
 // startCoreUpdate has the speaker download the newest SoundTap Core release and install it
-// into its spare slot, after a press on the speaker. It answers when the install is done:
-// with the install's report, which offers the reboot, or with status current when there
-// is nothing newer. The download and the NAND write take minutes.
+// into its spare slot; the speaker fetches it itself and it is signed, so no press. It answers
+// when the install is done: with the install's report, after which the speaker restarts into
+// the new slot on its own (restarting), or with status current when there is nothing newer.
+// The download and the NAND write take minutes.
 export async function startCoreUpdate(
   speaker?: string
 ): Promise<FirmwareReport | { status: 'current'; version?: string }> {
@@ -147,33 +151,14 @@ export async function startCoreUpdate(
   const body = await r.text();
   if (!r.ok) throw httpError(r.status, body, 'POST /api/core-update');
   try {
-    return JSON.parse(body) as FirmwareReport | { status: 'current'; version?: string };
+    return await contract<FirmwareReport | { status: 'current'; version?: string }>(
+      Promise.resolve(JSON.parse(body))
+    );
   } catch {
     throw new Error('Firmware response was invalid.');
   }
 }
 
-export async function reboot(speaker?: string) {
+export async function reboot(speaker?: string): Promise<unknown> {
   return send('/api/reboot', 'POST', { confirm: true }, speaker);
-}
-
-// getOwnerKey says whether the speaker trusts an owner key (ADR 0048) next to the release
-// keys, and which. null when the speaker could not answer.
-export async function getOwnerKey(speaker?: string): Promise<OwnerKey | null> {
-  try {
-    return await getJSON<OwnerKey>('/api/owner-key', speaker);
-  } catch {
-    return null;
-  }
-}
-
-// setOwnerKey makes the speaker trust key, an ed25519 public key in base64, after a key
-// held on the speaker. It answers with the new state.
-export async function setOwnerKey(key: string, speaker?: string): Promise<OwnerKey> {
-  return (await sendWithin('/api/owner-key', 'PUT', { body: { key }, speaker })) as OwnerKey;
-}
-
-// removeOwnerKey takes the owner key away, after a key held on the speaker.
-export async function removeOwnerKey(speaker?: string): Promise<OwnerKey> {
-  return (await sendWithin('/api/owner-key', 'DELETE', { speaker })) as OwnerKey;
 }

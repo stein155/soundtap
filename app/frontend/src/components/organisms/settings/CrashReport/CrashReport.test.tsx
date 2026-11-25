@@ -49,7 +49,7 @@ describe('CrashNotice', () => {
     // Word for word what the link carries, and no link opened yet.
     expect(getByTestId('crash-title').textContent).toBe(crash.title);
     expect(getByTestId('crash-body').textContent).toBe(crash.body);
-    expect(container.textContent).toContain('Maintenance › Help and support');
+    expect(container.textContent).toContain('Connection and maintenance › Help and support');
     expect(api.recordCrashReport).not.toHaveBeenCalled();
 
     const open = getByRole('link', { name: 'Open the report on GitHub' });

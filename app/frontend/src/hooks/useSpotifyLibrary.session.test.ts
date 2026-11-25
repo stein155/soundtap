@@ -6,6 +6,7 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { useSpotifyLibrary } from './useSpotifyLibrary';
 import { setTargetDevice } from '../lib/base';
 import * as spotify from '../lib/spotify';
+import { spotifyStatus } from './testFixtures';
 
 vi.mock('../lib/api', () => ({ storeSpotifyPreset: vi.fn() }));
 vi.mock('../lib/spotify', async (orig) => ({
@@ -28,18 +29,18 @@ describe('useSpotifyLibrary session', () => {
   // storing no longer also plays.
   it('reads the session again after a disconnect instead of loading forever', async () => {
     vi.mocked(spotify.spotifyStatus)
-      .mockResolvedValueOnce({ available: true, connected: true } as spotify.SpotifyStatus)
-      .mockResolvedValue({ available: true } as spotify.SpotifyStatus);
-    const { result } = renderHook(() => useSpotifyLibrary(true, undefined, () => {}));
+      .mockResolvedValueOnce(spotifyStatus({ available: true, connected: true }))
+      .mockResolvedValue(spotifyStatus({ available: true }));
+    const { result } = renderHook(() => useSpotifyLibrary(true, undefined, vi.fn()));
     await waitFor(() => expect(result.current.view).toBe('ready'));
 
-    await act(() => result.current.disconnect());
+    await act(async () => result.current.disconnect());
     await waitFor(() => expect(result.current.statusLoaded).toBe(true));
     expect(result.current.view).toBe('pair');
   });
 
   it('polls the session again after a play finds it lost, until it is back', async () => {
-    const S = (s: object) => s as spotify.SpotifyStatus;
+    const S = spotifyStatus;
     vi.mocked(spotify.spotifyStatus)
       .mockResolvedValueOnce(S({ available: true, connected: true }))
       .mockResolvedValueOnce(S({ available: true, authenticated: true }))
@@ -47,17 +48,17 @@ describe('useSpotifyLibrary session', () => {
     vi.mocked(spotify.spotifyPlay).mockRejectedValueOnce(
       new spotify.SpotifyError('spotify_not_connected')
     );
-    const { result } = renderHook(() => useSpotifyLibrary(true, undefined, () => {}));
+    const { result } = renderHook(() => useSpotifyLibrary(true, undefined, vi.fn()));
     await waitFor(() => expect(result.current.view).toBe('ready'));
-    await act(() => result.current.play(item.uri, undefined, item));
+    await act(async () => result.current.play(item.uri, undefined, item));
     await waitFor(() => expect(result.current.view).toBe('connecting'));
     await waitFor(() => expect(result.current.view).toBe('ready'), { timeout: 6000 });
   }, 10000);
 
   it('ignores a play that finishes after the sheet was closed and reopened', async () => {
-    let release: () => void = () => {};
+    let release: () => void = vi.fn();
     vi.mocked(spotify.spotifyPlay).mockImplementationOnce(
-      () => new Promise((r) => (release = () => r({ status: 'ok' })))
+      async () => new Promise((r) => (release = () => r({ status: 'ok' })))
     );
     const onPlayed = vi.fn();
     const { result, rerender } = renderHook(({ o }) => useSpotifyLibrary(o, undefined, onPlayed), {

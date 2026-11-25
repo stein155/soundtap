@@ -32,6 +32,20 @@ function draw({ svg, body }: IconSpec): IconComponent {
   );
 }
 
-export const Icon = Object.fromEntries(
-  Object.entries(specs).map(([name, spec]) => [name, draw(spec)])
-) as Record<IconName, IconComponent>;
+// Whether every icon of the set was drawn.
+function drewAll<K extends string>(
+  all: Record<K, IconSpec>,
+  drawn: Partial<Record<K, IconComponent>>
+): drawn is Record<K, IconComponent> {
+  return Object.keys(all).every((name) => name in drawn);
+}
+
+// Every spec of a set as a component, under the same names.
+function drawAll<K extends string>(all: Record<K, IconSpec>): Record<K, IconComponent> {
+  const drawn: Partial<Record<K, IconComponent>> = {};
+  for (const name in all) drawn[name] = draw(all[name]);
+  if (!drewAll(all, drawn)) throw new Error('an icon was not drawn');
+  return drawn;
+}
+
+export const Icon = drawAll(specs);

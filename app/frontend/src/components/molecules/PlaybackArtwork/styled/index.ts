@@ -39,8 +39,8 @@ const idle: Record<ArtworkVariant, string> = {
 
 export const Square = styled.span<{
   $variant: ArtworkVariant;
-  $color?: string;
-  $highlighted?: boolean;
+  $color?: string | undefined;
+  $highlighted?: boolean | undefined;
 }>`
   position: relative;
   flex-shrink: 0;
@@ -52,7 +52,7 @@ export const Square = styled.span<{
   ${({ $variant, $color, $highlighted }) => {
     if ($color && $variant === 'player') return 'background: var(--surface); color: var(--ink);';
     if ($color) return `background: ${$color}; color: #fff;`;
-    if ($highlighted) return 'background: var(--accent-soft); color: var(--accent-fill);';
+    if ($highlighted === true) return 'background: var(--accent-soft); color: var(--accent-fill);';
     return idle[$variant];
   }}
 `;

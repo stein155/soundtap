@@ -10,9 +10,9 @@ import type { IntegrationsPrefs, MultiroomPrefs } from '../lib/types';
 const RETRY_MS = 5000;
 
 // Writes one preference to each of `targets`; resolves to those that refused it.
-const write = (key: string, value: unknown, targets: Room[]) =>
+const write = async (key: string, value: unknown, targets: Room[]) =>
   Promise.all(
-    targets.map((r) =>
+    targets.map(async (r) =>
       saveSettings({ [key]: value }, speakerArg(r)).then(
         () => {
           // The home page's copy of this speaker's settings (its group volume) follows.
@@ -24,11 +24,25 @@ const write = (key: string, value: unknown, targets: Room[]) =>
     )
   ).then((failed) => failed.filter((r): r is Room => r !== null));
 
+// The household preferences a save writes, by settings key.
+interface Prefs {
+  multiroom: MultiroomPrefs;
+  integrations: IntegrationsPrefs;
+}
+
+export interface HouseholdPrefs {
+  multiroom: MultiroomPrefs | null;
+  saveMultiroom: (next: MultiroomPrefs) => Promise<void>;
+  mqttHost: string;
+  integrations: IntegrationsPrefs | null;
+  saveIntegrations: (next: IntegrationsPrefs) => Promise<void>;
+}
+
 // Settings that hold for the whole household: read from the speaker serving the page,
 // written to every speaker that is online, since any of them may lead a group. Until
 // they have been read there is nothing to change: a toggle would otherwise write a
 // default over the other preference.
-export function useHouseholdPrefs(rooms: Room[]) {
+export function useHouseholdPrefs(rooms: Room[]): HouseholdPrefs {
   const [multiroom, setMultiroom] = useState<MultiroomPrefs | null>(null);
   const [mqttHost, setMqttHost] = useState('');
   const [integrations, setIntegrations] = useState<IntegrationsPrefs | null>(null);
@@ -39,7 +53,7 @@ export function useHouseholdPrefs(rooms: Room[]) {
 
   // The last value a speaker accepted (or was read): what a failed save falls back to,
   // not the unsaved optimistic value another save may have shown meanwhile.
-  const confirmed = useRef<Record<string, unknown>>({});
+  const confirmed = useRef<Partial<Prefs>>({});
 
   // Read once a speaker is online to read from; with no room known yet at mount, that
   // is when discovery first finds one.
@@ -84,7 +98,11 @@ export function useHouseholdPrefs(rooms: Room[]) {
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   // Shows `next` at once and writes it to every online speaker; if not one of them took
   // it, puts back what is really stored.
-  const saveEverywhere = <T>(key: string, next: T, show: (v: T) => void) => {
+  const saveEverywhere = async <K extends keyof Prefs>(
+    key: K,
+    next: Prefs[K],
+    show: (v: Prefs[K] | null) => void
+  ) => {
     const mine = (saves.current[key] = (saves.current[key] ?? 0) + 1);
     show(next);
     // A speaker that missed this save while others took it gets it again a little later,
@@ -104,13 +122,14 @@ export function useHouseholdPrefs(rooms: Room[]) {
       if (failed.length < online.length) {
         confirmed.current[key] = next;
         if (failed.length > 0) retry(failed, 3);
-      } else if (mine === saves.current[key]) show(confirmed.current[key] as T);
+      } else if (mine === saves.current[key]) show(confirmed.current[key] ?? null);
     });
     queue.current = turn;
     return turn;
   };
-  const saveMultiroom = (next: MultiroomPrefs) => saveEverywhere('multiroom', next, setMultiroom);
-  const saveIntegrations = (next: IntegrationsPrefs) =>
+  const saveMultiroom = async (next: MultiroomPrefs) =>
+    saveEverywhere('multiroom', next, setMultiroom);
+  const saveIntegrations = async (next: IntegrationsPrefs) =>
     saveEverywhere('integrations', next, setIntegrations);
 
   return { multiroom, saveMultiroom, mqttHost, integrations, saveIntegrations };

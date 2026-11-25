@@ -17,8 +17,15 @@ interface Entry {
 const stack: Entry[] = [];
 // Installed once and kept: the entry outlives the overlay that took it.
 let listening = false;
-const onOurEntry = () =>
-  (window.history.state as { soundtapOverlay?: boolean } | null)?.soundtapOverlay === true;
+const onOurEntry = () => {
+  const state: unknown = window.history.state;
+  return (
+    typeof state === 'object' &&
+    state !== null &&
+    'soundtapOverlay' in state &&
+    state.soundtapOverlay === true
+  );
+};
 // Whether the history stands on our entry; a reload keeps standing on it.
 let guarded = onOurEntry();
 
@@ -29,9 +36,10 @@ function guard() {
 }
 
 function onKeyDown(e: KeyboardEvent) {
-  if (e.key !== 'Escape' || !stack.length) return;
+  const top = stack.at(-1);
+  if (e.key !== 'Escape' || !top) return;
   e.preventDefault();
-  stack[stack.length - 1].run();
+  top.run();
 }
 
 function onPopState() {
@@ -61,12 +69,12 @@ function register(run: () => void) {
 // Calls onEscape when Escape (or the device's back) is pressed while `active` and nothing
 // opened later is. A `layer` holds other users of this hook: it registers first even when
 // they open with it, as effects run children first.
-export function useEscape(active: boolean, onEscape: () => void, layer = false) {
+export function useEscape(active: boolean, onEscape: () => void, layer = false): void {
   const handle = useEffectEvent(onEscape);
   useLayoutEffect(() => {
-    if (active && layer) return register(() => handle());
+    return active && layer ? register(() => handle()) : undefined;
   }, [active, layer]);
   useEffect(() => {
-    if (active && !layer) return register(() => handle());
+    return active && !layer ? register(() => handle()) : undefined;
   }, [active, layer]);
 }

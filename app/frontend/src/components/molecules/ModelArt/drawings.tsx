@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
+import type { ReactElement } from 'react';
+
 // fill names one of the gradients or patterns in Defs, for this drawing instance.
 export interface DrawingProps {
   fill: (name: string) => string;
@@ -8,7 +10,7 @@ export interface DrawingProps {
 
 // The gradients and grille the drawings fill with, named per instance: several drawings
 // are on screen at once.
-export function Defs({ id }: { id: string }) {
+export function Defs({ id }: { id: string }): ReactElement {
   return (
     <defs>
       <linearGradient id={`${id}gb`} x1="0" y1="0" x2="0" y2="1">
@@ -47,7 +49,7 @@ export function Defs({ id }: { id: string }) {
 const BUTTONS = [0, 1, 2, 3];
 
 // A tall body: lighter cap to 29 %, a thin silver band, a fine grille.
-export function St10({ fill }: DrawingProps) {
+export function St10({ fill }: DrawingProps): ReactElement {
   return (
     <>
       <rect x="23" y="8" width="54" height="84" rx="3.5" fill={fill('gb')} />
@@ -67,7 +69,7 @@ export function St10({ fill }: DrawingProps) {
 const ST20_BODY = 'M8 24q0-3 3-3h78q3 0 3 3l.7 25.5-.7 25.5q0 3-3 3H11q-3 0-3-3L7.3 49.5Z';
 
 // A wide body: silver top cap with the button row, a glossy centre panel.
-export function St20({ fill }: DrawingProps) {
+export function St20({ fill }: DrawingProps): ReactElement {
   return (
     <>
       <path d={ST20_BODY} fill={fill('gb')} />
@@ -84,7 +86,7 @@ export function St20({ fill }: DrawingProps) {
 const ST300_FRONT = 'M3 51.9h94v9.6q0 1.5-1.5 1.5h-91q-1.5 0-1.5-1.5Z';
 
 // A soundbar seen from the front and a little above: glass top, grille front.
-export function St300({ fill }: DrawingProps) {
+export function St300({ fill }: DrawingProps): ReactElement {
   return (
     <>
       <path d="M9 40h82l6 11H3Z" fill={fill('gp')} />
@@ -99,7 +101,7 @@ export function St300({ fill }: DrawingProps) {
 const WLA_TOP = 'M26 21h48q9 0 11 8l6 21q1 5-5 5H14q-6 0-5-5l6-21q2-8 11-8Z';
 
 // A low box: the lighter top face narrows to the back, a darker front band.
-export function Wla({ fill }: DrawingProps) {
+export function Wla({ fill }: DrawingProps): ReactElement {
   return (
     <>
       <path d="M9 52h82l-.5 17q-.5 10-10 10H19.5q-9.5 0-10-10Z" fill={fill('gf')} />

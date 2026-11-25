@@ -9,21 +9,23 @@ import * as api from '../lib/api';
 import { I18nContext, makeT } from '../lib/i18n';
 import { PREF, writePref } from '../lib/storage';
 import { speakerArg, type Room } from './useRooms';
-import type { Settings } from '../lib/types';
+import { must } from '../test/must';
+import { room } from './testFixtures';
+import { settingsFixture } from '../test/settings';
 
 vi.mock('../lib/api', () => ({ getSettings: vi.fn(), saveSettings: vi.fn() }));
 
-const rooms = [
-  { id: 'a', name: 'Kitchen', self: true, online: true },
-  { id: 'b', name: 'Study', self: false, online: true },
-  { id: 'c', name: 'Attic', self: false, online: false },
-] as Room[];
+const rooms: Room[] = [
+  room({ id: 'a', name: 'Kitchen', self: true }),
+  room({ id: 'b', name: 'Study' }),
+  room({ id: 'c', name: 'Attic', online: false }),
+];
 
 const render = (initial: string) =>
   renderHook(() => useSpeakerLanguage(rooms), {
     wrapper: ({ children }: { children: ReactNode }) => (
       <I18nContext.Provider
-        value={{ t: makeT('en'), lang: initial, setLang: () => {}, langFailed: false }}
+        value={{ t: makeT('en'), lang: initial, setLang: vi.fn(), langFailed: false }}
       >
         {children}
       </I18nContext.Provider>
@@ -38,8 +40,8 @@ describe('useSpeakerLanguage', () => {
   });
 
   it('moves only a speaker still on the default English', async () => {
-    vi.mocked(api.getSettings).mockImplementation(
-      async (s) => ({ language: s ? 'de' : 'en' }) as Settings
+    vi.mocked(api.getSettings).mockImplementation(async (s) =>
+      settingsFixture({ language: s ? 'de' : 'en' })
     );
     render('nl');
     await waitFor(() => expect(api.saveSettings).toHaveBeenCalledWith({ language: 'nl' }, ''));
@@ -59,9 +61,7 @@ describe('useSpeakerLanguage', () => {
     const view = renderHook(({ list }) => useSpeakerLanguage(list), {
       initialProps: { list: rooms },
       wrapper: ({ children }: { children: ReactNode }) => (
-        <I18nContext.Provider
-          value={{ t: makeT('en'), lang, setLang: () => {}, langFailed: false }}
-        >
+        <I18nContext.Provider value={{ t: makeT('en'), lang, setLang: vi.fn(), langFailed: false }}>
           {children}
         </I18nContext.Provider>
       ),
@@ -72,7 +72,10 @@ describe('useSpeakerLanguage', () => {
     expect(api.saveSettings).toHaveBeenCalledTimes(2);
     view.rerender({ list: rooms.map((r) => ({ ...r, online: true })) });
     await waitFor(() => expect(api.saveSettings).toHaveBeenCalledTimes(3));
-    expect(api.saveSettings).toHaveBeenLastCalledWith({ language: 'nl' }, speakerArg(rooms[2]));
+    expect(api.saveSettings).toHaveBeenLastCalledWith(
+      { language: 'nl' },
+      speakerArg(must(rooms[2], 'the third room'))
+    );
     view.rerender({ list: rooms.map((r) => ({ ...r, online: true })) });
     expect(api.saveSettings).toHaveBeenCalledTimes(3);
   });

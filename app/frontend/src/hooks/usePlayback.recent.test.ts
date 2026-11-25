@@ -4,31 +4,31 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { usePlayback } from './usePlayback';
-import type { SelectedRoom } from './useSelectedRoom';
 import * as spotify from '../lib/spotify';
+import { recentItem, room, selectedRoom } from './testFixtures';
 
 vi.mock('../lib/api', () => ({}));
 vi.mock('../lib/spotify', () => ({ spotifyPlay: vi.fn() }));
 
-const item = { name: 'Mix', art: 'a.jpg', spotifyUri: 'spotify:playlist:1' } as never;
+const item = recentItem({
+  name: 'Mix',
+  art: 'a.jpg',
+  tuneInId: null,
+  spotifyUri: 'spotify:playlist:1',
+  source: 'SPOTIFY',
+});
 
 describe('usePlayback Spotify recent item', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('shows it starting at once and ignores a repeat until the request settles', async () => {
-    let release: () => void = () => {};
+    let release: () => void = vi.fn();
     vi.mocked(spotify.spotifyPlay).mockImplementationOnce(
-      () => new Promise<{ status: string }>((r) => (release = () => r({ status: 'ok' })))
+      async () => new Promise<{ status: string }>((r) => (release = () => r({ status: 'ok' })))
     );
-    const live = {
-      player: { status: 'standby' },
-      playOptimistic: vi.fn(),
-      nudge: vi.fn(),
-      refreshNowPlaying: vi.fn(),
-      cancelPending: vi.fn(),
-    };
-    const sel = { speaker: 'kitchen', lead: { name: 'Kitchen' }, live } as unknown as SelectedRoom;
-    const { result } = renderHook(() => usePlayback(sel, () => () => {}));
+    const sel = selectedRoom({ speaker: 'kitchen', lead: room({ name: 'Kitchen' }) });
+    const { live } = sel;
+    const { result } = renderHook(() => usePlayback(sel, () => vi.fn()));
 
     act(() => void result.current.playRecent(item));
     act(() => void result.current.playRecent(item));

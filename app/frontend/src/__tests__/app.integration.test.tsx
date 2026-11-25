@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
@@ -11,10 +11,13 @@ import * as apiModule from '../lib/api';
 import { loadLanguage } from '../lib/i18n';
 
 // Every export is a vi mock at runtime; expose them as such for the type-checker.
-const api = apiModule as unknown as Record<keyof typeof apiModule, Mock>;
+const api = vi.mocked(apiModule);
 
 import App from '../App';
 import { settingsFixture } from '../test/settings';
+import type { Settings } from '../lib/types';
+import { version, multiroomClient, recentEntry } from '../hooks/testFixtures';
+import { must } from '../test/must';
 
 const PRESETS = [
   { slot: 1, name: 'Radio Foo', tuneInId: 's1', location: '', logo: '' },
@@ -26,7 +29,7 @@ const PRESETS = [
 ];
 
 // The page is ready once its top bar is there.
-const home = () => screen.findByRole('button', { name: 'Menu' });
+const home = async () => screen.findByRole('button', { name: 'Menu' });
 const openPresets = async () => {
   await home();
   await userEvent.click(screen.getByRole('button', { name: 'Presets' }));
@@ -70,15 +73,15 @@ beforeEach(() => {
       bass: { actual: 0, target: 0, min: -9, max: 0, default: 0 },
     })
   );
-  api.getVersion.mockResolvedValue({ version: '1.2.3', updatable: false });
+  api.getVersion.mockResolvedValue(
+    version({ version: '1.2.3', os: '', app: '', updatable: false, updateMode: 'unmanaged' })
+  );
   // SettingsSheet also fetches the releases on open.
   api.getReleases.mockResolvedValue({
     current: '1.2.3',
     updatable: false,
     stable: null,
   });
-  // The Updates page asks whether an owner key is set (ADR 0048).
-  api.getOwnerKey.mockResolvedValue({ available: true, active: false });
   api.scanWifi.mockResolvedValue([{ ssid: 'HomeNet', signal: 'good', secure: true }]);
   api.setWifi.mockResolvedValue(null);
   api.getWifiJoinFailed.mockResolvedValue('');
@@ -98,7 +101,7 @@ beforeEach(() => {
     devices: [],
   });
   api.getMultiroom.mockResolvedValue([
-    {
+    multiroomClient({
       id: 'local',
       name: 'Kitchen',
       host: 'soundtap',
@@ -108,8 +111,8 @@ beforeEach(() => {
       groupId: 'g1',
       current: true,
       member: true,
-    },
-    {
+    }),
+    multiroomClient({
       id: 'mac',
       name: 'Test MacBook Pro',
       host: 'macbook',
@@ -119,7 +122,7 @@ beforeEach(() => {
       groupId: 'g2',
       current: false,
       member: false,
-    },
+    }),
   ]);
   api.stopPlayback.mockResolvedValue(null);
   api.skipSpotify.mockResolvedValue(null);
@@ -163,14 +166,18 @@ describe('App integration', () => {
     expect(await screen.findByText('Willkommen bei SoundTap')).toBeInTheDocument();
     expect(screen.getByText('Neues Leben für SoundTouch-Lautsprecher.')).toBeInTheDocument();
     expect(await screen.findByDisplayValue('Kitchen')).toBeInTheDocument();
+    expect(screen.getByText('Schritt 1 von 2')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Weiter' }));
     expect(await screen.findByText('HomeNet')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Menu' })).not.toBeInTheDocument();
+    expect(screen.getByText('Schritt 2 von 2')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Menü' })).not.toBeInTheDocument();
   });
 
   it('says why the last Wi-Fi join failed', async () => {
     api.getWifiJoinFailed.mockResolvedValue('wrong_password');
     window.history.replaceState({}, '', '/?setup=wifi');
     render(<App />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Next' }));
     expect(await screen.findByText(/the password was not accepted/)).toBeInTheDocument();
   });
 
@@ -180,7 +187,8 @@ describe('App integration', () => {
     const name = await screen.findByDisplayValue('Kitchen');
     await userEvent.clear(name);
     await userEvent.type(name, 'Living room');
-    await userEvent.type(await screen.findByLabelText('Enter Password'), 'secret123');
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+    await userEvent.type(await screen.findByLabelText('Password for HomeNet'), 'secret123');
     await userEvent.click(screen.getByRole('button', { name: 'Connect' }));
 
     await waitFor(() => expect(api.saveSettings).toHaveBeenCalledWith({ name: 'Living room' }, ''));
@@ -190,7 +198,7 @@ describe('App integration', () => {
       ''
     );
     expect(api.saveSettings.mock.invocationCallOrder.at(-1)).toBeLessThan(
-      api.setWifi.mock.invocationCallOrder[0]
+      must(api.setWifi.mock.invocationCallOrder[0], 'a setWifi call')
     );
   });
 
@@ -199,7 +207,8 @@ describe('App integration', () => {
     window.history.replaceState({}, '', '/?setup=wifi');
     render(<App />);
     await screen.findByDisplayValue('Kitchen');
-    await userEvent.type(await screen.findByLabelText('Enter Password'), 'secret123');
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+    await userEvent.type(await screen.findByLabelText('Password for HomeNet'), 'secret123');
     await userEvent.click(screen.getByRole('button', { name: 'Connect' }));
     await waitFor(() => expect(api.setWifi).toHaveBeenCalled());
     expect(api.saveSettings).not.toHaveBeenCalled();
@@ -213,7 +222,8 @@ describe('App integration', () => {
     );
     render(<App />);
     await userEvent.type(await screen.findByDisplayValue('Kitchen'), ' 2');
-    await userEvent.type(await screen.findByLabelText('Enter Password'), 'secret123');
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+    await userEvent.type(await screen.findByLabelText('Password for HomeNet'), 'secret123');
     await userEvent.click(screen.getByRole('button', { name: 'Connect' }));
     await waitFor(() => expect(api.setWifi).toHaveBeenCalled());
     expect(await screen.findByText(/The name could not be saved here/)).toBeInTheDocument();
@@ -222,12 +232,12 @@ describe('App integration', () => {
   // A name typed while the stored one is still loading is kept.
   it('keeps a setup name typed before the stored one arrives', async () => {
     window.history.replaceState({}, '', '/?setup=wifi');
-    let answer: (v: unknown) => void = () => {};
-    api.getSettings.mockImplementationOnce(() => new Promise((r) => (answer = r)));
+    let answer: (v: Settings) => void = vi.fn();
+    api.getSettings.mockImplementationOnce(async () => new Promise((r) => (answer = r)));
     render(<App />);
     const field = await screen.findByLabelText('Name');
     await userEvent.type(field, 'Typed name');
-    answer({ name: 'Stored name' });
+    answer(settingsFixture({ name: 'Stored name' }));
     await waitFor(() => expect(api.getSettings).toHaveBeenCalled());
     expect(field).toHaveValue('Typed name');
   });
@@ -237,7 +247,8 @@ describe('App integration', () => {
     await openPresets();
     expect(await screen.findByText('Radio Foo')).toBeInTheDocument();
     expect(screen.getByText('Radio Bar')).toBeInTheDocument();
-    expect((await screen.findAllByText('Open')).length).toBe(4);
+    // Four open presets and the open favorite.
+    expect((await screen.findAllByText('Open')).length).toBe(5);
   }, 30000);
 
   // <html lang> must follow the shown language, or a screen reader reads the whole UI
@@ -256,7 +267,7 @@ describe('App integration', () => {
     await userEvent.click(foo);
     await waitFor(() => expect(api.playPreset).toHaveBeenCalledTimes(1));
     // Called with the slot number (1) for Radio Foo.
-    expect(api.playPreset.mock.calls[0][0]).toBe(1);
+    expect(api.playPreset.mock.calls[0]?.[0]).toBe(1);
   }, 30000);
 
   it('sets the volume from the volume panel', async () => {
@@ -286,31 +297,32 @@ describe('App integration', () => {
     expect(await screen.findByText('Jazz Live')).toBeInTheDocument();
   }, 30000);
 
-  it('plays a custom station from TuneIn, and says what is wrong with the form', async () => {
+  it('plays a station from a link from the search, and says what is wrong with the form', async () => {
     render(<App />);
     await openTuneIn();
-    await userEvent.click(await screen.findByRole('button', { name: /Add your own station/ }));
-    await userEvent.click(screen.getByRole('button', { name: 'Stream Station' }));
+    await openTuneInSearch();
+    await userEvent.click(await screen.findByRole('button', { name: /^Play from a link/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Play station' }));
     expect(screen.getAllByRole('alert').map((a) => a.textContent)).toEqual([
       'Required field',
       'Required field',
     ]);
-    await userEvent.type(screen.getByLabelText('Stream URL'), 'ftp://radio.example/live');
+    await userEvent.type(screen.getByLabelText('Link to the stream'), 'ftp://radio.example/live');
     await userEvent.type(screen.getByLabelText('Name'), 'My radio');
-    await userEvent.click(screen.getByRole('button', { name: 'Stream Station' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Play station' }));
     expect(screen.getByRole('alert').textContent).toBe(
       'Please use URLs that start with http(s)://'
     );
     expect(api.selectStation).not.toHaveBeenCalled();
-    await userEvent.clear(screen.getByLabelText('Stream URL'));
-    await userEvent.type(screen.getByLabelText('Stream URL'), 'https://radio.example/live');
-    await userEvent.click(screen.getByRole('button', { name: 'Stream Station' }));
+    await userEvent.clear(screen.getByLabelText('Link to the stream'));
+    await userEvent.type(screen.getByLabelText('Link to the stream'), 'https://radio.example/live');
+    await userEvent.click(screen.getByRole('button', { name: 'Play station' }));
     await waitFor(() => expect(api.selectStation).toHaveBeenCalled());
-    expect(api.selectStation.mock.calls[0].slice(0, 2)).toEqual([
+    expect(api.selectStation.mock.calls[0]?.slice(0, 2)).toEqual([
       'https://radio.example/live',
       'My radio',
     ]);
-    await waitFor(() => expect(screen.queryByLabelText('Stream URL')).toBeNull());
+    await waitFor(() => expect(screen.queryByLabelText('Link to the stream')).toBeNull());
   }, 30000);
 
   // An unreachable TuneIn offers a retry instead of a dead end.
@@ -328,11 +340,13 @@ describe('App integration', () => {
     api.getPresets.mockResolvedValue([null, null, null, null, null, null]);
     render(<App />);
     await userEvent.click(await screen.findByRole('button', { name: /Pick something to play/ }));
-    await userEvent.click((await screen.findAllByRole('button', { name: /^\d\s?Open$/ }))[0]);
-    expect(await screen.findByText(/Press & hold an open preset/)).toBeInTheDocument();
+    await userEvent.click(
+      must((await screen.findAllByRole('button', { name: /^\d\s?Open$/ }))[0], 'an empty preset')
+    );
+    expect(await screen.findByText(/Press and hold an empty preset/)).toBeInTheDocument();
     expect(screen.queryByText(/for slot 1/i)).toBeNull();
     await userEvent.click(screen.getByRole('button', { name: 'OK' }));
-    await waitFor(() => expect(screen.queryByText(/Press & hold an open preset/)).toBeNull());
+    await waitFor(() => expect(screen.queryByText(/Press and hold an empty preset/)).toBeNull());
   }, 30000);
 
   it('opens a service on its own, without a switch to the other', async () => {
@@ -361,25 +375,21 @@ describe('App integration', () => {
   }
 
   it('offers firmware upload under Updates on a flashed speaker', async () => {
-    api.getVersion.mockResolvedValue({
-      version: '1.2.3',
-      updatable: false,
-      updateMode: 'firmware',
-    });
+    api.getVersion.mockResolvedValue(
+      version({ version: '1.2.3', os: '', app: '', updatable: false })
+    );
     await openUpload();
     expect(
       await screen.findByText(
-        "Pick a firmware image. It is checked before anything is written to NAND. Select its .sig file with it. Bose's own update file needs none."
+        'Choose a .stu file, with its .sig file if it has one. The speaker checks it first; you then confirm with one press on the speaker.'
       )
     ).toBeInTheDocument();
   }, 30000);
 
   it('validates, installs, then reboots firmware only after confirmation', async () => {
-    api.getVersion.mockResolvedValue({
-      version: '1.2.3',
-      updatable: false,
-      updateMode: 'firmware',
-    });
+    api.getVersion.mockResolvedValue(
+      version({ version: '1.2.3', os: '', app: '', updatable: false })
+    );
     const report = {
       size: 1024,
       kernel: 'stock',
@@ -392,7 +402,7 @@ describe('App integration', () => {
       .mockResolvedValueOnce({ ...report, installed: true, slot: 'Pong' });
     api.reboot.mockResolvedValue(null);
     await openUpload();
-    fireEvent.change(document.querySelector('input[accept=".stu,.sig"]')!, {
+    fireEvent.change(must(document.querySelector('input[accept=".stu,.sig"]'), 'the file input'), {
       target: { files: [new File(['firmware'], 'Update_soundtap-firmware.stu')] },
     });
     expect(await screen.findByText('Compatible with this speaker.')).toBeInTheDocument();
@@ -406,21 +416,57 @@ describe('App integration', () => {
     expect(api.reboot).toHaveBeenCalledOnce();
   }, 30000);
 
+  // A newer Core installs after one confirmation, as stock asks: no press, no reboot button.
+  // The speaker restarts on its own and the page over the app follows it (ADR 0048).
+  it('updates SoundTap Core after one confirmation and follows the restart', async () => {
+    api.getVersion.mockResolvedValue(
+      version({ version: '1.2.3', os: '0.1.0', app: '', updatable: false })
+    );
+    api.getReleases.mockResolvedValue({
+      current: '1.2.3',
+      updatable: false,
+      stable: null,
+      core: {
+        current: '0.1.0',
+        latest: { tag: 'os-v0.2.0', name: '', notes: '', publishedAt: '' },
+      },
+    });
+    api.startCoreUpdate.mockResolvedValue({
+      size: 1,
+      kernel: 'mainline',
+      models: ['ST20'],
+      modules: [],
+      installable: true,
+      installed: true,
+      restarting: true,
+    });
+    await openSpeakerSection(/^Updates/);
+    const card = await screen.findByRole('region', { name: 'SoundTap Core 0.2.0' });
+    await userEvent.click(within(card).getByRole('button', { name: 'Update' }));
+    expect(api.startCoreUpdate).not.toHaveBeenCalled();
+    const ask = await screen.findByRole('dialog', { name: 'Update' });
+    await userEvent.click(within(ask).getByRole('button', { name: 'Start' }));
+    expect(api.startCoreUpdate).toHaveBeenCalledOnce();
+    expect(
+      await screen.findByRole('alertdialog', { name: 'The speaker is updating itself' })
+    ).toBeInTheDocument();
+    expect(api.reboot).not.toHaveBeenCalled();
+  }, 30000);
+
   // The check sends the signature picked with the file, not the previous one.
   it('validates firmware with the signature picked alongside it', async () => {
-    api.getVersion.mockResolvedValue({
-      version: '1.2.3',
-      updatable: false,
-      updateMode: 'firmware',
-    });
+    api.getVersion.mockResolvedValue(
+      version({ version: '1.2.3', os: '', app: '', updatable: false })
+    );
     api.uploadFirmware.mockResolvedValue({
       size: 1,
+      kernel: '',
       models: ['ST10'],
       modules: [],
       installable: false,
     });
     await openUpload();
-    fireEvent.change(document.querySelector('input[accept=".stu,.sig"]')!, {
+    fireEvent.change(must(document.querySelector('input[accept=".stu,.sig"]'), 'the file input'), {
       target: { files: [new File(['fw'], 'A.stu'), new File(['sigA'], 'A.stu.sig')] },
     });
     await waitFor(() => expect(api.uploadFirmware).toHaveBeenCalledTimes(1));
@@ -431,14 +477,12 @@ describe('App integration', () => {
   }, 30000);
 
   it('keeps failed firmware named and never offers install', async () => {
-    api.getVersion.mockResolvedValue({
-      version: '1.2.3',
-      updatable: false,
-      updateMode: 'firmware',
-    });
+    api.getVersion.mockResolvedValue(
+      version({ version: '1.2.3', os: '', app: '', updatable: false })
+    );
     api.uploadFirmware.mockRejectedValue(new Error('truncated package'));
     await openUpload();
-    fireEvent.change(document.querySelector('input[accept=".stu,.sig"]')!, {
+    fireEvent.change(must(document.querySelector('input[accept=".stu,.sig"]'), 'the file input'), {
       target: { files: [new File(['broken'], 'broken.stu')] },
     });
     expect(await screen.findByText(/broken\.stu/)).toBeInTheDocument();
@@ -447,11 +491,9 @@ describe('App integration', () => {
   }, 30000);
 
   it('does not offer install when backend reports incompatible', async () => {
-    api.getVersion.mockResolvedValue({
-      version: '1.2.3',
-      updatable: false,
-      updateMode: 'firmware',
-    });
+    api.getVersion.mockResolvedValue(
+      version({ version: '1.2.3', os: '', app: '', updatable: false })
+    );
     api.uploadFirmware.mockResolvedValue({
       size: 1024,
       kernel: 'mainline',
@@ -461,7 +503,7 @@ describe('App integration', () => {
       reason: 'This is the mainline ST10 package; this ST20 needs another image.',
     });
     await openUpload();
-    fireEvent.change(document.querySelector('input[accept=".stu,.sig"]')!, {
+    fireEvent.change(must(document.querySelector('input[accept=".stu,.sig"]'), 'the file input'), {
       target: { files: [new File(['x'], 'st10.stu')] },
     });
     expect(await screen.findByText(/mainline ST10 package/)).toBeInTheDocument();
@@ -472,7 +514,7 @@ describe('App integration', () => {
     await openSpeakerSection(/^Alarm/);
     await userEvent.click(screen.getByRole('switch', { name: /Alarm on/ }));
     fireEvent.change(screen.getByLabelText('Time'), { target: { value: '06:45' } });
-    await userEvent.selectOptions(screen.getByLabelText('Station'), '2');
+    await userEvent.selectOptions(screen.getByLabelText('Preset'), '2');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() =>
       expect(api.saveSettings).toHaveBeenCalledWith(
@@ -512,34 +554,40 @@ describe('App integration', () => {
   it('asks before back throws away unsaved settings', async () => {
     await openSpeakerSection(/^Alarm/);
     await userEvent.click(screen.getByRole('switch', { name: /Alarm on/ }));
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     const sheet = screen.getByRole('region', { name: 'Settings' });
     // Back from the alarm's page returns to the speaker's list: the edit is still there.
     await userEvent.click(within(sheet).getByRole('button', { name: 'Back' }));
-    expect(confirm).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog', { name: 'Discard unsaved changes?' })).toBeNull();
     await userEvent.click(within(sheet).getByRole('button', { name: 'Back' }));
-    expect(confirm).toHaveBeenCalledWith('Discard unsaved changes?');
+    // The app's own sheet asks, not the browser's dialog; Cancel stays.
+    const ask = await screen.findByRole('dialog', { name: 'Discard unsaved changes?' });
+    await userEvent.click(within(ask).getByRole('button', { name: 'Cancel' }));
     // Still on the speaker's page, with the edit waiting on the alarm's own Save.
     await userEvent.click(screen.getByRole('button', { name: /^Alarm/ }));
     expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
-    confirm.mockRestore();
   }, 30000);
 
   // Every way out of Settings asks too, not only Back.
-  it('asks before Close throws away unsaved settings', async () => {
+  // A page below the overview has only Back, as in the design: leaving the speaker's page
+  // asks first, and the overview's Close then leaves settings.
+  it('asks before Back throws away unsaved settings', async () => {
     await openSpeakerSection(/^Alarm/);
     await userEvent.click(screen.getByRole('switch', { name: /Alarm on/ }));
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     const sheet = screen.getByRole('region', { name: 'Settings' });
-    await userEvent.click(within(sheet).getByRole('button', { name: 'Close' }));
-    expect(confirm).toHaveBeenCalledWith('Discard unsaved changes?');
-    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
-    confirm.mockReturnValue(true);
-    await userEvent.click(within(sheet).getByRole('button', { name: 'Close' }));
-    await waitFor(() =>
-      expect(screen.queryByRole('region', { name: 'Settings' })).not.toBeInTheDocument()
-    );
-    confirm.mockRestore();
+    expect(within(sheet).queryByRole('button', { name: 'Close' })).not.toBeInTheDocument();
+    // The alarm's own page goes back to the speaker's without asking: the edit is the page's.
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Back' }));
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Back' }));
+    const ask = await screen.findByRole('dialog', { name: 'Discard unsaved changes?' });
+    await userEvent.click(within(ask).getByRole('button', { name: 'Cancel' }));
+    // Still on the speaker's page.
+    expect(within(sheet).queryByRole('button', { name: 'Close' })).not.toBeInTheDocument();
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Back' }));
+    const again = await screen.findByRole('dialog', { name: 'Discard unsaved changes?' });
+    await userEvent.click(within(again).getByRole('button', { name: 'Discard' }));
+    // Back on the overview, a main page: the app's own bar, no Close of its own.
+    expect(await within(sheet).findByRole('button', { name: 'Menu' })).toBeInTheDocument();
+    expect(within(sheet).queryByRole('button', { name: 'Close' })).not.toBeInTheDocument();
   }, 30000);
 
   it('groups a second speaker by inviting it from the leader', async () => {
@@ -568,7 +616,7 @@ describe('App integration', () => {
     render(<App />);
     const speakers = await openSpeakers();
     await userEvent.click(within(speakers).getByRole('button', { name: 'Settings' }));
-    const sheet = await screen.findByRole('dialog', { name: 'Settings' });
+    const sheet = await screen.findByRole('region', { name: 'Settings' });
     // Its page, not the overview: one level down, so there is a way back.
     expect(within(sheet).getByRole('button', { name: 'Back' })).toBeInTheDocument();
     expect(within(sheet).getByRole('heading', { name: 'Kitchen' })).toBeInTheDocument();
@@ -591,15 +639,17 @@ describe('App integration', () => {
     expect(await screen.findByRole('button', { name: 'Speaker: Office' })).toBeInTheDocument();
   }, 30000);
 
-  it('takes a station off the recent list from its card menu', async () => {
+  it('takes a station off the recent list from its sheet', async () => {
     api.getRecent.mockResolvedValue([
-      { source: 'TUNEIN', name: 'Jazz', location: '/v1/playback/station/s1', art: '' },
+      recentEntry({ location: '/v1/playback/station/s1', stoppedAt: '' }),
     ]);
     render(<App />);
     await userEvent
       .setup({ pointerEventsCheck: 0 })
       .click(await screen.findByRole('button', { name: 'More for Jazz' }));
-    await userEvent.click(await screen.findByRole('menuitem', { name: 'Remove' }));
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Remove from Recently played' })
+    );
     await waitFor(() =>
       expect(api.removeRecent).toHaveBeenCalledWith('TUNEIN', '/v1/playback/station/s1', '')
     );
@@ -744,10 +794,10 @@ describe('App integration', () => {
     await userEvent.click(await screen.findByRole('button', { name: /Open player/ }));
     const playing = await screen.findByRole('dialog', { name: /Playing in/ });
     await userEvent.click(within(playing).getByRole('button', { name: 'Presets' }));
-    await screen.findByRole('dialog', { name: 'PRESETS & FAVORITES' });
+    await screen.findByRole('dialog', { name: 'Presets & favorites' });
     await userEvent.keyboard('{Escape}');
     await waitFor(() =>
-      expect(screen.queryByRole('dialog', { name: 'PRESETS & FAVORITES' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: 'Presets & favorites' })).not.toBeInTheDocument()
     );
     expect(screen.getByRole('dialog', { name: /Playing in/ })).toBeInTheDocument();
   }, 30000);

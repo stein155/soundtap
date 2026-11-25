@@ -29,7 +29,7 @@ describe('room state', () => {
     };
     expect(stationOf(sp)).toMatchObject({ name: 'Song', spotify: true, paused: true });
     const list = { ...sp, album: 'Record', stationName: 'My mix' };
-    expect(stationOf(list)).toMatchObject({ name: 'My mix', title: 'Song', sub: 'Band • Record' });
+    expect(stationOf(list)).toMatchObject({ name: 'My mix', title: 'Song', sub: 'Band · Record' });
     const aux = { standby: false, source: 'AUX', playStatus: 'PLAY_STATE' };
     expect(stationOf(aux)).toBeNull();
     expect(sourceOf(aux)).toBe('aux');

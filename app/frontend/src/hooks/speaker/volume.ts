@@ -5,16 +5,28 @@ import { useState, useCallback, useRef, useMemo } from 'react';
 import { setVolume } from '../../lib/api';
 import { createLatestSender } from '../../lib/latestSender';
 
-type VolumeHold = { value: number; until: number };
+interface VolumeHold {
+  value: number;
+  until: number;
+}
 
 const VOLUME_HOLD_MS = 2500; // ignore polled volume this long after a local change
 
 // A local volume change, held against polled readings until it has had time to apply.
 const holdVolume = (value: number): VolumeHold => ({ value, until: Date.now() + VOLUME_HOLD_MS });
 
+export interface SpeakerVolume {
+  volume: number;
+  volumeFailures: number;
+  changeVolume: (level: number, options?: { group?: boolean }) => void;
+  applyVolume: (vol: number) => void;
+  releaseHold: () => void;
+  resetVolume: () => void;
+}
+
 // The volume side of useSpeaker: the slider's value, the local change held against stale
 // readings, and the coalescing sender.
-export function useSpeakerVolume(speaker: string) {
+export function useSpeakerVolume(speaker: string): SpeakerVolume {
   const [volume, setVolumeState] = useState(20);
   // Volume the user just set locally, held for a moment so a poll that reads the
   // speaker's not-yet-applied volume can't yank the slider back. { value, until }.
@@ -34,8 +46,8 @@ export function useSpeakerVolume(speaker: string) {
   const sendVolume = useMemo(
     () =>
       createLatestSender(
-        ({ volume, group }: { volume: number; group: boolean }) =>
-          setVolume(volume, speaker, { group }),
+        async ({ volume: level, group }: { volume: number; group: boolean }) =>
+          setVolume(level, speaker, { group }),
         () => setFailed((f) => ({ speaker, count: f.speaker === speaker ? f.count + 1 : 1 }))
       ),
     [speaker]
@@ -43,12 +55,12 @@ export function useSpeakerVolume(speaker: string) {
   // `group` marks a change made to the whole group (see setVolume). A group level may lie
   // past 0..100: the speaker stops at the bound but passes the full step to its followers.
   const changeVolume = useCallback(
-    (volume: number, { group = false } = {}) => {
-      const shown = Math.max(0, Math.min(100, volume));
+    (level: number, { group = false } = {}) => {
+      const shown = Math.max(0, Math.min(100, level));
       // Held from the moment it changes; the sender only ever sends this latest value.
       volumeHoldRef.current = holdVolume(shown);
       setVolumeState(shown);
-      sendVolume({ volume, group });
+      sendVolume({ volume: level, group });
     },
     [sendVolume]
   );

@@ -3,16 +3,15 @@
 
 import styled from 'styled-components';
 
-export const Group = styled.div`
-  margin-bottom: 20px;
-`;
+// Groups stack as the design's sections do: the next bar right under the last row.
+export const Group = styled.div``;
 
 // Stockholm's section bar: grey, edge to edge.
 export const Head = styled.div`
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 43px;
+  min-height: 51px;
   margin-inline: calc(-1 * var(--page-gutter, 0px));
   padding: 4px var(--page-gutter, 12px);
   background: var(--section-bar);

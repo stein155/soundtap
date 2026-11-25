@@ -1,21 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import {
-  Button,
-  ListBox,
-  ListBoxItem,
-  Menu,
-  MenuItem,
-  MenuTrigger,
-  Popover,
-} from 'react-aria-components';
+import { useState, type ReactElement } from 'react';
+import { Button, ListBox, ListBoxItem } from 'react-aria-components';
 import { Icon } from '../../atoms/Icon';
 import { Art } from '../../molecules/Art';
+import { useLongPress } from '../../../hooks/useLongPress';
 import { useI18n } from '../../../lib/i18n';
 import { logoURL } from '../../../lib/artwork';
 import type { RecentItem } from '../../../lib/recent';
 import type { SearchMode } from '../SearchSheet';
+import { RecentActions, serviceName } from './RecentActions';
 
 // The rail shows the newest few; the heading opens them all.
 const RAIL_ITEMS = 10;
@@ -28,6 +23,8 @@ interface Props {
   spotifyReady: boolean;
   onPlayRecent: (item: RecentItem) => void;
   onRemoveRecent: (item: RecentItem) => void;
+  // Puts an entry on a preset; left out while there is no room to store it on.
+  onHoldRecent?: ((item: RecentItem) => void) | undefined;
   onAllRecent: () => void;
   onSearch: (mode: SearchMode) => void;
 }
@@ -78,6 +75,46 @@ function Services({
   );
 }
 
+// One tile of the rail: a tap plays it again, a long press (or the ⋯ the keyboard finds)
+// opens what else can be done.
+function RecentCard({
+  item,
+  speaker,
+  onPlay,
+  onMore,
+}: {
+  item: RecentItem;
+  speaker: string;
+  onPlay: () => void;
+  onMore: () => void;
+}) {
+  const { t } = useI18n();
+  const press = useLongPress(onMore, onPlay);
+  return (
+    <li className="card">
+      <button type="button" className="card-play" {...press}>
+        <Art
+          src={logoURL({ logo: item.art, tuneInId: item.tuneInId }, speaker)}
+          name={item.name}
+          className="card-art"
+        />
+        <span className="card-label">
+          <span>{item.name}</span>
+          <small>{serviceName(item)}</small>
+        </span>
+      </button>
+      <Button
+        className="card-more"
+        aria-label={t('moreFor', { name: item.name })}
+        aria-haspopup="dialog"
+        onPress={onMore}
+      >
+        <Icon.dots />
+      </Button>
+    </li>
+  );
+}
+
 // The start page, stock's Just for You: what was played recently (tap to play it again; the
 // heading opens the whole list) and the two music services. The presets are behind the top
 // bar's button.
@@ -88,10 +125,12 @@ export function HomeContent({
   spotifyReady,
   onPlayRecent,
   onRemoveRecent,
+  onHoldRecent,
   onAllRecent,
   onSearch,
-}: Props) {
+}: Props): ReactElement {
   const { t } = useI18n();
+  const [actionsFor, setActionsFor] = useState<RecentItem | null>(null);
   return (
     <div className="home">
       {recent.length > 0 && (
@@ -104,40 +143,27 @@ export function HomeContent({
           {/* A list of its own, not a ListBox: each card holds two buttons, play and ⋯. */}
           <ul className="rail" aria-labelledby="home-recent">
             {recent.slice(0, RAIL_ITEMS).map((item) => (
-              <li key={item.key} className="card">
-                <Button className="card-play" onPress={() => onPlayRecent(item)}>
-                  <Art
-                    src={logoURL({ logo: item.art, tuneInId: item.tuneInId }, speaker)}
-                    name={item.name}
-                    className="card-art"
-                  />
-                  <span className="card-label">
-                    <span>{item.name}</span>
-                  </span>
-                </Button>
-                <MenuTrigger>
-                  <Button className="card-more" aria-label={t('moreFor', { name: item.name })}>
-                    <Icon.dots />
-                  </Button>
-                  <Popover className="sl-pop" placement="bottom end">
-                    <Menu
-                      className="sl-menu"
-                      aria-label={t('moreFor', { name: item.name })}
-                      onAction={() => onRemoveRecent(item)}
-                    >
-                      <MenuItem id="remove" className="sl-item danger">
-                        {t('remove')}
-                      </MenuItem>
-                    </Menu>
-                  </Popover>
-                </MenuTrigger>
-              </li>
+              <RecentCard
+                key={item.key}
+                item={item}
+                speaker={speaker}
+                onPlay={() => onPlayRecent(item)}
+                onMore={() => setActionsFor(item)}
+              />
             ))}
           </ul>
         </section>
       )}
 
       <Services spotifyReady={spotifyReady} speakerName={speakerName} onSearch={onSearch} />
+      <RecentActions
+        item={actionsFor}
+        speaker={speaker}
+        onClose={() => setActionsFor(null)}
+        onPlay={onPlayRecent}
+        onHold={onHoldRecent}
+        onRemove={onRemoveRecent}
+      />
     </div>
   );
 }

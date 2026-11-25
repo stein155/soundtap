@@ -469,7 +469,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The saved favorites, in the order they were saved */
+        /** The saved favorites: the first is the one the list offers */
         get: {
             parameters: {
                 query?: never;
@@ -492,7 +492,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** Save a favorite; a full list answers 409 */
+        /** Save the favorite; the list becomes this one alone */
         post: {
             parameters: {
                 query?: never;
@@ -523,7 +523,7 @@ export interface paths {
                 default: components["responses"]["Error"];
             };
         };
-        /** Remove one favorite */
+        /** Remove one favorite; removing the first, the one the list offers, empties the list */
         delete: {
             parameters: {
                 query?: never;
@@ -3036,6 +3036,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/bluetooth/forget": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Forget one paired device
+         * @description Forgets the paired device with this address, as GET /api/bluetooth lists it. The body and the pairing are checked first: a malformed body is 400 and an address no paired device has is 404 at once. Only then does it wait for a key held on the speaker. 404 too when the pairing went while it waited.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    /** @description Optional id naming one user action. A repeated write with the same id within a minute gets the first answer back instead of acting twice. */
+                    "X-SoundTap-Request"?: components["parameters"]["Request"];
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** @description The device's Bluetooth address, AA:BB:CC:DD:EE:FF. */
+                        address: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            status?: string;
+                        };
+                    };
+                };
+                default: components["responses"]["Error"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/wifi/scan": {
         parameters: {
             query?: never;
@@ -3887,7 +3939,7 @@ export interface paths {
         put?: never;
         /**
          * Install the newest SoundTap Core release
-         * @description Waits for a button held on the speaker. The speaker downloads the newest stable Core release that is newer than the running one and streams it into the same install as POST /api/firmware?install=1, signature and version checks included. confirm must be true. The answer is the install's report; reboot to start the new slot. 200 with status current when no newer release exists.
+         * @description No press: the speaker fetches the release itself and installs it only when its .sig verifies (ADR 0048). The speaker downloads the newest stable Core release that is newer than the running one and streams it into the same install as POST /api/firmware?install=1, signature and version checks included. confirm must be true. The answer is the install's report; once the new slot is written, selected and the report saved, the speaker restarts into it on its own (restarting true), never after a failure. 200 with status current when no newer release exists.
          */
         post: {
             parameters: {
@@ -3967,7 +4019,7 @@ export interface paths {
         put?: never;
         /**
          * Check or install a .stu package
-         * @description Raw package as the body (not multipart), streamed and never stored.
+         * @description Raw package as the body (not multipart), streamed and never stored. With ?install=1 every package waits for the press on the speaker, signed or not; a signature that does not verify is refused, and an older signed one needs X-SoundTap-Confirm: downgrade (ADR 0048).
          */
         post: {
             parameters: {
@@ -3976,7 +4028,7 @@ export interface paths {
                     install?: string;
                 };
                 header?: {
-                    /** @description With ?install=1: install for the same or a newer SoundTap, downgrade for an older one, stock for Bose firmware (ADR 0048). */
+                    /** @description With ?install=1: install for the same or a newer SoundTap or an unsigned build, downgrade for an older one, stock for Bose firmware (ADR 0048). */
                     "X-SoundTap-Confirm"?: string;
                     /** @description Optional id naming one user action. A repeated write with the same id within a minute gets the first answer back instead of acting twice. */
                     "X-SoundTap-Request"?: components["parameters"]["Request"];
@@ -4033,7 +4085,7 @@ export interface paths {
         put?: never;
         /**
          * Replace the soundtapd binary
-         * @description Needs a signed upload.
+         * @description Every binary waits for the press on the speaker, signed or not; a signature that does not verify is refused (ADR 0048).
          */
         post: {
             parameters: {
@@ -4097,120 +4149,6 @@ export interface paths {
                     };
                 };
                 /** @description This build cannot replace soundtapd. */
-                501: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                default: components["responses"]["Error"];
-            };
-        };
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/owner-key": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Owner key
-         * @description Whether an owner key is set: an ed25519 public key whose signed packages this speaker installs next to the release keys' (ADR 0048).
-         */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["OwnerKey"];
-                    };
-                };
-                default: components["responses"]["Error"];
-            };
-        };
-        /**
-         * Set the owner key
-         * @description Waits for a key held on the speaker. key is the base64 of the 32 raw bytes of an ed25519 public key. It is kept in both copies of the U-Boot environment, so the USB-stick recovery trusts it too.
-         */
-        put: {
-            parameters: {
-                query?: never;
-                header?: {
-                    /** @description Optional id naming one user action. A repeated write with the same id within a minute gets the first answer back instead of acting twice. */
-                    "X-SoundTap-Request"?: components["parameters"]["Request"];
-                };
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": {
-                        key: string;
-                    };
-                };
-            };
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["OwnerKey"];
-                    };
-                };
-                /** @description This speaker has no U-Boot environment to keep a key in. */
-                501: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                default: components["responses"]["Error"];
-            };
-        };
-        post?: never;
-        /**
-         * Remove the owner key
-         * @description Waits for a key held on the speaker. Afterwards only the release keys are trusted. A factory reset removes it as well.
-         */
-        delete: {
-            parameters: {
-                query?: never;
-                header?: {
-                    /** @description Optional id naming one user action. A repeated write with the same id within a minute gets the first answer back instead of acting twice. */
-                    "X-SoundTap-Request"?: components["parameters"]["Request"];
-                };
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["OwnerKey"];
-                    };
-                };
-                /** @description This speaker has no U-Boot environment to keep a key in. */
                 501: {
                     headers: {
                         [name: string]: unknown;
@@ -4929,6 +4867,8 @@ export interface components {
             api: number;
             /** @description What this speaker has: bluetooth (an adapter is present), ir, keypad, aux, display, battery. An open list: ignore values you do not know. */
             capabilities: string[];
+            /** @description How far an update under way is, in percent: an app release downloading to the speaker (POST /api/update), or a Core package written to the spare slot (POST /api/core-update, or an upload to POST /api/firmware?install=1) as it streams in. Absent when no update runs or its size is unknown. It stops at 99: the last steps follow the last byte. */
+            updateProgress?: number;
         };
         /** @description The running boot, for bench scripts without a shell (tools/hil/, ADR 0119). */
         Boot: {
@@ -5086,6 +5026,8 @@ export interface components {
             models: string[];
             installable: boolean;
             installed?: boolean;
+            /** @description The speaker restarts into the installed slot on its own: a Core release it fetched itself (POST /api/core-update). */
+            restarting?: boolean;
             /** @description Slot written. */
             slot?: string;
             /** @description Slot still booting. */
@@ -5131,8 +5073,6 @@ export interface components {
             clockOff: boolean;
             hour12: boolean;
             timezone: string;
-            /** @description Clock peak in percent; absent is the default. */
-            brightness?: number;
         };
         Alarm: {
             enabled: boolean;
@@ -5265,16 +5205,6 @@ export interface components {
                 /** @description Looks of the boot confirmation that found the boot not good yet (ADR 0010). */
                 bootConfirmRetries: number;
             };
-        };
-        OwnerKey: {
-            /** @description The speaker has an environment the key can be kept in. */
-            available: boolean;
-            /** @description An owner key is set and trusted. */
-            active: boolean;
-            /** @description The public key, base64 of its 32 raw bytes. */
-            key?: string;
-            /** @description The first 8 bytes of the key's SHA-256, in hex. */
-            fingerprint?: string;
         };
         /** @description A crash written up as a GitHub issue the owner opens and submits: the exact title and body the link carries, already redacted as the support bundle is. Nothing is sent by the speaker. */
         CrashReport: {

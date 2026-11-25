@@ -67,11 +67,11 @@ export const Title = styled.h1`
   letter-spacing: var(--tracking-title);
 `;
 
-export const Emoji = styled.span<{ $waving?: boolean }>`
+export const Emoji = styled.span<{ $waving?: boolean | undefined }>`
   display: inline-block;
   margin-right: 8px;
   transform-origin: 70% 80%;
-  animation: ${({ $waving }) => ($waving ? wave : 'none')} 1.8s ease-in-out 0.4s 2;
+  animation: ${({ $waving }) => ($waving === true ? wave : 'none')} 1.8s ease-in-out 0.4s 2;
   ${reducedMotion}
 `;
 

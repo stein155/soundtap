@@ -4,8 +4,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { usePlayback } from './usePlayback';
-import type { SelectedRoom } from './useSelectedRoom';
 import * as api from '../lib/api';
+import { nowPlaying, room as roomFixture, selectedRoom } from './testFixtures';
 
 vi.mock('../lib/api', () => ({ selectUserSource: vi.fn(), stopPlayback: vi.fn() }));
 vi.mock('../lib/i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
@@ -15,9 +15,9 @@ vi.mock('../lib/i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 describe('usePlayback source picks', () => {
   it('queues the Wi-Fi stop behind a pending input pick', async () => {
     const order: string[] = [];
-    let finishAux = () => {};
+    let finishAux: () => void = vi.fn();
     vi.mocked(api.selectUserSource).mockImplementation(
-      () =>
+      async () =>
         new Promise((resolve) => {
           finishAux = () => {
             order.push('aux');
@@ -28,18 +28,10 @@ describe('usePlayback source picks', () => {
     vi.mocked(api.stopPlayback).mockImplementation(async () => {
       order.push('stop');
     });
-    const room = {
+    const room = selectedRoom({
       speaker: 'kitchen',
-      lead: { id: 'kitchen', name: 'Kitchen', now: { source: 'TUNEIN' } },
-      live: {
-        presets: [],
-        player: { status: 'idle' },
-        nudge: vi.fn(),
-        stopOptimistic: vi.fn(),
-        refreshNowPlaying: vi.fn(),
-        releaseStopHold: vi.fn(),
-      },
-    } as unknown as SelectedRoom;
+      lead: roomFixture({ id: 'kitchen', name: 'Kitchen', now: nowPlaying({ source: 'TUNEIN' }) }),
+    });
     const { result } = renderHook(() => usePlayback(room, () => vi.fn()));
     let aux!: Promise<void>, wifi!: Promise<void>;
     act(() => {

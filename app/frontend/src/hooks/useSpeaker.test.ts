@@ -15,17 +15,17 @@ vi.mock('../lib/api', () => ({
   setVolume: vi.fn(),
   normalizeNowPlaying: (x: unknown) => x,
 }));
-vi.mock('../lib/events', () => ({ subscribeState: () => () => {} }));
+vi.mock('../lib/events', () => ({ subscribeState: () => vi.fn() }));
 
 describe('useSpeaker changeVolume', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('serialises writes and skips intermediate values while one is in flight', async () => {
     // First write hangs so 20 and 30 pile up behind it; only the latest survives.
-    let release: () => void = () => {};
+    let release: () => void = vi.fn();
     vi.mocked(api.setVolume)
       .mockImplementationOnce(
-        () =>
+        async () =>
           new Promise<void>((r) => {
             release = r;
           })
@@ -240,9 +240,9 @@ describe('useSpeaker speaker switch', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('ignores a late volume failure from the room left behind', async () => {
-    let fail = (_: Error) => {};
+    let fail: (_: Error) => void = vi.fn();
     vi.mocked(api.setVolume).mockImplementationOnce(
-      () =>
+      async () =>
         new Promise((_, reject) => {
           fail = reject;
         })

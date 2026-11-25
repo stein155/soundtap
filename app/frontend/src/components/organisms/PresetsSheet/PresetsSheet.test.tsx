@@ -19,7 +19,7 @@ const renderSheet = (onPlay = vi.fn()) =>
   render(
     <PresetsSheet
       open
-      onClose={() => {}}
+      onClose={vi.fn()}
       presets={[preset(1, 'Radio 1'), preset(2, 'Radio 2'), null]}
       player={{ status: 'idle', station: null }}
       loading={false}
@@ -27,9 +27,9 @@ const renderSheet = (onPlay = vi.fn()) =>
       canStore
       onPlay={onPlay}
       saving={null}
-      onSave={() => {}}
-      onStore={() => {}}
-      favorites={{ items: [], onAdd: () => {}, onPlay: () => {}, onRemove: () => {} }}
+      onSave={vi.fn()}
+      onStore={vi.fn()}
+      favorites={{ items: [], onAdd: vi.fn(), onPlay: vi.fn(), onRemove: vi.fn() }}
     />
   );
 

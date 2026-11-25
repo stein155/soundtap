@@ -53,13 +53,11 @@ function requestID(): string {
 // install firmware, wipe it, take it off the network or read its memory. Matches
 // soundtapd's needsPress.
 const PRESS_ROUTES = [
-  /^POST \/api\/(factory-reset|restore|reboot|wifi|setup|soundtapd|core-update|bco\/firmware|bluetooth\/clear)$/,
-  // The Update button needs no press; picking a release does (startUpdate adds ?tag=).
-  /^POST \/api\/update\?tag=/,
+  // Updates the speaker fetches are signed and need no press, an older release included;
+  // every install upload needs one, signed or not (ADR 0048).
+  /^POST \/api\/(factory-reset|restore|reboot|wifi|setup|soundtapd|bco\/firmware|bluetooth\/(clear|forget))$/,
   /^POST \/api\/firmware\?(.*&)?install=1(&|$)/,
   /^DELETE \/api\/soundtapd$/,
-  // The owner key decides which signed packages install (ADR 0048).
-  /^(PUT|DELETE) \/api\/owner-key$/,
   /^GET \/api\/debug(\/|\?|$)/,
 ];
 
@@ -116,7 +114,7 @@ export async function apiFetch(url: string, init: RequestInit = {}): Promise<Res
   const method = (init.method ?? 'GET').toUpperCase();
   const write = method !== 'GET' && method !== 'HEAD';
   const id = requestID();
-  const once = () => {
+  const once = async (): Promise<Response> => {
     if (!write) return fetch(url, init);
     const headers = new Headers(init.headers);
     headers.set(REQUEST_HEADER, id);
@@ -126,7 +124,7 @@ export async function apiFetch(url: string, init: RequestInit = {}): Promise<Res
     try {
       return await once();
     } catch (err) {
-      if (!write || !(err instanceof TypeError) || init.signal?.aborted) throw err;
+      if (!write || !(err instanceof TypeError) || init.signal?.aborted === true) throw err;
       return once();
     }
   };

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import type { ReactNode } from 'react';
+import type { ReactNode, ReactElement } from 'react';
 import { Hint } from '../../atoms/Hint';
 import { Field, Label } from './styled';
 
@@ -16,7 +16,7 @@ export function LabeledField({
   label: string;
   error?: string | null;
   children: ReactNode;
-}) {
+}): ReactElement {
   return (
     <Field>
       <Label htmlFor={id}>{label}</Label>

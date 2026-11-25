@@ -12,6 +12,6 @@ function showTitle(name: string) {
     ?.setAttribute('content', name || 'SoundTap');
 }
 
-export function useDocumentTitle(name: string) {
+export function useDocumentTitle(name: string): void {
   useEffect(() => showTitle(name), [name]);
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useState } from 'react';
+import { useState, type ReactElement } from 'react';
 import { Image, Letters } from './styled';
 
 interface Props {
@@ -15,7 +15,7 @@ interface Props {
 // A station's logo: the lettermark, with the image laid over it once it has loaded.
 // The lettermark hides then, because many logos are transparent and it would show
 // through. A broken image leaves the lettermark.
-export function StationLogo({ src, initials, scale = 1 }: Props) {
+export function StationLogo({ src, initials, scale = 1 }: Props): ReactElement {
   const [state, setState] = useState<'loading' | 'loaded' | 'error'>('loading');
   const [square, setSquare] = useState(false);
   // A new image starts over.
@@ -30,7 +30,7 @@ export function StationLogo({ src, initials, scale = 1 }: Props) {
       <Letters $covered={showImage && state === 'loaded'} $scale={scale} aria-hidden="true">
         {initials}
       </Letters>
-      {showImage && (
+      {showImage && src && (
         <Image
           $loaded={state === 'loaded'}
           $square={square}

@@ -64,20 +64,26 @@ describe('recentItems', () => {
 describe('recentItems locations', () => {
   it('keeps every entry a card stands for, so removing it leaves none behind', () => {
     const items = recentItems([
-      { source: 'TUNEIN', name: 'Jazz', location: '/v1/playback/station/s1', art: '' },
-      { source: 'TUNEIN', name: 'Jazz', location: 's1', art: '' },
-    ] as never);
+      {
+        source: 'TUNEIN',
+        name: 'Jazz',
+        location: '/v1/playback/station/s1',
+        art: '',
+        stoppedAt: '',
+      },
+      { source: 'TUNEIN', name: 'Jazz', location: 's1', art: '', stoppedAt: '' },
+    ]);
     expect(items).toHaveLength(1);
-    expect(items[0].source).toBe('TUNEIN');
-    expect(items[0].locations).toEqual(['/v1/playback/station/s1', 's1']);
+    expect(items[0]?.source).toBe('TUNEIN');
+    expect(items[0]?.locations).toEqual(['/v1/playback/station/s1', 's1']);
   });
 
   it('starts a stream of the own URL again by that URL', () => {
     const url = 'https://radio.example/live';
     const [item] = recentItems([
-      { source: 'TUNEIN', name: 'Mine', location: url, art: '' } as never,
+      { source: 'TUNEIN', name: 'Mine', location: url, art: '', stoppedAt: '' },
     ]);
-    expect(item.tuneInId).toBe(url);
+    expect(item?.tuneInId).toBe(url);
   });
 });
 

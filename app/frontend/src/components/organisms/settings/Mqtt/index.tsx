@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useState, type ReactNode } from 'react';
+import { useState, type ReactNode, type ReactElement } from 'react';
 import { Icon } from '../../../atoms/Icon';
 import { TextButton } from '../../../atoms/TextButton';
 import { useReportDirty } from '../../../../hooks/useReportDirty';
-import { FormSection } from '../../../atoms/FormSection';
 import { Hint } from '../../../atoms/Hint';
 import { Stack } from '../../../atoms/Stack';
 import { SetSwitch } from '../../../molecules/SetItem';
@@ -34,7 +33,7 @@ type TextField = 'host' | 'port' | 'username' | 'discoveryPrefix';
 // A port is a whole number from 1 to 65535; empty means the default.
 function portOK(raw: string): boolean {
   const port = raw.trim();
-  return port === '' || (/^\d+$/.test(port) && +port >= 1 && +port <= 65535);
+  return port === '' || (/^\d+$/.test(port) && Number(port) >= 1 && Number(port) <= 65535);
 }
 
 type Household = ReturnType<typeof useHouseholdMqtt>;
@@ -49,8 +48,10 @@ function BrokerLinks({ rooms, links }: { rooms: Room[]; links: Household['links'
         return (
           <FieldRow key={room.id} label={room.name} layout="value" wideLabel>
             <Link>
-              <Dot $connected={!!link?.connected} aria-hidden="true" />
-              {link?.connected ? t('mqttConnected') : link?.lastError || t('mqttDisconnected')}
+              <Dot $connected={link?.connected === true} aria-hidden="true" />
+              {link?.connected === true
+                ? t('mqttConnected')
+                : link?.lastError || t('mqttDisconnected')}
             </Link>
           </FieldRow>
         );
@@ -87,9 +88,9 @@ function MoreOptions({
       <SetMenu>
         <SetSwitch on={form.tls} label={t('mqttTls')} onToggle={() => set('tls', !form.tls)} />
       </SetMenu>
-      <FormSection spaced>{t('mqttTopics')}</FormSection>
-      <FieldCard>{textRow('discoveryPrefix', t('mqttDiscoveryPrefix'))}</FieldCard>
-      <Hint>{t('mqttDiscoveryDesc')}</Hint>
+      <SetMenu title={t('mqttTopics')} note={t('mqttDiscoveryDesc')}>
+        {textRow('discoveryPrefix', t('mqttDiscoveryPrefix'))}
+      </SetMenu>
     </Stack>
   );
 }
@@ -123,7 +124,13 @@ function MqttFooter({
 }
 
 // MQTT settings for the whole household; see useHouseholdMqtt.
-export function Mqtt({ rooms, onDirty }: { rooms: Room[]; onDirty?: (dirty: boolean) => void }) {
+export function Mqtt({
+  rooms,
+  onDirty,
+}: {
+  rooms: Room[];
+  onDirty?: (dirty: boolean) => void;
+}): ReactElement {
   const { t } = useI18n();
   const mqtt = useHouseholdMqtt(rooms);
   const { form } = mqtt;
@@ -151,7 +158,7 @@ export function Mqtt({ rooms, onDirty }: { rooms: Room[]; onDirty?: (dirty: bool
   );
 
   return (
-    <Stack>
+    <Stack gap={8}>
       <SetMenu>
         <SetSwitch
           on={form.enabled}
@@ -161,8 +168,7 @@ export function Mqtt({ rooms, onDirty }: { rooms: Room[]; onDirty?: (dirty: bool
         />
       </SetMenu>
       <Broker $off={!form.enabled} disabled={!form.enabled}>
-        <FormSection spaced>{t('mqttBroker')}</FormSection>
-        <FieldCard>
+        <SetMenu title={t('mqttBroker')}>
           {textRow('host', t('mqttHost'), '192.168.1.10')}
           {textRow('username', t('mqttUser'))}
           <FieldRow label={t('mqttPassword')} htmlFor="mq-password">
@@ -174,7 +180,7 @@ export function Mqtt({ rooms, onDirty }: { rooms: Room[]; onDirty?: (dirty: bool
               autoComplete="new-password"
             />
           </FieldRow>
-        </FieldCard>
+        </SetMenu>
         {mqtt.hasPassword && !form.password && <Hint>{t('mqttPasswordSet')}</Hint>}
         {more ? (
           <MoreOptions form={form} set={set} textRow={textRow} />

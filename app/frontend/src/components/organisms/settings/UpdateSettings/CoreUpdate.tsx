@@ -1,96 +1,97 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useEffect, useState } from 'react';
-import { FormSection } from '../../../atoms/FormSection';
+import { useEffect, useState, type ReactElement } from 'react';
+import { Button } from '../../../atoms/Button';
 import { Hint } from '../../../atoms/Hint';
-import { Note } from '../../../atoms/Note';
-import { Spinner } from '../../../atoms/Spinner';
-import { Stack } from '../../../atoms/Stack';
-import { ConfirmAction } from '../../../molecules/ConfirmAction';
-import { ReportCard } from '../FirmwareUpload/ReportCard';
-import { getReleases, reboot, startCoreUpdate } from '../../../../lib/api';
-import { failureText } from '../../../../lib/failure';
+import { useCoreUpdate } from '../../../../hooks/useCoreUpdate';
+import { getReleases } from '../../../../lib/api';
 import { useI18n } from '../../../../lib/i18n';
-import type { FirmwareReport, ReleaseRef } from '../../../../lib/types';
-import { ReleaseNotes } from './styled';
+import { shortVersionLabel } from '../../../../lib/version';
+import type { ReleaseRef, VersionInfo } from '../../../../lib/types';
+import { Updating } from './Updating';
+import { VersionCard } from './VersionCard';
+import { useUpdateConfirm } from './UpdateConfirm';
 
-type Outcome = { text: string; error: boolean } | null;
-
-// A newer SoundTap Core than the speaker runs: the speaker downloads it itself,
-// after a press on it, into its spare slot; then it offers the reboot as an upload does.
-// The parent keys it by speaker, so a switch starts it afresh.
-export function CoreUpdate({ speaker }: { speaker: string }) {
-  const { t } = useI18n();
-  const [latest, setLatest] = useState<ReleaseRef | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [report, setReport] = useState<FirmwareReport | null>(null);
-  const [outcome, setOutcome] = useState<Outcome>(null);
-
+// The newest SoundTap Core when it is newer than the speaker's, else null; enabled only
+// where the speaker updates its own firmware. A switch to another speaker drops what the
+// previous one was still answering.
+export function useCoreLatest(speaker: string, enabled = true): ReleaseRef | null {
+  const [latest, setLatest] = useState<{ speaker: string; ref: ReleaseRef } | null>(null);
   useEffect(() => {
+    if (!enabled) return undefined;
     let current = true;
     void getReleases(speaker).then((r) => {
-      if (current) setLatest(r?.core?.latest ?? null);
+      const ref = r?.core?.latest;
+      if (current) setLatest(ref ? { speaker, ref } : null);
     });
     return () => {
       current = false;
     };
-  }, [speaker]);
+  }, [speaker, enabled]);
+  return enabled && latest?.speaker === speaker ? latest.ref : null;
+}
 
-  if (!latest) return null;
-  const version = latest.tag.replace(/^os-v/, '');
-
-  const install = async () => {
-    setBusy(true);
-    setOutcome(null);
-    try {
-      const res = await startCoreUpdate(speaker);
-      if ('status' in res) setOutcome({ text: t('upLatest'), error: false });
-      else setReport(res);
-    } catch (err) {
-      setOutcome({ text: failureText(err, t('coreInstallFailed'), t), error: true });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const restart = async () => {
-    try {
-      await reboot(speaker);
-      setOutcome({ text: t('firmwareRebooting'), error: false });
-    } catch (err) {
-      setOutcome({ text: failureText(err, t('firmwareRebootFailed'), t), error: true });
-    }
-  };
+// A newer SoundTap Core than the speaker runs, in the card drawn for a new version. Update
+// asks once, as stock does, and then the speaker downloads it itself into its spare slot, without a press (a
+// signed release it fetches, ADR 0048), restarts into it on its own, and the page over the
+// app follows it away and back. The parent keys it by speaker, so a switch starts it afresh.
+export function CoreUpdate({
+  speaker,
+  name,
+  model,
+  latest,
+  version,
+}: {
+  speaker: string;
+  // The speaker's name and model, over the page that follows the update.
+  name: string;
+  model: string;
+  latest: ReleaseRef;
+  version: VersionInfo | null;
+}): ReactElement {
+  const { t } = useI18n();
+  const number = latest.tag.replace(/^os-v/, '');
+  const update = useCoreUpdate(speaker, number);
+  const confirm = useUpdateConfirm(() => void update.install());
+  const now = shortVersionLabel(version);
+  const following = update.phase === 'busy' || update.phase === 'updated';
 
   return (
-    <Stack gap={8} offset={8}>
-      <FormSection spaced>{t('coreAvailable', { version })}</FormSection>
-      {latest.notes && (
-        <Note>
-          <ReleaseNotes>{latest.notes}</ReleaseNotes>
-        </Note>
-      )}
-      {!report && (
-        <ConfirmAction
-          label={t('coreInstall', { version })}
-          warning={t('firmwareInstallWarn')}
-          confirmLabel={t('firmwareInstallConfirm')}
-          disabled={busy}
-          onConfirm={install}
+    <>
+      <VersionCard
+        offer
+        kicker={t('updatesNewVersion')}
+        title={`SoundTap Core ${number}`}
+        meta={[now && t('updatesNow', { version: now }), t('updatesSigned')]
+          .filter(Boolean)
+          .join(' · ')}
+        notes={latest.notes}
+      >
+        {update.text && (
+          <Hint
+            error={update.phase === 'error'}
+            role={update.phase === 'error' ? 'alert' : 'status'}
+          >
+            {update.text}
+          </Hint>
+        )}
+        {update.phase !== 'done' && (
+          <Button variant="stockholm" wide disabled={following} onClick={confirm.ask}>
+            {t('updateInstall')}
+          </Button>
+        )}
+      </VersionCard>
+      {confirm.sheet}
+      {following && update.stage && (
+        <Updating
+          name={name}
+          model={model}
+          stage={update.stage}
+          done={update.phase === 'updated'}
+          progress={update.progress}
         />
       )}
-      {busy && (
-        <Hint role="status">
-          <Spinner /> {t('coreInstalling')}
-        </Hint>
-      )}
-      {report && <ReportCard report={report} busy={busy} onInstall={() => {}} onReboot={restart} />}
-      {outcome && (
-        <Hint error={outcome.error} role={outcome.error ? 'alert' : 'status'}>
-          {outcome.text}
-        </Hint>
-      )}
-    </Stack>
+    </>
   );
 }

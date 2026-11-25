@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactElement } from 'react';
 import { useReportDirty } from '../../../../hooks/useReportDirty';
 import { failureText } from '../../../../lib/failure';
 import { Icon } from '../../../atoms/Icon';
@@ -101,7 +101,7 @@ function useSpeakerActions(page: Page, onRenamed: () => void) {
 // itself (its name opens a page to change it), Sound, Speaker, Connection and Maintenance,
 // with the factory reset apart at the bottom. A switch, slider or choice goes to the
 // speaker at once; the name and the alarm, which are typed, have their own Save.
-export function SpeakerSettings({ room, rooms, onRenamed, onDirty }: Props) {
+export function SpeakerSettings({ room, rooms, onRenamed, onDirty }: Props): ReactElement {
   const speaker = speakerArg(room);
   const page = useSpeakerSettings(speaker, room.name);
   const section = useAccordionGroup<Section>();
@@ -151,7 +151,6 @@ export function SpeakerSettings({ room, rooms, onRenamed, onDirty }: Props) {
       <SystemGroups
         page={page}
         room={room}
-        rooms={rooms}
         model={model}
         network={settings.network ?? null}
         section={section}

@@ -1,48 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useState } from 'react';
+import { useState, type ReactElement } from 'react';
 import { useI18n } from '../../../../lib/i18n';
-import type { WifiNetwork } from '../../../../lib/types';
 import { Icon } from '../../../atoms/Icon';
 import { TextField } from '../../../atoms/TextField';
 import { CheckRow } from '../../../molecules/CheckRow';
 import { LabeledField } from '../../../molecules/LabeledField';
 import { SelectField } from '../../../molecules/SelectField';
-import { SignalGlyph } from './SignalGlyph';
+import { Reveal } from './styled';
 import { badSsid, SSID_MAX_LENGTH, type Security } from './useWifiJoin';
-
-export function NetworkSelect({
-  networks,
-  chosen,
-  onPick,
-  disabled,
-}: {
-  networks: WifiNetwork[];
-  chosen: WifiNetwork;
-  onPick: (ssid: string) => void;
-  disabled: boolean;
-}) {
-  const { t } = useI18n();
-  return (
-    <LabeledField id="wifi-network" label={t('wifiSelectNetwork')}>
-      <SelectField
-        id="wifi-network"
-        label={t('wifiSelectNetwork')}
-        value={chosen.ssid}
-        options={networks.map((n) => ({ value: n.ssid, label: n.ssid }))}
-        onChange={onPick}
-        disabled={disabled}
-        trail={
-          <>
-            {chosen.secure && <Icon.lock width="15" height="15" />}
-            {chosen.signal && <SignalGlyph signal={chosen.signal} />}
-          </>
-        }
-      />
-    </LabeledField>
-  );
-}
 
 export function ManualFields({
   ssid,
@@ -54,7 +21,7 @@ export function ManualFields({
   onSsid: (ssid: string) => void;
   security: Security;
   onSecurity: (security: Security) => void;
-}) {
+}): ReactElement {
   const { t } = useI18n();
   return (
     <>
@@ -89,37 +56,62 @@ export function ManualFields({
 }
 
 // Stockholm ticks "Show password": a Wi-Fi password is long and typed on a phone.
+// label: the field's name where the page already says what it is for (the join sheet).
+// eye: an eye inside the field shows and hides it instead, hidden to start (the first-run
+// page, as drawn).
 export function PasswordField({
   value,
   onChange,
   tooShort,
+  label,
+  eye = false,
 }: {
   value: string;
   onChange: (password: string) => void;
   tooShort: boolean;
-}) {
+  label?: string;
+  eye?: boolean | undefined;
+}): ReactElement {
   const { t } = useI18n();
-  const [shown, setShown] = useState(true);
+  const [shown, setShown] = useState(!eye);
+  const field = (
+    <TextField
+      id="wifi-pw"
+      type={shown ? 'text' : 'password'}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      autoComplete="off"
+      autoCapitalize="none"
+      autoCorrect="off"
+      spellCheck={false}
+    />
+  );
   return (
     <>
       <LabeledField
         id="wifi-pw"
-        label={t('wifiPassword')}
+        label={label ?? t('wifiPassword')}
         error={tooShort ? t('wifiPasswordLength') : null}
       >
-        <TextField
-          id="wifi-pw"
-          type={shown ? 'text' : 'password'}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={`*${t('requiredField')}`}
-          autoComplete="off"
-          autoCapitalize="none"
-          autoCorrect="off"
-          spellCheck={false}
-        />
+        {eye ? (
+          <Reveal>
+            {field}
+            <button
+              type="button"
+              aria-label={t('showPw')}
+              aria-pressed={shown}
+              // Keeps the field focused, so a phone's keyboard stays up.
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setShown(!shown)}
+            >
+              {shown ? <Icon.eyeOff width="20" height="20" /> : <Icon.eye width="20" height="20" />}
+            </button>
+          </Reveal>
+        ) : (
+          field
+        )}
       </LabeledField>
-      <CheckRow plain on={shown} title={t('showPw')} onToggle={() => setShown(!shown)} />
+      {!eye && <CheckRow plain on={shown} title={t('showPw')} onToggle={() => setShown(!shown)} />}
     </>
   );
 }

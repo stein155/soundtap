@@ -7,6 +7,13 @@ import { speakerArg, type Room } from './useRooms';
 import type { ReportFailure } from './useErrorReporter';
 import type { SelectedRoom } from './useSelectedRoom';
 
+export interface Grouping {
+  link: (room: Room) => Promise<void>;
+  unlink: (room: Room) => Promise<void>;
+  linkMany: (targets: Room[]) => Promise<void>;
+  unlinkMany: (targets: Room[]) => Promise<void>;
+}
+
 // Multiroom groups around the selected room. A speaker joins when the leader invites
 // it (the leader knows its own address); it leaves by being told to stop following.
 // The new grouping is shown at once; if a speaker refuses, that is said and the real
@@ -14,7 +21,7 @@ import type { SelectedRoom } from './useSelectedRoom';
 export function useGrouping(
   { rooms, lead, speaker, roomsState }: SelectedRoom,
   failed: ReportFailure
-) {
+): Grouping {
   const without = (ids: string[]) =>
     Object.fromEntries(Object.entries(roomsState.leaders).filter(([id]) => !ids.includes(id)));
   const undo = (room: Room) => (err?: unknown) => {
@@ -44,17 +51,17 @@ export function useGrouping(
       ...without(followers.map((f) => f.id)),
       ...Object.fromEntries(targets.map((r) => [r.id, lead.id])),
     });
-    await Promise.all(followers.map((f) => followSpeaker('', speakerArg(f)).catch(undo(f))));
-    await Promise.all(targets.map((r) => leaving.current.get(r.id) ?? Promise.resolve()));
+    await Promise.all(followers.map(async (f) => followSpeaker('', speakerArg(f)).catch(undo(f))));
+    await Promise.all(targets.map(async (r) => leaving.current.get(r.id)));
     const still = targets.filter((r) => asked.current.get(r.id) === request);
-    await Promise.all(still.map((r) => inviteSpeaker(r.ip, speaker).catch(undo(r))));
+    await Promise.all(still.map(async (r) => inviteSpeaker(r.ip, speaker).catch(undo(r))));
   };
 
   const unlinkMany = async (targets: Room[]) => {
     ask(targets);
     roomsState.regroup(without(targets.map((r) => r.id)));
     await Promise.all(
-      targets.map((r) => {
+      targets.map(async (r) => {
         const left = followSpeaker('', speakerArg(r)).catch(undo(r));
         leaving.current.set(r.id, left);
         return left;
@@ -62,8 +69,8 @@ export function useGrouping(
     );
   };
 
-  const link = (room: Room) => linkMany([room]);
-  const unlink = (room: Room) => unlinkMany([room]);
+  const link = async (room: Room) => linkMany([room]);
+  const unlink = async (room: Room) => unlinkMany([room]);
 
   return { link, unlink, linkMany, unlinkMany };
 }

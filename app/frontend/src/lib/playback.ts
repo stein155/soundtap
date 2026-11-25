@@ -16,6 +16,18 @@ export type Artwork =
 // else that plays can only stop, and a silent room starts.
 export type Transport = 'play' | 'pause' | 'resume' | 'stop';
 
+// What plays offers: Spotify pauses and resumes, the rest stops.
+function transportOf(station: { spotify: boolean; paused: boolean }): Transport {
+  if (!station.spotify) return 'stop';
+  return station.paused ? 'resume' : 'pause';
+}
+
+// The line under radio that names no song: live, or paused; nothing for the rest.
+function quietTail(radio: boolean, paused: boolean, t: TranslateFn): string {
+  if (radio) return t('liveShort');
+  return paused ? t('paused') : '';
+}
+
 export interface PlaybackView {
   artwork: Artwork;
   // The name of what plays (or of the input); "Silent"/"Standby" when nothing does.
@@ -53,7 +65,7 @@ function describeInput(
     artwork: { kind: source === 'hdmi' ? 'tv' : source },
     title,
     detail: phone.track
-      ? [now?.artist, now?.album].filter(Boolean).join(' • ')
+      ? [now?.artist, now?.album].filter(Boolean).join(' · ')
       : phone.name || t(SOURCE_DESCRIPTION[source]),
     status: title,
     live: false,
@@ -89,7 +101,7 @@ export function describePlayback(
       isSpotify: station.spotify,
       skips: station.skips,
       source: station.source,
-      transport: station.spotify ? (station.paused ? 'resume' : 'pause') : 'stop',
+      transport: transportOf(station),
     };
   }
   if (source !== 'wifi') return describeInput(now, source, t);
@@ -122,18 +134,15 @@ export function sourceName(view: PlaybackView, t: TranslateFn): string {
   return view.artwork.kind === 'speaker' ? t('standby') : view.title;
 }
 
-// The small line under a title: "Artist • Album • Spotify", "Live • TuneIn",
-// "Play from your device • Bluetooth". Nothing when nothing plays. Radio whose stream names no
+// The small line under a title: "Artist · Album · Spotify", "Live · TuneIn",
+// "Play from your device · Bluetooth". Nothing when nothing plays. Radio whose stream names no
 // song says live, and paused radio says paused: its song is no longer current.
 export function sourceLine(view: PlaybackView, t: TranslateFn): string {
   if (view.artwork.kind === 'speaker') return '';
   const radio = view.artwork.kind === 'station' && !SERVICE_NAME[view.source];
   const paused = view.artwork.kind === 'station' && !view.live;
-  const tail =
-    radio && paused
-      ? t('paused')
-      : view.detail || (radio ? t('liveShort') : paused ? t('paused') : '');
-  return [tail, sourceName(view, t)].filter(Boolean).join(' • ');
+  const tail = radio && paused ? t('paused') : view.detail || quietTail(radio, paused, t);
+  return [tail, sourceName(view, t)].filter(Boolean).join(' · ');
 }
 
 // The same line on the now playing page, whose top bar already names the source.

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import type { ReactNode } from 'react';
+import type { ReactNode, ReactElement } from 'react';
 import { Hint } from '../../atoms/Hint';
 import { Float } from './styled';
 
@@ -14,9 +14,9 @@ export function FloatingHint({
   role = 'status',
 }: {
   children: ReactNode;
-  error?: boolean;
+  error?: boolean | undefined;
   role?: 'status' | 'alert';
-}) {
+}): ReactElement {
   return (
     <Float>
       <Hint error={error} role={role}>

@@ -10,6 +10,7 @@ import {
   SpotifyError,
   LIKED_CONTEXT,
 } from './spotify';
+import { must } from '../test/must';
 
 const status = (over: Partial<Parameters<typeof statusView>[0] & object>) => ({
   available: true,
@@ -43,7 +44,7 @@ describe('api', () => {
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(new Response('{"status":"ok"}', { status: 200 }));
     await spotifyPlay('spotify:track:x', LIKED_CONTEXT);
-    const [url, init] = fetchMock.mock.calls[0];
+    const [url, init] = must(fetchMock.mock.calls[0], 'a fetch');
     expect(String(url)).toContain('/api/spotify/play');
     expect(JSON.parse(String(init?.body))).toEqual({
       uri: 'spotify:track:x',
@@ -64,6 +65,6 @@ describe('api', () => {
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(new Response('{"status":"ok"}', { status: 200 }));
     await spotifyStatus();
-    expect(fetchMock.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
   });
 });

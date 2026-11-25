@@ -5,17 +5,15 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { useRoomVolume } from './useRoomVolume';
 import type { SelectedRoom } from './useSelectedRoom';
+import { room, selectedRoom } from './testFixtures';
+import { must } from '../test/must';
 
-vi.mock('../lib/api', () => ({ setVolume: vi.fn(() => Promise.resolve()) }));
+vi.mock('../lib/api', () => ({ setVolume: vi.fn(async () => Promise.resolve()) }));
 
-const selection = (volume: number) =>
-  ({
-    lead: { id: 'a' },
-    members: [],
-    live: { changeVolume: vi.fn() },
-    roomsState: { patch: vi.fn() },
-    rooms: [{ id: 'a', volume }],
-  }) as unknown as SelectedRoom;
+const selection = (volume: number): SelectedRoom => {
+  const lead = room({ id: 'a', volume });
+  return selectedRoom({ lead, rooms: [lead] });
+};
 
 describe('useRoomVolume', () => {
   it('counts a volume change from elsewhere, so a late unmute level is dropped', () => {
@@ -29,17 +27,24 @@ describe('useRoomVolume', () => {
     expect(result.current.volumeStamp('a')).not.toBe(stamp);
   });
 
-  const group = (ids: string[], volume: number, changeVolume = vi.fn(), patch = vi.fn()) =>
-    ({
-      lead: { id: ids[0], name: ids[0], volume },
-      members: ids.slice(1).map((id) => ({ id, name: id, volume })),
+  const group = (
+    ids: string[],
+    volume: number,
+    changeVolume = vi.fn(),
+    patch = vi.fn()
+  ): SelectedRoom => {
+    const rooms = ids.map((id) => room({ id, name: id, volume }));
+    return selectedRoom({
+      lead: must(rooms[0], 'a leader'),
+      members: rooms.slice(1),
       live: { changeVolume },
       roomsState: { patch },
-      rooms: ids.map((id) => ({ id, name: id, volume })),
-    }) as unknown as SelectedRoom;
+      rooms,
+    });
+  };
 
   for (const sync of [true, false]) {
-    it(`starts a new drag for another group within the drag time (syncVolume ${sync})`, () => {
+    it(`starts a new drag for another group within the drag time (syncVolume ${String(sync)})`, () => {
       const changeVolume = vi.fn();
       const patch = vi.fn();
       const { result, rerender } = renderHook(({ s }) => useRoomVolume(s, sync), {

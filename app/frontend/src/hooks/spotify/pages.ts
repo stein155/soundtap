@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import {
   LIKED_CONTEXT,
   artistNames,
@@ -24,12 +24,12 @@ export type LibraryPage =
 
 export interface LoadedPage {
   title: string;
-  sub?: string;
-  artwork?: string;
+  sub?: string | undefined;
+  artwork?: string | undefined;
   context: string;
   tracks: SpotifyTrack[];
   albums?: SpotifyAlbum[];
-  next?: number;
+  next?: number | undefined;
 }
 
 async function loadPage(page: LibraryPage, offset = 0): Promise<LoadedPage> {
@@ -96,9 +96,18 @@ function usePageCache(opened: boolean) {
   return { loadedRef, generationRef, openingRef };
 }
 
+export interface LibraryPages {
+  trail: LibraryPage[];
+  page: LoadedPage | null;
+  loadingMore: boolean;
+  show: (next: LibraryPage[]) => void;
+  loadMore: () => Promise<void>;
+  openingRef: RefObject<number>;
+}
+
 // The drill-down: the trail of pages opened, the one shown, and more of its tracks.
 // Closing the tab forgets where in the library it was.
-export function useLibraryPages(opened: boolean, { setError, showError }: Errors) {
+export function useLibraryPages(opened: boolean, { setError, showError }: Errors): LibraryPages {
   const [trail, setTrail] = useState<LibraryPage[]>([]);
   const [page, setPage] = useState<LoadedPage | null>(null);
   // One "more" at a time: a double tap used to fetch the same page twice.
@@ -130,15 +139,16 @@ export function useLibraryPages(opened: boolean, { setError, showError }: Errors
         if (open === openingRef.current) loadedRef.current.set(pageKey(target), result);
         if (gen === generationRef.current) setPage(result);
       },
-      (e) => gen === generationRef.current && showError(e, 'spotifyLoadFailed')
+      (e: unknown) => gen === generationRef.current && showError(e, 'spotifyLoadFailed')
     );
   };
 
   const loadMore = async () => {
-    if (!page?.next || !trail.length || loadingMore) return;
+    const target = trail.at(-1);
+    // No next offset (or 0, which starts over) means there is no more.
+    if (page?.next === undefined || page.next === 0 || !target || loadingMore) return;
     // Another page opened meanwhile: this answer belongs to the one left behind.
     const gen = generationRef.current;
-    const target = trail[trail.length - 1];
     setLoadingMore(true);
     try {
       const more = await loadPage(target, page.next);

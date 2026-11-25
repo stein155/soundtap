@@ -56,7 +56,7 @@ export interface BrowseCategory {
 // One level of the browse tree: sub-categories and/or stations.
 export interface BrowseResult {
   // TuneIn's "more stations" page for this level, shown as a load-more row.
-  more?: BrowseCategory;
+  more?: BrowseCategory | undefined;
   categories: BrowseCategory[];
   stations: Station[];
 }
@@ -81,7 +81,7 @@ export interface PlayerStation {
   track: string;
   artist: string;
   // The speaker's source (SPOTIFY, TUNEIN, ...) once now-playing reports one.
-  source?: string;
+  source?: string | undefined;
 }
 
 export interface Player {
@@ -151,9 +151,6 @@ export type UpdateMode = VersionInfo['updateMode'];
 export type VersionInfo = Schemas['Version'];
 
 export type FirmwareReport = Schemas['FirmwareReport'];
-
-// The owner key (ADR 0048): whether one is set, the key and its fingerprint.
-export type OwnerKey = Schemas['OwnerKey'];
 
 export type ReleaseRef = Schemas['ReleaseRef'];
 

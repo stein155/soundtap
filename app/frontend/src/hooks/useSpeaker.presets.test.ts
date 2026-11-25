@@ -5,9 +5,10 @@ import { describe, it, expect, vi } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { useSpeaker } from './useSpeaker';
 import * as api from '../lib/api';
+import { preset } from './testFixtures';
 
 type OnState = (s: { now?: unknown; volume?: number; presets?: string }) => void;
-let push: OnState = () => {};
+let push: OnState = vi.fn();
 
 vi.mock('../lib/api', () => ({
   getNowPlaying: vi.fn().mockResolvedValue({ standby: true }),
@@ -19,7 +20,7 @@ vi.mock('../lib/api', () => ({
 vi.mock('../lib/events', () => ({
   subscribeState: ({ onState }: { onState: OnState }) => {
     push = onState;
-    return () => {};
+    return vi.fn();
   },
 }));
 
@@ -37,8 +38,8 @@ describe('useSpeaker presets revision', () => {
 
   // A failed read keeps the slots and is retried by the next push of the same revision.
   it('keeps the shown presets and retries a failed refresh', async () => {
-    const shown = [{ slot: 1, name: 'A' }, null, null, null, null, null];
-    vi.mocked(api.getPresets).mockResolvedValueOnce(shown as never);
+    const shown = [preset({ slot: 1, name: 'A' }), null, null, null, null, null];
+    vi.mocked(api.getPresets).mockResolvedValueOnce(shown);
     const { result } = renderHook(() => useSpeaker());
     await waitFor(() => expect(result.current.presets[0]).toBeTruthy());
     act(() => push({ presets: 'a' }));

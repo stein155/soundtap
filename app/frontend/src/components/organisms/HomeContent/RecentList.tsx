@@ -2,37 +2,36 @@
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
 import { SheetEmpty } from '../../molecules/SheetEmpty';
-import { useState } from 'react';
-import { Button, Menu, MenuItem, MenuTrigger, Popover } from 'react-aria-components';
+import { useState, type ReactElement } from 'react';
+import { Button } from 'react-aria-components';
 import { Icon } from '../../atoms/Icon';
 import { Art } from '../../molecules/Art';
 import { useLongPress } from '../../../hooks/useLongPress';
 import { useI18n } from '../../../lib/i18n';
 import { logoURL } from '../../../lib/artwork';
-import { timeAgo, type RecentItem } from '../../../lib/recent';
-
-const SERVICE: Record<string, string> = { TUNEIN: 'TuneIn', SPOTIFY: 'Spotify' };
+import type { RecentItem } from '../../../lib/recent';
+import { RecentActions, recentLine } from './RecentActions';
 
 interface Props {
   recent: RecentItem[];
   speaker: string;
   onPlayRecent: (item: RecentItem) => void;
   onRemoveRecent: (item: RecentItem) => void;
+  // Puts an entry on a preset; left out while there is no room to store it on.
+  onHoldRecent?: ((item: RecentItem) => void) | undefined;
 }
 
 interface RowProps {
   item: RecentItem;
   speaker: string;
   onPlay: () => void;
-  onRemove: () => void;
+  onMore: () => void;
 }
 
-// One entry: a tap plays it again, a long press opens the menu to remove it, as in stock.
-// The menu's button stays out of sight until the keyboard reaches it.
-function RecentRow({ item, speaker, onPlay, onRemove }: RowProps) {
+// One entry: a tap plays it again, a long press or the ⋯ opens what else can be done.
+function RecentRow({ item, speaker, onPlay, onMore }: RowProps) {
   const { t, lang } = useI18n();
-  const [menuOpen, setMenuOpen] = useState(false);
-  const press = useLongPress(() => setMenuOpen(true), onPlay);
+  const press = useLongPress(onMore, onPlay);
   return (
     <li className="recent-row">
       <button type="button" className="recent-play" {...press}>
@@ -43,46 +42,53 @@ function RecentRow({ item, speaker, onPlay, onRemove }: RowProps) {
         />
         <span className="recent-text">
           <span>{item.name}</span>
-          <small>
-            {[timeAgo(item.stoppedAt, lang), SERVICE[item.source]].filter(Boolean).join(' · ')}
-          </small>
+          <small>{recentLine(item, lang)}</small>
         </span>
       </button>
-      <MenuTrigger isOpen={menuOpen} onOpenChange={setMenuOpen}>
-        <Button className="recent-more" aria-label={t('moreFor', { name: item.name })}>
-          <Icon.dots />
-        </Button>
-        <Popover className="sl-pop" placement="bottom end">
-          <Menu
-            className="sl-menu"
-            aria-label={t('moreFor', { name: item.name })}
-            onAction={onRemove}
-          >
-            <MenuItem id="remove" className="sl-item danger">
-              {t('remove')}
-            </MenuItem>
-          </Menu>
-        </Popover>
-      </MenuTrigger>
+      <Button
+        className="recent-more"
+        aria-label={t('moreFor', { name: item.name })}
+        aria-haspopup="dialog"
+        onPress={onMore}
+      >
+        <Icon.more />
+      </Button>
     </li>
   );
 }
 
 // Everything played recently, newest first.
-export function RecentList({ recent, speaker, onPlayRecent, onRemoveRecent }: Props) {
+export function RecentList({
+  recent,
+  speaker,
+  onPlayRecent,
+  onRemoveRecent,
+  onHoldRecent,
+}: Props): ReactElement {
   const { t } = useI18n();
+  const [actionsFor, setActionsFor] = useState<RecentItem | null>(null);
   if (!recent.length) return <SheetEmpty>{t('recentlyPlayedEmpty')}</SheetEmpty>;
   return (
-    <ul className="recent" aria-label={t('recentlyPlayed')}>
-      {recent.map((item) => (
-        <RecentRow
-          key={item.key}
-          item={item}
-          speaker={speaker}
-          onPlay={() => onPlayRecent(item)}
-          onRemove={() => onRemoveRecent(item)}
-        />
-      ))}
-    </ul>
+    <>
+      <ul className="recent" aria-label={t('recentlyPlayed')}>
+        {recent.map((item) => (
+          <RecentRow
+            key={item.key}
+            item={item}
+            speaker={speaker}
+            onPlay={() => onPlayRecent(item)}
+            onMore={() => setActionsFor(item)}
+          />
+        ))}
+      </ul>
+      <RecentActions
+        item={actionsFor}
+        speaker={speaker}
+        onClose={() => setActionsFor(null)}
+        onPlay={onPlayRecent}
+        onHold={onHoldRecent}
+        onRemove={onRemoveRecent}
+      />
+    </>
   );
 }

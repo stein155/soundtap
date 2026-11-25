@@ -6,6 +6,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { setUPnPRepeat, setUPnPShuffle, upnpModes } from '../../../lib/api/upnp';
 import { FolderModeButtons } from './parts';
+import { must } from '../../../test/must';
 
 vi.mock('../../../lib/api/upnp', () => ({
   upnpModes: vi.fn(),
@@ -18,11 +19,11 @@ describe('FolderModeButtons', () => {
     vi.mocked(upnpModes).mockResolvedValue({ shuffle: false, repeat: 'off' });
     render(<FolderModeButtons speaker="a" />);
     await waitFor(() => expect(upnpModes).toHaveBeenCalledWith('a'));
-    const buttons = screen.getAllByRole('button');
-    expect(buttons).toHaveLength(2); // no + for a folder
-    await userEvent.click(buttons[0]);
+    const [shuffle, repeat] = screen.getAllByRole('button');
+    expect(screen.getAllByRole('button')).toHaveLength(2); // no + for a folder
+    await userEvent.click(must(shuffle, 'shuffle'));
     expect(setUPnPShuffle).toHaveBeenCalledWith(true, 'a');
-    await userEvent.click(buttons[1]);
+    await userEvent.click(must(repeat, 'repeat'));
     expect(setUPnPRepeat).toHaveBeenCalledWith('context', 'a');
   });
 });

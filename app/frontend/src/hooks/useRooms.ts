@@ -25,7 +25,36 @@ export interface Room {
   volume: number;
   sources: string[];
   linkedTo: string | null;
-  connecting?: boolean;
+  connecting?: boolean | undefined;
+}
+
+// A room as keepRooms stored it; anything else in the stored list is no room.
+function isRoom(value: unknown): value is Room {
+  if (typeof value !== 'object' || value === null) return false;
+  const r: Partial<Record<keyof Room, unknown>> = value;
+  return (
+    typeof r.id === 'string' &&
+    typeof r.name === 'string' &&
+    typeof r.model === 'string' &&
+    typeof r.ip === 'string' &&
+    typeof r.online === 'boolean' &&
+    typeof r.self === 'boolean' &&
+    typeof r.volume === 'number' &&
+    Array.isArray(r.sources) &&
+    (r.linkedTo === null || typeof r.linkedTo === 'string') &&
+    (r.now === null || typeof r.now === 'object')
+  );
+}
+
+export interface RoomsState {
+  rooms: Room[];
+  loaded: boolean;
+  leaders: Leaders;
+  refresh: () => Promise<void>;
+  patch: (id: string, p: { now?: NowPlaying | null; volume?: number }) => void;
+  regroup: (next: Leaders) => void;
+  reconnect: (id: string) => Promise<void>;
+  loadState: () => Promise<void>;
 }
 
 // The household as this browser last saw it, so a cold start (the home-screen app, a
@@ -34,7 +63,7 @@ export interface Room {
 export function lastRooms(): Room[] {
   try {
     const rooms: unknown = JSON.parse(readPref(PREF.rooms) ?? '');
-    return Array.isArray(rooms) ? (rooms as Room[]) : [];
+    return Array.isArray(rooms) ? rooms.filter(isRoom) : [];
   } catch {
     return [];
   }
@@ -102,7 +131,7 @@ const roomOf = (d: SpeakerDevice, p: RoomParts): Room => ({
 //
 // `skip` is the room the page already follows live (useSpeaker, over SSE); polling it
 // again would only race that stream.
-export function useRooms(skip: string | null) {
+export function useRooms(skip: string | null): RoomsState {
   const [seed] = useState(lastRooms);
   const [devices, setDevices] = useState<SpeakerDevice[]>(() =>
     seed.map(({ id, name, model, ip, online, self }) => ({ id, name, model, ip, online, self }))

@@ -10,7 +10,7 @@ import type { Room } from './useRooms';
 let rooms: Partial<Room>[] = [];
 vi.mock('./useRooms', async (orig) => ({
   ...(await orig<typeof import('./useRooms')>()),
-  useRooms: () => ({ rooms, loaded: true, patch: () => {} }),
+  useRooms: () => ({ rooms, loaded: true, patch: vi.fn() }),
 }));
 vi.mock('./useSpeaker', () => ({
   useSpeaker: () => ({ nowPlaying: null, player: { status: 'idle' }, volume: 0 }),

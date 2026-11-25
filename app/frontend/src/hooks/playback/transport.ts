@@ -7,15 +7,22 @@ import type { PlaybackContext } from './context';
 
 const STOP_SETTLE_MS = 1000;
 
+export interface Transports {
+  stop: () => Promise<void>;
+  transport: () => Promise<void>;
+  skip: (dir: 'previous' | 'next') => Promise<void>;
+  power: (on: boolean) => Promise<void>;
+}
+
 // Stop, pause, skip and power for the selected group.
-export function transports(c: PlaybackContext) {
+export function transports(c: PlaybackContext): Transports {
   const { live, speaker, lead, roomsState, leadFailed } = c;
 
   const stop = async () => {
     live.stopOptimistic();
     const ok = await stopPlayback(speaker).then(
       () => true,
-      (err) => {
+      (err: unknown) => {
         leadFailed(err);
         return false;
       }
@@ -32,7 +39,7 @@ export function transports(c: PlaybackContext) {
   // The selected group's transport button: pause/resume Spotify, otherwise stop.
   const transport = async () => {
     const station = stationOf(lead?.now ?? null);
-    if (!station?.spotify) return stop();
+    if (station?.spotify !== true) return stop();
     // The glyph follows the room's state, so flip it at once (the stop below does the
     // same) and ignore a repeat tap until the request settles.
     const key = `${speaker}|transport`;
@@ -41,7 +48,7 @@ export function transports(c: PlaybackContext) {
     roomsState.patch(lead.id, {
       now: { ...was, playStatus: station.paused ? 'PLAY_STATE' : 'PAUSE_STATE' },
     });
-    await setPaused(!station.paused, speaker).catch((err) => {
+    await setPaused(!station.paused, speaker).catch((err: unknown) => {
       roomsState.patch(lead.id, { now: was });
       leadFailed(err);
     });
@@ -49,7 +56,7 @@ export function transports(c: PlaybackContext) {
   };
 
   const skip = async (dir: 'previous' | 'next') => {
-    const send = stationOf(lead?.now ?? null)?.spotify ? skipSpotify : skipKey;
+    const send = stationOf(lead?.now ?? null)?.spotify === true ? skipSpotify : skipKey;
     await send(dir, speaker).catch(leadFailed);
     void live.refreshNowPlaying();
   };

@@ -12,9 +12,9 @@ export function useFailedPlay(
   speaker: string | undefined,
   now: NowPlaying | null | undefined,
   notify: (text: string) => void
-) {
+): void {
   const { t } = useI18n();
-  const failed = !!now?.failed;
+  const failed = now?.failed === true;
   const station = now?.stationName;
   const playing = now?.playStatus === 'PLAY_STATE';
   const told = useRef({ speaker, station, done: failed });

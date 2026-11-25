@@ -12,7 +12,7 @@ export function createLatestSender<T>(
 ) {
   let inflight = false;
   let next: { value: T } | null = null;
-  return (value: T) => {
+  return (value: T): void => {
     next = { value };
     if (inflight) return;
     inflight = true;

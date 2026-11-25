@@ -10,7 +10,7 @@ import { speakerArg, type Room } from './useRooms';
 // A speaker's panel speaks the speaker's language, as stock's does. Picking a language here
 // sets it on every speaker, as each comes online. A browser that picked none only moves a speaker still on
 // the default English, so a second browser does not undo the household's choice.
-export function useSpeakerLanguage(rooms: Room[]) {
+export function useSpeakerLanguage(rooms: Room[]): void {
   const { lang } = useI18n();
   const roomsRef = useRef(rooms);
   useEffect(() => {
@@ -44,7 +44,9 @@ export function useSpeakerLanguage(rooms: Room[]) {
     for (const r of online()) {
       const speaker = speakerArg(r);
       void getSettings(speaker)
-        .then((s) => (s?.language === 'en' ? saveSettings({ language: lang }, speaker) : null))
+        .then(async (s) =>
+          s?.language === 'en' ? saveSettings({ language: lang }, speaker) : null
+        )
         .catch(() => null);
     }
   }, [anyOnline, lang]);

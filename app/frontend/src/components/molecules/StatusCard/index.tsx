@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import type { ReactNode } from 'react';
+import type { ReactNode, ReactElement } from 'react';
 import { Spinner } from '../../atoms/Spinner';
 import { Card } from './styled';
 
@@ -9,17 +9,17 @@ import { Card } from './styled';
 // "No devices paired", "Searching your network…", "You're up to date".
 export function StatusCard({
   icon,
-  busy,
+  busy = false,
   children,
 }: {
   icon?: ReactNode;
   busy?: boolean;
   children?: ReactNode;
-}) {
+}): ReactElement {
   return (
     <Card aria-busy={busy || undefined}>
       {busy ? <Spinner /> : icon}
-      {children && <span>{children}</span>}
+      {Boolean(children) && <span>{children}</span>}
     </Card>
   );
 }

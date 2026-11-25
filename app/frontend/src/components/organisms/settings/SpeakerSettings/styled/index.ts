@@ -11,7 +11,7 @@ export const Hero = styled.button`
   gap: 14px;
   width: calc(100% + 2 * var(--page-gutter, 0px));
   margin: 0 calc(-1 * var(--page-gutter, 0px));
-  padding: 6px var(--page-gutter, 16px) 20px;
+  padding: 4px var(--page-gutter, 16px) 20px;
   background: var(--surface);
   text-align: left;
 `;
@@ -54,10 +54,18 @@ export const Name = styled.span`
   color: var(--ink);
 `;
 
+// The model, then the versions: each on a line of its own, never broken inside.
 export const Meta = styled.span`
   font-size: 12px;
-  line-height: 1.4;
+  line-height: 1.45;
   color: var(--ink-3);
+
+  span {
+    display: block;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
 `;
 
 export const Pencil = styled.span`

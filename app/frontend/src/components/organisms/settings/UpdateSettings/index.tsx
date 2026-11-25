@@ -1,185 +1,187 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
+import type { ReactElement } from 'react';
 import { Icon } from '../../../atoms/Icon';
 import { Button } from '../../../atoms/Button';
-import { FormSection } from '../../../atoms/FormSection';
 import { Hint } from '../../../atoms/Hint';
 import { Note } from '../../../atoms/Note';
 import { Spinner } from '../../../atoms/Spinner';
 import { Stack } from '../../../atoms/Stack';
-import { FieldCard } from '../../../molecules/FieldCard';
-import { FieldRow } from '../../../molecules/FieldRow';
-import { StatusCard } from '../../../molecules/StatusCard';
-import { CoreUpdate } from './CoreUpdate';
+import { CoreUpdate, useCoreLatest } from './CoreUpdate';
 import { FirmwareUpload } from '../FirmwareUpload';
 import { Accordion, useAccordionGroup } from '../../../molecules/Accordion';
 import { SetMenu } from '../../../molecules/SetMenu';
 import { useSelfUpdate, type UpdatePhase } from '../../../../hooks/useSelfUpdate';
-import { useUpdateAll, type UpdateAllState } from '../../../../hooks/useUpdateAll';
-import type { Room } from '../../../../hooks/useRooms';
-import type { I18nKey } from '../../../../lib/i18n';
 import { useI18n } from '../../../../lib/i18n';
-import { modelLabel } from '../../../../lib/format';
-import { versionLabel } from '../../../../lib/version';
+import { shortVersionLabel, versionLabel } from '../../../../lib/version';
 import type { VersionInfo } from '../../../../lib/types';
-import { Card, Overlay, ReleaseNotes, Text, Title } from './styled';
+import { Updating } from './Updating';
+import { VersionCard } from './VersionCard';
+import { useUpdateConfirm } from './UpdateConfirm';
 
-// Shown once the new version is being served: this page still runs the old bundle,
-// and reloads itself shortly (or now, on request).
-function Reloading({ text }: { text: string }) {
-  const { t } = useI18n();
-  return (
-    <Overlay role="alertdialog" aria-modal="true" aria-label={text}>
-      <Card>
-        <Spinner />
-        <Title>{text}</Title>
-        <Text>{t('updateReloading')}</Text>
-        <Button variant="ghost" onClick={() => window.location.reload()}>
-          {t('reloadNow')}
-        </Button>
-      </Card>
-    </Overlay>
-  );
-}
-
-// A tick only once the speaker is up to date: not before a check, nor after one failed.
-const StatusIcon = ({ phase }: { phase: UpdatePhase }) =>
-  phase === 'done' || phase === 'updated' ? (
-    <Icon.check width="22" height="22" />
+// A tick only once the speaker is up to date: not before a check, nor after one failed; a
+// spinner while it works.
+const StatusIcon = ({ phase }: { phase: UpdatePhase }) => {
+  if (phase === 'busy') return <Spinner />;
+  return phase === 'done' || phase === 'updated' ? (
+    <Icon.check width="16" height="16" aria-hidden="true" />
   ) : (
-    <Icon.info width="22" height="22" />
+    <Icon.info width="16" height="16" aria-hidden="true" />
   );
-
-// soundtapd replacing itself with the latest stable release, with the notes of what it is
-// about to install.
-function SelfUpdate({ speaker, version }: { speaker: string; version: VersionInfo }) {
-  const { t } = useI18n();
-  const update = useSelfUpdate(speaker, version);
-  return (
-    <Stack gap={8} offset={8}>
-      {update.target?.notes && (
-        <>
-          <FormSection spaced>{t('whatsNew')}</FormSection>
-          <Note>
-            <ReleaseNotes>{update.target.notes}</ReleaseNotes>
-          </Note>
-        </>
-      )}
-      <StatusCard busy={update.phase === 'busy'} icon={<StatusIcon phase={update.phase} />}>
-        {update.text || t('upIdle')}
-      </StatusCard>
-      <Button
-        variant="ghost"
-        wide
-        disabled={update.phase === 'busy'}
-        onClick={() => void update.install()}
-      >
-        {t('updateNow')}
-      </Button>
-      <Hint>{t('updateVerified')}</Hint>
-      {update.phase === 'updated' && <Reloading text={update.text} />}
-    </Stack>
-  );
-}
-
-const STATE_TEXT: Record<UpdateAllState, I18nKey> = {
-  queued: 'updateAllQueued',
-  busy: 'updateAllBusy',
-  current: 'upLatest',
-  done: 'updateAllDone',
-  failed: 'updateError',
 };
 
-// Every speaker at once: each one's progress, then the button that starts the round.
-function UpdateAll({ rooms }: { rooms: Room[] }) {
+// soundtapd replacing itself with the latest stable release. A newer one shows in the card
+// drawn for a new version, with its notes; otherwise the card is the version the speaker
+// runs, and the button asks it to look. Update on an offered release asks once first, as
+// stock does. Once the speaker takes an update on, a page over the app follows it through.
+function SelfUpdate({
+  speaker,
+  name,
+  model,
+  version,
+}: {
+  speaker: string;
+  name: string;
+  model: string;
+  version: VersionInfo;
+}) {
   const { t } = useI18n();
-  const all = useUpdateAll(rooms);
-  if (all.order.length < 2) return null;
+  const update = useSelfUpdate(speaker, version);
+  const confirm = useUpdateConfirm(() => void update.install());
+  const offer = update.newer ? update.target : null;
+  const now = shortVersionLabel(version);
+  const status = (
+    <>
+      <StatusIcon phase={update.phase} />
+      <span role="status">{update.text || t('upIdle')}</span>
+    </>
+  );
   return (
-    <Stack gap={8} offset={8}>
-      <FormSection spaced>{t('updateAll')}</FormSection>
-      {Object.keys(all.states).length > 0 && (
-        <FieldCard>
-          {all.order.map((r) => {
-            const state = all.states[r.id];
-            return (
-              <FieldRow key={r.id} label={r.name} layout="value" wideLabel>
-                {state ? t(STATE_TEXT[state]) : '—'}
-              </FieldRow>
-            );
-          })}
-        </FieldCard>
+    <>
+      <VersionCard
+        offer={!!offer}
+        kicker={offer ? t('updatesNewVersion') : t('upFirmware')}
+        title={offer ? `SoundTap app ${offer.tag.replace(/^app-v/, '')}` : versionLabel(version)}
+        meta={offer ? `${t('updatesNow', { version: now })} · ${t('updatesSigned')}` : status}
+        notes={offer?.notes}
+      >
+        {offer && update.text && <Hint role="status">{update.text}</Hint>}
+        <Button
+          variant={offer ? 'stockholm' : 'ghost'}
+          wide
+          disabled={update.phase === 'busy'}
+          onClick={offer ? confirm.ask : () => void update.install()}
+        >
+          {offer ? t('updateInstall') : t('updateNow')}
+        </Button>
+      </VersionCard>
+      {confirm.sheet}
+      <Hint>{t('updateVerified')}</Hint>
+      {update.stage && (update.phase === 'busy' || update.phase === 'updated') && (
+        <Updating
+          name={name}
+          model={model}
+          stage={update.stage}
+          done={update.phase === 'updated'}
+          progress={update.progress}
+        />
       )}
-      <Button variant="ghost" wide disabled={all.running} onClick={() => void all.run()}>
-        {t('updateAll')}
-      </Button>
-      <Hint>{t('updateAllHint')}</Hint>
-    </Stack>
+    </>
   );
 }
 
 // Bose's own update files, kept by others: the link the installer gives too.
 const BOSE_ARCHIVE = 'https://archive.org/download/bose-soundtouch-software-and-firmware/Firmware/';
 
+// Where Bose's file can be found, the link in the sentence.
+function ArchiveNote() {
+  const { t } = useI18n();
+  const [before, after = ''] = t('updatesArchive').split('{link}');
+  return (
+    <>
+      {before}
+      <a href={BOSE_ARCHIVE} target="_blank" rel="noreferrer">
+        {t('updatesArchiveLink')}
+      </a>
+      {after}
+    </>
+  );
+}
+
 // The other ways to put software on the speaker, each a page of its own: a file of your
-// choice, or Bose's own update file to go back (the same upload, which knows Bose's file and
-// asks for the press on the speaker). The installer sends owners here for the way back.
+// choice, signed or your own unsigned build, or Bose's own update file to go back (the same
+// upload, which knows Bose's file). Every upload asks for one press on the speaker, signed
+// or not (ADR 0048). The installer sends owners here for the way back.
 function OtherWays({ speaker }: { speaker: string }) {
   const { t } = useI18n();
   const page = useAccordionGroup<'upload' | 'bose'>();
   return (
-    <SetMenu title={t('updatesOther')}>
-      <Accordion {...page('upload')} icon="download" title={t('updatesUpload')}>
+    <SetMenu title={t('updatesOther')} note={<ArchiveNote />}>
+      <Accordion
+        {...page('upload')}
+        icon="upload"
+        title={t('updatesUpload')}
+        desc={t('updatesUploadSummary')}
+      >
         <FirmwareUpload speaker={speaker} />
       </Accordion>
-      <Accordion {...page('bose')} icon="refresh" title={t('updatesBose')}>
+      <Accordion
+        {...page('bose')}
+        icon="undo"
+        title={t('updatesBose')}
+        desc={t('updatesBoseSummary')}
+      >
         <Stack gap={8}>
           <Hint>{t('updatesBoseHint')}</Hint>
           <FirmwareUpload speaker={speaker} />
-          <Hint>
-            {t('updatesArchive')}{' '}
-            <a href={BOSE_ARCHIVE} target="_blank" rel="noreferrer">
-              {t('updatesArchiveLink')}
-            </a>
-          </Hint>
         </Stack>
       </Accordion>
     </SetMenu>
   );
 }
 
-// The Updates accordion: what an update does, model and version, then this speaker's update
-// routes: the app from its releases, a newer SoundTap Core, and the other ways (a file of
-// your own, Bose's file to go back).
+// The Updates page: what an update does under its title, then this speaker's version in one
+// card, every speaker at once, and the other ways (a file of your own, Bose's file to go
+// back). A newer SoundTap Core on offer is the card: Core carries the app, so the app's own
+// card waits until the speaker runs the newest Core. Otherwise the app's card offers a newer
+// app or shows the one it runs.
 export function UpdateSettings({
   speaker,
+  name,
   model,
   version,
-  rooms = [],
 }: {
   speaker: string;
+  // The speaker's name, over the page that follows an update.
+  name: string;
   model: string;
   version: VersionInfo | null;
-  rooms?: Room[];
-}) {
+}): ReactElement {
   const { t } = useI18n();
+  const firmware = version?.updateMode === 'firmware';
+  const core = useCoreLatest(speaker, firmware);
   return (
     <>
-      <Hint>{t('updatesIntro')}</Hint>
-      <FieldCard spaced>
-        <FieldRow label={t('upModel')} layout="value">
-          {modelLabel(model) || '—'}
-        </FieldRow>
-        <FieldRow label={t('upFirmware')} layout="value">
-          {versionLabel(version) || '—'}
-        </FieldRow>
-      </FieldCard>
-      {version?.updateMode === 'firmware' ? (
+      <Note>{t('updatesIntro')}</Note>
+      {core && (
+        <CoreUpdate
+          key={speaker}
+          speaker={speaker}
+          name={name}
+          model={model}
+          latest={core}
+          version={version}
+        />
+      )}
+      {!core && firmware && version.updatable && (
+        <SelfUpdate speaker={speaker} name={name} model={model} version={version} />
+      )}
+      {!core && !(firmware && version.updatable) && (
+        <VersionCard kicker={t('upFirmware')} title={versionLabel(version) || '—'} />
+      )}
+      {firmware ? (
         <>
-          {version.updatable && <SelfUpdate speaker={speaker} version={version} />}
-          <UpdateAll rooms={rooms} />
-          <CoreUpdate key={speaker} speaker={speaker} />
           <OtherWays speaker={speaker} />
         </>
       ) : (

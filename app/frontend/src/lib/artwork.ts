@@ -40,14 +40,14 @@ export function stationColor(key?: string | null): string {
   if (!key) return FALLBACK_COLOR;
   let hash = 0;
   for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) | 0;
-  return PALETTE[Math.abs(hash) % PALETTE.length];
+  return PALETTE[Math.abs(hash) % PALETTE.length] ?? FALLBACK_COLOR;
 }
 
 // Two letters for a lettermark, from the first letters of its words: "NPO Radio 2" -> "NR",
 // "Studio Brussel" -> "SB", "kink" -> "KI".
 export function initials(name: string): string {
   const [first = name, second] = name.match(/[A-Za-z]\w*/g) ?? [];
-  if (second) return (first[0] + second[0]).toUpperCase();
+  if (second) return (first.charAt(0) + second.charAt(0)).toUpperCase();
   return first.slice(0, 2).toUpperCase() || '?';
 }
 

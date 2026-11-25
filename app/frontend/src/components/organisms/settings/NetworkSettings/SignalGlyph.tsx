@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
+import type { ReactElement } from 'react';
+
 const SIGNAL_BARS: Record<string, number> = { poor: 1, fair: 2, good: 3, excellent: 4 };
 
 // Signal strength as lit and dimmed arcs, so a network reads at a glance.
-export function SignalGlyph({ signal }: { signal: string }) {
-  const level = SIGNAL_BARS[signal] || 0;
+export function SignalGlyph({ signal }: { signal: string }): ReactElement {
+  const level = SIGNAL_BARS[signal] ?? 0;
   const opacity = (bar: number) => (level >= bar ? 1 : 0.22);
   return (
     <svg

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, type RefObject } from 'react';
 import type { NowPlaying, PlayTarget } from '../../lib/types';
 import {
   PENDING_MAX_MS,
@@ -11,9 +11,23 @@ import {
   type Picked,
 } from '../../lib/speakerPlayer';
 
+export interface OptimisticPlay {
+  nowPlaying: NowPlaying | null;
+  pending: Pending | null;
+  gaveUp: Pending | null;
+  lastPicked: Picked | null;
+  shownNameRef: RefObject<string>;
+  applyNowPlaying: (np: NowPlaying | null | undefined) => void;
+  playOptimistic: (station: PlayTarget | null) => Pending | null;
+  stopOptimistic: () => void;
+  cancelPending: (which?: Pending | null) => void;
+  reset: () => void;
+  releaseStopHold: () => void;
+}
+
 // The playback side of useSpeaker: the raw now-playing, and the optimistic target a tap
 // holds on screen until the box actually plays it (see useSpeaker for why).
-export function useOptimisticPlay() {
+export function useOptimisticPlay(): OptimisticPlay {
   const [nowPlaying, setNowPlaying] = useState<NowPlaying | null>(null); // raw normalised speaker state
   const [pending, setPending] = useState<Pending | null>(null); // target after a tap
   const [gaveUp, setGaveUp] = useState<Pending | null>(null); // a target the box could not play

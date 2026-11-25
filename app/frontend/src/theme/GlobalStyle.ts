@@ -32,6 +32,8 @@ export const GlobalStyle = createGlobalStyle`
     --on-ink: #ffffff;
     --glow-color: #ffffff;
     --thumb: #ffffff;
+    /* A switch that is on: its track. The knob stays white in both schemes. */
+    --switch-on: #111111;
     /* The plate behind station logos: light enough for dark lettering, softer than white. */
     --logo-plate: #f1efec;
     --shimmer: rgba(255, 255, 255, 0.55);
@@ -42,9 +44,17 @@ export const GlobalStyle = createGlobalStyle`
     --section-bar: #ebebeb;
     --danger: #b90000;
     --backdrop: rgba(187, 187, 187, 0.4);
+    --dim: rgba(17, 17, 17, 0.45); /* under a sheet from the bottom */
+    --grip: #d5d5d5; /* a sheet's drag handle */
+    /* A notice that something waits or needs care (an update, keep the power on). */
+    --warn-bg: #fff4e5;
+    --warn-line: #e8b56a;
+    --warn-ink: #4a3208;
     --radius: 7px;
     --radius-sm: 4px;
-    --shell-max: 393px;
+    /* As wide as the widest phone (440 px): a phone's own screen is never framed by gutters;
+       a wider window gets a column. */
+    --shell-max: 440px;
     --shadow-sm: 0 1px 2px rgba(31, 24, 20, 0.05), 0 0 0 1px rgba(31, 24, 20, 0.04);
     --shadow: 0 8px 24px -8px rgba(31, 24, 20, 0.14), 0 0 0 1px rgba(31, 24, 20, 0.04);
     --shadow-lg: 0 22px 50px -16px rgba(31, 24, 20, 0.2);
@@ -64,6 +74,11 @@ export const GlobalStyle = createGlobalStyle`
     --section-bar: #2a2a2c;
     --danger: #ff6b60;
     --backdrop: rgba(0, 0, 0, 0.5);
+    --dim: rgba(0, 0, 0, 0.6);
+    --grip: #4a4a4c;
+    --warn-bg: #3a2c14;
+    --warn-line: #8a6a2e;
+    --warn-ink: #f6dfb6;
     --surface: #1c1c1e;
     --surface-2: #2a2a2c;
     /* 3.4:1 on --bg: the surface grey left the track of a slider near invisible. */
@@ -83,6 +98,7 @@ export const GlobalStyle = createGlobalStyle`
     --on-ink: #141619;
     --glow-color: #1d2024;
     --thumb: #eef0f3;
+    --switch-on: #8e8e93;
     --shimmer: rgba(255, 255, 255, 0.06);
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(0, 0, 0, 0.3);
     --shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(0, 0, 0, 0.35);
@@ -120,6 +136,11 @@ export const GlobalStyle = createGlobalStyle`
     -webkit-user-select: none;
   }
 
+  /* A link in running text is underlined ink, as in Stockholm; never the browser's blue,
+     which also fails on the dark theme. */
+  a {
+    color: var(--ink);
+  }
 
   button {
     font: inherit;

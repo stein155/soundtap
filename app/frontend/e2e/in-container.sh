@@ -16,7 +16,7 @@ trap 'kill "$server"' EXIT
 i=0
 until node -e "fetch('http://localhost:8080/').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"; do
 	i=$((i + 1))
-	[ "$i" -lt 50 ] || { echo 'demo server did not start' >&2; exit 1; }
+	[ "${i}" -lt 50 ] || { echo 'demo server did not start' >&2; exit 1; }
 	sleep 0.2
 done
 npx playwright test --config playwright.config.mjs "$@"

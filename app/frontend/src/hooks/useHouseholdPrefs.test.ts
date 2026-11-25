@@ -6,20 +6,22 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { useHouseholdPrefs } from './useHouseholdPrefs';
 import * as api from '../lib/api';
 import type { Room } from './useRooms';
+import { must } from '../test/must';
+import { room } from './testFixtures';
 
 vi.mock('../lib/api', async () => ({
   getSettings: vi.fn().mockResolvedValue((await import('../test/settings')).settingsFixture()),
   saveSettings: vi.fn(),
 }));
 
-const rooms = [{ id: 'a', self: true, online: true }] as Room[];
+const rooms: Room[] = [room({ id: 'a', self: true })];
 
 describe('useHouseholdPrefs saveMultiroom', () => {
   // An older save that fails late must not undo a newer one.
   it('lets only the newest save roll back', async () => {
-    let failOld: (e: Error) => void = () => {};
+    let failOld: (e: Error) => void = vi.fn();
     vi.mocked(api.saveSettings)
-      .mockImplementationOnce(() => new Promise((_, reject) => (failOld = reject)))
+      .mockImplementationOnce(async () => new Promise((_, reject) => (failOld = reject)))
       .mockResolvedValueOnce(undefined);
     const { result } = renderHook(() => useHouseholdPrefs(rooms));
     await waitFor(() => expect(result.current.multiroom).not.toBeNull());
@@ -44,12 +46,12 @@ describe('useHouseholdPrefs saveMultiroom', () => {
   // first save's unsaved one.
   it('rolls back to the stored value when both overlapping saves fail', async () => {
     const stored = { keepGroups: false, syncVolume: false };
-    let rejectFirst: (e: Error) => void = () => {};
-    let rejectSecond: (e: Error) => void = () => {};
+    let rejectFirst: (e: Error) => void = vi.fn();
+    let rejectSecond: (e: Error) => void = vi.fn();
     vi.mocked(api.saveSettings).mockReset();
     vi.mocked(api.saveSettings)
-      .mockImplementationOnce(() => new Promise((_, reject) => (rejectFirst = reject)))
-      .mockImplementationOnce(() => new Promise((_, reject) => (rejectSecond = reject)));
+      .mockImplementationOnce(async () => new Promise((_, reject) => (rejectFirst = reject)))
+      .mockImplementationOnce(async () => new Promise((_, reject) => (rejectSecond = reject)));
     const { result } = renderHook(() => useHouseholdPrefs(rooms));
     await waitFor(() => expect(result.current.multiroom).toEqual(stored));
     let first: Promise<void> = Promise.resolve();
@@ -75,14 +77,13 @@ describe('useHouseholdPrefs saveMultiroom', () => {
   // A quick A, B, A must end as A on every speaker: saves go out in order and a
   // superseded one still waiting is not sent at all.
   it('sends quick saves in order and drops a superseded one', async () => {
-    const two = [
-      { id: 'a', self: true, online: true },
-      { id: 'b', self: false, online: true },
-    ] as Room[];
+    const two = [room({ id: 'a', self: true }), room({ id: 'b' })];
     const sent: boolean[] = [];
     vi.mocked(api.saveSettings).mockReset();
-    vi.mocked(api.saveSettings).mockImplementation((body) => {
-      sent.push((body.multiroom as { keepGroups: boolean }).keepGroups);
+    vi.mocked(api.saveSettings).mockImplementation(async (body) => {
+      const multiroom = body['multiroom'];
+      if (typeof multiroom === 'object' && multiroom !== null && 'keepGroups' in multiroom)
+        sent.push(multiroom.keepGroups === true);
       return Promise.resolve();
     });
     const { result } = renderHook(() => useHouseholdPrefs(two));
@@ -101,10 +102,7 @@ describe('useHouseholdPrefs saveMultiroom', () => {
   // A speaker that missed a save gets it again, so it does not keep the old value.
   it('saves again to a speaker that missed it', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    const two = [
-      { id: 'a', self: true, online: true },
-      { id: 'b', self: false, online: true },
-    ] as Room[];
+    const two = [room({ id: 'a', self: true }), room({ id: 'b' })];
     vi.mocked(api.saveSettings).mockReset();
     vi.mocked(api.saveSettings)
       .mockResolvedValueOnce(undefined)
@@ -112,14 +110,13 @@ describe('useHouseholdPrefs saveMultiroom', () => {
       .mockResolvedValue(undefined);
     const { result } = renderHook(() => useHouseholdPrefs(two));
     await waitFor(() => expect(result.current.multiroom).not.toBeNull());
-    await act(() => result.current.saveMultiroom({ keepGroups: true, syncVolume: false }));
+    await act(async () => result.current.saveMultiroom({ keepGroups: true, syncVolume: false }));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
     });
     expect(api.saveSettings).toHaveBeenCalledTimes(3);
-    expect(vi.mocked(api.saveSettings).mock.calls[2][1]).toBe(
-      vi.mocked(api.saveSettings).mock.calls[1][1]
-    );
+    const calls = vi.mocked(api.saveSettings).mock.calls;
+    expect(must(calls[2], 'the retry')[1]).toBe(must(calls[1], 'the save')[1]);
     vi.useRealTimers();
   });
 });

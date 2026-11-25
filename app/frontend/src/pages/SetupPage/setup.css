@@ -1,19 +1,132 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /* SPDX-FileCopyrightText: 2026 SoundTap contributors */
 
-/* First-run Wi-Fi setup (Stockholm layout): a plain white title block, then the name and
-   network as one flat white card on the grey page, black filled controls. Own CSS on the
-   app tokens; no external assets, so it works on the offline setup access point. */
+/* First-run setup, in two steps (Stockholm layout): a white block with the step, the
+   language and a line per step over the title, then the form on the grey page and one
+   black button. Own CSS on the app tokens; no external assets, so it works on the offline
+   setup access point. */
+
+/* The step scrolls as one column down to the bottom of the screen, where its button sits. */
+.setup-page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.setup-page::-webkit-scrollbar {
+  display: none;
+}
 
 .setup-head {
+  flex: none;
+  padding-top: env(safe-area-inset-top);
+  background: var(--surface);
+}
+
+.setup-bar {
+  display: grid;
+  grid-template-columns: 44px 1fr auto;
+  align-items: center;
+  height: 56px;
+  padding: 0 6px;
+}
+
+.setup-bar p {
+  margin: 0;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* The language: its name as a quiet button, the list a native one over it. */
+.setup-lang {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 44px;
+  padding: 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-3);
+}
+
+.setup-lang select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  /* Invisible, but iOS still zooms the page onto a focused field under 16px. */
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.setup-lang:focus-within {
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
+}
+
+.setup-steps {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 0 16px 14px;
+}
+
+.setup-steps span {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--surface-3);
+}
+
+.setup-steps span[data-done] {
+  background: var(--ink);
+}
+
+.setup-intro {
+  padding: 6px 16px 22px;
+}
+
+.setup-intro h1 {
+  margin: 4px 0 0;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: var(--tracking-title);
+  color: var(--ink);
+}
+
+.setup-intro p:not(.setup-name) {
+  margin: 8px 0 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+.setup-name {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* The first step: our own speaker drawing on a light grey disc, as on its card. */
+.setup-welcome {
   display: grid;
   justify-items: center;
-  padding: max(28px, calc(env(safe-area-inset-top) + 16px)) 24px 28px;
-  background: var(--surface);
   text-align: center;
 }
 
-/* Our own speaker drawing on a light grey disc, like the speaker card's hero. */
 .setup-disc {
   width: 148px;
   height: 148px;
@@ -26,108 +139,55 @@
   display: block;
   width: 100%;
   height: 100%;
-  filter: drop-shadow(0 6px 6px rgba(0, 0, 0, 0.18));
+  filter: drop-shadow(0 6px 6px rgb(0 0 0 / 18%));
 }
 
-.setup-name {
-  margin: 14px 0 0;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--ink-3);
+.setup-welcome h1 {
+  margin-top: 14px;
 }
 
-.setup-head h1 {
-  margin: 6px 0 0;
-  font-size: 26px;
-  font-weight: 600;
-  line-height: 1.2;
-  letter-spacing: var(--tracking-title);
-  color: var(--ink);
-  text-wrap: balance;
+.setup-body {
+  --page-gutter: 16px;
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 0 16px calc(28px + env(safe-area-inset-bottom));
 }
 
-.setup-head p:not(.setup-name) {
-  margin: 10px 0 0;
-  max-width: 28ch;
-  font-size: 14px;
-  line-height: 1.5;
-  color: var(--ink-3);
+.setup-body > :first-child:not(form) {
+  margin-top: 18px;
 }
 
-.setup section {
-  margin: 16px 16px 0;
-  padding: 20px 16px 4px;
-  background: var(--surface);
-  border-radius: var(--radius);
-  counter-reset: step;
-}
-
-/* Steps 1 and 2 are numbered; 3 is the button. */
-.setup section > h2::before,
-.setup section > h3:nth-of-type(1)::before {
-  counter-increment: step;
-  content: counter(step);
-  display: inline-grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  margin-right: 10px;
-  border-radius: 50%;
-  background: var(--accent-fill);
-  color: var(--on-accent-fill);
-  font-size: 11px;
-  letter-spacing: 0;
-}
-
-.setup h2,
-.setup h3 {
-  padding: 0 0 8px;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ink-3);
-}
-
-/* Full-width network rows, and the black pill primary button. */
-.setup section button:has(> span) {
-  min-height: 52px;
-  background: var(--surface-2);
-  border-radius: var(--radius);
-}
-
-.setup section > div > button:not(:has(> span)) {
-  min-height: 52px;
-  border-radius: 999px;
-  background: var(--accent-fill);
-  color: var(--on-accent-fill);
-  box-shadow: none;
-}
-
-.setup input {
-  border-radius: var(--radius);
-  background: var(--surface-2);
-  box-shadow: none;
-}
-
-.setup input:focus {
-  box-shadow: none;
-  border-color: var(--ink);
-}
-
+/* Next at the bottom of the screen, on the page's grey, clear of the home indicator; the
+   negative margins undo the body's gutter and bottom padding. */
 .setup-foot {
-  padding: 22px 24px 14px;
-  text-align: center;
-  font-size: 12px;
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin: auto -16px calc(-28px - env(safe-area-inset-bottom));
+  padding: 12px 16px calc(28px + env(safe-area-inset-bottom));
+  background: var(--bg);
+}
+
+/* What to know before Connect, in a grey box with its sign. */
+.setup-notice {
+  display: flex;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
   color: var(--ink-3);
 }
 
-.setup section p {
-  margin-inline: 0;
+.setup-notice svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+.setup-notice p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ink-2);
 }

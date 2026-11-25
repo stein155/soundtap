@@ -4,21 +4,29 @@
 import { Button, Slider, SliderOutput, SliderThumb, SliderTrack } from 'react-aria-components';
 import { Icon } from '../../atoms/Icon';
 import { useI18n } from '../../../lib/i18n';
+import type { ReactElement } from 'react';
 
 interface Props {
   value: number;
   onChange: (volume: number) => void;
   label: string;
   // Taps on the speaker icon; without it the icon is only a picture.
-  onMute?: () => void;
+  onMute?: (() => void) | undefined;
   // Drawn on a dark picture (now playing) instead of a card.
-  light?: boolean;
+  light?: boolean | undefined;
   // The level as a number at the slider's end, as on now playing.
   showValue?: boolean;
 }
 
 // A volume slider with the speaker icon at its start, which mutes and unmutes.
-export function VolumeSlider({ value, onChange, label, onMute, light, showValue }: Props) {
+export function VolumeSlider({
+  value,
+  onChange,
+  label,
+  onMute,
+  light = false,
+  showValue = false,
+}: Props): ReactElement {
   const { t } = useI18n();
   const muted = value === 0;
   const icon = muted ? <Icon.mute /> : <Icon.volume />;

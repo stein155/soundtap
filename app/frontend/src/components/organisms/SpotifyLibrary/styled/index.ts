@@ -32,8 +32,8 @@ export const Text = styled.p`
 export const Hero = styled.div`
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 4px 6px 16px;
+  gap: 16px;
+  padding: 20px 0;
 `;
 
 export const Cover = styled.img`
@@ -41,6 +41,8 @@ export const Cover = styled.img`
   height: 124px;
   flex-shrink: 0;
   object-fit: cover;
+  border-radius: var(--radius);
+  box-shadow: 0 12px 28px -14px rgba(0, 0, 0, 0.5);
 `;
 
 export const HeroText = styled.div`
@@ -51,13 +53,22 @@ export const HeroText = styled.div`
 
   ${Heading} {
     margin-top: 0;
+    font-size: 18px;
+    letter-spacing: -0.2px;
+    line-height: 1.25;
   }
 
   ${Text} {
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 400;
-    letter-spacing: -0.4px;
     color: var(--ink-3);
+  }
+
+  /* Play: black with a white glyph, never black on Spotify's green. */
+  & > button {
+    margin-top: 12px;
+    min-height: 44px;
+    padding: 0 20px;
   }
 `;
 
@@ -66,9 +77,10 @@ export const Account = styled.div`
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 4px 6px 16px;
+  min-height: 48px;
+  padding: 8px 0 16px;
   font-size: 12.5px;
-  color: var(--ink-2);
+  color: var(--ink-3);
 `;
 
 export const AccountName = styled.span`
@@ -78,8 +90,9 @@ export const AccountName = styled.span`
 `;
 
 export const LinkButton = styled.button`
+  padding: 8px 0;
   font-weight: 600;
-  color: var(--ink-2);
+  color: var(--ink-3);
   text-decoration: underline;
   text-underline-offset: 3px;
 `;

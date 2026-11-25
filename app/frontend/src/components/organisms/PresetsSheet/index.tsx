@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useState } from 'react';
+import { useState, type ReactElement } from 'react';
 import { Button, Heading } from 'react-aria-components';
 import { EqualizerBars } from '../../atoms/EqualizerBars';
 import { Spinner } from '../../atoms/Spinner';
@@ -89,28 +89,31 @@ function EmptyPreset({ open, onClose }: { open: boolean; onClose: () => void }) 
   );
 }
 
+// The sheet's grip and title, with its X.
 function PageHead({ close }: { close: () => void }) {
   const { t } = useI18n();
   return (
-    <div className="sheet-head">
-      <Heading slot="title" className="sheet-title caps">
-        {t('presetsAndFavorites')}
-      </Heading>
-      <Button className="x-btn" aria-label={t('close')} onPress={close}>
-        <Icon.close />
-      </Button>
-    </div>
+    <>
+      <span className="ract-grab" aria-hidden="true" />
+      <div className="phead">
+        <Heading slot="title" className="phead-title">
+          {t('presetsAndFavorites')}
+        </Heading>
+        <Button className="top-btn" aria-label={t('close')} onPress={close}>
+          <Icon.close />
+        </Button>
+      </div>
+    </>
   );
 }
 
-const playingState = (status: Player['status']) =>
-  status === 'playing'
-    ? 'playing'
-    : status === 'starting' || status === 'buffering'
-      ? 'starting'
-      : 'idle';
+const playingState = (status: Player['status']): 'playing' | 'starting' | 'idle' => {
+  if (status === 'playing') return 'playing';
+  return status === 'starting' || status === 'buffering' ? 'starting' : 'idle';
+};
 
-// The selected room's six presets, on a page of their own: tap one to play it.
+// The selected room's six presets and its favorite, in a sheet from the bottom: tap one to
+// play it.
 export function PresetsSheet({
   open,
   onClose,
@@ -124,7 +127,7 @@ export function PresetsSheet({
   onSave,
   onStore,
   favorites,
-}: Props) {
+}: Props): ReactElement {
   const { t } = useI18n();
   const [emptyTapped, setEmptyTapped] = useState(false);
   // One active slot, resolved once: a loose name match must never light up several.
@@ -132,7 +135,7 @@ export function PresetsSheet({
   const hint = saving ? `${t('spotifySaveTo')}: ${saving}` : null;
   const activeState = playingState(player.status);
   return (
-    <SheetModal open={open} onClose={onClose} label={t('presetsAndFavorites')} variant="page">
+    <SheetModal open={open} onClose={onClose} label={t('presetsAndFavorites')} className="psheet">
       {(close) => (
         <>
           <PageHead close={close} />
@@ -142,7 +145,10 @@ export function PresetsSheet({
                 {hint}
               </p>
             )}
-            <ol className="prows" aria-busy={loading || undefined}>
+            <h2 className="pbar" id="pbar-presets">
+              {t('yourStations')}
+            </h2>
+            <ol className="prows" aria-labelledby="pbar-presets" aria-busy={loading || undefined}>
               {presets.map((preset, i) => {
                 const slot = i + 1;
                 if (loading) return <li key={slot} className="prow skeleton" aria-hidden="true" />;
@@ -160,7 +166,10 @@ export function PresetsSheet({
                       close();
                     }}
                     onEmpty={() => {
-                      if (!saving) return setEmptyTapped(true);
+                      if (!saving) {
+                        setEmptyTapped(true);
+                        return;
+                      }
                       onSave(slot);
                       close();
                     }}

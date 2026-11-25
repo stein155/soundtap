@@ -15,9 +15,10 @@ import {
 } from './api';
 import { PRESS_WINDOW_MS } from './base';
 import { loadLanguage } from './i18n';
+import { must } from '../test/must';
 
 // Dutch is fetched on demand like every language but English.
-beforeAll(() => loadLanguage('nl'));
+beforeAll(async () => loadLanguage('nl'));
 
 // Stub global.fetch with a JSON response for the fetch-backed helpers.
 function mockFetch(
@@ -48,8 +49,8 @@ describe('press routes', () => {
     await setWifi({ ssid: 'home', security: 'none', password: '' });
     await factoryReset();
     // wifiJoinDeadline and restoreDeadline on the speaker.
-    expect(timeout.mock.calls[0][0]).toBeGreaterThan(PRESS_WINDOW_MS + 60000);
-    expect(timeout.mock.calls[1][0]).toBeGreaterThan(PRESS_WINDOW_MS + 20000);
+    expect(timeout.mock.calls[0]?.[0]).toBeGreaterThan(PRESS_WINDOW_MS + 60000);
+    expect(timeout.mock.calls[1]?.[0]).toBeGreaterThan(PRESS_WINDOW_MS + 20000);
   });
 });
 
@@ -61,7 +62,7 @@ describe('normalizeNowPlaying', () => {
       station: 'Liked Songs',
       stationId: 'spotify:collection',
     });
-    expect(np?.stationName).toBe('Gelikete nummers');
+    expect(np?.stationName).toBe('Nummers die je leuk vindt');
   });
 
   it('returns null for empty input', () => {
@@ -151,8 +152,8 @@ describe('setVolume', () => {
     vi.stubGlobal('fetch', fetchMock);
     await setVolume(30);
     await setVolume(40, '', { group: true });
-    expect(fetchMock.mock.calls[0][1]).toMatchObject({ body: JSON.stringify({ volume: 30 }) });
-    expect(fetchMock.mock.calls[1][1]).toMatchObject({
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ body: JSON.stringify({ volume: 30 }) });
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
       body: JSON.stringify({ volume: 40, group: true }),
     });
   });
@@ -171,7 +172,7 @@ describe('getPresets', () => {
       { slot: 3, name: 'C', location: '/v1/playback/station/s9' }, // tuneInId from location
       { slot: 7, name: 'X' }, // out of range -> ignored
     ]);
-    const slots = (await getPresets())!;
+    const slots = must(await getPresets(), 'presets');
     expect(slots).toHaveLength(6);
     expect(slots[0]).toMatchObject({
       slot: 1,
@@ -206,7 +207,7 @@ describe('getPresets', () => {
         location: 'http://media/song.flac',
       },
     ]);
-    const slots = (await getPresets())!;
+    const slots = must(await getPresets(), 'presets');
     expect(slots[1]).toMatchObject({ source: 'UPNP', name: 'Song', tuneInId: null });
   });
 });
@@ -219,7 +220,7 @@ describe('getRecent', () => {
       { source: 'TUNEIN', location: 's1', name: 'Jazz', art: '' },
     ]);
     const list = await getRecent();
-    expect(list?.map((e) => e.name)).toEqual(['Gelikete nummers', 'Jazz']);
+    expect(list?.map((e) => e.name)).toEqual(['Nummers die je leuk vindt', 'Jazz']);
   });
 });
 
@@ -237,12 +238,12 @@ describe('searchTuneIn', () => {
     });
     const res = await searchTuneIn('jazz');
     expect(res).toHaveLength(30); // capped
-    expect(res![0]).toMatchObject({
+    expect(res?.[0]).toMatchObject({
       tuneInId: 's0',
       name: 'Station 0',
       logo: 'img0',
     });
-    expect(res!.some((s) => s.tuneInId === 'x1')).toBe(false);
+    expect(res?.some((s) => s.tuneInId === 'x1')).toBe(false);
   });
 
   it('returns null on a failed search, so the UI can say TuneIn is unreachable', async () => {

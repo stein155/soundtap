@@ -3,29 +3,18 @@
 
 import styled from 'styled-components';
 
-// One group of settings, as Stockholm's lists: straight rows across the whole width (out
-// through the page's side gutter), a line above and below the group and a hairline between
-// rows that starts where the row's text does.
-export const Card = styled.div`
+// One group of settings, as the design's lists: white rows across the whole width (out
+// through the page's side gutter), a faint hairline between rows from edge to edge, on top
+// of the row's own height as in the design.
+export const Card = styled.div<{ $apart?: boolean | undefined }>`
   display: flex;
   flex-direction: column;
   margin-inline: calc(-1 * var(--page-gutter, 0px));
-  border-block: 1px solid var(--border-strong);
   background: var(--surface);
+  ${({ $apart }) => ($apart === true ? 'border-block: 1px solid var(--border-strong);' : '')}
 
   & > * + * {
-    position: relative;
-  }
-
-  & > * + *::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: var(--page-gutter, 14px);
-    right: 0;
-    height: 1px;
-    background: var(--border-strong);
-    pointer-events: none;
+    border-top: 1px solid var(--border);
   }
 `;
 
@@ -48,7 +37,7 @@ export const Group = styled.section`
 export const Bar = styled.h2`
   display: flex;
   align-items: center;
-  min-height: 43px;
+  min-height: 51px;
   margin: 0 calc(-1 * var(--page-gutter, 0px));
   padding: 4px var(--page-gutter, 16px);
   background: var(--section-bar);
@@ -58,6 +47,5 @@ export const Bar = styled.h2`
   color: var(--ink-2);
 `;
 
-export const Note = styled.div`
-  padding-top: 6px;
-`;
+// The note under a card: the hint's own 12 px above it, as the design's notes.
+export const Note = styled.div``;

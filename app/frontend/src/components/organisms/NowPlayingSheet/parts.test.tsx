@@ -12,6 +12,7 @@ import {
   spotifyModes,
 } from '../../../lib/api/playback';
 import { SpotifyModeButtons } from './parts';
+import { must } from '../../../test/must';
 
 vi.mock('../../../lib/api/playback', () => ({
   spotifyModes: vi.fn(),
@@ -55,7 +56,9 @@ describe('SpotifyModeButtons', () => {
   it('shows what the session has and sends the change', async () => {
     vi.mocked(spotifyModes).mockResolvedValue({ shuffle: true, repeat: 'context' });
     render(<SpotifyModeButtons speaker="a" />);
-    const [shuffle, repeat] = screen.getAllByRole('button');
+    const [first, second] = screen.getAllByRole('button');
+    const shuffle = must(first, 'shuffle');
+    const repeat = must(second, 'repeat');
     await waitFor(() => expect(shuffle).toHaveAttribute('aria-pressed', 'true'));
     expect(repeat).toHaveAttribute('aria-pressed', 'true');
 
@@ -68,20 +71,20 @@ describe('SpotifyModeButtons', () => {
   it('turns repeat off from the last step', async () => {
     vi.mocked(spotifyModes).mockResolvedValue({ shuffle: false, repeat: 'track' });
     render(<SpotifyModeButtons />);
-    const repeat = screen.getAllByRole('button')[1];
+    const repeat = must(screen.getAllByRole('button')[1], 'repeat');
     await waitFor(() => expect(repeat).toHaveAttribute('aria-pressed', 'true'));
     await userEvent.click(repeat);
     expect(setSpotifyRepeat).toHaveBeenCalledWith('off', undefined);
   });
 
   it('keeps a tap when a poll that left before it answers late', async () => {
-    let answer = (_: { shuffle: boolean; repeat: 'off' }) => {};
+    let answer: (modes: { shuffle: boolean; repeat: 'off' }) => void = vi.fn();
     vi.mocked(spotifyModes)
-      .mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)))
+      .mockImplementationOnce(async () => new Promise((resolve) => (answer = resolve)))
       .mockResolvedValue({ shuffle: true, repeat: 'off' });
-    vi.mocked(setSpotifyShuffle).mockReturnValueOnce(new Promise(() => {}));
+    vi.mocked(setSpotifyShuffle).mockReturnValueOnce(new Promise(vi.fn()));
     render(<SpotifyModeButtons />);
-    const shuffle = screen.getAllByRole('button')[0];
+    const shuffle = must(screen.getAllByRole('button')[0], 'shuffle');
     await userEvent.click(shuffle);
     expect(shuffle).toHaveAttribute('aria-pressed', 'true');
     await act(async () => {

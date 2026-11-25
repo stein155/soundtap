@@ -13,6 +13,12 @@ const clampVolume = (v: number) => Math.max(0, Math.min(100, Math.round(v)));
 // How long after its last move a group drag still measures from where it started.
 const DRAG_MS = 1500;
 
+export interface RoomVolume {
+  setRoomVolume: (room: Room, volume: number) => void;
+  setGroupVolume: (volume: number) => void;
+  volumeStamp: (id: string) => number;
+}
+
 // Volume for any room, and for the selected group as a whole. The selected room goes
 // through useSpeaker (it holds the slider steady against stale reads); every other room
 // gets its own coalescing sender, so a drag does not flood it through the proxy.
@@ -25,7 +31,7 @@ export function useRoomVolume(
   { lead, members, live, roomsState, rooms }: SelectedRoom,
   syncVolume: boolean,
   failed?: ReportFailure
-) {
+): RoomVolume {
   const senders = useRef(new Map<string, (volume: number) => void>());
   // Every member's level and the group mean when the current drag began, and which
   // group that was: a drag never carries over to another group.
@@ -54,7 +60,7 @@ export function useRoomVolume(
     let send = senders.current.get(speaker);
     if (!send) {
       send = createLatestSender(
-        (volume: number) => setVolume(volume, speaker),
+        async (volume: number) => setVolume(volume, speaker),
         () => failed?.(name)()
       );
       senders.current.set(speaker, send);
@@ -64,7 +70,10 @@ export function useRoomVolume(
 
   const setRoomVolume = (room: Room, volume: number) => {
     touch(room.id);
-    if (room.id === lead?.id) return live.changeVolume(volume);
+    if (room.id === lead?.id) {
+      live.changeVolume(volume);
+      return;
+    }
     roomsState.patch(room.id, { volume });
     senderFor(speakerArg(room), room.name)(volume);
   };
@@ -77,7 +86,7 @@ export function useRoomVolume(
     const group = [lead, ...members];
     const now = Date.now();
     const key = group.map((r) => r.id).join(' ');
-    if (!drag.current || drag.current.group !== key || now - drag.current.at > DRAG_MS) {
+    if (drag.current?.group !== key || now - drag.current.at > DRAG_MS) {
       drag.current = {
         at: now,
         group: key,

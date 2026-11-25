@@ -2,11 +2,17 @@
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { keepRooms, useRooms, speakerArg, type Room } from './useRooms';
-import { useSpeaker } from './useSpeaker';
+import { keepRooms, useRooms, speakerArg, type Room, type RoomsState } from './useRooms';
+import { useSpeaker, type SpeakerLive } from './useSpeaker';
 import { followDevice, setTargetDevice, targetDevice } from '../lib/base';
 import { sourceOf } from '../lib/rooms';
 import type { NowPlaying, Player } from '../lib/types';
+
+// A paused room shows paused; otherwise playing once the speaker plays, else buffering.
+function shownStatus(reported: NowPlaying | null, player: Player): string {
+  if (reported?.playStatus === 'PAUSE_STATE') return 'PAUSE_STATE';
+  return player.status === 'playing' ? 'PLAY_STATE' : 'BUFFERING_STATE';
+}
 
 // The selected room's now-playing as the room cards read it, built from the live
 // speaker state: the optimistic station while one is starting, then the speaker's own.
@@ -23,12 +29,7 @@ function liveNowPlaying(raw: NowPlaying | null, player: Player): NowPlaying {
       tuneInId: station.tuneInId,
       track: station.track,
       artist: station.artist,
-      playStatus:
-        reported?.playStatus === 'PAUSE_STATE'
-          ? 'PAUSE_STATE'
-          : player.status === 'playing'
-            ? 'PLAY_STATE'
-            : 'BUFFERING_STATE',
+      playStatus: shownStatus(reported, player),
     };
   }
   if (reported && sourceOf(reported) !== 'wifi') return reported;
@@ -47,10 +48,20 @@ function leadFor(rooms: Room[], key: string): Room | undefined {
   return chosen && leaderOf(rooms, chosen);
 }
 
+export interface SelectedRoom {
+  rooms: Room[];
+  lead: Room | null;
+  members: Room[];
+  speaker: string;
+  live: SpeakerLive;
+  roomsState: RoomsState;
+  select: (id: string) => void;
+}
+
 // Every room, and the one this browser looks at. Playback lives on a group's leader, so
 // the selected room is always a leader; it is followed live (useSpeaker, over SSE) while
 // the others are polled (useRooms). The choice is kept per browser.
-export function useSelectedRoom() {
+export function useSelectedRoom(): SelectedRoom {
   const [selectedKey, setSelectedKey] = useState(targetDevice);
   const [leadId, setLeadId] = useState<string | null>(null);
   const roomsState = useRooms(leadId);
@@ -93,7 +104,7 @@ export function useSelectedRoom() {
   // it (a cold start, a room switch) rather than standby at a made-up volume.
   const heard = live.nowPlaying !== null || live.player.station !== null;
   const rooms: Room[] = polled.map((r) =>
-    lead && r.id === lead.id && heard ? { ...r, now, volume: live.volume } : r
+    r.id === lead?.id && heard ? { ...r, now, volume: live.volume } : r
   );
   const snapshot = roomsState.loaded && heard ? rooms : null;
   useEffect(() => {
@@ -119,5 +130,3 @@ export function useSelectedRoom() {
     select,
   };
 }
-
-export type SelectedRoom = ReturnType<typeof useSelectedRoom>;

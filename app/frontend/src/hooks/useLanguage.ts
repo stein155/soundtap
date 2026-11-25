@@ -2,7 +2,14 @@
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { detectInitialLang, isSupportedLang, loadLanguage, makeT, shownLang } from '../lib/i18n';
+import {
+  detectInitialLang,
+  isSupportedLang,
+  loadLanguage,
+  makeT,
+  shownLang,
+  type I18n,
+} from '../lib/i18n';
 import { PREF, readPref, writePref } from '../lib/storage';
 
 export function initialLang(): string {
@@ -12,7 +19,7 @@ export function initialLang(): string {
 
 // The UI language: the one picked in settings, else the browser's. Kept on <html lang>
 // so a screen reader pronounces the page in the language it is shown in.
-export function useLanguage() {
+export function useLanguage(): I18n {
   const [lang, setLangState] = useState(() => shownLang(initialLang()));
   // The last pick: a slower load of an earlier one must not undo it.
   const wanted = useRef(lang);

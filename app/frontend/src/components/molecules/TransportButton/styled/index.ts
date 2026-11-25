@@ -6,7 +6,10 @@ import { hitArea } from '../../../../theme/hitArea';
 
 export type TransportVariant = 'card' | 'player' | 'full';
 
-type Look = { $variant: TransportVariant; $on: boolean };
+interface Look {
+  $variant: TransportVariant;
+  $on: boolean;
+}
 
 const looks: Record<TransportVariant, ReturnType<typeof css<Look>>> = {
   // On a room card: quiet while the room is silent, the accent while it plays.

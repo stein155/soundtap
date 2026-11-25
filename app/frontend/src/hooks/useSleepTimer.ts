@@ -14,9 +14,19 @@ export type SleepTimer = { minutes: number; endsAt: number } | null;
 const toTimer = (state: SleepState | null): SleepTimer =>
   state?.endsAt ? { minutes: state.minutes, endsAt: Date.parse(state.endsAt) } : null;
 
+export interface SleepTimerControl {
+  timer: SleepTimer;
+  start: (minutes: number) => Promise<void>;
+  clear: () => void;
+}
+
 // The selected speaker's sleep timer, read when the now-playing screen opens. The timer
 // itself runs on the speaker, so it fires with the page closed.
-export function useSleepTimer(speaker: string, visible: boolean, onFailed?: () => void) {
+export function useSleepTimer(
+  speaker: string,
+  visible: boolean,
+  onFailed?: () => void
+): SleepTimerControl {
   // Kept with the speaker it was read from: after a switch, the previous room's countdown
   // is not shown under the new one while its own read is still out.
   const [held, setHeld] = useState<{ speaker: string; timer: SleepTimer }>({
@@ -36,7 +46,7 @@ export function useSleepTimer(speaker: string, visible: boolean, onFailed?: () =
     gen.current += 1; // whatever was in flight belongs to the speaker left behind
   }, [speaker]);
   const read = useCallback(
-    (isCurrent: () => boolean) => {
+    async (isCurrent: () => boolean) => {
       const g = gen.current;
       return getSleep(speaker).then((state) => {
         if (!isCurrent() || g !== gen.current) return;
@@ -52,10 +62,10 @@ export function useSleepTimer(speaker: string, visible: boolean, onFailed?: () =
   useEffect(() => {
     if (!visible) return undefined;
     // A slow answer from the previous speaker must not land under the next one.
-    let current = true;
-    void read(() => current);
+    let live = true;
+    void read(() => live);
     return () => {
-      current = false;
+      live = false;
     };
   }, [visible, read]);
   // The speaker clears the timer when it fires or someone else cancels it, and another
@@ -64,20 +74,20 @@ export function useSleepTimer(speaker: string, visible: boolean, onFailed?: () =
   // schedules the next read.
   useEffect(() => {
     if (!visible) return undefined;
-    let current = true;
+    let live = true;
     const untilEnd = timer ? timer.endsAt - Date.now() + 1000 : 0;
     let wait = misses ? RETRY_MS : REREAD_MS;
     if (timer) wait = untilEnd > 0 ? Math.min(REREAD_MS, untilEnd) : RETRY_MS;
-    const id = setTimeout(() => read(() => current), wait);
+    const id = setTimeout(() => void read(() => live), wait);
     return () => {
-      current = false;
+      live = false;
       clearTimeout(id);
     };
   }, [visible, read, held, timer, misses]);
   const start = async (minutes: number) => {
     const g = ++gen.current;
     const target = speaker;
-    const state = await setSleep(minutes, target).catch(() => {
+    const state = await setSleep(minutes, target).catch(async () => {
       // Say so, and show what the speaker really has.
       onFailed?.();
       return getSleep(target).catch(() => null);

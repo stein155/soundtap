@@ -46,7 +46,7 @@ function usePlaylists(ready: boolean) {
         }
         all = [...all, ...r.items];
         setPlaylists(all);
-        offset = r.next && r.next > offset ? r.next : undefined;
+        offset = r.next !== undefined && r.next > offset ? r.next : undefined;
       }
     };
     void load();
@@ -58,9 +58,16 @@ function usePlaylists(ready: boolean) {
   return { playlists, homeLoaded };
 }
 
+export interface SpotifyHome {
+  playlists: SpotifyPlaylist[];
+  homeLoaded: boolean;
+  recent: SpotifyRecent[];
+  following: SpotifyArtist[];
+}
+
 // The home list: the playlists, and as extras the recent plays and followed artists. A
 // failed extra hides its group; the rest of the library still works.
-export function useSpotifyHome(ready: boolean) {
+export function useSpotifyHome(ready: boolean): SpotifyHome {
   const { playlists, homeLoaded } = usePlaylists(ready);
   const [recent, setRecent] = useState<SpotifyRecent[]>([]);
   const [following, setFollowing] = useState<SpotifyArtist[]>([]);

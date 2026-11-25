@@ -46,8 +46,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px; /* a long name ends before the icons, also at 320 px */
-  height: calc(60px + env(safe-area-inset-top));
-  padding: env(safe-area-inset-top) 12px 0;
+  height: calc(56px + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) 6px 0;
   background: var(--surface);
   flex: none;
 }
@@ -68,8 +68,8 @@
 }
 
 .top-btn svg {
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
@@ -78,10 +78,27 @@
   opacity: 0.6;
 }
 
+/* A search field in a strip of its own under the bar. */
 .top-field {
-  flex: 1;
-  min-width: 0;
-  padding-left: 8px;
+  flex: none;
+  padding: 0 16px 12px;
+  background: var(--surface);
+}
+
+/* The search's title carries TuneIn's logo as a small badge in its own colours. */
+.brand .tunein-badge {
+  display: inline-grid;
+  place-items: center;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: #1c203c;
+  color: #63d3c6;
+}
+
+.brand .tunein-badge .tunein-logo {
+  width: 30px;
+  height: 13px;
 }
 
 .brand {
@@ -91,10 +108,9 @@
   margin: 0;
   min-width: 0;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
-  letter-spacing: 0.8px;
-  color: var(--ink-2);
+  color: var(--ink);
 }
 
 .brand span {
@@ -105,14 +121,16 @@
 /* recently played */
 .brand svg {
   flex: none;
-  width: 24px;
-  height: 24px;
+  width: 18px;
+  height: 18px;
 }
 
 .recent {
   list-style: none;
   margin: 0 calc(-1 * var(--page-gutter));
   padding: 0;
+  background: var(--surface);
+  box-shadow: 0 1px 0 var(--border);
 }
 
 .recent-row {
@@ -121,13 +139,17 @@
   align-items: center;
 }
 
+.recent-row + .recent-row {
+  border-top: 1px solid var(--border);
+}
+
 .recent-play {
   flex: 1;
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 20px;
-  padding: 8px 0 8px 20px;
+  gap: 16px;
+  padding: 8px 0 8px var(--page-gutter);
   border: 0;
   background: none;
   text-align: left;
@@ -147,17 +169,18 @@
 }
 
 .recent-art {
-  width: 62px;
-  height: 62px;
+  width: 56px;
+  height: 56px;
   flex: none;
+  border-radius: var(--radius);
 }
 
 .recent-text {
   min-width: 0;
   display: grid;
-  gap: 4px;
+  gap: 3px;
   font-size: 15px;
-  letter-spacing: -0.25px;
+  font-weight: 600;
 }
 
 .recent-text > span,
@@ -165,88 +188,225 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  letter-spacing: -0.4px;
 }
 
 .recent-text small {
   font-size: 12px;
-  letter-spacing: 0.02em;
+  font-weight: 400;
   color: var(--ink-3);
 }
 
 .recent-more {
-  position: absolute;
-  right: 0;
-  top: 0;
+  flex: none;
+  display: grid;
+  place-items: center;
   width: 44px;
-  height: 100%;
-  opacity: 0;
-  pointer-events: none;
+  height: 44px;
+  margin-right: 6px;
   border: 0;
+  border-radius: 50%;
   background: none;
   color: var(--ink-3);
   cursor: pointer;
   outline: none;
 }
 
-.recent-more[data-focus-visible] {
-  opacity: 1;
-  pointer-events: auto;
+.recent-more[data-pressed] {
+  background: var(--press);
 }
 
 .recent-more svg {
   width: 18px;
   height: 18px;
-  margin: auto;
+}
+
+/* What can be done with a recent entry: a sheet from the bottom, its entry on top. */
+.sheet.ract {
+  height: auto;
+  border-radius: 14px 14px 0 0;
+  padding-bottom: calc(28px + env(safe-area-inset-bottom));
+  box-shadow: 0 -10px 30px rgb(0 0 0 / 18%);
+}
+
+/* A failure that stopped what was asked: a sheet nearly as tall as the page. */
+.sheet.errpage {
+  height: calc(100dvh - max(12px, env(safe-area-inset-top) + 8px));
+  border-radius: 14px 14px 0 0;
+  background: var(--surface);
+  box-shadow: 0 -10px 30px rgb(0 0 0 / 18%);
+}
+
+.ract-grab {
+  display: block;
+  width: 36px;
+  height: 4px;
+  margin: 8px auto 2px;
+  border-radius: 2px;
+  background: var(--grip);
+}
+
+.ract-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 16px 16px;
+}
+
+.ract-art {
+  width: 56px;
+  height: 56px;
+  flex: none;
+  border-radius: var(--radius);
+}
+
+.ract-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.ract-text h2 {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.ract-text small {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.ract-list {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-block: 1px solid var(--border-strong);
+}
+
+.ract-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 52px;
+  padding: 0 16px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 15px;
+  text-align: left;
+  color: var(--ink);
+  cursor: pointer;
+  outline: none;
+}
+
+.ract-row + .ract-row {
+  border-top: 1px solid var(--border);
+}
+
+.ract-row[data-pressed] {
+  background: var(--press);
+}
+
+.ract-row[data-focus-visible] {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.ract-row span {
+  flex: 1;
+}
+
+.ract-row svg {
+  width: 22px;
+  height: 22px;
+  flex: none;
+}
+
+.ract-row .ract-more {
+  width: 18px;
+  height: 18px;
+  color: var(--ink-3);
+}
+
+.ract-row.danger {
+  color: var(--danger);
 }
 
 .home {
   padding-top: 0;
 }
 
+.search-bar {
+  padding: 12px 16px;
+  background: var(--surface);
+  box-shadow: 0 1px 0 var(--border);
+}
+
 .search {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   width: 100%;
-  min-height: 62px;
-  padding: 0 16px 0 20px;
-  color: var(--ink);
+  height: 40px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--ink-3);
+  font: inherit;
   text-align: left;
-  text-decoration: none;
   cursor: pointer;
 }
 
-.search-mark {
+.search svg {
   flex: none;
-  display: grid;
-  place-items: center;
-  width: 41px;
-  height: 41px;
-  border-radius: 50%;
-  background: #b2b2b2;
-  color: #fff;
+  width: 18px;
+  height: 18px;
+  stroke-width: 2;
 }
 
 .search-text {
   flex: 1;
   min-width: 0;
-  font-size: 14px;
-  letter-spacing: -0.25px;
-  color: var(--ink-2);
+  font-size: 15px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.search svg {
+.search-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 52px;
+  padding: 0 16px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.search-row svg {
+  flex: none;
   width: 22px;
   height: 22px;
   stroke-width: 1.8;
 }
 
-.search[data-pressed] {
-  background: var(--surface-2);
+.search-row .search-go {
+  width: 18px;
+  height: 18px;
+  stroke-width: 2;
+  color: var(--ink-3);
+}
+
+.search[data-pressed],
+.search-row:active {
+  background: var(--surface-3);
 }
 
 /* artwork */
@@ -328,7 +488,7 @@
   content: '';
   position: absolute;
   inset: 0;
-  background: rgba(255, 255, 255, 0.18);
+  background: rgb(255 255 255 / 18%);
 }
 
 /* With nothing to blur, a light grey field behind a dark card glares in dark mode. */
@@ -343,7 +503,7 @@
 /* The bar's text is white: a light logo blurs to near-white, so the bar darkens
    its blur like the player does rather than lightening it. */
 .minibar .blur::after {
-  background: rgba(0, 0, 0, 0.5);
+  background: rgb(0 0 0 / 50%);
 }
 
 /* dock */
@@ -367,7 +527,10 @@
   overflow: hidden;
   color: #fff;
   font-weight: 400;
-  letter-spacing: -0.25px;
+}
+
+.minibar {
+  height: 62px;
 }
 
 .idlebar {
@@ -410,7 +573,7 @@
   flex: 1;
   min-width: 0;
   height: 100%;
-  padding: 0 0 0 10px;
+  padding: 0 0 0 12px;
   border: 0;
   background: none;
   color: #fff;
@@ -419,9 +582,9 @@
 }
 
 .mini-art {
-  width: 40px;
-  height: 40px;
-  border-radius: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-sm);
 }
 
 .mini-text {
@@ -432,24 +595,22 @@
 }
 
 .mini-title {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
-  letter-spacing: -0.6px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
+  text-shadow: 0 1px 6px rgb(0 0 0 / 40%);
 }
 
 .mini-line {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 400;
-  letter-spacing: -0.3px;
-  margin-top: 2px;
+  opacity: 0.85;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
+  text-shadow: 0 1px 6px rgb(0 0 0 / 40%);
 }
 
 .mini-ctl {
@@ -458,7 +619,7 @@
   flex: none;
   width: 44px;
   height: 44px;
-  margin-right: 8px;
+  margin: 0 12px;
   display: grid;
   place-items: center;
   border: 0;
@@ -469,8 +630,8 @@
 }
 
 .mini-ctl svg {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
 }
 
 .mini-ctl[data-pressed] {
@@ -482,8 +643,11 @@
   align-items: center;
   gap: 12px;
   width: 100%;
-  height: calc(64px + env(safe-area-inset-bottom));
-  padding: 0 18px env(safe-area-inset-bottom) 10px;
+  /* The phone's home indicator sits in the lowest few pixels of its safe area: clear it,
+     without the whole safe area as an empty strip under the bar. */
+  --spk-pad: max(0px, calc(env(safe-area-inset-bottom) - 16px));
+  height: calc(64px + var(--spk-pad));
+  padding: 0 12px var(--spk-pad);
   border: 0;
   background: var(--surface);
   text-align: left;
@@ -507,8 +671,8 @@
 }
 
 .av-glyph {
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
 }
 
 .av-glyph svg {
@@ -524,7 +688,7 @@
   height: 20px;
   padding: 0 4px;
   border-radius: 999px;
-  background: var(--accent);
+  background: var(--switch-on);
   color: var(--on-accent);
   display: grid;
   place-items: center;
@@ -543,7 +707,6 @@
 .spk-name {
   font-size: 14px;
   font-weight: 700;
-  letter-spacing: -0.6px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -553,9 +716,7 @@
 .spk-sub {
   font-size: 12px;
   font-weight: 400;
-  letter-spacing: -0.3px;
   color: var(--ink-3);
-  margin-top: 2px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -565,14 +726,21 @@
   position: relative;
 }
 
+/* On the page the speaker bar stands off what scrolls above it: a line and a soft shadow. */
+.dock .spkbar-wrap {
+  box-shadow:
+    0 -1px 0 rgb(22 24 27 / 14%),
+    0 -8px 20px rgb(0 0 0 / 6%);
+}
+
 .spk-vol.tap {
   position: absolute;
-  top: 8px;
-  right: 6px;
+  top: 10px;
+  right: 12px;
   display: grid;
   place-items: center;
-  width: 48px;
-  height: 48px;
+  width: 44px;
+  height: 44px;
   padding: 0;
   border: 0;
   background: none;
@@ -586,12 +754,32 @@
 /* the volume panel from the speaker bar */
 .sheet.volpanel {
   height: auto;
-  border-radius: 0;
-  padding-bottom: calc(24px + env(safe-area-inset-bottom));
+  border-radius: 14px 14px 0 0;
+  padding-bottom: calc(32px + env(safe-area-inset-bottom));
+  background: var(--surface);
+  box-shadow: 0 -10px 30px rgb(0 0 0 / 18%);
 }
 
 .volpanel .vols {
-  padding-top: 24px;
+  padding: 20px 16px 0;
+  border-top: 0;
+}
+
+/* The icon at the edge with its target reaching past it; the knob ends inside the sheet. */
+.volpanel .vol-ico {
+  margin-left: -11px;
+}
+
+.volpanel .vtrack {
+  margin-right: 11px;
+}
+
+.volpanel .vols .vtitle {
+  margin: 0 0 4px;
+}
+
+.volpanel .vols .vname {
+  margin: 18px 0 4px;
 }
 
 .volpanel-top {
@@ -599,28 +787,43 @@
   align-items: center;
   justify-content: center;
   position: relative;
-  height: 60px;
+  height: 52px;
   border-bottom: 1px solid var(--border);
 }
 
 .volpanel-top h2 {
   margin: 0;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 700;
-  letter-spacing: 0.8px;
+  letter-spacing: 0.5px;
   color: var(--ink);
 }
 
 .volpanel-top .top-btn {
   position: absolute;
   right: 6px;
-  top: 6px;
+  top: 4px;
 }
 
 .spk-vol svg {
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   color: var(--ink);
+}
+
+.spk-up {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin-right: -12px;
+}
+
+.spk-up svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 2;
+  color: var(--ink-3);
 }
 
 /* the start page: Stockholm's grey section bar over each group, as in the installer */
@@ -628,7 +831,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  min-height: 43px;
+  min-height: 51px;
   margin: 0;
   padding: 4px 16px;
   background: var(--section-bar);
@@ -649,6 +852,7 @@
 }
 
 button.h-row {
+  justify-content: space-between;
   background: var(--section-bar);
   border: 0;
   font-family: inherit;
@@ -658,14 +862,15 @@ button.h-row {
 .h-row svg {
   width: 16px;
   height: 16px;
-  stroke-width: 2.6;
+  stroke-width: 2;
+  color: var(--ink-3);
 }
 
 .rail {
   display: flex;
-  gap: 12px;
+  gap: 10px;
   overflow-x: auto;
-  padding: 14px 16px 18px;
+  padding: 14px 16px;
   margin: 0;
   list-style: none;
   scrollbar-width: none;
@@ -676,37 +881,31 @@ button.h-row {
   display: none;
 }
 
-/* A rail inside a page's padding runs from edge to edge. */
+/* A rail inside a page's padding runs from edge to edge, its bar straight under what is
+   above it. */
 .ribbon {
-  margin: 16px calc(-1 * var(--page-gutter)) 0;
+  margin: 0 calc(-1 * var(--page-gutter));
 }
 
 .ribbon .h-row {
-  padding: 0 var(--page-gutter);
+  padding: 4px var(--page-gutter);
 }
 
 .ribbon .rail {
   padding-inline: var(--page-gutter);
-  margin-bottom: 24px;
 }
 
-.ribbon .card-play .card-label {
-  padding-right: 10px;
-}
-
+/* A tile: the art with rounded corners, its name and one quiet line under it. */
 .card {
   position: relative;
   flex: none;
-  width: 154px;
-  background: var(--surface);
-  cursor: pointer;
+  width: 140px;
   outline: none;
-  border-radius: var(--radius-sm);
-  overflow: hidden;
   transition: transform 0.18s var(--ease);
 }
 
-.card:has(.card-play[data-pressed]) {
+.card:has(.card-play[data-pressed]),
+.card:has(.card-play:active) {
   transform: scale(0.97);
 }
 
@@ -723,52 +922,57 @@ button.h-row {
   outline: none;
 }
 
-.card-play .card-label {
-  padding-right: 40px;
-}
-
 .card:has(.card-play[data-focus-visible]),
+.card:has(.card-play:focus-visible),
 .card-more[data-focus-visible] {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
 
+/* Only the keyboard finds it: a long press on the tile opens the same choices. */
 .card-more {
   position: absolute;
-  right: 2px;
-  bottom: 4px;
-  width: 44px;
-  height: 44px;
+  right: 4px;
+  top: 4px;
+  width: 36px;
+  height: 36px;
   padding: 0;
   border: 0;
-  background: none;
+  border-radius: 50%;
+  background: var(--surface);
   color: var(--ink-2);
   display: grid;
   place-items: center;
   cursor: pointer;
   outline: none;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.card-more[data-focus-visible] {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .card-more svg {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
 }
 
 .card-art {
-  width: 154px;
-  height: 154px;
-  border-radius: 0;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  border-radius: var(--radius);
 }
 
 .card-label {
-  display: flex;
-  align-items: center;
-  padding: 12px 10px;
-  min-height: 52px;
-  font-size: 12px;
-  letter-spacing: -0.3px;
-  font-weight: 400;
-  color: var(--ink-2);
+  display: block;
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--ink);
 }
 
 /* block, not a flex column: text-overflow does not apply to a flex container's text,
@@ -783,16 +987,42 @@ button.h-row {
 
 .card-label small {
   display: block;
-  margin-top: 3px;
-  font-size: 11px;
-  letter-spacing: -0.4px;
-  color: var(--ink-3);
-  white-space: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
   font-weight: 400;
+  color: var(--ink-3);
 }
 
 .card-art .art-letters {
   font-size: 40px;
+}
+
+/* Spotify's ribbons hold smaller tiles; an artist is a circle with its name centred. */
+.ribbon .card {
+  width: 92px;
+}
+
+.ribbon .card-label {
+  margin-top: 6px;
+}
+
+.ribbon .card-art .art-letters {
+  font-size: 28px;
+}
+
+.ribbon .card.round {
+  width: 76px;
+  text-align: center;
+}
+
+.ribbon .card.round .card-art {
+  border-radius: 50%;
+}
+
+.ribbon .card.round .card-label {
+  font-size: 12px;
 }
 
 .svc {
@@ -810,10 +1040,10 @@ button.h-row {
   background: #1db954;
 }
 
-/* TuneIn's colours, in both themes: its navy logo on its teal. */
+/* TuneIn's colours, in both themes: its logo in soft teal on its navy. */
 .svc.tunein {
-  background: #14d8cc;
-  color: #1c203c;
+  background: #1c203c;
+  color: #63d3c6;
 }
 
 .svc.tunein svg {
@@ -831,7 +1061,7 @@ button.h-row {
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.35);
+  background: var(--dim);
 }
 
 .overlay[data-entering] {
@@ -847,7 +1077,7 @@ button.h-row {
 .overlay.left {
   justify-content: flex-start;
   align-items: stretch;
-  background: var(--backdrop);
+  background: var(--dim);
 }
 
 .overlay.bare,
@@ -860,7 +1090,8 @@ button.h-row {
 .sheet {
   width: 100%;
   max-width: var(--shell-max);
-  height: calc(100dvh - 56px);
+  /* Below the phone's status bar too, in a home-screen app that draws under it. */
+  height: calc(100dvh - max(56px, env(safe-area-inset-top) + 8px));
   background: var(--bg);
   border-radius: var(--radius) var(--radius) 0 0;
   overflow: hidden;
@@ -893,6 +1124,31 @@ button.h-row {
   will-change: opacity;
 }
 
+/* A question in the middle of the screen, as Stockholm asks before it erases something. */
+.overlay.center {
+  align-items: center;
+  padding: 24px;
+}
+
+.sheet.dialog {
+  width: 100%;
+  max-width: 340px;
+  height: auto;
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 10px 40px rgb(0 0 0 / 30%);
+}
+
+.sheet.dialog[data-entering] {
+  animation: pop 0.2s var(--ease);
+  will-change: transform, opacity;
+}
+
+.sheet.dialog[data-exiting] {
+  animation: pop 0.15s var(--ease) reverse;
+  will-change: transform, opacity;
+}
+
 .dlg {
   outline: none;
   height: 100%;
@@ -906,16 +1162,15 @@ button.h-row {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 60px;
-  background: var(--surface);
+  height: 52px;
   flex: none;
 }
 
 .sheet-title {
   margin: 0;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 700;
-  letter-spacing: 1.5px;
+  letter-spacing: 0.5px;
   color: var(--ink);
 }
 
@@ -927,8 +1182,8 @@ button.h-row {
 
 .x-btn {
   position: absolute;
-  right: 10px;
-  top: 8px;
+  right: 6px;
+  top: 4px;
   width: 44px;
   height: 44px;
   border: 0;
@@ -940,34 +1195,72 @@ button.h-row {
 }
 
 .x-btn svg {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
+  stroke-width: 2;
 }
 
-/* presets: Stockholm's grey page */
-.sheet:has(.plist) {
-  background: var(--bg-grey);
+/* presets: a sheet from the bottom, the presets and the favorite each under a grey bar */
+.sheet.psheet {
+  height: calc(100dvh - max(24px, env(safe-area-inset-top) + 8px));
+  border-radius: 14px 14px 0 0;
+  box-shadow: 0 -10px 30px rgb(0 0 0 / 18%);
+}
+
+.phead {
+  position: relative;
+  display: grid;
+  grid-template-columns: 44px 1fr 44px;
+  align-items: center;
+  height: 52px;
+  padding: 0 6px;
+  flex: none;
+}
+
+.phead-title {
+  grid-column: 2;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
 }
 
 .plist {
   flex: 1;
   overflow-y: auto;
-  padding: 24px 20px calc(24px + env(safe-area-inset-bottom));
+  padding-bottom: calc(24px + env(safe-area-inset-bottom));
   outline: none;
 }
 
+.pbar {
+  display: flex;
+  align-items: center;
+  min-height: 51px;
+  margin: 0;
+  padding: 4px 16px;
+  background: var(--section-bar);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--ink-2);
+}
+
 .phint {
-  margin: 0 0 12px;
+  margin: 0;
+  padding: 10px 16px;
   text-align: center;
   font-size: 12px;
-  letter-spacing: 0;
   color: var(--ink-3);
 }
 
 .pblank {
   position: relative;
   height: 100%;
-  padding: 0 20px calc(16px + env(safe-area-inset-bottom));
+  padding: 0 32px calc(98px + env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -984,87 +1277,108 @@ button.h-row {
   font-weight: 700;
   letter-spacing: 1px;
   text-transform: uppercase;
+  color: var(--ink);
 }
 
 .pblank p {
   margin: 0;
   font-size: 14px;
-  line-height: 1.3;
+  line-height: 1.45;
+  color: var(--ink-3);
 }
 
 .pblank-ok {
   position: absolute;
   left: 16px;
   right: 16px;
-  bottom: calc(16px + env(safe-area-inset-bottom));
+  bottom: calc(28px + env(safe-area-inset-bottom));
   height: 54px;
-  border: 1px solid var(--ink);
+  border: 0;
   border-radius: var(--radius);
   background: none;
+  box-shadow: inset 0 0 0 1.5px var(--ink);
   color: var(--ink);
   font: inherit;
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.2px;
+  text-transform: uppercase;
 }
 
-.prows {
+.prows,
+.pfav-list {
   list-style: none;
   margin: 0;
   padding: 0;
+  background: var(--surface);
 }
 
-.prow {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 5px 0;
+.prow + .prow {
+  border-top: 1px solid var(--border);
+}
+
+.prow[data-active] {
+  box-shadow: inset 3px 0 0 var(--ink);
 }
 
 .prow.skeleton {
-  height: 62px;
-  margin: 5px 0;
-  border-radius: var(--radius-sm);
+  height: 72px;
   background: var(--surface-2);
 }
 
-.prow-main {
+.prow-main,
+.pfav-main {
   flex: 1;
   min-width: 0;
+  width: 100%;
   display: flex;
   align-items: center;
   gap: 14px;
-  min-height: 62px;
+  min-height: 72px;
+  padding: 8px 16px 8px 8px;
+  border: 0;
+  background: none;
   text-align: left;
-  color: inherit;
-  border-radius: var(--radius-sm);
+  color: var(--ink);
   transition: background 0.15s;
 }
 
-.prow-main:active {
+.pfav-main {
+  padding: 14px 0 14px 16px;
+}
+
+.prow-main:active,
+.pfav-main:active {
   background: var(--press);
 }
 
 .pnum {
+  flex: none;
   width: 28px;
   text-align: center;
   font-size: 18px;
   font-weight: 400;
-  color: var(--ink);
   letter-spacing: 2px;
 }
 
 .part {
-  width: 62px;
-  height: 62px;
-  border-radius: 0;
+  flex: none;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius);
+}
+
+.pfav-art {
+  flex: none;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius);
 }
 
 .pempty {
-  border: 1.5px solid var(--surface-3);
-  background: none;
   display: block;
-  aspect-ratio: 1;
+  box-shadow: inset 0 0 0 1.5px var(--surface-3);
+  background: none;
 }
 
 .ptext {
@@ -1075,29 +1389,58 @@ button.h-row {
 }
 
 .pname {
-  font-size: 14px;
-  font-weight: 400;
-  letter-spacing: -0.25px;
-  color: var(--ink-2);
-  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 500;
 }
 
 .psrc {
-  font-size: 11px;
-  letter-spacing: -0.4px;
+  margin-top: 3px;
+  font-size: 12px;
   color: var(--ink-3);
-  margin-top: 4px;
 }
 
-.prow.empty .pname {
+.prow.empty .pname,
+.pfav-row.empty .pname {
+  font-weight: 400;
   color: var(--ink-3);
 }
 
 .prow[data-active] .pname {
   font-weight: 700;
-  color: var(--ink);
+}
+
+.pfav-row {
+  display: flex;
+  align-items: center;
+}
+
+.pfav-remove {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  margin-right: 4px;
+  border: 0;
+  background: none;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+
+.pfav-remove svg {
+  width: 18px;
+  height: 18px;
+}
+
+.pnote {
+  margin: 0;
+  padding: 12px 16px 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-3);
 }
 
 /* menu from the left */
@@ -1106,6 +1449,7 @@ button.h-row {
   max-width: 332px;
   height: 100%;
   background: var(--surface);
+  box-shadow: 10px 0 30px rgb(0 0 0 / 18%);
 }
 
 .drawer[data-entering] {
@@ -1154,6 +1498,7 @@ button.h-row {
 
 .mrow:not([data-active]) .mico {
   filter: grayscale(1);
+  opacity: 0.75;
 }
 
 .mrow[data-focus-visible] {
@@ -1161,8 +1506,9 @@ button.h-row {
   outline-offset: -2px;
 }
 
+/* As wide as the TuneIn logo, the widest mark, so every label starts at the same place. */
 .mico {
-  width: 22px;
+  width: 36px;
   height: 22px;
   flex: none;
   display: grid;
@@ -1189,7 +1535,7 @@ button.h-row {
 }
 
 .spk-modal .blur::after {
-  background: rgba(0, 0, 0, 0.3);
+  background: rgb(0 0 0 / 30%);
 }
 
 .spk-now {
@@ -1284,7 +1630,7 @@ button.h-row {
   padding: 0;
   border: 0;
   border-radius: 50%;
-  background: rgba(0, 0, 0, 0.45);
+  background: rgb(0 0 0 / 45%);
   color: #fff;
   transform: translateY(-50%);
   cursor: pointer;
@@ -1320,7 +1666,7 @@ button.h-row {
   margin: 0;
   padding: 8px 14px;
   border-radius: 999px;
-  background: rgba(0, 0, 0, 0.7);
+  background: rgb(0 0 0 / 70%);
   color: #fff;
   font-size: 14px;
   width: max-content;
@@ -1420,7 +1766,7 @@ button.h-row {
 .glyph svg {
   width: 100%;
   height: 100%;
-  filter: drop-shadow(0 6px 6px rgba(0, 0, 0, 0.18));
+  filter: drop-shadow(0 6px 6px rgb(0 0 0 / 18%));
 }
 
 .disc.grouped {
@@ -1506,7 +1852,7 @@ button.h-row {
 }
 
 .src[data-selected] {
-  background: var(--accent);
+  background: var(--switch-on);
   color: var(--on-accent);
 }
 
@@ -1571,7 +1917,7 @@ span.vol-ico {
   height: 4px;
   margin-top: -2px;
   border-radius: 2px;
-  background: var(--accent);
+  background: var(--switch-on);
 }
 
 .vthumb {
@@ -1580,11 +1926,13 @@ span.vol-ico {
   height: 22px;
   border-radius: 50%;
   background: var(--thumb);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 35%);
   transition: transform 0.15s;
 }
 
 .vthumb[data-dragging] {
+  /* stylelint-disable-next-line declaration-no-important -- React Aria positions the thumb
+     with an inline transform; only !important can scale it while dragging. */
   transform: translate(-50%, -50%) scale(1.15) !important;
 }
 
@@ -1645,7 +1993,7 @@ span.vol-ico {
   height: 40px;
   border-radius: 999px;
   border: 0;
-  background: var(--accent);
+  background: var(--switch-on);
   color: var(--on-accent);
   text-transform: uppercase;
   letter-spacing: 1px;
@@ -1810,7 +2158,7 @@ span.vol-ico {
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.5);
+  background: rgb(255 255 255 / 50%);
 }
 
 .dot[data-on]::before {
@@ -1855,7 +2203,7 @@ span.vol-ico {
 }
 
 .sleeprow.on-dark {
-  color: rgba(255, 255, 255, 0.85);
+  color: rgb(255 255 255 / 85%);
   width: auto;
   padding: 0 6px;
   gap: 8px;
@@ -1873,9 +2221,11 @@ span.vol-ico {
 .sl-pop {
   background: var(--surface);
   color: var(--ink);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-  min-width: 150px;
+  border-radius: var(--radius);
+  box-shadow:
+    0 2px 8px rgb(0 0 0 / 12%),
+    0 12px 32px rgb(0 0 0 / 28%);
+  min-width: 170px;
   outline: none;
 }
 
@@ -1887,6 +2237,8 @@ span.vol-ico {
 .sl-item {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   min-height: 48px;
   padding: 0 14px;
   border-radius: var(--radius-sm);
@@ -1903,6 +2255,7 @@ span.vol-ico {
 }
 
 .sl-item[data-selected] {
+  background: var(--surface-2);
   font-weight: 700;
 }
 
@@ -1937,31 +2290,33 @@ span.vol-ico {
 .np-top {
   position: relative;
   z-index: 1;
-  display: flex;
+  display: grid;
+  grid-template-columns: 44px 1fr 44px;
   align-items: center;
-  justify-content: space-between;
-  padding: calc(env(safe-area-inset-top) + 8px) 12px 0;
+  height: calc(env(safe-area-inset-top) + 56px);
+  padding: env(safe-area-inset-top) 6px 0;
 }
 
 .np .top-btn {
   color: #fff;
 }
 
-.np-src {
-  margin: 0;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 1.5px;
-  --spotify-disc: #fff;
-  --spotify-waves: #1db954;
+.np .top-btn svg {
+  width: 22px;
+  height: 22px;
 }
 
-.np-src svg {
-  width: 26px;
-  height: 26px;
+.np-src {
+  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  opacity: 0.85;
 }
 
 .np-body {
@@ -1970,7 +2325,7 @@ span.vol-ico {
   flex: 1;
   display: flex;
   flex-direction: column;
-  padding: 28px 20px 12px;
+  padding: 18px 24px 12px;
   min-height: 0;
   overflow-y: auto;
   scrollbar-width: none;
@@ -1978,31 +2333,29 @@ span.vol-ico {
 
 .np-title {
   margin: 0;
-  font-size: 30px;
-  line-height: 1.12;
-  font-weight: 700;
-  letter-spacing: -0.8px;
-  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.2);
+  font-size: 24px;
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: var(--tracking-title);
+  text-shadow: 0 2px 14px rgb(0 0 0 / 20%);
   overflow-wrap: anywhere;
 }
 
 .np-line {
-  margin: 10px 0 0;
-  font-size: 16px;
+  margin: 4px 0 0;
+  font-size: 15px;
   font-weight: 400;
   letter-spacing: 0;
-  opacity: 0.92;
-  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.3);
+  opacity: 0.85;
+  text-shadow: 0 1px 8px rgb(0 0 0 / 30%);
 }
 
 .np-ctl {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 84px;
-  gap: 36px;
-  margin: auto 0 28px;
-  padding-top: 24px;
+  gap: 28px;
+  padding-top: 22px;
 }
 
 .np-ctl .skip {
@@ -2026,7 +2379,7 @@ span.vol-ico {
   width: 80px;
   height: 80px;
   border-radius: 50%;
-  border: 1.5px solid rgba(255, 255, 255, 0.9);
+  border: 1.5px solid rgb(255 255 255 / 90%);
   background: none;
   color: #fff;
   display: grid;
@@ -2044,33 +2397,42 @@ span.vol-ico {
 
 .big[data-pressed] {
   transform: scale(0.94);
-  background: rgba(255, 255, 255, 0.15);
+  background: rgb(255 255 255 / 15%);
 }
 
 .vol.on-dark {
+  gap: 0;
+  margin-top: 12px;
   color: #fff;
 }
 
+/* The icon at the text's edge, its 44 px target reaching past it. */
 .vol.on-dark .vol-ico {
+  margin-left: -12px;
   color: #fff;
+}
+
+.vol.on-dark .vol-ico svg {
+  width: 20px;
+  height: 20px;
 }
 
 .vol.on-dark .vtrack::before {
-  background: rgba(255, 255, 255, 0.35);
-  height: 2px;
-  margin-top: -1px;
+  background: rgb(255 255 255 / 30%);
 }
 
 .vol.on-dark .vfill {
   background: #fff;
-  height: 2px;
-  margin-top: -1px;
 }
 
 .vol.on-dark .vthumb {
-  width: 16px;
-  height: 16px;
+  width: 20px;
+  height: 20px;
   background: #fff;
+}
+
+.vol.on-dark .vval {
+  margin-left: 12px;
 }
 
 .np-time {
@@ -2098,7 +2460,7 @@ span.vol-ico {
   align-items: flex-end;
   justify-content: space-between;
   gap: 12px;
-  margin-top: 18px;
+  margin-top: 10px;
 }
 
 .np-left {
@@ -2154,12 +2516,12 @@ span.vol-ico {
    phone, a phone on its side) keeps the controls and shows the artwork small or not at all. */
 .np-art {
   flex: none;
-  width: min(100%, 300px, calc(100dvh - 540px));
+  width: min(100%, 310px, calc(100dvh - 534px));
   height: auto;
   aspect-ratio: 1;
   margin: 0 auto 22px;
   border-radius: var(--radius);
-  box-shadow: var(--shadow-lg);
+  box-shadow: 0 22px 50px -16px rgb(0 0 0 / 60%);
 }
 
 @media (max-height: 680px) {
@@ -2204,13 +2566,20 @@ span.vol-ico {
 
 @keyframes dim {
   from {
-    background-color: rgba(0, 0, 0, 0);
+    background-color: rgb(0 0 0 / 0%);
   }
 }
 
 @keyframes fade {
   from {
     opacity: 0;
+  }
+}
+
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
   }
 }
 
@@ -2236,6 +2605,10 @@ span.vol-ico {
   .drawer {
     margin-left: max(0px, calc(50vw - var(--shell-max) / 2));
   }
+
+  .sheet.dialog {
+    border-radius: 14px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2245,20 +2618,13 @@ span.vol-ico {
   .overlay,
   .overlay *,
   .top-layer * {
+    /* stylelint-disable declaration-no-important, time-min-milliseconds --
+       Reduced motion overrides every animation, inline ones too; a near-zero duration
+       (not none) still fires the end events the code waits for. */
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+    /* stylelint-enable declaration-no-important, time-min-milliseconds */
   }
-}
-
-.favs {
-  margin-top: 20px;
-  border-top: 1px solid var(--line);
-  padding-top: 8px;
-}
-
-.fav-add svg {
-  flex: none;
-  margin-left: 3px;
 }
 
 /* The speaker drawings are near-black: on dark surfaces they need lifting to stay visible. */
@@ -2268,14 +2634,13 @@ span.vol-ico {
 }
 
 [data-theme='dark'] .glyph svg {
-  filter: brightness(1.4) drop-shadow(0 6px 6px rgba(0, 0, 0, 0.18));
+  filter: brightness(1.4) drop-shadow(0 6px 6px rgb(0 0 0 / 18%));
 }
 
 /* The logo is a wide word: where other services show a square icon it runs wider. Last in
    the file, to outrank the square sizes above. */
 .brand .tunein-logo,
-.mico .tunein-logo,
-.np-src .tunein-logo {
+.mico .tunein-logo {
   width: 36px;
   height: 16px;
 }
@@ -2346,10 +2711,12 @@ span.vol-ico {
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  opacity: 0.8;
+  opacity: 0.75;
 }
 
 .np .big {
+  width: 72px;
+  height: 72px;
   border: 0;
   background: #fff;
   color: #111;
@@ -2378,7 +2745,7 @@ span.vol-ico {
   padding: 0 14px;
   border: 0;
   border-radius: 20px;
-  background: rgba(255, 255, 255, 0.14);
+  background: rgb(255 255 255 / 14%);
   color: #fff;
   font: inherit;
   font-size: 13px;
@@ -2391,13 +2758,37 @@ span.vol-ico {
   height: 16px;
 }
 
+/* The sleep timer's chip: the time left a little softer, lighter while its menu is open. */
+.np .sleeprow.on-dark[aria-expanded='true'] {
+  background: rgb(255 255 255 / 28%);
+}
+
+.np .sleeprow.on-dark svg:first-child {
+  width: 16px;
+  height: 16px;
+}
+
+.np .sleeprow.on-dark .sl-v {
+  opacity: 0.8;
+}
+
 /* The speakers sheet: which speaker this page controls and which play along (the design's
    "Speaker wisselen"). */
+/* The speakers and group sheets: from the bottom, as tall as what they hold. */
+.sheet.spks-modal {
+  display: flex;
+  flex-direction: column;
+  height: auto;
+  max-height: calc(100dvh - max(56px, env(safe-area-inset-top) + 8px));
+  border-radius: 14px 14px 0 0;
+  box-shadow: 0 -10px 30px rgb(0 0 0 / 18%);
+}
+
 .spks-sheet {
   --page-gutter: 16px;
   display: flex;
   flex-direction: column;
-  padding: 0 16px 24px;
+  padding: 0 16px calc(28px + env(safe-area-inset-bottom));
   overflow-y: auto;
 }
 
@@ -2479,27 +2870,28 @@ span.vol-ico {
   height: 22px;
   flex: none;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--switch-on);
   color: var(--on-accent);
 }
 
 .spks-tick svg {
   width: 12px;
   height: 12px;
+  stroke-width: 3;
 }
 
 .spks-actions {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin-top: 18px;
+  margin-top: 16px;
 }
 
 .spks-primary {
   min-height: 54px;
   border: 0;
   border-radius: var(--radius);
-  background: var(--accent);
+  background: var(--switch-on);
   color: var(--on-accent);
   font: inherit;
   font-size: 11px;
@@ -2525,7 +2917,11 @@ span.vol-ico {
   --page-gutter: 16px;
   display: flex;
   flex-direction: column;
-  min-height: 100%;
+  /* The sheet clips: on a short phone, or with the home indicator's inset below the
+     buttons, the page scrolls instead of cutting them off. */
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--bg);
   color: var(--ink);
 }
@@ -2533,8 +2929,9 @@ span.vol-ico {
 .off-bar {
   display: flex;
   justify-content: flex-end;
-  height: 56px;
-  padding: 0 6px;
+  align-items: center;
+  height: calc(56px + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) 6px 0;
   background: var(--surface);
 }
 
@@ -2646,7 +3043,7 @@ span.vol-ico {
   flex-direction: column;
   gap: 6px;
   margin-top: auto;
-  padding: 16px 16px calc(24px + env(safe-area-inset-bottom));
+  padding: 12px 16px calc(28px + env(safe-area-inset-bottom));
 }
 
 .off-primary {
@@ -2657,7 +3054,7 @@ span.vol-ico {
   min-height: 54px;
   border: 0;
   border-radius: var(--radius);
-  background: var(--accent);
+  background: var(--switch-on);
   color: var(--on-accent);
   font: inherit;
   font-size: 11px;
@@ -2675,6 +3072,7 @@ span.vol-ico {
   font-size: 13px;
   font-weight: 600;
   color: var(--ink-3);
+  text-decoration: underline;
   cursor: pointer;
 }
 
@@ -2751,23 +3149,73 @@ span.vol-ico {
   height: 27px;
   border-radius: 50%;
   background: #fff;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 2px 4px rgb(0 0 0 / 20%);
   transition: transform 0.18s ease;
 }
 
 .grp-switch[data-on] {
-  background: var(--accent);
+  background: var(--switch-on);
 }
 
 .grp-switch[data-on]::after {
   transform: translateX(20px);
 }
 
+.grp-row .spks-disc {
+  width: 44px;
+  height: 44px;
+}
+
+/* A member's own level, under its name: no icon, the slider from the name's edge. */
 .grp-vol {
-  padding: 0 16px 14px 78px;
+  padding: 0 16px 0 74px;
   background: var(--surface);
 }
 
+.grp-vol .vol {
+  gap: 0;
+  margin-top: -12px;
+}
+
+.grp-vol .vol-ico {
+  display: none;
+}
+
+.grp-vol .vthumb {
+  width: 20px;
+  height: 20px;
+}
+
+.grp-vol .vval {
+  min-width: 24px;
+  margin-left: 12px;
+  color: var(--ink-3);
+}
+
+/* The whole group's level: the icon at the edge, its target reaching past it. */
 .grp-vol.grp-all {
-  padding: 14px 16px;
+  padding: 6px 16px;
+}
+
+.grp-vol.grp-all .vol {
+  margin-top: 0;
+}
+
+.grp-vol.grp-all .vol-ico {
+  display: grid;
+  margin-left: -12px;
+}
+
+.grp-vol.grp-all .vol-ico svg {
+  width: 20px;
+  height: 20px;
+}
+
+.grp-vol.grp-all .vthumb {
+  width: 22px;
+  height: 22px;
+}
+
+.grp-vol.grp-all .vval {
+  color: var(--ink);
 }

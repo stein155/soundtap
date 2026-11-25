@@ -11,6 +11,12 @@ export const Broker = styled.fieldset<{ $off: boolean }>`
   border: 0;
   opacity: ${({ $off }) => ($off ? 0.45 : 1)};
   transition: opacity 180ms ease;
+
+  /* More options: a link with room for a finger, under the hint. */
+  & > button:last-child {
+    min-height: 44px;
+    margin-top: 4px;
+  }
 `;
 
 export const Link = styled.span`

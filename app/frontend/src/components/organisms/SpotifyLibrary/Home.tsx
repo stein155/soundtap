@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
+import type { ReactElement } from 'react';
 import { Icon } from '../../atoms/Icon';
 import { Art } from '../../molecules/Art';
 import { ConfirmAction } from '../../molecules/ConfirmAction';
-import { ListRow } from '../../molecules/ListRow';
 import { EntryRow, SearchEntry } from '../../molecules/SearchEntry';
-import { SheetGroup } from '../../molecules/SheetGroup';
+import { SetItem } from '../../molecules/SetItem';
+import { SetMenu } from '../../molecules/SetMenu';
 import { SheetLoading } from '../../molecules/SheetLoading';
 import { useLongPress } from '../../../hooks/useLongPress';
 import type { SpotifyLibrary as Library } from '../../../hooks/useSpotifyLibrary';
@@ -23,17 +24,19 @@ interface TileItem {
 function Tile({
   item,
   sub,
+  round,
   onOpen,
   onHold,
 }: {
   item: TileItem;
-  sub?: string;
+  sub?: string | undefined;
+  round?: boolean | undefined;
   onOpen: () => void;
-  onHold?: () => void;
+  onHold?: (() => void) | undefined;
 }) {
   const press = useLongPress(onHold ?? null, onOpen);
   return (
-    <li className="card">
+    <li className={round === true ? 'card round' : 'card'}>
       <button type="button" className="card-play" {...press}>
         <Art src={artworkURL(item.artwork)} name={item.name} className="card-art" />
         <span className="card-label">
@@ -52,15 +55,18 @@ export function Ribbon<T extends TileItem>({
   title,
   items,
   sub,
+  round,
   onOpen,
   onHold,
 }: {
   title: string;
   items: T[];
   sub?: (item: T) => string | undefined;
+  // Round tiles, as an artist's.
+  round?: boolean | undefined;
   onOpen: (item: T) => void;
-  onHold?: (item: T) => void;
-}) {
+  onHold?: ((item: T) => void) | undefined;
+}): ReactElement | null {
   if (!items.length) return null;
   return (
     <section className="ribbon">
@@ -71,6 +77,7 @@ export function Ribbon<T extends TileItem>({
             key={item.uri}
             item={item}
             sub={sub?.(item)}
+            round={round}
             onOpen={() => onOpen(item)}
             onHold={onHold && (() => onHold(item))}
           />
@@ -83,7 +90,7 @@ export function Ribbon<T extends TileItem>({
 // The library's top level, laid out as Stockholm's: the search bar, a ribbon per part, the
 // songs as a row under them. Stockholm's featured, genre and chart ribbons need Spotify's
 // catalogue, which this session cannot read.
-export function Home({ library }: { library: Library }) {
+export function Home({ library }: { library: Library }): ReactElement {
   const { t } = useI18n();
   const hold = (item: TileItem) =>
     library.hold?.({ uri: item.uri, name: item.name, artwork: item.artwork });
@@ -118,15 +125,16 @@ export function Home({ library }: { library: Library }) {
       <Ribbon
         title={t('spotifyFollowing')}
         items={library.following}
+        round
         onOpen={(item) => library.open({ kind: 'artist', uri: item.uri, title: item.name })}
       />
-      <SheetGroup>
-        <ListRow
-          art={<Icon.spotify width="22" height="22" />}
-          title={t('spotifyLiked')}
+      <SetMenu>
+        <SetItem
+          icon="heart"
+          label={t('spotifyLiked')}
           onClick={() => library.open({ kind: 'liked', title: t('spotifyLiked') })}
         />
-      </SheetGroup>
+      </SetMenu>
       <ConfirmAction
         destructive
         label={t('spDisconnect')}

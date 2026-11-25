@@ -3,7 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { apiFetch, apiURL, setTargetDevice } from './base';
+import { apiFetch, apiURL, needsPress, setTargetDevice } from './base';
 
 function at(href: string) {
   const u = new URL(href);
@@ -66,5 +66,18 @@ describe('apiFetch', () => {
       TypeError
     );
     expect(f).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ADR 0048: updates the speaker fetches are signed and need no press, an older release
+// included; an install upload is listed, and uploadFirmware skips the list when it is signed.
+describe('needsPress', () => {
+  it('leaves signed fetched updates alone and keeps the upload', () => {
+    expect(needsPress('POST', '/api/core-update')).toBe(false);
+    expect(needsPress('POST', '/api/update?tag=app-v0.1.0')).toBe(false);
+    expect(needsPress('POST', '/api/update')).toBe(false);
+    expect(needsPress('POST', '/api/firmware?install=1')).toBe(true);
+    expect(needsPress('POST', '/api/firmware')).toBe(false);
+    expect(needsPress('POST', '/api/soundtapd')).toBe(true);
   });
 });

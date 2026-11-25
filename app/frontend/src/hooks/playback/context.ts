@@ -15,9 +15,14 @@ export interface PlaybackContext {
   failed: ReportFailure;
   // failed, said of the selected group's lead.
   leadFailed: ReturnType<ReportFailure>;
-  notify?: Notify;
+  notify?: Notify | undefined;
   t: ReturnType<typeof useI18n>['t'];
   // The duplicate-tap guard: begin is false while the same target is still on its way.
+  begin: (key: string) => boolean;
+  settle: (key: string) => void;
+}
+
+export interface Settling {
   begin: (key: string) => boolean;
   settle: (key: string) => void;
 }
@@ -26,7 +31,7 @@ export interface PlaybackContext {
 // play requests that fight each other. A repeat tap on the same target is ignored until
 // its request has settled. The key is the speaker plus the preset slot or station id,
 // never the display name: two stations or two rooms can share a name.
-export function useSettling(live: SelectedRoom['live']) {
+export function useSettling(live: SelectedRoom['live']): Settling {
   const switching = useRef<Set<string>>(new Set());
   const begin = (key: string) => {
     if (switching.current.has(key)) return false;

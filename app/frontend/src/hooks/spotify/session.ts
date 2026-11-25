@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from 'react';
 import { useI18n } from '../../lib/i18n';
 import {
   SpotifyError,
@@ -9,13 +9,21 @@ import {
   spotifyStatus,
   statusView,
   type SpotifyStatus,
+  type SpotifyView,
 } from '../../lib/spotify';
 
 const STATUS_POLL_MS = 3000;
 
+export interface SpotifySession {
+  view: SpotifyView;
+  statusLoaded: boolean;
+  renew: () => void;
+  disconnect: () => Promise<void>;
+}
+
 // The speaker's librespot session, polled until it is usable, so the tab turns ready by
 // itself once the user picks the speaker in the Spotify app.
-export function useSpotifySession(active: boolean) {
+export function useSpotifySession(active: boolean): SpotifySession {
   const [status, setStatus] = useState<SpotifyStatus | null>(null);
   const [statusLoaded, setStatusLoaded] = useState(false);
   // Bumped by disconnect and by a lost session to start the status poll over: it stops
@@ -57,10 +65,16 @@ export function useSpotifySession(active: boolean) {
 
 export type ErrorFallback = 'spotifyFailed' | 'spotifyLoadFailed';
 
+export interface SpotifyErrorLine {
+  error: string;
+  setError: Dispatch<SetStateAction<string>>;
+  showError: (e: unknown, fallback?: ErrorFallback) => void;
+}
+
 // The library's one error line. A lost session is no error to show: `renew` polls its
 // status again until it is usable, so the view shows what to do and turns ready by itself
 // once it recovers.
-export function useSpotifyError(renew: () => void) {
+export function useSpotifyError(renew: () => void): SpotifyErrorLine {
   const { t } = useI18n();
   const [error, setError] = useState('');
   const showError = useCallback(

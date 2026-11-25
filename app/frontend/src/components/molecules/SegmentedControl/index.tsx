@@ -3,6 +3,7 @@
 
 import { useRadioKeys } from '../../../hooks/useRadioKeys';
 import { Segment, Track } from './styled';
+import type { ReactElement } from 'react';
 
 interface Props<V> {
   label: string;
@@ -12,11 +13,14 @@ interface Props<V> {
 }
 
 // A small inline choice between a few values (12h / 24h).
-export function SegmentedControl<V>({ label, value, options, onChange }: Props<V>) {
+export function SegmentedControl<V>({ label, value, options, onChange }: Props<V>): ReactElement {
   const keys = useRadioKeys(
     options.length,
     options.findIndex((o) => o.value === value),
-    (i) => onChange(options[i].value)
+    (i) => {
+      const picked = options[i];
+      if (picked) onChange(picked.value);
+    }
   );
   return (
     <Track role="radiogroup" aria-label={label}>

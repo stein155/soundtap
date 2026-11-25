@@ -17,8 +17,8 @@ export function mainColor(rgba: ArrayLike<number>): RGB | null {
   const buckets = new Map<number, { n: number; sum: RGB }>();
   let fallback: RGB | null = null;
   for (let i = 0; i + 3 < rgba.length; i += 4) {
-    const rgb: RGB = [rgba[i], rgba[i + 1], rgba[i + 2]];
-    if (rgba[i + 3] < 128) continue;
+    const rgb = opaquePixel(rgba, i);
+    if (!rgb) continue;
     fallback ??= rgb;
     const high = Math.max(...rgb);
     if (high < 24 || Math.min(...rgb) > 232) continue;
@@ -35,12 +35,19 @@ export function mainColor(rgba: ArrayLike<number>): RGB | null {
   return limit([sum[0] / n, sum[1] / n, sum[2] / n]);
 }
 
+// The colour of the pixel at i, or null when it is mostly transparent. The caller's loop
+// bound keeps i..i+3 inside rgba: the fallbacks never apply.
+function opaquePixel(rgba: ArrayLike<number>, i: number): RGB | null {
+  if ((rgba[i + 3] ?? 0) < 128) return null;
+  return [rgba[i] ?? 0, rgba[i + 1] ?? 0, rgba[i + 2] ?? 0];
+}
+
 function limit(rgb: RGB): RGB {
   const scale = Math.min(1, MAX_CHANNEL / Math.max(1, ...rgb));
   return [Math.round(rgb[0] * scale), Math.round(rgb[1] * scale), Math.round(rgb[2] * scale)];
 }
 
-export function artColor(src: string): Promise<RGB | null> {
+export async function artColor(src: string): Promise<RGB | null> {
   return new Promise((resolve) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';

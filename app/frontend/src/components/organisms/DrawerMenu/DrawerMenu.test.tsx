@@ -16,10 +16,10 @@ describe('DrawerMenu', () => {
       onMediaServers: vi.fn(),
       onSettings: vi.fn(),
     };
-    const view = renderWithI18n(<DrawerMenu open onClose={() => {}} {...on} />);
+    const view = renderWithI18n(<DrawerMenu open onClose={vi.fn()} {...on} />);
     fireEvent.click(view.getByText('Settings'));
-    view.rerender(<DrawerMenu open={false} onClose={() => {}} {...on} />);
-    view.rerender(<DrawerMenu open onClose={() => {}} {...on} />);
+    view.rerender(<DrawerMenu open={false} onClose={vi.fn()} {...on} />);
+    view.rerender(<DrawerMenu open onClose={vi.fn()} {...on} />);
     act(() => {
       vi.advanceTimersByTime(500);
     });

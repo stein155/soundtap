@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import type { AnchorHTMLAttributes, ButtonHTMLAttributes } from 'react';
+import type { AnchorHTMLAttributes, ButtonHTMLAttributes, ReactElement } from 'react';
 import { ButtonEl, LinkEl, type ButtonVariant } from './styled';
 
 export type { ButtonVariant } from './styled';
@@ -20,7 +20,7 @@ export function Button({
   small,
   type = 'button',
   ...rest
-}: Look & ButtonHTMLAttributes<HTMLButtonElement>) {
+}: Look & ButtonHTMLAttributes<HTMLButtonElement>): ReactElement {
   return <ButtonEl type={type} $variant={variant} $wide={wide} $small={small} {...rest} />;
 }
 
@@ -30,6 +30,6 @@ export function ButtonLink({
   wide,
   small,
   ...rest
-}: Look & AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }) {
+}: Look & AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }): ReactElement {
   return <LinkEl $variant={variant} $wide={wide} $small={small} {...rest} />;
 }

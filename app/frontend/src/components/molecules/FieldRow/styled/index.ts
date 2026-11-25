@@ -20,24 +20,24 @@ export const rowLayout = css`
     left: 0;
     right: 0;
     height: 1px;
-    background: var(--border-strong);
+    background: var(--border);
   }
 `;
 
-export const Row = styled.div<{ $value?: boolean }>`
+export const Row = styled.div<{ $value?: boolean | undefined }>`
   ${rowLayout}
   ${({ $value }) =>
-    $value &&
+    $value === true &&
     css`
       justify-content: space-between;
       font-size: 14px;
     `}
 `;
 
-export const Label = styled.label<{ $wide?: boolean }>`
-  flex: ${({ $wide }) => ($wide ? 1 : '0 0 96px')};
+export const Label = styled.label<{ $wide?: boolean | undefined }>`
+  flex: ${({ $wide }) => ($wide === true ? 1 : '0 0 96px')};
   font-size: 14px;
-  color: var(--ink-2);
+  color: var(--ink-3);
 `;
 
 export const Value = styled.span`

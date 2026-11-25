@@ -12,17 +12,17 @@ const pageLang = () => document.documentElement.lang || DEFAULT_LANG;
 // inside what just failed -- but in the page's language: the messages it already loaded
 // are read straight from lib/i18n, so the fallback needs nothing that may have broken.
 export class ErrorBoundary extends Component<{ children: ReactNode }, { error?: Error }> {
-  state: { error?: Error } = {};
+  override state: { error?: Error } = {};
 
-  static getDerivedStateFromError(error: Error) {
+  static getDerivedStateFromError(error: Error): { error: Error } {
     return { error };
   }
 
-  componentDidCatch(error: Error, info: ErrorInfo) {
+  override componentDidCatch(error: Error, info: ErrorInfo): void {
     console.error(error, info.componentStack);
   }
 
-  render() {
+  override render(): ReactNode {
     if (!this.state.error) return this.props.children;
     const t = makeT(pageLang());
     return (

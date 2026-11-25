@@ -3,7 +3,7 @@
 
 // Spotify browsing and playback through the speaker. The speaker owns the Spotify
 // session; this module only ever sees SoundTap's own models — never a token.
-import { deadline } from './api/http';
+import { contract, deadline } from './api/http';
 import { apiFetch, apiURL } from './base';
 
 export interface SpotifyRef {
@@ -97,17 +97,18 @@ async function call<T>(path: string, init?: RequestInit, speaker?: string): Prom
   if (!r.ok) {
     let code = 'spotify_playback_failed';
     try {
-      const body = (await r.json()) as { error?: string };
-      if (typeof body.error === 'string') code = body.error;
+      const body: unknown = await r.json();
+      const fields: { error?: unknown } = typeof body === 'object' && body !== null ? body : {};
+      if (typeof fields.error === 'string') code = fields.error;
     } catch {
       /* not JSON */
     }
     throw new SpotifyError(code);
   }
-  return (await r.json()) as T;
+  return contract<T>(r.json());
 }
 
-const post = <T>(path: string, body?: unknown, speaker?: string) =>
+const post = async <T>(path: string, body?: unknown, speaker?: string): Promise<T> =>
   call<T>(
     path,
     {
@@ -125,25 +126,29 @@ export const idOf = (uri: string): string => uri.split(':')[2] ?? '';
 // call, so another speaker's artwork loads through the one serving the page.
 export const artworkURL = (path?: string): string | undefined => (path ? apiURL(path) : undefined);
 
-export const spotifyStatus = () => call<SpotifyStatus>('/api/spotify/status');
-export const spotifyArtist = (id: string) => call<SpotifyArtistPage>(`/api/spotify/artists/${id}`);
-export const spotifyAlbum = (id: string, offset = 0) =>
+export const spotifyStatus = async (): Promise<SpotifyStatus> =>
+  call<SpotifyStatus>('/api/spotify/status');
+export const spotifyArtist = async (id: string): Promise<SpotifyArtistPage> =>
+  call<SpotifyArtistPage>(`/api/spotify/artists/${id}`);
+export const spotifyAlbum = async (id: string, offset = 0): Promise<SpotifyAlbum> =>
   call<SpotifyAlbum>(`/api/spotify/albums/${encodeURIComponent(id)}?offset=${offset}`);
-export const spotifyPlaylist = (id: string, offset = 0) =>
+export const spotifyPlaylist = async (id: string, offset = 0): Promise<SpotifyPlaylist> =>
   call<SpotifyPlaylist>(`/api/spotify/playlists/${encodeURIComponent(id)}?offset=${offset}`);
-export const spotifyMyPlaylists = (offset = 0) =>
+export const spotifyMyPlaylists = async (offset = 0): Promise<SpotifyPage<SpotifyPlaylist>> =>
   call<SpotifyPage<SpotifyPlaylist>>(`/api/spotify/me/playlists?offset=${offset}`);
-export const spotifyLiked = (offset = 0) =>
+export const spotifyLiked = async (offset = 0): Promise<SpotifyPage<SpotifyTrack>> =>
   call<SpotifyPage<SpotifyTrack>>(`/api/spotify/me/tracks?offset=${offset}`);
 // item is what a held preset key stores while this plays (the same as a preset made here).
-export const spotifyRecent = () => call<SpotifyRecent[]>('/api/spotify/me/recent');
-export const spotifyFollowing = () => call<SpotifyArtist[]>('/api/spotify/me/following');
-export const spotifyPlay = (
+export const spotifyRecent = async (): Promise<SpotifyRecent[]> =>
+  call<SpotifyRecent[]>('/api/spotify/me/recent');
+export const spotifyFollowing = async (): Promise<SpotifyArtist[]> =>
+  call<SpotifyArtist[]>('/api/spotify/me/following');
+export const spotifyPlay = async (
   uri: string | undefined,
   context?: string,
-  item?: { uri: string; name: string; artwork?: string },
+  item?: { uri: string; name: string; artwork?: string | undefined },
   speaker?: string
-) =>
+): Promise<{ status: string }> =>
   post<{ status: string }>(
     '/api/spotify/play',
     {
@@ -153,12 +158,13 @@ export const spotifyPlay = (
     },
     speaker
   );
-export const spotifyDisconnect = () => post<{ status: string }>('/api/spotify/disconnect');
+export const spotifyDisconnect = async (): Promise<{ status: string }> =>
+  post<{ status: string }>('/api/spotify/disconnect');
 
 // statusView turns the session state into the one thing the sheet should show.
 export type SpotifyView = 'ready' | 'pair' | 'reauth' | 'connecting' | 'unavailable';
 export function statusView(s: SpotifyStatus | null): SpotifyView {
-  if (!s || !s.available) return 'unavailable';
+  if (s?.available !== true) return 'unavailable';
   if (s.connected) return 'ready';
   if (s.reauthRequired) return 'reauth';
   if (s.authenticated) return 'connecting';

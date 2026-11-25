@@ -8,8 +8,9 @@ import { PREF } from '../lib/storage';
 import * as api from '../lib/api';
 import * as events from '../lib/events';
 
-vi.mock('../lib/events', () => ({ subscribeHousehold: vi.fn(() => () => {}) }));
-import type { MultiroomClient, NowPlaying } from '../lib/types';
+vi.mock('../lib/events', () => ({ subscribeHousehold: vi.fn(() => vi.fn()) }));
+import { multiroomClient, nowPlaying } from './testFixtures';
+import { must } from '../test/must';
 
 vi.mock('../lib/api', () => ({
   getDevices: vi
@@ -24,10 +25,10 @@ vi.mock('../lib/api', () => ({
 
 describe('useRooms state polls', () => {
   it('lets a late answer from an older poll not overwrite a newer one', async () => {
-    let releaseOld: (v: number) => void = () => {};
+    let releaseOld: (v: number) => void = vi.fn();
     vi.mocked(api.getVolume)
       .mockImplementationOnce(
-        () =>
+        async () =>
           new Promise<number>((r) => {
             releaseOld = r;
           })
@@ -59,7 +60,7 @@ describe('useRooms state polls', () => {
   });
 
   it('keeps what a room plays when a read fails', async () => {
-    const jazz = { title: 'Jazz' } as unknown as Awaited<ReturnType<typeof api.getNowPlaying>>;
+    const jazz = nowPlaying({ stationName: 'Jazz' });
     vi.mocked(api.getVolume).mockReset().mockResolvedValue(40);
     vi.mocked(api.getNowPlaying).mockReset().mockResolvedValueOnce(jazz).mockResolvedValue(null);
     const { result } = renderHook(() => useRooms(null));
@@ -98,7 +99,10 @@ describe('useRooms state polls', () => {
     vi.mocked(api.getVolume).mockReset().mockResolvedValue(5);
     const { result } = renderHook(() => useRooms(null));
     await waitFor(() => expect(result.current.rooms).toHaveLength(2));
-    const h = vi.mocked(events.subscribeHousehold).mock.calls.at(-1)![0];
+    const h = must(
+      vi.mocked(events.subscribeHousehold).mock.calls.at(-1),
+      'a household subscription'
+    )[0];
     act(() => {
       h.onOpen?.();
       h.onState({ self: true }, { volume: 17 });
@@ -124,7 +128,10 @@ describe('useRooms state polls', () => {
       vi.mocked(api.getMultiroom).mockReset().mockResolvedValue([]);
       const { result } = renderHook(() => useRooms(null));
       await waitFor(() => expect(result.current.rooms).toHaveLength(2));
-      const h = vi.mocked(events.subscribeHousehold).mock.calls.at(-1)![0];
+      const h = must(
+        vi.mocked(events.subscribeHousehold).mock.calls.at(-1),
+        'a household subscription'
+      )[0];
       await act(async () => {
         h.onOpen?.();
         h.onState({ self: true }, { followers: ['b'], devices: 'r1' });
@@ -169,9 +176,12 @@ describe('useRooms state polls', () => {
       vi.mocked(api.getDevices).mockReset().mockResolvedValueOnce([a]).mockResolvedValue([a, b]);
       const { result } = renderHook(() => useRooms(null));
       await waitFor(() => expect(result.current.rooms).toHaveLength(1));
-      const h = vi.mocked(events.subscribeHousehold).mock.calls.at(-1)![0];
+      const h = must(
+        vi.mocked(events.subscribeHousehold).mock.calls.at(-1),
+        'a household subscription'
+      )[0];
       act(() => h.onOpen?.());
-      vi.mocked(api.getDevices).mockResolvedValueOnce(null as never);
+      vi.mocked(api.getDevices).mockRejectedValueOnce(new Error('down'));
       await act(async () => {
         h.onState({ self: true }, { devices: 'new-revision' });
       });
@@ -196,7 +206,10 @@ describe('useRooms state polls', () => {
       vi.mocked(api.getVolume).mockReset().mockResolvedValue(10);
       const { result } = renderHook(() => useRooms('a'));
       await waitFor(() => expect(result.current.rooms.map((r) => r.volume)).toEqual([0, 10]));
-      const h = vi.mocked(events.subscribeHousehold).mock.calls.at(-1)![0];
+      const h = must(
+        vi.mocked(events.subscribeHousehold).mock.calls.at(-1),
+        'a household subscription'
+      )[0];
       act(() => {
         h.onOpen?.();
         h.onState({ self: true }, { volume: 10 });
@@ -243,7 +256,7 @@ describe('useRooms state polls', () => {
     vi.mocked(api.getMultiroom)
       .mockReset()
       .mockImplementation(async (speaker) =>
-        speaker === '' ? [{ deviceId: 'b', connected: true } as MultiroomClient] : []
+        speaker === '' ? [multiroomClient({ deviceId: 'b', connected: true })] : []
       );
     const { result } = renderHook(() => useRooms(null));
     await waitFor(() => expect(result.current.leaders).toEqual({ b: 'a' }));
@@ -278,7 +291,7 @@ describe('useRooms state polls', () => {
         timeout: 3000,
       }
     );
-    await act(async () => {});
+    await act(async () => Promise.resolve());
     expect(result.current.leaders).toEqual({ b: 'a' });
   });
 
@@ -289,9 +302,7 @@ describe('useRooms state polls', () => {
         { id: 'a', name: 'A', ip: '', model: 'ST10', online: true, self: true },
         { id: 'b', name: 'B', ip: '10.0.0.2', model: 'ST20', online: true, self: false },
       ]);
-    const member = [{ deviceId: 'b', connected: true }] as Awaited<
-      ReturnType<typeof api.getMultiroom>
-    >;
+    const member = [multiroomClient({ deviceId: 'b', connected: true })];
     vi.mocked(api.getMultiroom).mockReset().mockResolvedValue([]);
     const { result } = renderHook(() => useRooms(null));
     await waitFor(() => expect(result.current.loaded).toBe(true));
@@ -302,14 +313,14 @@ describe('useRooms state polls', () => {
       () => expect(vi.mocked(api.getMultiroom).mock.calls.length).toBeGreaterThan(asked),
       { timeout: 3000 }
     );
-    await act(async () => {});
+    await act(async () => Promise.resolve());
     vi.mocked(api.getMultiroom).mockResolvedValue([]);
     const confirmed = vi.mocked(api.getMultiroom).mock.calls.length;
     await waitFor(
       () => expect(vi.mocked(api.getMultiroom).mock.calls.length).toBeGreaterThan(confirmed),
       { timeout: 4000 }
     );
-    await act(async () => {});
+    await act(async () => Promise.resolve());
     expect(result.current.leaders).toEqual({ b: 'a' });
   }, 9000);
 });
@@ -322,7 +333,7 @@ describe('useRooms last seen household', () => {
     ip: '10.0.0.2',
     online: true,
     self: false,
-    now: { stationName: 'Jazz' } as NowPlaying,
+    now: nowPlaying({ stationName: 'Jazz' }),
     volume: 12,
     sources: ['AUX'],
     linkedTo: 'a',
@@ -331,7 +342,7 @@ describe('useRooms last seen household', () => {
 
   it('shows the rooms last seen before discovery answers', () => {
     keepRooms([seen]);
-    vi.mocked(api.getDevices).mockReturnValueOnce(new Promise(() => {}));
+    vi.mocked(api.getDevices).mockReturnValueOnce(new Promise(vi.fn()));
     const { result } = renderHook(() => useRooms(null));
     expect(result.current.loaded).toBe(false);
     expect(result.current.rooms).toEqual([{ ...seen, connecting: undefined }]);

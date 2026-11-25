@@ -4,6 +4,7 @@
 import { Icon } from '../../atoms/Icon';
 import { useI18n } from '../../../lib/i18n';
 import { Bubble, Close, Text, UndoButton } from './styled';
+import type { ReactElement } from 'react';
 
 // A short message floating above the player: what just failed, and a way to dismiss it.
 export function Toast({
@@ -14,10 +15,10 @@ export function Toast({
 }: {
   message: string;
   onDismiss: () => void;
-  onUndo?: () => void;
+  onUndo?: (() => void) | undefined;
   // The action's name, when it is not "Undo".
   undoLabel?: string;
-}) {
+}): ReactElement {
   const { t } = useI18n();
   return (
     <Bubble role="alert">

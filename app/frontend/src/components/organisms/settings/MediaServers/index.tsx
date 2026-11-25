@@ -1,142 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useEffect, useRef, useState } from 'react';
-import { FloatingHint } from '../../../molecules/FloatingHint';
+import { useEffect, useRef, useState, type ReactElement } from 'react';
 import { Icon } from '../../../atoms/Icon';
 import { Button } from '../../../atoms/Button';
-import { Note } from '../../../atoms/Note';
-import { Stack } from '../../../atoms/Stack';
-import { FieldButton, FieldButtonLabel } from '../../../molecules/FieldButton';
-import { FieldCard } from '../../../molecules/FieldCard';
-import { FieldRow } from '../../../molecules/FieldRow';
+import { SetItem } from '../../../molecules/SetItem';
+import { SetMenu } from '../../../molecules/SetMenu';
+import { SheetModal } from '../../../molecules/SheetModal';
 import { StatusCard } from '../../../molecules/StatusCard';
 import { useI18n } from '../../../../lib/i18n';
 import {
   browseUPnP,
   getUPnPServers,
   isUPnPContainer,
-  playUPnP,
   searchUPnPServers,
 } from '../../../../lib/api';
-import type { UPnPItem, UPnPServer } from '../../../../lib/types';
-import { Chevron } from './styled';
+import type { UPnPServer } from '../../../../lib/types';
+import { FolderPage } from './Folder';
+import { Intro, SearchAgain } from './styled';
 
-type Folder = { id: string; title: string };
-const ROOT_FOLDER = '0';
-
-// One entry of a folder: a folder opens, a track plays.
-function FolderEntry({
-  item,
-  disabled,
-  onOpen,
-  onPlay,
-}: {
-  item: UPnPItem;
-  disabled: boolean;
-  onOpen: () => void;
-  onPlay: () => void;
-}) {
-  const folder = isUPnPContainer(item);
-  return (
-    <FieldButton disabled={disabled} onClick={folder ? onOpen : onPlay}>
-      {folder ? <Icon.folder width="18" height="18" /> : <Icon.play width="14" height="14" />}
-      <FieldButtonLabel>{item.title}</FieldButtonLabel>
-      {folder && <Icon.chevron width="16" height="16" />}
-    </FieldButton>
-  );
-}
-
-// One media server, opened: its current folder, a way back up, and what is in it.
-function ServerBrowser({
-  server,
-  speaker,
-  onStatus,
-}: {
-  server: UPnPServer;
-  speaker: string;
-  onStatus: (text: string) => void;
-}) {
-  const { t } = useI18n();
-  const [open, setOpen] = useState(false);
-  const [trail, setTrail] = useState<Folder[]>([]);
-  const [items, setItems] = useState<UPnPItem[]>([]);
-  const [busy, setBusy] = useState(false);
-  // Only the newest browse may land; an older answer would jump back to where it was sent.
-  const seq = useRef(0);
-
-  const browse = async (next: Folder[]) => {
-    const mine = ++seq.current;
-    setBusy(true);
-    const found = await browseUPnP(server.usn, next[next.length - 1]?.id ?? ROOT_FOLDER, speaker);
-    if (mine !== seq.current) return;
-    setBusy(false);
-    if (!found) return onStatus(t('upnpBrowseFailed'));
-    onStatus(''); // an earlier failure is over
-    setItems(found);
-    setTrail(next);
-    setOpen(true);
-  };
-
-  const play = async (item: UPnPItem) => {
-    if (!item.url) return;
-    setBusy(true);
-    try {
-      const folder = trail[trail.length - 1]?.id ?? ROOT_FOLDER;
-      await playUPnP({ url: item.url, name: item.title, server: server.usn, folder }, speaker);
-      onStatus(`${t('playing')} ${item.title}`);
-    } catch {
-      onStatus(t('upnpPlayFailed'));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <FieldCard>
-      <FieldButton
-        expanded={open}
-        disabled={busy && !open}
-        onClick={() => {
-          if (!open) return void browse([]);
-          seq.current += 1;
-          setBusy(false);
-          setOpen(false);
-        }}
-      >
-        <FieldButtonLabel>{server.friendlyName}</FieldButtonLabel>
-        <Chevron $open={open} aria-hidden="true">
-          <Icon.chevron width="18" height="18" />
-        </Chevron>
-      </FieldButton>
-      {open && trail.length > 0 && (
-        <FieldButton disabled={busy} onClick={() => void browse(trail.slice(0, -1))}>
-          <Icon.back width="16" height="16" />
-          <FieldButtonLabel>{trail[trail.length - 1].title}</FieldButtonLabel>
-        </FieldButton>
-      )}
-      {open &&
-        items.map((item) => (
-          <FolderEntry
-            key={item.id}
-            item={item}
-            disabled={busy}
-            onOpen={() => void browse([...trail, { id: item.id, title: item.title }])}
-            onPlay={() => void play(item)}
-          />
-        ))}
-      {open && !busy && !items.length && <FieldRow label={t('upnpEmptyFolder')} wideLabel />}
-    </FieldCard>
-  );
-}
-
-// Media servers (UPnP/DLNA, a NAS) on the network: folders open, tracks play on this
-// speaker.
-export function MediaServers({ speaker }: { speaker: string }) {
-  const { t } = useI18n();
+// The servers on the network: read once, and searched for again on request.
+function useServers(speaker: string) {
   // undefined while searching; null when the speaker could not say.
   const [servers, setServers] = useState<UPnPServer[] | null | undefined>(undefined);
-  const [status, setStatus] = useState('');
   // Bumped by "search again"; each value is one discovery round.
   const [round, setRound] = useState(0);
   useEffect(() => {
@@ -151,38 +37,91 @@ export function MediaServers({ speaker }: { speaker: string }) {
     setServers(undefined);
     setRound((r) => r + 1);
   };
+  return { servers, search };
+}
 
+// The names of each server's top-level folders ("Music, Audiobooks"), the line under its
+// name: its root is read once per server while the page is open, a server found again by
+// "search again" included. Nothing shows while a read runs, when it fails or when the root
+// holds no folders.
+function useRootFolders(speaker: string, servers: UPnPServer[] | null | undefined) {
+  const [folders, setFolders] = useState<Record<string, string>>({});
+  const asked = useRef(new Set<string>());
+  useEffect(() => {
+    for (const { usn } of servers ?? []) {
+      if (asked.current.has(usn)) continue;
+      asked.current.add(usn);
+      void browseUPnP(usn, '0', speaker).then((items) => {
+        const names = (items ?? []).filter(isUPnPContainer).map((item) => item.title);
+        const line = names.filter(Boolean).join(', ');
+        if (line) setFolders((known) => ({ ...known, [usn]: line }));
+      });
+    }
+  }, [speaker, servers]);
+  return folders;
+}
+
+// Media servers (UPnP/DLNA, a NAS) on the network, as a list: a tap opens a server on a page
+// of its own, where folders open deeper and tracks play on this speaker. onExit leaves the
+// media servers altogether.
+export function MediaServers({
+  speaker,
+  onExit,
+}: {
+  speaker: string;
+  onExit?: () => void;
+}): ReactElement {
+  const { t } = useI18n();
+  const { servers, search } = useServers(speaker);
+  const folders = useRootFolders(speaker, servers);
+  const [opened, setOpened] = useState<UPnPServer | null>(null);
   return (
-    <Stack>
-      <Note>{t('msDesc')}</Note>
-      {servers?.length ? (
-        <Stack gap={8}>
+    <>
+      <Intro>{t('msDesc')}</Intro>
+      {servers && servers.length > 0 ? (
+        <SetMenu title={t('msFound')}>
           {servers.map((server) => (
-            <ServerBrowser
+            <SetItem
               key={server.usn}
-              server={server}
-              speaker={speaker}
-              onStatus={setStatus}
+              icon="server"
+              label={server.friendlyName}
+              desc={folders[server.usn]}
+              onClick={() => setOpened(server)}
             />
           ))}
-        </Stack>
+        </SetMenu>
       ) : (
-        <>
-          <StatusCard busy={servers === undefined} icon={<Icon.search width="22" height="22" />}>
-            {servers === undefined ? t('msSearching') : t('msNone')}
-          </StatusCard>
-          <Button variant="ghost" wide disabled={servers === undefined} onClick={search}>
-            {t('msSearch')}
-          </Button>
-        </>
+        <StatusCard busy={servers === undefined} icon={<Icon.search width="22" height="22" />}>
+          {servers === undefined ? t('msSearching') : t('msNone')}
+        </StatusCard>
       )}
-      {servers?.length ? (
-        // A NAS that comes online later must be findable without leaving the page.
-        <Button variant="ghost" wide onClick={search}>
+      {/* A NAS that comes online later must be findable without leaving the page. */}
+      <SearchAgain>
+        <Button variant="ghost" wide disabled={servers === undefined} onClick={search}>
+          <Icon.search width="16" height="16" aria-hidden="true" />
           {t('msSearch')}
         </Button>
-      ) : null}
-      {status && <FloatingHint>{status}</FloatingHint>}
-    </Stack>
+      </SearchAgain>
+      <SheetModal
+        open={!!opened}
+        onClose={() => setOpened(null)}
+        label={opened?.friendlyName ?? ''}
+        variant="page"
+      >
+        {(close) =>
+          opened && (
+            <FolderPage
+              server={opened}
+              speaker={speaker}
+              onBack={close}
+              onExit={() => {
+                close();
+                onExit?.();
+              }}
+            />
+          )
+        }
+      </SheetModal>
+    </>
   );
 }

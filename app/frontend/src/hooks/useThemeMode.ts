@@ -3,25 +3,26 @@
 
 import { useEffect } from 'react';
 import { PREF, removePref } from '../lib/storage';
+import { applyThemeColor } from '../lib/themeColor';
 
 // The colour scheme follows the system, live: a concrete 'light' | 'dark' goes on
 // <html data-theme>, which the tokens key off. index.html applies the same before first
 // paint, so keep the two in step. There is no setting for it; a choice saved by an older
 // build is dropped.
 
-const THEME_COLOR = { light: '#f9f9f9', dark: '#121212' };
 const darkScheme = () =>
   typeof window !== 'undefined' && 'matchMedia' in window
     ? window.matchMedia('(prefers-color-scheme: dark)')
     : null;
 
 function apply() {
-  const theme = darkScheme()?.matches ? 'dark' : 'light';
+  const theme = darkScheme()?.matches === true ? 'dark' : 'light';
   document.documentElement.setAttribute('data-theme', theme);
-  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', THEME_COLOR[theme]);
+  // A layer's own colour (now playing) stays while it shows.
+  applyThemeColor();
 }
 
-export function useThemeMode() {
+export function useThemeMode(): void {
   useEffect(() => {
     removePref(PREF.theme);
     apply();

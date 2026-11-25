@@ -25,8 +25,8 @@ export function sameStation(a?: string | null, b?: string | null): boolean {
 const alnum = /[a-z0-9]/;
 function containsWord(long: string, short: string): boolean {
   for (let i = long.indexOf(short); i !== -1; i = long.indexOf(short, i + 1)) {
-    const okBefore = i === 0 || !alnum.test(long[i - 1]);
-    const okAfter = i + short.length === long.length || !alnum.test(long[i + short.length]);
+    const okBefore = i === 0 || !alnum.test(long.charAt(i - 1));
+    const okAfter = i + short.length === long.length || !alnum.test(long.charAt(i + short.length));
     if (okBefore && okAfter) return true;
   }
   return false;
@@ -44,7 +44,8 @@ export function activePresetIndex(
 ): number {
   if (!station || !Array.isArray(presets)) return -1;
   if (station.tuneInId) {
-    const byId = presets.findIndex((p) => p && p.tuneInId && p.tuneInId === station.tuneInId);
+    // station.tuneInId is set here, so equal ids are set ids.
+    const byId = presets.findIndex((p) => p?.tuneInId === station.tuneInId);
     if (byId >= 0) return byId;
   }
   // Names only stand in for identity that is missing: a preset whose known id differs
@@ -52,11 +53,12 @@ export function activePresetIndex(
   const named = (p: Preset | null): p is Preset =>
     !!p && !(station.tuneInId && p.tuneInId && p.tuneInId !== station.tuneInId);
   const target = normName(station.name);
-  const byExact = presets.findIndex((p) => named(p) && normName(p.name) === target && target);
+  const byExact = presets.findIndex(
+    (p) => named(p) && normName(p.name) === target && target !== ''
+  );
   if (byExact >= 0) return byExact;
   let loose = -1;
-  for (let i = 0; i < presets.length; i++) {
-    const p = presets[i];
+  for (const [i, p] of presets.entries()) {
     if (named(p) && sameStation(p.name, station.name)) {
       if (loose >= 0) return -1; // more than one loose match — don't guess
       loose = i;

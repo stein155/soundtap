@@ -3,7 +3,7 @@
 
 import '@testing-library/jest-dom/vitest';
 import { configure } from '@testing-library/react';
-import { afterEach } from 'vitest';
+import { afterEach, vi } from 'vitest';
 
 // A find's default second is too short for a whole app render on a busy CI host.
 configure({ asyncUtilTimeout: 10000 });
@@ -13,7 +13,7 @@ Object.defineProperty(globalThis, 'localStorage', {
   configurable: true,
   value: {
     getItem: (key: string) => storage.get(key) ?? null,
-    setItem: (key: string, value: string) => storage.set(key, String(value)),
+    setItem: (key: string, value: unknown) => storage.set(key, String(value)),
     removeItem: (key: string) => storage.delete(key),
     clear: () => storage.clear(),
   },
@@ -32,10 +32,10 @@ if (!(window as Partial<Window>).matchMedia) {
     matches: false,
     media: query,
     onchange: null,
-    addListener: () => {},
-    removeListener: () => {},
-    addEventListener: () => {},
-    removeEventListener: () => {},
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
     dispatchEvent: () => false,
   });
 }

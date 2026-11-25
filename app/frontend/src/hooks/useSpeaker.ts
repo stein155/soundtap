@@ -3,7 +3,8 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { derivePlayer } from '../lib/speakerPlayer';
-import type { NowPlaying } from '../lib/types';
+import type { NowPlaying, Player, PlayTarget, Preset } from '../lib/types';
+import type { Pending } from '../lib/speakerPlayer';
 import { useSpeakerFeed } from './speaker/feed';
 import { useOptimisticPlay } from './speaker/play';
 import { useSpeakerReads } from './speaker/reads';
@@ -25,10 +26,29 @@ import { useSpeakerVolume } from './speaker/volume';
 // presets, Bluetooth) are held once per page in speaker/store.ts, which useSpeakerInfo,
 // useSpeakerSettings and this hook's presets share.
 
+export interface SpeakerLive {
+  player: Player;
+  nowPlaying: NowPlaying | null;
+  volume: number;
+  presets: (Preset | null)[];
+  loading: boolean;
+  refreshPresets: () => Promise<boolean>;
+  volumeFailures: number;
+  unreachable: boolean;
+  refreshNowPlaying: () => Promise<boolean>;
+  changeVolume: (level: number, options?: { group?: boolean }) => void;
+  playOptimistic: (station: PlayTarget | null) => Pending | null;
+  stopOptimistic: () => void;
+  releaseStopHold: () => void;
+  cancelPending: (which?: Pending | null) => void;
+  gaveUp: Pending | null;
+  nudge: () => void;
+}
+
 // `speaker` is the one to follow ('' = the one serving the page). Switching it starts the
 // hook over against the new speaker: state is dropped rather than carried across, so one
 // room's station can never flash up under another room's name.
-export function useSpeaker(speaker = '') {
+export function useSpeaker(speaker = ''): SpeakerLive {
   const [loading, setLoading] = useState(true);
   const play = useOptimisticPlay();
   const vol = useSpeakerVolume(speaker);

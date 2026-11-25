@@ -24,7 +24,7 @@ describe('ErrorBoundary', () => {
   });
 
   it('shows a reload and the diagnostics link instead of a blank page', () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockReturnValue(undefined);
     crash();
     expect(screen.getByRole('heading', { name: 'Something went wrong' })).toBeTruthy();
     expect(screen.getByRole('alert').textContent).toContain('bad payload');
@@ -34,7 +34,7 @@ describe('ErrorBoundary', () => {
   });
 
   it('reloads the page when asked', () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockReturnValue(undefined);
     const reload = vi.fn();
     vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload });
     crash();
@@ -43,7 +43,7 @@ describe('ErrorBoundary', () => {
   });
 
   it('speaks the language the page was shown in', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockReturnValue(undefined);
     await loadLanguage('nl');
     document.documentElement.lang = 'nl';
     crash();
@@ -52,7 +52,7 @@ describe('ErrorBoundary', () => {
   });
 
   it('falls back to English when the page’s language never arrived', () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockReturnValue(undefined);
     document.documentElement.lang = 'ko';
     crash();
     expect(screen.getByRole('heading', { name: 'Something went wrong' })).toBeTruthy();

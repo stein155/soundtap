@@ -20,26 +20,29 @@ const room = (id: string, linkedTo: string | null = null): Room => ({
 
 describe('pairPartner', () => {
   it('finds the partner whichever speaker leads', () => {
-    const rooms = [room('kitchen'), room('hall', 'kitchen'), room('attic')];
-    expect(pairPartner(rooms[0], rooms)?.id).toBe('hall');
-    expect(pairPartner(rooms[1], rooms)?.id).toBe('kitchen');
-    expect(pairPartner(rooms[2], rooms)).toBeNull();
+    const [kitchen, hall, attic] = [room('kitchen'), room('hall', 'kitchen'), room('attic')];
+    const rooms = [kitchen, hall, attic];
+    expect(pairPartner(kitchen, rooms)?.id).toBe('hall');
+    expect(pairPartner(hall, rooms)?.id).toBe('kitchen');
+    expect(pairPartner(attic, rooms)).toBeNull();
   });
 });
 
 describe('pairCandidates', () => {
   it('offers only online speakers that are free or already follow this one', () => {
     const offline = { ...room('cellar'), online: false };
+    const kitchen = room('kitchen');
+    const garage = room('garage');
     const rooms = [
-      room('kitchen'),
+      kitchen,
       room('hall', 'kitchen'),
       room('attic'),
       room('study', 'attic'),
-      room('garage'),
+      garage,
       offline,
     ];
     const ids = (r: Room) => pairCandidates(r, rooms).map((c) => c.id);
-    expect(ids(rooms[0])).toEqual(['hall', 'garage']);
-    expect(ids(rooms[4])).toEqual([]);
+    expect(ids(kitchen)).toEqual(['hall', 'garage']);
+    expect(ids(garage)).toEqual([]);
   });
 });

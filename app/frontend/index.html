@@ -157,21 +157,27 @@
         background: #121212;
       }
 
-      /* Launch skeleton: the app shell as static HTML (header, room cards, mini
-         player) so the first frame is the layout, not a blank screen, while the JS
-         bundle loads. React replaces #root's contents on mount. Keep the shapes and
-         colours in step with styles/tokens.css and the component styles. */
+      /* Launch skeleton: the home page as static HTML (top bar, recently played tiles,
+         music services, and the docked bars as when the speaker is in standby) so the
+         first frame is the layout, not a blank screen, while the JS bundle loads. React
+         replaces #root's contents on mount. Keep the shapes and colours in step with
+         theme/GlobalStyle.ts, AppShell and pages/HomePage/home.css (.top, .h-row, .rail
+         and .card, .svc-list, .dock); scripts/splash.py draws the same picture. */
       #root:has(.ls) {
         height: 100%;
       }
       .ls {
         --bg: #f9f9f9;
         --surface: #fff;
+        --surface-2: #f0f0f0;
         --surface-3: #e5e5e5;
+        --section-bar: #ebebeb;
+        --sk-bar: #d9d9d9; /* a shimmer block on the section bar */
         --border: rgba(22, 24, 27, 0.07);
         --shimmer: rgba(255, 255, 255, 0.55);
-        width: 393px;
-        max-width: 100%;
+        --spk-pad: max(0px, calc(env(safe-area-inset-bottom) - 16px));
+        width: 100%;
+        max-width: 440px; /* --shell-max */
         height: 100dvh;
         margin: 0 auto;
         display: flex;
@@ -183,48 +189,101 @@
       html[data-theme='dark'] .ls {
         --bg: #121212;
         --surface: #1c1c1e;
+        --surface-2: #2a2a2c;
         --surface-3: #333333;
+        --section-bar: #2a2a2c;
+        --sk-bar: #3a3a3c;
         --border: rgba(238, 240, 243, 0.08);
         --shimmer: rgba(255, 255, 255, 0.06);
       }
       @media (min-width: 720px) and (min-height: 600px) {
         .ls {
-          height: min(852px, calc(100dvh - 64px));
-          box-shadow: 0 30px 60px -20px rgba(31, 24, 20, 0.22);
+          max-width: 1000px;
         }
       }
-      .ls-hdr {
+      .ls-top {
+        flex: none;
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: max(30px, calc(env(safe-area-inset-top) + 12px)) 20px 18px;
+        height: calc(60px + env(safe-area-inset-top));
+        padding: env(safe-area-inset-top) 12px 0;
+        box-sizing: border-box;
+        background: var(--surface);
       }
-      .ls-sect {
-        padding: 18px 16px 0;
+      .ls-ico {
+        width: 44px;
+        height: 44px;
+        display: grid;
+        place-items: center;
+      }
+      .ls-brand {
         display: flex;
-        flex-direction: column;
-        gap: 10px;
+        align-items: center;
+        gap: 8px;
       }
-      .ls-room {
+      .ls-bar {
+        flex: none;
+        display: flex;
+        align-items: center;
+        height: 43px;
+        padding: 0 16px;
+        background: var(--section-bar);
+      }
+      .ls-bar .ls-sk {
+        background-color: var(--sk-bar);
+      }
+      .ls-rail {
+        flex: none;
+        display: flex;
+        gap: 12px;
+        padding: 14px 16px 18px;
+        overflow: hidden;
+      }
+      .ls-card {
+        flex: none;
+        width: 140px;
+        height: 179px;
+      }
+      .ls-list {
+        flex: none;
+        background: var(--surface);
+      }
+      .ls-row {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        height: 68px;
+        padding: 0 16px;
+      }
+      .ls-row + .ls-row {
+        border-top: 1px solid var(--border);
+      }
+      .ls-dock {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+      }
+      .ls-idle {
         display: flex;
         align-items: center;
         gap: 12px;
-        background: var(--surface);
-        border-radius: 22px;
-        padding: 12px;
-        box-shadow: 0 0 0 1px var(--border);
+        height: 64px;
+        padding: 0 12px 0 16px;
+        background: var(--surface-2);
       }
-      .ls-mp {
-        position: absolute;
-        left: 10px;
-        right: 10px;
-        bottom: max(10px, calc(env(safe-area-inset-bottom) + 6px));
+      .ls-spk {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        box-sizing: content-box;
+        height: 64px;
+        padding: 0 18px var(--spk-pad) 10px;
         background: var(--surface);
-        border-radius: 22px;
-        padding: 12px;
         box-shadow:
-          0 0 0 1px var(--border),
-          0 20px 40px -20px rgba(22, 24, 27, 0.3);
+          0 -1px 0 rgba(22, 24, 27, 0.14),
+          0 -8px 20px rgba(0, 0, 0, 0.06);
       }
       .ls-sk {
         display: block;
@@ -260,47 +319,99 @@
     <div id="root">
       <!-- Static launch skeleton; see .ls styles above. Replaced by React on mount. -->
       <div class="ls" aria-hidden="true">
-        <div class="ls-hdr">
-          <span>
-            <span class="ls-sk" style="width: 170px; height: 20px; border-radius: 6px"></span>
+        <div class="ls-top">
+          <span class="ls-ico">
+            <span class="ls-sk" style="width: 26px; height: 20px; border-radius: 4px"></span>
+          </span>
+          <span class="ls-brand">
+            <span class="ls-sk" style="width: 24px; height: 24px; border-radius: 50%"></span>
+            <span class="ls-sk" style="width: 110px; height: 13px; border-radius: 6px"></span>
+          </span>
+          <span class="ls-ico">
+            <span class="ls-sk" style="width: 26px; height: 20px; border-radius: 4px"></span>
+          </span>
+        </div>
+        <div class="ls-bar">
+          <span class="ls-sk" style="width: 130px; height: 12px; border-radius: 6px"></span>
+        </div>
+        <div class="ls-rail">
+          <span class="ls-card">
+            <span class="ls-sk" style="width: 140px; height: 140px; border-radius: 7px"></span>
             <span
               class="ls-sk"
-              style="width: 120px; height: 12px; border-radius: 6px; margin-top: 8px"
+              style="width: 70%; height: 12px; border-radius: 6px; margin-top: 10px"
+            ></span>
+            <span
+              class="ls-sk"
+              style="width: 45%; height: 10px; border-radius: 5px; margin-top: 6px"
             ></span>
           </span>
-          <span class="ls-sk" style="width: 36px; height: 36px; border-radius: 50%"></span>
+          <span class="ls-card">
+            <span class="ls-sk" style="width: 140px; height: 140px; border-radius: 7px"></span>
+            <span
+              class="ls-sk"
+              style="width: 40%; height: 12px; border-radius: 6px; margin-top: 10px"
+            ></span>
+            <span
+              class="ls-sk"
+              style="width: 45%; height: 10px; border-radius: 5px; margin-top: 6px"
+            ></span>
+          </span>
+          <span class="ls-card">
+            <span class="ls-sk" style="width: 140px; height: 140px; border-radius: 7px"></span>
+            <span
+              class="ls-sk"
+              style="width: 60%; height: 12px; border-radius: 6px; margin-top: 10px"
+            ></span>
+            <span
+              class="ls-sk"
+              style="width: 45%; height: 10px; border-radius: 5px; margin-top: 6px"
+            ></span>
+          </span>
         </div>
-        <div class="ls-sect">
-          <span class="ls-sk" style="width: 64px; height: 12px; border-radius: 6px"></span>
-          <div class="ls-room">
-            <span class="ls-sk" style="width: 52px; height: 52px; border-radius: 14px"></span>
+        <div class="ls-bar">
+          <span class="ls-sk" style="width: 120px; height: 12px; border-radius: 6px"></span>
+        </div>
+        <div class="ls-list">
+          <div class="ls-row">
+            <span class="ls-sk" style="width: 44px; height: 44px; border-radius: 7px"></span>
             <span style="flex: 1">
-              <span class="ls-sk" style="width: 45%; height: 15px; border-radius: 6px"></span>
+              <span class="ls-sk" style="width: 30%; height: 13px; border-radius: 6px"></span>
               <span
                 class="ls-sk"
-                style="width: 30%; height: 12px; border-radius: 6px; margin-top: 7px"
+                style="width: 65%; height: 10px; border-radius: 5px; margin-top: 8px"
               ></span>
             </span>
-            <span class="ls-sk" style="width: 38px; height: 38px; border-radius: 50%"></span>
+            <span class="ls-sk" style="width: 10px; height: 16px; border-radius: 3px"></span>
           </div>
-          <div class="ls-room">
-            <span class="ls-sk" style="width: 52px; height: 52px; border-radius: 14px"></span>
+          <div class="ls-row">
+            <span class="ls-sk" style="width: 44px; height: 44px; border-radius: 7px"></span>
             <span style="flex: 1">
-              <span class="ls-sk" style="width: 40%; height: 15px; border-radius: 6px"></span>
+              <span class="ls-sk" style="width: 30%; height: 13px; border-radius: 6px"></span>
               <span
                 class="ls-sk"
-                style="width: 25%; height: 12px; border-radius: 6px; margin-top: 7px"
+                style="width: 70%; height: 10px; border-radius: 5px; margin-top: 8px"
               ></span>
             </span>
-            <span class="ls-sk" style="width: 38px; height: 38px; border-radius: 50%"></span>
+            <span class="ls-sk" style="width: 10px; height: 16px; border-radius: 3px"></span>
           </div>
         </div>
-        <div class="ls-mp">
-          <span class="ls-sk" style="width: 50%; height: 12px; border-radius: 6px"></span>
-          <span
-            class="ls-sk"
-            style="width: 100%; height: 8px; border-radius: 99px; margin-top: 18px"
-          ></span>
+        <div class="ls-dock">
+          <div class="ls-idle">
+            <span class="ls-sk" style="width: 28px; height: 28px; border-radius: 50%"></span>
+            <span class="ls-sk" style="width: 110px; height: 12px; border-radius: 6px"></span>
+          </div>
+          <div class="ls-spk">
+            <span class="ls-sk" style="width: 44px; height: 44px; border-radius: 50%"></span>
+            <span style="flex: 1">
+              <span class="ls-sk" style="width: 90px; height: 12px; border-radius: 6px"></span>
+              <span
+                class="ls-sk"
+                style="width: 70px; height: 10px; border-radius: 5px; margin-top: 8px"
+              ></span>
+            </span>
+            <span class="ls-sk" style="width: 20px; height: 20px; border-radius: 4px"></span>
+          </div>
         </div>
       </div>
     </div>

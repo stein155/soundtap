@@ -3,6 +3,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { makeT } from './i18n';
+import type { NowPlaying } from './types';
 import {
   describePlayback,
   artSrc,
@@ -39,28 +40,28 @@ describe('sourceName', () => {
 
 describe('sourceLine', () => {
   it('says live for a running station and paused for a stopped one', () => {
-    expect(sourceLine(view({}), t)).toBe('Live • TuneIn');
-    expect(sourceLine(view({ live: false }), t)).toBe('Paused • TuneIn');
+    expect(sourceLine(view({}), t)).toBe('Live · TuneIn');
+    expect(sourceLine(view({ live: false }), t)).toBe('Paused · TuneIn');
   });
 
   it('prefers the detail, and has nothing for a speaker at rest', () => {
     expect(
-      sourceLine(view({ isSpotify: true, source: 'SPOTIFY', detail: 'Artist • Album' }), t)
-    ).toBe('Artist • Album • Spotify');
+      sourceLine(view({ isSpotify: true, source: 'SPOTIFY', detail: 'Artist · Album' }), t)
+    ).toBe('Artist · Album · Spotify');
     expect(sourceLine(view({ artwork: { kind: 'speaker' } }), t)).toBe('');
   });
 });
 
 describe('detailLine', () => {
   it('leaves the source to the top bar when there is something to say', () => {
-    const spotify = { isSpotify: true, source: 'SPOTIFY', detail: 'Artist • Album' };
-    expect(detailLine(view(spotify), t)).toBe('Artist • Album');
+    const spotify = { isSpotify: true, source: 'SPOTIFY', detail: 'Artist · Album' };
+    expect(detailLine(view(spotify), t)).toBe('Artist · Album');
     expect(detailLine(view({ detail: 'Song' }), t)).toBe('Song');
-    expect(detailLine(view({}), t)).toBe('Live • TuneIn');
+    expect(detailLine(view({}), t)).toBe('Live · TuneIn');
   });
 
   it('does not show the song of a paused station', () => {
-    expect(detailLine(view({ detail: 'Song', live: false }), t)).toBe('Paused • TuneIn');
+    expect(detailLine(view({ detail: 'Song', live: false }), t)).toBe('Paused · TuneIn');
   });
 });
 
@@ -72,18 +73,24 @@ describe('artSrc', () => {
 });
 
 describe('a phone on Bluetooth', () => {
-  const now = { source: 'BLUETOOTH', track: 'Song', artist: 'Band', album: 'Record' };
+  const now: NowPlaying = {
+    standby: false,
+    source: 'BLUETOOTH',
+    track: 'Song',
+    artist: 'Band',
+    album: 'Record',
+  };
 
   it('shows its track under the name of the source', () => {
-    const v = describePlayback(now as never, t, '');
+    const v = describePlayback(now, t, '');
     expect(v.title).toBe('Song');
-    expect(v.detail).toBe('Band • Record');
+    expect(v.detail).toBe('Band · Record');
     expect(v.artwork.kind).toBe('bluetooth');
     expect(sourceName(v, t)).toBe('Bluetooth');
   });
 
   it('says what the input is while the phone names nothing', () => {
-    const v = describePlayback({ source: 'BLUETOOTH', track: '' } as never, t, '');
+    const v = describePlayback({ standby: false, source: 'BLUETOOTH', track: '' }, t, '');
     expect(v.title).toBe('Bluetooth');
     expect(v.detail).not.toBe('');
   });
@@ -92,7 +99,7 @@ describe('a phone on Bluetooth', () => {
 describe('a connected phone with nothing playing', () => {
   it('is named under the source', () => {
     const v = describePlayback(
-      { source: 'BLUETOOTH', track: '', stationName: 'Anna' } as never,
+      { standby: false, source: 'BLUETOOTH', track: '', stationName: 'Anna' },
       t,
       ''
     );
@@ -114,11 +121,11 @@ describe('describePlayback source matrix', () => {
       const now = { source, standby: false, stationName: 'Name', playStatus: 'PLAY_STATE' };
       const v = describePlayback(now, t, '');
       expect(sourceName(v, t)).toBe(name);
-      expect(sourceLine(v, t)).toBe(radio ? `Live • ${name}` : name);
+      expect(sourceLine(v, t)).toBe(radio ? `Live · ${name}` : name);
       const withTrack = describePlayback({ ...now, track: 'A track', artist: 'An artist' }, t, '');
       expect(sourceName(withTrack, t)).toBe(name);
       expect(sourceLine(withTrack, t)).toBe(
-        source === 'SPOTIFY' ? `An artist • ${name}` : `An artist • A track • ${name}`
+        source === 'SPOTIFY' ? `An artist · ${name}` : `An artist · A track · ${name}`
       );
     }
   );
@@ -133,6 +140,6 @@ describe('describePlayback album', () => {
       artist: 'Band',
       album: 'Record',
     };
-    expect(describePlayback(now, t).detail).toBe('Band • Record');
+    expect(describePlayback(now, t).detail).toBe('Band · Record');
   });
 });

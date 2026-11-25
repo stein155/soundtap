@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactElement } from 'react';
 import { Hint } from '../../../atoms/Hint';
 import { SegmentedControl } from '../../../molecules/SegmentedControl';
 import { useI18n, type I18nKey } from '../../../../lib/i18n';
@@ -44,7 +44,7 @@ function SoundbarChoiceCard({
   title,
   options,
 }: {
-  speaker?: string;
+  speaker?: string | undefined;
   choice: SoundbarChoice;
   title: I18nKey;
   options: readonly (readonly [string, I18nKey | null])[];
@@ -91,7 +91,7 @@ function SoundbarChoiceCard({
 }
 
 // A soundbar's audio mode, HDMI-CEC mode and HDMI input button, each hidden until the bar has reported it.
-export function SoundbarChoices({ speaker }: { speaker?: string }) {
+export function SoundbarChoices({ speaker }: { speaker?: string | undefined }): ReactElement {
   return (
     <>
       <SoundbarChoiceCard

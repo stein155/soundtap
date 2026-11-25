@@ -5,6 +5,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { useSleepTimer } from './useSleepTimer';
 import * as api from '../lib/api';
+import type { SleepState } from '../lib/api/playback';
 
 vi.mock('../lib/api', () => ({ getSleep: vi.fn(), setSleep: vi.fn() }));
 
@@ -12,8 +13,13 @@ vi.mock('../lib/api', () => ({ getSleep: vi.fn(), setSleep: vi.fn() }));
 // Bedroom.
 describe('useSleepTimer room switch', () => {
   it('drops a timer write that completes for the previous speaker', async () => {
-    let finish: (v: unknown) => void = () => {};
-    vi.mocked(api.setSleep).mockImplementation(() => new Promise((r) => (finish = r)) as never);
+    let finish: (v: SleepState | null) => void = vi.fn();
+    vi.mocked(api.setSleep).mockImplementation(
+      async () =>
+        new Promise<SleepState | null>((r) => {
+          finish = r;
+        })
+    );
     vi.mocked(api.getSleep).mockResolvedValue({ minutes: 0, endsAt: '' });
     const { result, rerender } = renderHook(({ s }) => useSleepTimer(s, true), {
       initialProps: { s: 'kitchen' },
@@ -41,8 +47,8 @@ describe('useSleepTimer past its end', () => {
       .mockResolvedValueOnce(null)
       .mockResolvedValue({ minutes: 30, endsAt });
     const { result } = renderHook(() => useSleepTimer('kitchen', true));
-    await act(() => vi.advanceTimersByTimeAsync(0));
-    await act(() => vi.advanceTimersByTimeAsync(6000));
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    await act(async () => vi.advanceTimersByTimeAsync(6000));
     expect(result.current.timer?.minutes).toBe(30);
     vi.useRealTimers();
   });
@@ -55,10 +61,11 @@ describe('useSleepTimer past its end', () => {
       .mockResolvedValueOnce({ minutes: 1, endsAt })
       .mockResolvedValue(null);
     renderHook(() => useSleepTimer('kitchen', true));
-    await act(() => vi.advanceTimersByTimeAsync(1600));
+    await act(async () => vi.advanceTimersByTimeAsync(1600));
     vi.mocked(api.getSleep).mockClear();
     // In steps: React applies a miss, and arms the next read, when each act ends.
-    for (let step = 0; step < 20; step += 1) await act(() => vi.advanceTimersByTimeAsync(500));
+    for (let step = 0; step < 20; step += 1)
+      await act(async () => vi.advanceTimersByTimeAsync(500));
     expect(vi.mocked(api.getSleep).mock.calls.length).toBeLessThanOrEqual(2);
     vi.useRealTimers();
   });

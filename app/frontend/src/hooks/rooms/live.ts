@@ -4,9 +4,7 @@
 import { useCallback, useEffect } from 'react';
 import { subscribeHousehold } from '../../lib/events';
 import { forgetStream, type HouseholdRef, type RoomSetters } from './household';
-import type { useRoomLoaders } from './loaders';
-
-type Loaders = ReturnType<typeof useRoomLoaders>;
+import type { RoomLoaders as Loaders } from './loaders';
 
 // Room state, groups and the device list are polled only while the household stream is
 // down, or for a speaker too old to report them over it.
@@ -18,7 +16,7 @@ const GROUPS_MS = 8000;
 export function useRefresh(
   householdRef: HouseholdRef,
   { loadDevices, loadState, loadGroups }: Loaders
-) {
+): () => Promise<void> {
   return useCallback(async () => {
     householdRef.current.wanted = null; // a refused change is read back as it really is
     await loadDevices();
@@ -32,7 +30,7 @@ export function usePolling(
   visible: boolean,
   refresh: () => Promise<void>,
   { loadDevices, loadState, loadGroups }: Loaders
-) {
+): void {
   useEffect(() => {
     if (!visible) return;
     void refresh();
@@ -60,7 +58,7 @@ export function useHouseholdStream(
   visible: boolean,
   { loadDevices, loadGroups }: Loaders,
   setState: RoomSetters['setState']
-) {
+): void {
   useEffect(() => {
     if (!visible) return;
     // One record for the whole run; only its fields change.
@@ -73,7 +71,7 @@ export function useHouseholdStream(
       onState: (who, s) => {
         if (who.self && s.devices !== undefined && s.devices !== household.devicesWant) {
           household.devicesWant = s.devices;
-          void loadDevices().then(() => loadGroups('push'));
+          void loadDevices().then(async () => loadGroups('push'));
         }
         const key = who.self ? '' : who.id;
         if (s.followers && key !== undefined) {

@@ -13,9 +13,18 @@ const RETRY_MS = 15000;
 // A removal belongs to one speaker: the same station stays in another room's history.
 const removalOf = (speaker: string, item: RecentItem) => `${speaker} ${item.key}`;
 
+export interface Recent {
+  items: RecentItem[];
+  remove: (item: RecentItem) => Promise<void>;
+}
+
 // What the selected speaker played recently, re-read whenever what plays changes. onFail
 // hears about a removal the speaker did not take; the read-back then shows the entry again.
-export function useRecent(speaker: string, playing: string, onFail?: (err: unknown) => void) {
+export function useRecent(
+  speaker: string,
+  playing: string,
+  onFail?: (err: unknown) => void
+): Recent {
   // Kept with the speaker it belongs to: after a switch the previous room's history is not
   // shown, or played, under the new one while its own is still loading.
   const [read, setRead] = useState<{ speaker: string; items: RecentItem[] }>({
@@ -58,7 +67,7 @@ export function useRecent(speaker: string, playing: string, onFail?: (err: unkno
     removing.current.add(removal);
     setRead((r) => ({ ...r, items: r.items.filter((i) => i.key !== item.key) }));
     const results = await Promise.allSettled(
-      item.locations.map((loc) => removeRecent(item.source, loc, speaker))
+      item.locations.map(async (loc) => removeRecent(item.source, loc, speaker))
     );
     removing.current.delete(removal);
     const failure = results.find((r) => r.status === 'rejected');

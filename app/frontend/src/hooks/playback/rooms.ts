@@ -25,7 +25,7 @@ const SOURCE_NAME: Record<Exclude<Source, 'wifi'>, string> = {
 export function useSourcePicks(
   { live, speaker, lead, leadFailed }: PlaybackContext,
   stop: () => Promise<void>
-) {
+): (source: Source) => Promise<void> {
   const sourcePicks = useRef<Promise<unknown>>(Promise.resolve());
   const picksWaiting = useRef(0);
   return async (source: Source) => {
@@ -33,7 +33,7 @@ export function useSourcePicks(
     // Leaving an input for the network sources means stopping the input.
     if (source === 'wifi' && sourceOf(lead.now) === 'wifi' && picksWaiting.current === 0) return;
     picksWaiting.current++;
-    const pick = sourcePicks.current.then(() =>
+    const pick = sourcePicks.current.then(async () =>
       source === 'wifi' ? stop() : selectUserSource(SOURCE_NAME[source], speaker).catch(leadFailed)
     );
     sourcePicks.current = pick;
@@ -48,16 +48,16 @@ async function otherRoomTransport(
   room: Room,
   roomsState: PlaybackContext['roomsState'],
   failed: ReportFailure
-): Promise<'empty' | void> {
+): Promise<'empty' | undefined> {
   const target = speakerArg(room);
   const roomFailed = failed(room.name);
   const station = stationOf(room.now);
-  if (station?.spotify) {
+  if (station?.spotify === true) {
     await setPaused(!station.paused, target).catch(roomFailed);
   } else if (roomOn(room)) {
     roomsState.patch(room.id, { now: { standby: true } });
     // The household stream keeps the poll quiet, so nothing else would undo this.
-    await stopPlayback(target).catch((err) => {
+    await stopPlayback(target).catch((err: unknown) => {
       roomsState.patch(room.id, { now: room.now });
       roomFailed(err);
     });
@@ -68,6 +68,7 @@ async function otherRoomTransport(
     await playPreset(first + 1, true, presets[first], target).catch(roomFailed);
   }
   setTimeout(roomsState.loadState, REREAD_MS);
+  return undefined;
 }
 
 // The transport button on any room card: pause or resume Spotify, stop what plays, or
@@ -76,16 +77,21 @@ async function otherRoomTransport(
 export function roomTransporter(
   { live, lead, roomsState, failed, begin, settle }: PlaybackContext,
   own: { transport: () => Promise<void>; playSlot: (slot: number) => Promise<void> }
-) {
-  return async (room: Room): Promise<'empty' | void> => {
+): (room: Room) => Promise<'empty' | undefined> {
+  return async (room: Room): Promise<'empty' | undefined> => {
     if (room.id === lead?.id) {
-      if (roomOn(room)) return own.transport();
+      if (roomOn(room)) {
+        await own.transport();
+        return undefined;
+      }
       const first = live.presets.findIndex(Boolean);
-      return first < 0 ? 'empty' : own.playSlot(first + 1);
+      if (first < 0) return 'empty';
+      await own.playSlot(first + 1);
+      return undefined;
     }
     // A repeat tap on a room card is ignored until this one has settled.
     const key = `transport:${room.id}`;
-    if (!begin(key)) return;
+    if (!begin(key)) return undefined;
     try {
       return await otherRoomTransport(room, roomsState, failed);
     } finally {

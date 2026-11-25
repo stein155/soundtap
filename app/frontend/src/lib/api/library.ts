@@ -21,7 +21,7 @@ export async function getPresets(speaker?: string): Promise<(Preset | null)[] | 
         const source = text(p.source) || 'TUNEIN';
         const tuneInId =
           source === 'TUNEIN'
-            ? p.stationId || text(p.location).match(/station\/(s\d+)/)?.[1] || null
+            ? p.stationId || /station\/(s\d+)/.exec(text(p.location))?.[1] || null
             : null;
         slots[slot - 1] = {
           slot,
@@ -60,16 +60,24 @@ export async function getFavorites(speaker?: string): Promise<RecentEntry[] | nu
   }
 }
 
-export async function addFavorite(entry: FavoriteEntry, speaker?: string) {
+export async function addFavorite(entry: FavoriteEntry, speaker?: string): Promise<unknown> {
   return send('/api/favorites', 'POST', entry, speaker);
 }
 
-export async function removeFavorite(source: string, location: string, speaker?: string) {
+export async function removeFavorite(
+  source: string,
+  location: string,
+  speaker?: string
+): Promise<unknown> {
   return send('/api/favorites', 'DELETE', { source, location }, speaker);
 }
 
 // Takes one entry off the speaker's recently played list.
-export async function removeRecent(source: string, location: string, speaker?: string) {
+export async function removeRecent(
+  source: string,
+  location: string,
+  speaker?: string
+): Promise<unknown> {
   return send('/api/recent', 'DELETE', { source, location }, speaker);
 }
 
@@ -83,7 +91,7 @@ export async function getUserSources(speaker?: string): Promise<string[] | null>
   }
 }
 
-export function selectUserSource(source: string, speaker?: string) {
+export async function selectUserSource(source: string, speaker?: string): Promise<unknown> {
   return send('/api/user-source', 'POST', { source }, speaker);
 }
 
@@ -92,9 +100,9 @@ export function selectUserSource(source: string, speaker?: string) {
 // the speaker's own Spotify session plays it when the preset key is pressed.
 export async function storeSpotifyPreset(
   slot: number,
-  { uri, name, logo }: { uri: string; name: string; logo?: string },
+  { uri, name, logo }: { uri: string; name: string; logo?: string | undefined },
   speaker?: string
-) {
+): Promise<unknown> {
   return send(
     `/api/presets/${slot}`,
     'PUT',
@@ -106,7 +114,7 @@ export async function storePreset(
   slot: number,
   { tuneInId, name, logo }: { tuneInId: string; name: string; logo?: string },
   speaker?: string
-) {
+): Promise<unknown> {
   return send(
     `/api/presets/${slot}`,
     'PUT',

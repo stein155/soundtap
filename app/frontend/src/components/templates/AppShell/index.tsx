@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import type { ReactNode } from 'react';
+import type { ReactNode, ReactElement } from 'react';
 import { Frame, Main, Scroll } from './styled';
 
 // The app frame: a header, a scrolling middle, what is docked at the bottom, and what is
@@ -18,16 +18,18 @@ export function AppShell({
   footer?: ReactNode;
   overlays?: ReactNode;
   page?: ReactNode;
-  children: ReactNode;
-}) {
+  children?: ReactNode;
+}): ReactElement {
+  const docked = Boolean(footer);
+  const hasPage = Boolean(page);
   return (
     <Frame>
-      {page ? (
-        <Main $docked={!!footer}>{page}</Main>
+      {hasPage ? (
+        <Main $docked={docked}>{page}</Main>
       ) : (
         <>
           {header}
-          <Scroll $docked={!!footer}>{children}</Scroll>
+          <Scroll $docked={docked}>{children}</Scroll>
         </>
       )}
       {footer}

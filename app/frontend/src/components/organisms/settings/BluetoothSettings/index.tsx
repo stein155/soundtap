@@ -1,22 +1,67 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactElement } from 'react';
 import { Button } from '../../../atoms/Button';
 import { Icon } from '../../../atoms/Icon';
 import { Hint } from '../../../atoms/Hint';
 import { Note } from '../../../atoms/Note';
-import { ConfirmAction } from '../../../molecules/ConfirmAction';
-import { FieldCard } from '../../../molecules/FieldCard';
-import { FieldRow } from '../../../molecules/FieldRow';
-import { StatusCard } from '../../../molecules/StatusCard';
+import { TextButton } from '../../../atoms/TextButton';
+import { SetMenu } from '../../../molecules/SetMenu';
 import { useI18n } from '../../../../lib/i18n';
-import { clearBluetoothPairings, pairBluetooth, type BluetoothStatus } from '../../../../lib/api';
+import { forgetBluetoothDevice, pairBluetooth, type BluetoothStatus } from '../../../../lib/api';
 import { useSpeakerResource } from '../../../../hooks/speaker/resource';
 import { discardResource, refreshResource } from '../../../../hooks/speaker/store';
+import { Connected, Findable, Footer, Forget, Glyph, Name, Row, Value } from './styled';
 
 // A phone connects and disconnects without telling this page, so poll while open.
 const POLL_MS = 5000;
+
+type Device = NonNullable<BluetoothStatus['devices']>[number];
+
+// The paired phones and tablets, each with its own Forget, as in Bose's app.
+function PairedDevices({
+  devices,
+  onForget,
+}: {
+  devices: Device[];
+  onForget: (device: Device) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <SetMenu title={t('bluetoothDevices')}>
+      {devices.length ? (
+        devices.map((d) => {
+          const name = d.name || d.address;
+          return (
+            <Row key={d.address}>
+              <Glyph aria-hidden="true">
+                <Icon.phone width="20" height="20" />
+              </Glyph>
+              <Name>{name}</Name>
+              {d.connected && <Connected>{t('bluetoothConnected')}</Connected>}
+              <Forget>
+                <TextButton
+                  aria-label={t('bluetoothForgetName', { name })}
+                  onClick={() => onForget(d)}
+                >
+                  {t('wifiForget')}
+                </TextButton>
+              </Forget>
+            </Row>
+          );
+        })
+      ) : (
+        <Row>
+          <Glyph aria-hidden="true">
+            <Icon.bluetooth width="20" height="20" />
+          </Glyph>
+          <Name>{t('btNone')}</Name>
+        </Row>
+      )}
+    </SetMenu>
+  );
+}
 
 // What the speaker's own radio knows: the name phones see and who has paired.
 export function BluetoothSettings({
@@ -25,7 +70,7 @@ export function BluetoothSettings({
 }: {
   speaker: string;
   initial: BluetoothStatus;
-}) {
+}): ReactElement {
   const { t } = useI18n();
   // The page's one copy of the speaker's Bluetooth (hooks/speaker/store.ts): the row's
   // summary above reads it too. Only the newest read lands there.
@@ -39,14 +84,14 @@ export function BluetoothSettings({
     return () => window.clearInterval(id);
   }, [refresh]);
 
-  const forgetAll = async () => {
-    // A poll sent before "forget" would bring the phones back.
+  const forget = async (device: Device) => {
+    setResult('');
+    // A poll sent before "forget" would bring the device back.
     discardResource('bluetooth', speaker);
     try {
-      await clearBluetoothPairings(speaker);
-      setResult(t('bluetoothForgetDone'));
+      await forgetBluetoothDevice(device.address, speaker);
     } catch {
-      setResult(t('bluetoothForgetError'));
+      setResult(t('bluetoothForgetFailed', { name: device.name || device.address }));
     }
     await refresh();
   };
@@ -54,48 +99,43 @@ export function BluetoothSettings({
   const pair = async () => {
     try {
       await pairBluetooth(speaker);
-      setResult(''); // the button says it is pairing, for as long as the speaker reports that
+      setResult(''); // the button says it is findable, for as long as the speaker reports that
     } catch {
       setResult(t('bluetoothPairError'));
     }
     await refresh();
   };
 
-  const devices = status.devices ?? [];
   return (
     <>
       <Note>{t('bluetoothHint')}</Note>
       {status.alias && (
-        <FieldCard>
-          <FieldRow label={t('bluetoothName')} layout="value">
-            {status.alias}
-          </FieldRow>
-        </FieldCard>
+        <SetMenu>
+          <Row>
+            <Glyph aria-hidden="true">
+              <Icon.bluetooth width="20" height="20" />
+            </Glyph>
+            <Name>{t('bluetoothName')}</Name>
+            <Value>{status.alias}</Value>
+          </Row>
+        </SetMenu>
       )}
-      {devices.length ? (
-        <>
-          <FieldCard>
-            {devices.map(({ address, name, connected }) => (
-              <FieldRow key={address} label={name || address} layout="value" wideLabel>
-                {connected ? t('bluetoothConnected') : ''}
-              </FieldRow>
-            ))}
-          </FieldCard>
-          <ConfirmAction
-            destructive
-            label={t('bluetoothForget')}
-            warning={t('bluetoothForgetWarn')}
-            confirmLabel={t('bluetoothForget')}
-            onConfirm={forgetAll}
-          />
-        </>
-      ) : (
-        <StatusCard icon={<Icon.bluetooth width="22" height="22" />}>{t('btNone')}</StatusCard>
+      <PairedDevices devices={status.devices ?? []} onForget={(d) => void forget(d)} />
+      {result && (
+        <Hint error role="status">
+          {result}
+        </Hint>
       )}
-      <Button wide variant="stockholm" disabled={status.discoverable} onClick={pair}>
-        {status.discoverable ? t('bluetoothPairing') : t('bluetoothPair')}
-      </Button>
-      {result && <Hint role="status">{result}</Hint>}
+      <Footer>
+        {status.discoverable && (
+          <Findable role="status">
+            {t('bluetoothFindableHint', { name: status.alias || t('speaker') })}
+          </Findable>
+        )}
+        <Button wide variant="stockholm" disabled={status.discoverable} onClick={pair}>
+          {status.discoverable ? t('bluetoothFindable') : t('bluetoothPair')}
+        </Button>
+      </Footer>
     </>
   );
 }

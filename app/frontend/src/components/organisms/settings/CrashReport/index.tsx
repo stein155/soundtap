@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactElement } from 'react';
 import { Button, ButtonLink } from '../../../atoms/Button';
 import { Hint } from '../../../atoms/Hint';
 import { Note } from '../../../atoms/Note';
@@ -22,7 +22,7 @@ export function CrashReportSwitch({
   speaker: string;
   on: boolean;
   onChange: (on: boolean) => void;
-}) {
+}): ReactElement {
   const { t } = useI18n();
   const [failed, setFailed] = useState(false);
   const toggle = async () => {
@@ -36,7 +36,7 @@ export function CrashReportSwitch({
   };
   return (
     <>
-      <SetMenu>
+      <SetMenu title={t('crashReportsTitle')}>
         <SetSwitch
           on={on}
           label={t('crashReportsSetting')}
@@ -57,7 +57,13 @@ export function CrashReportSwitch({
 // report is shown word for word before it leaves; it leaves only as the link the owner
 // opens on GitHub, and is sent only when they submit it there. Reported or dismissed, the
 // speaker does not offer that crash again.
-export function CrashNotice({ speaker, enabled }: { speaker: string; enabled: boolean }) {
+export function CrashNotice({
+  speaker,
+  enabled,
+}: {
+  speaker: string;
+  enabled: boolean;
+}): ReactElement | null {
   const { t } = useI18n();
   const [crash, setCrash] = useState<CrashReport | null>(null);
   const [previewing, setPreviewing] = useState(false);
@@ -87,7 +93,9 @@ export function CrashNotice({ speaker, enabled }: { speaker: string; enabled: bo
           <Label>{t('crashReportBodyLabel')}</Label>
           <Preview data-testid="crash-body">{crash.body}</Preview>
           <Note>
-            {t('crashReportAttach', { path: `${t('maintenance')} › ${t('helpSupport')}` })}
+            {t('crashReportAttach', {
+              path: `${t('connectionMaintenance')} › ${t('helpSupport')}`,
+            })}
           </Note>
           <Actions>
             <ButtonLink

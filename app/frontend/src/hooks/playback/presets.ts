@@ -6,11 +6,37 @@ import { playingEntry } from '../../lib/favorites';
 import type { Preset } from '../../lib/types';
 import type { PlaybackContext } from './context';
 
+// How a preset goes back on its slot: a Spotify list as Spotify, a TuneIn station by its id.
+// null for a kind the page cannot store.
+function putBack(slot: number, prev: Preset, speaker: string): (() => Promise<unknown>) | null {
+  if (prev.source === 'SPOTIFY') {
+    return async () => storeSpotifyPreset(slot, { ...prev, uri: prev.location }, speaker);
+  }
+  const tuneInId = prev.tuneInId;
+  if (!tuneInId) return null;
+  return async () => storePreset(slot, { tuneInId, name: prev.name, logo: prev.logo }, speaker);
+}
+
+export interface PresetStores {
+  storeSpotify: (
+    slot: number,
+    item: { uri: string; name: string; artwork?: string | undefined }
+  ) => Promise<void>;
+  canStore: boolean;
+  storeCurrent: (slot: number) => Promise<void>;
+}
+
 // Storing on a preset: a Spotify item held onto a slot, or what is playing, with Undo.
-export function presetStores({ live, speaker, notify, t, leadFailed }: PlaybackContext) {
+export function presetStores({
+  live,
+  speaker,
+  notify,
+  t,
+  leadFailed,
+}: PlaybackContext): PresetStores {
   const storeSpotify = async (
     slot: number,
-    item: { uri: string; name: string; artwork?: string }
+    item: { uri: string; name: string; artwork?: string | undefined }
   ) => {
     await storeSpotifyPreset(slot, { ...item, logo: item.artwork }, speaker).catch(leadFailed);
     await live.refreshPresets();
@@ -24,21 +50,11 @@ export function presetStores({ live, speaker, notify, t, leadFailed }: PlaybackC
   // holds something else by the time Undo is tapped, someone changed it and it stays.
   const restore = (slot: number, prev: Preset | null, now: string | null) => {
     if (!prev) return undefined;
-    const put =
-      prev.source === 'SPOTIFY'
-        ? () => storeSpotifyPreset(slot, { ...prev, uri: prev.location }, speaker)
-        : prev.tuneInId
-          ? () =>
-              storePreset(
-                slot,
-                { tuneInId: prev.tuneInId as string, name: prev.name, logo: prev.logo },
-                speaker
-              )
-          : null;
+    const put = putBack(slot, prev, speaker);
     if (!put) return undefined;
     const undo = async () => {
       const cur = (await getPresets(speaker))?.[slot - 1] ?? null;
-      if (now === null ? cur : (cur?.tuneInId ?? cur?.location) !== now) {
+      if (now === null ? cur !== null : (cur?.tuneInId ?? cur?.location) !== now) {
         notify?.(t('presetChanged', { slot }));
       } else {
         await put().catch(leadFailed);

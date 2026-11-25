@@ -9,7 +9,7 @@ const pop = () => {
   window.history.replaceState(null, '');
   window.dispatchEvent(new PopStateEvent('popstate'));
 };
-const tick = () => new Promise((r) => setTimeout(r, 0));
+const tick = async () => new Promise((r) => setTimeout(r, 0));
 
 // The device's back closes the top overlay instead of leaving the app.
 describe('useEscape and the back button', () => {
@@ -35,8 +35,8 @@ describe('useEscape and the back button', () => {
     const back = vi.spyOn(window.history, 'back');
     const before = window.history.length;
     const useStack = ({ first }: { first: boolean }) => {
-      useEscape(first, () => {});
-      useEscape(!first, () => {});
+      useEscape(first, vi.fn());
+      useEscape(!first, vi.fn());
     };
     const { rerender, unmount } = renderHook(useStack, { initialProps: { first: true } });
     rerender({ first: false });
@@ -50,8 +50,8 @@ describe('useEscape and the back button', () => {
   it('reuses the entry for the next overlay', () => {
     pop();
     const before = window.history.length;
-    renderHook(() => useEscape(true, () => {})).unmount();
-    renderHook(() => useEscape(true, () => {})).unmount();
+    renderHook(() => useEscape(true, vi.fn())).unmount();
+    renderHook(() => useEscape(true, vi.fn())).unmount();
     expect(window.history.length).toBe(before + 1);
   });
 });

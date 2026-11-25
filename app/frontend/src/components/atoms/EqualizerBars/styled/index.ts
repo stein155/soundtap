@@ -10,7 +10,7 @@ const bounce = keyframes`
 `;
 
 // Heights and delays of the four bars, so they never move in step.
-const BARS = [
+const BARS: [height: number, delay: number][] = [
   [60, 0],
   [100, 150],
   [40, 300],

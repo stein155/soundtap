@@ -10,7 +10,8 @@ export const Underlined = styled.button`
   border: 0;
   background: none;
   font: inherit;
-  font-size: 14px;
+  font-size: 13px;
+  font-weight: 600;
   color: var(--ink);
   text-align: start;
   text-decoration: underline;

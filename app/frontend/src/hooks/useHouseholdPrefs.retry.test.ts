@@ -7,10 +7,11 @@ import { useHouseholdPrefs } from './useHouseholdPrefs';
 import * as api from '../lib/api';
 import { settingsFixture } from '../test/settings';
 import type { Room } from './useRooms';
+import { room as roomFixture } from './testFixtures';
 
 vi.mock('../lib/api', () => ({ getSettings: vi.fn(), saveSettings: vi.fn() }));
 
-const room = { id: 'a', name: 'Kitchen', self: true, online: true } as Room;
+const room: Room = roomFixture({ id: 'a', name: 'Kitchen', self: true });
 
 // One failed read must not hide the household controls for good.
 describe('useHouseholdPrefs', () => {
@@ -31,7 +32,7 @@ describe('useHouseholdPrefs', () => {
   // A retry left by a closed view must not overwrite what a reopened one saved.
   it('drops the retry of an unmounted view', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    const b = { id: 'b', name: 'Bedroom', online: true } as Room;
+    const b = roomFixture({ id: 'b', name: 'Bedroom' });
     vi.mocked(api.getSettings).mockResolvedValue(settingsFixture());
     vi.mocked(api.saveSettings)
       .mockResolvedValueOnce(undefined)
@@ -39,11 +40,11 @@ describe('useHouseholdPrefs', () => {
       .mockResolvedValue(undefined);
     const first = renderHook(() => useHouseholdPrefs([room, b]));
     await waitFor(() => expect(first.result.current.integrations).not.toBeNull());
-    await act(() => first.result.current.saveIntegrations({ spotify: false, airplay: true }));
+    await act(async () => first.result.current.saveIntegrations({ spotify: false, airplay: true }));
     first.unmount();
     const second = renderHook(() => useHouseholdPrefs([room, b]));
     await waitFor(() => expect(second.result.current.integrations).not.toBeNull());
-    await act(() => second.result.current.saveIntegrations({ spotify: true, airplay: true }));
+    await act(async () => second.result.current.saveIntegrations({ spotify: true, airplay: true }));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
     });

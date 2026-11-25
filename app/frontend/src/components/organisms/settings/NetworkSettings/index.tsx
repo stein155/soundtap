@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactElement } from 'react';
 import { SetItem } from '../../../molecules/SetItem';
 import { SetMenu } from '../../../molecules/SetMenu';
 import { TextButton } from '../../../atoms/TextButton';
+import { Icon } from '../../../atoms/Icon';
 import {
   dismissWifiFellBack,
   forgetWifi,
@@ -13,12 +14,12 @@ import {
   type SavedWifi,
 } from '../../../../lib/api';
 import { Hint } from '../../../atoms/Hint';
-import { SubPage } from '../../../molecules/Accordion';
-import { FieldCard } from '../../../molecules/FieldCard';
-import { FieldRow } from '../../../molecules/FieldRow';
 import { useI18n, type I18nKey } from '../../../../lib/i18n';
 import type { NetworkInfo } from '../../../../lib/types';
+import { SignalGlyph } from './SignalGlyph';
+import { Current, Detail, Glyph, Row, Text } from './styled';
 import { WifiPicker } from './WifiPicker';
+import { WifiSearch } from './WifiSearch';
 
 export { WifiPicker };
 
@@ -37,53 +38,52 @@ const WIFI_FAIL: Partial<Record<string, I18nKey>> = {
   timeout: 'wifiFailTimeout',
 };
 
-const band = (mhz: number) => (mhz >= 5925 ? '6 GHz' : mhz >= 4900 ? '5 GHz' : '2.4 GHz');
-
-// What signal_poll adds to the signal word: dBm, band and link speed, each when known.
-function linkDetail(n: NetworkInfo | null): string[] {
-  return [
-    n?.dbm ? `${n.dbm} dBm` : '',
-    n?.mhz ? band(n.mhz) : '',
-    n?.linkMbps ? `${n.linkMbps} Mbit/s` : '',
-  ].filter(Boolean);
+// "Signal good · 192.0.2.21": the signal in words and the address, each when known.
+function statusLine(n: NetworkInfo, t: ReturnType<typeof useI18n>['t']): string {
+  const word = n.signal && SIGNAL_LABEL[n.signal];
+  const signal = word ? t('wifiSignalIs', { level: t(word).toLocaleLowerCase() }) : '';
+  return [n.type === 'ethernet' ? t('ethernetLabel') : signal, n.ip].filter(Boolean).join(' · ');
 }
 
-// The connection in use: interface, address and, on Wi-Fi, signal. On Ethernet there is
-// no SSID, and saying so is the diagnosis for "my Wi-Fi settings do nothing".
+// The connection in use: the network, its signal and address. On Ethernet there is no
+// SSID, and saying so is the diagnosis for "my Wi-Fi settings do nothing".
+// The connection's name: wired, or the Wi-Fi network it is on.
+function connectionName(
+  network: NetworkInfo,
+  wired: boolean,
+  t: ReturnType<typeof useI18n>['t']
+): string {
+  if (wired) return t('ethernetLabel');
+  return network.ssid || t('wifiLabel');
+}
+
+// What to know about a working connection: wired, or a weak Wi-Fi signal.
+function Diagnosis({ wired, poor }: { wired: boolean; poor: boolean }): ReactElement | null {
+  const { t } = useI18n();
+  if (wired) return <Hint>{t('netDiagWired')}</Hint>;
+  return poor ? <Hint>{t('netDiagPoor')}</Hint> : null;
+}
+
 function NetworkStatus({ network }: { network: NetworkInfo | null }) {
   const { t } = useI18n();
   const wired = network?.type === 'ethernet';
-  const signal = network?.signal;
   return (
     <>
-      <FieldCard>
-        <FieldRow label={t('connection')} layout="value">
-          {!network
-            ? t('notConnected')
-            : wired
-              ? t('ethernetLabel')
-              : network.ssid || t('wifiLabel')}
-        </FieldRow>
-        <FieldRow label={t('ipAddress')} layout="value">
-          {network?.ip || '—'}
-        </FieldRow>
-        {!wired && (
-          <FieldRow label={t('signal')} layout="value">
-            {signal
-              ? [
-                  SIGNAL_LABEL[signal] ? t(SIGNAL_LABEL[signal]) : signal,
-                  ...linkDetail(network),
-                ].join(' · ')
-              : '—'}
-          </FieldRow>
-        )}
-      </FieldCard>
-      {!network?.ip ? (
-        <Hint error>{t('netDiagNoIP')}</Hint>
-      ) : wired ? (
-        <Hint>{t('netDiagWired')}</Hint>
+      <SetMenu title={t('wifiConnectedTo')}>
+        <Row>
+          <Glyph aria-hidden="true">
+            {wired ? <Icon.link /> : <SignalGlyph signal={network?.signal ?? ''} />}
+          </Glyph>
+          <Text>
+            <Current>{network ? connectionName(network, wired, t) : t('notConnected')}</Current>
+            {network && <Detail>{statusLine(network, t)}</Detail>}
+          </Text>
+        </Row>
+      </SetMenu>
+      {network?.ip ? (
+        <Diagnosis wired={wired} poor={network.signal === 'poor'} />
       ) : (
-        signal === 'poor' && <Hint>{t('netDiagPoor')}</Hint>
+        <Hint error>{t('netDiagNoIP')}</Hint>
       )}
     </>
   );
@@ -91,7 +91,7 @@ function NetworkStatus({ network }: { network: NetworkInfo | null }) {
 
 // New settings that did not join: the speaker went back to its last network, and says why
 // once, until dismissed.
-export function FellBackNotice({ speaker }: { speaker: string }) {
+export function FellBackNotice({ speaker }: { speaker: string }): ReactElement | null {
   const { t } = useI18n();
   const [reason, setReason] = useState('');
   useEffect(() => {
@@ -147,25 +147,32 @@ function SavedNetworks({
       setSaved((list) => list.filter((n) => n.id !== id));
     } catch (err) {
       // Still listed: nothing was forgotten. Say so, and whether the speaker said no.
-      const status = (err as { status?: number } | undefined)?.status;
-      const refused = !!status && status >= 400 && status < 500;
+      const status =
+        typeof err === 'object' && err !== null && 'status' in err && typeof err.status === 'number'
+          ? err.status
+          : undefined;
+      const refused = status !== undefined && status >= 400 && status < 500;
       setError(t(refused ? 'actionRefused' : 'actionFailed', { name: speakerName }));
     }
   };
   return (
     <>
-      <FieldCard>
+      <SetMenu title={t('wifiSavedNetworks')}>
         {others.map((n) => (
-          <FieldRow key={n.id} label={n.ssid} layout="value" wideLabel>
+          <Row key={n.id}>
+            <Glyph aria-hidden="true">
+              <Icon.home />
+            </Glyph>
+            <Text>{n.ssid}</Text>
             <TextButton
               aria-label={`${t('wifiForget')} ${n.ssid}`}
               onClick={() => void forget(n.id)}
             >
               {t('wifiForget')}
             </TextButton>
-          </FieldRow>
+          </Row>
         ))}
-      </FieldCard>
+      </SetMenu>
       {error && (
         <Hint error role="alert">
           {error}
@@ -176,7 +183,7 @@ function SavedNetworks({
 }
 
 // The Wi-Fi page of a speaker: what it is on, the networks it remembers and a row that
-// opens the page for joining another network. No survey runs until it is pressed.
+// opens the page for finding another network. No survey runs until it is opened.
 export function NetworkSettings({
   network,
   speaker,
@@ -185,14 +192,12 @@ export function NetworkSettings({
   network: NetworkInfo | null;
   speaker: string;
   speakerName: string;
-}) {
+}): ReactElement {
   const { t } = useI18n();
-  const [joining, setJoining] = useState(false);
-  if (joining)
+  const [finding, setFinding] = useState(false);
+  if (finding)
     return (
-      <SubPage open onBack={() => setJoining(false)} title={t('wifiNetworks')}>
-        <WifiPicker network={network} speaker={speaker} />
-      </SubPage>
+      <WifiSearch speaker={speaker} current={network?.ssid} onBack={() => setFinding(false)} />
     );
   return (
     <>
@@ -200,7 +205,7 @@ export function NetworkSettings({
       <NetworkStatus network={network} />
       <SavedNetworks network={network} speaker={speaker} speakerName={speakerName} />
       <SetMenu>
-        <SetItem icon="wifi" label={t('wifiConnectTitle')} onClick={() => setJoining(true)} />
+        <SetItem icon="plus" label={t('wifiFind')} onClick={() => setFinding(true)} />
       </SetMenu>
     </>
   );

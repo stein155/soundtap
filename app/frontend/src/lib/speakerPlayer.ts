@@ -6,14 +6,18 @@ import type { NowPlaying, Player, PlayerStation, PlayerStatus, Preset } from './
 
 // The pure side of useSpeaker: what the polled / pushed state means, with no React in it.
 
-export type Pending = {
+export interface Pending {
   name: string;
   tuneInId: string | null;
   logo: string;
   since: number;
   prevName: string;
-};
-export type Picked = { name: string; logo: string; tuneInId: string | null };
+}
+export interface Picked {
+  name: string;
+  logo: string;
+  tuneInId: string | null;
+}
 
 // Hard cap on holding a pending target: give up, show reality (likely an error).
 export const PENDING_MAX_MS = 15000;
@@ -33,7 +37,11 @@ const POLL_SAFETY_MS = 30000; // while SSE is live, only poll occasionally as a 
 // on the very first tick, so the lagging PLAY_STATE of the old station arrived unguarded
 // and flickered back on screen. Hold until the box confirms it has actually stopped
 // (standby/STOP_STATE) or the window expires.
-export function stopHold(hold: number, np: NowPlaying | null | undefined, now: number) {
+export function stopHold(
+  hold: number,
+  np: NowPlaying | null | undefined,
+  now: number
+): { holding: boolean; release: boolean } {
   const expired = hold !== 0 && now - hold >= STOP_HOLD_MS;
   const settledStopped = np != null && (np.standby || np.playStatus === 'STOP_STATE');
   return {
@@ -44,7 +52,11 @@ export function stopHold(hold: number, np: NowPlaying | null | undefined, now: n
 
 // Whether a reading ends the pending target (`clear`), and whether it ends it because the
 // box gave up on the stream (`failed`).
-export function pendingOutcome(np: NowPlaying, p: Pending, now: number) {
+export function pendingOutcome(
+  np: NowPlaying,
+  p: Pending,
+  now: number
+): { failed: boolean; clear: boolean } {
   const elapsed = now - p.since;
   const playing = !np.standby && np.playStatus === 'PLAY_STATE';
   // Clear the hold only once the box actually plays our station, OR has

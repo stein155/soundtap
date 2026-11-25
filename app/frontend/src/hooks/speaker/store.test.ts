@@ -12,16 +12,18 @@ import {
   snapshot,
   subscribeResource,
 } from './store';
+import { must } from '../../test/must';
+import { settingsFixture } from '../../test/settings';
 
 vi.mock('../../lib/api', () => ({ getSettings: vi.fn() }));
 
-const named = (name: string) => ({ name }) as Settings;
+const named = (name: string): Settings => settingsFixture({ name });
 
 // A read that answers when the test says so.
 function later() {
-  const answers: Array<(s: Settings | null) => void> = [];
+  const answers: ((s: Settings | null) => void)[] = [];
   vi.mocked(api.getSettings).mockImplementation(
-    () => new Promise<Settings | null>((r) => answers.push(r))
+    async () => new Promise<Settings | null>((r) => answers.push(r))
   );
   return answers;
 }
@@ -33,19 +35,19 @@ describe('speaker store', () => {
 
   it('lets only the newest read land', async () => {
     const answers = later();
-    const off = subscribeResource('settings', 'a', () => {});
+    const off = subscribeResource('settings', 'a', vi.fn());
     const first = refreshResource('settings', 'a');
     const second = refreshResource('settings', 'a');
-    answers[1](named('new'));
+    must(answers[1], 'the second read')(named('new'));
     await second;
-    answers[0](named('old'));
+    must(answers[0], 'the first read')(named('old'));
     expect(await first).toBe(true);
     expect(snapshot('settings', 'a')).toEqual(named('new'));
     off();
   });
 
   it('keeps the last answer when a read fails, and says the speaker is away until one', async () => {
-    const off = subscribeResource('settings', 'a', () => {});
+    const off = subscribeResource('settings', 'a', vi.fn());
     vi.mocked(api.getSettings).mockResolvedValueOnce(null);
     expect(await refreshResource('settings', 'a')).toBe(false);
     expect(snapshot('settings', 'a')).toBeNull();
@@ -58,9 +60,9 @@ describe('speaker store', () => {
   });
 
   it('keeps speakers apart', async () => {
-    vi.mocked(api.getSettings).mockImplementation((s) => Promise.resolve(named(s ?? '')));
-    const offA = subscribeResource('settings', 'a', () => {});
-    const offB = subscribeResource('settings', 'b', () => {});
+    vi.mocked(api.getSettings).mockImplementation(async (s) => Promise.resolve(named(s ?? '')));
+    const offA = subscribeResource('settings', 'a', vi.fn());
+    const offB = subscribeResource('settings', 'b', vi.fn());
     await Promise.all([refreshResource('settings', 'a'), refreshResource('settings', 'b')]);
     expect(snapshot('settings', 'a')?.name).toBe('a');
     expect(snapshot('settings', 'b')?.name).toBe('b');
@@ -70,7 +72,7 @@ describe('speaker store', () => {
 
   it('reads once for every page that asks at the same time', async () => {
     vi.mocked(api.getSettings).mockResolvedValue(named('a'));
-    const off = subscribeResource('settings', 'a', () => {});
+    const off = subscribeResource('settings', 'a', vi.fn());
     await Promise.all([ensureResource('settings', 'a'), ensureResource('settings', 'a')]);
     await ensureResource('settings', 'a');
     expect(api.getSettings).toHaveBeenCalledTimes(1);
@@ -79,11 +81,11 @@ describe('speaker store', () => {
 
   it('forgets a speaker no page reads any more', async () => {
     vi.mocked(api.getSettings).mockResolvedValue(named('a'));
-    const off = subscribeResource('settings', 'a', () => {});
+    const off = subscribeResource('settings', 'a', vi.fn());
     await ensureResource('settings', 'a');
     off();
     expect(snapshot('settings', 'a')).toBeUndefined();
-    const again = subscribeResource('settings', 'a', () => {});
+    const again = subscribeResource('settings', 'a', vi.fn());
     await ensureResource('settings', 'a');
     expect(api.getSettings).toHaveBeenCalledTimes(2);
     again();
@@ -106,7 +108,7 @@ describe('speaker store', () => {
     vi.mocked(api.getSettings).mockResolvedValue(named('a'));
     refreshHeld('settings', 'nobody');
     expect(api.getSettings).not.toHaveBeenCalled();
-    const off = subscribeResource('settings', 'a', () => {});
+    const off = subscribeResource('settings', 'a', vi.fn());
     refreshHeld('settings', 'a');
     expect(api.getSettings).toHaveBeenCalledWith('a');
     off();
@@ -114,10 +116,10 @@ describe('speaker store', () => {
 
   it('drops a read an action made stale', async () => {
     const answers = later();
-    const off = subscribeResource('settings', 'a', () => {});
+    const off = subscribeResource('settings', 'a', vi.fn());
     const stale = refreshResource('settings', 'a');
     discardResource('settings', 'a');
-    answers[0](named('before the action'));
+    must(answers[0], 'the read')(named('before the action'));
     await stale;
     expect(snapshot('settings', 'a')).toBeUndefined();
     off();

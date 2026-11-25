@@ -6,28 +6,29 @@ import { renderHook, act } from '@testing-library/react';
 import { usePlayback } from './usePlayback';
 import type { SelectedRoom } from './useSelectedRoom';
 import * as api from '../lib/api';
+import { nowPlaying, room, selectedRoom } from './testFixtures';
 
 vi.mock('../lib/api', () => ({ setPaused: vi.fn() }));
 
-const now = { source: 'SPOTIFY', stationName: 'Mix', playStatus: 'PLAY_STATE' };
+const now = nowPlaying({ source: 'SPOTIFY', stationName: 'Mix', playStatus: 'PLAY_STATE' });
 
 function selected(patch: () => void): SelectedRoom {
-  return {
+  return selectedRoom({
     speaker: 'kitchen',
-    lead: { id: 'kitchen', name: 'Kitchen', now },
-    live: { presets: [], player: { status: 'playing' }, refreshNowPlaying: vi.fn() },
-    roomsState: { patch, loadState: vi.fn() },
-  } as unknown as SelectedRoom;
+    lead: room({ id: 'kitchen', name: 'Kitchen', now }),
+    live: { player: { status: 'playing', station: null } },
+    roomsState: { patch },
+  });
 }
 
 describe('usePlayback Spotify pause', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('shows paused at once, ignores a second tap, and undoes it on failure', async () => {
-    let fail: (e: Error) => void = () => {};
-    vi.mocked(api.setPaused).mockImplementationOnce(() => new Promise((_, r) => (fail = r)));
+    let fail: (e: Error) => void = vi.fn();
+    vi.mocked(api.setPaused).mockImplementationOnce(async () => new Promise((_, r) => (fail = r)));
     const patch = vi.fn();
-    const { result } = renderHook(() => usePlayback(selected(patch), () => () => {}));
+    const { result } = renderHook(() => usePlayback(selected(patch), () => vi.fn()));
 
     act(() => void result.current.transport());
     act(() => void result.current.transport());

@@ -3,8 +3,8 @@
 
 // splitSignature takes a picked file and, when picked with it, its <name>.sig (ADR 0048).
 export async function splitSignature(
-  files: FileList | null
-): Promise<{ file: File | null; signature?: string }> {
+  files: ArrayLike<File> | null
+): Promise<{ file: File | null; signature?: string | undefined }> {
   const all = Array.from(files ?? []);
   const sig = all.find((f) => f.name.toLowerCase().endsWith('.sig'));
   return {

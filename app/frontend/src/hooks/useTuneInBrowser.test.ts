@@ -17,7 +17,7 @@ const station = (name: string): Station => ({
 
 const search = vi.hoisted(() => vi.fn());
 const browse = vi.hoisted(() =>
-  vi.fn((): Promise<BrowseResult | null> => Promise.resolve({ categories: [], stations: [] }))
+  vi.fn(async (): Promise<BrowseResult | null> => Promise.resolve({ categories: [], stations: [] }))
 );
 vi.mock('../lib/api', () => ({
   searchTuneIn: search,
@@ -26,9 +26,11 @@ vi.mock('../lib/api', () => ({
 
 describe('useTuneInBrowser', () => {
   it('keeps the last results on screen while a changed query is on its way', async () => {
-    let answer: (stations: Station[]) => void = () => {};
+    let answer: (stations: Station[]) => void = vi.fn();
     search.mockResolvedValueOnce([station('Jazz FM')]);
-    search.mockImplementationOnce(() => new Promise<Station[]>((resolve) => (answer = resolve)));
+    search.mockImplementationOnce(
+      async () => new Promise<Station[]>((resolve) => (answer = resolve))
+    );
     const { result } = renderHook(() => useTuneInBrowser(true, 'en'));
 
     act(() => result.current.setQuery('jaz'));
@@ -48,7 +50,7 @@ describe('useTuneInBrowser', () => {
   it('never shows the directory of the previous language while the new one loads', async () => {
     const english = { categories: [{ title: 'Music', path: 'c=music' }], stations: [] };
     browse.mockResolvedValueOnce(english);
-    browse.mockImplementationOnce(() => new Promise(() => {}));
+    browse.mockImplementationOnce(async () => new Promise(vi.fn()));
     const { result, rerender } = renderHook(({ lang }) => useTuneInBrowser(true, lang), {
       initialProps: { lang: 'en' },
     });

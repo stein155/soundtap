@@ -20,55 +20,70 @@ export type ResourceKind = keyof SpeakerResources;
 // Read through a function, not a table of the imports: a test that mocks lib/api with only
 // the reads it needs must still be able to load this module.
 const READ: { [K in ResourceKind]: (speaker: string) => Promise<SpeakerResources[K] | null> } = {
-  settings: (speaker) => getSettings(speaker),
-  version: (speaker) => getVersion(speaker),
-  presets: (speaker) => getPresets(speaker),
-  bluetooth: (speaker) => getBluetooth(speaker),
+  settings: async (speaker) => getSettings(speaker),
+  version: async (speaker) => getVersion(speaker),
+  presets: async (speaker) => getPresets(speaker),
+  bluetooth: async (speaker) => getBluetooth(speaker),
 };
 
 // undefined until the first answer; null when the speaker did not answer and nothing it
 // said before is known. A failed read after a good one keeps the good one.
 export type Held<K extends ResourceKind> = SpeakerResources[K] | null | undefined;
 
-type Entry = {
-  value: unknown;
+interface Entry<T> {
+  value: T | null | undefined;
   // Monotonic per entry: only the newest read may land, so a slow answer can never
   // overwrite a newer one (a poll sent before a "forget", a read before a save).
   seq: number;
   inflight: Promise<boolean> | null;
   listeners: Set<() => void>;
+}
+
+// One map per kind, by speaker: each holds its own kind's value.
+type Entries = { [K in ResourceKind]: Map<string, Entry<SpeakerResources[K]>> };
+const entries: Entries = {
+  settings: new Map(),
+  version: new Map(),
+  presets: new Map(),
+  bluetooth: new Map(),
 };
+const held = <K extends ResourceKind>(kind: K): Entries[K] => entries[kind];
 
-const entries = new Map<string, Entry>();
-const keyOf = (kind: ResourceKind, speaker: string) => `${kind}\u0000${speaker}`;
-
-function entry(kind: ResourceKind, speaker: string): Entry {
-  const key = keyOf(kind, speaker);
-  let e = entries.get(key);
+function entry<K extends ResourceKind>(kind: K, speaker: string): Entry<SpeakerResources[K]> {
+  const map = held(kind);
+  let e = map.get(speaker);
   if (!e) {
     e = { value: undefined, seq: 0, inflight: null, listeners: new Set() };
-    entries.set(key, e);
+    map.set(speaker, e);
   }
   return e;
 }
 
-function publish(e: Entry, value: unknown) {
+function publish<T>(e: Entry<T>, value: T | null) {
   e.value = value;
   e.listeners.forEach((l) => l());
 }
 
 export function snapshot<K extends ResourceKind>(kind: K, speaker: string): Held<K> {
-  return entries.get(keyOf(kind, speaker))?.value as Held<K>;
+  return held(kind).get(speaker)?.value;
 }
 
 // Reads the speaker now; resolves whether it answered. Every caller of a fresh read gets
 // one: a read that started earlier may have been answered before what the caller changed.
-export function refreshResource(kind: ResourceKind, speaker: string): Promise<boolean> {
-  const e = entry(kind, speaker);
+export async function refreshResource(kind: ResourceKind, speaker: string): Promise<boolean> {
+  return readInto(kind, entry(kind, speaker), speaker);
+}
+
+// The read behind refreshResource, into the entry of its own kind.
+async function readInto<K extends ResourceKind>(
+  kind: K,
+  e: Entry<SpeakerResources[K]>,
+  speaker: string
+): Promise<boolean> {
   const seq = ++e.seq;
   const read = READ[kind](speaker).then(
     (value) => {
-      if (seq !== e.seq || entries.get(keyOf(kind, speaker)) !== e) return value !== null;
+      if (seq !== e.seq || held(kind).get(speaker) !== e) return value !== null;
       if (value !== null || e.value === undefined) publish(e, value);
       return value !== null;
     },
@@ -84,22 +99,22 @@ export function refreshResource(kind: ResourceKind, speaker: string): Promise<bo
 
 // Reads again only what a page holds: a change made elsewhere (a save, a household
 // preference) shows where it is on screen, and costs nothing where it is not.
-export function refreshHeld(kind: ResourceKind, speaker: string) {
-  const e = entries.get(keyOf(kind, speaker));
+export function refreshHeld(kind: ResourceKind, speaker: string): void {
+  const e = held(kind).get(speaker);
   if (e && e.listeners.size > 0) void refreshResource(kind, speaker);
 }
 
 // Reads once: nothing if an answer is held or a read is on its way.
-export function ensureResource(kind: ResourceKind, speaker: string): Promise<boolean> {
+export async function ensureResource(kind: ResourceKind, speaker: string): Promise<boolean> {
   const e = entry(kind, speaker);
   if (e.inflight) return e.inflight;
-  if (e.value !== undefined) return Promise.resolve(e.value !== null);
+  if (e.value !== undefined) return e.value !== null;
   return refreshResource(kind, speaker);
 }
 
 // Drops whatever read is on its way: an action changed what it would report.
-export function discardResource(kind: ResourceKind, speaker: string) {
-  const e = entries.get(keyOf(kind, speaker));
+export function discardResource(kind: ResourceKind, speaker: string): void {
+  const e = held(kind).get(speaker);
   if (e) {
     e.seq++;
     e.inflight = null;
@@ -108,12 +123,20 @@ export function discardResource(kind: ResourceKind, speaker: string) {
 
 // An entry lives while someone reads it: a page opened later reads the speaker again
 // rather than trusting what a page closed long ago saw.
-function forgetUnread(kind: ResourceKind, speaker: string, e: Entry) {
-  if (e.listeners.size === 0 && !e.inflight && entries.get(keyOf(kind, speaker)) === e)
-    entries.delete(keyOf(kind, speaker));
+function forgetUnread<K extends ResourceKind>(
+  kind: K,
+  speaker: string,
+  e: Entry<SpeakerResources[K]>
+) {
+  const map = held(kind);
+  if (e.listeners.size === 0 && !e.inflight && map.get(speaker) === e) map.delete(speaker);
 }
 
-export function subscribeResource(kind: ResourceKind, speaker: string, listener: () => void) {
+export function subscribeResource(
+  kind: ResourceKind,
+  speaker: string,
+  listener: () => void
+): () => void {
   const e = entry(kind, speaker);
   e.listeners.add(listener);
   return () => {
@@ -123,6 +146,6 @@ export function subscribeResource(kind: ResourceKind, speaker: string, listener:
 }
 
 // For tests: no entry outlives the test that made it.
-export function resetSpeakerResources() {
-  entries.clear();
+export function resetSpeakerResources(): void {
+  for (const map of Object.values(entries)) map.clear();
 }

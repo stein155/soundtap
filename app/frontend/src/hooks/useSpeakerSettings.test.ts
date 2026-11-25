@@ -6,6 +6,7 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { useSpeakerSettings } from './useSpeakerSettings';
 import * as api from '../lib/api';
 import { settingsFixture } from '../test/settings';
+import { must } from '../test/must';
 
 const BASS = { actual: 0, target: 0, min: -9, max: 0, default: 0 };
 
@@ -29,7 +30,7 @@ describe('useSpeakerSettings save', () => {
     await waitFor(() => expect(result.current.form?.name).toBe('Kitchen'));
     act(() => result.current.set('name', '  '));
     act(() => result.current.set('bass', 3));
-    await act(() => result.current.save());
+    await act(async () => result.current.save());
     expect(api.saveSettings).toHaveBeenCalledWith({ bass: 3 }, 'Kitchen');
     expect(result.current.form?.name).toBe('Kitchen');
     expect(result.current.dirty).toBe(false);
@@ -40,7 +41,7 @@ describe('useSpeakerSettings save', () => {
     const { result } = renderHook(() => useSpeakerSettings('Kitchen', 'Kitchen'));
     await waitFor(() => expect(result.current.form?.alarm.time).toBe('07:00'));
     act(() => result.current.set('alarm', { enabled: true, time: '06:45', slot: 1 }));
-    await act(() => result.current.save());
+    await act(async () => result.current.save());
     const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     expect(api.saveSettings).toHaveBeenLastCalledWith(
       { alarm: { enabled: true, time: '06:45', slot: 1, timezone: zone } },
@@ -61,7 +62,7 @@ describe('useSpeakerSettings save', () => {
       'Hall'
     );
     act(() => result.current.set('display', { ...panel.display, hour12: true }));
-    await act(() => result.current.save());
+    await act(async () => result.current.save());
     expect(api.saveSettings).toHaveBeenLastCalledWith(
       { display: { ...panel.display, hour12: true, timezone: zone } },
       'Hall'
@@ -71,12 +72,12 @@ describe('useSpeakerSettings save', () => {
   it('rereads what the speaker reports and leaves the form alone', async () => {
     vi.useFakeTimers();
     const { result } = renderHook(() => useSpeakerSettings('Kitchen', 'Kitchen'));
-    await act(() => vi.advanceTimersByTimeAsync(0));
+    await act(async () => vi.advanceTimersByTimeAsync(0));
     act(() => result.current.set('bass', 3));
     vi.mocked(api.getSettings).mockResolvedValueOnce(
-      settingsFixture({ name: 'Kitchen', bass: BASS, network: { ssid: 'Roamed' } as never })
+      settingsFixture({ name: 'Kitchen', bass: BASS, network: { type: 'wifi', ssid: 'Roamed' } })
     );
-    await act(() => vi.advanceTimersByTimeAsync(15000));
+    await act(async () => vi.advanceTimersByTimeAsync(15000));
     vi.useRealTimers();
     expect(result.current.settings?.network?.ssid).toBe('Roamed');
     expect(result.current.form?.bass).toBe(3);
@@ -86,9 +87,9 @@ describe('useSpeakerSettings save', () => {
     vi.useFakeTimers();
     vi.mocked(api.getSettings).mockResolvedValueOnce(null);
     const { result } = renderHook(() => useSpeakerSettings('Hall', 'Hall'));
-    await act(() => vi.advanceTimersByTimeAsync(0));
+    await act(async () => vi.advanceTimersByTimeAsync(0));
     expect(result.current.form).toBeNull();
-    await act(() => vi.advanceTimersByTimeAsync(15000));
+    await act(async () => vi.advanceTimersByTimeAsync(15000));
     vi.useRealTimers();
     expect(result.current.form?.name).toBe('Kitchen');
   });
@@ -101,7 +102,7 @@ describe('useSpeakerSettings save', () => {
     await waitFor(() => expect(result.current.form?.name).toBe('Kitchen'));
     act(() => result.current.set('bass', -3));
     rerender({ name: 'Renamed Kitchen' });
-    await act(() => Promise.resolve());
+    await act(async () => Promise.resolve());
     expect(result.current.form?.bass).toBe(-3);
     expect(result.current.dirty).toBe(true);
   });
@@ -111,9 +112,9 @@ describe('useSpeakerSettings save', () => {
     const { result } = renderHook(() => useSpeakerSettings('Kitchen', 'Kitchen'));
     await waitFor(() => expect(result.current.form?.name).toBe('Kitchen'));
     vi.mocked(api.saveSettings).mockClear();
-    const done: Array<() => void> = [];
+    const done: (() => void)[] = [];
     vi.mocked(api.saveSettings).mockImplementation(
-      () => new Promise<undefined>((r) => done.push(() => r(undefined)))
+      async () => new Promise<undefined>((r) => done.push(() => r(undefined)))
     );
     act(() => result.current.set('bass', 2));
     let first: Promise<boolean> = Promise.resolve(false);
@@ -124,12 +125,12 @@ describe('useSpeakerSettings save', () => {
     await act(async () => void (second = result.current.save()));
     expect(api.saveSettings).toHaveBeenCalledTimes(1); // the second waits for the speaker
     await act(async () => {
-      done[0]();
+      must(done[0], 'the first save')();
       await first;
     });
     expect(api.saveSettings).toHaveBeenLastCalledWith({ bass: 0, name: 'Dining' }, 'Kitchen');
     await act(async () => {
-      done[1]();
+      must(done[1], 'the second save')();
       await second;
     });
     expect(result.current.dirty).toBe(false);

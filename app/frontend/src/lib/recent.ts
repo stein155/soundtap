@@ -22,7 +22,7 @@ export interface RecentItem {
 function stationOf(location: string): string | null {
   // A favorite holds the bare guide id, whatever its kind; history holds a playback path.
   if (/^https?:\/\//.test(location) || /^[A-Za-z0-9]+$/.test(location)) return location;
-  return location.match(/(?:^|[/=])(s\d+)/)?.[1] ?? null;
+  return /(?:^|[/=])(s\d+)/.exec(location)?.[1] ?? null;
 }
 
 export function recentItems(list: RecentEntry[]): RecentItem[] {
@@ -35,8 +35,8 @@ export function recentItems(list: RecentEntry[]): RecentItem[] {
     const spotifyUri =
       entry.source === 'SPOTIFY' && entry.location.startsWith('spotify:') ? entry.location : null;
     // What plays, not what it is called: two stations can share a name.
-    const key = tuneInId ? `tunein:${tuneInId}` : `spotify:${spotifyUri}`;
     if (!tuneInId && !spotifyUri) continue;
+    const key = tuneInId ? `tunein:${tuneInId}` : `spotify:${spotifyUri ?? ''}`;
     const known = seen.get(key);
     if (known) {
       known.locations.push(entry.location);
@@ -58,17 +58,14 @@ export function recentItems(list: RecentEntry[]): RecentItem[] {
   return out;
 }
 
-const UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
-  ['day', 86400],
-  ['hour', 3600],
-  ['minute', 60],
-  ['second', 1],
-];
+type Unit = [Intl.RelativeTimeFormatUnit, number];
+const SECONDS: Unit = ['second', 1];
+const UNITS: Unit[] = [['day', 86400], ['hour', 3600], ['minute', 60], SECONDS];
 
 // "2 hours ago" in the page's language, in the largest unit that fits.
 export function timeAgo(stoppedAt: string, lang: string, now = Date.now()): string {
   const seconds = Math.max(0, Math.round((now - Date.parse(stoppedAt)) / 1000));
   if (Number.isNaN(seconds)) return '';
-  const [unit, size] = UNITS.find(([, s]) => seconds >= s) ?? UNITS[UNITS.length - 1];
+  const [unit, size] = UNITS.find(([, s]) => seconds >= s) ?? SECONDS;
   return new Intl.RelativeTimeFormat(lang).format(-Math.floor(seconds / size), unit);
 }

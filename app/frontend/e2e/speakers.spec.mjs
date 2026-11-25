@@ -8,8 +8,10 @@ test('switches to another speaker and shows what it plays', async ({ page }) => 
   await openHome(page);
   await expect(page.getByText('Radio Paradise').first()).toBeVisible();
 
+  // The speakers sheet: a tap on another speaker makes it the one this page controls.
   await page.getByRole('button', { name: 'Speaker: Woonkamer' }).click();
-  await page.getByRole('button', { name: 'Next speaker' }).click();
+  await page.getByRole('radio', { name: /Keuken/ }).click();
+  await page.getByRole('button', { name: 'Volume Keuken' }).click();
   await expect(page.getByRole('slider', { name: 'Volume' }).first()).toHaveValue('18');
   await page.keyboard.press('Escape');
 
@@ -24,7 +26,7 @@ test('switches to another speaker and shows what it plays', async ({ page }) => 
 
 test('a volume slider sets the speaker’s volume', async ({ page, request }) => {
   await openHome(page);
-  await page.getByRole('button', { name: 'Speaker: Woonkamer' }).click();
+  await page.getByRole('button', { name: 'Volume Woonkamer' }).click();
   const slider = page.getByRole('slider', { name: 'Volume' }).first();
   await expect(slider).toHaveValue('28');
 

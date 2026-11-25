@@ -2,9 +2,10 @@
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
 import { Bars } from './styled';
+import type { ReactElement } from 'react';
 
 // Four animated bars: "this is playing right now". `size` is their height in px.
-export function EqualizerBars({ size = 10 }: { size?: number }) {
+export function EqualizerBars({ size = 10 }: { size?: number }): ReactElement {
   return (
     <Bars $height={size} aria-hidden="true">
       <i />

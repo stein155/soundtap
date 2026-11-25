@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactElement } from 'react';
 import { Button } from '../../atoms/Button';
 import { useI18n } from '../../../lib/i18n';
 import { Bar } from './styled';
@@ -16,7 +16,7 @@ interface Props {
 
 // The sticky Save button under a settings form. It says "Saved" for a moment after a
 // save that went through, until the next edit.
-export function SaveBar({ dirty, onSave }: Props) {
+export function SaveBar({ dirty, onSave }: Props): ReactElement | null {
   const { t } = useI18n();
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);

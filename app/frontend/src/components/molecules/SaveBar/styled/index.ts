@@ -3,12 +3,21 @@
 
 import styled from 'styled-components';
 
-// Sticks to the bottom of the sheet's scrolling body, fading the form out beneath it.
+// Sticks to the bottom of the sheet's scrolling body: a white bar with a hairline above,
+// clear of the phone's home indicator. The negative margins undo the body's own gutter and
+// bottom padding; the sheet's body is a column down to it, so margin-top: auto puts it at
+// the bottom of a short page (see Sheet's Body).
 export const Bar = styled.div`
   position: sticky;
-  bottom: -32px;
+  bottom: calc(-32px - env(safe-area-inset-bottom));
   z-index: 2;
-  margin: 18px -20px -32px;
-  padding: 14px 20px max(20px, env(safe-area-inset-bottom));
-  background: linear-gradient(180deg, transparent, var(--bg) 30%);
+  margin: auto calc(-1 * var(--page-gutter, 16px)) calc(-32px - env(safe-area-inset-bottom));
+  padding: 12px var(--page-gutter, 16px) calc(28px + env(safe-area-inset-bottom));
+  background: var(--surface);
+  box-shadow: 0 -1px 0 var(--border);
+
+  /* The bar's own padding is the space above the button. */
+  & > button {
+    margin-top: 0;
+  }
 `;

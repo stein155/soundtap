@@ -11,7 +11,7 @@ vi.mock('react-dom/client', () => ({
 }));
 vi.mock('./lib/i18n', async (actual) => ({
   ...(await actual<typeof import('./lib/i18n')>()),
-  loadLanguage: () => new Promise(() => {}),
+  loadLanguage: async () => new Promise(vi.fn()),
 }));
 
 describe('startup', () => {

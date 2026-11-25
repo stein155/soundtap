@@ -45,12 +45,13 @@ async function selfWithoutRegistry(): Promise<SpeakerDevice> {
 async function discoverSpeakers(known: SpeakerDevice[]): Promise<SpeakerDevice[] | null> {
   const list = await getDevices().catch(() => null);
   if (!list && known.length) return null;
-  const all = list?.some((d) => d.self) ? list : [await selfWithoutRegistry(), ...(list ?? [])];
+  const all =
+    list?.some((d) => d.self) === true ? list : [await selfWithoutRegistry(), ...(list ?? [])];
   return all.sort((a, b) => Number(b.self) - Number(a.self) || a.name.localeCompare(b.name));
 }
 
 // Each online speaker's now-playing and volume; null where a read failed.
-function readState(list: SpeakerDevice[]) {
+async function readState(list: SpeakerDevice[]) {
   return Promise.all(
     list.map(async (d) => {
       const speaker = speakerArg(d);
@@ -89,8 +90,14 @@ async function readGroups(
   );
   // A speaker that follows cannot also lead; if two answers disagree (a follower that
   // just moved), the one that is itself followed keeps its own stream.
-  for (const id of Object.keys(next)) if (next[next[id]]) delete next[id];
-  return { next, unread, known };
+  // Decided in key order: a leader dropped earlier no longer counts as followed.
+  const dropped = new Set<string>();
+  for (const [id, leader] of Object.entries(next))
+    if (next[leader] && !dropped.has(leader)) dropped.add(id);
+  const groups: Leaders = Object.fromEntries(
+    Object.entries(next).filter(([id]) => !dropped.has(id))
+  );
+  return { next: groups, unread, known };
 }
 
 // The read groups, with what was last confirmed for a speaker whose read failed.
@@ -101,8 +108,14 @@ function withUnread(prev: Leaders, read: Awaited<ReturnType<typeof readGroups>>)
   return out;
 }
 
+export interface RoomLoaders {
+  loadDevices: () => Promise<void>;
+  loadState: () => Promise<void>;
+  loadGroups: (from?: GroupsFrom) => Promise<void>;
+}
+
 // The three reads behind the rooms: the device list, each room's state, and the groups.
-export function useRoomLoaders(householdRef: HouseholdRef, set: RoomSetters) {
+export function useRoomLoaders(householdRef: HouseholdRef, set: RoomSetters): RoomLoaders {
   const { setDevices, setLoaded, setState, setLeaders } = set;
 
   const loadDevices = useCallback(async () => {

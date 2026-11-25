@@ -3,13 +3,14 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { browseTuneIn } from './api';
+import { must } from '../test/must';
 
 // Capture the URL browseTuneIn fetches and reply with a canned OPML/JSON body.
 function mockFetch(body: unknown): () => string {
   let seen = '';
-  vi.stubGlobal('fetch', (url: string) => {
+  vi.stubGlobal('fetch', async (url: string) => {
     seen = url;
-    return Promise.resolve({ ok: true, json: () => Promise.resolve(body) } as Response);
+    return new Response(JSON.stringify(body), { status: 200 });
   });
   return () => seen;
 }
@@ -37,7 +38,7 @@ describe('browseTuneIn', () => {
       ],
     });
     const res = await browseTuneIn('/Browse.ashx?render=json');
-    expect(res!.stations.map((s) => s.tuneInId)).toEqual(['s123']);
+    expect(res?.stations.map((s) => s.tuneInId)).toEqual(['s123']);
   });
 
   it('rewrites the dead By-Language category ids to the working c=<cat> form', async () => {
@@ -52,8 +53,8 @@ describe('browseTuneIn', () => {
       ],
     });
     const res = await browseTuneIn('/Browse.ashx?c=lang&filter=l101&render=json');
-    expect(res!.categories).toHaveLength(1);
-    const p = res!.categories[0].path;
+    expect(res?.categories).toHaveLength(1);
+    const p = must(res?.categories[0], 'a category').path;
     expect(p).toContain('c=music');
     expect(p).toContain('filter=l101');
     expect(p).not.toContain('id=c424724');
@@ -81,7 +82,7 @@ describe('browseTuneIn', () => {
       ],
     });
     const res = await browseTuneIn('/Browse.ashx?render=json');
-    expect(res!.categories.map((c) => c.title)).toEqual(['Pop']);
-    expect(res!.more?.title).toBe('Meer zenders');
+    expect(res?.categories.map((c) => c.title)).toEqual(['Pop']);
+    expect(res?.more?.title).toBe('Meer zenders');
   });
 });

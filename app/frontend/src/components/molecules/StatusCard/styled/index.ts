@@ -3,19 +3,21 @@
 
 import styled from 'styled-components';
 
+// The design's notice card: white, a fine edge, the icon in ink at the top of the text.
 export const Card = styled.div`
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
-  padding: 16px;
+  padding: 14px 16px;
   border-radius: var(--radius);
   background: var(--surface);
   box-shadow: 0 0 0 1px var(--border);
   font-size: 14px;
-  color: var(--ink-2);
+  line-height: 1.5;
+  color: var(--ink);
 
   & > svg {
     flex-shrink: 0;
-    color: var(--ink-3);
+    color: var(--ink);
   }
 `;

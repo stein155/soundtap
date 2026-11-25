@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
+import type { ReactElement } from 'react';
 import { Button } from '../../atoms/Button';
 import { Stack } from '../../atoms/Stack';
 import { StationLogo } from '../../atoms/StationLogo';
@@ -18,11 +19,11 @@ interface Props {
   speaker: string;
   onPick: (station: Station) => void;
   // Picking stores on a preset instead of playing.
-  onHold?: (station: Station) => void;
+  onHold?: ((station: Station) => void) | undefined;
 }
 
 // The TuneIn tab's body: search results, or the current level of the directory.
-export function TuneInResults({ tunein, speaker, onPick, onHold }: Props) {
+export function TuneInResults({ tunein, speaker, onPick, onHold }: Props): ReactElement {
   const { t } = useI18n();
   const { query, results, searching, trail, level, browsing, failed } = tunein;
   const stationRows = (stations: Station[]) =>

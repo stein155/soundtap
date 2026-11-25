@@ -7,6 +7,7 @@ import { AuxLabel } from '../../atoms/AuxLabel';
 import type { Artwork } from '../../../lib/playback';
 import { modelIcon } from '../../../lib/format';
 import { Square, type ArtworkVariant } from './styled';
+import type { ReactElement } from 'react';
 
 export type { ArtworkVariant } from './styled';
 
@@ -21,12 +22,12 @@ interface Props {
   // Tints a square without a station logo, for an input that is playing.
   highlighted?: boolean;
   // The speaker's model: an idle square shows its own drawing, as settings does.
-  model?: string;
+  model?: string | undefined;
 }
 
 // The square for what plays: the station's logo on its colour, the Bluetooth glyph,
 // "AUX", or the speaker.
-export function PlaybackArtwork({ artwork, variant, highlighted, model }: Props) {
+export function PlaybackArtwork({ artwork, variant, highlighted, model }: Props): ReactElement {
   const Speaker = Icon[modelIcon(model)];
   if (artwork.kind === 'station')
     return (

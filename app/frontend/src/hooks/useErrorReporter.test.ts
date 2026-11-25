@@ -12,7 +12,12 @@ vi.mock('../lib/i18n', async (actual) => ({
 }));
 
 const speak = (word: string) =>
-  vi.mocked(useI18n).mockReturnValue({ t: () => word } as unknown as ReturnType<typeof useI18n>);
+  vi.mocked(useI18n).mockReturnValue({
+    t: () => word,
+    lang: 'en',
+    setLang: vi.fn(),
+    langFailed: false,
+  });
 
 describe('useErrorReporter', () => {
   it('drops a toast when the language changes, and a late failure uses the new one', () => {

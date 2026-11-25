@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type Dispatch, type SetStateAction } from 'react';
 import { browseTuneIn, searchTuneIn } from '../lib/api';
 import { tuneInLocale } from '../lib/i18n';
 import type { BrowseCategory, BrowseResult, Station } from '../lib/types';
@@ -10,16 +10,34 @@ const SEARCH_DEBOUNCE_MS = 350;
 const ROOT = '';
 
 // null stations / result: TuneIn could not be reached for that query or level.
-type Found = { query: string; stations: Station[] | null };
+interface Found {
+  query: string;
+  stations: Station[] | null;
+}
 // key is lang|path, so an answer for another language never stands in for this one.
 type Level = { key: string; result: BrowseResult | null } | null;
+
+export interface TuneInBrowser {
+  query: string;
+  setQuery: Dispatch<SetStateAction<string>>;
+  results: Station[];
+  searching: boolean;
+  trail: BrowseCategory[];
+  level: BrowseResult;
+  browsing: boolean;
+  failed: boolean;
+  open: (category: BrowseCategory) => void;
+  canGoUp: boolean;
+  goUp: () => void;
+  retry: () => void;
+}
 
 // What the search shows for q. While a changed query is on its way the last answer stays
 // on screen, so each keystroke does not blank the list for a spinner; a spinner only
 // shows before the first answer.
 function searchView(q: string, found: Found) {
   const searched = found.query === q;
-  const keeping = !!q && !searched && !!found.stations?.length;
+  const keeping = !!q && !searched && (found.stations?.length ?? 0) > 0;
   return {
     results: ((searched || keeping) && found.stations) || [],
     searching: !!q && !searched && !keeping,
@@ -44,7 +62,7 @@ function browseView(key: string, known: BrowseResult | undefined, level: Level) 
 // slow response for a level the user already left is never shown.
 // `active`: the TuneIn tab is showing (it fetches). `opened`: the sheet is open; only a new
 // opening resets the search, so a trip to the Spotify tab and back keeps it.
-export function useTuneInBrowser(active: boolean, lang: string, opened = active) {
+export function useTuneInBrowser(active: boolean, lang: string, opened = active): TuneInBrowser {
   const [query, setQuery] = useState('');
   const [trail, setTrail] = useState<BrowseCategory[]>([]);
   const [found, setFound] = useState<Found>({
@@ -122,5 +140,3 @@ export function useTuneInBrowser(active: boolean, lang: string, opened = active)
     },
   };
 }
-
-export type TuneInBrowser = ReturnType<typeof useTuneInBrowser>;
