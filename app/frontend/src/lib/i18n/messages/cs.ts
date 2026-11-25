@@ -115,7 +115,9 @@ const cs: Messages = {
   presetOpen: 'Otevřít',
   speakersControl: 'Ovládat',
   playTogetherWith: 'Přehrávat společně s {name}',
-  speakerMore: 'Více o {name}',
+  group: 'Group',
+  powerOffName: 'Turn {name} off',
+  powerOnName: 'Turn {name} on',
   updatesIntro:
     'An update goes in next to the version that runs now. The speaker keeps it only once it has started properly; otherwise it goes on with the version it had.',
   updatesOther: 'Other ways',

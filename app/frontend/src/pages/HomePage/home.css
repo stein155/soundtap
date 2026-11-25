@@ -2677,3 +2677,97 @@ span.vol-ico {
   color: var(--ink-3);
   cursor: pointer;
 }
+
+.spks-choice {
+  padding: 4px 16px 12px;
+}
+
+.spks-power {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 54px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--ink);
+  color: var(--ink);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.spks-power svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* The group sheet, as the design's "Groep". */
+.grp-member + .grp-member {
+  border-top: 1px solid var(--border);
+}
+
+.grp-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 64px;
+  padding: 10px 16px;
+  border: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.grp-name {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.grp-switch {
+  position: relative;
+  flex: none;
+  width: 51px;
+  height: 31px;
+  border-radius: 16px;
+  background: var(--border-strong);
+  transition: background 0.18s ease;
+}
+
+.grp-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  transition: transform 0.18s ease;
+}
+
+.grp-switch[data-on] {
+  background: var(--accent);
+}
+
+.grp-switch[data-on]::after {
+  transform: translateX(20px);
+}
+
+.grp-vol {
+  padding: 0 16px 14px 78px;
+  background: var(--surface);
+}
+
+.grp-vol.grp-all {
+  padding: 14px 16px;
+}

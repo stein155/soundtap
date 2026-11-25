@@ -106,7 +106,9 @@ const zhHans: Messages = {
   presetOpen: '打开',
   speakersControl: '控制',
   playTogetherWith: '与 {name} 一起播放',
-  speakerMore: '{name} 更多信息',
+  group: 'Group',
+  powerOffName: 'Turn {name} off',
+  powerOnName: 'Turn {name} on',
   updatesIntro:
     'An update goes in next to the version that runs now. The speaker keeps it only once it has started properly; otherwise it goes on with the version it had.',
   updatesOther: 'Other ways',

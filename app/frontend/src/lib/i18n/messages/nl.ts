@@ -115,7 +115,9 @@ const nl: Messages = {
   presetOpen: 'Leeg',
   speakersControl: 'Bedienen',
   playTogetherWith: 'Samen met {name} afspelen',
-  speakerMore: 'Meer over {name}',
+  group: 'Groep',
+  powerOffName: '{name} uitzetten',
+  powerOnName: '{name} aanzetten',
   updatesIntro:
     'Een update komt naast de versie die nu draait. De speaker houdt hem pas als hij goed opstart; anders gaat hij verder met de versie die hij had.',
   updatesOther: 'Andere manieren',

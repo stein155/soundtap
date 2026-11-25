@@ -116,7 +116,9 @@ const pt: Messages = {
   presetOpen: 'Abrir',
   speakersControl: 'Controlar',
   playTogetherWith: 'Reproduzir em conjunto com {name}',
-  speakerMore: 'Mais sobre {name}',
+  group: 'Group',
+  powerOffName: 'Turn {name} off',
+  powerOnName: 'Turn {name} on',
   updatesIntro:
     'An update goes in next to the version that runs now. The speaker keeps it only once it has started properly; otherwise it goes on with the version it had.',
   updatesOther: 'Other ways',

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 vi.mock('../../lib/api');
@@ -83,18 +83,16 @@ describe('HomePage', () => {
     await waitFor(() => expect(api.stopPlayback).toHaveBeenCalled());
   }, 30000);
 
-  it('powers the speaker and switches its source from the speaker card', async () => {
+  it('powers the speaker and switches its source from the speakers sheet', async () => {
     api.getNowPlaying.mockResolvedValue(PLAYING);
     render(<App />);
     await userEvent.click(await screen.findByRole('button', { name: /^Speaker: / }));
-    await userEvent.click(await screen.findByRole('button', { name: /^More about / }));
-    const card = await screen.findByRole('dialog', { name: /^Speaker / });
-    const power = await screen.findByRole('button', { name: 'Power' });
-    expect(card).toContainElement(power);
-    await userEvent.click(power);
-    await waitFor(() => expect(api.setPower).toHaveBeenCalledWith(false, ''));
+    const sheet = await screen.findByRole('dialog', { name: 'Speakers' });
+    await userEvent.click(within(sheet).getByRole('button', { name: /^Source/ }));
     await userEvent.click(await screen.findByRole('radio', { name: 'AUX' }));
     await waitFor(() => expect(api.selectUserSource).toHaveBeenCalledWith('AUX', ''));
+    await userEvent.click(within(sheet).getByRole('button', { name: /^Turn .* off$/ }));
+    await waitFor(() => expect(api.setPower).toHaveBeenCalledWith(false, ''));
   }, 30000);
 
   it('reaches the settings through the menu', async () => {
@@ -104,7 +102,7 @@ describe('HomePage', () => {
     expect(await screen.findByRole('region', { name: 'Settings' })).toBeInTheDocument();
   }, 30000);
 
-  it('the volume icon on the speaker bar opens the volume panel, not the card', async () => {
+  it('the volume icon on the speaker bar opens the volume panel, not the speakers', async () => {
     render(<App />);
     await userEvent.click(await screen.findByRole('button', { name: /^Volume / }));
     const panel = await screen.findByRole('dialog', { name: /^Volume / });

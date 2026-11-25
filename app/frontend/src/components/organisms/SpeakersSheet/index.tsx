@@ -1,28 +1,29 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
+import { useState } from 'react';
 import { Button, Heading } from 'react-aria-components';
 import { EqualizerBars } from '../../atoms/EqualizerBars';
 import { Icon } from '../../atoms/Icon';
+import { ChoiceList } from '../../molecules/ChoiceList';
 import { ModelArt } from '../../molecules/ModelArt';
+import { PairAlone } from '../SpeakerCard/PairAlone';
 import { SetMenu } from '../../molecules/SetMenu';
-import { SetSwitch } from '../../molecules/SetItem';
+import { SetItem } from '../../molecules/SetItem';
 import { SheetModal } from '../../molecules/SheetModal';
 import { useI18n } from '../../../lib/i18n';
 import { describePlayback } from '../../../lib/playback';
+import { sourceOf, sourcesOf, type Source } from '../../../lib/rooms';
 import { speakerArg, type Room } from '../../../hooks/useRooms';
 import type { SelectedRoom } from '../../../hooks/useSelectedRoom';
-import type { useGrouping } from '../../../hooks/useGrouping';
-
-type Grouping = ReturnType<typeof useGrouping>;
+import type { usePlayback } from '../../../hooks/usePlayback';
 
 interface Props {
   open: boolean;
   onClose: () => void;
   selected: SelectedRoom;
-  grouping: Grouping;
-  // The speaker card of the selected room: its power, its own volume, its settings.
-  onMore: () => void;
+  playback: ReturnType<typeof usePlayback>;
+  onSettings: (room: Room) => void;
 }
 
 // One speaker: its drawing, its name, what it plays (or that it is offline), and a tick on
@@ -58,67 +59,65 @@ function SpeakerRow({ room, on, onSelect }: { room: Room; on: boolean; onSelect:
   );
 }
 
-// The speakers that can play along with the selected one, each a switch, then one button
-// for all of them (or to stop the group) and the way to the selected speaker's card.
-function Together({
+// The selected speaker itself: its source (when it has more than one), its settings, and
+// its power.
+function Lead({
   lead,
-  free,
-  grouping,
-  onMore,
+  playback,
+  onSettings,
 }: {
   lead: Room;
-  free: Room[];
-  grouping: Grouping;
-  onMore: () => void;
+  playback: Props['playback'];
+  onSettings: () => void;
 }) {
   const { t } = useI18n();
-  const joined = free.filter((r) => r.linkedTo === lead.id);
-  const joinable = free.filter((r) => r.linkedTo !== lead.id);
-  const toggle = (r: Room) => void (r.linkedTo === lead.id ? grouping.unlink(r) : grouping.link(r));
+  const [choosing, setChoosing] = useState(false);
+  const sources = sourcesOf(lead.sources);
+  const current = sourceOf(lead.now);
+  const on = !!lead.now && !lead.now.standby;
   return (
     <>
-      {free.length > 0 && (
-        <SetMenu title={t('playTogetherWith', { name: lead.name })}>
-          {free.map((r) => (
-            <SetSwitch
-              key={r.id}
-              icon="stereo"
-              label={r.name}
-              on={r.linkedTo === lead.id}
-              onToggle={() => toggle(r)}
+      <SetMenu title={lead.name}>
+        {sources.length > 1 && (
+          <SetItem
+            icon="wifi"
+            label={t('source')}
+            meta={t(`src_${current}`)}
+            onClick={() => setChoosing(!choosing)}
+          />
+        )}
+        {choosing && (
+          <div className="spks-choice">
+            <ChoiceList<Source>
+              label={t('source')}
+              value={current}
+              options={sources.map((s) => ({ value: s, label: t(`src_${s}`) }))}
+              onChange={(s) => {
+                setChoosing(false);
+                void playback.setSource(s);
+              }}
             />
-          ))}
-        </SetMenu>
-      )}
+          </div>
+        )}
+        <SetItem icon="settings" label={t('settings')} onClick={onSettings} />
+      </SetMenu>
+      <PairAlone room={lead} grouped={false} />
       <div className="spks-actions">
-        {joinable.length > 0 && (
-          <Button className="spks-primary" onPress={() => void grouping.linkMany(joinable)}>
-            {t('playOnAll')}
-          </Button>
-        )}
-        {joined.length > 0 && joinable.length === 0 && (
-          <Button className="spks-primary" onPress={() => void grouping.unlinkMany(joined)}>
-            {t('stopPlayOnAll')}
-          </Button>
-        )}
-        <Button className="spks-link" onPress={onMore}>
-          {t('speakerMore', { name: lead.name })}
+        <Button className="spks-power" onPress={() => void playback.power(!on)}>
+          <Icon.power aria-hidden="true" />
+          {t(on ? 'powerOffName' : 'powerOnName', { name: lead.name })}
         </Button>
       </div>
     </>
   );
 }
 
-// Which speaker this page controls, and which play along with it: every speaker as a row
-// (its drawing, what it plays, a tick on the one selected), the others as switches that
-// join it, and one button to play everywhere.
-export function SpeakersSheet({ open, onClose, selected, grouping, onMore }: Props) {
+// Which speaker this page controls, as the design's "Speaker wisselen": every speaker as a
+// row (its drawing, what it plays, a tick on the one selected), then the selected one's
+// source, settings and power. Grouping has its own sheet, from now playing's Group.
+export function SpeakersSheet({ open, onClose, selected, playback, onSettings }: Props) {
   const { t } = useI18n();
   const { rooms, lead } = selected;
-  // Who can join the selected room: online, and not following another leader.
-  const free = lead
-    ? rooms.filter((r) => r.id !== lead.id && r.online && (!r.linkedTo || r.linkedTo === lead.id))
-    : [];
   return (
     <SheetModal open={open} onClose={onClose} label={t('speakers')} variant="page">
       {(close) => (
@@ -148,13 +147,12 @@ export function SpeakersSheet({ open, onClose, selected, grouping, onMore }: Pro
               </div>
             </SetMenu>
             {lead && (
-              <Together
+              <Lead
                 lead={lead}
-                free={free}
-                grouping={grouping}
-                onMore={() => {
+                playback={playback}
+                onSettings={() => {
                   close();
-                  onMore();
+                  onSettings(lead);
                 }}
               />
             )}

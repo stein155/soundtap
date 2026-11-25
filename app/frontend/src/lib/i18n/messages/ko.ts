@@ -114,7 +114,9 @@ const ko: Messages = {
   presetOpen: '열기',
   speakersControl: '제어',
   playTogetherWith: '{name}와(과) 함께 재생',
-  speakerMore: '{name} 자세히',
+  group: 'Group',
+  powerOffName: 'Turn {name} off',
+  powerOnName: 'Turn {name} on',
   updatesIntro:
     'An update goes in next to the version that runs now. The speaker keeps it only once it has started properly; otherwise it goes on with the version it had.',
   updatesOther: 'Other ways',

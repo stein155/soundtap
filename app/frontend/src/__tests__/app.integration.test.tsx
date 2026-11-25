@@ -36,11 +36,16 @@ const openSettings = async () => {
   await userEvent.click(await home());
   await userEvent.click(await screen.findByRole('button', { name: 'Settings' }));
 };
-const openSpeaker = async () => {
-  // The speaker bar opens the speakers; "More about" there opens the selected one's card.
+// The speaker bar opens the speakers sheet: which speaker this page controls.
+const openSpeakers = async () => {
   await userEvent.click(await screen.findByRole('button', { name: /^Speaker: / }));
-  await userEvent.click(await screen.findByRole('button', { name: /^More about / }));
-  return screen.findByRole('dialog', { name: /^Speaker / });
+  return screen.findByRole('dialog', { name: 'Speakers' });
+};
+// Now playing's Group opens who plays along.
+const openGroup = async () => {
+  await userEvent.click(await screen.findByRole('button', { name: /^Open player/ }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Group' }));
+  return screen.findByRole('dialog', { name: 'Group' });
 };
 
 beforeEach(() => {
@@ -254,9 +259,9 @@ describe('App integration', () => {
     expect(api.playPreset.mock.calls[0][0]).toBe(1);
   }, 30000);
 
-  it('sets the volume from the speaker card', async () => {
+  it('sets the volume from the volume panel', async () => {
     render(<App />);
-    await openSpeaker();
+    await userEvent.click(await screen.findByRole('button', { name: /^Volume / }));
     const slider = await screen.findByRole('slider', { name: 'Volume' });
     slider.focus();
     await userEvent.keyboard('{ArrowRight}');
@@ -543,52 +548,47 @@ describe('App integration', () => {
       { id: 'B', name: 'Office', ip: '10.0.0.3', model: 'ST10', online: true, self: false },
     ]);
     api.getMultiroom.mockResolvedValue([]);
+    // Grouping opens from now playing, so the leader plays something.
+    api.getNowPlaying.mockResolvedValue({
+      standby: false,
+      source: 'TUNEIN',
+      playStatus: 'PLAY_STATE',
+      stationName: 'Radio',
+      track: 'Song',
+      artist: 'Artist',
+      art: '',
+    });
     render(<App />);
-    await openSpeaker();
-    // The speaker's pill comes before the page dots.
-    await userEvent.click((await screen.findAllByRole('button', { name: /^Office/ }))[0]);
+    const group = await openGroup();
+    await userEvent.click(within(group).getByRole('switch', { name: /Office/ }));
     await waitFor(() => expect(api.inviteSpeaker).toHaveBeenCalledWith('10.0.0.3', ''));
   }, 30000);
 
-  it("opens a speaker's own settings from the gear on its card", async () => {
+  it("opens the selected speaker's own settings from the speakers sheet", async () => {
     render(<App />);
-    await openSpeaker();
-    await userEvent.click(screen.getByRole('button', { name: 'Settings Kitchen' }));
+    const speakers = await openSpeakers();
+    await userEvent.click(within(speakers).getByRole('button', { name: 'Settings' }));
     const sheet = await screen.findByRole('dialog', { name: 'Settings' });
     // Its page, not the overview: one level down, so there is a way back.
     expect(within(sheet).getByRole('button', { name: 'Back' })).toBeInTheDocument();
     expect(within(sheet).getByRole('heading', { name: 'Kitchen' })).toBeInTheDocument();
   }, 30000);
 
-  // The speaker tray is a scroll-snap carousel: the page a swipe settles on is selected.
-  it('selects the speaker a swipe settles on', async () => {
+  // The speakers sheet lists every speaker; a tap makes it the one this page controls.
+  it('switches to the speaker tapped in the speakers sheet', async () => {
     api.getDevices.mockResolvedValue([
       { id: 'A', name: 'Kitchen', ip: '10.0.0.2', model: 'ST20', online: true, self: true },
       { id: 'B', name: 'Office', ip: '10.0.0.3', model: 'ST10', online: true, self: false },
     ]);
     api.getMultiroom.mockResolvedValue([]);
     render(<App />);
-    const dialog = await openSpeaker();
-    expect(dialog).toHaveAccessibleName('Speaker Kitchen');
-    // Only the selected speaker's page has the controls.
-    expect(screen.getAllByRole('slider', { name: 'Volume' })).toHaveLength(1);
-    const track = dialog.querySelector('.spk-track') as HTMLElement;
-    expect(track.children).toHaveLength(2);
-    // The neighbour is the full card, inert, so a swipe shows it complete and nothing
-    // shifts when it becomes the selected page.
-    const neighbour = track.children[1].querySelector('.spk-body') as HTMLElement;
-    expect(neighbour).toHaveAttribute('inert');
-    expect(neighbour).toHaveTextContent('Office');
-    expect(neighbour.querySelector('input[type="range"]')).not.toBeNull();
-    // jsdom has no layout: a page is 300 px wide, so page 2 is centred at 300.
-    const size = vi
-      .spyOn(Element.prototype, 'getBoundingClientRect')
-      .mockReturnValue({ width: 300 } as DOMRect);
-    track.scrollLeft = 300;
-    fireEvent.scroll(track);
-    fireEvent(track, new Event('scrollend'));
-    expect(await screen.findByRole('dialog', { name: 'Speaker Office' })).toBeInTheDocument();
-    size.mockRestore();
+    const speakers = await openSpeakers();
+    expect(within(speakers).getByRole('radio', { name: /Kitchen/ })).toHaveAttribute(
+      'aria-checked',
+      'true'
+    );
+    await userEvent.click(within(speakers).getByRole('radio', { name: /Office/ }));
+    expect(await screen.findByRole('button', { name: 'Speaker: Office' })).toBeInTheDocument();
   }, 30000);
 
   it('takes a station off the recent list from its card menu', async () => {

@@ -38,6 +38,8 @@ interface Props {
   onMute?: () => void;
   onPresets: () => void;
   onSpeaker: () => void;
+  // Who plays along: the group sheet.
+  onGroup: () => void;
 }
 
 // Now playing, full screen: what plays over its own blurred picture, the transport, the
@@ -64,8 +66,8 @@ function Titles(p: { title: string; track?: string; artist?: string; line: strin
   );
 }
 
-// Under the volume: Spotify's modes, then the sleep timer and the speakers as pills.
-function Extras(p: { modes: ReactNode; sleep: ReactNode; onSpeaker: () => void }) {
+// Under the volume: Spotify's modes, then the sleep timer and the group as pills.
+function Extras(p: { modes: ReactNode; sleep: ReactNode; onGroup: () => void }) {
   const { t } = useI18n();
   return (
     <div className="np-row">
@@ -73,9 +75,9 @@ function Extras(p: { modes: ReactNode; sleep: ReactNode; onSpeaker: () => void }
         {p.modes}
         <div className="np-pills">
           {p.sleep}
-          <Button className="np-pill" onPress={p.onSpeaker}>
+          <Button className="np-pill" onPress={p.onGroup}>
             <Icon.stereo aria-hidden="true" />
-            {t('speakers')}
+            {t('group')}
           </Button>
         </div>
       </div>
@@ -90,14 +92,7 @@ export function NowPlayingSheet({
   members,
   starting,
   sleepTimer,
-  onTransport,
-  onSkip,
-  onStart,
-  onSleep,
-  onVolume,
-  onMute,
-  onPresets,
-  onSpeaker,
+  ...cb
 }: Props) {
   const { t } = useI18n();
   const view = describePlayback(lead.now, t, speakerArg(lead));
@@ -120,7 +115,7 @@ export function NowPlayingSheet({
       {(close) => (
         <>
           <WashedBlur src={artSrc(view)} />
-          <TopBar view={view} onClose={close} onPresets={onPresets} />
+          <TopBar view={view} onClose={close} onPresets={cb.onPresets} />
           <div className="np-body">
             {on && <PlayArt artwork={view.artwork} name={view.title} className="np-art" />}
             <Titles
@@ -134,8 +129,8 @@ export function NowPlayingSheet({
               label={`${t(action)} · ${name}`}
               canControl={canControl}
               skips={skips}
-              onPress={on ? onTransport : onStart}
-              onSkip={onSkip}
+              onPress={on ? cb.onTransport : cb.onStart}
+              onSkip={cb.onSkip}
             />
             {on && view.artwork.kind === 'station' && (
               <TrackTime
@@ -149,16 +144,16 @@ export function NowPlayingSheet({
               showValue
               label={group.length > 1 ? t('grpVolume') : t('volume')}
               value={average(group)}
-              onChange={onVolume}
-              onMute={onMute}
+              onChange={cb.onVolume}
+              onMute={cb.onMute}
             />
             <Extras
               modes={on && <ModeButtonsFor now={lead.now} speaker={speakerArg(lead)} />}
-              sleep={<SleepMenu light timer={sleepTimer} onChange={onSleep} />}
-              onSpeaker={onSpeaker}
+              sleep={<SleepMenu light timer={sleepTimer} onChange={cb.onSleep} />}
+              onGroup={cb.onGroup}
             />
           </div>
-          <SpeakerBar lead={lead} members={members} onPress={onSpeaker} />
+          <SpeakerBar lead={lead} members={members} onPress={cb.onSpeaker} />
         </>
       )}
     </SheetModal>

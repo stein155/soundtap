@@ -4,7 +4,7 @@
 import { NowPlayingSheet } from '../../components/organisms/NowPlayingSheet';
 import { PresetsSheet } from '../../components/organisms/PresetsSheet';
 import { SpeakersSheet } from '../../components/organisms/SpeakersSheet';
-import { SpeakerCard } from '../../components/organisms/SpeakerCard';
+import { GroupSheet } from '../../components/organisms/GroupSheet';
 import type { RecentItem } from '../../lib/recent';
 import type { useFavorites } from '../../hooks/useFavorites';
 import type { useGrouping } from '../../hooks/useGrouping';
@@ -90,23 +90,19 @@ export function PlayerLayers({
           () => saving?.entry ?? playingEntry(live.player.station)
         )}
       />
-      <SpeakerCard
-        open={open.speaker}
-        onClose={() => hide('speaker')}
-        selected={selected}
-        playback={playback}
-        grouping={grouping}
-        volume={volume}
-        sleep={sleep}
-        onMute={onMute}
-        onSettings={(room) => showSettings(room.id)}
-      />
       <SpeakersSheet
         open={open.speakers}
         onClose={() => hide('speakers')}
         selected={selected}
+        playback={playback}
+        onSettings={(room) => showSettings(room.id)}
+      />
+      <GroupSheet
+        open={open.group}
+        onClose={() => hide('group')}
+        selected={selected}
         grouping={grouping}
-        onMore={() => show('speaker')}
+        volume={volume}
       />
       <NowPlayingSheet
         open={open.nowPlaying}
@@ -123,6 +119,7 @@ export function PlayerLayers({
         onMute={group.length > 1 ? undefined : () => onMute(lead)}
         onPresets={() => show('presets')}
         onSpeaker={() => show('speakers')}
+        onGroup={() => show('group')}
       />
     </>
   );

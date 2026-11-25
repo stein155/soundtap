@@ -10,8 +10,8 @@ type Layer =
   | 'presets'
   | 'settings'
   | 'mediaServers'
-  | 'speaker'
   | 'speakers'
+  | 'group'
   | 'nowPlaying'
   | 'volume';
 const NONE: Record<Layer, boolean> = {
@@ -19,8 +19,8 @@ const NONE: Record<Layer, boolean> = {
   presets: false,
   settings: false,
   mediaServers: false,
-  speaker: false,
   speakers: false,
+  group: false,
   nowPlaying: false,
   volume: false,
 };

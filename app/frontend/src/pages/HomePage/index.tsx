@@ -52,7 +52,7 @@ export function HomePage() {
   const layers = useLayers();
   const { open, show } = layers;
   const leadName = lead?.name || '';
-  const sleep = useSleepTimer(speaker, open.nowPlaying || open.speaker, () =>
+  const sleep = useSleepTimer(speaker, open.nowPlaying || open.speakers, () =>
     errors.failed(leadName)()
   );
   useVolumeFailures(live.volumeFailures, errors.failed, leadName);
