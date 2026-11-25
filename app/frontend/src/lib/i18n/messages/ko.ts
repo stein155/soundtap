@@ -112,6 +112,8 @@ const ko: Messages = {
   spotifyLoadFailed: 'Spotify에서 불러올 수 없습니다.',
   spotifyDisconnectConfirm: '이 스피커의 Spotify 계정을 삭제하시겠습니까?',
   presetOpen: '열기',
+  presets: '사전 설정',
+  presetSlot: '사전 설정 {slot}: {name}',
   presetEmptyTitle: '사용 가능',
   presetEmptyHint:
     '아직 사전 설정에 아무 것도 저장되지 않았습니다. 할당되지 않은 사전 설정을 누르고 있으면 재생 중인 항목이 저장됩니다.',

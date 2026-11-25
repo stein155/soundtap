@@ -112,6 +112,8 @@ const nb: Messages = {
   spotifyLoadFailed: 'Spotify kunne ikke laste det.',
   spotifyDisconnectConfirm: 'Glemme Spotify-kontoen på denne høyttaleren?',
   presetOpen: 'Åpne',
+  presets: 'Forhåndsinnstillinger',
+  presetSlot: 'Forhåndsinnstilling {slot}: {name}',
   presetEmptyTitle: 'Det er fritt frem',
   presetEmptyHint:
     'Du har ikke lagret noe på denne forhåndsinnstillingen enda. Trykk på og hold inne en ledig forhåndsinnstilling for å lagre det som spilles av.',

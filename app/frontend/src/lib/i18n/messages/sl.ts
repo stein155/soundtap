@@ -112,6 +112,8 @@ const sl: Messages = {
   spotifyLoadFailed: 'Spotify tega ni mogel naložiti.',
   spotifyDisconnectConfirm: 'Odstranim račun Spotify s tega zvočnika?',
   presetOpen: 'Odpri',
+  presets: 'Prednastavitve',
+  presetSlot: 'Prednastavitev {slot}: {name}',
   presetEmptyTitle: 'Na voljo vsem',
   presetEmptyHint:
     'Za to prednastavitev niste shranili ničesar. Pritisnite in pridržite odprto prednastavitev, da shranite trenutno predvajano.',

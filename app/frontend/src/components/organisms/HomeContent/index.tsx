@@ -16,6 +16,7 @@ import { useI18n } from '../../../lib/i18n';
 import { logoURL } from '../../../lib/artwork';
 import type { RecentItem } from '../../../lib/recent';
 import type { SearchMode } from '../SearchSheet';
+import { PresetStrip, type PresetStripProps } from './PresetStrip';
 
 // The rail shows the newest few; the heading opens them all.
 const RAIL_ITEMS = 10;
@@ -30,6 +31,8 @@ interface Props {
   onRemoveRecent: (item: RecentItem) => void;
   onAllRecent: () => void;
   onSearch: (mode: SearchMode) => void;
+  // The six presets on top, once a room is selected.
+  presets?: PresetStripProps;
 }
 
 // The two music services, each a way into its page.
@@ -81,8 +84,8 @@ function Services({
   );
 }
 
-// The start page, stock's Just for You: what was played recently (tap to play it again; the
-// heading opens the whole list) and the two music services.
+// The start page, stock's Just for You: the six presets, what was played recently (tap to play
+// it again; the heading opens the whole list) and the two music services.
 export function HomeContent({
   recent,
   speaker,
@@ -92,10 +95,12 @@ export function HomeContent({
   onRemoveRecent,
   onAllRecent,
   onSearch,
+  presets,
 }: Props) {
   const { t } = useI18n();
   return (
     <div className="home">
+      {presets && <PresetStrip {...presets} />}
       {recent.length > 0 && (
         <section aria-labelledby="home-recent">
           <h2 className="h-link" id="home-recent">

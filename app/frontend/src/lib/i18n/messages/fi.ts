@@ -113,6 +113,8 @@ const fi: Messages = {
   spotifyLoadFailed: 'Spotify ei voinut ladata sitä.',
   spotifyDisconnectConfirm: 'Unohdetaanko Spotify-tili tässä kaiuttimessa?',
   presetOpen: 'Avaa',
+  presets: 'Esiasetukset',
+  presetSlot: 'Esiasetus {slot}: {name}',
   presetEmptyTitle: 'Vapaana',
   presetEmptyHint:
     'Tähän esiasetukseen ei ole vielä tallennettu mitään. Tallenna toistettava kohde pitämällä esiasetusta painettuna.',

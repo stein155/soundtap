@@ -113,6 +113,8 @@ const ru: Messages = {
   spotifyLoadFailed: 'Spotify не удалось это загрузить.',
   spotifyDisconnectConfirm: 'Забыть учетную запись Spotify на этом динамике?',
   presetOpen: 'Открыть',
+  presets: 'Предустановки',
+  presetSlot: 'Предустановка {slot}: {name}',
   presetEmptyTitle: 'Пока не занято',
   presetEmptyHint:
     'В этой предварительной установке нет сохраненных элементов. Нажмите и удерживайте открытую предварительную установку, чтобы сохранить текущее воспроизведение.',

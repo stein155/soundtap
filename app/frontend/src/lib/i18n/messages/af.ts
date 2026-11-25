@@ -113,6 +113,8 @@ const af: Messages = {
   spotifyLoadFailed: 'Spotify kon dit nie laai nie.',
   spotifyDisconnectConfirm: 'Vergeet die Spotify-rekening op hierdie luidspreker?',
   presetOpen: 'Oop',
+  presets: 'Voorinstellings',
+  presetSlot: 'Voorinstelling {slot}: {name}',
   presetEmptyTitle: 'Nog oop',
   presetEmptyHint:
     "Daar is nog niks op hierdie voorinstelling gestoor nie. Druk en hou 'n oop voorinstelling om te stoor wat speel.",

@@ -114,6 +114,8 @@ const es: Messages = {
   spotifyLoadFailed: 'Spotify no pudo cargar eso.',
   spotifyDisconnectConfirm: '¿Olvidar la cuenta de Spotify en este altavoz?',
   presetOpen: 'Abrir',
+  presets: 'Ajustes predefinidos',
+  presetSlot: 'Ajuste predefinido {slot}: {name}',
   presetEmptyTitle: 'Listo para llevar',
   presetEmptyHint:
     'Aún no hay nada guardado en este ajuste predefinido. Mantén presionado un ajuste predefinido abierto para guardar lo que se está reproduciendo.',

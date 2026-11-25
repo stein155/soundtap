@@ -112,6 +112,8 @@ const tr: Messages = {
   spotifyLoadFailed: 'Spotify bunu yükleyemedi.',
   spotifyDisconnectConfirm: 'Bu hoparlördeki Spotify hesabı unutulsun mu?',
   presetOpen: 'Aç',
+  presets: 'Ön ayarlar',
+  presetSlot: 'Ön ayar {slot}: {name}',
   presetEmptyTitle: 'Herkese açık',
   presetEmptyHint:
     'Henüz bu ön ayara bir şey kaydetmediniz. Çalan şarkıyı kaydetmek için açık bir ön ayara basın ve bekleyin.',

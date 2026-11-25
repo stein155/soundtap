@@ -112,6 +112,8 @@ const da: Messages = {
   spotifyLoadFailed: 'Spotify kunne ikke indlæse det.',
   spotifyDisconnectConfirm: 'Glem Spotify-kontoen på denne højttaler?',
   presetOpen: 'Åbn',
+  presets: 'Forudindstillinger',
+  presetSlot: 'Forudindstilling {slot}: {name}',
   presetEmptyTitle: 'Intet gemt',
   presetEmptyHint:
     'Du har ikke gemt noget i denne forudindstilling endnu. Tryk på en ledig forudindstilling, og hold den nede for at gemme det, der afspilles.',

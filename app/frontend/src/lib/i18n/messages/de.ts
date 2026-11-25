@@ -115,6 +115,8 @@ const de: Messages = {
   spotifyLoadFailed: 'Spotify konnte das nicht laden.',
   spotifyDisconnectConfirm: 'Das Spotify-Konto auf diesem Lautsprecher vergessen?',
   presetOpen: 'Offen',
+  presets: 'Presets',
+  presetSlot: 'Preset {slot}: {name}',
   presetEmptyTitle: 'Noch offen',
   presetEmptyHint:
     'Sie haben noch keine Quelle für dieses Preset festgelegt. Drücken und halten Sie ein offenes Preset, um die aktuell gespielte Musik zu speichern.',

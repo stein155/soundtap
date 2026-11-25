@@ -104,6 +104,8 @@ const zhHans: Messages = {
   spotifyLoadFailed: 'Spotify 无法加载该内容。',
   spotifyDisconnectConfirm: '要忘记此扬声器上的 Spotify 帐户吗？',
   presetOpen: '打开',
+  presets: '预设',
+  presetSlot: '预设 {slot}：{name}',
   presetEmptyTitle: '尚未设置',
   presetEmptyHint: '此预设还没有保存任何信息。按住打开的预设，保存正在播放的内容。',
   menu: '菜单',

@@ -104,6 +104,8 @@ const zhHant: Messages = {
   spotifyLoadFailed: 'Spotify 無法載入該內容。',
   spotifyDisconnectConfirm: '要忘記此揚聲器上的 Spotify 帳戶嗎？',
   presetOpen: '開啟',
+  presets: '預設',
+  presetSlot: '預設 {slot}：{name}',
   presetEmptyTitle: '尚未設定',
   presetEmptyHint: '這個預設尚未儲存任何內容。請長按任何待定的預設來儲存正在播放的內容。',
   menu: '選單',

@@ -113,6 +113,8 @@ const cs: Messages = {
   spotifyLoadFailed: 'Spotify to nemohlo načíst.',
   spotifyDisconnectConfirm: 'Zapomenout účet Spotify na tomto reproduktoru?',
   presetOpen: 'Otevřít',
+  presets: 'Předvolby',
+  presetSlot: 'Předvolba {slot}: {name}',
   presetEmptyTitle: 'K dispozici',
   presetEmptyHint:
     'Zatím jste do této předvolby nic neuložili. Stisknutím a podržením otevřené předvolby uložíte přehrávanou položku.',

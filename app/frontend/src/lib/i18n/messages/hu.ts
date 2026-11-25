@@ -113,6 +113,8 @@ const hu: Messages = {
   spotifyLoadFailed: 'A Spotify nem tudta betölteni.',
   spotifyDisconnectConfirm: 'Eltávolítja a Spotify-fiókot erről a hangszóróról?',
   presetOpen: 'Megnyitás',
+  presets: 'Előbeállítások',
+  presetSlot: '{slot}. előbeállítás: {name}',
   presetEmptyTitle: 'Bárki számára elérhető',
   presetEmptyHint:
     'Ön még semmit sem mentett ehhez az előbeállításhoz. Tartsa lenyomva az egyik üres előbeállítást a jelenleg játszott zene mentéséhez.',

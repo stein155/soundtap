@@ -115,6 +115,8 @@ const it: Messages = {
   spotifyLoadFailed: 'Spotify non è riuscito a caricarlo.',
   spotifyDisconnectConfirm: "Dimenticare l'account Spotify su questo diffusore?",
   presetOpen: 'Apri',
+  presets: 'Preset',
+  presetSlot: 'Preset {slot}: {name}',
   presetEmptyTitle: 'Disponibile',
   presetEmptyHint:
     "Nessun elemento salvato per questo preset. Tieni premuto un preset disponibile per salvare l'elemento in riproduzione.",

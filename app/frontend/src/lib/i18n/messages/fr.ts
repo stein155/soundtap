@@ -114,6 +114,8 @@ const fr: Messages = {
   spotifyLoadFailed: "Spotify n'a pas pu charger cela.",
   spotifyDisconnectConfirm: 'Oublier le compte Spotify sur cette enceinte ?',
   presetOpen: 'Ouvrir',
+  presets: 'Présélections',
+  presetSlot: 'Présélection {slot} : {name}',
   presetEmptyTitle: 'Désormais disponible',
   presetEmptyHint:
     'Vous n’avez encore rien enregistré sur cette présélection. Appuyez longuement sur une présélection active pour enregistrer la source en cours de lecture.',

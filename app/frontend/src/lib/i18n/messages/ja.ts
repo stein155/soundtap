@@ -113,6 +113,8 @@ const ja: Messages = {
   spotifyLoadFailed: 'Spotifyでそれを読み込めませんでした。',
   spotifyDisconnectConfirm: 'このスピーカーのSpotifyアカウントを削除しますか？',
   presetOpen: '開く',
+  presets: 'プリセット',
+  presetSlot: 'プリセット {slot}: {name}',
   presetEmptyTitle: '簡単に入手',
   presetEmptyHint:
     'このプリセットにはまだ何も登録されていません。再生中のコンテンツを登録するには、空きのプリセットを長押ししてください。',
