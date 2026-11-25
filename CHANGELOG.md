@@ -10,6 +10,22 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
 
 ## [Unreleased]
 
+### Added
+
+- **The six presets on the start page**, as the speaker's own buttons: a tap plays one, an
+  open one opens the presets page, and the one playing is ringed.
+
+### Changed
+
+- **Settings look like the installer**: every group has a grey bar with its title, rows are
+  white with line icons, and a speaker's page opens with its drawing large, its name, model
+  and version.
+- **Now playing shows the artwork large** at the top of the page.
+
+### Fixed
+
+- The Wireless Link drew as a SoundTouch 10 where its model came as its short name.
+
 ## [app-v0.1.0-alpha.4] - 2026-11-24
 
 - The SoundTap app that SoundTap Core 0.1.0-alpha.4 carries; what it changes is listed under
