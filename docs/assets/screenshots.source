@@ -1,4 +1,4 @@
 # Written by make screenshots (tools/release/screenshots.py): the trees the README
 # screenshots in this directory were made from. A release refuses another UI.
-app/frontend 5ce50102c9f68b967a374cb444f26722e597405e
+app/frontend 91ca84144a90814cad59025e00708498975b4300
 docs/tools c82a95731247d71412d9714e8f964020e526f524
