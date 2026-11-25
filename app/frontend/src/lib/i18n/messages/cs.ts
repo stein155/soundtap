@@ -115,6 +115,7 @@ const cs: Messages = {
   presetOpen: 'Otevřít',
   presets: 'Předvolby',
   presetSlot: 'Předvolba {slot}: {name}',
+  presetsEdit: 'Upravit',
   presetEmptyTitle: 'K dispozici',
   presetEmptyHint:
     'Zatím jste do této předvolby nic neuložili. Stisknutím a podržením otevřené předvolby uložíte přehrávanou položku.',

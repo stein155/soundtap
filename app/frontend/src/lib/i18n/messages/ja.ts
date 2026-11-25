@@ -115,6 +115,7 @@ const ja: Messages = {
   presetOpen: '開く',
   presets: 'プリセット',
   presetSlot: 'プリセット {slot}: {name}',
+  presetsEdit: '編集',
   presetEmptyTitle: '簡単に入手',
   presetEmptyHint:
     'このプリセットにはまだ何も登録されていません。再生中のコンテンツを登録するには、空きのプリセットを長押ししてください。',

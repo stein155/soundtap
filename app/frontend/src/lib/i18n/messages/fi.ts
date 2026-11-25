@@ -115,6 +115,7 @@ const fi: Messages = {
   presetOpen: 'Avaa',
   presets: 'Esiasetukset',
   presetSlot: 'Esiasetus {slot}: {name}',
+  presetsEdit: 'Muokkaa',
   presetEmptyTitle: 'Vapaana',
   presetEmptyHint:
     'Tähän esiasetukseen ei ole vielä tallennettu mitään. Tallenna toistettava kohde pitämällä esiasetusta painettuna.',

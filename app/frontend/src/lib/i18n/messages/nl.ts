@@ -115,6 +115,7 @@ const nl: Messages = {
   presetOpen: 'Leeg',
   presets: 'Presets',
   presetSlot: 'Preset {slot}: {name}',
+  presetsEdit: 'Bewerken',
   presetEmptyTitle: 'Altijd bij de hand',
   presetEmptyHint:
     'Je hebt nog niets opgeslagen onder deze preset. Houd een lege preset ingedrukt om op te slaan wat er nu speelt.',

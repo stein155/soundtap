@@ -38,7 +38,8 @@ const strip = (player: Player = { status: 'idle', station: null }) => {
 describe('PresetStrip', () => {
   it('shows all six slots, each named with its number', () => {
     strip();
-    expect(screen.getAllByRole('button')).toHaveLength(6);
+    expect(screen.getAllByRole('button', { name: /^Preset / })).toHaveLength(6);
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Preset 2: Radio 2' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Preset 3: Open' })).toBeInTheDocument();
   });

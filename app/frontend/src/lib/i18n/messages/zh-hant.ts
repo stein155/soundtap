@@ -106,6 +106,7 @@ const zhHant: Messages = {
   presetOpen: '開啟',
   presets: '預設',
   presetSlot: '預設 {slot}：{name}',
+  presetsEdit: '編輯',
   presetEmptyTitle: '尚未設定',
   presetEmptyHint: '這個預設尚未儲存任何內容。請長按任何待定的預設來儲存正在播放的內容。',
   menu: '選單',

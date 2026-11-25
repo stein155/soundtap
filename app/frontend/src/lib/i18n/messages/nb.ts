@@ -114,6 +114,7 @@ const nb: Messages = {
   presetOpen: 'Åpne',
   presets: 'Forhåndsinnstillinger',
   presetSlot: 'Forhåndsinnstilling {slot}: {name}',
+  presetsEdit: 'Rediger',
   presetEmptyTitle: 'Det er fritt frem',
   presetEmptyHint:
     'Du har ikke lagret noe på denne forhåndsinnstillingen enda. Trykk på og hold inne en ledig forhåndsinnstilling for å lagre det som spilles av.',

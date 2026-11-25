@@ -114,6 +114,7 @@ const tr: Messages = {
   presetOpen: 'Aç',
   presets: 'Ön ayarlar',
   presetSlot: 'Ön ayar {slot}: {name}',
+  presetsEdit: 'Düzenle',
   presetEmptyTitle: 'Herkese açık',
   presetEmptyHint:
     'Henüz bu ön ayara bir şey kaydetmediniz. Çalan şarkıyı kaydetmek için açık bir ön ayara basın ve bekleyin.',

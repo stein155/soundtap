@@ -114,6 +114,7 @@ const sl: Messages = {
   presetOpen: 'Odpri',
   presets: 'Prednastavitve',
   presetSlot: 'Prednastavitev {slot}: {name}',
+  presetsEdit: 'Uredi',
   presetEmptyTitle: 'Na voljo vsem',
   presetEmptyHint:
     'Za to prednastavitev niste shranili ničesar. Pritisnite in pridržite odprto prednastavitev, da shranite trenutno predvajano.',

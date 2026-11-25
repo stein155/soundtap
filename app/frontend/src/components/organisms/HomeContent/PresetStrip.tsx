@@ -75,9 +75,14 @@ export function PresetStrip({
   const active = activePresetIndex(presets, player.station);
   return (
     <section className="pstrip" aria-labelledby="home-presets">
-      <h2 className="h-row" id="home-presets">
-        {t('presets')}
-      </h2>
+      <div className="h-bar">
+        <h2 className="h-row" id="home-presets">
+          {t('presets')}
+        </h2>
+        <button type="button" className="h-action" onClick={onOpen}>
+          {t('presetsEdit')}
+        </button>
+      </div>
       <ol className="pstrip-row" aria-busy={loading || undefined}>
         {presets.map((preset, i) => (
           <Slot

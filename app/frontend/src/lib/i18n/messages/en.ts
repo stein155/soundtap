@@ -116,6 +116,7 @@ const en = {
   presetOpen: 'Open',
   presets: 'Presets',
   presetSlot: 'Preset {slot}: {name}',
+  presetsEdit: 'Edit',
   presetEmptyTitle: 'Up for grabs',
   presetEmptyHint:
     "You don't have anything saved to this preset yet. Press & hold an open preset to save what's playing.",

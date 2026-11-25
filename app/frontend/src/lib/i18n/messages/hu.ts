@@ -115,6 +115,7 @@ const hu: Messages = {
   presetOpen: 'Megnyitás',
   presets: 'Előbeállítások',
   presetSlot: '{slot}. előbeállítás: {name}',
+  presetsEdit: 'Szerkesztés',
   presetEmptyTitle: 'Bárki számára elérhető',
   presetEmptyHint:
     'Ön még semmit sem mentett ehhez az előbeállításhoz. Tartsa lenyomva az egyik üres előbeállítást a jelenleg játszott zene mentéséhez.',

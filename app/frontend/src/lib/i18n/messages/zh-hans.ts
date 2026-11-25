@@ -106,6 +106,7 @@ const zhHans: Messages = {
   presetOpen: '打开',
   presets: '预设',
   presetSlot: '预设 {slot}：{name}',
+  presetsEdit: '编辑',
   presetEmptyTitle: '尚未设置',
   presetEmptyHint: '此预设还没有保存任何信息。按住打开的预设，保存正在播放的内容。',
   menu: '菜单',

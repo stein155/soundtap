@@ -114,6 +114,7 @@ const sv: Messages = {
   presetOpen: 'Öppna',
   presets: 'Förval',
   presetSlot: 'Förval {slot}: {name}',
+  presetsEdit: 'Redigera',
   presetEmptyTitle: 'Här var det ledigt',
   presetEmptyHint:
     'Du har inte sparat några inställningar för det här förvalet än. Tryck på och håll ned ett ledigt förval för att spara det som spelas för tillfället.',

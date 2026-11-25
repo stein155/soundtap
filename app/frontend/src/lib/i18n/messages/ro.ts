@@ -115,6 +115,7 @@ const ro: Messages = {
   presetOpen: 'Deschide',
   presets: 'Presetări',
   presetSlot: 'Presetarea {slot}: {name}',
+  presetsEdit: 'Editează',
   presetEmptyTitle: 'Încă disponibil',
   presetEmptyHint:
     'Nu ați salvat încă nimic la această presetare. Apăsați și mențineți apăsată o presetare deschisă pentru a salva ceea ce se redă acum.',

@@ -45,39 +45,36 @@ function Services({
   return (
     <section aria-labelledby="home-services">
       <h2 className="h-row" id="home-services">
-        {t('services')} <Icon.chevron />
+        {t('services')}
       </h2>
       <ListBox
-        className="rail"
+        className="svc-list"
         aria-labelledby="home-services"
-        orientation="horizontal"
         layout="stack"
         selectionMode="none"
         onAction={(key) => onSearch(key === 'spotify' ? { service: 'spotify' } : {})}
       >
-        <ListBoxItem id="spotify" textValue="Spotify" className="card">
-          <div className="art card-art svc spotify" aria-hidden="true">
+        <ListBoxItem id="spotify" textValue="Spotify" className="svc-row">
+          <span className="svc spotify" aria-hidden="true">
             <Icon.spotifyMark />
-          </div>
-          <span className="card-label">
-            <span>
-              Spotify
-              <small>
-                {spotifyReady ? t('spBrowseSub') : t('spConnectShort', { name: speakerName })}
-              </small>
-            </span>
           </span>
+          <span className="svc-text">
+            Spotify
+            <small>
+              {spotifyReady ? t('spBrowseSub') : t('spConnectShort', { name: speakerName })}
+            </small>
+          </span>
+          <Icon.chevron aria-hidden="true" />
         </ListBoxItem>
-        <ListBoxItem id="tunein" textValue={t('findNew')} className="card">
-          <div className="art card-art svc tunein" aria-hidden="true">
+        <ListBoxItem id="tunein" textValue={t('findNew')} className="svc-row">
+          <span className="svc tunein" aria-hidden="true">
             <Icon.tuneinMark />
-          </div>
-          <span className="card-label">
-            <span>
-              {t('findNew')}
-              <small>{t('findNewSub')}</small>
-            </span>
           </span>
+          <span className="svc-text">
+            {t('findNew')}
+            <small>{t('findNewSub')}</small>
+          </span>
+          <Icon.chevron aria-hidden="true" />
         </ListBoxItem>
       </ListBox>
     </section>

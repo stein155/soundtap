@@ -117,6 +117,7 @@ const de: Messages = {
   presetOpen: 'Offen',
   presets: 'Presets',
   presetSlot: 'Preset {slot}: {name}',
+  presetsEdit: 'Bearbeiten',
   presetEmptyTitle: 'Noch offen',
   presetEmptyHint:
     'Sie haben noch keine Quelle für dieses Preset festgelegt. Drücken und halten Sie ein offenes Preset, um die aktuell gespielte Musik zu speichern.',

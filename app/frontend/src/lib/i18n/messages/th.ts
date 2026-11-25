@@ -106,6 +106,7 @@ const th: Messages = {
   presetOpen: 'เปิด',
   presets: 'ค่าตั้งล่วงหน้า',
   presetSlot: 'ค่าตั้งล่วงหน้า {slot}: {name}',
+  presetsEdit: 'แก้ไข',
   presetEmptyTitle: 'ยังว่างอยู่',
   presetEmptyHint: 'คุณไม่มีรายการใดๆ ที่บันทึกในค่าตั้งล่วงหน้า กดค่าตั้งล่วงหน้าค้างไว้เพื่อบันทึกรายการที่กำลังเล่น',
   menu: 'เมนู',

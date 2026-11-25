@@ -116,6 +116,7 @@ const pt: Messages = {
   presetOpen: 'Abrir',
   presets: 'Predefinições',
   presetSlot: 'Predefinição {slot}: {name}',
+  presetsEdit: 'Editar',
   presetEmptyTitle: 'Disponíveis',
   presetEmptyHint:
     'Você ainda não tem nada salvo nesta predefinição. Mantenha pressionado e abra a predefinição para salvar o que estiver reproduzindo.',

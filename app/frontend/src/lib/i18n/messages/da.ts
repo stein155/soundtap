@@ -114,6 +114,7 @@ const da: Messages = {
   presetOpen: 'Åbn',
   presets: 'Forudindstillinger',
   presetSlot: 'Forudindstilling {slot}: {name}',
+  presetsEdit: 'Rediger',
   presetEmptyTitle: 'Intet gemt',
   presetEmptyHint:
     'Du har ikke gemt noget i denne forudindstilling endnu. Tryk på en ledig forudindstilling, og hold den nede for at gemme det, der afspilles.',
