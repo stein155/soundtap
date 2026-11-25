@@ -17,8 +17,9 @@ file's header lists. What is checked:
 - fixed by our patch: a patch of ours for that package names the CVE;
 - not built for Linux: only for a package other than the kernel, which names a CONFIG_ symbol.
 - ffmpeg <kind> X not built: only for soundtap-ffmpeg, and X is not in the list of that kind
-  (filter, muxer, demuxer or protocol) soundtap-ffmpeg.mk enables, SOUNDTAP_FFMPEG_FILTERS,
-  _MUXERS, _DEMUXERS or _PROTOCOLS (its build is --disable-everything).
+  (filter, muxer, demuxer, protocol, encoder or decoder) soundtap-ffmpeg.mk enables,
+  SOUNDTAP_FFMPEG_FILTERS, _MUXERS, _DEMUXERS, _PROTOCOLS, _ENCODERS or _DECODERS (its build is
+  --disable-everything).
 
 "fixed in/before V" for a package other than the kernel, "not built for Linux" (the file and
 the build condition it names) and "maintainer accepted" are records, not checked further.
@@ -40,7 +41,7 @@ OFF = re.compile(r"\b(CONFIG_\w+) off\b")
 MODULE = re.compile(r"\b(CONFIG_\w+)=m\b")
 PATCH = re.compile(r"\bfixed by our patch\b")
 NOT_BUILT = re.compile(r"\bnot built for Linux\b")
-FFMPEG_PART = re.compile(r"\bffmpeg (filter|muxer|demuxer|protocol)s? ([\w ,]+?) not built\b")
+FFMPEG_PART = re.compile(r"\bffmpeg (filter|muxer|demuxer|protocol|encoder|decoder)s? ([\w ,]+?) not built\b")
 FFMPEG_MK = "os/package/soundtap-ffmpeg/soundtap-ffmpeg.mk"
 OTHER = re.compile(r"\bfixed (?:in|before) \d[\w.]*|\bmaintainer accepted\b")
 
@@ -135,7 +136,7 @@ def entry_problems(ctx: Context, package: str, cve: str, reason: str) -> list[st
 
 
 def ffmpeg_part_problems(root: Path, package: str, cve: str, kind: str, names: str) -> list[str]:
-    """Check that the filters, muxers, demuxers or protocols a reason names are ones our ffmpeg leaves out."""
+    """Check that the ffmpeg parts of one kind a reason names are ones our ffmpeg leaves out."""
     if package != "SOUNDTAP_FFMPEG":
         return [f"{cve}: 'ffmpeg {kind} ... not built' is for soundtap-ffmpeg only"]
     mk = (root / FFMPEG_MK).read_text() if (root / FFMPEG_MK).exists() else ""

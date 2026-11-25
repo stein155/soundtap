@@ -16,9 +16,9 @@
 #   fixed in/before V      the package version we ship already has the fix
 #   not built for Linux    a package's file only another platform builds (the kernel names
 #                          its CONFIG_ symbol instead)
-#   ffmpeg filter X not built  a filter, muxer, demuxer or protocol soundtap-ffmpeg.mk
-#                          leaves out (also 'ffmpeg muxer X', 'ffmpeg demuxer X',
-#                          'ffmpeg protocol X')
+#   ffmpeg filter X not built  a filter, muxer, demuxer, protocol, encoder or decoder
+#                          soundtap-ffmpeg.mk leaves out (also 'ffmpeg muxer X', 'ffmpeg
+#                          demuxer X', 'ffmpeg protocol X', 'ffmpeg encoder X', 'ffmpeg decoder X')
 #   maintainer accepted    open, with the maintainer's recorded acceptance and why
 
 # Linux 6.12.117 (BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE in os/configs/soundtap_defconfig).
@@ -202,6 +202,7 @@ LINUX_IGNORE_CVES += CVE-2026-31609 # SMB client SMB Direct: bug came in 7.0, an
 
 # Open in 6.12, with the maintainer's acceptance.
 LINUX_IGNORE_CVES += CVE-2026-63858 # nf_tables, no 6.12 fix yet; needs CAP_NET_ADMIN, and there are no user namespaces (CONFIG_NAMESPACES off): maintainer accepted
+LINUX_IGNORE_CVES += CVE-2026-62840 # local privilege escalation, Microsoft's record names no component or fix; production has no shell, login or SSH, so it needs code running on the speaker first: maintainer accepted
 
 # libplist 2.4.0: 2017 records with no version range; both were fixed before libplist 2.0.0
 # (upstream issues #86 and #88).
@@ -241,3 +242,12 @@ SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-135743 # ffmpeg filter dynaudnorm not bu
 SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-135722 # ffmpeg muxers wav, w64 not built
 SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-135723 # ffmpeg demuxer imf not built
 SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-135725 # ffmpeg protocols rtmp, rtmpe, rtmps, rtmpt, rtmpte, rtmpts not built
+# libavcodec video code our ffmpeg leaves out: it decodes audio only and encodes pcm_s16le
+# (SOUNDTAP_FFMPEG_DECODERS, _ENCODERS), and builds no bitstream filter. lcevcdec.c and
+# cbs_sei.c are reached only through the H.264 and HEVC decoders.
+SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-125259 # ffmpeg encoder prores_ks not built
+SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-125262 # ffmpeg decoders h264, hevc not built
+SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-125181 # ffmpeg decoder flic not built
+SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-125196 # ffmpeg encoder liboapv not built
+SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-125260 # ffmpeg encoder exr not built
+SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-125269 # ffmpeg decoders h264, hevc not built

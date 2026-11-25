@@ -70,6 +70,22 @@ class IgnoreCvesTest(unittest.TestCase):
         self.assertIn("builds the volume filter", found[0])
         self.assertIn("soundtap-ffmpeg only", found[1])
 
+    def test_an_ffmpeg_encoder_or_decoder_reason_reads_that_kind_s_list(self) -> None:
+        """An FFmpeg encoder or decoder reason is checked against that kind's list."""
+        mk = ("SOUNDTAP_FFMPEG_ENCODERS = pcm_s16le\n"
+              "SOUNDTAP_FFMPEG_DECODERS = aac mp3\n"
+              "SOUNDTAP_FFMPEG_CONF_OPTS = --disable-everything\n")
+        files = {"os/package/soundtap-ffmpeg/soundtap-ffmpeg.mk": mk}
+        self.assertEqual(self.check("SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-1001 # ffmpeg encoder exr not built\n"
+                                    "SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-1002 # ffmpeg decoders h264, hevc not built\n",
+                                    files=files), [])
+        found = self.check("SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-1003 # ffmpeg decoder mp3 not built\n"
+                           "SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-1004 # ffmpeg encoder pcm_s16le not built\n",
+                           files=files)
+        self.assertEqual(len(found), 2, found)
+        self.assertIn("builds the mp3 decoder", found[0])
+        self.assertIn("builds the pcm_s16le encoder", found[1])
+
     def test_an_ffmpeg_muxer_demuxer_or_protocol_reason_reads_that_kind_s_list(self) -> None:
         """An FFmpeg muxer, demuxer or protocol reason is checked against that kind's list."""
         mk = ("SOUNDTAP_FFMPEG_MUXERS = pcm_s16le\n"
