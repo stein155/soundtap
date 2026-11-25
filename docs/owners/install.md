@@ -208,10 +208,14 @@ A speaker that is already on your Wi-Fi under Bose's software has the same page 
 `http://<speaker address>:17008/update.html` (a SoundTouch 20 on 27.0.6 accepted it that way);
 then setup mode is not needed.
 
-From a terminal the same upload is one command, if you prefer:
-`curl -X POST -H 'Expect:' -F 'filename=@SoundTap-Core-X.Y.Z.stu;type=application/octet-stream' http://192.0.2.1:17008/update.html`
-If the first request answers HTTP 500, do not send the package again straight away: wait until
-you are sure the speaker is not still installing.
+From a terminal the same upload is one command:
+
+```sh
+curl -X POST -H 'Expect:' -F 'filename=@SoundTap-Core-X.Y.Z.stu;type=application/octet-stream' http://192.0.2.1:17008/update.html
+```
+
+If it answers HTTP 500, do not send the package again straight away: wait until you are sure
+the speaker is not still installing.
 
 Then go on with [What happens next](#5-what-happens-next).
 
@@ -299,7 +303,7 @@ lower case, with dashes), and your router's device list shows its IP address. Wi
 one speaker, `soundtap.local` reaches one of them; use the speaker's own address for anything
 that changes it.
 
-Add the page to your home screen for an app-like experience; no app store needed. From there:
+Add the page to your home screen and it behaves like an app; no app store needed. From there:
 
 - **Presets:** search a station, then hold a preset tile to save it. The buttons on the speaker
   play the same six presets.
@@ -346,7 +350,7 @@ What to know first:
 The details behind each of these, and what has been tested, are in the
 [install records](../hardware/install-records.md#going-back-to-bose). If you are stuck, open an
 [install or recovery issue](https://github.com/stein155/soundtap/issues/new?template=install.yml)
-with exactly what you did; we would much rather help than have a speaker end up in a drawer.
+with exactly what you did.
 
 ## Updating
 
@@ -363,9 +367,9 @@ SoundTap updates in two parts, each from the speaker's *Settings → Updates* pa
 
 When a newer SoundTap Core is out, the Updates page says so and shows what is new. *Install
 SoundTap Core* asks once, then the speaker waits for one of its buttons, not volume, to be
-held for two seconds, downloads
-the release itself and writes it into the other half. It takes several minutes; keep the
-speaker plugged in. Then *Reboot into the new firmware* starts it.
+held for two seconds, downloads the release itself and writes it into the other half. This
+takes several minutes; keep the speaker plugged in. Then *Reboot into the new firmware* starts
+it.
 
 To install a file you downloaded, or to go back to an older version, upload it instead.
 Every release file comes with a signature (`.sig`). Select both together; the speaker refuses
@@ -387,9 +391,9 @@ curl --fail -X POST --data-binary @SoundTap-Core-0.1.0.stu \
 curl --fail -X POST -d '{"confirm":true}' "http://$SPEAKER/api/reboot"
 ```
 
-The reboot runs only if the install request succeeds; an HTTP error stops this command
-chain. A failed or interrupted request still needs investigation before any retry or reboot.
-The install answer names the slot it wrote and the one still running. The package holds everything
+The reboot runs only if the install request succeeds. If the request fails or is interrupted,
+find out why before you retry or reboot. The install answer names the slot it wrote and the one
+still running. The package holds everything
 the speaker needs: bootloaders that differ from it are written too, and ones that match are
 not touched ([ADR 0008](../decisions/0008-one-universal-stu.md)).
 
@@ -464,7 +468,7 @@ known way back: do not rely on it yet.
 | The setup page does not open | Browse to `http://192.168.42.1` yourself. |
 | `soundtap.local` does not open | Use the IP address from your router. Some Android phones do not resolve `.local` names. |
 | An update is refused | Select the `.sig` file together with the package. |
-| Anything else | *Settings → System → Support bundle* downloads the diagnostics; attach it to an [issue](https://github.com/stein155/soundtap/issues/new). |
+| Anything else | *Settings → Maintenance → Help and support → Support bundle* downloads the diagnostics; attach it to an [issue](https://github.com/stein155/soundtap/issues/new). |
 
 ## Where to read next
 

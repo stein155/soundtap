@@ -1,15 +1,15 @@
 # Environment variables
 
 The init script `os/overlay/etc/init.d/soundtap` hands configuration to `soundtapd` through
-the environment. Below are the daemon's environment inputs and the explicitly named helper-process variables. `os/tests/docs/test_environment_doc.py`
-fails when Go code reads a variable that is not in this table, or when the init script
-exports one that is not.
+the environment. The table lists every variable the daemon reads, plus the ones it sets for
+helper processes. `os/tests/docs/test_environment_doc.py` fails when Go code reads a variable
+that is not in this table, or when the init script exports one that is not.
 
 Most of these are set by the init script per model; the rest are debug and test knobs.
-The last column describes a variable absent from the daemon environment. Where the init
-script normally supplies it, that value is stated separately. These switches are not a
-no-hardware mode: `AUDIO_NOINIT=1` does not disable playback, the amplifier fault monitor,
-buttons, LEDs or other hardware workers.
+The *unset* column gives the behaviour when the variable is absent; where the init script
+normally sets a value, that is noted there too. These switches are not a no-hardware mode:
+`AUDIO_NOINIT=1` does not disable playback, the amplifier fault monitor, buttons, LEDs or
+other hardware workers.
 
 | variable | read in | meaning | unset |
 |---|---|---|---|

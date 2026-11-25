@@ -29,6 +29,7 @@
 [MQTT](#mqtt) ·
 [Multiroom](#multiroom) ·
 [Remote](#does-my-remote-work) ·
+[Buttons](#what-do-the-buttons-do) ·
 [Bluetooth and AUX](#bluetooth-and-aux) ·
 [Stereo pairs](#can-i-pair-two-speakers-as-left-and-right) ·
 [Languages](#which-languages) ·
@@ -36,7 +37,8 @@
 [Crash reports](#can-the-speaker-report-its-own-crashes)
 
 **Security:** [Is it safe on my network?](#is-it-safe-on-my-network) ·
-[Can I install my own builds?](#can-i-install-my-own-builds)
+[Can I install my own builds?](#can-i-install-my-own-builds) ·
+[Why hold a button?](#why-does-the-speaker-ask-me-to-hold-a-button)
 
 ---
 
@@ -79,15 +81,15 @@ it does not load a stock radio blob. ST10/WLA Wi-Link firmware comes from upstre
 
 ### How is it different from other SoundTouch projects?
 
-Several good projects keep SoundTouch speakers alive, and they are worth a look. Most of
-them either **emulate Bose's cloud** on a computer in your home, or **add a small program on
-top of Bose's software**. Both keep Bose's original software on the speaker, which is a
-perfectly sensible choice if you want minimal change.
+Several good projects keep SoundTouch speakers alive. Most of them either **emulate Bose's
+cloud** on a computer in your home, or **add a small program on top of Bose's software**. Both
+keep Bose's software on the speaker, which is a sensible choice if you want to change as little
+as possible.
 
-SoundTap takes the other road: a **whole new operating system**. That is more work, but it is
-also why SoundTap can add things the speaker never had (AirPlay 2, Snapcast multiroom,
-UPnP/DLNA, MQTT, a modern web page), fix things in the system itself, and keep
-receiving updates without any Bose code left in the loop.
+SoundTap replaces the **whole operating system** instead. That is more work, but it lets
+SoundTap add things the speaker never had (AirPlay 2, Snapcast multiroom, UPnP/DLNA, MQTT, a
+new web page), fix problems in the system itself, and keep receiving updates without Bose
+code.
 
 ### Is it affiliated with Bose?
 
@@ -186,10 +188,11 @@ yourself does need a Linux machine with Docker.
 ### What happens to my Bose presets?
 
 On the first SoundTap start, locally stored TuneIn presets are imported when there is no
-SoundTap preset file yet. This depends on the stock `Presets.xml` still being available;
-cloud/account-based sources are not imported. This has not yet been checked on hardware. Existing SoundTap presets are kept, and a
-factory reset does not import stock presets again. You can search for a station and hold a
-preset tile to store it, or choose a Spotify playlist/album or media-server item.
+SoundTap preset file yet. This needs the stock `Presets.xml` to still be on the speaker;
+presets from cloud or account-based sources are not imported. This has not yet been checked on
+hardware. Existing SoundTap presets are kept, and a factory reset does not import stock presets
+again. To store a preset, search for a station and hold a preset tile, or choose a Spotify
+playlist or album or a media-server item.
 
 ### Does the Bose SoundTouch app keep working?
 
@@ -243,10 +246,10 @@ the Spotify app, you can also browse your playlists, albums and liked songs from
 page and store them as presets. Spotify Connect on third-party speakers needs **Spotify
 Premium**.
 
-Spotify track switches close and reopen the source audio stream so buffered sound from the
-previous track cannot return after a skip. Natural endings keep their tail, but fully gapless
-transitions between tracks (such as live albums) are not guaranteed. A short response delay
-from audio already queued at the output remains, especially in multiroom.
+On a skip, the speaker closes and reopens the Spotify audio stream so buffered sound from the
+previous track cannot come back. A track that ends by itself plays to the end, but fully
+gapless transitions (as on live albums) are not guaranteed. Audio already queued at the output
+still causes a short delay before a change is heard, especially in multiroom.
 
 ### Does AirPlay work? And Apple Home?
 
@@ -349,18 +352,21 @@ opens pairing for another phone.
 
 ### Can I pair two speakers as left and right?
 
-Yes, any two speakers, also of different models; no hardware run is recorded yet. In a speaker's settings, open Stereo pair, pick the partner and the side this speaker plays. The pair is a multiroom group in which each speaker plays one channel ([ADR 0107](../decisions/0107-stereo-pair-acts-as-one-speaker.md)).
+Yes, any two speakers, also of different models, though no hardware run is recorded yet. In a
+speaker's settings, open *Stereo pair*, pick the partner and the side this speaker plays. The
+pair is a multiroom group in which each speaker plays one channel
+([ADR 0107](../decisions/0107-stereo-pair-acts-as-one-speaker.md)).
 
 ### Which languages?
 
 The language picker offers 25 languages, including English, Nederlands, Deutsch, Français,
 Español and Afrikaans. The page follows a supported browser language and falls back to English
-otherwise. Choose another under *Settings → Language*.
-Translations are a great first contribution.
+otherwise. Choose another under *Settings → Language*. Translations are a good first
+[contribution](../../CONTRIBUTING.md#ways-to-help).
 
 ### How do I report a bug?
 
-Open *Settings → System → Support bundle* and press any button on the speaker when the page
+Open *Settings → Maintenance → Help and support → Support bundle* and press any button on the speaker when the page
 asks. The browser saves one ZIP file; attach it to an
 [issue](https://github.com/stein155/soundtap/issues/new). Nobody has to log in to the speaker
 (release builds have no SSH), because the file holds what support would otherwise look up there:
@@ -379,7 +385,7 @@ Everything inside is plain text, so you can read it before you post it.
 
 ### Can the speaker report its own crashes?
 
-Only if you ask it to, and only through you. Turn on *Settings → System → Offer crash reports*;
+Only if you ask it to, and only through you. Turn on *Settings → Maintenance → For developers → Offer crash reports*;
 it is off until you do. When the speaker then finds a crash (the app stopped with an error, the
 previous start ended in a kernel crash, or a music service kept failing and was put to rest), its
 settings page shows a notice. *Report this crash* shows you the report word for word: what
@@ -420,17 +426,19 @@ Assistant can set it ([ADR 0048](../decisions/0048-signed-updates.md#the-owners-
 
 Resetting, rebooting, changing Wi-Fi, forgetting the paired Bluetooth
 devices, installing firmware, setting or removing your own signing key and reading debug data
-only go ahead after someone holds a button
-on the speaker for two seconds within a minute. Any button on the speaker itself counts except
-volume, which keeps working while it waits; a short press and the remote do not count. A
-SoundTouch 300 has no buttons, so there you hold a key on its remote (not volume).
+only go ahead after someone holds a button on the speaker for two seconds within a minute. Any
+button on the speaker itself counts except volume, which keeps working while it waits; a short
+press and the remote do not count. A SoundTouch 300 has no buttons, so there you hold a key on
+its remote (not volume).
+
 While it waits, the lamps blink (the ST20 display says what the hold will do, such as *Hold a
 button to reset*) and the web page shows the same request. If another request comes in
-meanwhile, it takes the place of the first, and the page of the first says so.
-Everything else, such as volume, sources and presets, works without it.
-The latest stable app update is an exception: *Update now* can install it without a hold.
-Choosing a specific release still asks for confirmation, as do installing a newer SoundTap Core
-and manual firmware uploads.
-These are the production rules; alpha bring-up can use a device confirmation token.
+meanwhile, it replaces the first, and the first request's page says so. Everything else, such
+as volume, sources and presets, works without a hold.
+
+One exception: *Update now* installs the latest stable app update without a hold. Choosing a
+specific release still asks for one, as do installing a newer SoundTap Core and uploading
+firmware by hand. These are the production rules; on alpha images a device confirmation token
+can stand in for the hold.
 See [ADR 0055](../decisions/0055-household-token-and-windows.md) and
 [ADR 0118](../decisions/0118-update-button-without-press.md).

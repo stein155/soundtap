@@ -33,8 +33,8 @@ soundtapd owns all of it, per speaker.
 
 The alarm is a persisted setting (`alarm: {enabled, time "HH:MM", slot 1..6}`), checked every
 20 s by soundtapd in the time zone of the standby-clock town, and plays its preset once per day.
-On the night a clock change skips the alarm minute it goes off in the first minute after the jump;
-on the night the minute repeats it goes off once.
+On a night when a clock change skips the alarm minute, it goes off in the first minute after the
+jump; on a night when the minute repeats, it goes off once.
 
 ### Group preferences
 

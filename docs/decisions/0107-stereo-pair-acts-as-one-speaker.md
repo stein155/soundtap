@@ -9,7 +9,7 @@ right, not only two of the same model). Multiroom already keeps two speakers in 
 ([ADR 0013](0013-multiroom-through-snapcast.md)): the follower plays the leader's stream. What it
 lacks is that each speaker plays only its own side, and that the two behave as one: in a plain
 group a follower's preset leaves the group, its power key switches only itself, a leader in
-standby releases its followers when the owner chose "dissolve groups", and the group volume
+standby releases its followers when the owner turned "keep groups" off, and the group volume
 slider moves the followers only when "sync volume" is on. Stock treats the transport keys as the
 group's and the rest as the pressed speaker's, which suits a living-room group, not a pair meant
 to be one speaker.

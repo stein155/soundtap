@@ -5,8 +5,9 @@ Status: accepted — 2026-11-08
 ## Context
 
 Writing a speaker's flash, rebooting it or installing a package on it needs explicit permission
-and a proven way back ([the contract](../../CONTRIBUTING.md#absolute-safety-rules)). CI already proves what can be proven without hardware: the
-checks, the image, and the install gate on simulated NAND for every model. What it cannot prove is
+and a proven way back ([the contract](../../CONTRIBUTING.md#absolute-safety-rules)). CI already
+proves what can be proven without hardware: the checks, the image, and the install gate on
+simulated NAND for every model. What it cannot prove is
 that a build boots and confirms on a real speaker, and a job that installed each green build on a
 bench speaker would do that without anyone deciding it, on a speaker that may be in use for
 something else. On a production image every install also waits for a key held on the speaker

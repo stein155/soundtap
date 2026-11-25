@@ -16,9 +16,9 @@ owner decided that crash reports get none either.
 
 ## Decision
 
-**Off by default.** The owner turns *Offer crash reports* on in Settings, this speaker, Advanced
-Setup, System. It is stored in the settings file (`crashReports.enabled`, absent from an older file,
-which reads as off) and carried by a backup.
+**Off by default.** The owner turns *Offer crash reports* on in *Settings → Maintenance →
+For developers*. It is stored in the settings file (`crashReports.enabled`; an older
+file without it reads as off) and carried by a backup.
 
 **The speaker finds the crash, the owner sends it.** With reports on, `GET /api/crash-report`
 answers the first crash not yet reported or dismissed, in this order:

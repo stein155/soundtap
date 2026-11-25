@@ -8,9 +8,8 @@ The speaker image carries 13 shell scripts, about 2,700 lines. `etc/init.d/sound
 is 1,224 lines. Shell has no unit tests on this project (only `os/tests` greps and a few
 `sh -n` checks), hides errors behind `|| true`, and runs as root. Some of it must still
 work when soundtapd is broken or missing: bringing up the board, restarting soundtapd, and
-giving a person a way in. Other parts make
-choices that soundtapd could make with tests: when to release a source, what a Bluetooth
-event means, which track is playing.
+giving a person a way in. Other parts make choices that soundtapd could make with tests: when
+to release a source, what a Bluetooth event means, which track is playing.
 
 soundtapd is the only Go process on the speaker, and the 128 MB models have a memory
 budget. Each move into it has to be measured.
@@ -24,8 +23,8 @@ Shell stays only where one of these is true:
 2. a third-party daemon calls it as a hook, and it only passes the event on.
 
 Any other decision (state, timing, parsing, retries) belongs in soundtapd, with tests.
-Scripts move one at a time, one PR each. Manual model-specific hardware validation (ADR 0117) proves
-each move, and soundtapd's RSS on a 128 MB speaker is measured before and after.
+Scripts move one at a time, one PR each. Manual model-specific hardware validation (ADR 0117)
+proves each move, and soundtapd's RSS on a 128 MB speaker is measured before and after.
 
 Wi-Fi is not a boot path. The setup AP serves soundtapd's page and gives no lease before
 soundtapd answers, so without soundtapd it never was a way back in; a boot whose soundtapd

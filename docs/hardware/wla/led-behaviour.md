@@ -15,8 +15,7 @@ quoted below it is quoted exactly.
 `binky_sm2.dtb` node `shelbyleds` (`compatible = "bose, shelby-led"`) declares four
 channels. Bose numbers GPIOs across the four AM335x banks as one flat space; Linux
 numbers from each gpiochip's base in registration order, which on this board puts bank 0
-at 610 and bank 2 at 544 (see `wla-gpio-numbering` — `mute_out` 72 → 552 is the same
-arithmetic).
+at 610 and bank 2 at 544 (the same arithmetic takes `mute_out` 72 to 552).
 
 | channel | pad | Bose gpio | Linux gpio | kind |
 |---|---|---|---|---|
@@ -127,10 +126,9 @@ the `0xffff` the steady states use. So it is a single blink, not an animation, a
 gated on a `SHELBY_SOURCE` comparison, so it only fires while Bluetooth is the source.
 SoundTap does this now, using the mechanism the ST10's empty-preset feedback already
 used: `applyKey` opens a 500 ms window in `speakerstate` — the length of the blink — and
-the LED loop shows the pattern while the window is open. No event plumbing was needed
-after all, which is why it got built rather than left on this list. Volume and the
-presets are deliberately not in the set: they have their own LED states, and on a box
-with two lamps those states do nothing.
+the LED loop shows the pattern while the window is open, with no extra event plumbing.
+Volume and the presets are deliberately not in the set: they have their own LED states,
+and on a box with two lamps those states do nothing.
 
 Bose's own words for the four Wi-Fi ones, from the binary:
 
@@ -171,7 +169,7 @@ lamp until it finishes).
 ## What SoundTap does with it
 
 Implemented and running. `am335x-soundtap-wla.dts` declares the four channels,
-`app/internal/hw/led_wla.go` drives them from the same states as above, and `internal/hw/model` keeps
+`app/internal/hw/led_wla.go` drives them from the same states as above, and `app/internal/hw/model` keeps
 `LEDDir = ""` because none of this goes through the ST10's `shelby-leds` path.
 
 Proven on the board on 2026-09-19, with a package built that day:

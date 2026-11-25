@@ -15,8 +15,8 @@ cloud update check and a test screen. A cloud update check has no source on Soun
 gets the power-on behaviour, not the runtime one.
 
 The Wireless Link has no preset keys. It has two buttons, Bluetooth and AUX
-([`docs/hardware/wla/buttons.md`](../hardware/wla/buttons.md)), and its micro-B is usb0, the same controller the
-ST10 turns into a host for the stick. Stock's WLA U-Boot has no USB emergency update.
+([`docs/hardware/wla/buttons.md`](../hardware/wla/buttons.md)), and its micro-B is usb0, the
+same controller the ST10 turns into a host for the stick. Stock's WLA U-Boot has no USB emergency update.
 
 A running speaker accepts only signed SoundTap updates ([ADR 0048](0048-signed-updates.md)): those
 come automatically or from the web UI, which anyone on the network can reach. A stick is different:

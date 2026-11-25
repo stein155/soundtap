@@ -17,7 +17,7 @@ other way in.
   port 22, and nothing on the image (avahi's adverts included) names SSH.
 - **Nothing replaces it.** No key-only login, no debug switch, no remote shell over the web API.
   Support goes through what an owner already has: the support bundle in the web UI
-  (*Settings → System → Support bundle*, `GET /api/debug`, behind a key held on the speaker,
+  (*Settings → Maintenance → Help and support → Support bundle*, `GET /api/debug`, behind a key held on the speaker,
   [ADR 0055](0055-household-token-and-windows.md)), the read-only boot state in
   `GET /api/health`, and for recovery the USB update at power-on and the web UI.
 - **Alpha images keep root SSH without a password** for development. They are for the bench and

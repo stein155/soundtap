@@ -124,9 +124,10 @@ environment.
 - **Settling.** The confirmation clears `upgrade_available` and `bootcount` (one environment
   write, none when they are absent), resets SCRATCH2, and brings an armed `bootlimit` that differs
   to `BootLimit`. It clears them only while `bootcmd` selects the running slot: a selection of the
-  other slot is an install's that has not booted yet, and `POST /api/reboot` (which settles before
-  it reboots) and a soundtapd restarted within that boot leave it armed. A count above the limit at that moment means U-Boot ran `altbootcmd`: soundtapd
-  selects the slot it is running, with `altbootcmd` on that slot too, until the next install.
+  other slot belongs to an install that has not booted yet, and `POST /api/reboot` (which settles
+  before it reboots) and a soundtapd restarted within that boot leave it armed. A count above the
+  limit at that moment means U-Boot ran `altbootcmd`: soundtapd selects the slot it is running,
+  with `altbootcmd` on that slot too, until the next install.
 - **The limit is 4.** A trial boot on the ST20 that installs a new BCO image waits for its flash
   (cut off after 15 minutes) before it confirms, long enough for a household to pull the plug more
   than once. With 4, three cuts in a row, each before its boot's confirm, leave a fourth boot of

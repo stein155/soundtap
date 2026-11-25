@@ -17,7 +17,7 @@ of Bose's userland is up:
 ```
 
 So the pattern is a **knight rider sweep**, it starts as early as init can start it, and it
-runs until BoseApp ("Rhino process") kills it — which is exactly the window SoundTap has
+runs until BoseApp ("Rhino process") kills it, which is exactly the window SoundTap has
 nothing to show in.
 
 `/opt/Bose/led-splash-write` (ELF, ARM, stripped, 48 KB) opens the LED character devices
@@ -31,7 +31,7 @@ directly:
 ```
 
 and writes one byte per change: the write seen in the disassembly is a single `0x78`
-(120), which `shelby-led.ko` caps at 100 % duty — full brightness, not a PWM ramp. The
+(120), which `shelby-led.ko` caps at 100 % duty: full brightness, not a PWM ramp. The
 LED device classes are `LedPWMDevice`, `LedControlDevice`, `LedMultiDevice` and
 `PruLedDevice`; the last one talks to `/dev/rpmsg_pru31`, which is the PRU path a
 different model uses and not this one.
@@ -57,28 +57,26 @@ The original note records these emulator byte values (the complete capture is mi
 | 6 | `rled3` | 139 | 0 |
 
 then back to step 1, forever. **350 ms** per step, measured at 350.0-353 ms over dozens of
-cycles. Every step writes all four lamps -- the lit one and three zeros -- and the run
+cycles. Every step writes all four lamps (the lit one and three zeros), and the run
 opens with a single 0 to `uledw`, `uledy`, `rled3`, `rled4` and `rled7`.
 
 The disassembly summary above names `0x78` (120), while the emulator table records 139
 (`0x8b`). With no identified binary hash or full capture, these are two unreconciled byte
-claims; do not treat them as a matched trace of one instruction. Both exceed the documented
-100 cap, so they imply the same saturated software request, not a measured physical duty.
-
-139 is above the driver's 100 % cap, so the requested lamp level is full brightness; there is no
-ramp and no PWM step anywhere in the sequence. Four lamps sweep and bounce: 1-2-3-4-3-2,
-which is what "knight rider" means here, and the endpoints are not repeated.
+claims; do not treat them as a matched trace of one instruction. Both exceed the driver's
+100 % cap, so either way the requested level is full brightness, not a measured physical duty:
+there is no ramp and no PWM step anywhere in the sequence. Four lamps sweep and bounce,
+1-2-3-4-3-2, which is what "knight rider" means here; the endpoints are not repeated.
 
 One thing this measurement says that the device tree did not: `rled7` is **gpio2_23**, the
-pad this tree currently gives to the NCP6922 enable line. Stock's own tree claims it twice
--- once in `shelbyleds` as a lamp, once in `ncp6922_pins_default`. The emulator records
+pad this tree currently gives to the NCP6922 enable line. Stock's own tree claims it twice:
+once in `shelbyleds` as a lamp, once in `ncp6922_pins_default`. The emulator records
 writes to the lamp device; it does not measure gpio2_23 or prove the physical role of that
 pad. Any electrical/audio investigation needs its own approved test plan. The historical
 suggestion to toggle this line during playback is not a standing instruction.
 
 Extracting the binary: the stock root filesystem is in the NAND backup as
 `mtd8-File-System-Ping.oob`. Strip the 64-byte OOB from every 2048-byte page, then
-reassemble the UBI volume by hand -- `ubireader_extract_files` maps no blocks on this
+reassemble the UBI volume by hand. `ubireader_extract_files` maps no blocks on this
 image, but the volume is plain: each PEB carries `UBI#` at 0 and `UBI!` at 2048, data
 starts at 4096, and LEB n of volume 0 goes at offset n * 126976. Feeding that UBIFS image
 to `ubireader_extract_files` gives the whole tree.

@@ -81,7 +81,7 @@ now returns immediately on mainline because the path does not exist there.
 The old plan to add McASP1 and a new passthrough script is not the current implementation.
 `os/board/common/dts/ti/omap/am335x-soundtap-st20.dts` enables McASP0 with capture and
 playback serializers. `app/cmd/soundtapd/aux.go` captures ALSA into the common Mixer, and
-`internal/hw/model` selects the model's source gain. The speaker retains its own normal codec
+`app/internal/hw/model` selects the model's source gain. The speaker retains its own normal codec
 script under [ADR 0012](../../decisions/0012-single-dac-writer.md); this note is not an
 instruction to ship, regenerate or replace Bose's miniDSP tuning.
 
@@ -93,7 +93,7 @@ The stock analysis still leaves these questions for model-specific evidence:
   writes and an ALSA node are not a completed line-input test.
 - Do source gain and latency match stock on that model? A +5 dB codec output setting alone
   does not isolate AUX loudness through the whole chain. Follow the AUX rows in
-  [hardware-test.md](../hardware-test.md).
+  the [hardware test](../hardware-test.md).
 
 Further hardware work requires the session's explicit permission. The static register list
 is evidence to investigate, not a safe-to-run codec procedure.

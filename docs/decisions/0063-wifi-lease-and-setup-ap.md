@@ -67,9 +67,9 @@ once its name is published; `/etc/init.d/soundtap` starts no Wi-Fi script.
 
 Two radio-exposure findings from a review:
 
-- `wifi.sh` (now soundtapd's Wi-Fi manager), the eth0 path in `init.d/soundtap` and the BCO lan watch ran `udhcpc -b -q`. `-q`
-  exits once a lease is bound, so nothing ever renewed it. When the lease ran out the router could
-  give the address to another host: an address conflict, and the speaker off the LAN until reboot.
+- `wifi.sh` (now soundtapd's Wi-Fi manager), the eth0 path in `init.d/soundtap` and the BCO
+  lan watch ran `udhcpc -b -q`. `-q` exits once a lease is bound, so nothing ever renewed it.
+  When the lease ran out the router could give the address to another host: an address conflict, and the speaker off the LAN until reboot.
 - A failed join at boot (no address after 45 s) started the open setup AP, and nothing ever went
   back to the station. After a power cut the router usually boots slower than the speakers, so
   every speaker came back as an open AP with a catch-all DNS, for good.
@@ -84,8 +84,8 @@ BCO took away); it only kills the pid in `/run/soundtap-udhcpc.pid` when `/proc/
 
 When a join fails while credentials are saved, the Wi-Fi manager still opens the setup AP, and
 retries: every 5 minutes, while the setup AP is up and has no client associated, it tears the AP
-down and tries the saved network again. A phone on the AP holds it
-open. Without saved credentials the AP stays, as before.
+down and tries the saved network again. A device on the AP holds it open, for at most
+30 minutes. Without saved credentials the AP stays, as before.
 
 When the network was not found or gave no address, the first ten retries come every minute instead:
 a router coming back from a power cut then costs about a minute, not up to five. A wrong password
@@ -93,16 +93,17 @@ keeps the 5 minutes, since it needs the AP and trying sooner does not help.
 
 ### Consequences
 
-- A speaker recovers by itself from a router that came up late; at most 5 minutes of open AP per
-  attempt remain, plus the current 90 s join/address window. Early not-found/no-address
-  retries use the shorter one-minute AP pause described above.
+- A speaker recovers by itself from a router that came up late. Each attempt leaves at most
+  5 minutes of open AP (1 minute for the first ten retries after not-found or no address), plus
+  the 90 s join and address window.
 - A wrong saved password now cycles: AP for 5 minutes, a failed join, AP again. The setup page is
-  still reachable in each AP window, and a connected phone stops the cycle.
+  still reachable in each AP window, and a connected phone holds the cycle off for up to
+  30 minutes.
 - Buildroot's `/usr/share/udhcpc/default.script` sets address, default route and resolv.conf
   on bound and renew; its hook `default.script.d/soundtap-log` logs each lease event. soundtapd
   is not told about address changes and picks them up within 15 s (`maintainIP`).
 
-### Alternatives considered
+### Alternatives that lost
 
 - Keep the station retrying while the AP is up: opening the AP stops wpa_supplicant, and the
   ST20's BCO link has one radio context; a full new pass reuses the tested join path instead.
@@ -124,7 +125,8 @@ As on stock: the manager picks the channel among 1, 6 and 11 with the fewest net
 scan it already makes (6 on a tie or without a scan; stock also weighs channel load, which
 we do not measure), hostapd sends `country_code` with `ieee80211d=1` when the country is
 known, and udhcpd leases for 600 s. The ST20 keeps channel 6 and no country element: its
-`wlan1` is the BCO's radio behind `soundtap_bco` (ADR 0031), proven on channel 6 only.
+`wlan1` is the BCO's radio behind `soundtap_bco` ([ADR 0031](0031-bco-network-card.md)), proven
+on channel 6 only.
 
 Kept on purpose: 192.168.42.1/24. The portal, the firewall and their tests use it, and a
 phone on the AP sees no difference.
@@ -137,16 +139,18 @@ a 169.254 address cannot be set up from the app, while the AP can.
 ### Consequences
 
 - In a crowded channel 6 the setup AP moves to 1 or 11, as stock's did.
-- The setup AP's channel needs per-model hardware proof (docs/hardware/hardware-test.md, Wi-Fi).
+- The setup AP's channel needs per-model hardware proof (the Wi-Fi rows of
+  [the hardware checklist](../hardware/hardware-test.md)).
 
 ## The setup access point stays open, as on stock
 
 ### Context
 
 When a speaker has no usable Wi-Fi, soundtapd's Wi-Fi manager opens a setup access point
-(`openAP` in `app/internal/wifi/ap.go`): hostapd without WPA, plus catch-all DNS for the setup page.
-ADR 0063 bounded the outage case. With saved credentials, the saved network is retried every
-5 minutes while no client is on the AP. The AP itself is still open (a follow-up).
+(`openAP` in `app/internal/wifi/ap.go`): hostapd without WPA, plus catch-all DNS for the setup
+page. The section above bounds the outage case: with saved credentials, the saved network is
+retried every 5 minutes while no client is on the AP. That leaves the question of whether the AP
+itself should be open.
 
 Stock Bose firmware does the same: its setup network is open. The ST10 and the Wireless Link
 have no screen, so a per-device passphrase would have to be printed on a label, and our
@@ -161,11 +165,12 @@ The setup AP stays open, as on stock. Project decision, 2026-10-09.
 - Setup works on every model with no label, screen or button chord, the same way people
   already know from stock.
 - Anyone in range can join the AP while it is up: when no Wi-Fi is configured, and during a
-  router outage until the next retry. There is no household token (ADR 0055), so a phone
-  on the AP reaches the same routes as on the home network; dangerous routes retain their
-  physical-confirmation and signature requirements (ADR 0055/0048).
+  router outage until the next retry. There is no household token
+  ([ADR 0055](0055-household-token-and-windows.md)), so a phone on the AP reaches the same routes
+  as on the home network; dangerous routes still need the press on the speaker, and installs a
+  signature ([ADR 0048](0048-signed-updates.md)).
 
-### Alternatives considered
+### Alternatives that lost
 
 - **WPA2 with a per-device PSK.** Lost because the ST10 and WLA have no screen, and a label
   we do not ship cannot carry it.

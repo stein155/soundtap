@@ -96,9 +96,9 @@ choice: the person updating a speaker cannot judge it, the package can).
   model's payload rebuilds and re-tests the package for every model.
 - The model is decided on the board at install and boot time, never by the file name. The only
   borrowed thing is the `BOSE` magic stock authenticates.
-- A new model or variant is one edit to `os/models.json`, then `go generate`; the test names
-  every other copy that has to follow. It cannot add a variant to the init script, the
-  installer or U-Boot: those carry their own tables.
+- A new model or variant is one edit to `os/models.json`, then `go generate`. Generation does
+  not reach the init script, the installer or U-Boot, which carry their own tables; the test
+  names every copy that has to follow.
 - A stock `Update.stu` goes back through the same request as an update, bootloaders included.
 - An STU with a changed SPL or U-Boot writes mtd0-mtd4 on every speaker that installs it,
   without anyone being asked. A bad SPL then leaves only the mask ROM. The gate is the release:

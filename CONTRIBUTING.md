@@ -8,7 +8,7 @@ follows from that.
 
 | You have… | You can… |
 | --- | --- |
-| a SoundTouch running SoundTap | report what works and what does not ([bug form](../../issues/new?template=bug.yml)); the speaker's own *Settings → Debug mode → Report a bug* opens a pre-filled issue with the diagnostics |
+| a SoundTouch running SoundTap | report what works and what does not ([bug form](../../issues/new?template=bug.yml)); attach the support bundle (*Settings → Maintenance → Help and support → Support bundle*), and with *Settings → Maintenance → For developers → Offer crash reports* on, a crash comes with a ready-made issue |
 | a SoundTouch still on Bose software | read-only evidence from a model we do not support yet ([device form](../../issues/new?template=device.yml)) |
 | a translator's eye | improve a language in [`app/frontend/src/lib/i18n/messages/`](app/frontend/src/lib/i18n/messages/) |
 | Go or React | pick an issue labelled [`good first issue`](../../issues?q=is%3Aopen+label%3A%22good+first+issue%22) |
@@ -20,13 +20,14 @@ follows from that.
    It binds every contributor: what may be flashed, what may never be written, and how each
    model gets back to stock.
 2. **No Bose files in the repository or the package** ([ADR 0049](docs/decisions/0049-no-stock-bytes.md)).
+   Stock analysis stays outside the tree; see [Bose-free](#bose-free).
 3. **Every architectural choice gets an ADR** in [`docs/decisions/`](docs/decisions/README.md),
    in the same pull request. Change the picture in [`docs/contributors/design.md`](docs/contributors/design.md) too.
    Where stock had a feature, SoundTap behaves as stock does; that needs no ADR, and a
    difference from stock without one is a bug.
 4. **Evidence over claims.** "Works on my ST10" comes with the commit, the package hash and the
    log. A green QEMU run is a gate, not hardware approval.
-5. **Third-party libraries are welcome; Bose files never** ([ADR 0124](docs/decisions/0124-third-party-code.md)).
+5. **Third-party libraries are welcome** ([ADR 0124](docs/decisions/0124-third-party-code.md)).
    A dependency needs a licence compatible with GPL-3.0-only, recorded in
    [`NOTICE.md`](NOTICE.md); an exact pinned version (`go.sum`, `package-lock.json`, Buildroot
    hash); active maintenance; a reasonable size; and a real problem it fixes. A Go module is
@@ -65,22 +66,28 @@ make dev                 # a simulated ST10; make dev MODEL=st20 (st10, st20, st
 `localhost:5173`, which proxies `/api` and the live updates to it. Ctrl-C stops both. A
 change to the Go code needs a restart.
 
-It uses the host's Go (1.26 or newer, `app/go.mod`) and Node (22 or newer,
-`app/frontend/package.json`) when both are there: a few seconds after the first `npm ci`.
+When both are installed it uses the host's Go (1.26 or newer, `app/go.mod`) and Node (22 or
+newer, `app/frontend/package.json`), and starts in seconds once the first `npm ci` is done.
 Otherwise it builds and runs both in the pinned Go and Node images, which needs only Docker
 (`DEV_CONTAINERS=1` forces that, `DEV_CONTAINERS=0` forbids it). `DEV_PORT` and
 `DEV_UI_PORT` move the ports.
 
-What `-dev` is: the in-process speaker (`app/internal/speakerstate`) behind the real web API,
-with `MODEL`'s profile: its name, sources, capabilities and volume limits. What the API keeps
-in that speaker and in the home (volume, presets, settings, source, standby) behaves as on a
+`-dev` runs the in-process speaker (`app/internal/speakerstate`) behind the real web API, with
+`MODEL`'s profile: its name, sources, capabilities and volume limits. Whatever the API keeps in
+that speaker and its home (volume, presets, settings, source, standby) behaves as on a real
 speaker, live updates included; a selected station goes from buffering to playing after a
-moment, silently. What it is not: nothing is decoded or
-heard, and there are no buttons, lamps, panel, IR, Bluetooth, Wi-Fi changes, firmware
-installs, boot confirmation or BCO. Nothing is announced on the LAN (no mDNS name, no
-`_soundtap._tcp`), so other speakers never see it and multiroom has no peers; both servers
-listen on 127.0.0.1 only. Browsing TuneIn still goes out to the internet, as
-the UI asks. soundtapd refuses `-dev` on a flashed speaker.
+moment, silently.
+
+What it does not do:
+
+- decode or play anything;
+- buttons, lamps, panel, IR, Bluetooth, Wi-Fi changes, firmware installs, boot confirmation or
+  BCO;
+- announce itself on the LAN (no mDNS name, no `_soundtap._tcp`), so other speakers never see
+  it and multiroom has no peers. Both servers listen on 127.0.0.1 only.
+
+Browsing TuneIn still goes out to the internet when the UI asks. soundtapd refuses `-dev` on a
+flashed speaker.
 
 To work against a real speaker instead, run `SOUNDTAP_URL=http://<speaker-ip> npm run dev` in
 `app/frontend`.
@@ -107,18 +114,24 @@ tools/ci/run-ci.sh            # everything CI checks on a pull request, side by 
 tools/ci/run-ci.sh go web     # or some of it
 ```
 
-CI runs the same script on GitHub-hosted runners, one job per step; a pull request from a
-fork gets read-only permissions and no secrets. The steps: `lint` (`make lint`), `web`, `go`,
-`go-race`, `python`, `firewall` and `bco` (together `make test`) and `vuln` (`make vuln`:
-`govulncheck` and `npm audit`). The Go steps check both build architectures, vet, the tests and the tests under
-the race detector; the frontend step includes lint, format, types, tests and build. On the host
-it needs only Docker, Python 3, git and make (macOS's make 3.81 will do); the linters, and
-`bash -n`, run in pinned containers, and `lint` needs the Buildroot submodule
-(`git submodule update --init`). `lint` includes `actionlint` and `zizmor` on the workflows:
-every action is pinned by full commit SHA, every container image by digest.
+On the host it needs only Docker, Python 3, git and make (macOS's make 3.81 will do); the
+linters and `bash -n` run in pinned containers. `lint` needs the Buildroot submodule
+(`git submodule update --init`).
+
+CI runs the same script on GitHub-hosted runners, one job per step; a pull request from a fork
+gets read-only permissions and no secrets. The steps:
+
+- `lint` (`make lint`), including `actionlint` and `zizmor` on the workflows: every action is
+  pinned by full commit SHA, every container image by digest;
+- `web`, `e2e`, `go`, `go-race`, `python`, `firewall` and `bco` (together `make test`). The Go steps
+  cover both build architectures, vet, the tests and the tests under the race detector; the
+  frontend step covers lint, format, types, tests and build;
+- `vuln` (`make vuln`: `govulncheck` and `npm audit`).
+
 A pull request that touches `os/`, `bco/`, the build or the installer also builds the image
 and the package (`tools/ci/run-build.sh`); the Build workflow on `main` then runs the install
 gate on every model. See the [test map](docs/contributors/testing/README.md).
+
 For documentation-only changes, the focused suite is
 `python3 -m unittest discover -s os/tests/docs` from the repository root.
 

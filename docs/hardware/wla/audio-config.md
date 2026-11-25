@@ -19,7 +19,7 @@ burns   wifiAttenuation="0.39810699"  auxAttenuation="1"
 
 Every speaker pulls streamed audio down by 8 dB and leaves its line input alone. The
 Wireless Link does neither: streamed audio runs at full scale and AUX is lifted by 1.22,
-which is +1.73 dB. That follows from what the box is — it feeds someone else's amplifier
+which is +1.73 dB. That follows from what the box is: it feeds someone else's amplifier
 at line level, so there is no hot amp to protect and no reason to throw away headroom.
 
 **This corrects the audio gap for this model.** "AUX ~8 dB too loud, BoseApp applies
@@ -33,7 +33,7 @@ useArmVolumeControl="true"      (spotty: false)
 ```
 
 The speakers hand volume to their DSP. This box has no DSP in the path, so the scaling
-is ours to do — which is what `internal/audio` already does, and it is why the APServer
+is ours to do, which is what `app/internal/audio` already does, and it is why the APServer
 coefficient table is the right curve to be applying in software. See
 `TestStockVolumeCurveMatchesAPServerTable`.
 
@@ -57,7 +57,7 @@ defaultOutputDriverIndex="0"
 
 Both switch on `/sys/devices/virtual/sound/snd_shelby/outputMode`, which is the pair of
 GPIOs this board senses the plug with (`binky_output_select_1/2`, see
-`bluetooth-and-analog-output.md`).
+[Bluetooth and analog output](bluetooth-and-analog-output.md)).
 
 `/opt/Bose/BinkyOutputMonitor` is 8 KB and does one thing, which reads out in full:
 
@@ -88,10 +88,10 @@ which agrees with `defaultOutputDriverIndex="0"` and with the order of the two p
 sets above. **Both lines reading `0` select analog; both reading `1` select optical.**
 This establishes the software selection, not the physical jack state for every bit pair.
 
-Both pads are muxed as inputs in our tree now so they can be read at all; until that they
+Both pads are muxed as inputs in our tree now so they can be read at all; until then they
 sat in whatever mode the bootloader left and an optical plug was undetectable.
 
-Reading them on the board on 2026-09-19 gave **0 and 1** — a disagreement, which is the
+Reading them on the board on 2026-09-19 gave **0 and 1**: a disagreement, which is the
 one state stock's monitor refuses to act on. That first reading also caught a real
 mistake: the pads had been declared `PIN_INPUT_PULLUP` while stock's `0x27` is
 `PIN_INPUT_PULLDOWN`, and the button pads were pulled up where stock's `0x2f` is pull
@@ -117,7 +117,6 @@ monitor acts on, with `01` and `10` meaning something other than "half-way in". 
 measurement is a plug going in and out while these two values are watched, and that needs
 hands on the speaker.
 
-The rates match what SoundTap already builds:
-analog first at 46875, S/PDIF at 44100. The dither flag and the per-path latency
+The rates match what SoundTap already builds: analog first at 46875, S/PDIF at 44100. The dither flag and the per-path latency
 compensation are not implemented on our side, and neither is the ASRC constant set
 (`invFsamp`, `ki`, `invki`) that stock uses to resample into those rates.

@@ -6,9 +6,9 @@ Status: accepted — 2026-11-12
 
 Everything a speaker remembers lives on `/mnt/nv`: its name and settings, presets, favourites,
 Wi-Fi networks, the group it follows. An update replaces the slot and leaves `/mnt/nv` alone
-(`mtd10`, [the NAND contract](../../CONTRIBUTING.md#nand-and-boot-contract)), so the new build reads files the old one wrote.
-From the first public release an update must never lose a user's settings, presets, name,
-Wi-Fi or any other state.
+(`mtd10`, [the NAND contract](../../CONTRIBUTING.md#nand-and-boot-contract)), so the new build
+reads files the old one wrote. From the first public release an update must never lose a user's
+settings, presets, name, Wi-Fi or any other state.
 
 Only the settings file has a version and a list of migrations (`app/internal/settings`). The
 other files have none, and most need none: their loaders read by key or ignore fields they do
@@ -27,11 +27,11 @@ From 0.1.0 on:
   holds one file per format, laid out as on `/mnt/nv` and written by that release's own
   writers. The tests load every set through the loaders soundtapd uses
   (`app/cmd/soundtapd/nvstate_test.go`, `app/internal/web/nvstate_test.go`,
-  `app/internal/wifi/manager_test.go`). The
-  newest set must equal what the current writers produce, so a format change cannot go
-  unnoticed. A released set is never edited; a later format change adds a new set beside it.
-- **[`docs/contributors/nv-state.md`](../contributors/nv-state.md) lists every file** soundtapd, the init script and the
-  speaker's scripts keep on `/mnt/nv`, with its owner and format. A PR that adds a file or
+  `app/internal/wifi/manager_test.go`). The newest set must equal what the current writers
+  produce, so a format change cannot go unnoticed. A released set is never edited; a later format change adds a new set beside it.
+- **[`docs/contributors/nv-state.md`](../contributors/nv-state.md) lists every file**
+  soundtapd, the init script and the speaker's scripts keep on `/mnt/nv`, with its owner and
+  format. A PR that adds a file or
   changes a format updates it.
 - **Machine state, logs and caches** (boot logs, the clock, the app override, the BCO image
   marker) may be dropped by a new build, but the new build starts with the old file in place:

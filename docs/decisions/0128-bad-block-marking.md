@@ -33,8 +33,8 @@ Both writers mark a block bad under the same rules.
   `NAND.Update-Staging` and `NAND.Manufacturing-Data` are never written by an install, and the
   installer refuses to mark them by name all the same.
 - **Bounded.** At most 2 blocks per partition and 3 per install; the stick writes one partition
-  and stops at 2. A healthy chip retires a block in an install about never; more than that in
-  one write is a driver, timing or power fault, and marking is what would make it permanent. One
+  and stops at 2. A healthy chip almost never retires a block during an install; more than that
+  in one write is a driver, timing or power fault, and marking is what would make it permanent. One
   failure past the limit stops the install before anything selects the new slot, and the running
   slot boots. Factory marks do not count.
 - **Written around where the layout allows it.** A block that fails to erase is skipped. When a
@@ -62,8 +62,9 @@ no reason to retire that many).
 - A worn block in the inactive slot does not block a first install or a stick; a chip that fails
   more than the limits still does, with the old slot booting.
 - The rule is proven on the host only. A program or erase failure cannot be provoked on a
-  speaker without damaging it, so no row of [`docs/hardware/hardware-test.md`](../hardware/hardware-test.md) can
-  prove it; the install rows keep proving the path where nothing fails. nandsim's `badblocks=`
+  speaker without damaging it, so no row of
+  [`docs/hardware/hardware-test.md`](../hardware/hardware-test.md) can prove it; the install
+  rows keep proving the path where nothing fails. nandsim's `badblocks=`
   only sets factory marks, so layer 1 of the install gate covers the skipping, not the marking.
 
 ## Code

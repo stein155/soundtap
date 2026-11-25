@@ -46,10 +46,10 @@ The audio path's parameters, in Bose's own words:
 | `asrcConstants` | `invFsamp = 2.1333333e-05` | 1 / 46875, again. |
 | `dspImages` | `rhino_sm2_normal.cfg` | The 9976-write blob we load; separate left/right images exist for stereo pairing. |
 
-The later stock ST20 PCM measurement
-found a first-order bass shelf at about 260 Hz, 1.22 dB per step. That is separate hardware
-evidence on an ST20, not a result obtained from this ST10 XML. Current ST10/ST20 software
-implements that shelf ([DESIGN](../../contributors/design.md#6-audio)).
+A later PCM measurement of stock on an ST20 found a first-order bass shelf at about 260 Hz,
+1.22 dB per step. That is separate hardware evidence on an ST20, not a result obtained from this
+ST10 XML. Current ST10/ST20 software implements that shelf
+([technical design](../../contributors/design.md#6-audio)).
 
 `useArmVolumeControl="false"` identifies the configured volume path. In the September
 SoundTap build described below, the mixer instead scaled PCM with `stockVolumeGain`,
@@ -83,8 +83,8 @@ Reported from the bench on 2026-09-21. What was ruled out first:
 
 What APServer does, read out of its disassembly on 2026-09-22:
 `APDigitalAudioDeviceDSP::SetVolumeAction(const std::vector<int>&)` stores a vector of
-32-bit words, and `SendVolumeAction()` seeks the codec device to **0x2C10** -- page 0x2C,
-register 0x10, the block the September SoundTap build wrote once at boot -- and writes that whole
+32-bit words, and `SendVolumeAction()` seeks the codec device to **0x2C10** (page 0x2C,
+register 0x10, the block the September SoundTap build wrote once at boot) and writes that whole
 vector, every time the volume changes. So the block is stock's volume control, not a
 one-time setup, and ours is a constant sitting where stock puts a variable. Whether that
 constant matched stock's value at volume 100 was initially unresolved; the later table

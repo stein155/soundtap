@@ -1,21 +1,20 @@
 # API stability
 
 SoundTap's HTTP API is what the web page, Music Assistant and your own scripts talk to. This page
-says what you can rely on. `GET /api/openapi.json` on a speaker is the full list of
-routes.
+says what you can rely on. `GET /api/openapi.json` on a speaker lists every route, and
+`http://<speaker>/api/docs` shows the same list as a browsable page.
 
 ## Finding out what a speaker offers
 
 - `GET /api/version` returns `api`, the API's major version, today `1`. Check it before you depend
   on a route.
-- A test in `app/internal/web/openapi_test.go` fails when a route is missing from the document, so
-  each registered route is either documented or explicitly internal. This checks route
-  coverage; response/schema checks provide additional coverage and do not prove hardware behaviour.
+- A test in `app/internal/web/openapi_test.go` fails when a registered route is missing from the
+  document, so every route is either documented or explicitly internal. The test covers the list
+  of routes, not how a speaker behaves.
 
 ## Before the first public release
 
-During unreleased alpha development, routes may change without a compatibility window.
-The first public release is 0.1.0; reaching 1.0 is not the start of the API contract.
+Until then, routes can change without notice. The promise below starts at 0.1.0, not at 1.0.
 
 ## From the first public release (0.1.0)
 

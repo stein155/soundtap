@@ -45,13 +45,13 @@ A release goes out only when the maintainer says so, every time. Before that it 
    only docs or a release's hardware reports, Build (`build.yml`): the checks, the image and the install gate on every model.
    No speaker is touched ([ADR 0117](docs/decisions/0117-no-automated-speaker-install.md)). A
    red run on `main` is a bug to fix before anything moves on.
-2. **Soak.** The production candidate (step 1 below) runs for **7 days** on the maintainer's
+2. **Soak.** The production candidate (step 1 of [Steps](#steps)) runs for **7 days** on the maintainer's
    bench speakers: ST10, ST20, ST300 and WLA, in daily use. A fix for a serious bug in that week
    makes a new candidate and starts the 7 days again.
 3. **Dry run.** `tools/release/dry-run.sh` runs the pre-publish checks on the candidate
    (see [Dry run](#dry-run)). It publishes nothing.
-4. **Public.** With the criteria below met, the maintainer gives the OK and steps 4 to 8 below
-   publish it: signed as a draft, installed on the maintainer's bench speakers through the
+4. **Public.** With the [release criteria](#release-criteria) met, the maintainer gives the OK
+   and steps 4 to 8 of [Steps](#steps) publish it: signed as a draft, installed on the maintainer's bench speakers through the
    signed upload route, then published, then named in the update feed.
 
 Approval is needed to start the soak, to sign, and to publish; each is a separate yes.
@@ -86,10 +86,9 @@ All of these hold on the commit that is released:
   no open CVE scoring 7.0 or more, or not scored yet, in an OS package. That includes the
   host packages whose output ships (SPL/U-Boot and the BCO app); shipped packages without a
   CPE, and those whose CPE NVD does not know, are listed as not checked, and an empty or
-  partial SBOM fails. It asks NVD over the network; a
-  CVE that does not apply to us goes into the package's `<PKG>_IGNORE_CVES` in
-  `os/ignore-cves.mk`, one per line with its reason in a form `os/support/ignore_cves.py`
-  checks (the file's header lists them);
+  partial SBOM fails. It asks NVD over the network. A CVE that does not apply to us goes into
+  the package's `<PKG>_IGNORE_CVES` in `os/ignore-cves.mk`, one per line, with its reason in a
+  form `os/support/ignore_cves.py` checks (the file's header lists them);
 - the version is real: `os/VERSION` (and `app/VERSION` for an app release) raised in a PR to a
   number never released before, `X.Y.Z` or for an alpha `X.Y.Z-alpha.N`. The build writes
   `os/VERSION` into the image (`os/board/image/post-build.sh`) and `sign.sh` into the `.sig`;
@@ -315,9 +314,8 @@ gets. It is protected in three ways:
   workflows that check and publish.
 - **The feed check.** `tools/release/feed_check.py` holds the index to one release: every
   supported model gets the same image, its URL is
-  `https://github.com/stein155/soundtap/releases/download/os-vX.Y.Z/SoundTap-Core-X.Y.Z.stu`,
-  (`X.Y.Z` may be an alpha's `X.Y.Z-alpha.N`, a published prerelease),
-  its length and CRC are that asset's, the release is published and not withdrawn, and the
+  `https://github.com/stein155/soundtap/releases/download/os-vX.Y.Z/SoundTap-Core-X.Y.Z.stu`
+  (`X.Y.Z` may be an alpha's `X.Y.Z-alpha.N`, a published prerelease), its length and CRC are that asset's, the release is published and not withdrawn, and the
   asset's `.sig` states production Core `X.Y.Z` over its SHA-256 and verifies with a key
   compiled into soundtapd. The **Update feed** workflow (`feed.yml`) runs it on every PR and
   push that touches the feed, the keys or the check; `dry-run.sh` runs it on the local
@@ -511,8 +509,8 @@ openssl pkey -in soundtap-reserve-key.pem -pubout -outform DER | tail -c 32 | ba
 ```
 
 Put the printed value into `ReservePublicKey` in a PR, regenerate U-Boot's key header as
-above, and move `soundtap-reserve-key.pem` to its own offline medium. `TestCompiledKeys` fails on a value that is not an ed25519 key or
-that equals the active key.
+above, and move `soundtap-reserve-key.pem` to its own offline medium. `TestCompiledKeys`
+fails on a value that is not an ed25519 key or that equals the active key.
 
 ### Rotation: the reserve becomes the active key
 
@@ -575,8 +573,8 @@ speaker on their network or in their hands can still give it software.
 configuration evidence (`rf_config`) and pass `rf-config`, `usb-recovery` and
 `bootcount-rollback`. The ST300 report must pass the soundbar processor link
 (`soundbar-link`), the TV input (`tv-input`) and the bass module (`bass-module`), plus
-`usb-recovery` and `bootcount-rollback`. A report records what was tested; it never authorises a hardware
-action.
+`usb-recovery` and `bootcount-rollback`. A report records what was tested; it never
+authorises a hardware action.
 
 `releases/os-vX.Y.Z/` holds the four reports and their evidence files side by side, each
 evidence file named `hardware-<model>-<what>` as its report names it. They are public. Redact

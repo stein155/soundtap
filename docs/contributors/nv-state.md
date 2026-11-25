@@ -66,13 +66,8 @@ and a backup never carries it.
 Names nothing writes any more: `api-token`, `.sessions`, `plugins` (a factory reset removes
 them) and `.version`, `.attempts`, `.gaveup` (the diagnostics page shows them if present).
 
-The loaders do not all preserve damaged input in the same way:
-[`store.Open`](../../app/internal/store/store.go) quarantines malformed presets, whereas
-[`favorites.Open`](../../app/internal/favorites/favorites.go) and
-[`recent.Open`](../../app/internal/recent/recent.go) start empty without moving the file.
-A later successful save can replace that original input. The
-[`BCO install marker`](../../app/internal/bco/autoinstall.go) also controls whether a flash is
-attempted; treating it as disposable cache can cause another hardware write.
+The [BCO install marker](../../app/internal/bco/autoinstall.go) is not a disposable cache: it
+also decides whether a flash is attempted, so deleting it can cause another hardware write.
 
 ## `/mnt/nv`
 

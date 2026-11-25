@@ -1,16 +1,15 @@
 # The install gate
 
-The offline install gate checks package writes and the shipped userspace before a speaker
-is involved. Only a model-specific hardware run can show that the complete installed boot
-chain and hardware paths work. No single test can show that, so the gate is
-built in three layers. Each one proves something the layer below it cannot. This page says
-what each layer proves, which of the ten gaps found in the old harness it closes, and what
-is still open.
+The install gate checks what an install writes and the userspace it ships before a speaker
+is involved. Only a hardware run on each model shows that the installed boot chain and
+hardware paths work, so the gate has three layers, each proving something the one below it
+cannot. This page says what each layer proves, which of the ten gaps of the old harness it
+closes, and what is still open.
 
-Layers 1 and 2 run in every Build of `main`, layer 1 on all four models.
-Layer 3 is a separately
-authorised manual hardware session (ADR 0117), not a CI task. Its gaps close only with
-recorded model/candidate evidence; automation is not the criterion for a hardware pass.
+Layers 1 and 2 run in every Build of `main`, layer 1 on all four models. Layer 3 is a
+separately authorised session by hand (ADR 0117), not a CI task. Its gaps close only with
+recorded evidence for that model and candidate; automation is not the criterion for a
+hardware pass.
 
 | Layer | When | What it is | State |
 | --- | --- | --- | --- |
@@ -50,7 +49,7 @@ One guest boots once and runs every scenario in turn, reloading `nandsim` betwee
    `fw_env.config` line `soundtapd` writes (`/dev/mtd5 0x0 0x2000 0x20000 1`), has `bootcmd`
    on the installed slot and the SoundTap markers on that slot's `nand_args*` entry, and
    `bootlimit=4` and `altbootcmd` boot the slot that was running, which is the rollback of
-   [ADR 0010](../../decisions/0010-ab-slots-boot-confirm-rollback.md). The same on all three
+   [ADR 0010](../../decisions/0010-ab-slots-boot-confirm-rollback.md). The same on all four
    models (ADR 0009). Boot recipes may change too (item 7); the scenario rejects changes
    outside its explicit expected set, including ST300's `bootdelay=-2`.
 5. The kernel partition holds the image's kernel, byte for byte, and the new UBI volume
@@ -109,14 +108,10 @@ same table). What differs is the chip ID.
 | ST10 | `rhino`, sm2 | `2c da 90 95` (3.3 V part) | the ID the harness has always used; the repo records no READID for the ST10 |
 | WLA | `binky`, sm2 | `2c aa 90 15` (1.8 V part) | READID `2c aa 90 15 06` read on the board |
 | ST20 | `spotty`, scm | `2c da 90 95` (same as ST10) | the repo documents the same 256 MiB chip and table as the ST10 (`os/tests/fixtures/st20-stock/hardware-facts.md`) but holds no READID; the ID is borrowed, the geometry is not invented |
-
-ST300 uses `ginger` / `sm2` with the WLA's four-byte nandsim ID. `model_setup` records
-`2c aa` from a 2026-11-07 ST300 dmesg observation; the remaining ID bytes follow the WLA
-model and are not a complete independently captured ST300 READID.
+| ST300 | `ginger`, sm2 | `2c aa 90 15` (same as WLA) | `2c aa` from the ST300's dmesg (2026-11-07); the other two bytes follow the WLA and are not an independently captured READID |
 
 nandsim takes four ID bytes, so the fifth (`06` on the WLA) is not modelled. If a READID
-for the ST10 or ST20 is recorded, update `model_setup` and its source evidence together.
-ST300 does have installer scenarios in the matrix above.
+for the ST10, ST20 or ST300 is recorded, update `model_setup` and its source evidence together.
 
 **Reproducible.** The images are pinned by digest. The guest's packages (kernel, QEMU,
 `mtd-utils`, `libubootenv-tool`, BusyBox) come from `snapshot.ubuntu.com` at one fixed
@@ -301,5 +296,5 @@ behaviour that depends on them.
 - Anything that changes what an install writes (the environment, slot selection, the
   rootfs format) changes the expectations in the script or in `stu_expect.py`. They are
   deliberately written down twice, in the installer and in the test.
-- The gate is not hardware release approval: [`../../hardware/hardware-test.md`](../../hardware/hardware-test.md) still
-  decides that.
+- The gate is not hardware release approval: the [hardware checklist](../../hardware/hardware-test.md)
+  still decides that.

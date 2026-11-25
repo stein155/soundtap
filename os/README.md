@@ -23,7 +23,7 @@ make stu        # package it as the universal STU, with the install dry runs
 | `drivers` | codec loaders and the McASP machine driver source |
 | `installer` | the STU packager, the installer module that runs on the speaker, and their checks |
 | `upstream` | upstream firmware blobs, with provenance |
-| `stock` | RE provenance: the register of analysed stock sources; original stock inputs stay outside git |
+| `stock` | reverse-engineering provenance: the register of analysed stock sources; original stock inputs stay outside git |
 | `container` | the pinned builder image |
 
 ## Boot
@@ -44,5 +44,5 @@ Local playback does not depend on routing every sample through snapserver (ADR 0
 
 `build-stu.yml` runs lint, the app tests and `os/tests` (`tools/ci/run-ci.sh`), and builds the
 image on a pull request that touches `os/`; `build.yml` builds the image and the STU and runs
-the install gate on every model (`tools/ci/run-build.sh`). QEMU cannot prove module probing, radio, audio, keys, LEDs or A/B activation: those are
-the hardware checks in [`docs/hardware/hardware-test.md`](../docs/hardware/hardware-test.md).
+the install gate on every model (`tools/ci/run-build.sh`). QEMU cannot prove module probing,
+radio, audio, keys, LEDs or A/B activation: those are the hardware checks in [`docs/hardware/hardware-test.md`](../docs/hardware/hardware-test.md).

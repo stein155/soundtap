@@ -7,18 +7,14 @@ SoundTap Core 0.1.0 is out as an alpha; no candidate is release-approved yet. Th
 its stable/internal split, deprecation and maintenance rules are in
 [ADR 0108](../decisions/0108-http-api-compatibility-for-1-0.md).
 
-Feature status describes evidence, not release approval:
+A feature's status describes evidence, not release approval:
 
-- **Observed** — previously reported on this model's hardware. Notes identify the available
-  observation; older entries without a linked run remain historical reports, not candidate proof.
-- **Built** — implemented; this table does not establish a complete hardware pass for the
-  feature. A partial bench observation can be recorded in the note without approving it.
-- **No** — absent hardware or intentionally unsupported; see the row's note.
-
-**Release approval is separate:** it requires completed per-model reports for the exact
-candidate under [hardware-test.md](../hardware/hardware-test.md) and [RELEASING.md](../../RELEASING.md).
-No feature label in this table grants that approval. The former “Shipped” labels are now
-“Observed”; this wording change adds no hardware evidence.
+- **Observed**: reported on this model's hardware. The note or evidence column names the
+  observation; older entries without a linked run are historical reports, not proof for the
+  current candidate.
+- **Built**: implemented, without a complete hardware pass for the feature. A partial bench
+  observation can be recorded in the note.
+- **No**: the hardware is absent or the feature is intentionally unsupported; see the note.
 
 Every model in this table is **Supported**: it is part of the first release, and a release is
 published only after it has passed that model's column of the
@@ -38,11 +34,12 @@ open row there blocks a release, not the model. The README uses the same word.
 The Wireless Link runs the same features as the ST10 except where it has no hardware for them:
 no loudspeaker, and two buttons instead of a keypad. It has a 3.5 mm AUX in and a 3.5 mm
 [analog line out](../hardware/wla/bluetooth-and-analog-output.md); S/PDIF on that output jack is not built.
+
 The hardware checklist has
 [WLA](../hardware/hardware-test.md#wireless-link-candidate-validation) and
-[ST300](../hardware/hardware-test.md#soundtouch-300-candidate-validation) sections. A checklist's existence
-is not a completed run; WLA/ST300 entries below remain Built unless a feature-specific
-observation is identified. What has run on the SoundTouch 300 is in its
+[ST300](../hardware/hardware-test.md#soundtouch-300-candidate-validation) sections, but a section
+is not a completed run: WLA and ST300 features stay Built until a feature-specific observation
+exists. What has run on the SoundTouch 300 is in its
 [install records](../hardware/install-records.md#soundtouch-300).
 
 ## Previews
@@ -70,11 +67,11 @@ the preview feed once its owner confirmed it.
 
 ## Features
 
-Each Observed cell has a model-specific evidence entry. **Missing run** preserves a historical
-report whose supporting run could not be located in the checked-in documentation; it must not
-be cited as verified hardware support. Linked summaries and excerpts also state their missing
-build/hash/capture fields. Evidence for a stock path does not transfer to the current chain.
-No hardware was retested to fill this table. The [source register](../../os/stock/PROVENANCE.md#reverse-engineering-source-register)
+Each Observed cell has an evidence entry for that model. **Missing run** marks a historical
+report whose run is not in the repository's documentation; do not cite it as verified hardware
+support. Linked summaries and excerpts say which build, hash or capture they lack. Evidence from
+a stock path does not carry over to the current boot chain, and no hardware was retested to
+fill this table. The [source register](../../os/stock/PROVENANCE.md#reverse-engineering-source-register)
 tracks the inputs and gaps behind the model notes.
 
 | Feature | ST10 | ST20 | WLA | ST300 | Note | Evidence by model |
@@ -126,7 +123,7 @@ tracks the inputs and gaps behind the model notes.
 
 - New Observed entries need a linked run naming model, build, procedure and result. Static
   reverse engineering or an offline test is not a hardware observation.
-- ST20 cannot be marked supported while any ST20 check in the
+- No release goes out while an ST20 check in the
   [hardware checklist](../hardware/hardware-test.md#st20-candidate-validation) is open.
 - SPL/U-Boot, kernel and rootfs are in scope. Hardware writes still need explicit permission
   and a proven recovery plan; mtd0–mtd4 writes need fresh permission for each write on every model.

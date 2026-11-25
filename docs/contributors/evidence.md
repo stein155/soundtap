@@ -16,7 +16,7 @@ an input to analysis, not a specification of every hardware state or proof that 
 Record the source firmware version, file path and SHA-256, relevant addresses/registers,
 analysis method and evidence location. Source hashes identify RE inputs; release hashes
 come from generated `SHA256SUMS`. Keep stock files outside git. If an old note lacks a hash
-or capture, say so instead of inventing one or upgrading the claim to “proven”.
+or capture, say so instead of inventing one or upgrading the claim to "proven".
 
 When a conclusion changes, keep the useful measurements and explain their limits, but remove
 obsolete commands from current runbooks. Current implementation belongs in the [design](design.md) and the [ADRs](../decisions/README.md);

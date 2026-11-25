@@ -4,9 +4,10 @@
 > This is the pre-1.0 tracking page. It is removed after the 0.1.0 release; from then on the
 > [changelog](../../CHANGELOG.md) says what each release brings.
 
-SoundTap starts again at 0.1.0 (ADR 0035). This page lists what stands between today's alpha and
-a first release a stranger can install on their own speaker. A ticked item names its evidence:
-the date and the tested artifact (version and SHA-256) of the result. A design choice is closed by an ADR, not by this page.
+SoundTap starts again at 0.1.0 ([ADR 0035](../decisions/0035-releases.md)). This page lists what
+stands between today's alpha and a first release a stranger can install on their own speaker. A
+ticked item names its evidence: the date and the tested artifact (version and SHA-256) of the
+result. A design choice is closed by an ADR, not by this page.
 
 Status on 2026-11-24. The models are the ST10, the ST20, the Wireless Link and the
 SoundTouch 300: the ST300 ships in the first release (project decision 2026-11-12), the signing
@@ -46,8 +47,8 @@ preview becomes a supported model once an owner has run its hardware checklist.
 - [x] **No SSH.** Project decision 2026-11-11, recorded in
       [ADR 0119](../decisions/0119-no-ssh-in-production.md): production images carry no SSH server
       and no root login, and nothing replaces it; support goes through the web UI's support
-      bundle (*Settings → System*), and recovery is the USB update and the web UI. Release images are production images; alpha images keep
-      root SSH without a password. Done: `os/configs/production.fragment` drops Dropbear and
+      bundle (*Settings → Maintenance → Help and support*), and recovery is the USB update and the web UI. Release
+      images are production images; alpha images keep root SSH without a password. Done: `os/configs/production.fragment` drops Dropbear and
       locks root; `rootfs_check.py --profile production` rejects any SSH server, client, key
       tool, host key, `authorized_keys`, avahi SSH advert, script that sets one up and filter
       rule for port 22; owner docs no longer tell anyone to ssh into the speaker, and
@@ -55,8 +56,8 @@ preview becomes a supported model once an owner has run its hardware checklist.
       2026-11-12, passed that check on the build tree and again on the rootfs unpacked from the
       package: no file named after SSH or Dropbear, root's password field `*`, no avahi
       service advert, nothing on 22 in the input filter, and its soundtapd from that rootfs
-      (qemu-user, no init) listens on TCP 80 only. Installed on the Wireless Link: production build of
-      `main`, 2026-11-14, scanned on every TCP port from the home network and from a
+      (qemu-user, no init) listens on TCP 80 only. Installed on the Wireless Link: production
+      build of `main`, 2026-11-14, scanned on every TCP port from the home network and from a
       client on the setup network: nothing on 22; open are 80, 7000 and 41547 (librespot).
 - [x] **Security audit** of a production image. The threat model
       ([ADR 0113](../decisions/0113-threat-model.md)); a route classification test
@@ -130,10 +131,11 @@ preview becomes a supported model once an owner has run its hardware checklist.
       2026-11-12, with a test that puts bad blocks in the primary half.
 - [ ] Rollback after a crash loop from the release candidate on ST20. Historical
       pass: 2026-11-12, three unconfirmed boots and retained fallback after
-      reboot (run), at `bootlimit=3`; the limit is 4 since 2026-11-20 (ADR 0010).
+      reboot (run), at `bootlimit=3`; the limit is 4 since 2026-11-20
+      ([ADR 0010](../decisions/0010-ab-slots-boot-confirm-rollback.md)).
 - [ ] **Bluetooth** proven end to end on each model that has it. Decided 2026-11-12:
-      tested with the Pi's own Bluetooth controller as the phone. Of the ST20s only the Series III has Bluetooth, so the
-      shared kernel keeps it. So far: pairing from the web UI, 10 minutes of play
+      tested with the Pi's own Bluetooth controller as the phone. Of the ST20s only the Series
+      III has Bluetooth, so the shared kernel keeps it. So far: pairing from the web UI, 10 minutes of play
       without underruns, link loss and return, wake on Bluetooth and forgetting on the
       Wireless Link and the ST10 (2026-11-12 to 2026-11-20); an iPhone playing on the
       SoundTouch 300 (2026-11-17). Still open: title and volume from a real phone, a second
@@ -196,8 +198,8 @@ preview becomes a supported model once an owner has run its hardware checklist.
       ST10 as leader is down from 76% to 67%; every model has headroom as leader, so any model
       can lead.
 - [x] **Known CVEs in the OS packages.** `make os-cves` asks NVD about each package in the
-      SBOM, no mirror needed (it replaces `make sbom-cves`). Its first run, on 2026-11-12 against the SBOM of the build host's
-      build tree (Buildroot 2026.05.3), found 206 open CVEs scoring 7.0 or more: 165 in the
+      SBOM, no mirror needed (it replaces `make sbom-cves`). Its first run, on 2026-11-12
+      against the SBOM of the build host's build tree (Buildroot 2026.05.3), found 206 open CVEs scoring 7.0 or more: 165 in the
       kernel 6.12.113, the rest in ffmpeg, expat, OpenSSL, libplist, GLib and PCRE2. Each one gets
       fixed by a newer point release or a patch, or goes into `<PKG>_IGNORE_CVES` with the reason.
       Triaged: kernel 6.12.117, expat 2.10.0, OpenSSL 3.6.5, PCRE2 10.49, the
@@ -250,8 +252,8 @@ preview becomes a supported model once an owner has run its hardware checklist.
 
 ## Done
 
-- [x] **AUX in** on the ST10 and the Wireless Link, captured through the mixer since the mixer capture landed.
-      ST10, 2026-11-08: the Wireless Link's line out into the ST10's AUX in; AUX owned the
+- [x] **AUX in** on the ST10 and the Wireless Link, captured through the mixer since the mixer
+      capture landed. ST10, 2026-11-08: the Wireless Link's line out into the ST10's AUX in; AUX owned the
       output, 0 underruns. Wireless Link, 2026-11-09: a loopback cable played 30 minutes with no
       underrun.
 - [x] **ST10 IR remote** after the kernel media trim; the ST20's remote works too

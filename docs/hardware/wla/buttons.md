@@ -25,12 +25,13 @@ binky_keypad  { compatible = "bose, binky-keypad";
                 interrupts = <0x17 3 0x1b 3>; };
 ```
 
-`switchins = <23 27>` are gpio0_23 and gpio0_27 — Linux 633 and 637 — on
+`switchins = <23 27>` are gpio0_23 and gpio0_27 (Linux 633 and 637) on
 `keypad_pins_default = <0x24 0x2f 0x2c 0x2f>`, which is `gpmc_ad9` and `gpmc_ad11` in
-mux mode 7, input, internal pull disabled (bit 3 set). The pull-ups are on the board. So a button reads low when pressed, and there are no strobes
-at all: the ST10's 3x3 matrix does not exist here, just two lines.
+mux mode 7, input, internal pull disabled (bit 3 set). The pull-ups are on the board, so a
+button reads low when pressed. There are no strobes at all: the ST10's 3x3 matrix does not
+exist here, just two lines.
 
-Those two pads are free on this board because its NAND is 8 bit and uses `ad0..ad7` —
+Those two pads are free on this board because its NAND is 8 bit and uses `ad0..ad7`,
 the same reason `ad15` could be taken for the analog bias.
 
 `binky-keypad.ko` registers its character device under the name `shelby-keypad`, and
@@ -41,8 +42,8 @@ case carrying the edge.
 ## The trap: these are gpio0 lines
 
 `app/internal/hw/keypad.go` is worth reading before touching this. Every
-earlier attempt to put the ST10's keypad in the kernel — `gpio-keys`,
-`gpio-matrix-keypad`, a custom scanner — stopped Wi-Fi from coming up, because they all
+earlier attempt to put the ST10's keypad in the kernel (`gpio-keys`,
+`gpio-matrix-keypad`, a custom scanner) stopped Wi-Fi from coming up, because they all
 request GPIO interrupts on switch-in lines that share bank 0 with the WL1835's own
 interrupt on gpio0_31. The WLA's two switch-ins are gpio0_23 and gpio0_27: the same
 bank, the same hazard.
@@ -68,8 +69,8 @@ naming the edge:
 
 BoseApp reads it back the same way. At `0x4bb81a` it logs `"Read of raw button device
 gives value of 0x%02X"`, subtracts `'A'`, and runs a 46-entry `tbb` jump table; then
-`cmp r6x60` decides the state field — above `` ` `` (lower case) is
-`KEY_STATE_PRESSED`, at or below is `KEY_STATE_RELEASED` — and `bfi r3`
+`cmp r6x60` decides the state field (above `` ` ``, lower case, is
+`KEY_STATE_PRESSED`; at or below is `KEY_STATE_RELEASED`), and `bfi r3`
 stamps the producer as `KEY_PRODUCER_CONSOLE`.
 
 The table itself is shared across the whole product family, and its eleven live entries
@@ -90,7 +91,7 @@ Anything else logs `"IGNORING unknown button 0x%02X"`.
 
 ## Which button is which
 
-Not by position — `binky-keypad.ko` hard-codes it. `debounce_thread` reads the row the
+Not by position: `binky-keypad.ko` hard-codes it. `debounce_thread` reads the row the
 interrupt reported and picks the button number from it:
 
 ```
@@ -100,7 +101,7 @@ interrupt reported and picks the button number from it:
 828: movne r4       @ row 3 -> button 12
 ```
 
-The module registers exactly two interrupts, named `switchin0` and `switchin3` — the
+The module registers exactly two interrupts, named `switchin0` and `switchin3`: the
 positions gpio0_23 and gpio0_27 hold in the ST10's `switchins = <23 26 22 27>`, which is
 why the WLA reuses those two lines and those two names. Through the letter table above:
 
@@ -109,9 +110,8 @@ why the WLA reuses those two lines and those two names. Through the letter table
 | gpio0_23 | 0 | 13 | `n` / `N` | `KEY_VAL_BLUETOOTH` |
 | gpio0_27 | 3 | 12 | `m` / `M` | `KEY_VAL_AUX_INPUT` |
 
-Which is a sensible pair for this box, and it also explains the three dead letters: 12
-and 13 are the two directly-wired keys that sit past the end of the ST10's 3x3 matrix,
-where `D`, `H` and `L` are the matrix positions with no switch behind them.
+A sensible pair for this box: 12 and 13 are the two directly wired keys that sit past the
+end of the ST10's 3x3 matrix.
 
 ## What is still missing
 

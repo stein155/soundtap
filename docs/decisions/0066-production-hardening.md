@@ -9,8 +9,8 @@ listens on is reachable by all of them. The daemons that parse what the LAN send
 exposed code we ship, and none of them is ours: shairport-sync, librespot, snapclient and
 snapserver, nqptp, and ffmpeg (radio and announcement URLs anyone on the LAN can set). Running
 them as root makes a bug in any of them root on the speaker, with write access to `/mnt/nv` and
-the boot slots. The same holds for soundtapd, which parses every request on port 80. A writable root filesystem lets any root process change the image that boots
-next time.
+the boot slots. The same holds for soundtapd, which parses every request on port 80. A writable
+root filesystem lets any root process change the image that boots next time.
 
 The speaker has little RAM and a small `/run` and `/tmp`, so a log that grows without a bound,
 or a child that floods its output, pushes everything else out. Persistent NAND wears with every
@@ -59,15 +59,15 @@ write the source bus FIFO; `ptp` has no audio access. soundtapd starts shairport
 `radio`, and nqptp as `ptp` with one ambient capability, `CAP_NET_BIND_SERVICE`, for UDP 319 and
 320. None of them opens the sound card: they write the source bus, and soundtapd's Mixer is the
 card's only writer ([ADR 0012](0012-single-dac-writer.md)); the card's nodes are group
-`soundtapd`'s, not `audio`'s. soundtapd hands each
-daemon the state it must write before starting it. When a user is missing the daemon does not
+`soundtapd`'s, not `audio`'s. soundtapd hands each daemon the state it must write before
+starting it. When a user is missing the daemon does not
 start: falling back to root would silently undo this decision. bluetoothd, bluealsa and avahi
 stay root: they parse less from the LAN and are not supervised by soundtapd.
 
 ### soundtapd runs as its own user; what needs root goes through soundtap-root
 
 `users.txt` creates `soundtapd` (group `soundtapd`, member of `audio` for the source bus).
-init.d/soundtap starts `soundtap-root` (`app/cmd/soundtap-root`, in the same Go module) as root, then
+`init.d/soundtap` starts `soundtap-root` (`app/cmd/soundtap-root`, in the same Go module) as root, then
 soundtapd through `soundtap-root exec-soundtapd`: it drops every capability but six from the
 bounding set, switches to the user, raises the six as ambient capabilities (the only kind a binary
 without file capabilities keeps across exec as a user other than root) and execs soundtapd in
@@ -82,7 +82,7 @@ What soundtapd did as root, and where it went:
 | | `/dev/mtd*` (readback, `fw_printenv`, the serial, the Wi-Fi calibration) | group `soundtapd`, 0640: read only |
 | | the lamps' `brightness` and `trigger`, GPIO `export`/`unexport`, the attributes of every line init exported (amplifier, mute), pstore's records | group or owner `soundtapd` |
 | | `/run`, `/run/soundtap`, `/mnt/nv` | root's, group `soundtapd`, 1775: soundtapd adds its own entries (pid files, wpa_supplicant's and hostapd's control directories, `wifi.conf*`) and cannot touch root's. `ntp-servers`, `lan-net.{eth0,wlan0,wlan1}`, `/tmp/resolv.conf` and libubootenv's lock are root's and group-writable, since root's and soundtapd's DHCP both write them; `lan-allow.sh` empties its state instead of removing it |
-| | `/mnt/nv/soundtap` (but init's boot logs), and `/run/audio-bin/app`, where soundtapd runs and `/api/soundtapd` swaps it, off root's PATH | soundtapd's |
+| | `/mnt/nv/soundtap` (except init's boot logs), and `/run/audio-bin/app`, where soundtapd runs and `/api/soundtapd` swaps it, off root's PATH | soundtapd's |
 | | `/mnt/nv/spotify`, `/run/soundtap/spotify` (librespot's), `/run/soundtap/snapserver` (snapcast:soundtapd 2770, so soundtapd seeds and keeps `server.json`) | made and handed over by init; soundtapd no longer chowns |
 | | the firmware loader's search path | init sets it to `/run/soundtap/firmware`; soundtapd writes it only when it says something else |
 | (b) capabilities soundtapd keeps | `CAP_NET_BIND_SERVICE` | :80 |

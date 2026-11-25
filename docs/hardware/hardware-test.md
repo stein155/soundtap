@@ -4,7 +4,7 @@ Mandatory per-model spare-device checklist. QEMU cannot approve a release. Keep 
 recovery console attached through first boot and test the exact SHA-256 artifact intended
 for publication. On ST10 the console is UART3, `ttyS3` on mainline (`ttyO3` on stock).
 
-## Session Authorization
+## Session authorization
 
 This document is a plan, not authorization. Start each session read-only. Before each category,
 obtain explicit permission for that exact category and record it in the test notes:
@@ -19,9 +19,9 @@ obtain explicit permission for that exact category and record it in the test not
 
 Permission for one category does not authorize another. Stop after any unexpected storage,
 recovery, boot, temperature or audio result. Bootloader and BCO app writes need the explicit
-permissions and proven recovery plan in [the contract](../../CONTRIBUTING.md#the-contract); on every model each mtd0–mtd4 write needs a
-fresh explicit approval immediately before it. Never write BCO memory or BFL/BSL. A test on one model
-cannot approve another.
+permissions and proven recovery plan in [the contract](../../CONTRIBUTING.md#the-contract); on
+every model each mtd0–mtd4 write needs a fresh explicit approval immediately before it. Never
+write BCO memory or BFL/BSL. A test on one model cannot approve another.
 
 ## Select the install and recovery scenario
 
@@ -45,7 +45,7 @@ cannot approve another.
   recovery tools. Record the model-specific entry and restore plan; USB enumeration alone
   does not prove NAND restoration. Never manufacture a fault without separate permission.
 
-## Read-Only Preflight
+## Read-only preflight
 
 Complete this before requesting any destructive permission:
 
@@ -54,8 +54,8 @@ Complete this before requesting any destructive permission:
 3. Verify `Update.stu` with `stu_check.py accept` and `recovery-mainline`; record its SHA-256.
 4. Verify the named recovery inputs, FAT/FAT32 stick where relevant, board backup and
    model-specific USB restore tools required by the selected scenario.
-5. Attach and capture the model's recovery console (ST10 UART3, 115200 baud). If a serial session is already running, record it;
-   do not reboot or power-cycle during preflight.
+5. Attach and capture the model's recovery console (ST10 UART3, 115200 baud). If a serial
+   session is already running, record it; do not reboot or power-cycle during preflight.
 6. Back up persistent `mtd10` read-only and record its hash and restore procedure.
 7. Compare candidate and installed bootloader bytes; record which shared copies would change.
    Confirm the kernel/rootfs write target is the inactive slot. Do not assume A/B protects
@@ -95,8 +95,8 @@ during the first authorized reboot, before relying on serial rollback.
   processes you started. Include any writes or restarts needed for restoration in the
   session authorization; record anything that could not be restored.
 - **Low volume.** Keep the speaker at ~10% throughout — a remote tester cannot hear it.
-- **SSH state.** (Alpha images only; production has no SSH.) If SSH is off, it stays off afterward. Prefer on-box diagnostics over a
-  shell: `GET http://<speaker>/api/debug` returns version, audio-arbiter state
+- **SSH state.** (Alpha images only; production has no SSH.) If SSH is off, it stays off
+  afterwards. Prefer on-box diagnostics over a shell: `GET http://<speaker>/api/debug` returns version, audio-arbiter state
   (`AUDIO_MIX`, source/snapcast FIFOs, `/etc/asound.conf` mode, mute GPIO, current source) and
   tailed logs — paste that instead of poking sysfs by hand.
 
@@ -157,7 +157,7 @@ line pointing at the bus config.
    ([bus configuration](../../os/overlay/etc/asound.conf.bus)).
 3. Connect a Docker laptop client (by the leader's address: snapserver announces no mDNS
    service) and a second physical room. Verify pitch, dropouts,
-   synchronization, reconnect behavior and grouping/volume/mute in SoundTap Settings > Multiroom.
+   synchronization, reconnect behaviour and grouping/volume/mute in SoundTap Settings > Multiroom.
 4. Capture RSS for Snapserver, local Snapclient and soundtapd during a one-hour stream.
    Hardware synchronization remains unvalidated until these checks pass.
 5. Sync: on each follower `GET /api/multiroom/downstream` must stay well under 1000 ms
@@ -339,19 +339,19 @@ power cycle is the last resort when the HTTP server itself is gone.
 - `sha256sum /mnt/nv/soundtap/codec/*.cfg` matches stock: ST10 `cc4ad9f1…`, ST20 `3c65ec31…`.
 - The codec still loads: `AIC3256_CONFIG_OK` (ST10) or `ST20 AIC3256 initialized over GPIO SPI`.
 
-## ST20 Candidate Validation
+## ST20 candidate validation
 
 The ST20 takes the same universal STU as the other models
-(`docs/owners/install.md`): its own kernel and our SPL/U-Boot pair, the
+([install guide](../owners/install.md)): its own kernel and our SPL/U-Boot pair, the
 `.spotty` modules, installed through stock's `:17008` like the WLA. Bose's MLO/U-Boot are
-replaced, so the way back is the ST20's mask-ROM USB route (`docs/hardware/st20/rom-usb-recovery.md`)
+replaced, so the way back is the ST20's [mask-ROM USB route](st20/rom-usb-recovery.md)
 with that board's NAND backup, and an install needs a separately authorised session.
 
 Run the same install, reboot, persistent-state, recovery and rollback gates as above on the
 ST20, with OLED and BCO networking in place of ST10 LEDs/SCM Wi-Fi. Record the device as
 model `SoundTouch 20`, variant `spotty`, module type `scm` (what SoundTap reports), and put the
 completed `hardware-st20.json` with the other reports in `releases/os-vX.Y.Z/`, which `sign.yml`
-signs against (`RELEASING.md`).
+signs against ([RELEASING.md](../../RELEASING.md)).
 
 On a cable, also check the wired port: `eth0` gets a DHCP lease at boot and again
 after a BCO reset, and Wi-Fi keeps its own lease beside it.
@@ -361,7 +361,7 @@ built on the stock 13-module container with Bose's bootloaders, passed USB boot,
 API, AIC3256 config, raw PCM/TuneIn and the OLED transport. That path is gone and those
 passes approve no current STU.
 
-## Wireless Link Candidate Validation
+## Wireless Link candidate validation
 
 The Wireless Link (`binky`) takes the same universal STU and installs through stock's
 `:17008`. Run the install, reboot, persistent-state, recovery and rollback gates of section A,
@@ -369,14 +369,15 @@ with these differences:
 
 - It has no loudspeaker. Audio gates run on its analog output, at any volume.
 - Two buttons replace the keypad, and there is no IR receiver; skip those rows of section E.
-- Its recovery chord is both buttons at power-on, not Volume Down + Preset 4 (`docs/owners/install.md`).
+- Its recovery chord is both buttons at power-on, not Volume Down + Preset 4
+  ([install guide](../owners/install.md#usb-stick)).
 - Bluetooth runs on the WL1835's UART2 through the kernel's serdev: confirm `hci0` and pairing.
 
 Record model `SoundTouch Wireless Link Adapter`, variant `binky`.
 
-## SoundTouch 300 Candidate Validation
+## SoundTouch 300 candidate validation
 
-The SoundTouch 300 (`ginger`) ships in the first release ([install.md](install-records.md#soundtouch-300)).
+The SoundTouch 300 (`ginger`) ships in the first release ([install records](install-records.md#soundtouch-300)).
 Every hardware action on it needs a fresh explicit approval, and audio stays at 5% or below.
 
 - Install and reboot as in section A. ST300 recovery remains unproven; do not
@@ -672,8 +673,8 @@ an SM2 Lifestyle adapter (`lisa2`), which they cannot tell apart from it.
 
 ### Prohibited and historical checks
 
-| Reference | Model | Outcome |
-| --- | --- | --- |
+| Model | Outcome |
+| --- | --- |
 | ST300 | ADAPTiQ start is prohibited on the bench bar. Keep offline coverage; do not schedule a speaker run. |
 | ST300 | Preview installation has a later tracker summary. Historical report only; exact candidate approval remains separate. |
 

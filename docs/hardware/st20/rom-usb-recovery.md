@@ -12,7 +12,7 @@ permission and a verified board-specific restore plan remain mandatory under
 
 ## Why the ST20 needs it
 
-The ST20 straps are SYSBOOT 10010b, which gives the boot order NAND, NANDI2C, USB0, UART0. On the WLA and ST10 the ROM tries USB first. On the ST20 it never gets as far as USB while block 0-3 of NAND carries a valid header. An SPL that is valid but hangs therefore bricks the speaker, and no remote path undoes that.
+The ST20 straps are SYSBOOT 10010b, which gives the boot order NAND, NANDI2C, USB0, UART0. On the WLA and ST10 the ROM tries USB first. On the ST20 it never gets as far as USB while any of NAND blocks 0-3 carries a valid header. An SPL that is valid but hangs therefore bricks the speaker, and no remote path undoes that.
 
 ## Forcing the ROM to USB0
 
@@ -41,8 +41,8 @@ erase and write with its flash range and touches nothing. The full description i
 [Developer recovery tools](../install-records.md#developer-recovery-tools).
 
 Unproven on the ST20: this loader (`tools/recovery/rom-usb-loader`) serving the ST20 SPL from the
-ROM, and the script writing NAND. The 2026-09-27 rescue below used dnsmasq instead, and stock
-copies the current chain no longer has.
+ROM, and the script writing NAND. The 2026-09-27 rescue below used dnsmasq instead, and relied
+on stock copies the current chain no longer has.
 
 ## The 2026-09-27 rescue chain (history)
 

@@ -1,25 +1,25 @@
 # Own BCO application
 
-The ST20's BCO (DM870) runs this app as the SCM's network card ([ADR 0031](../../docs/decisions/0031-bco-network-card.md)):
-our own first stage, our stage 2 and our own WiLD core, with no Bose bytes
-([ADR 0031](../../docs/decisions/0031-bco-network-card.md)). The stock BFL and BSL stay
-untouched. The image ships with SoundTap Core at `/usr/share/soundtap/bco-app.bcd`, and
-soundtapd installs it on the BCO itself, once per image (ADR 0031). `bcoflash` is the
-development tool for a manual flash.
+The ST20's BCO (DM870) runs this app as the SCM's network card
+([ADR 0031](../../docs/decisions/0031-bco-network-card.md)): our own first stage, stage 2 and
+WiLD core, with no Bose bytes. The stock BFL and BSL stay untouched. The image ships with
+SoundTap Core at `/usr/share/soundtap/bco-app.bcd`, and soundtapd installs it on the BCO
+itself, once per image. `bcoflash` is the development tool for a manual flash.
 
 ## Build
 
-Buildroot builds it (`os/package/*bco*`): `build-app.sh VARIANT SRC OUT` per variant, with
+Buildroot builds it ([`os/package/soundtap-bco-app`](../../os/package/soundtap-bco-app/)): `build-app.sh VARIANT SRC OUT` per variant, with
 `link-own` the shipped image (the network card with our WiLD core linked in, `WILD_BIN` from
 `bco/wild/fw`). `bco/tools/bco-pack` wraps the two stages into a `.bcd` that BFL accepts (header byte
 +0x28 = 2, the 0xb0-byte header).
 
-Host unit tests and the first stage's bring-up trace: `make test-bco` (part of `make test`; CI's `bco` job).
-They cover the app (`tests/`) and our WiLD core (`bco/wild/fw/tests/`). The core's sources build
-unchanged on the host, under ASan and UBSan: `tests/host.h` maps its register block and mailbox at
-their own addresses (linked without PIE, so its 32-bit addresses reach every global), and
-`tests/core_sim.h` puts a simulated host (rings, DMA), MAC (receive area, FIQ, TX-done, ACKs) and
-RF bus around them. `air_fuzz_test.c` on either side fuzzes every parser of frames from the air
+`make test-bco` (part of `make test`; CI's `bco` job) runs the host unit tests and the first
+stage's bring-up trace. The tests cover the app (`tests/`) and our WiLD core
+(`bco/wild/fw/tests/`). The core's sources build unchanged on the host, under ASan and UBSan:
+`bco/wild/fw/tests/host.h` maps its register block and mailbox at their own addresses (linked
+without PIE, so its 32-bit addresses reach every global), and `bco/wild/fw/tests/core_sim.h`
+puts a simulated host (rings, DMA), MAC (receive area, FIQ, TX-done, ACKs) and RF bus around
+them. `air_fuzz_test.c`, in both test directories, fuzzes every parser of frames from the air
 with a fixed seed, so a failure repeats.
 
 ## First stage
@@ -62,8 +62,8 @@ Proven on hardware with a `-DTICK` hello build:
   needed: 79 000 ticks in ~80 s, steady.
 - With all lines enabled, lines 26..41 fire without a handler (devices BFL left armed);
   never enable lines blindly.
-- Side finding: UART status bit2 is not "busy" on hardware (each char waits out the full
-  poll budget, ~42 ms); TX readiness bit still to settle (map says bit1).
+- UART status bit 2 is not "busy" on hardware (see the first stage above); the TX readiness
+  bit is still to settle (the map says bit 1).
 
 ## WiLD (WLAN core) boot on hardware (2026-10-02, ST20)
 
@@ -125,9 +125,8 @@ logs carry counters and types only.
 Hardware 2026-10-06 (ST20): `wpa_supplicant` COMPLETED in 12 s, DHCP on `wlan0`, SoundTap
 answers on :80 from the LAN, 1500-byte frames pass. Data frames carry the AP's rates fastest
 first (MIB 09:09 StaRateSetData). With our own core (2026-10-16): RTT 10-15 ms, TCP ~23 KB/s.
-Those October measurements do not describe every later revision. Rate adaptation is now
-implemented in the own core (ADR 0031), and `src/wired.c` implements the MACB wired port.
-The 2026-11-10 wired report
+
+These October figures are not a current performance guarantee: the own core has since gained
+rate adaptation (ADR 0031), so assess RSSI reporting and performance against the specific app
+and core build. `src/wired.c` implements the MACB wired port; the wired report of 2026-11-10
 records DHCP at boot and after a BCO reflash, with cable unplug/replug still untested.
-RSSI reporting and performance must be assessed against the specific app/core build;
-the old RTT/throughput figures are not a current performance guarantee.

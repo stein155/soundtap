@@ -26,8 +26,9 @@ releases of this repository (`update.Repo`) that are neither drafts nor withdraw
 whose notes have a line starting with `Withdrawn:`,
 [RELEASING.md](../../RELEASING.md#withdrawing-a-release)); the highest one the speaker is
 offered is "latest": a prerelease only when the running app is an alpha itself
-([ADR 0035](0035-releases.md#alphas-prereleases-before-the-hardware-approval)). It downloads `SoundTap-app-<version>-armv7.bin` and its `.sig` and checks the
-statement before anything else: `kind=app`, `profile=production`, and the tag's own version.
+([ADR 0035](0035-releases.md#alphas-prereleases-before-the-hardware-approval)). It downloads
+`SoundTap-app-<version>-armv7.bin` and its `.sig` and checks the statement before anything
+else: `kind=app`, `profile=production`, and the tag's own version.
 
 The verified binary goes through the install step of an upload (`firmware.Handler.InstallApp`):
 the ELF and module check, the Core-level contract ([ADR 0035](0035-releases.md)), the gzipped

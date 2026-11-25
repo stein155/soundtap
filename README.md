@@ -119,10 +119,9 @@ Not every feature is proven on every model. The [hardware checklist](docs/hardwa
 "Supported" means the model is part of the first release: a release is published only after it has passed that model's [hardware checklist](docs/hardware/hardware-test.md#release-checklist-per-model). No candidate has passed it yet; the alphas published so far are prereleases that come before that test. Individual features may not have run on every model yet. "Validation pending" models install from the same file and "Preview" models from the release's preview package (`SoundTap-Core-X.Y.Z-preview.stu`), but neither has had that test. A preview is worked out from Bose's own software alone ([ADR 0133](docs/decisions/0133-more-soundtouch-models-from-stock.md)) and has never run on hardware, its recovery gesture included; the installers offer one only when you pick it by name and confirm it as a preview, and refuse the Lifestyle 600/650 module, and with it a Lifestyle's Bluetooth adapter, which they cannot tell apart from it.
 
 **One universal file serves the supported models**; each speaker picks its own parts from it.
-The model-support roadmap prioritizes
-the four supported models, followed by the ST30 generations. Shared stock firmware and offline tests
-help prepare a port, but do not establish hardware support for an untested generation or revision.
-Have another model? [Help bring it up](https://github.com/stein155/soundtap/issues/new?template=device.yml):
+The four supported models come first, then the ST30 generations. Shared stock firmware and
+offline tests help prepare a port, but do not establish hardware support for an untested
+generation or revision. Have another model? [Help bring it up](https://github.com/stein155/soundtap/issues/new?template=device.yml):
 the first step is read-only investigation.
 
 ## Getting started
@@ -189,8 +188,8 @@ have the speaker stand on its own.
 Start with the [technical design](docs/contributors/design.md); it links to everything else. Setup without
 a speaker, checks and pull requests are in [CONTRIBUTING.md](CONTRIBUTING.md), and
 [its contract](CONTRIBUTING.md#the-contract) holds the rules for anything that touches real
-hardware. The HTTP API
-has a browsable reference on every speaker, offline: `http://<speaker>/api/docs`.
+hardware. Every speaker serves a browsable reference of its HTTP API, offline, at
+`http://<speaker>/api/docs`.
 
 ## Thanks
 

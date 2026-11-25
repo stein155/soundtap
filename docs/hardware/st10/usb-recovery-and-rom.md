@@ -22,8 +22,8 @@ and the printer at `0x801021dc` names each bit from a table at `0x801022b4`:
 | 3 | VOLUME DOWN | 8 | PRESET 4 |
 | 4 | PRESET 2 | 9 | SOURCE |
 
-That order is the same one `defaultKeymap` in `buttons.go` uses, with U-Boot packing out
-the keypad matrix's empty rows. Two independent sources agreeing on the ST10 keymap.
+That order is the one `defaultKeymap` in `app/internal/hw/keymap.go` uses, with U-Boot packing
+out the keypad matrix's empty rows: two independent sources agree on the ST10 keymap.
 
 ## What each combination does
 
@@ -92,13 +92,20 @@ off afterwards and the speaker is power-cycled into its normal boot. Both were d
 
 An earlier cold boot on the same cable produced no device, and that was recorded as
 evidence that the two models differ. It was evidence of nothing: `usb3-port1` was
-`disabled` -- the software cable-pull from the Wireless Link work, left off -- so nothing
+`disabled` (the software cable-pull from the Wireless Link work, left off), so nothing
 could enumerate whatever the ROM intended. `usb-port.sh status` says which it is, and
 reading it first is now part of the test rather than an afterthought.
 
 The straps were read before that was found and pointed the same way.
 
 ### The straps, read
+
+`CONTROL_STATUS` at `0x44E10040` holds the straps, but `/dev/mem` answers `Bad address` for it,
+although this kernel has `# CONFIG_STRICT_DEVMEM is not set`: ARM restricts `/dev/mem` to RAM in
+`valid_phys_addr_range()` whatever that option says, so no device register is reachable that
+way on this architecture. A loadable module can read it, and changes nothing persistent (at the
+time `insmod` was on the box and `modules_disabled` was 0; modules are now locked after boot,
+[ADR 0132](../../decisions/0132-modules-locked-after-boot.md)).
 
 A one-off read-only kernel module, `sysboot.ko` (removed since), loaded over
 ssh on 2026-09-19, read the register and changed nothing:
@@ -110,21 +117,21 @@ SYSBOOT[4:0]   = 0x0b        01011b
 ```
 
 `CONTROL_STATUS` carries `SYSBOOT[7:0]` in bits 7:0 and `SYSBOOT[15:8]` in bits 23:16,
-so the upper byte is `0x40` -- the same upper byte an OSD335x board documents for a
+so the upper byte is `0x40`: the same upper byte an OSD335x board documents for a
 working configuration, which is a useful sign that the read is right rather than
 accidental.
 
 **What it does not yet say is what `01011` means.** TRM Table 26-7 holds the mapping and
 it is not reproduced in any public source that could be checked; the three rows that are
-quoted in the wild -- `10011` as NAND/NANDI2C/MMC0/UART0, `10111` as MMC0/SPI0/UART0,
-`11000` as SPI0/MMC0/USB0/UART0 -- all contradict a table written from memory, which is
+quoted in the wild (`10011` as NAND/NANDI2C/MMC0/UART0, `10111` as MMC0/SPI0/UART0,
+`11000` as SPI0/MMC0/USB0/UART0) all contradict a table written from memory, which is
 exactly how the first version of this module printed a confident wrong answer. The
 decode has been taken out rather than left to mislead.
 
 ### The same read on a Wireless Link, which settles it without the table
 
-Built against the Wireless Link's own Buildroot kernel tree -- it already carries a
-`Module.symvers`, so no kernel build was needed -- and loaded the same way:
+Built against the Wireless Link's own Buildroot kernel tree (it already carries a
+`Module.symvers`, so no kernel build was needed) and loaded the same way:
 
 ```
 ST10   CONTROL_STATUS = 0x0040030b   SYSBOOT[15:0] = 0x400b   SYSBOOT[4:0] = 01011b
@@ -138,7 +145,7 @@ power-on with NAND intact, and accepts an MLO over RNDIS/DHCP/TFTP
 (`os/README.md`, 2026-08-18).
 
 The MLO it accepted hashes `7d272c4653c978eb...`, which is this ST10's own mtd0 SPL, byte
-for byte -- the same image both models ship, found independently this morning.
+for byte: both models ship the same image, found independently.
 
 So the ST10's ROM should take an SPL over USB the way the Wireless Link's does. What the
 straps do not prove is the wiring: that USB0 reaches a connector, in peripheral mode, at
@@ -149,33 +156,16 @@ That leaves one explanation for the negative cable test, and it is physical rath
 electrical: with an OTG adapter attached the port is a host and cannot enumerate as a
 device, whatever the ROM intends.
 
-The straps could not be read at first. `CONTROL_STATUS` at `0x44E10040` holds them and
-`/dev/mem` answers `Bad address`, but not for the reason it first looked like: this kernel
-has `# CONFIG_STRICT_DEVMEM is not set`. ARM restricts `/dev/mem` to RAM in
-`valid_phys_addr_range()` whatever that option says, so no device register is reachable
-that way on this architecture at all. A loadable module can read it -- `CONFIG_MODULES=y`,
-`insmod` is on the box and `modules_disabled` is 0 -- and that changes nothing persistent.
+## USB on this model: three different things
 
-That reasoning is superseded. It was written while mask-ROM USB looked unavailable and
-while the plan was to leave stock U-Boot in place; the bootloader is being replaced, so
-the mask ROM is exactly what matters, and it works.
-
-## The Wireless Link's USB mode is available here, and it is two different things
-
-**The gadget link is a setting, and we turned it off ourselves.** Stock `rhino` loads
-`g_ether` and puts `usb0` on `203.0.113.1/30` -- the same address the Wireless Link uses --
-so this board has always had the Wireless Link's USB link. SoundTap lost it for two reasons,
-both ours:
-
-- `# CONFIG_USB is not set` in `os/board/image/linux.fragment`, which is one of
-  the five settings `make one-kernel-check` counts and whose merged value is already `y`;
-- `dr_mode = "host"` in `os/board/common/dts/ti/omap/am335x-soundtap-st10.dts`, set that way because
-  the RAM-boot work needed to read a USB stick.
-
-Turning both around gives an ST10 running SoundTap the same USB link the Wireless Link has,
-and with mtd-utils already on the image that is direct NAND writing over USB, independent
-of Wi-Fi. Both changes live in the kernel and root filesystem slots, so the button path
-restores them.
+**The gadget link is a setting.** Stock `rhino` loads `g_ether` and puts `usb0` on
+`203.0.113.1/30`, the same address the Wireless Link uses, so this board has always had a USB
+link. Early SoundTap builds lost it twice over: `# CONFIG_USB is not set` in the kernel
+fragment, and `dr_mode = "host"` in the ST10 device tree for the RAM-boot work, which read a
+root filesystem from a stick. Both are reversed now: `os/board/image/linux.fragment` sets
+`CONFIG_USB=y`, `os/board/common/dts/ti/omap/am335x-soundtap-st10.dts` asks for
+`dr_mode = "peripheral"`, and `os/overlay/etc/init.d/gadget-console` brings up an ACM console and an
+RNDIS link on 192.168.7.2: a way in that does not depend on Wi-Fi.
 
 **Stock U-Boot can already write NAND from USB.** The environment carries
 `load_MLO_from_usb`, `write_MLO_to_nand`, `load_uboot_from_usb`, `write_uboot_to_nand`,
@@ -184,15 +174,8 @@ and `go`es straight into it. So a USB write path exists below Linux as well.
 
 **Mask-ROM USB boot is not a setting.** It happens before any of our code, and whether it
 is attempted is decided by the SYSBOOT strapping resistors on the board. No kernel option,
-device tree property or environment variable reaches it. It can only be discovered, which
-is what the straps would say.
+device tree property or environment variable reaches it; only reading the straps, as above,
+tells.
 
-The two cover different halves: the gadget gives a write path for installing, the mask ROM
-gives a way back when what was installed does not run.
-
-## Linux-side USB is off on this model
-
-`os/board/image/linux.fragment` has `# CONFIG_USB is not set`, so a running
-SoundTap on an ST10 has no USB at all — which is why the speaker shows nothing on the wire
-once it is up. That setting is one of the five differences `make one-kernel-check` counts,
-and the merged kernel already takes the Wireless Link's `y`.
+The gadget gives a write path for installing; the mask ROM gives a way back when what was
+installed does not run.

@@ -54,8 +54,9 @@ soundtap-package v1 kind=core profile=production version=0.1.0 sha256=<64 hex> s
   bench build, `sign.sh`'s default).
 - `version` is `MAJOR.MINOR.PATCH` in decimal digits, `MAJOR.MINOR.PATCH-alpha.N` for an alpha
   ([ADR 0035](0035-releases.md); an alpha is older than the release of its number), or `stock`
-  for a Bose package signed for the way back (core only). `sign.sh` takes it from `SOUNDTAP_PACKAGE_VERSION`, by default
-  `os/VERSION` or `app/VERSION`; `sign-release.sh` takes it from the tag.
+  for a Bose package signed for the way back (core only). `sign.sh` takes it from
+  `SOUNDTAP_PACKAGE_VERSION`, by default `os/VERSION` or `app/VERSION`; `sign-release.sh` takes
+  it from the tag.
 - `sha256` is the asset's SHA-256 in lowercase hex.
 - `sig` is the ed25519 signature, padded standard base64, over the exact bytes before ` sig=`.
 

@@ -33,10 +33,10 @@ existing BFL and BSL loaders. This page preserves read-only analysis of stock
 
 **[STATIC]** means found in an extracted script, symbol table or string, not executed
 on hardware. **[INFERRED]** means an interpretation of those observations. The original
-notes called static observations “PROVEN”; that did not establish recovery success.
+notes called static observations "PROVEN"; that did not establish recovery success.
 See the [evidence rules](../../contributors/evidence.md).
 
-“BCO”, “DM870” and “SMSC” name the same processor in these sources.
+"BCO", "DM870" and "SMSC" name the same processor in these sources.
 `App_BD_DMP*.bcd` is the application; `Bootloader_CE2*.bcd` is the BSL image.
 The stock binary and script hashes were not recorded individually in these notes;
 addresses or strings must be re-associated with exact source files before reuse.
@@ -48,12 +48,12 @@ each ELF) wrapped as different entry points. They talk to the BCO over the
 **internal** serial line `/dev/ttyO5` at 115200 (not the external recovery
 console `ttyO3`), and power-cycle the BCO via GPIO14. **[STATIC]**
 
-| Binary            | Usage string                                                      | Role                                                                                      | Risk                     |
-| ----------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------ |
-| `SMSC_App_Update` | `Usage: SMSC_App_Update <app.bcd>`                                | Flash BCO **application** only                                                            | Recovery conditional     |
-| `SMSC_BSL_Update` | `Usage: SMSC_BSL_Update <bsl.bcd>`                                | Flash BCO **second-stage bootloader**                                                     | **Dangerous**            |
-| `SMSCControlApp`  | `Usage: SMSCControlApp <command: save, restore, erase, app, bsl>` | Combined tool incl. MAC save/restore                                                      | app write / BSL forbidden |
-| `SMSC_Update`     | (no bare usage; driven by `SoftwareUpdateInstaller`)              | The **production** updater invoked during a real SW update; version-checked orchestration | app+bsl per manifest     |
+| Binary | Usage string | Role | Risk |
+| --- | --- | --- | --- |
+| `SMSC_App_Update` | `Usage: SMSC_App_Update <app.bcd>` | Flash the BCO **application** only | Recovery conditional |
+| `SMSC_BSL_Update` | `Usage: SMSC_BSL_Update <bsl.bcd>` | Flash the BCO **second-stage bootloader** | **Dangerous** |
+| `SMSCControlApp` | `Usage: SMSCControlApp <command: save, restore, erase, app, bsl>` | Combined tool, including MAC save/restore | app write / BSL forbidden |
+| `SMSC_Update` | (no bare usage; driven by `SoftwareUpdateInstaller`) | The **production** updater run during a real software update; version-checked orchestration | app + BSL per manifest |
 
 Evidence (strings on `rootfs/opt/Bose/…`):
 
@@ -82,15 +82,15 @@ description of the stock update configuration: **[STATIC]**
 </UpdateModule>
 ```
 
-So a stock update carries BOTH the BSL and the app, and gates each on a pinned
-**Revision** plus `VersionCheck="true"` — it does not blindly rewrite. **[STATIC]**
+So a stock update carries both the BSL and the app, and gates each on a pinned
+`Revision` and `VersionCheck="true"`: it does not blindly rewrite. **[STATIC]**
 
 ### Images present in the extracted stock SCM rootfs **[STATIC]**
 
 `rootfs/opt/Bose/`:
 
-- `App_BD_DMP 3.x-3_8_0-9423_ER.bcd` — sha256 `9446fca43b6bfe5001bd6e79d66bef75213ee5b8a4adfa70fad05b2b4a8d3829`
-- `Bootloader_CE2_Release_8MB_3.x-3_8_0-9423_ER.bcd` — sha256 `1eec9dc2bfb5cbd2344e04aa425d44ad80f92407cee6539bb550fc2402c3967a`
+- `App_BD_DMP 3.x-3_8_0-9423_ER.bcd`: sha256 `9446fca43b6bfe5001bd6e79d66bef75213ee5b8a4adfa70fad05b2b4a8d3829`
+- `Bootloader_CE2_Release_8MB_3.x-3_8_0-9423_ER.bcd`: sha256 `1eec9dc2bfb5cbd2344e04aa425d44ad80f92407cee6539bb550fc2402c3967a`
 
 The original analysis recorded the app hash as identical to the STU module. These hashes
 identify historical source inputs, not a newly verified recovery candidate. Verify local
@@ -99,7 +99,7 @@ these stock files.
 
 ### GPIO / power wiring **[STATIC]**
 
-`rootfs/usr/local/etc/gpio_helper` — only the SCM has a BCO (`module_type = scm`):
+`rootfs/usr/local/etc/gpio_helper` (only the SCM has a BCO, `module_type = scm`):
 
 - `DM870_power_on()` → `echo -n 0 > /sys/class/gpio/gpio14/value`
 - `DM870_power_off()` → `echo -n 1 > /sys/class/gpio/gpio14/value`
@@ -108,13 +108,11 @@ GPIO14 low = BCO powered; high = BCO off. BoseApp also opens the node
 `/dev/gpiodev/dm870pwr` for the same rail. `has-bco` (`rootfs/usr/bin/has-bco`)
 is simply `[ "$(cat /proc/module_type)" = scm ]`.
 
----
-
 ## 2. Flash sequences found in stock scripts (not instructions to execute)
 
 Two reference shell scripts on the rootfs spell out the wire protocol literally.
-**Caveat — see Section 2a: these two scripts cannot run unmodified on the stock
-rootfs.** They are the clearest documentation of the sequence; the stock manifest invokes the ELF `SMSC_Update`. This observation alone does not
+**They cannot run unmodified on the stock rootfs** (section 2a), but they are the clearest
+documentation of the sequence; the stock manifest invokes the ELF `SMSC_Update`. They do not
 prove a successful recovery.
 
 ### App flash — `rootfs/usr/bin/updatebcoapp.sh` **[STATIC]**
@@ -139,13 +137,13 @@ prove a successful recovery.
 
 - Sanity guard: refuses a file `> 2,000,000` bytes ("BSL file appears to be too big").
 
-**The crucial structural difference:**
+The structural difference:
 
 - The **First Boot Loader (BFL)**, entered by Ctrl-A after every power-cycle, is
   the intended loader entry. Neither script explicitly requests a BFL write; that
   does not establish physical write protection or recovery after an interrupted erase.
 - From BFL, menu option **`4`** enters the already-flashed BSL, whose option `1`
-  programs the **application**. That is the app path — two loaders deep, so the
+  programs the **application**. That is the app path, two loaders deep, so the
   primary BFL is untouched. **[STATIC sequence] / [INFERRED menu semantics]**
 - From BFL, menu option **`1`** programs the **BSL/second-stage** region
   directly. This overwrites the second-stage loader itself. **[STATIC sequence] /
@@ -166,13 +164,11 @@ The runtime (non-flash) BCO messaging channel is a **different** serial port,
 `updatebcoapp.sh` / `updatebcobsl.sh` both call **`lsz -X`** (lrzsz XMODEM send),
 and the logging branch calls **`socat`**. Neither `lsz`/`lrzsz` nor `socat` exists
 anywhere on the stock rootfs (only `/usr/bin/microcom` is present). So these two
-scripts **cannot run as-written on a stock device** — they are documentation /
+scripts **cannot run as written on a stock device**; they are documentation or
 bench tools. The ELF binaries expose the corresponding menu/XMODEM symbols; that is
 static evidence of their implementation, not a recommendation to run them on SoundTap.
 `SMSCControlApp` also exposes MAC save/restore using `/mnt/update/BCO_MAC.txt`.
 `microcom` is present and `reset-airplay.sh` names `/dev/ttyO5`. **[STATIC]**
-
----
 
 ## 3. What the static analysis does not prove
 
@@ -218,18 +214,18 @@ not establish a remotely reachable recovery shell.
 ## Evidence index (all read-only, from the extracted STU)
 
 - `rootfs/opt/Bose/SMSC_App_Update`, `SMSC_BSL_Update`, `SMSCControlApp`,
-  `SMSC_Update` — usage strings + `SMSCUpdateControl` symbols.
-- `rootfs/opt/Bose/etc/SCM_Update.xml` — `SMSC_Update` module, both `.bcd` images
-  with pinned `Revision` + `VersionCheck="true"`.
+  `SMSC_Update`: usage strings and `SMSCUpdateControl` symbols.
+- `rootfs/opt/Bose/etc/SCM_Update.xml`: the `SMSC_Update` module, both `.bcd` images
+  with pinned `Revision` and `VersionCheck="true"`.
 - `rootfs/usr/bin/updatebcoapp.sh`, `updatebcobsl.sh`, `reset-airplay.sh`,
-  `switch-tap-to-airplay-reset.sh` — literal `ttyO5` / Ctrl-A / menu / XMODEM flow;
-  `lsz`/`socat` invocations (both absent from rootfs — `microcom` only).
-- `rootfs/usr/local/etc/gpio_helper` — `DM870_power_on/off` on GPIO14.
-- `rootfs/usr/bin/has-bco` — `module_type = scm`.
-- `rootfs/etc/init.d/shelby_local` (`S97shelby_local`) — `/mnt/nv/rc.local` root hook.
-- `rootfs/etc/init.d/shelby_usb` — USB gadget bring-up.
-- `boseapp.txt` — `:17000` CLI verbs (`airplay cne rs mfg`, `reset cne settings`,
+  `switch-tap-to-airplay-reset.sh`: the literal `ttyO5` / Ctrl-A / menu / XMODEM flow;
+  `lsz` and `socat` invocations (both absent from the rootfs, which has only `microcom`).
+- `rootfs/usr/local/etc/gpio_helper`: `DM870_power_on/off` on GPIO14.
+- `rootfs/usr/bin/has-bco`: `module_type = scm`.
+- `rootfs/etc/init.d/shelby_local` (`S97shelby_local`): the `/mnt/nv/rc.local` root hook.
+- `rootfs/etc/init.d/shelby_usb`: USB gadget bring-up.
+- `boseapp.txt`: `:17000` CLI verbs (`airplay cne rs mfg`, `reset cne settings`,
   `bco reset control`, `restore factory defaults`, `boot into bsl`,
   `graceful shutdown`), MFGDATA restore logs, `/dev/gpiodev/dm870pwr`,
   `/mnt/nv/bco_needs_factory_reset`, `DM8X0_NEEDS_TRIGGER_TO_ENTER_BSL`.
-- [The contract](../../../CONTRIBUTING.md#the-contract) — current permissions and recovery constraints.
+- [The contract](../../../CONTRIBUTING.md#the-contract): current permissions and recovery constraints.

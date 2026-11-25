@@ -202,8 +202,8 @@ Alternatives that lost:
   checklist has not passed on every model. Its notes say so, and no speaker on a release moves
   onto one by itself.
 - Release tooling matches only the `SoundTap-Core-*` and `SoundTap-app-*` asset names.
-- Speakers find releases at `stein155/soundtap` (`update.Repo`), anonymously, so they see them only
-  once the repository is public.
+- Speakers find releases at `stein155/soundtap` (`update.Repo`) anonymously, so the repository
+  must stay public for them to see any.
 
 ## Code
 

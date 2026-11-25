@@ -28,7 +28,8 @@ In order:
    (`-O ntpsrv`) and the udhcpc hook keeps them in `/run/soundtap/ntp-servers`. A network that
    blocks outside NTP usually names its own.
 2. The owner's own servers in `/mnt/nv/ntp-servers`, when that file names any
-   ([nv-state.md](../contributors/nv-state.md)). Only words that can be a host name or an address are used.
+   ([nv-state.md](../contributors/nv-state.md)). Only words that can be a host name or an
+   address are used.
 3. Otherwise the default: `time.cloudflare.com` and `time.google.com`. Both are free for any
    device to use without registration, and two operators mean one outage leaves the other.
 

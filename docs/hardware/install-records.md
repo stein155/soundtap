@@ -22,7 +22,7 @@ Older Bose software works too: the oldest tested is 20.0.6 (Wireless Link adapte
 | Model | Update server | Upload to port 17008 |
 | --- | --- | --- |
 | **SoundTouch 20** | 2026-11-11, Bose 27.0.6 → SoundTap: API answered after 336 s; its BCO app was then replaced and Wi-Fi/Ethernet returned. No audio test. 2026-11-14, again from 27.0.6: after 534 s, Wi-Fi taken over from Bose's software | 2026-10-17: installed from Bose's software 27.0.6 over its setup network (`Bose SoundTouch Wi-Fi Network`, upload to `192.168.1.1:17008`, HTTP 200 after 196 s), then booted SoundTap with our bootloaders |
-| **Wireless Link adapter** | 2026-11-06: installed from Bose's software 27.0.6, also from GitHub over HTTPS. 2026-11-11: again, started from the browser installer in Chrome, and with the Wi-Fi taken over from Bose's software. 2026-11-14, from Bose's software 20.0.6: Wi-Fi taken over 2026-11-17: put back on Bose's 27.0.6 from SoundTap's firmware page (up in 50 s), then back to SoundTap through the update feed in 233 s, with its name, presets, volume and Wi-Fi kept | 2026-10-23: installed from Bose's software 27.0.6 over its setup network (`Bose ST WLA (…)`, upload to `192.0.2.1:17008`, HTTP 200 after 202 s), then rebooted into SoundTap by itself 46 s later with its settings intact |
+| **Wireless Link adapter** | 2026-11-06: installed from Bose's software 27.0.6, also from GitHub over HTTPS. 2026-11-11: again, started from the browser installer in Chrome, and with the Wi-Fi taken over from Bose's software. 2026-11-14, from Bose's software 20.0.6: Wi-Fi taken over. 2026-11-17: put back on Bose's 27.0.6 from SoundTap's firmware page (up in 50 s), then back to SoundTap through the update feed in 233 s, with its name, presets, volume and Wi-Fi kept | 2026-10-23: installed from Bose's software 27.0.6 over its setup network (`Bose ST WLA (…)`, upload to `192.0.2.1:17008`, HTTP 200 after 202 s), then rebooted into SoundTap by itself 46 s later with its settings intact |
 | **SoundTouch 10** | 2026-11-12, from Bose's software 27.0.6: SoundTap answered after 262 s, Wi-Fi taken over from Bose's profile. 2026-11-14, from Bose's software 22.0.3: after 259 s, Wi-Fi taken over. 2026-11-17, back to Bose 27.0.6 through the Updates page (unsigned Bose package) and returned through the feed: after 336 s, name, presets, volume and Wi-Fi kept | 2026-10-23: installed from Bose's software 27.0.6 over its setup network (`Bose ST 10 (…)`, upload to `192.0.2.1:17008`, HTTP 200 after 211 s), then rebooted into SoundTap by itself 44 s later with its settings intact |
 | **SoundTouch 300** | 2026-11-15: installed from Bose's software, started from the browser installer, with the Wi-Fi taken over from Bose's software; the same day back to Bose through the Updates page and returned through the feed ([checklist](hardware-test.md#release-checklist-per-model)) | 2026-11-06, one bar: see [SoundTouch 300](#soundtouch-300) |
 
@@ -63,7 +63,7 @@ Back to the guide: [the three routes](../owners/install.md#route-1-the-installer
   three restarts; four is not proven on a speaker yet, nor the SoundTouch 300 at all;
   [evidence](hardware-test.md#release-checklist-per-model)).
   Developer runs behind the design of [ADR 0010](../decisions/0010-ab-slots-boot-confirm-rollback.md):
-  - Wireless Link, 2026-10-08, at the limit of that time, 3: the environment was set to a broken
+  - Wireless Link, 2026-10-08, with the limit then in force (3): the environment was set to a broken
     `bootcmd` (Ping kernel with `init=/bin/false`, `panic=10`), `altbootcmd=run nand_boot;`,
     `bootlimit=3`, SCRATCH2 cleared. Three broken boots followed; the fourth ran `altbootcmd` and
     came up with `init=/init` after 105 s, SCRATCH2 reading `0x040001B0` (count 4). soundtapd,
@@ -142,13 +142,14 @@ Back to the guide: [Going back to Bose](../owners/install.md#going-back-to-bose)
   USB-stick recovery. Prove it on the exact model and candidate before relying on it. Put an
   `Update.stu` (a SoundTap release, or Bose's file for that model; no `.sig`, ADR 0130) on a
   FAT USB stick, plug it into the micro-B port through an OTG adapter, and
-  hold **Volume − and Preset 4** (ST10, ST20) or **both buttons** (Wireless Link) while
+  hold **Volume Down + Preset 4** (ST10, ST20) or **both buttons** (Wireless Link) while
   powering on. ST300's remote-triggered code path has no completed recovery run and is not
-  an approved recovery guarantee. This route reads a compatible SoundTap package's `soundtap-rootfs`, including
-  its `/boot` files, into the other slot and selects it after verification. It writes nothing
-  unless the `.sig` verifies against a release key and names the file's SHA-256 (ADR 0048),
-  so it does not install a stock package, and it does not replace SPL/U-Boot. Stock ST10/ST20 USB recovery is a different
-  implementation; stock Wireless Link has no USB-stick update gesture.
+  an approved recovery guarantee. This route reads a compatible SoundTap package's
+  `soundtap-rootfs`, including its `/boot` files, into the other slot and selects it after
+  verification. It writes nothing unless the `.sig` verifies against a release key and names
+  the file's SHA-256 (ADR 0048), so it does not install a stock package, and it does not
+  replace SPL/U-Boot. Stock ST10/ST20 USB recovery is a different implementation; stock
+  Wireless Link has no USB-stick update gesture.
 - **Slot limits:** a normal update preserves the running kernel/rootfs, but bootloaders and
   environment are shared. After another update both slots may hold SoundTap. A/B rollback
   alone does not restore the stock boot chain or the ST20's stock BCO app.

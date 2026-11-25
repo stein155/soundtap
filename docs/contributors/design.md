@@ -17,14 +17,13 @@ Everything for contributors starts here:
 | Releasing and hardware approval | [RELEASING.md](../../RELEASING.md), [hardware-test.md](../hardware/hardware-test.md) |
 | What is tested where | [test map](testing/README.md), [install gate](testing/install-gate.md) |
 | State on the speaker, environment variables | [nv-state.md](nv-state.md), [environment.md](environment.md) |
-| Per-model notes (how stock does it) | [st10/](../hardware/st10/), [st20/](../hardware/st20/README.md), [wla/](../hardware/wla/) |
+| Per-model notes (how stock does it) | [ST10](../hardware/st10/README.md), [ST20](../hardware/st20/README.md), [Wireless Link](../hardware/wla/README.md), [ST300](../hardware/st300/README.md) |
 
 ## 1. Goal and scope
 
 SoundTap replaces the discontinued Bose SoundTouch software stack with firmware we build
-from source: bootloader, mainline Linux,
-drivers, userland, update path and app. Bose-free has one definition:
-[ADR 0049](../decisions/0049-no-stock-bytes.md).
+from source: bootloader, mainline Linux, drivers, userland, update path and app. Bose-free
+has one definition: [ADR 0049](../decisions/0049-no-stock-bytes.md).
 
 | Model | Stock variant | Implemented chain |
 |---|---|---|
@@ -55,14 +54,13 @@ This table describes the implementation, not release approval. Per-model observa
 missing runs are in the [compatibility matrix](../owners/compatibility.md); exact-candidate gates are
 in the [hardware checklist](../hardware/hardware-test.md).
 
-Out of scope: Google Cast and Sonos ([ADR 0003](../decisions/0003-apple-home-via-airplay-no-cast-no-sonos.md)),
-HomeKit bridge ([ADR 0003](../decisions/0003-apple-home-via-airplay-no-cast-no-sonos.md)),
-Sendspin.
+Out of scope: a HomeKit bridge, Google Cast and Sonos
+([ADR 0003](../decisions/0003-apple-home-via-airplay-no-cast-no-sonos.md)), and Sendspin.
 
 The documented HTTP API becomes stable with the first public release, 0.1.0 (decided
 2026-11-13), under the API-level and deprecation rules of
-[ADR 0108](../decisions/0108-http-api-compatibility-for-1-0.md). Unreleased alpha builds before
-that release remain mutable; 1.0 is not the start of this API promise.
+[ADR 0108](../decisions/0108-http-api-compatibility-for-1-0.md). Alpha builds before that
+release could still change it; the promise starts at 0.1.0, not at 1.0.
 
 ### Stock behaviour is the baseline
 
@@ -388,6 +386,9 @@ slider; a per-room slider does not forward); without `keepGroups` it releases th
 every standby, whatever caused it. A stereo pair keeps its follower and synchronises group
 volume regardless of those preferences ([ADR 0107](../decisions/0107-stereo-pair-acts-as-one-speaker.md)).
 Every standby also cancels the sleep timer.
+
+### Diagnostics
+
 `GET /api/debug` is the support bundle: redacted plain text, or with `?download=1` the zip
 the UI's *Support bundle* button saves, with every log in full and the previous boot's ramoops
 records, all through one redactor ([ADR 0055](../decisions/0055-household-token-and-windows.md)).
@@ -457,7 +458,7 @@ flowchart LR
 - The browser installer verifies first boot with a readable `GET /api/version` response.
   This build-metadata route alone permits credential-free cross-origin reads; an opaque
   answer on port 80 never establishes success ([ADR 0113](../decisions/0113-threat-model.md)).
-- Release rules: [`../RELEASING.md`](../../RELEASING.md), [`../hardware/hardware-test.md`](../hardware/hardware-test.md).
+- Release rules: [RELEASING.md](../../RELEASING.md) and the [hardware checklist](../hardware/hardware-test.md).
 
 ## 10. Security
 
@@ -480,9 +481,10 @@ flowchart LR
   including the board's NAND backup and ROM-USB restore path on every model; only the first
   install from Bose's software runs without a backup. The firmware API
   writes shared bootloaders when their bytes differ; A/B protects kernel/rootfs slots only.
-- The BCO runs our app in SoundTap and stock during a stock restore; existing BFL/BSL remain.
-  App updates through those loaders are distinct from forbidden loader replacement. Never
-  use BSL flashing tools, raw BCO memory writes or guessed commands (ADR 0031).
+- Under SoundTap the BCO runs our app; going back to stock restores stock's BCO app
+  separately, with the `bcoflash` development tool. The BFL/BSL loaders stay as they are:
+  updating the app through them is allowed, replacing them is not. Never use BSL flashing
+  tools, raw BCO memory writes or guessed commands (ADR 0031).
 - Stock files stay outside git. The public repository starts from one clean commit of the
   tree (ADR 0049), so its history holds no Bose bytes either.
 

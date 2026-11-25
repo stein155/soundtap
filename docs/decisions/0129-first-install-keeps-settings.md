@@ -30,8 +30,8 @@ that is running: of all its runs of 12 or more ASCII digits there must be exactl
 and one of 16; any other pattern gives nothing. It leaves them in
 `/mnt/nv/soundtap/stock-wifi-key` (0600) only when SoundTap has no `wifi.conf` yet and stock saved
 a profile. On the first boot soundtapd decrypts the profile stock joined last (`lastConnected`)
-with Go's own AES, writes `wifi.conf`, deletes the key file and restarts Wi-Fi through its Wi-Fi manager. WPA and open
-networks are taken; WEP is not. On the ST20, where Bose's software keeps the network in the BCO,
+with Go's own AES, writes `wifi.conf`, deletes the key file and restarts Wi-Fi through its
+Wi-Fi manager. WPA and open networks are taken; WEP is not. On the ST20, where Bose's software keeps the network in the BCO,
 soundtapd reads the profile from the BCO while Bose's BCO app is still there, just before it
 replaces that app.
 
