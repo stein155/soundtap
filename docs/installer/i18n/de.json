@@ -26,7 +26,7 @@
   "copyFail": "Markieren und kopieren",
   "br.intro": "Diese Seite fordert einen SoundTouch, auf dem noch die Bose-Software läuft, auf, SoundTap vom Update-Server von SoundTap herunterzuladen und zu installieren. Der Lautsprecher bleibt in Ihrem WLAN und erledigt alles selbst; nach etwa vier Minuten startet er als SoundTap neu.",
   "br.ip": "IP-Adresse des Lautsprechers",
-  "br.ipHint": "In der Bose-App: Einstellungen, Lautsprechereinstellungen, Ihr Lautsprecher, Info. Oder schauen Sie in Ihrem Router nach.",
+  "br.ipHint": "In der Bose-App: Einstellungen, Lautsprechereinstellungen, Ihr Lautsprecher, Info über. Oder schauen Sie in Ihrem Router nach.",
   "br.previewAgree": "Dieses Modell ist eine Vorabversion: SoundTap wurde dafür anhand der Bose-Software entwickelt, und noch niemand hat es auf diesem Modell ausprobiert. Vielleicht spielt es nicht, und der Weg zurück ist möglicherweise nicht erprobt. Ich installiere es trotzdem.",
   "br.go": "SoundTap installieren",
   "br.pickModel": "Wählen Sie zuerst in Schritt 1 Ihren Lautsprecher.",

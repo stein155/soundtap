@@ -6,8 +6,8 @@
 set -eu
 
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-REPO=$(CDPATH= cd -- "$HERE/../.." && pwd)
-OUT=${WLA_PRODUCT_SPL_OUT:-$HERE/build/out-product-wla-spl}
+REPO=$(CDPATH= cd -- "${HERE}/../.." && pwd)
+OUT=${WLA_PRODUCT_SPL_OUT:-${HERE}/build/out-product-wla-spl}
 ENTRY_RESET=${WLA_PRODUCT_SPL_ENTRY_RESET:-}
 NAND_MARKERS=${WLA_PRODUCT_SPL_NAND_MARKERS:-}
 USB_RECOVERY=${WLA_SPL_USB_RECOVERY:-}
@@ -21,12 +21,13 @@ SOURCE_SHA256=78e8bfc382fe388f9b55aa1daf8c563522a037779b5d4c349d1415e381f1243e
 # Same constant as the U-Boot build, for the same reason. The product SPL has come out
 # byte-identical across every build so far even with this taken from HEAD -- it carries no
 # banner -- but that was luck rather than design, and the two belong to one boot chain.
-: "${SOURCE_DATE_EPOCH:=$(cat "$REPO/os/bootloader/source-date-epoch")}"
+: "${SOURCE_DATE_EPOCH:=$(cat "${REPO}/os/bootloader/source-date-epoch" || true)}"
 export SOURCE_DATE_EPOCH
 
-mkdir -p "$OUT"
-OUT=$(CDPATH= cd -- "$OUT" && pwd)
-docker run --rm -e SOURCE_DATE_EPOCH -v "$REPO:/repo:ro" -v "$OUT:/out" "$IMAGE" sh -euc '
+mkdir -p "${OUT}"
+OUT=$(CDPATH= cd -- "${OUT}" && pwd)
+# shellcheck disable=SC2250 # os/support/check_wla_product_spl_markers.py matches this text as written
+docker run --rm -e SOURCE_DATE_EPOCH -v "${REPO}:/repo:ro" -v "${OUT}:/out" "${IMAGE}" sh -euc '
   export DEBIAN_FRONTEND=noninteractive
   apt-get -qq update
   apt-get -qq install -y --no-install-recommends build-essential gcc-arm-linux-gnueabihf \
@@ -35,13 +36,13 @@ docker run --rm -e SOURCE_DATE_EPOCH -v "$REPO:/repo:ro" -v "$OUT:/out" "$IMAGE"
   cd /tmp
   # ftp.denx.de, else the Buildroot mirror of it; the hash below decides.
   for site in https://ftp.denx.de/pub/u-boot https://sources.buildroot.net/uboot; do
-    [ -f u-boot-'"$VERSION"'.tar.bz2 ] || curl -fsSLO --connect-timeout 20 "$site/u-boot-'"$VERSION"'.tar.bz2" ||
-      rm -f u-boot-'"$VERSION"'.tar.bz2
+    [ -f u-boot-'"${VERSION}"'.tar.bz2 ] || curl -fsSLO --connect-timeout 20 "$site/u-boot-'"${VERSION}"'.tar.bz2" ||
+      rm -f u-boot-'"${VERSION}"'.tar.bz2
   done
-  printf "%s  %s\n" '"$SOURCE_SHA256"' u-boot-'"$VERSION"'.tar.bz2 | sha256sum -c -
-  tar -xjf u-boot-'"$VERSION"'.tar.bz2
-  cd u-boot-'"$VERSION"'
-  test "$(sed -n "s/^VERSION = //p" Makefile).$(sed -n "s/^PATCHLEVEL = //p" Makefile)" = '"$VERSION"'
+  printf "%s  %s\n" '"${SOURCE_SHA256}"' u-boot-'"${VERSION}"'.tar.bz2 | sha256sum -c -
+  tar -xjf u-boot-'"${VERSION}"'.tar.bz2
+  cd u-boot-'"${VERSION}"'
+  test "$(sed -n "s/^VERSION = //p" Makefile).$(sed -n "s/^PATCHLEVEL = //p" Makefile)" = '"${VERSION}"'
   git init -q
   git add . && GIT_AUTHOR_DATE="@$SOURCE_DATE_EPOCH +0000" GIT_COMMITTER_DATE="@$SOURCE_DATE_EPOCH +0000" \
     git -c user.name=build -c user.email=build@example.invalid commit -qm source
@@ -55,7 +56,7 @@ docker run --rm -e SOURCE_DATE_EPOCH -v "$REPO:/repo:ro" -v "$OUT:/out" "$IMAGE"
   git apply /repo/os/bootloader/uboot/wla-uboot-nand-base.patch
   # Diagnostic-only. WLA_PRODUCT_SPL_ENTRY_RESET=1 makes the SPL warm-reset the moment
   # it gets control, so a fresh mask-ROM generation answers whether it runs at all.
-  [ "'"$ENTRY_RESET"'" = 1 ] && git apply /repo/os/bootloader/uboot/wla-product-spl-entry-reset.patch
+  [ "'"${ENTRY_RESET}"'" = 1 ] && git apply /repo/os/bootloader/uboot/wla-product-spl-entry-reset.patch
   # Diagnostic-only. Erases first two mtd11 eraseblocks and writes raw stage bytes.
   [ "'"$NAND_MARKERS"'" = 1 ] && git apply /repo/os/bootloader/uboot/wla-product-spl-nand-markers.patch
   # Replacing NAND.U-Boot is the one step with no way back: mtd0 has three spare copies
@@ -63,7 +64,7 @@ docker run --rm -e SOURCE_DATE_EPOCH -v "$REPO:/repo:ro" -v "$OUT:/out" "$IMAGE"
   # recovery that reads Update.stu from a stick lives in the U-Boot being replaced. This
   # rebuilds that net one layer lower, where replacing U-Boot cannot remove it: NAND
   # first, then a FAT USB stick. See docs/decisions/0009-mainline-linux-own-bootloaders.md.
-  [ "'"$USB_RECOVERY"'" = 1 ] && git apply /repo/os/bootloader/uboot/uboot-2026.07-spl-usb-recovery.patch
+  [ "'"${USB_RECOVERY}"'" = 1 ] && git apply /repo/os/bootloader/uboot/uboot-2026.07-spl-usb-recovery.patch
   # Every model: module clocks the ROM may leave off, a 120 s WDT1 boot watchdog, and the
   # USB-first step that only a USB-capable build on the ST20 takes.
   git apply /repo/os/bootloader/uboot/uboot-2026.07-spl-board.patch
@@ -100,7 +101,7 @@ docker run --rm -e SOURCE_DATE_EPOCH -v "$REPO:/repo:ro" -v "$OUT:/out" "$IMAGE"
   # check_wla_product_spl.py pins. 0x7420 is not a hardware limit -- it matches the size
   # stock ships -- and the SRAM budget the lab SPL already lives inside is 0xfc00, which
   # is what USB host, FAT and the block layer have to fit within.
-  [ "'"$USB_RECOVERY"'" = 1 ] && ./scripts/config --file .config \
+  [ "'"${USB_RECOVERY}"'" = 1 ] && ./scripts/config --file .config \
     --enable USB --enable USB_MUSB_HOST --enable USB_MUSB_TI --enable USB_MUSB_DSPS \
     --enable AM335X_PHY_USB --enable NOP_USB_XCEIV --enable USB_STORAGE --enable BLK \
     --enable SPL_USB_HOST --enable SPL_USB_STORAGE --enable SPL_BLK \
@@ -113,14 +114,14 @@ docker run --rm -e SOURCE_DATE_EPOCH -v "$REPO:/repo:ro" -v "$OUT:/out" "$IMAGE"
   # USB_GADGET is off. The fallback reads a stick; it never needs to be a device.
   # The USB-net config of the lab SPL (build-wla-uboot.sh) on top of the NAND one. One BOOTP
   # retry keeps an unanswered port at about 11 s: 3 s connect, 8 s BOOTP.
-  [ "'"$ST20_SPL"'" = 1 ] && ./scripts/config --file .config \
+  [ "'"${ST20_SPL}"'" = 1 ] && ./scripts/config --file .config \
     --enable USB --enable USB_GADGET --enable NET --enable USB_ETHER --enable USB_ETH_RNDIS \
     --enable USB_MUSB_GADGET --enable USB_MUSB_TI --enable USB_MUSB_DSPS \
     --enable SPL_USB_GADGET --enable SPL_USB_ETHER --enable SPL_NET --enable SPL_MUSB_NEW \
     --enable SPL_DM_USB_GADGET --set-val NET_RETRY_COUNT 1 \
     --set-val SPL_SIZE_LIMIT 0xfc00
   make olddefconfig < /dev/null
-  if [ "'"$ST20_SPL"'" = 1 ]; then
+  if [ "'"${ST20_SPL}"'" = 1 ]; then
     for c in SPL_USB_ETHER=y SPL_NAND_SUPPORT=y SYS_NAND_U_BOOT_OFFS=0x80000 SYS_NAND_U_BOOT_OFFS_REDUND=0x180000 SPL_LEGACY_IMAGE_CRC_CHECK=y NET_RETRY_COUNT=1; do
       grep -qx "CONFIG_$c" .config || { echo "ST20 SPL lost CONFIG_$c" >&2; exit 1; }
     done
@@ -134,25 +135,25 @@ docker run --rm -e SOURCE_DATE_EPOCH -v "$REPO:/repo:ro" -v "$OUT:/out" "$IMAGE"
   KCFLAGS="-DCONFIG_SYS_MMC_MAX_BLK_COUNT=0 -DCONFIG_USB_MAX_CONTROLLER_COUNT=0" make -j${WLA_PRODUCT_SPL_JOBS:-2} MLO
   cp MLO /out/MLO
   # Stock U-Boot bootm-s this into SRAM, which runs the SPL once without writing NAND.
-  [ "'"$ST20_SPL"'" = 1 ] && ./tools/mkimage -A arm -O linux -T kernel -C none -a 0x402f0400 \
+  [ "'"${ST20_SPL}"'" = 1 ] && ./tools/mkimage -A arm -O linux -T kernel -C none -a 0x402f0400 \
     -e 0x402f0400 -n "ST20 SPL SRAM test" -d spl/u-boot-spl.bin /out/uImage-spl-sram
   cp .config spl/u-boot-spl spl/u-boot-spl.bin spl/u-boot-spl.map /out/
   arm-linux-gnueabihf-size -A -d spl/u-boot-spl > /out/spl-size.txt
   arm-linux-gnueabihf-nm -n spl/u-boot-spl > /out/spl-symbols.txt
   arm-linux-gnueabihf-objdump -d spl/u-boot-spl > /out/spl-disassembly.txt
   {
-    printf "source_url=https://ftp.denx.de/pub/u-boot/u-boot-'"$VERSION"'.tar.bz2\n"
-    printf "source_sha256='"$SOURCE_SHA256"'\n"
+    printf "source_url=https://ftp.denx.de/pub/u-boot/u-boot-'"${VERSION}"'.tar.bz2\n"
+    printf "source_sha256='"${SOURCE_SHA256}"'\n"
     printf "source_revision=ece349ade2973e220f524ce59e59711cc919263f\n"
-    printf "patch_sha256="; { cat /repo/os/bootloader/uboot/wla-am335x-bringup.patch /repo/os/bootloader/uboot/wla-uboot-nand-base.patch /repo/os/bootloader/uboot/uboot-2026.07-spl-board.patch; [ "'"$NAND_MARKERS"'" = 1 ] && cat /repo/os/bootloader/uboot/wla-product-spl-nand-markers.patch || :; } | sha256sum | cut -d" " -f1
-    [ "'"$NAND_MARKERS"'" = 1 ] && printf "diagnostic_nand_markers=mtd11:0x0,0x20000\n" || :
+    printf "patch_sha256="; { cat /repo/os/bootloader/uboot/wla-am335x-bringup.patch /repo/os/bootloader/uboot/wla-uboot-nand-base.patch /repo/os/bootloader/uboot/uboot-2026.07-spl-board.patch; [ "'"${NAND_MARKERS}"'" = 1 ] && cat /repo/os/bootloader/uboot/wla-product-spl-nand-markers.patch || :; } | sha256sum | cut -d" " -f1
+    [ "'"${NAND_MARKERS}"'" = 1 ] && printf "diagnostic_nand_markers=mtd11:0x0,0x20000\n" || :
     printf "dts_sha256="; sha256sum /repo/os/bootloader/uboot/uboot-am335x-soundtap-wla.dts | cut -d" " -f1
     printf "config_sha256="; sha256sum .config | cut -d" " -f1
     printf "mlo_sha256="; sha256sum /out/MLO | cut -d" " -f1
     printf "source_date_epoch=%s\n" "$SOURCE_DATE_EPOCH"
     printf "compiler="; arm-linux-gnueabihf-gcc --version | head -n 1
-    printf "container='"$IMAGE"'\n"
+    printf "container='"${IMAGE}"'\n"
   } > /out/PROVENANCE
   sha256sum /out/MLO > /out/MLO.sha256
 '
-[ "$ENTRY_RESET$NAND_MARKERS$ST20_SPL" != "" ] || python3 "$REPO/os/support/check_wla_product_spl.py" "$OUT"
+[ "${ENTRY_RESET}${NAND_MARKERS}${ST20_SPL}" != "" ] || python3 "${REPO}/os/support/check_wla_product_spl.py" "${OUT}"

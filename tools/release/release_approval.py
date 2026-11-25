@@ -84,9 +84,11 @@ MODELS = {
     "st300": {"device": {"model": "SoundTouch 300", "variant": "ginger", "module_type": "sm2"},
               "checks": ST300_CHECKS, "evidence": hw.REQUIRED_EVIDENCE},
 }
+SCHEMA_VERSION = 2
 
 
 def validate_report(path: Path, asset: Path, asset_sha: str, model: str) -> None:
+    """Raise ValueError unless path is a passing report for model, made against these asset bytes."""
     spec = MODELS[model]
     report = hw.load_report(path)
     hw.require_exact_keys(
@@ -94,18 +96,22 @@ def validate_report(path: Path, asset: Path, asset_sha: str, model: str) -> None
         {"schema_version", "target", "completed_at", "artifact", "device", "checks", "evidence"},
         f"{model} report",
     )
-    if report["schema_version"] != 2 or report["target"] != model:
-        raise ValueError(f"{path.name} must be a schema 2 report for target {model}")
+    if report["schema_version"] != SCHEMA_VERSION or report["target"] != model:
+        msg = f"{path.name} must be a schema 2 report for target {model}"
+        raise ValueError(msg)
     stamp = report["completed_at"]
     if not isinstance(stamp, str) or not hw.TIMESTAMP.fullmatch(stamp):
-        raise ValueError(f"{model}: completed_at must be an exact UTC timestamp")
-    datetime.datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ")
+        msg = f"{model}: completed_at must be an exact UTC timestamp"
+        raise ValueError(msg)
+    datetime.datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.UTC)
     artifact = report["artifact"]
     hw.require_exact_keys(artifact, {"name", "sha256"}, f"{model} artifact")
     if artifact["name"] != asset.name or artifact["sha256"] != asset_sha:
-        raise ValueError(f"{model} report was made against other bytes than {asset.name}")
+        msg = f"{model} report was made against other bytes than {asset.name}"
+        raise ValueError(msg)
     if report["device"] != spec["device"]:
-        raise ValueError(f"{model} report device does not match the {model}")
+        msg = f"{model} report device does not match the {model}"
+        raise ValueError(msg)
     checks = report["checks"]
     hw.require_exact_keys(checks, set(spec["checks"]), f"{model} checks")
     failed = sorted(name for name, result in checks.items() if result != "pass")
@@ -115,19 +121,23 @@ def validate_report(path: Path, asset: Path, asset_sha: str, model: str) -> None
 
 
 def validate(asset: Path, reports: Path) -> None:
+    """Raise ValueError unless every model has a passing report for asset in reports."""
     if not asset.is_file():
-        raise ValueError(f"{asset} is missing")
+        msg = f"{asset} is missing"
+        raise ValueError(msg)
     asset_sha = hw.sha256(asset)
     for model in MODELS:
         path = reports / f"hardware-{model}.json"
         if not path.is_file():
-            raise ValueError(f"no {model} hardware report ({path.name}) for this release")
+            msg = f"no {model} hardware report ({path.name}) for this release"
+            raise ValueError(msg)
         validate_report(path, asset, asset_sha, model)
         release_gate.validate(model, "stu", "production", "promotion",
-                              hardware_evidence=True, wla_rf_config_evidence=model == "wla")
+                              release_gate.Evidence(hardware=True, wla_rf_config=model == "wla"))
 
 
 def main() -> None:
+    """Check the reports given on the command line and report the approval."""
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--asset", required=True, type=Path)
@@ -136,7 +146,8 @@ def main() -> None:
     try:
         validate(args.asset, args.reports)
     except (OSError, ValueError, json.JSONDecodeError) as error:
-        raise SystemExit(f"RELEASE APPROVAL REJECT: {error}") from error
+        msg = f"RELEASE APPROVAL REJECT: {error}"
+        raise SystemExit(msg) from error
     print(f"RELEASE APPROVAL OK: ST10, ST20, WLA and ST300 passed on {args.asset.name}")
 
 

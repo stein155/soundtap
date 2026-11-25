@@ -105,15 +105,15 @@ static void scan_mac_prep(void)
  * the tune; stock then waits (p[0x3a] << 10) + 7000 ticks for responses (dwell timer state 7). */
 static unsigned char probe_frame[24 + 2 + 32 + 2 + 8 + 2 + 4];
 static struct {
-    unsigned z0;
-    unsigned short len, z1, rate, cls;
+    unsigned z0; /* cppcheck-suppress unusedStructMember ; the MAC reads this descriptor */
+    unsigned short len, z1, rate, cls; /* cppcheck-suppress unusedStructMember ; the MAC reads this descriptor */
     unsigned hdrlen;
     unsigned char *hdr;
     unsigned l1;
     unsigned char *p1;
-    unsigned l2;
-    unsigned char *p2;
-    unsigned char z2[0x24];
+    unsigned l2; /* cppcheck-suppress unusedStructMember ; the MAC reads this descriptor */
+    unsigned char *p2; /* cppcheck-suppress unusedStructMember ; the MAC reads this descriptor */
+    unsigned char z2[0x24]; /* cppcheck-suppress unusedStructMember ; the MAC reads this descriptor */
 } probe_desc;
 
 #define MGMT_RATE 8u   /* stock's management-frame rate code below rate class 8 (ROM ps0+0x24) */
@@ -182,10 +182,10 @@ unsigned lcg(void)
 }
 
 extern volatile unsigned dg_rxfiq, dg_rxkeep, dg_rxfcs, dg_rxdwell;   /* mac.c: per-scan RX counters */
+extern volatile unsigned dg_vco;            /* tune.c: last VCO cal result for this channel */
 
 static void scan_stop(unsigned event)
 {
-    extern volatile unsigned dg_vco;            /* tune.c: last VCO cal result for this channel */
     unsigned snap[6] = { dg_rxfiq, dg_rxkeep, rx_chan, dg_vco, dg_rxfcs, dg_rxdwell }; /* did the MAC + RF work THIS channel? */
     dwell_state = 0;
     route(event, 2, 0x13, snap, sizeof snap);

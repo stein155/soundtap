@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-"""Hardening options the speaker kernel must have, or must not, plus the
-options hardware needs that a fragment rewrite once dropped unnoticed.
+"""Hardening options the speaker kernel must have, or must not.
+
+Plus the options hardware needs that a fragment rewrite once dropped unnoticed.
 
     kernel_config_check.py --fragment os/board/image/linux.fragment   # lint, no build
     kernel_config_check.py output/os/images/kernel.config             # what was built
@@ -55,16 +56,15 @@ REQUIRE = (
 NONZERO = ("PANIC_TIMEOUT",)
 
 
-def problems(text: str, fragment: bool) -> list[str]:
+def problems(text: str, *, fragment: bool) -> list[str]:
+    """Return one message per option the configuration (or fragment) gets wrong."""
     lines = set(text.splitlines())
     out = []
     for name in DENY:
         on = f"CONFIG_{name}=y" in lines or f"CONFIG_{name}=m" in lines
         if on or (fragment and f"# CONFIG_{name} is not set" not in lines):
             out.append(f"CONFIG_{name} must be off")
-    for name in REQUIRE:
-        if f"CONFIG_{name}=y" not in lines:
-            out.append(f"CONFIG_{name} must be y")
+    out.extend(f"CONFIG_{name} must be y" for name in REQUIRE if f"CONFIG_{name}=y" not in lines)
     for name in NONZERO:
         values = [line.split("=", 1)[1] for line in lines if line.startswith(f"CONFIG_{name}=")]
         if not values or not values[0].lstrip("-").isdigit() or int(values[0]) == 0:
@@ -73,11 +73,12 @@ def problems(text: str, fragment: bool) -> list[str]:
 
 
 def main() -> int:
+    """Check the configuration named on the command line and return the exit code."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("config", type=Path)
     parser.add_argument("--fragment", action="store_true", help="the input is linux.fragment")
     args = parser.parse_args()
-    found = problems(args.config.read_text(), args.fragment)
+    found = problems(args.config.read_text(), fragment=args.fragment)
     for line in found:
         print(f"{args.config}: {line}", file=sys.stderr)
     return 1 if found else 0

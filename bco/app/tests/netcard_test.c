@@ -22,7 +22,8 @@ int radio_tx_eth(const unsigned char *f, unsigned n) { (void)f; radio_n = n; ret
 
 int main(void)
 {
-    unsigned char m[BCOLINK_HDR + BCOLINK_MAX + 4], f[1514] = {0};
+    unsigned char m[BCOLINK_HDR + BCOLINK_MAX + 4];
+    const unsigned char f[1514] = {0};
     unsigned ch;
 
     /* framing: header round trip, padding allowed, malformed refused */

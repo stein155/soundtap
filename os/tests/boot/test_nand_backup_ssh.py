@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
@@ -24,11 +23,11 @@ NAMES = ["SPL", "SPL.backup1", "SPL.backup2", "SPL.backup3", "U-Boot", "U-Boot-E
          "Persistent-Storage", "Update-Staging", "Manufacturing-Data"]
 
 
-def fake_ssh(tmp: Path, sizes) -> Path:
-    """An ssh that answers /proc/mtd and serves zeroed dumps of the right length."""
+def fake_ssh(tmp: Path, sizes: list[int]) -> Path:
+    """Write an ssh that answers /proc/mtd and serves zeroed dumps of the right length."""
     table = "dev:    size   erasesize  name\n" + "".join(
         f'mtd{i}: {size:08x} 00020000 "{name}"\n'
-        for i, (size, name) in enumerate(zip(sizes, NAMES)))
+        for i, (size, name) in enumerate(zip(sizes, NAMES, strict=False)))
     table_file = tmp / "proc-mtd"
     table_file.write_text(table)
     sizes_file = tmp / "sizes"
@@ -47,8 +46,7 @@ head -c $((size / 2048 * 2112)) /dev/zero
 
 
 def bsd_wc(tmp: Path) -> Path:
-    """A wc that pads its count the way macOS's BSD wc does, and a stat that
-    rejects GNU's -c the way BSD stat does."""
+    """Write a wc that pads its count the way macOS's BSD wc does, and a stat that rejects GNU's -c as BSD stat does."""
     bindir = tmp / "bsd-bin"
     bindir.mkdir(exist_ok=True)
     wc = bindir / "wc"
@@ -61,42 +59,48 @@ def bsd_wc(tmp: Path) -> Path:
     return bindir
 
 
-def run(tmp: Path, sizes, path_prefix=None):
+def run(tmp: Path, sizes: list[int], path_prefix: Path | None = None) -> tuple[subprocess.CompletedProcess[str], Path]:
+    """Run the backup against a fake ssh with this partition table; return (the run, the backup directory)."""
     out = tmp / "backup"
     env = dict(os.environ, SSH=str(fake_ssh(tmp, sizes)))
     if path_prefix:
         env["PATH"] = f"{path_prefix}:{env['PATH']}"
     return subprocess.run(["bash", str(SCRIPT), "speaker", str(out)],
-                          env=env, capture_output=True, text=True), out
+                          check=False, env=env, capture_output=True, text=True), out
 
 
-def remote(tmp: Path):
-    """Every command the script sent to the speaker, in order."""
+def remote(tmp: Path) -> list[str]:
+    """Return every command the script sent to the speaker, in order."""
     path = tmp / "remote"
     return path.read_text().splitlines() if path.exists() else []
 
 
 class NandBackupSsh(unittest.TestCase):
-    def test_backup_reads_every_partition_and_writes_nothing(self):
+    """nand-backup-ssh.sh against a fake speaker."""
+
+    def test_backup_reads_every_partition_and_writes_nothing(self) -> None:
+        """The backup asks only for the table and one OOB dump per partition, each of the right size."""
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d)
             done, out = run(tmp, SIZES)
             self.assertEqual(done.returncode, 0, done.stderr)
-            # Read-only: the speaker is asked for its table and one OOB dump per partition.
             self.assertEqual(remote(tmp), ["cat /proc/mtd"] + [
                 f"nanddump -o --bb=padbad /dev/mtd{i}" for i in range(len(SIZES))])
-            for i, (size, name) in enumerate(zip(SIZES, NAMES)):
+            for i, (size, name) in enumerate(zip(SIZES, NAMES, strict=False)):
                 got = (out / f"mtd{i}-{name}.oob").stat().st_size
                 self.assertEqual(got, size // 2048 * 2112, f"mtd{i}")
             self.assertEqual((out / "SHA256SUMS").read_text().count("\n"), len(SIZES) + 1)
 
-    def test_running_again_reads_nothing_and_a_changed_dump_is_refused(self):
+    def test_running_again_reads_nothing_and_a_changed_dump_is_refused(self) -> None:
+        """Running again reads nothing, and a dump changed after the fact is refused, not re-certified.
+
+        Running again is a no-op rather than a re-read: a broken transfer costs one
+        partition, not the whole backup.
+        """
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d)
             _, out = run(tmp, SIZES)
             (tmp / "remote").unlink()
-            # Running again is a no-op rather than a re-read: a broken transfer costs one
-            # partition, not the whole backup.
             again, _ = run(tmp, SIZES)
             self.assertEqual(again.returncode, 0)
             self.assertIn("already have", again.stdout)
@@ -112,8 +116,8 @@ class NandBackupSsh(unittest.TestCase):
             self.assertIn("no longer matches", tampered.stderr)
             self.assertEqual((out / "SHA256SUMS").read_text(), sums, "the original checksums must survive")
 
-    def test_a_speaker_whose_table_differs_is_not_dumped(self):
-        # A speaker whose table differs is the discovery, not something to dump around.
+    def test_a_speaker_whose_table_differs_is_not_dumped(self) -> None:
+        """A speaker whose table differs is the discovery, not something to dump around."""
         with tempfile.TemporaryDirectory() as d:
             wrong = list(SIZES)
             wrong[8] = 0x4000000
@@ -123,17 +127,20 @@ class NandBackupSsh(unittest.TestCase):
             self.assertEqual(list(out.glob("*.oob")), [], "nothing may be dumped against a wrong table")
             self.assertEqual(remote(Path(d)), ["cat /proc/mtd"])
 
-    def test_bsd_wc_and_stat(self):
-        # BSD wc pads "13" to "      13"; the count check must not read that as a mismatch.
-        # BSD stat has no -c; sizes must not depend on it. Twice, for the resume path.
+    def test_bsd_wc_and_stat(self) -> None:
+        """The backup works with BSD wc and stat, also on the resume path.
+
+        BSD wc pads "13" to "      13"; the count check must not read that as a mismatch.
+        BSD stat has no -c; sizes must not depend on it. Twice, for the resume path.
+        """
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d)
             for _ in range(2):
                 done, _ = run(tmp, SIZES, bsd_wc(tmp))
                 self.assertEqual(done.returncode, 0, done.stderr)
 
-    def test_a_partition_fewer_is_refused(self):
-        # A speaker with a partition fewer is still refused, padded wc or not.
+    def test_a_partition_fewer_is_refused(self) -> None:
+        """A speaker with a partition fewer is refused, padded wc or not."""
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d)
             short = fake_ssh(tmp, SIZES[:-1])
@@ -142,7 +149,7 @@ class NandBackupSsh(unittest.TestCase):
                 if prefix:
                     env["PATH"] = f"{prefix}:{env['PATH']}"
                 done = subprocess.run(["bash", str(SCRIPT), "speaker", str(tmp / "backup")],
-                                      env=env, capture_output=True, text=True)
+                                      check=False, env=env, capture_output=True, text=True)
                 self.assertEqual(done.returncode, 1, done.stderr)
                 self.assertIn("refusing to guess", done.stderr)
 

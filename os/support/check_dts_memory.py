@@ -23,7 +23,7 @@ from pathlib import Path
 
 BOOTARGS = re.compile(r'bootargs\s*=\s*"([^"]*)"')
 MEM_ARG = re.compile(r"\bmem=(\d+)([MmKkGg])")
-MEMORY_NODE = re.compile(r"memory@[0-9a-fA-F]+\s*\{[^}]*?reg\s*=\s*<\s*(0x[0-9a-fA-F]+|\d+)\s+(0x[0-9a-fA-F]+|\d+)\s*>", re.S)
+MEMORY_NODE = re.compile(r"memory@[0-9a-fA-F]+\s*\{[^}]*?reg\s*=\s*<\s*(0x[0-9a-fA-F]+|\d+)\s+(0x[0-9a-fA-F]+|\d+)\s*>", re.DOTALL)
 
 SCALE = {"k": 1 << 10, "m": 1 << 20, "g": 1 << 30}
 
@@ -32,9 +32,11 @@ SCALE = {"k": 1 << 10, "m": 1 << 20, "g": 1 << 30}
 # device tree along with how it was measured. Overstating is the dangerous direction:
 # the upper addresses alias onto the lower ones and Linux destroys its own data.
 DEFAULT_MEMORY = 128 << 20
+# `--expect SIZE` takes two arguments.
+EXPECT_ARGC = 2
 
 
-def declared_sizes(text: str):
+def declared_sizes(text: str) -> tuple[int | None, int | None]:
     """Return (mem= bytes or None, memory node bytes or None)."""
     arg = None
     args = BOOTARGS.search(text)
@@ -50,13 +52,16 @@ def declared_sizes(text: str):
 
 
 def parse_size(text: str) -> int:
+    """Return the bytes in a size like 128M."""
     found = re.fullmatch(r"(\d+)([MmKkGg])", text.strip())
     if not found:
-        raise ValueError(f"expected a size like 128M, got {text!r}")
+        msg = f"expected a size like 128M, got {text!r}"
+        raise ValueError(msg)
     return int(found.group(1)) * SCALE[found.group(2).lower()]
 
 
 def check(path: Path, expect: int | None = None) -> str | None:
+    """Return why the tree's mem= and memory node disagree with each other or the expected size, or None."""
     if expect is None:
         expect = DEFAULT_MEMORY
     arg, node = declared_sizes(path.read_text())
@@ -74,9 +79,10 @@ def check(path: Path, expect: int | None = None) -> str | None:
 
 
 def main(argv: list[str]) -> int:
+    """Check every tree named, or every SoundTap tree, and return the exit code."""
     argv = argv[1:]
     expect = None
-    if len(argv) >= 2 and argv[0] == "--expect":
+    if len(argv) >= EXPECT_ARGC and argv[0] == "--expect":
         expect = parse_size(argv[1])
         argv = argv[2:]
     paths = [Path(a) for a in argv]

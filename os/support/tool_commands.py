@@ -32,9 +32,11 @@ COMMANDS = {
 }
 # Arguments the scripts pass, found anywhere in the binary's strings.
 ARGUMENTS = {"usr/bin/bluetoothctl": ["Connected"]}
+USAGE_ARGC = 2
 
 
-def missing(rootfs):
+def missing(rootfs: str | Path) -> list[str]:
+    """Return one problem per tool, subcommand or argument the rootfs lacks."""
     out = []
     for rel, commands in COMMANDS.items():
         path = Path(rootfs) / rel
@@ -49,7 +51,7 @@ def missing(rootfs):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
+    if len(sys.argv) != USAGE_ARGC:
         sys.exit("usage: tool_commands.py <rootfs>")
     if problems := missing(sys.argv[1]):
         sys.exit("TOOL COMMANDS: " + "; ".join(problems))

@@ -13,7 +13,7 @@ CTL = ROOT / "os/overlay/opt/soundtap/bt-ctl.sh"
 MAC = "AA:BB:CC:DD:EE:%02X"
 
 
-def reconnect(devices, connects_after=None, verb="reconnect", connected=""):
+def reconnect(devices: list[tuple[int, int, bool]], connects_after: int | None = None, verb: str = "reconnect", connected: str = "") -> list[str]:
     """Run `bt-ctl.sh reconnect`. devices: [(n, mtime, trusted)]. Return the addresses connected to.
 
     The stub bluetoothctl reports a connected device once `connects_after` connect calls were made.
@@ -41,41 +41,53 @@ esac
         (bin_dir / "bluetoothctl").write_text(stub)
         (bin_dir / "bluetoothctl").chmod(0o755)
         env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "BT_STATE": str(root / "state")}
-        rc = subprocess.run(["sh", str(CTL), verb], env=env, capture_output=True, timeout=30).returncode
+        rc = subprocess.run(["sh", str(CTL), verb], check=False, env=env, capture_output=True, timeout=30).returncode
         got = calls.read_text().split() if calls.exists() else []
         # 3 only when phones were called and none came; everything else succeeds.
         came = connects_after is not None and len(got) >= connects_after
         want = 3 if verb == "reconnect" and got and not came else 0
         if rc != want:
-            raise AssertionError(f"exit {rc}, want {want}")
+            msg = f"exit {rc}, want {want}"
+            raise AssertionError(msg)
         return got
 
 
 class Reconnect(unittest.TestCase):
-    def test_newest_trusted_first_and_untrusted_skipped(self):
+    """bt-ctl.sh reconnect calls the trusted phones."""
+
+    def test_newest_trusted_first_and_untrusted_skipped(self) -> None:
+        """Trusted phones are called newest first and untrusted ones are skipped."""
         got = reconnect([(1, 100, True), (2, 300, True), (3, 200, False), (4, 200, True)])
         self.assertEqual(got, [MAC % 2, MAC % 4, MAC % 1])
 
-    def test_stops_once_a_phone_is_connected(self):
+    def test_stops_once_a_phone_is_connected(self) -> None:
+        """No further phone is called once one has connected."""
         self.assertEqual(reconnect([(1, 100, True), (2, 300, True), (3, 200, True)], connects_after=1), [MAC % 2])
 
-    def test_gives_up_after_five(self):
+    def test_gives_up_after_five(self) -> None:
+        """At most five phones are called."""
         self.assertEqual(len(reconnect([(n, n, True) for n in range(1, 9)])), 5)
 
-    def test_nothing_paired_does_nothing(self):
+    def test_nothing_paired_does_nothing(self) -> None:
+        """With no paired phones nothing is called."""
         self.assertEqual(reconnect([]), [])
 
 
 class Trim(unittest.TestCase):
-    def test_forgets_the_oldest_beyond_eight(self):
+    """bt-ctl.sh trim keeps the paired list bounded."""
+
+    def test_forgets_the_oldest_beyond_eight(self) -> None:
+        """Beyond eight paired devices the oldest are removed."""
         got = reconnect([(n, n, True) for n in range(1, 11)], verb="trim")
         self.assertEqual(got, ["rm-" + MAC % 2, "rm-" + MAC % 1])
 
-    def test_keeps_a_connected_device(self):
+    def test_keeps_a_connected_device(self) -> None:
+        """A connected device is never removed, even when it is the oldest."""
         got = reconnect([(n, n, True) for n in range(1, 11)], verb="trim", connected=MAC % 1)
         self.assertEqual(got, ["rm-" + MAC % 2])
 
-    def test_eight_or_fewer_untouched(self):
+    def test_eight_or_fewer_untouched(self) -> None:
+        """Eight or fewer paired devices are left alone."""
         self.assertEqual(reconnect([(n, n, True) for n in range(1, 9)], verb="trim"), [])
 
 

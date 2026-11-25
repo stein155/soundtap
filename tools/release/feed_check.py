@@ -57,21 +57,24 @@ SIG_MAX = 1024  # release.SigMax
 # An ed25519 public key in DER: this fixed prefix and the 32 raw bytes.
 DER_PREFIX = bytes.fromhex("302a300506032b6570032100")
 WITHDRAWN = "Withdrawn:"  # update.WithdrawnMarker
+ED25519_KEY_SIZE = 32
 
 
 class FeedError(Exception):
-    pass
+    """The index names no release the speakers can trust."""
 
 
-def go_const(path, name):
-    m = re.search(rf'^const {name} = "(.*)"$', Path(path).read_text(), re.M)
+def go_const(path: str | Path, name: str) -> str:
+    """Return the value of the string constant name in the Go file at path."""
+    m = re.search(rf'^const {name} = "(.*)"$', Path(path).read_text(), re.MULTILINE)
     if not m:
-        raise FeedError(f"{path} has no const {name}")
+        msg = f"{path} has no const {name}"
+        raise FeedError(msg)
     return m.group(1)
 
 
-def release_keys(root=ROOT):
-    """The keys soundtapd verifies with, without the empty placeholder."""
+def release_keys(root: Path = ROOT) -> list[str]:
+    """Return the keys soundtapd verifies with, without the empty placeholder."""
     go = root / "app/internal/release/release.go"
     keys = [go_const(go, "PublicKey"), go_const(go, "ReservePublicKey")]
     keys = [k for k in keys if k.strip()]
@@ -80,61 +83,76 @@ def release_keys(root=ROOT):
             raw = base64.b64decode(k, validate=True)
         except ValueError:
             raw = b""
-        if len(raw) != 32:
-            raise FeedError(f"release.go holds a key that is not an ed25519 key: {k!r}")
+        if len(raw) != ED25519_KEY_SIZE:
+            msg = f"release.go holds a key that is not an ed25519 key: {k!r}"
+            raise FeedError(msg)
     return keys
 
 
-def read_index(path, repo, preview=False):
-    """The one image the index offers: (url, version, filename, length, crc). preview: the
-    preview feed, for the preview models and the preview package."""
+def read_index(path: str | Path, repo: str, *, preview: bool = False) -> tuple[str, str, str, int, int]:
+    """Return the one image the index offers: (url, version, filename, length, crc).
+
+    preview: the preview feed, for the preview models and the preview package.
+    """
     try:
         root = ET.parse(path).getroot()
     except ET.ParseError as e:
-        raise FeedError(f"{path} does not parse: {e}") from e
+        msg = f"{path} does not parse: {e}"
+        raise FeedError(msg) from e
     if root.tag != "INDEX":
-        raise FeedError(f"{path} is not an INDEX")
+        msg = f"{path} is not an INDEX"
+        raise FeedError(msg)
     offers, ids = set(), set()
     for device in root.findall("DEVICE"):
         ids.add(device.get("ID"))
         releases = device.findall("HARDWARE/RELEASE")
         images = device.findall("HARDWARE/RELEASE/IMAGE")
         if len(releases) != 1 or len(images) != 1:
-            raise FeedError(f"DEVICE {device.get('ID')} offers {len(images)} images, not one")
+            msg = f"DEVICE {device.get('ID')} offers {len(images)} images, not one"
+            raise FeedError(msg)
         rel, img = releases[0], images[0]
         offers.add((rel.get("HTTPHOST"), rel.get("URLPATH"), img.get("FILENAME"),
                     img.get("LENGTH"), img.get("CRC")))
     supported, previews = {i for i, _ in MODELS}, {i for i, _ in PREVIEW_MODELS}
     if supported & previews:
-        raise FeedError(f"devices {sorted(supported & previews)} are both supported and previews")
+        msg = f"devices {sorted(supported & previews)} are both supported and previews"
+        raise FeedError(msg)
     want_ids, other, kind = (previews, supported, "preview") if preview else (supported, previews, "supported")
     if ids & other:
-        raise FeedError(f"the {kind} feed lists {'supported' if preview else 'preview'} devices "
-                        f"{sorted(ids & other)}; each model is in one feed only")
+        msg = (
+            f"the {kind} feed lists {'supported' if preview else 'preview'} devices "
+                        f"{sorted(ids & other)}; each model is in one feed only"
+        )
+        raise FeedError(msg)
     if ids != want_ids:
-        raise FeedError(f"the index lists devices {sorted(ids)}, not the {kind} {sorted(want_ids)}")
+        msg = f"the index lists devices {sorted(ids)}, not the {kind} {sorted(want_ids)}"
+        raise FeedError(msg)
     if len(offers) != 1:
-        raise FeedError("the devices do not all offer the same image")
+        msg = "the devices do not all offer the same image"
+        raise FeedError(msg)
     host, urlpath, name, length, crc = offers.pop()
     m = re.fullmatch(rf"{re.escape(repo)}/releases/download/os-v({VERSION})", urlpath or "")
     if host != HOST or not m:
-        raise FeedError(f"the index points at {host}/{urlpath}, not a release of {repo} on {HOST}")
+        msg = f"the index points at {host}/{urlpath}, not a release of {repo} on {HOST}"
+        raise FeedError(msg)
     version = m.group(1)
     want_name = f"SoundTap-Core-{version}{'-preview' if preview else ''}.stu"
     if name != want_name:
-        raise FeedError(f"the index names {name}, not {want_name}")
+        msg = f"the index names {name}, not {want_name}"
+        raise FeedError(msg)
     try:
         length = int(length)
         crc = int(crc, 16)
     except (TypeError, ValueError):
-        raise FeedError("the index has no numeric LENGTH and CRC") from None
+        msg = "the index has no numeric LENGTH and CRC"
+        raise FeedError(msg) from None
     return f"{host}/{urlpath}/{name}", version, name, length, crc
 
 
-def verify_ed25519(keys, message, signature):
-    """Whether one of keys (base64 raw ed25519) signed message, checked by openssl."""
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp = Path(tmp)
+def verify_ed25519(keys: list[str], message: bytes, signature: bytes) -> bool:
+    """Return whether one of keys (base64 raw ed25519) signed message, checked by openssl."""
+    with tempfile.TemporaryDirectory() as tmp_name:
+        tmp = Path(tmp_name)
         (tmp / "message").write_bytes(message)
         (tmp / "signature").write_bytes(signature)
         for key in keys:
@@ -142,54 +160,62 @@ def verify_ed25519(keys, message, signature):
             (tmp / "pub.pem").write_text(f"-----BEGIN PUBLIC KEY-----\n{der}\n-----END PUBLIC KEY-----\n")
             done = subprocess.run(["openssl", "pkeyutl", "-verify", "-pubin", "-inkey", str(tmp / "pub.pem"),
                                    "-rawin", "-in", str(tmp / "message"),
-                                   "-sigfile", str(tmp / "signature")], capture_output=True)
+                                   "-sigfile", str(tmp / "signature")], check=False, capture_output=True)
             if done.returncode == 0:
                 return True
     return False
 
 
-def check_signature(sig_text, version, data, keys):
-    """The .sig is the production Core statement for version over data, signed by a key."""
+def check_signature(sig_text: str, version: str, data: bytes, keys: list[str]) -> None:
+    """Check that the .sig is the production Core statement for version over data, signed by a key."""
     if len(sig_text) > SIG_MAX:
-        raise FeedError("the .sig is too long to be a statement")
+        msg = "the .sig is too long to be a statement"
+        raise FeedError(msg)
     line = sig_text.removesuffix("\n").removesuffix("\r")
     statement = (f"soundtap-package v1 kind=core profile=production version={version} "
                  f"sha256={hashlib.sha256(data).hexdigest()}")
     m = re.fullmatch(re.escape(statement) + r" sig=([A-Za-z0-9+/]{86}==)", line)
     if not m:
         stated = line.split(" sig=", 1)[0]
-        raise FeedError(f"the .sig states '{stated}'; the feed's asset needs '{statement}'")
+        msg = f"the .sig states '{stated}'; the feed's asset needs '{statement}'"
+        raise FeedError(msg)
     if not keys:
-        raise FeedError("release.go holds no release key")
+        msg = "release.go holds no release key"
+        raise FeedError(msg)
     if not verify_ed25519(keys, statement.encode(), base64.b64decode(m.group(1))):
-        raise FeedError("the .sig does not verify with the release keys compiled into soundtapd")
+        msg = "the .sig does not verify with the release keys compiled into soundtapd"
+        raise FeedError(msg)
 
 
-def fetch(url, limit):
+def fetch(url: str, limit: int) -> bytes:
     """GET url, at most limit bytes."""
     req = urllib.request.Request(url, headers={"User-Agent": "soundtap-feed-check"})
     with urllib.request.urlopen(req, timeout=120) as r:
         body = r.read(limit + 1)
     if len(body) > limit:
-        raise FeedError(f"{url} is larger than {limit} bytes")
+        msg = f"{url} is larger than {limit} bytes"
+        raise FeedError(msg)
     return body
 
 
-def check_published(repo, version):
-    """GitHub has os-v<version> as a published release that is not withdrawn."""
+def check_published(repo: str, version: str) -> None:
+    """Check that GitHub has os-v<version> as a published release that is not withdrawn."""
     tag = f"os-v{version}"
     rel = json.loads(fetch(f"https://api.github.com/repos/{repo}/releases/tags/{tag}", 1 << 20))
     if rel.get("draft"):
-        raise FeedError(f"{tag} is a draft")
+        msg = f"{tag} is a draft"
+        raise FeedError(msg)
     if any(line.startswith(WITHDRAWN) for line in (rel.get("body") or "").split("\n")):
-        raise FeedError(f"{tag} is withdrawn")
+        msg = f"{tag} is withdrawn"
+        raise FeedError(msg)
 
 
-def check(index, assets=None, root=ROOT, preview=False):
-    """Raises FeedError unless the index names a release the speakers can trust."""
+def check(index: str | Path, assets: str | Path | None = None, root: Path = ROOT, *,
+          preview: bool = False) -> tuple[str, str]:
+    """Raise FeedError unless the index names a release the speakers can trust."""
     repo = go_const(root / "app/internal/update/update.go", "Repo")
     keys = release_keys(root)
-    url, version, name, length, crc = read_index(index, repo, preview)
+    url, version, name, length, crc = read_index(index, repo, preview=preview)
     if assets is None:
         check_published(repo, version)
         data = fetch(url, length)
@@ -197,21 +223,26 @@ def check(index, assets=None, root=ROOT, preview=False):
     else:
         asset = Path(assets) / name
         if not asset.is_file():
-            raise FeedError(f"no {name} in {assets}")
+            msg = f"no {name} in {assets}"
+            raise FeedError(msg)
         data = asset.read_bytes()
         sig_path = Path(assets) / f"{name}.sig"
         if not sig_path.is_file():
-            raise FeedError(f"no {name}.sig in {assets}")
+            msg = f"no {name}.sig in {assets}"
+            raise FeedError(msg)
         sig = sig_path.read_bytes()[:SIG_MAX + 1].decode("utf-8", "replace")
     if len(data) != length:
-        raise FeedError(f"the index says {length} bytes; {name} has {len(data)}")
+        msg = f"the index says {length} bytes; {name} has {len(data)}"
+        raise FeedError(msg)
     if zlib.crc32(data) != crc:
-        raise FeedError(f"the index's CRC 0x{crc:08x} is not {name}'s 0x{zlib.crc32(data):08x}")
+        msg = f"the index's CRC 0x{crc:08x} is not {name}'s 0x{zlib.crc32(data):08x}"
+        raise FeedError(msg)
     check_signature(sig, version, data, keys)
     return url, version
 
 
-def main(argv):
+def main(argv: list[str]) -> int:
+    """Check the index given in argv and return the exit code."""
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     ap.add_argument("index")
     ap.add_argument("--assets", help="read the asset and its .sig from here instead of downloading")

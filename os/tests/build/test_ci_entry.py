@@ -40,7 +40,10 @@ echo "$(basename "$0") $* SCENARIOS=${SCENARIOS:-}" >>"$TREE/scripts.calls"
 
 
 class EntryTree:
-    def __init__(self, tmp):
+    """A temporary tree holding the CI entry scripts, a stub make and stub gate scripts."""
+
+    def __init__(self, tmp: str) -> None:
+        """Lay out the tree in tmp."""
         self.tree = Path(tmp)
         (self.tree / "os/tests/installer").mkdir(parents=True)
         (self.tree / "tools/ci").mkdir(parents=True)
@@ -54,21 +57,26 @@ class EntryTree:
         self.make.write_text(STUB_MAKE)
         self.make.chmod(0o755)
 
-    def run(self, script, *args, **env):
+    def run(self, script: str, *args: str, **env: str) -> subprocess.CompletedProcess[str]:
+        """Run tools/ci/script with args and the extra environment env."""
         full = {k: v for k, v in os.environ.items()
                 if k not in ("SCENARIOS", "MODELS", "SOUNDTAP_COMMIT", "SOUNDTAP_PROFILE")}
         full.update(MAKE=str(self.make), TREE=str(self.tree), FAIL="")
         full.update(env)
-        return subprocess.run(["sh", str(self.tree / "tools/ci" / script), *args], env=full,
+        return subprocess.run(["sh", str(self.tree / "tools/ci" / script), *args], check=False, env=full,
                               cwd="/", text=True, capture_output=True, timeout=60)
 
-    def calls(self, name):
+    def calls(self, name: str) -> list[str]:
+        """Return the calls the stubs recorded in name, or none."""
         path = self.tree / name
         return path.read_text().splitlines() if path.exists() else []
 
 
 class RunCITest(unittest.TestCase):
-    def test_one_step_runs_its_make_target_in_the_foreground(self):
+    """run-ci.sh runs the make targets of the steps it is given."""
+
+    def test_one_step_runs_its_make_target_in_the_foreground(self) -> None:
+        """One step runs its make target in the foreground."""
         with tempfile.TemporaryDirectory() as tmp:
             t = EntryTree(tmp)
             result = t.run("run-ci.sh", "go-race")
@@ -76,7 +84,8 @@ class RunCITest(unittest.TestCase):
             self.assertIn("stub: test-go-race", result.stdout)
             self.assertEqual(t.calls("make.calls"), [f"-C {t.tree} --no-print-directory test-go-race"])
 
-    def test_steps_run_side_by_side_and_a_failure_fails_the_run(self):
+    def test_steps_run_side_by_side_and_a_failure_fails_the_run(self) -> None:
+        """Several steps run side by side with their own logs, and one failure fails the run."""
         with tempfile.TemporaryDirectory() as tmp:
             t = EntryTree(tmp)
             result = t.run("run-ci.sh", "lint", "web", "bco", "vuln", FAIL="test-web")
@@ -88,7 +97,8 @@ class RunCITest(unittest.TestCase):
             self.assertEqual(targets, ["lint", "test-bco", "test-web", "vuln"])
             self.assertTrue((t.tree / "output/ci/bco.log").exists())
 
-    def test_without_arguments_every_ci_step_runs(self):
+    def test_without_arguments_every_ci_step_runs(self) -> None:
+        """Without arguments every CI step runs."""
         with tempfile.TemporaryDirectory() as tmp:
             t = EntryTree(tmp)
             result = t.run("run-ci.sh")
@@ -97,7 +107,8 @@ class RunCITest(unittest.TestCase):
             self.assertEqual(targets, ["lint", "test-bco", "test-e2e", "test-firewall", "test-go",
                                        "test-go-race", "test-python", "test-web", "vuln"])
 
-    def test_an_unknown_step_runs_nothing(self):
+    def test_an_unknown_step_runs_nothing(self) -> None:
+        """An unknown step stops the run with exit 2 before any make runs."""
         with tempfile.TemporaryDirectory() as tmp:
             t = EntryTree(tmp)
             result = t.run("run-ci.sh", "go", "nope")
@@ -108,7 +119,10 @@ class RunCITest(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("sha256sum"), "GNU checksum tools required")
 class RunBuildTest(unittest.TestCase):
-    def test_stu_names_the_candidate_after_the_version_with_its_commit_and_profile(self):
+    """run-build.sh builds, names and gates the candidate."""
+
+    def test_stu_names_the_candidate_after_the_version_with_its_commit_and_profile(self) -> None:
+        """The stu step names both packages after the version, with sums, commit, profile and image records."""
         with tempfile.TemporaryDirectory() as tmp:
             t = EntryTree(tmp)
             result = t.run("run-build.sh", "stu", SOUNDTAP_COMMIT="c0ffee", SOUNDTAP_PROFILE="production")
@@ -132,7 +146,8 @@ class RunBuildTest(unittest.TestCase):
             self.assertEqual((dist / "SHA256SUMS").read_text(), "sums\n")
             self.assertEqual((dist / "kernel.config").read_text(), "config\n")
 
-    def test_default_steps_build_then_package_without_reuse(self):
+    def test_default_steps_build_then_package_without_reuse(self) -> None:
+        """Without steps the build runs os then stu, reuses nothing and defaults to alpha."""
         with tempfile.TemporaryDirectory() as tmp:
             t = EntryTree(tmp)
             result = t.run("run-build.sh", SOUNDTAP_COMMIT="c0ffee")
@@ -141,7 +156,8 @@ class RunBuildTest(unittest.TestCase):
             self.assertEqual(t.calls("scripts.calls"), [])
             self.assertEqual((t.tree / "dist/profile").read_text(), "alpha\n")
 
-    def test_reuse_wraps_a_build_that_worked_and_records_nothing_after_a_failure(self):
+    def test_reuse_wraps_a_build_that_worked_and_records_nothing_after_a_failure(self) -> None:
+        """--reuse records the tree after a build that worked and never after a failure."""
         with tempfile.TemporaryDirectory() as tmp:
             t = EntryTree(tmp)
             self.assertEqual(t.run("run-build.sh", "--reuse", "os").returncode, 0)
@@ -151,7 +167,8 @@ class RunBuildTest(unittest.TestCase):
             self.assertNotEqual(t.run("run-build.sh", "--reuse", "os", FAIL="os").returncode, 0)
             self.assertEqual([c.split()[1] for c in t.calls("scripts.calls")], ["auto"])
 
-    def test_gate_runs_two_cells_per_model_on_the_versioned_candidate(self):
+    def test_gate_runs_two_cells_per_model_on_the_versioned_candidate(self) -> None:
+        """The gate runs two cells per model on the versioned candidate."""
         with tempfile.TemporaryDirectory() as tmp:
             t = EntryTree(tmp)
             result = t.run("run-build.sh", "gate", MODELS="wla st300")
@@ -163,7 +180,8 @@ class RunBuildTest(unittest.TestCase):
             self.assertEqual(scenarios.split("=", 1)[1].split(),
                              ["wla/8/some", "wla/9/none", "st300/8/none", "st300/9/some"])
 
-    def test_gate_covers_all_four_models_unless_told_otherwise(self):
+    def test_gate_covers_all_four_models_unless_told_otherwise(self) -> None:
+        """The gate covers all four models unless MODELS says otherwise."""
         with tempfile.TemporaryDirectory() as tmp:
             t = EntryTree(tmp)
             self.assertEqual(t.run("run-build.sh", "gate").returncode, 0)
@@ -172,7 +190,8 @@ class RunBuildTest(unittest.TestCase):
             self.assertEqual(len(cells), 8)
             self.assertEqual(len([c for c in cells if c.endswith("/cut")]), 2)
 
-    def test_unknown_models_and_steps_are_refused(self):
+    def test_unknown_models_and_steps_are_refused(self) -> None:
+        """An unknown model or step is refused before anything runs."""
         with tempfile.TemporaryDirectory() as tmp:
             t = EntryTree(tmp)
             self.assertNotEqual(t.run("run-build.sh", "gate", MODELS="st30").returncode, 0)

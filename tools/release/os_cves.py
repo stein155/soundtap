@@ -21,6 +21,9 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
+from pathlib import Path
+from typing import TextIO
 
 NVD = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 MIN_SCORE = 7.0
@@ -28,17 +31,30 @@ PAGE = 2000
 # NVD allows 5 requests per 30 s without a key and 50 with one.
 PAUSE = (0.7, 6.5)
 METRICS = ("cvssMetricV40", "cvssMetricV31", "cvssMetricV30", "cvssMetricV2")
+ATTEMPTS = 5
+RETRIED = (403, 429, 500, 502, 503, 504)
+HTTP_NOT_FOUND = 404
+ARGV_LENGTH = 2  # the program and the SBOM
 
 
 # Host packages whose output the STU installs: SPL and U-Boot, and the ST20's BCO image.
 SHIPPED_HOST = ("soundtap-bootloaders", "soundtap-bco-app")
 
+# A JSON object as json.load returns it, and an NVD lookup: one page for a CPE from an index.
+Json = dict[str, object]
+Lookup = Callable[[str, int], Json | None]
 
-def shipped(sbom):
-    """The components that end up on the speaker. ValueError when the SBOM cannot be a real build's."""
+
+class MalformedSbomError(ValueError):
+    """The SBOM cannot be a real build's."""
+
+
+def shipped(sbom: object) -> list[Json]:
+    """Return the components that end up on the speaker; raise ValueError when the SBOM cannot be a real build's."""
     comps = sbom.get("components") if isinstance(sbom, dict) else None
     if not isinstance(comps, list):
-        raise ValueError("SBOM has no components list")
+        msg = "SBOM has no components list"
+        raise MalformedSbomError(msg)
     targets, hosts = [], {}
     for comp in comps:
         props = {p["name"]: p["value"] for p in comp.get("properties", [])}
@@ -47,15 +63,17 @@ def shipped(sbom):
         elif props.get("BR_TYPE") == "host" and comp.get("name") in SHIPPED_HOST:
             hosts[comp["name"]] = comp
     if not targets:
-        raise ValueError("SBOM has no target packages")
+        msg = "SBOM has no target packages"
+        raise MalformedSbomError(msg)
     missing = [name for name in SHIPPED_HOST if name not in hosts]
     if missing:
-        raise ValueError(f"SBOM lacks the shipped host packages {', '.join(missing)}")
+        msg = f"SBOM lacks the shipped host packages {', '.join(missing)}"
+        raise MalformedSbomError(msg)
     return targets + list(hosts.values())
 
 
-def packages(sbom):
-    """The shipped packages with a CPE, one per CPE: {cpe: (name, version, bom-ref)}."""
+def packages(sbom: Json) -> dict[str, tuple[str, str, str]]:
+    """Return the shipped packages with a CPE, one per CPE: {cpe: (name, version, bom-ref)}."""
     found = {}
     for comp in shipped(sbom):
         if comp.get("cpe"):
@@ -63,13 +81,13 @@ def packages(sbom):
     return found
 
 
-def uncovered(sbom):
-    """The shipped packages NVD cannot be asked about, because they have no CPE."""
+def uncovered(sbom: Json) -> list[str]:
+    """Return the shipped packages NVD cannot be asked about, because they have no CPE."""
     return sorted({comp["name"] for comp in shipped(sbom) if not comp.get("cpe")})
 
 
-def cleared(sbom):
-    """{package bom-ref: set of CVE ids} that Buildroot ignores for it."""
+def cleared(sbom: Json) -> dict[str, set[str]]:
+    """Return {package bom-ref: set of CVE ids} that Buildroot ignores for it."""
     out = {}
     for vuln in sbom.get("vulnerabilities", []):
         for ref in vuln.get("affects", []):
@@ -77,8 +95,8 @@ def cleared(sbom):
     return out
 
 
-def score(cve):
-    """The CVE's base score, newest CVSS version first; None when NVD has not scored it yet."""
+def score(cve: Json) -> float | None:
+    """Return the CVE's base score, newest CVSS version first; None when NVD has not scored it yet."""
     metrics = cve.get("metrics", {})
     for key in METRICS:
         for metric in metrics.get(key, []):
@@ -86,39 +104,41 @@ def score(cve):
     return None
 
 
-def serious(cve):
-    """An unscored CVE is undecided, so it counts until it is scored or waived."""
+def serious(cve: Json) -> bool:
+    """Return whether the CVE counts: an unscored CVE is undecided, so it counts until it is scored or waived."""
     s = score(cve)
     return s is None or s >= MIN_SCORE
 
 
-def fetch(cpe, start):
+def fetch(cpe: str, start: int) -> Json | None:
+    """Return one page of NVD's CVEs for cpe from start; None when NVD does not know the CPE."""
     query = urllib.parse.urlencode({"cpeName": cpe, "startIndex": start, "resultsPerPage": PAGE})
     # isVulnerable takes no value: only CVEs that make this CPE vulnerable, not ones it merely runs beside.
     req = urllib.request.Request(f"{NVD}?{query}&isVulnerable", headers={"User-Agent": "soundtap-os-cves"})
     key = os.environ.get("NVD_API_KEY")
     if key:
         req.add_header("apiKey", key)
-    for attempt in range(5):
+    for attempt in range(ATTEMPTS):
         try:
             with urllib.request.urlopen(req, timeout=60) as resp:
                 return json.load(resp)
         except urllib.error.HTTPError as err:
             # NVD answers 404 for a CPE name it has never seen. That is not "no CVEs": a
             # CVE with a version range can still cover it, so the package is not checked.
-            if err.code == 404:
+            if err.code == HTTP_NOT_FOUND:
                 return None
-            if attempt == 4 or err.code not in (403, 429, 500, 502, 503, 504):
+            if attempt == ATTEMPTS - 1 or err.code not in RETRIED:
                 raise
         except (urllib.error.URLError, TimeoutError):
-            if attempt == 4:
+            if attempt == ATTEMPTS - 1:
                 raise
         time.sleep(30)
-    raise AssertionError("unreachable")
+    msg = "unreachable"
+    raise AssertionError(msg)
 
 
-def cves(cpe, get=fetch, pause=0.0):
-    """Every non-rejected CVE NVD lists for the CPE, paged; None when NVD does not know the CPE."""
+def cves(cpe: str, get: Lookup = fetch, pause: float = 0.0) -> list[Json] | None:
+    """Return every non-rejected CVE NVD lists for the CPE, paged; None when NVD does not know the CPE."""
     found, start = [], 0
     while True:
         page = get(cpe, start)
@@ -131,7 +151,7 @@ def cves(cpe, get=fetch, pause=0.0):
         time.sleep(pause)
 
 
-def check(sbom, get=fetch, pause=0.0, out=sys.stdout):
+def check(sbom: Json, get: Lookup = fetch, pause: float = 0.0, out: TextIO = sys.stdout) -> int:
     """Print open and cleared CVEs per package; return the number of open ones at MIN_SCORE or above."""
     checked = packages(sbom)  # first: it refuses an SBOM that cannot be a real build's
     ignored = cleared(sbom)
@@ -165,11 +185,12 @@ def check(sbom, get=fetch, pause=0.0, out=sys.stdout):
     return count
 
 
-def main(argv):
-    if len(argv) != 2:
+def main(argv: list[str]) -> int:
+    """Check the SBOM named in argv and return the exit code."""
+    if len(argv) != ARGV_LENGTH:
         print(__doc__.strip(), file=sys.stderr)
         return 2
-    with open(argv[1]) as f:
+    with Path(argv[1]).open() as f:
         try:
             sbom = json.load(f)
             shipped(sbom)

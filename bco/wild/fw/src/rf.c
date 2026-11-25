@@ -114,16 +114,16 @@ struct rfcal rfcal;
 static int rf_measure(unsigned *m)
 {
     unsigned t0;
-    int done;
+    int signalled;
     rf_write(0x38, 0xffff);
     rf_write(0x37, 0x23);
     t0 = REG(R_TIMER);
-    while (!(done = rf_read(0x3a) & 1) && ((REG(R_TIMER) - t0) & 0x3ffffff) < RF_MEAS_WAIT) {
+    while (!(signalled = rf_read(0x3a) & 1) && ((REG(R_TIMER) - t0) & 0x3ffffff) < RF_MEAS_WAIT) {
     }
-    if (done)
+    if (signalled)
         *m = rf_read(0x39);
     rf_write(0x37, 0);
-    return done;
+    return signalled;
 }
 
 /* 5-bit two's-complement-ish magnitude as the calibration readout encodes it. */

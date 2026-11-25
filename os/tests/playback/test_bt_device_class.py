@@ -21,7 +21,10 @@ MINOR_LOUDSPEAKER = 0x05
 
 
 class DeviceClassTest(unittest.TestCase):
-    def test_class_is_audio_video_loudspeaker(self):
+    """The Class in main.conf as bluetoothd reads it."""
+
+    def test_class_is_audio_video_loudspeaker(self) -> None:
+        """main.conf's Class carries major class Audio/Video and minor class Loudspeaker."""
         conf = configparser.ConfigParser()
         conf.read_string(MAIN_CONF.read_text())
         cls = int(conf["General"]["Class"], 0)

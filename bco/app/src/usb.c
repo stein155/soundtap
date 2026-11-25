@@ -62,7 +62,6 @@ void app_main(void)
     hex("MUSB POWER ", MUSB[0x01]);
     hex("MUSB DEVCTL ", MUSB[0x60]);
 #ifdef USB_IRQ
-    unsigned budget = 10000000;
     irq_start();
 #ifdef USB_CONNECT
     /* Step 3: enable the controller interrupts, then connect (stock 0x601c2b74: HSENAB, then
@@ -79,6 +78,7 @@ void app_main(void)
     MUSB[0x01] = 0x20; /* SOFTCONN off again */
     say("USB connect done\r\n");
 #else
+    unsigned budget = 10000000;
     while (!irq_count && --budget) {}
 #endif
     hex("USB IRQ count ", irq_count);

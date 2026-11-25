@@ -12,8 +12,8 @@ import unittest
 from boot.init_script import InitScript
 
 
-def services(setup: str) -> list:
-    """Runs setup, then the shared tail; returns what it started, sorted."""
+def services(setup: str) -> list[str]:
+    """Run setup, then the shared tail; return what it started, sorted."""
     with tempfile.TemporaryDirectory() as d:
         init = InitScript(d)
         init.stub("bt.sh", where=init.opt)
@@ -30,7 +30,10 @@ def services(setup: str) -> list:
 
 
 class InitSharedTail(unittest.TestCase):
-    def test_every_model_starts_bt_and_soundtapd(self):
+    """The shared tail of the init script."""
+
+    def test_every_model_starts_bt_and_soundtapd(self) -> None:
+        """Every model and AirPlay mode starts the same services, bt.sh and soundtapd among them."""
         for model, airplay in (("st10", "scm-ap2"), ("st20", "bco-ap1"), ("st20", "scm-ap2"), ("wla", "scm-ap2")):
             with self.subTest(model=model, airplay=airplay):
                 want = ["avahi-daemon -D", "bt.sh", "dbus-daemon --system --fork", "soundtapd_loop", "start_snapserver"]

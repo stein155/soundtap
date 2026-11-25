@@ -38,7 +38,7 @@ unsigned ring_space(struct ring *r, unsigned c)
     return lim < pos ? r->size - pos : lim - pos;
 }
 
-static unsigned advance(struct ring *r, unsigned at, unsigned n)
+static unsigned advance(const struct ring *r, unsigned at, unsigned n)
 {
     at += n;
     return at >= r->size ? at - r->size : at;

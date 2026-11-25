@@ -18,7 +18,7 @@ static inline int mon_getc(void)
 
 static inline void mon_putc(char c)
 {
-    char s[2] = {c, 0};
+    const char s[2] = {c, 0};
     say(s);
 }
 
@@ -48,12 +48,12 @@ static inline void mon_exec(const char *l)
 {
     const char *p = l;
     char op[3] = {0, 0, 0};
-    unsigned a, n, w = 4;
+    unsigned n;
     for (int i = 0; i < 2 && *p >= 'a' && *p <= 'z'; i++)
         op[i] = *p++;
     if (op[0] == 'r' || op[0] == 'w') {
-        w = op[1] == 'b' ? 1 : op[1] == 'h' ? 2 : 4;
-        a = mon_num(&p) & ~(w - 1); /* aligned: SCTLR.A may be set and there is no abort vector */
+        unsigned w = op[1] == 'b' ? 1 : op[1] == 'h' ? 2 : 4;
+        unsigned a = mon_num(&p) & ~(w - 1); /* aligned: SCTLR.A may be set and there is no abort vector */
         if (op[0] == 'w') {
             unsigned v = mon_num(&p);
             if (w == 1)

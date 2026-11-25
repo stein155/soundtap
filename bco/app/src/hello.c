@@ -9,6 +9,7 @@
 extern void irq_entry(void), fiq_entry(void);
 static volatile unsigned ticks, others, last_other, fiqs;
 
+/* cppcheck-suppress unusedFunction ; app.S calls it */
 void irq_dispatch(void)
 {
     unsigned n = INTC[0x90 / 4];
@@ -24,6 +25,7 @@ void irq_dispatch(void)
 }
 
 /* Only counts: we do not know how a FIQ is acknowledged. Nonzero = mask FIQ on return. */
+/* cppcheck-suppress unusedFunction ; app.S calls it */
 unsigned fiq_dispatch(void)
 {
     return ++fiqs >= 100;
@@ -55,6 +57,7 @@ static void tick(void)
 /* Which way do undef/SWI really go on hardware? (RTOS yield vanished, 2026-10-02) */
 extern void vt_undef(void), vt_swi(void), vt_pabort(void), vt_dabort(void);
 
+/* cppcheck-suppress unusedFunction ; app.S calls it */
 void vt_hit(unsigned kind, unsigned lr)
 {
     hex("vt hit kind ", kind);
@@ -82,6 +85,7 @@ static void vectest(void)
 }
 #endif
 
+/* cppcheck-suppress unusedFunction ; app.S calls it */
 void app_main(void)
 {
     unsigned ahb = ahb_hz();

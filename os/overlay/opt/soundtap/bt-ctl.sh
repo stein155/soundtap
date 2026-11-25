@@ -14,7 +14,7 @@
 # available" and there is nothing for the user to do about it.
 # The FIFO init.d/soundtap drains into syslogd; the file when there is no syslogd.
 LOG=/run/soundtap/log.fifo
-[ -p "$LOG" ] || LOG=/tmp/soundtap.log
+[ -p "${LOG}" ] || LOG=/tmp/soundtap.log
 
 BT_STATE=${BT_STATE:-/var/lib/bluetooth}
 
@@ -37,50 +37,50 @@ command -v bluetoothctl >/dev/null 2>&1 || exit 1
 # newest file is the best guess at the newest phone. Each try is bounded, the list is cut
 # at five, and it stops as soon as anything is connected (a phone may beat us to it).
 # Exits 3 when it called phones and none connected.
-if [ "$cmd" = reconnect ]; then
-	connected() { [ -n "$(bluetoothctl devices Connected </dev/null 2>/dev/null)" ]; } # no bluetoothd = none
+if [ "${cmd}" = reconnect ]; then
+	connected() { [ -n "$(bluetoothctl devices Connected </dev/null 2>/dev/null || true)" ]; } # no bluetoothd = none
 	tried=0
 	# shellcheck disable=SC2045 # ls -t is the ordering; the paths are MAC addresses
-	for info in $(ls -t "$BT_STATE"/*/*/info 2>/dev/null); do # nothing paired yet
+	for info in $(ls -t "${BT_STATE}"/*/*/info 2>/dev/null); do # nothing paired yet
 		connected && exit 0
-		[ "$tried" -lt 5 ] || break
-		grep -q '^Trusted=true' "$info" || continue
+		[ "${tried}" -lt 5 ] || break
+		grep -q '^Trusted=true' "${info}" || continue
 		addr=${info%/info}
 		addr=${addr##*/}
 		tried=$((tried + 1))
-		echo "[bt] reconnect: trying $addr" >>"$LOG"
-		timeout 10 bluetoothctl connect "$addr" </dev/null >>"$LOG" 2>&1
+		echo "[bt] reconnect: trying ${addr}" >>"${LOG}"
+		timeout 10 bluetoothctl connect "${addr}" </dev/null >>"${LOG}" 2>&1
 	done
 	connected && exit 0
-	echo "[bt] reconnect: nothing answered after $tried tries" >>"$LOG"
+	echo "[bt] reconnect: nothing answered after ${tried} tries" >>"${LOG}"
 	# 3: phones were called and none came, so the panel can say it could not connect.
-	[ "$tried" = 0 ] || exit 3
+	[ "${tried}" = 0 ] || exit 3
 	exit 0
 fi
 
 # disconnect: Bluetooth was left a minute ago. Stock drops the idle link then.
-if [ "$cmd" = disconnect ]; then
+if [ "${cmd}" = disconnect ]; then
 	bluetoothctl devices Connected </dev/null 2>/dev/null | while read -r _ addr _; do # no bluetoothd
-		timeout 5 bluetoothctl disconnect "$addr" </dev/null >>"$LOG" 2>&1
+		timeout 5 bluetoothctl disconnect "${addr}" </dev/null >>"${LOG}" 2>&1
 	done
 	exit 0
 fi
 
 # trim: a device connected. Stock keeps eight pairings and forgets the oldest; so do we,
 # by the same newest-first info files, never touching a connected device.
-if [ "$cmd" = trim ]; then
+if [ "${cmd}" = trim ]; then
 	kept=0
 	# shellcheck disable=SC2045 # ls -t is the ordering; the paths are MAC addresses
-	for info in $(ls -t "$BT_STATE"/*/*/info 2>/dev/null); do # nothing paired yet
+	for info in $(ls -t "${BT_STATE}"/*/*/info 2>/dev/null); do # nothing paired yet
 		kept=$((kept + 1))
-		[ "$kept" -gt "${BT_KEEP:-8}" ] || continue
+		[ "${kept}" -gt "${BT_KEEP:-8}" ] || continue
 		addr=${info%/info}
 		addr=${addr##*/}
-		bluetoothctl info "$addr" </dev/null 2>/dev/null | grep -q 'Connected: yes' && continue # no bluetoothd: not connected
-		echo "[bt] pairing list full: forgetting $addr" >>"$LOG"
-		timeout 5 bluetoothctl remove "$addr" </dev/null >>"$LOG" 2>&1
+		bluetoothctl info "${addr}" </dev/null 2>/dev/null | grep -q 'Connected: yes' && continue # no bluetoothd: not connected
+		echo "[bt] pairing list full: forgetting ${addr}" >>"${LOG}"
+		timeout 5 bluetoothctl remove "${addr}" </dev/null >>"${LOG}" 2>&1
 	done
 	exit 0
 fi
 
-printf '%s\n' 'menu player' "$cmd" 'quit' | timeout 5 bluetoothctl >>"$LOG" 2>&1
+printf '%s\n' 'menu player' "${cmd}" 'quit' | timeout 5 bluetoothctl >>"${LOG}" 2>&1

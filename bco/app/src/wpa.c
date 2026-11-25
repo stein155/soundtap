@@ -37,7 +37,7 @@ struct sha1 {
 static uint32_t rol(uint32_t v, unsigned s) { return (v << s) | (v >> (32 - s)); }
 static void sha1_block(struct sha1 *c, const uint8_t *p)
 {
-    uint32_t w[80], a, b, d, e, f, k, t;
+    uint32_t w[80], a, b, d, e;
     unsigned i;
     for (i = 0; i < 16; i++)
         w[i] = (uint32_t)p[4 * i] << 24 | (uint32_t)p[4 * i + 1] << 16 |
@@ -48,6 +48,7 @@ static void sha1_block(struct sha1 *c, const uint8_t *p)
     {
         uint32_t cc = c->h[4];
         for (i = 0; i < 80; i++) {
+            uint32_t f, k;
             if (i < 20)
                 f = (b & d) | (~b & e), k = 0x5a827999;
             else if (i < 40)
@@ -56,7 +57,7 @@ static void sha1_block(struct sha1 *c, const uint8_t *p)
                 f = (b & d) | (b & e) | (d & e), k = 0x8f1bbcdc;
             else
                 f = b ^ d ^ e, k = 0xca62c1d6;
-            t = rol(a, 5) + f + cc + k + w[i];
+            uint32_t t = rol(a, 5) + f + cc + k + w[i];
             cc = e, e = d, d = rol(b, 30), b = a, a = t;
         }
         c->h[0] += a, c->h[1] += b, c->h[2] += d, c->h[3] += e, c->h[4] += cc;

@@ -18,34 +18,39 @@ unshare -n sleep 600 &
 ns=$!
 trap 'kill $ns' EXIT
 sleep 0.2
-spk() { nsenter --net=/proc/$ns/ns/net "$@"; }
+spk() { nsenter --net="/proc/${ns}/ns/net" "$@"; }
 ip link add wlan1 type veth peer name phone
-ip link set wlan1 netns "$ns"
+ip link set wlan1 netns "${ns}"
 ip addr add 192.168.42.10/24 dev phone && ip link set phone up
 spk ip addr add 192.168.42.1/24 dev wlan1
 spk ip link set wlan1 up
 spk ip link set lo up
-spk nft -f "$RULES"
+spk nft -f "${RULES}"
 got() { # port: does the speaker side receive a UDP datagram on it?
 	rm -f /tmp/got
 	spk timeout 3 socat -u "UDP4-RECV:$1,reuseaddr" OPEN:/tmp/got,creat &
 	recv=$!
 	sleep 1
 	echo probe | socat -u - "UDP4-DATAGRAM:$2:$1,broadcast,sp=$3" || true
-	wait "$recv" || true
+	wait "${recv}" || true
 	[ -s /tmp/got ]
 }
 fail=0
-got 67 192.168.42.255 68 && echo "DHCP to 67: accepted" || { echo "DHCP to 67: DROPPED"; fail=1; }
-got 53 192.168.42.1 40000 && echo "DNS to 53: accepted" || { echo "DNS to 53: DROPPED"; fail=1; }
+# shellcheck disable=SC2310 # the probe's status is what this test checks
+{ got 67 192.168.42.255 68 && echo "DHCP to 67: accepted"; } || { echo "DHCP to 67: DROPPED"; fail=1; }
+# shellcheck disable=SC2310 # the probe's status is what this test checks
+{ got 53 192.168.42.1 40000 && echo "DNS to 53: accepted"; } || { echo "DNS to 53: DROPPED"; fail=1; }
+# shellcheck disable=SC2310 # the probe's status is what this test checks
 got 9999 192.168.42.1 40001 && { echo "closed port 9999: accepted"; fail=1; } || echo "closed port 9999: dropped"
+# shellcheck disable=SC2310 # the probe's status is what this test checks
 got 1900 192.168.42.1 40002 && { echo "SSDP before lan-allow: accepted"; fail=1; } || echo "SSDP before lan-allow: dropped"
 mkdir -p /tmp/bin
-printf '#!/bin/sh\nexec nsenter --net=/proc/%s/ns/net nft "$@"\n' "$ns" >/tmp/bin/nft
+printf '#!/bin/sh\nexec nsenter --net=/proc/%s/ns/net nft "$@"\n' "${ns}" >/tmp/bin/nft
 chmod 0755 /tmp/bin/nft
 SOUNDTAP_NFT=/tmp/bin/nft SOUNDTAP_LAN_STATE=/tmp/lan-net \
 	sh "${LAN_ALLOW:-/w/os/overlay/opt/soundtap/lan-allow.sh}" add wlan1 192.168.42.1 24
-got 1900 192.168.42.1 40003 && echo "SSDP from own subnet: accepted" || { echo "SSDP from own subnet: DROPPED"; fail=1; }
+# shellcheck disable=SC2310 # the probe's status is what this test checks
+{ got 1900 192.168.42.1 40003 && echo "SSDP from own subnet: accepted"; } || { echo "SSDP from own subnet: DROPPED"; fail=1; }
 # A host behind a router: its address is not on the speaker's link.
 ip addr add 10.9.9.9/32 dev phone
 spk ip route add 10.9.9.9/32 dev wlan1
@@ -55,8 +60,9 @@ routed() {
 	recv=$!
 	sleep 1
 	echo probe | socat -u - UDP4-DATAGRAM:192.168.42.1:1900,bind=10.9.9.9:40004 || true
-	wait "$recv" || true
+	wait "${recv}" || true
 	[ -s /tmp/got ]
 }
+# shellcheck disable=SC2310 # the probe's status is what this test checks
 routed && { echo "SSDP from a routed address: accepted"; fail=1; } || echo "SSDP from a routed address: dropped"
-exit $fail
+exit "${fail}"

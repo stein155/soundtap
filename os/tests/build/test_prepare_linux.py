@@ -25,6 +25,7 @@ INPUTS = [
     "os/package/soundtap-aic3256-loader/soundtap-aic3256-loader.hash",
     "os/package/soundtap-aic3256-loader/soundtap-aic3256-loader.mk",
 ]
+SHA256_HEX_LENGTH = 64
 STAMPS = [
     ".soundtap-linux-inputs.sha256",
     ".soundtap-linux-dts-inputs.sha256",
@@ -33,7 +34,10 @@ STAMPS = [
 
 
 class PrepareLinuxTest(unittest.TestCase):
-    def setUp(self):
+    """prepare-linux.sh records the input digests only when every input hashes."""
+
+    def setUp(self) -> None:
+        """Create a fake repository holding every input and an empty output directory."""
         self.tmp = tempfile.TemporaryDirectory()
         self.repo = pathlib.Path(self.tmp.name, "repo")
         self.out = pathlib.Path(self.tmp.name, "out")
@@ -43,30 +47,36 @@ class PrepareLinuxTest(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("BR2_arm=y\n" if name.endswith("defconfig") else name + "\n")
 
-    def tearDown(self):
+    def tearDown(self) -> None:
+        """Remove the temporary trees."""
         self.tmp.cleanup()
 
-    def record(self, env=None):
+    def record(self, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+        """Run prepare-linux.sh record on the fake repository."""
         return subprocess.run(
             ["sh", str(SCRIPT), str(self.repo), str(self.out), "record"],
-            env=env, capture_output=True, text=True,
+            check=False, env=env, capture_output=True, text=True,
         )
 
-    def stamps(self):
+    def stamps(self) -> list[str | None]:
+        """Return the content of each stamp, or None for a stamp that does not exist."""
         return [(self.out / s).read_text() if (self.out / s).exists() else None for s in STAMPS]
 
-    def test_record_writes_three_digests(self):
+    def test_record_writes_three_digests(self) -> None:
+        """A record run writes a SHA-256 digest into each of the three stamps."""
         self.assertEqual(self.record().returncode, 0)
-        self.assertTrue(all(s and len(s.strip()) == 64 for s in self.stamps()))
+        self.assertTrue(all(s and len(s.strip()) == SHA256_HEX_LENGTH for s in self.stamps()))
 
-    def test_missing_input_fails_and_keeps_stamps(self):
+    def test_missing_input_fails_and_keeps_stamps(self) -> None:
+        """A missing input fails the run and leaves the earlier stamps as they were."""
         self.assertEqual(self.record().returncode, 0)
         before = self.stamps()
         (self.repo / INPUTS[-1]).unlink()
         self.assertNotEqual(self.record().returncode, 0)
         self.assertEqual(self.stamps(), before)
 
-    def test_failing_hash_command_fails(self):
+    def test_failing_hash_command_fails(self) -> None:
+        """A failing sha256sum fails the run and writes no stamp."""
         shim = pathlib.Path(self.tmp.name, "bin")
         shim.mkdir()
         fake = shim / "sha256sum"

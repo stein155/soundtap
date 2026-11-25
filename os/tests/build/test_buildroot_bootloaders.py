@@ -1,8 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-"""Static contract for os/package/soundtap-bootloaders, the Buildroot build of the SPL and
-U-Boot images the STUs carry.
+"""Static contract for os/package/soundtap-bootloaders, the Buildroot build of the SPL and U-Boot images the STUs carry.
 
 os/bootloader/build-wla-uboot.sh and build-wla-product-spl.sh stay the reference. These
 tests hold the package to them without building anything: the same source archive, the same
@@ -19,30 +18,37 @@ PKG = ROOT / "os/package/soundtap-bootloaders"
 UBOOT_SH = ROOT / "os/bootloader/build-wla-uboot.sh"
 SPL_SH = ROOT / "os/bootloader/build-wla-product-spl.sh"
 VARIANTS = ("st20-spl", "wla-uboot", "wla-spl")
+# The value group of the CONFIG_X=value pattern; the "is not set" pattern has only the name.
+VALUE_GROUP = 2
 
 
-def config(variant):
+def config(variant: str) -> dict[str, str]:
+    """Return the saved .config of variant as a map of option to value, "n" for one not set."""
     out = {}
     for line in (PKG / f"configs/{variant}.config").read_text().splitlines():
         m = re.match(r"^(CONFIG_\w+)=(.*)$", line) or re.match(r"^# (CONFIG_\w+) is not set$", line)
         if m:
-            out[m.group(1)] = m.group(2) if m.lastindex == 2 else "n"
+            out[m.group(1)] = m.group(2) if m.lastindex == VALUE_GROUP else "n"
     return out
 
 
-def unconditional_patches(script):
-    # `git apply /repo/...` at the start of a line runs for every build; the ones behind
-    # `[ ... ] &&` belong to diagnostic or variant builds.
-    return re.findall(r"^\s*git apply (/repo/\S+\.patch)$", script.read_text(), re.M)
+def unconditional_patches(script: Path) -> list[str]:
+    """Return the patches script applies on every build.
+
+    `git apply /repo/...` at the start of a line runs for every build; the ones behind
+    `[ ... ] &&` belong to diagnostic or variant builds.
+    """
+    return re.findall(r"^\s*git apply (/repo/\S+\.patch)$", script.read_text(), re.MULTILINE)
 
 
-def variant_patches(variant):
+def variant_patches(variant: str) -> list[str]:
+    """Return the patches build-variant.sh applies for variant, as /repo/ paths."""
     text = (PKG / "build-variant.sh").read_text()
-    lists = dict(re.findall(r'^(base|spl|uboot)="([^"]*)"$', text, re.M))
+    lists = dict(re.findall(r'^(base|spl|uboot)="([^"]*)"$', text, re.MULTILINE))
     for name in ("spl", "uboot"):
         lists[name] = lists[name].replace("$base", lists["base"])
     cases = {}
-    for labels, value in re.findall(r'^([\w| -]+)\) patches=("[^"]*"|\S+) ;;$', text, re.M):
+    for labels, value in re.findall(r'^([\w| -]+)\) patches=("[^"]*"|\S+) ;;$', text, re.MULTILINE):
         for label in labels.split("|"):
             cases[label.strip()] = value.strip('"')
     value = cases[variant]
@@ -51,18 +57,23 @@ def variant_patches(variant):
     return ["/repo/" + p for p in value.split()]
 
 
-def shell_literal(script, guard):
+def shell_literal(script: Path, guard: str) -> str:
+    """Return the BOOTCOMMAND literal script sets behind guard."""
     return re.search(rf"{re.escape(guard)} && BOOTCOMMAND='([^']*)'", script.read_text()).group(1)
 
 
 class BootloaderPackageTests(unittest.TestCase):
-    def test_same_source_archive_as_mainline(self):
-        pinned = re.search(r"^SHA256=(\w+)$", UBOOT_SH.read_text(), re.M).group(1)
-        self.assertEqual(pinned, re.search(r"^SOURCE_SHA256=(\w+)$", SPL_SH.read_text(), re.M).group(1))
+    """The Buildroot bootloader package builds what the reference scripts build."""
+
+    def test_same_source_archive_as_mainline(self) -> None:
+        """The package pins the same U-Boot archive and version as the reference scripts."""
+        pinned = re.search(r"^SHA256=(\w+)$", UBOOT_SH.read_text(), re.MULTILINE).group(1)
+        self.assertEqual(pinned, re.search(r"^SOURCE_SHA256=(\w+)$", SPL_SH.read_text(), re.MULTILINE).group(1))
         self.assertIn(f"sha256  {pinned}  u-boot-2026.07.tar.bz2", (PKG / "soundtap-bootloaders.hash").read_text())
         self.assertIn("HOST_SOUNDTAP_BOOTLOADERS_VERSION = 2026.07", (PKG / "soundtap-bootloaders.mk").read_text())
 
-    def test_same_patches_as_mainline(self):
+    def test_same_patches_as_mainline(self) -> None:
+        """Each variant applies the same patches as its reference script, and every patch exists."""
         uboot = unconditional_patches(UBOOT_SH)
         spl = unconditional_patches(SPL_SH)
         self.assertEqual(len(uboot), 10)
@@ -74,14 +85,16 @@ class BootloaderPackageTests(unittest.TestCase):
         for p in uboot + spl:
             self.assertTrue((ROOT / p.removeprefix("/repo/")).is_file(), p)
 
-    def test_same_timestamp_and_kcflags(self):
+    def test_same_timestamp_and_kcflags(self) -> None:
+        """The package uses the same source date and KCFLAGS as the reference SPL script."""
         mk = (PKG / "soundtap-bootloaders.mk").read_text()
         self.assertIn("$(BR2_EXTERNAL_SOUNDTAP_PATH)/bootloader/source-date-epoch", mk)
         kcflags = 'KCFLAGS="-DCONFIG_SYS_MMC_MAX_BLK_COUNT=0 -DCONFIG_USB_MAX_CONTROLLER_COUNT=0"'
         self.assertEqual(SPL_SH.read_text().count(kcflags), 2)
         self.assertEqual((PKG / "build-variant.sh").read_text().count(kcflags), 2)
 
-    def test_saved_configs_carry_each_variants_flags(self):
+    def test_saved_configs_carry_each_variants_flags(self) -> None:
+        """Each saved .config carries the options its variant's flags ask for."""
         for v in VARIANTS:
             c = config(v)
             self.assertEqual(c["CONFIG_DEFAULT_DEVICE_TREE"], '"am335x-soundtap-wla"', v)
@@ -110,7 +123,8 @@ class BootloaderPackageTests(unittest.TestCase):
         self.assertEqual(uboot["CONFIG_BOOTCOMMAND"],
                          '"{}"'.format(shell_literal(UBOOT_SH, '[ "${WLA_UBOOT_NAND_BOOT:-}" = 1 ]')))
 
-    def test_profiles_ship_their_images(self):
+    def test_profiles_ship_their_images(self) -> None:
+        """The defconfig enables every variant and post-image.sh ships each image."""
         lines = (ROOT / "os/configs/soundtap_defconfig").read_text().splitlines()
         for name in ("", "_ST20", "_WLA"):
             self.assertIn(f"BR2_PACKAGE_HOST_SOUNDTAP_BOOTLOADERS{name}=y", lines)
@@ -120,9 +134,12 @@ class BootloaderPackageTests(unittest.TestCase):
         self.assertIn('source "$BR2_EXTERNAL_SOUNDTAP_PATH/package/soundtap-bootloaders/Config.in"',
                       (ROOT / "os/package/Config.in").read_text())
 
-    def test_compiler_is_the_mainline_one(self):
-        # Dockerfile.wla-uboot installs bookworm's gcc-arm-linux-gnueabihf; the package pins
-        # the same Debian cross toolchain by version and hash.
+    def test_compiler_is_the_mainline_one(self) -> None:
+        """The package pins the Debian cross toolchain the reference Dockerfile installs.
+
+        Dockerfile.wla-uboot installs bookworm's gcc-arm-linux-gnueabihf; the package pins
+        the same Debian cross toolchain by version and hash.
+        """
         self.assertIn("gcc-arm-linux-gnueabihf", (ROOT / "os/bootloader/Dockerfile.wla-uboot").read_text())
         mk = (PKG / "soundtap-bootloaders.mk").read_text()
         digests = (PKG / "soundtap-bootloaders.hash").read_text()

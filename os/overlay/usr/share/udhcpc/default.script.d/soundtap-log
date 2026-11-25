@@ -23,12 +23,13 @@ LAN_ALLOW=${SOUNDTAP_LAN_ALLOW:-/opt/soundtap/lan-allow.sh}
 case "${1:-}" in
 bound | renew)
 	chmod a+r /etc/resolv.conf 2>/dev/null || true  # no resolv.conf (no DNS in the lease), or root's and already 0664 (ADR 0066): nothing to do
-	[ -z "${ntpsrv:-}" ] || { mkdir -p /run/soundtap && echo "$ntpsrv" >/run/soundtap/ntp-servers; } || true  # lost: clock.sh asks the default servers
-	"$LAN_ALLOW" add "${interface:-}" "${ip:-}" "${subnet:-}" || true ;;  # logs its own failure
+	[ -z "${ntpsrv:-}" ] || { mkdir -p /run/soundtap && echo "${ntpsrv}" >/run/soundtap/ntp-servers; } || true  # lost: clock.sh asks the default servers
+	"${LAN_ALLOW}" add "${interface:-}" "${ip:-}" "${subnet:-}" || true ;;  # logs its own failure
 deconfig)
-	"$LAN_ALLOW" del "${interface:-}" || true ;;
+	"${LAN_ALLOW}" del "${interface:-}" || true ;;
+*) ;;
 esac
 LOG=/run/soundtap/log.fifo
-[ -p "$LOG" ] || LOG=/tmp/soundtap.log
-echo "[dhcp] ${1:-?} ${interface:-?} ${ip:-no address}${lease:+ lease ${lease}s}" >>"$LOG" 2>&1
+[ -p "${LOG}" ] || LOG=/tmp/soundtap.log
+echo "[dhcp] ${1:-?} ${interface:-?} ${ip:-no address}${lease:+ lease ${lease}s}" >>"${LOG}" 2>&1
 exit 0

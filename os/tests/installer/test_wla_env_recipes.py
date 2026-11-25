@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
@@ -19,18 +18,18 @@ Why a text check: the copies are literal arrays in four languages, and two of th
 U-Boot patch) cannot run here. Parsing the declared literals and comparing them byte for byte is
 the one check that covers all four; the filled C result is also run, through `--print-env`.
 
-The Python file is the copy to edit. Run this after changing it; it prints what to paste.
+The Python file is the copy to edit. Run this after changing it; it reports each copy that differs.
 """
-import unittest
 import importlib.util
 import re
-import sys
+import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 
 
-def python_recipes():
+def python_recipes() -> list[str]:
+    """Return the templates as uboot_recipes.py declares them: the copy to edit."""
     spec = importlib.util.spec_from_file_location(
         "wla_env", ROOT / "os" / "support" / "uboot_recipes.py")
     module = importlib.util.module_from_spec(spec)
@@ -38,77 +37,78 @@ def python_recipes():
     return [entry.decode() for entry in module.TEMPLATES]
 
 
-def c_recipes():
+def c_recipes() -> list[str]:
+    """Return the installer's copy (mainline_env_templates in os/installer/module/installer.c)."""
     source = (ROOT / "os/installer/module/installer.c").read_text()
     match = re.search(r"static const char \*const mainline_env_templates\[\] = \{(.*?)\n\};",
-                      source, re.S)
+                      source, re.DOTALL)
     if not match:
-        raise SystemExit("installer.c no longer declares mainline_env_templates[]")
-    entries = []
-    for literal in re.findall(r'((?:\s*"(?:[^"\\]|\\.)*")+)\s*,', match.group(1)):
-        entries.append("".join(
-            part.encode().decode("unicode_escape")
-            for part in re.findall(r'"((?:[^"\\]|\\.)*)"', literal)))
-    return entries
+        msg = "installer.c no longer declares mainline_env_templates[]"
+        raise SystemExit(msg)
+    return [
+        "".join(part.encode().decode("unicode_escape")
+                for part in re.findall(r'"((?:[^"\\]|\\.)*)"', literal))
+        for literal in re.findall(r'((?:\s*"(?:[^"\\]|\\.)*")+)\s*,', match.group(1))
+    ]
 
 
-def uboot_recipes():
-    """U-Boot's copy (rt_env_templates in uboot-2026.07-usb-recovery.patch), which the USB-stick
-    recovery saves when the environment it finds lacks them."""
+def uboot_recipes() -> list[str]:
+    """Return U-Boot's copy (rt_env_templates in uboot-2026.07-usb-recovery.patch).
+
+    The USB-stick recovery saves it when the environment it finds lacks the templates.
+    """
     patch = (ROOT / "os/bootloader/uboot/uboot-2026.07-usb-recovery.patch").read_text()
-    match = re.search(r"^\+static const char \*const rt_env_templates\[\] = \{(.*?)^\+\};", patch, re.S | re.M)
+    match = re.search(r"^\+static const char \*const rt_env_templates\[\] = \{(.*?)^\+\};", patch, re.DOTALL | re.MULTILINE)
     if not match:
-        raise SystemExit("the USB recovery patch no longer declares rt_env_templates[]")
+        msg = "the USB recovery patch no longer declares rt_env_templates[]"
+        raise SystemExit(msg)
     body = "\n".join(line[1:] for line in match.group(1).split("\n"))
-    entries = []
-    for literal in re.findall(r'((?:\s*"(?:[^"\\]|\\.)*")+)\s*,', body):
-        entries.append("".join(
-            part.encode().decode("unicode_escape")
-            for part in re.findall(r'"((?:[^"\\]|\\.)*)"', literal)))
-    return entries
+    return [
+        "".join(part.encode().decode("unicode_escape")
+                for part in re.findall(r'"((?:[^"\\]|\\.)*)"', literal))
+        for literal in re.findall(r'((?:\s*"(?:[^"\\]|\\.)*")+)\s*,', body)
+    ]
 
 
-def go_recipes():
-    """soundtapd's copy (internal/flash/recipes.go), which /api/firmware writes when it
-    replaces the boot chain."""
+def go_recipes() -> list[str]:
+    """Return soundtapd's copy (internal/flash/recipes.go).
+
+    /api/firmware writes it when it replaces the boot chain.
+    """
     source = (ROOT / "app" / "internal" / "flash" / "recipes.go").read_text()
-    match = re.search(r"var mainlineTemplates = \[\]string\{(.*?)\n\}", source, re.S)
+    match = re.search(r"func mainlineTemplates\(\) \[\]string \{\n\treturn \[\]string\{(.*?)\n\t\}", source, re.DOTALL)
     if not match:
-        raise SystemExit("recipes.go no longer declares mainlineTemplates")
-    entries = []
-    for literal in re.findall(r'((?:\s*"(?:[^"\\]|\\.)*"\s*\+?)+)\s*,', match.group(1)):
-        entries.append("".join(
-            part.encode().decode("unicode_escape")
-            for part in re.findall(r'"((?:[^"\\]|\\.)*)"', literal)))
-    return entries
+        msg = "recipes.go no longer declares mainlineTemplates"
+        raise SystemExit(msg)
+    return [
+        "".join(part.encode().decode("unicode_escape")
+                for part in re.findall(r'"((?:[^"\\]|\\.)*)"', literal))
+        for literal in re.findall(r'((?:\s*"(?:[^"\\]|\\.)*"\s*\+?)+)\s*,', match.group(1))
+    ]
 
 
-def main():
-    wanted = python_recipes()
-    status = 0
-    for where, have in (("installer.c", c_recipes()), ("recipes.go", go_recipes()),
-                        ("uboot-2026.07-usb-recovery.patch", uboot_recipes())):
-        if wanted == have:
-            print(f"{where} carries all {len(wanted)} recipe templates byte for byte")
-            continue
-        status = 1
-        report(where, wanted, have)
-    return status
-
-
-def report(where, wanted, have):
-    print(f"{where} and uboot_recipes.py disagree:", file=sys.stderr)
+def report(where: str, wanted: list[str], have: list[str]) -> str:
+    """Return the templates on which ``where`` and uboot_recipes.py disagree, one pair per index."""
+    lines = [f"{where} and uboot_recipes.py disagree:"]
     for index in range(max(len(wanted), len(have))):
         a = wanted[index] if index < len(wanted) else "<missing>"
         b = have[index] if index < len(have) else "<missing>"
         if a != b:
-            print(f"  [{index}] python: {a[:90]}", file=sys.stderr)
-            print(f"       {where}: {b[:90]}", file=sys.stderr)
+            lines.append(f"  [{index}] python: {a[:90]}")
+            lines.append(f"       {where}: {b[:90]}")
+    return "\n".join(lines)
 
 
 class Check(unittest.TestCase):
-    def test_check(self):
-        self.assertEqual(main(), 0)
+    """Every copy of the U-Boot recipe templates equals uboot_recipes.py."""
+
+    def test_check(self) -> None:
+        """installer.c, recipes.go and the USB recovery patch carry every template byte for byte."""
+        wanted = python_recipes()
+        for where, have in (("installer.c", c_recipes()), ("recipes.go", go_recipes()),
+                            ("uboot-2026.07-usb-recovery.patch", uboot_recipes())):
+            with self.subTest(where=where):
+                self.assertTrue(wanted == have, report(where, wanted, have))
 
 
 if __name__ == "__main__":

@@ -26,7 +26,7 @@
   "copyFail": "Markér og kopiér",
   "br.intro": "Denne side beder en SoundTouch, der stadig bruger Boses software, om at hente SoundTap fra SoundTaps opdateringsserver og installere det. Højttaleren bliver på dit Wi-Fi og klarer selv arbejdet; efter cirka fire minutter genstarter den som SoundTap.",
   "br.ip": "Højttalerens IP-adresse",
-  "br.ipHint": "I Bose-appen: Indstillinger, Højttalerindstillinger, din højttaler, Om. Eller find den i din router.",
+  "br.ipHint": "I Bose-appen: Indstillinger, Indstillinger for højttaler, din højttaler, Om. Eller find den i din router.",
   "br.previewAgree": "Denne model er en forhåndsversion: SoundTap er lavet ud fra Boses egen software, og ingen har prøvet det på denne model endnu. Den spiller måske ikke, og vejen tilbage er måske ikke bevist. Jeg installerer det alligevel.",
   "br.go": "Installér SoundTap",
   "br.pickModel": "Vælg først din højttaler i trin 1.",

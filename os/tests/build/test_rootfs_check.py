@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
+"""Tests for rootfs_check.py, the contract every root filesystem image meets, and for the boot scripts it checks."""
+
 import importlib.util
 import os
-import subprocess
 import struct
+import subprocess
 import tempfile
 import time
 import unittest
@@ -16,13 +18,15 @@ check = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(check)
 
 
-def write(path, data=b"x", executable=False):
+def write(path: Path, data: bytes | bytearray = b"x", *, executable: bool = False) -> None:
+    """Write data to path, creating its directory, with mode 0755 or 0644."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
     path.chmod(0o755 if executable else 0o644)
 
 
-def fixture(root):
+def fixture(root: str | Path) -> Path:
+    """Fill root with a minimal alpha root filesystem that passes the check, and return it."""
     root = Path(root)
     write(root / "bin/busybox", executable=True)
     (root / "sbin").mkdir()
@@ -30,20 +34,20 @@ def fixture(root):
     elf[:6] = b"\x7fELF\x01\x01"
     struct.pack_into("<H", elf, 18, 40)
     for name in check.EXECUTABLES:
-        write(root / name, elf if name in ("opt/soundtap/soundtapd", "usr/bin/ffmpeg") else b"#!/bin/sh\n", True)
+        write(root / name, elf if name in ("opt/soundtap/soundtapd", "usr/bin/ffmpeg") else b"#!/bin/sh\n", executable=True)
     # Snapcast built with FLAC names libFLAC in its dynamic section (ADR 0013).
     for name in ("usr/bin/snapserver", "usr/bin/snapclient"):
-        write(root / name, bytes(elf) + b"\0libFLAC.so.12\0", True)
+        write(root / name, bytes(elf) + b"\0libFLAC.so.12\0", executable=True)
     write(root / "usr/lib/libFLAC.so.12", elf)
     write(root / "etc/init.d/gadget-console",
-          b"#!/bin/sh\nmount -t proc proc /proc\ncat /proc/cmdline\n", True)
+          b"#!/bin/sh\nmount -t proc proc /proc\ncat /proc/cmdline\n", executable=True)
     for name in check.BUSYBOX_APPLETS:
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        os.symlink("/bin/busybox", path)
-    write(root / "usr/sbin/wpa_passphrase", b"#!/bin/sh\n", True)
+        path.symlink_to("/bin/busybox")
+    write(root / "usr/sbin/wpa_passphrase", b"#!/bin/sh\n", executable=True)
     write(root / "usr/sbin/dropbear", executable=True)
-    write(root / "opt/soundtap/ssh.sh", b"#!/bin/sh\ndropbear -B -r key -p 22\n", True)
+    write(root / "opt/soundtap/ssh.sh", b"#!/bin/sh\ndropbear -B -r key -p 22\n", executable=True)
     write(root / "etc/shadow", b"root::0:0:99999:7:::\n")
     (root / "mnt/nv").mkdir(parents=True)
     write(root / "etc/soundtap-build-epoch", b"1787443200\n")
@@ -71,12 +75,12 @@ def fixture(root):
           b"snapclient --player file:filename=/dev/null --mixer none\n"
           b'SNAPCLIENT_SOUNDCARD=shelby\nSNAPCLIENT_SOUNDCARD=plughw:0,0\n'
           b"SNAPCLIENT_SAMPLEFORMAT='48000:16:*'\nSOUNDTAP_SNAPCLIENT_ID=\"soundtap-$snap_mac\"\n"
-          b"snapclient --player alsa --soundcard \"$SNAPCLIENT_SOUNDCARD\" --mixer none "
-          b"--hostID \"$SOUNDTAP_SNAPCLIENT_ID\" tcp://127.0.0.1:1704\n", True)
+          b'snapclient --player alsa --soundcard "$SNAPCLIENT_SOUNDCARD" --mixer none '
+          b'--hostID "$SOUNDTAP_SNAPCLIENT_ID" tcp://127.0.0.1:1704\n', executable=True)
     # soundtapd's own user and its helper (ADR 0066), as mkusers and soundtapd.mk leave them.
     write(root / "etc/passwd", b"root:x:0:0::/root:/bin/sh\nsoundtapd:x:1006:1006::/home/soundtapd:/bin/false\n")
     write(root / "etc/group", b"root:x:0:\naudio:x:29:airplay,soundtapd\nsoundtapd:x:1006:\n")
-    write(root / "usr/bin/soundtap-root", elf, True)
+    write(root / "usr/bin/soundtap-root", elf, executable=True)
     write(root / "etc/dbus-1/system.d/soundtapd.conf", b'<busconfig><policy user="soundtapd"></policy></busconfig>\n')
     write(root / "etc/shairport-sync.conf",
           b'general = { service_type = "airplay2"; };\n'
@@ -87,31 +91,40 @@ def fixture(root):
           b'pcm.busfile { type file slave.pcm "null" file "/run/soundtap/source.pcm" format "raw" }\n'
           b'pcm.!default { type plug slave { pcm "busfile" format S16_LE rate 48000 channels 2 } }\n')
     write(root / "etc/snapserver.conf",
-          b'[server]\ndatadir = /run/soundtap/snapserver\nmdns_enabled = false\n[http]\nenabled = false\n'
-          b'[tcp-control]\nenabled = true\nbind_to_address = 127.0.0.1\nport = 1705\n'
-          b'[tcp-streaming]\nbind_to_address = 0.0.0.0\nport = 1704\n[stream]\n'
-          b'source = pipe:///run/soundtap/snapcast.pcm?name=SoundTap&sampleformat=46875:16:2&codec=flac:1&chunk_ms=20\n'
-          b'buffer = 1000\n')
+          b"[server]\ndatadir = /run/soundtap/snapserver\nmdns_enabled = false\n[http]\nenabled = false\n"
+          b"[tcp-control]\nenabled = true\nbind_to_address = 127.0.0.1\nport = 1705\n"
+          b"[tcp-streaming]\nbind_to_address = 0.0.0.0\nport = 1704\n[stream]\n"
+          b"source = pipe:///run/soundtap/snapcast.pcm?name=SoundTap&sampleformat=46875:16:2&codec=flac:1&chunk_ms=20\n"
+          b"buffer = 1000\n")
     return root
 
 
 class RootfsCheckTest(unittest.TestCase):
-    def test_env_fallback_file_is_refused(self):
+    """rootfs_check.py accepts a good image and refuses each broken rule."""
+
+    def test_env_fallback_file_is_refused(self) -> None:
+        """An image carrying a U-Boot environment fallback file is refused."""
         with tempfile.TemporaryDirectory() as tmp:
             check.validate_no_env_fallback(tmp)
-            os.makedirs(os.path.join(tmp, "etc"))
-            open(os.path.join(tmp, "etc/u-boot-initial-env"), "w").close()
+            Path(tmp, "etc").mkdir(parents=True)
+            Path(tmp, "etc/u-boot-initial-env").open("w").close()
             with self.assertRaises(SystemExit):
                 check.validate_no_env_fallback(tmp)
 
-    def test_st20_rear_usb_is_routed_to_the_scm(self):
-        # Stock microbswitch drives microbsel high with a host cable in; low, usb0 sees no VBUS.
+    def test_st20_rear_usb_is_routed_to_the_scm(self) -> None:
+        """The ST20's rear USB is routed to the SCM.
+
+        Stock microbswitch drives microbsel high with a host cable in; low, usb0 sees no VBUS.
+        """
         dts = (ROOT / "os/board/common/dts/ti/omap/am335x-soundtap-st20.dts").read_text()
         hog = dts[dts.index("microbsel-hog {"):]
         self.assertIn("output-high;", hog[:hog.index("};")])
 
-    def test_st20_bco_gets_its_clock(self):
-        # Without clkout1 (xdma_event_intr0, MODE3) the BCO never enumerates from a ROM boot.
+    def test_st20_bco_gets_its_clock(self) -> None:
+        """The ST20's BCO gets its clock from the device tree and, at once, from the SPL.
+
+        Without clkout1 (xdma_event_intr0, MODE3) the BCO never enumerates from a ROM boot.
+        """
         dts = (ROOT / "os/board/common/dts/ti/omap/am335x-soundtap-st20.dts").read_text()
         group = dts[dts.index("power_control_pins:"):]
         self.assertIn("AM33XX_PADCONF(0x9b0, 0x00, MUX_MODE3)", group[:group.index("};")])
@@ -124,32 +137,36 @@ class RootfsCheckTest(unittest.TestCase):
         self.assertLess(restart.index("SETDATAOUT: BCO off"), restart.index("CLEARDATAOUT: BCO on"))
         self.assertIn("+\t\tspl_bco_restart();", spl[spl.index("+\tspl_clocks();\n \ttimer_init();"):])
 
-    def test_spl_watchdog_runs_off_the_rc_oscillator(self):
-        # CLK_32KHZ comes from the PER DPLL; a stall with that DPLL down must still reset.
+    def test_spl_watchdog_runs_off_the_rc_oscillator(self) -> None:
+        """The SPL's watchdog runs off the RC oscillator.
+
+        CLK_32KHZ comes from the PER DPLL; a stall with that DPLL down must still reset.
+        """
         spl = (ROOT / "os/bootloader/uboot/uboot-2026.07-spl-board.patch").read_text()
         start = spl[spl.index("static void spl_watchdog_start(void)"):]
         self.assertLess(start.index("writel(0x0, 0x44e00538);"), start.index("WSPR start sequence"))
 
-    def test_clock_sync_waits_for_route_retries_and_saves(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
+    def test_clock_sync_waits_for_route_retries_and_saves(self) -> None:
+        """The clock sync waits for a route, retries NTP, saves the clock and leaves ntpd running."""
+        with tempfile.TemporaryDirectory() as tmp_name:
+            tmp = Path(tmp_name)
             state = tmp / "state"
             state.mkdir()
-            write(tmp / "ip", b'''#!/bin/sh
+            write(tmp / "ip", b"""#!/bin/sh
 n=$(cat "$STATE/ip" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"$STATE/ip"
 [ "$n" -ge 2 ] && echo "default via 192.0.2.1 dev wlan0"
-''', True)
-            write(tmp / "timeout", b'#!/bin/sh\nshift\nexec "$@"\n', True)
-            write(tmp / "ntpd", b'''#!/bin/sh
+""", executable=True)
+            write(tmp / "timeout", b'#!/bin/sh\nshift\nexec "$@"\n', executable=True)
+            write(tmp / "ntpd", b"""#!/bin/sh
 case " $* " in *" -q "*) ;; *) echo "$*" >"$STATE/daemon"; exit 0 ;; esac
 n=$(cat "$STATE/ntpd" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"$STATE/ntpd"
 [ "$n" -lt 2 ] || touch "$STATE/synced"
-''', True)
-            write(tmp / "date", b'''#!/bin/sh
+""", executable=True)
+            write(tmp / "date", b"""#!/bin/sh
 [ "$1" != +%Y ] || { [ -e "$STATE/synced" ] && echo 2026 || echo 1970; }
-''', True)
-            write(tmp / "sleep", b'#!/bin/sh\nexit 0\n', True)
-            write(tmp / "save-clock", b'#!/bin/sh\nprintf "%s\\n" "$1" >"$STATE/save"\n', True)
+""", executable=True)
+            write(tmp / "sleep", b"#!/bin/sh\nexit 0\n", executable=True)
+            write(tmp / "save-clock", b'#!/bin/sh\nprintf "%s\\n" "$1" >"$STATE/save"\n', executable=True)
             env = os.environ | {
                 "PATH": f"{tmp}:{os.environ['PATH']}",
                 "STATE": str(state),
@@ -180,7 +197,8 @@ n=$(cat "$STATE/ntpd" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"$STATE/n
                 time.sleep(0.1)
             self.assertIn("-n -p time.cloudflare.com", daemon)
 
-    def test_crash_loop_reboots_only_while_u_boot_counts(self):
+    def test_crash_loop_reboots_only_while_u_boot_counts(self) -> None:
+        """A soundtapd crash loop reboots only while U-Boot's boot count can still fall back."""
         init = (ROOT / "os/overlay/etc/init.d/soundtap").read_text()
         loop = init.split("soundtapd_loop() {", 1)[1].split("\n}\n", 1)[0]
         self.assertIn('[ "$fails" -ge 5 ] && [ -n "$CRASH_REBOOT" ]', loop)
@@ -190,36 +208,39 @@ n=$(cat "$STATE/ntpd" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"$STATE/n
         armed = init.split('if [ "$count" -le 9 ]; then', 1)[1].split("else", 1)[0]
         self.assertIn("CRASH_REBOOT=1", armed)
 
-    def test_clock_logic_lives_in_clock_sh(self):
+    def test_clock_logic_lives_in_clock_sh(self) -> None:
+        """The init script takes its clock logic from clock.sh."""
         init = (ROOT / "os/overlay/etc/init.d/soundtap").read_text()
         self.assertIn(". /opt/soundtap/clock.sh", init)
         self.assertNotIn("ntpd -n -q", init)
 
-    def test_rejects_an_image_that_still_carries_wifi_sh(self):
+    def test_rejects_an_image_that_still_carries_wifi_sh(self) -> None:
+        """An image that still carries wifi.sh is refused."""
         with tempfile.TemporaryDirectory() as tmp:
             root = fixture(tmp)
-            write(root / "opt/soundtap/wifi.sh", b"#!/bin/sh\n", True)
+            write(root / "opt/soundtap/wifi.sh", b"#!/bin/sh\n", executable=True)
             with self.assertRaisesRegex(SystemExit, "soundtapd owns Wi-Fi"):
                 check.validate(root)
 
-    def test_clock_retries_after_dhcp_until_ntp_succeeds(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
+    def test_clock_retries_after_dhcp_until_ntp_succeeds(self) -> None:
+        """The background clock sync retries NTP until it succeeds."""
+        with tempfile.TemporaryDirectory() as tmp_name:
+            tmp = Path(tmp_name)
             state = tmp / "state"
             state.mkdir()
-            write(tmp / "ip", b'#!/bin/sh\necho "default via 192.0.2.1 dev wlan0"\n', True)
-            write(tmp / "timeout", b'#!/bin/sh\nshift\nexec "$@"\n', True)
-            write(tmp / "ntpd", b'''#!/bin/sh
+            write(tmp / "ip", b'#!/bin/sh\necho "default via 192.0.2.1 dev wlan0"\n', executable=True)
+            write(tmp / "timeout", b'#!/bin/sh\nshift\nexec "$@"\n', executable=True)
+            write(tmp / "ntpd", b"""#!/bin/sh
 case " $* " in *" -q "*) ;; *) exit 0 ;; esac
 n=$(cat "$STATE/ntpd" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"$STATE/ntpd"
 [ "$n" -lt 4 ] || touch "$STATE/synced"
 [ "$n" -ge 4 ]
-''', True)
-            write(tmp / "date", b'''#!/bin/sh
+""", executable=True)
+            write(tmp / "date", b"""#!/bin/sh
 [ "$1" != +%Y ] || { [ -e "$STATE/synced" ] && echo 2026 || echo 1970; }
-''', True)
-            write(tmp / "sleep", b'#!/bin/sh\nexit 0\n', True)
-            write(tmp / "save-clock", b'#!/bin/sh\ntouch "$STATE/save"\n', True)
+""", executable=True)
+            write(tmp / "sleep", b"#!/bin/sh\nexit 0\n", executable=True)
+            write(tmp / "save-clock", b'#!/bin/sh\ntouch "$STATE/save"\n', executable=True)
             env = os.environ | {
                 "PATH": f"{tmp}:{os.environ['PATH']}",
                 "STATE": str(state),
@@ -233,51 +254,60 @@ n=$(cat "$STATE/ntpd" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"$STATE/n
             )
             self.assertEqual((state / "ntpd").read_text().strip(), "4")
 
-    def test_rejects_image_without_mnt_nv(self):
+    def test_rejects_image_without_mnt_nv(self) -> None:
+        """An image without /mnt/nv is refused."""
         with tempfile.TemporaryDirectory() as tmp:
             fixture(tmp)
             (Path(tmp) / "mnt/nv").rmdir()
             with self.assertRaisesRegex(SystemExit, "mnt/nv"):
                 check.validate(tmp)
 
-    def test_rejects_snapcast_built_without_flac(self):
-        # The group stream is FLAC (ADR 0013): an old follower's snapclient exits at its header.
+    def test_rejects_snapcast_built_without_flac(self) -> None:
+        """Snapcast built without FLAC is refused.
+
+        The group stream is FLAC (ADR 0013): an old follower's snapclient exits at its header.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             root = fixture(tmp)
-            write(root / "usr/bin/snapclient", b"\x7fELF no flac here", True)
+            write(root / "usr/bin/snapclient", b"\x7fELF no flac here", executable=True)
             with self.assertRaisesRegex(SystemExit, "snapclient is not linked with libFLAC"):
                 check.validate(root)
 
-    def test_rejects_image_without_libflac(self):
+    def test_rejects_image_without_libflac(self) -> None:
+        """An image without libFLAC is refused."""
         with tempfile.TemporaryDirectory() as tmp:
             root = fixture(tmp)
             (root / "usr/lib/libFLAC.so.12").unlink()
             with self.assertRaisesRegex(SystemExit, "libFLAC missing"):
                 check.validate(root)
 
-    def test_gadget_console_mounts_proc_before_reading_cmdline(self):
+    def test_gadget_console_mounts_proc_before_reading_cmdline(self) -> None:
+        """The shipped gadget-console mounts proc before it reads the command line."""
         script = (ROOT / "os/overlay/etc/init.d/gadget-console").read_text()
         self.assertLess(script.index("mount -t proc"), script.index("/proc/cmdline"))
 
-    def test_rejects_gadget_console_reading_cmdline_first(self):
+    def test_rejects_gadget_console_reading_cmdline_first(self) -> None:
+        """A gadget-console that reads the command line before mounting proc is refused."""
         with tempfile.TemporaryDirectory() as tmp:
             write(Path(tmp) / "etc/init.d/gadget-console",
-                  b"#!/bin/sh\ncat /proc/cmdline\nmount -t proc proc /proc\n", True)
+                  b"#!/bin/sh\ncat /proc/cmdline\nmount -t proc proc /proc\n", executable=True)
             with self.assertRaisesRegex(SystemExit, "before mounting proc"):
                 check.validate_gadget_console(tmp)
 
-    def test_rejects_gadget_console_without_rndis(self):
+    def test_rejects_gadget_console_without_rndis(self) -> None:
+        """The shipped gadget-console brings up RNDIS on usb0 with its address."""
         script = (ROOT / "os/overlay/etc/init.d/gadget-console").read_text()
-        for required in ('functions/rndis.usb0', 'ln -sf "$G/functions/rndis.usb0"',
-                         'ip addr add 192.168.7.2/24 dev usb0', 'ip link set usb0 up'):
+        for required in ("functions/rndis.usb0", 'ln -sf "$G/functions/rndis.usb0"',
+                         "ip addr add 192.168.7.2/24 dev usb0", "ip link set usb0 up"):
             self.assertIn(required, script)
 
-    def test_spotify_new_pause_resets_grace_period(self):
+    def test_spotify_new_pause_resets_grace_period(self) -> None:
+        """A new Spotify pause restarts the grace period before the source is released."""
         script = ROOT / "os/overlay/opt/soundtap/spotify-source.sh"
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
+        with tempfile.TemporaryDirectory() as tmp_name:
+            tmp = Path(tmp_name)
             calls = tmp / "calls"
-            write(tmp / "wget", b'#!/bin/sh\nprintf "%s\\n" "$*" >>"$CALLS"\n', True)
+            write(tmp / "wget", b'#!/bin/sh\nprintf "%s\\n" "$*" >>"$CALLS"\n', executable=True)
             env = os.environ | {
                 "PATH": f"{tmp}:{os.environ['PATH']}",
                 "CALLS": str(calls),
@@ -298,7 +328,8 @@ n=$(cat "$STATE/ntpd" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"$STATE/n
             subprocess.run(["sleep", "2"], check=True)            # t=7: after the second
             self.assertEqual(len(calls.read_text().splitlines()), 1)
 
-    def test_source_build_includes_snapcast_packages_and_overlay(self):
+    def test_source_build_includes_snapcast_packages_and_overlay(self) -> None:
+        """The build includes Snapcast with FLAC, without snapweb, and its quiet configuration."""
         runtime = (ROOT / "os/package/soundtap-runtime/Config.in").read_text()
         self.assertIn("select BR2_PACKAGE_SOUNDTAP_SNAPCAST", runtime)
         snapcast = (ROOT / "os/package/soundtap-snapcast/soundtap-snapcast.mk").read_text()
@@ -315,17 +346,21 @@ n=$(cat "$STATE/ntpd" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"$STATE/n
         self.assertIn("select BR2_PACKAGE_FLAC",
                       (ROOT / "os/package/soundtap-snapcast/Config.in").read_text())
 
-    def test_init_announces_the_bus_rate_and_keeps_the_flac_codec(self):
-        # start_snapserver rewrites the rate in the shipped configuration; run its sed on it.
+    def test_init_announces_the_bus_rate_and_keeps_the_flac_codec(self) -> None:
+        """The init script announces the bus rate and keeps the FLAC codec.
+
+        start_snapserver rewrites the rate in the shipped configuration; run its sed on it.
+        """
         init = (ROOT / "os/overlay/etc/init.d/soundtap").read_text()
-        line = next(l for l in init.splitlines() if 'sed "s|sampleformat=' in l)
+        line = next(text_line for text_line in init.splitlines() if 'sed "s|sampleformat=' in text_line)
         expr = line.split('"')[1].replace("$snap_rate", "48000")
         out = subprocess.run(["sed", expr, str(ROOT / "os/overlay/etc/snapserver.conf")],
                              check=True, capture_output=True, text=True).stdout
         self.assertIn("?name=SoundTap&sampleformat=48000:16:2&codec=flac:1&chunk_ms=20\n", out)
         self.assertNotIn("46875", out)
 
-    def test_source_build_includes_bluetooth_runtime(self):
+    def test_source_build_includes_bluetooth_runtime(self) -> None:
+        """The build includes the Bluetooth runtime on the ST10's UART only."""
         runtime = (ROOT / "os/package/soundtap-runtime/Config.in").read_text()
         self.assertIn("select BR2_PACKAGE_BLUEZ5_UTILS", runtime)
         self.assertIn("select BR2_PACKAGE_BLUEZ_ALSA", runtime)
@@ -335,22 +370,29 @@ n=$(cat "$STATE/ntpd" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"$STATE/n
         self.assertNotIn("/dev/ttyO1", bt)
         self.assertNotIn("/dev/ttyS1", bt)
 
-    def test_wla_hardware_defaults_are_fail_closed(self):
+    def test_wla_hardware_defaults_are_fail_closed(self) -> None:
+        """The WLA's hardware defaults fail closed in the init script."""
         init = (ROOT / "os/overlay/etc/init.d/soundtap").read_text()
         self.assertIn("binky) PROC_MODEL=wla", init)
         self.assertIn('stock_modules="snd-binky wakeup-source"', init)
         self.assertIn('elif [ "${MODEL:-st10}" = "wla" ]; then', init)
 
-    def test_the_init_script_starts_soundtapd_as_its_own_user(self):
-        # The real script, not the fixture's lines: soundtap-root first, soundtapd through it.
+    def test_the_init_script_starts_soundtapd_as_its_own_user(self) -> None:
+        """The init script starts soundtapd as its own user.
+
+        The real script, not the fixture's lines: soundtap-root first, soundtapd through it.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             root = fixture(tmp)
             (root / "etc/init.d/soundtap").write_bytes((ROOT / "os/overlay/etc/init.d/soundtap").read_bytes())
             check.validate_soundtapd_user(root)
 
-    def test_the_accounts_come_from_the_filesystems_own_tree(self):
-        # output/target has no users from users.txt; only the copy mkfs packs does
-        # (images/rootfs-tree). image-check passes that tree as accounts.
+    def test_the_accounts_come_from_the_filesystems_own_tree(self) -> None:
+        """The accounts come from the filesystem's own tree.
+
+        output/target has no users from users.txt; only the copy mkfs packs does
+        (images/rootfs-tree). image-check passes that tree as accounts.
+        """
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as fs:
             root = fixture(tmp)
             for name in ("etc/passwd", "etc/group"):
@@ -361,7 +403,8 @@ n=$(cat "$STATE/ntpd" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"$STATE/n
                 check.validate_soundtapd_user(root)
             check.validate_soundtapd_user(root, accounts=fs)
 
-    def test_soundtapd_never_runs_as_root(self):
+    def test_soundtapd_never_runs_as_root(self) -> None:
+        """Each way soundtapd could end up running as root is refused."""
         cases = {
             "no soundtapd user": lambda r: (r / "etc/passwd").write_text("root:x:0:0::/root:/bin/sh\n"),
             "apart from root": lambda r: (r / "etc/passwd").write_text("soundtapd:x:0:0::/:/bin/false\n"),
@@ -384,11 +427,13 @@ n=$(cat "$STATE/ntpd" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"$STATE/n
                 with self.assertRaisesRegex(SystemExit, message):
                     check.validate(root)
 
-    def test_valid_contract(self):
+    def test_valid_contract(self) -> None:
+        """The fixture image passes the check."""
         with tempfile.TemporaryDirectory() as tmp:
             check.validate(fixture(tmp))
 
-    def test_rejects_a_special_builtin_writability_probe(self):
+    def test_rejects_a_special_builtin_writability_probe(self) -> None:
+        """A writability probe through a special built-in is refused."""
         with tempfile.TemporaryDirectory() as tmp:
             root = fixture(tmp)
             init = root / "etc/init.d/soundtap"
@@ -398,41 +443,48 @@ n=$(cat "$STATE/ntpd" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"$STATE/n
             with self.assertRaisesRegex(SystemExit, "probes /mnt/nv with"):
                 check.validate(root)
 
-    def test_follows_absolute_and_relative_links_inside_the_root(self):
+    def test_follows_absolute_and_relative_links_inside_the_root(self) -> None:
+        """Absolute and relative links are followed inside the root."""
         with tempfile.TemporaryDirectory() as tmp:
             root = fixture(tmp)
-            os.remove(root / "usr/sbin/udhcpd")
-            os.symlink("../../bin/busybox", root / "usr/sbin/udhcpd")
+            (root / "usr/sbin/udhcpd").unlink()
+            (root / "usr/sbin/udhcpd").symlink_to("../../bin/busybox")
             check.validate(root)
-            os.remove(root / "usr/sbin/udhcpd")
-            os.symlink("/bin/other", root / "usr/sbin/udhcpd")
+            (root / "usr/sbin/udhcpd").unlink()
+            (root / "usr/sbin/udhcpd").symlink_to("/bin/other")
             with self.assertRaises(SystemExit):
                 check.validate(root)
 
-    def test_rejects_kernel_modules(self):
+    def test_rejects_kernel_modules(self) -> None:
+        """An image carrying a kernel module is refused."""
         with tempfile.TemporaryDirectory() as tmp:
             root = fixture(tmp)
             write(root / "lib/modules/6.12/foo.ko")
             with self.assertRaises(SystemExit):
                 check.validate(root)
 
-    def test_accepts_the_st300_cpsw_modules(self):
+    def test_accepts_the_st300_cpsw_modules(self) -> None:
+        """The ST300's CPSW modules are accepted."""
         with tempfile.TemporaryDirectory() as tmp:
             root = fixture(tmp)
             write(root / "lib/modules/6.12/kernel/drivers/net/ethernet/ti/ti_cpsw_new.ko")
             write(root / "lib/modules/6.12/kernel/drivers/phy/ti/phy-gmii-sel.ko")
             check.validate(root)
 
-    def test_rejects_a_rootfs_without_ssh(self):
+    def test_rejects_a_rootfs_without_ssh(self) -> None:
+        """An alpha image without dropbear is refused."""
         with tempfile.TemporaryDirectory() as tmp:
             root = fixture(tmp)
             (root / "usr/sbin/dropbear").unlink()
             with self.assertRaisesRegex(SystemExit, "no dropbear"):
                 check.validate(root)
 
-    # A blank password only lets anyone in if dropbear is told to accept one; the
-    # two have to be configured together or the speaker is quietly unreachable.
-    def test_rejects_ssh_that_refuses_the_blank_password(self):
+    def test_rejects_ssh_that_refuses_the_blank_password(self) -> None:
+        """SSH that refuses the blank password is refused.
+
+        A blank password only lets anyone in if dropbear is told to accept one; the
+        two have to be configured together or the speaker is quietly unreachable.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             root = fixture(tmp)
             ssh = root / "opt/soundtap/ssh.sh"
@@ -440,31 +492,34 @@ n=$(cat "$STATE/ntpd" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"$STATE/n
             with self.assertRaisesRegex(SystemExit, "blank-password"):
                 check.validate(root)
 
-    def test_rejects_a_locked_root_account(self):
+    def test_rejects_a_locked_root_account(self) -> None:
+        """An alpha image with a locked root account is refused."""
         with tempfile.TemporaryDirectory() as tmp:
             root = fixture(tmp)
             write(root / "etc/shadow", b"root:!:19000:0:99999:7:::\n")
             with self.assertRaisesRegex(SystemExit, "blank"):
                 check.validate(root)
 
-    def test_production_rejects_alpha_ssh(self):
+    def test_production_rejects_alpha_ssh(self) -> None:
+        """A production image with alpha's SSH is refused."""
         with tempfile.TemporaryDirectory() as tmp, self.assertRaisesRegex(SystemExit, "production rootfs contains dropbear"):
             check.validate_ssh_policy(fixture(tmp), profile="production")
 
-    def production(self, tmp):
+    def production(self, tmp: str) -> Path:
+        """Fill tmp with a production root filesystem that passes the SSH policy, and return it."""
         root = fixture(tmp)
         (root / "usr/sbin/dropbear").unlink()
         write(root / "etc/shadow", b"root:!:19000:0:99999:7:::\n")
         (root / "opt/soundtap/ssh.sh").unlink()
         write(root / "etc/soundtap/profile", b"production\n")
-        write(root / "usr/sbin/nft", b"#!/bin/sh\n")
-        os.chmod(root / "usr/sbin/nft", 0o755)
+        write(root / "usr/sbin/nft", b"#!/bin/sh\n", executable=True)
         write(root / "etc/soundtap/firewall.nft", (ROOT / "os/board/rootfs/firewall.nft").read_bytes())
         write(root / "etc/inittab", b"::sysinit:/usr/sbin/nft -f /etc/soundtap/firewall.nft\n"
               b"::sysinit:/etc/init.d/gadget-console\n::sysinit:/etc/init.d/soundtap\n")
         return root
 
-    def test_production_refuses_a_package_that_may_not_be_redistributed(self):
+    def test_production_refuses_a_package_that_may_not_be_redistributed(self) -> None:
+        """Production refuses a package that may not be redistributed."""
         config = (ROOT / "os/configs/soundtap_defconfig").read_text()
         config += (ROOT / "os/configs/production.fragment").read_text()
         check.validate_redistributable(config)
@@ -475,12 +530,16 @@ n=$(cat "$STATE/ntpd" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"$STATE/n
             with self.assertRaisesRegex(SystemExit, "closed-thing"):
                 check.validate_redistributable(config + "BR2_PACKAGE_CLOSED_THING=y\n", root=Path(tmp))
 
-    def test_production_accepts_no_ssh_and_locked_root(self):
+    def test_production_accepts_no_ssh_and_locked_root(self) -> None:
+        """Production accepts an image without SSH and with root locked."""
         with tempfile.TemporaryDirectory() as tmp:
             check.validate_ssh_policy(self.production(tmp), profile="production")
 
-    # Not the server alone: nothing SSH, nor a script or filter rule that would bring it back (ADR 0119).
-    def test_production_rejects_any_ssh_leftover(self):
+    def test_production_rejects_any_ssh_leftover(self) -> None:
+        """Production refuses any SSH leftover.
+
+        Not the server alone: nothing SSH, nor a script or filter rule that would bring it back (ADR 0119).
+        """
         leftovers = {
             "usr/bin/dbclient": b"", "usr/bin/dropbearkey": b"", "root/.ssh/authorized_keys": b"",
             "etc/avahi/services/ssh.service": b"",
@@ -499,8 +558,11 @@ n=$(cat "$STATE/ntpd" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"$STATE/n
             with self.assertRaisesRegex(SystemExit, "opens port 22"):
                 check.validate_ssh_policy(root, profile="production")
 
-    # The input filter has to be in place before gadget-console brings up usb0 (ADR 0066).
-    def test_production_loads_the_input_filter_first(self):
+    def test_production_loads_the_input_filter_first(self) -> None:
+        """Production loads the default-deny input filter first.
+
+        The input filter has to be in place before gadget-console brings up usb0 (ADR 0066).
+        """
         with tempfile.TemporaryDirectory() as tmp:
             root = self.production(tmp)
             write(root / "etc/inittab", b"::sysinit:/etc/init.d/gadget-console\n"
@@ -511,7 +573,8 @@ n=$(cat "$STATE/ntpd" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"$STATE/n
             with self.assertRaisesRegex(SystemExit, "default-deny"):
                 check.validate_ssh_policy(root, profile="production")
 
-    def test_production_rejects_the_gadget_shell(self):
+    def test_production_rejects_the_gadget_shell(self) -> None:
+        """Production refuses a root shell on the USB gadget console."""
         with tempfile.TemporaryDirectory() as tmp:
             root = fixture(tmp)
             (root / "usr/sbin/dropbear").unlink()
@@ -522,7 +585,8 @@ n=$(cat "$STATE/ntpd" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"$STATE/n
             with self.assertRaisesRegex(SystemExit, "gadget a root shell"):
                 check.validate_ssh_policy(root, profile="production")
 
-    def test_rejects_provisioned_wifi_in_production(self):
+    def test_rejects_provisioned_wifi_in_production(self) -> None:
+        """An image carrying a build-time Wi-Fi profile is refused."""
         with tempfile.TemporaryDirectory() as tmp:
             root = fixture(tmp)
             write(root / "etc/soundtap-wifi.conf", b"SSID_B64=dGVzdA==\nPSK_B64=dGVzdA==\n")
@@ -530,7 +594,8 @@ n=$(cat "$STATE/ntpd" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"$STATE/n
                 check.validate(root)
 
 
-    def test_snapserver_falls_back_from_read_only_storage_and_bounds_restarts(self):
+    def test_snapserver_falls_back_from_read_only_storage_and_bounds_restarts(self) -> None:
+        """The init script falls back from read-only storage, disables snapserver then, and leaves restarts to soundtapd."""
         init = (ROOT / "os/overlay/etc/init.d/soundtap").read_text()
         self.assertIn('ubiattach -m "$PERSIST_MTD" -O 2048 -d 1 /dev/ubi_ctrl', init)
         self.assertNotIn("ubiattach /dev/ubi_ctrl -m 10", init)
@@ -550,14 +615,16 @@ n=$(cat "$STATE/ntpd" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"$STATE/n
         self.assertIn("SOUNDTAP_SNAPSERVER_CONF=/run/soundtap/snapserver.conf", init)
         self.assertNotIn("supervise snapserver", init)
 
-    def test_rejects_airplay_without_forced_ap2(self):
+    def test_rejects_airplay_without_forced_ap2(self) -> None:
+        """AirPlay without AirPlay 2 forced is refused."""
         with tempfile.TemporaryDirectory() as tmp:
             root = fixture(tmp)
             (root / "etc/shairport-sync.conf").write_text('general = { service_type = "auto"; };\n')
             with self.assertRaisesRegex(SystemExit, "AirPlay configuration contract"):
                 check.validate(root)
 
-    def test_rejects_unbounded_airplay_fifo_buffer(self):
+    def test_rejects_unbounded_airplay_fifo_buffer(self) -> None:
+        """AirPlay without its bounded buffer is refused."""
         with tempfile.TemporaryDirectory() as tmp:
             root = fixture(tmp)
             config = root / "etc/shairport-sync.conf"

@@ -30,17 +30,17 @@ static int is_eth(unsigned n)
 
 void usblink_rx(unsigned ch, const unsigned char *p, unsigned n)
 {
-    static unsigned char rsp[MGMT_MAX];
     if (ch == BCOLINK_CH_WIFI)
         mgmt_taken++; /* every one, taken or dropped: the driver's credit counts them all */
     if (ch == BCOLINK_CH_CTRL) {
+        static unsigned char rsp[MGMT_MAX];
         unsigned m = mgmt_handle(p, n, rsp);
         netcard_mgmt++;
         if (!m || usblink_send(BCOLINK_CH_CTRL, rsp, m))
             netcard_dropped++;
-    } else if (ch == BCOLINK_CH_WIFI && is_eth(n) && !radio_tx_eth(p, n)) {
+    } else if (ch == BCOLINK_CH_WIFI && is_eth(n) && !radio_tx_eth(p, n)) { /* cppcheck-suppress knownConditionTrueFalse ; the weak stub fails, wifi.c replaces it */
         netcard_to_wifi++;
-    } else if (ch == BCOLINK_CH_WIRED && is_eth(n) && !wired_tx_eth(p, n)) {
+    } else if (ch == BCOLINK_CH_WIRED && is_eth(n) && !wired_tx_eth(p, n)) { /* cppcheck-suppress knownConditionTrueFalse ; the weak stub fails, wired.c replaces it */
         netcard_to_wired++;
     } else {
         netcard_dropped++;
@@ -73,6 +73,7 @@ void netcard_flow_poll(void)
 
 extern void fault_undef(void), fault_swi(void), fault_pabort(void), fault_dabort(void);
 
+/* cppcheck-suppress unusedFunction ; app.S calls it */
 void app_fault(unsigned kind, unsigned lr, unsigned spsr)
 {
     unsigned far, fsr;

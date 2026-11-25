@@ -23,45 +23,46 @@ NTP_PUBLIC="time.cloudflare.com time.google.com"
 # address; # starts a comment. The input is data: a word ntpd could take for an option
 # (-S runs a script) is dropped.
 ntp_names() {
+	# shellcheck disable=SC2020 # both blanks become a newline; the repeat spells that out for every tr
 	sed 's/#.*//' | tr -s ' \t' '\n\n' | grep -E '^[A-Za-z0-9][A-Za-z0-9.:-]*$'
 }
 
 # ntp_fallback prints the servers asked after the lease's: the owner's, else the default.
 ntp_fallback() {
-	own=$([ -r "$NTP_SERVERS" ] && ntp_names <"$NTP_SERVERS") # no file: the default
-	if [ -n "$own" ]; then
-		printf '%s\n' "$own"
+	own=$([ -r "${NTP_SERVERS}" ] && ntp_names <"${NTP_SERVERS}") # no file: the default
+	if [ -n "${own}" ]; then
+		printf '%s\n' "${own}"
 		return 0
 	fi
-	[ -z "$NTP_VENDOR_ZONE" ] || printf '%s.%s ' 0 "$NTP_VENDOR_ZONE" 1 "$NTP_VENDOR_ZONE" 2 "$NTP_VENDOR_ZONE"
-	printf '%s\n' "$NTP_PUBLIC"
+	[ -z "${NTP_VENDOR_ZONE}" ] || printf '%s.%s ' 0 "${NTP_VENDOR_ZONE}" 1 "${NTP_VENDOR_ZONE}" 2 "${NTP_VENDOR_ZONE}"
+	printf '%s\n' "${NTP_PUBLIC}"
 }
 
 # ntp_peers prints ntpd's -p arguments: the lease's servers first, then the fallback.
 ntp_peers() {
-	lease=$([ -r "$DHCP_NTP" ] && ntp_names <"$DHCP_NTP") # no file: no lease named one
-	for s in $lease $(ntp_fallback); do
-		printf -- '-p %s ' "$s"
+	lease=$([ -r "${DHCP_NTP}" ] && ntp_names <"${DHCP_NTP}") # no file: no lease named one
+	for s in ${lease} $(ntp_fallback); do
+		printf -- '-p %s ' "${s}"
 	done
 	echo
 }
 
 credible_clock() {
 	year=$(date +%Y)
-	[ "$year" -ge 2020 ]
+	[ "${year}" -ge 2020 ]
 }
 
 sync_clock() {
 	waited=0
 	while ! ip route | grep -q '^default'; do
-		[ "$waited" -ge "${CLOCK_ROUTE_WAIT_SECONDS:-90}" ] && return 1
+		[ "${waited}" -ge "${CLOCK_ROUTE_WAIT_SECONDS:-90}" ] && return 1
 		waited=$((waited + 1))
 		sleep 1
 	done
 
 	for _ in 1 2 3; do
 		# shellcheck disable=SC2046 # one argument per word
-		if timeout 20 ntpd -n -q $(ntp_peers) && credible_clock; then
+		if timeout 20 ntpd -n -q $(ntp_peers || true) && credible_clock; then
 			return 0
 		fi
 		sleep 2
@@ -73,15 +74,15 @@ sync_clock() {
 # of uptime do not drift the alarm and the standby clock. Started once: the sync after a
 # Wi-Fi join runs again on every rejoin.
 keep_clock() {
-	pid=$(cat "$NTPD_PID" 2>/dev/null) # not started yet
-	[ -n "$pid" ] && [ "$(cat "/proc/$pid/comm" 2>/dev/null)" = ntpd ] && return 0 # gone = restart it
+	pid=$(cat "${NTPD_PID}" 2>/dev/null) # not started yet
+	[ -n "${pid}" ] && [ "$(cat "/proc/${pid}/comm" 2>/dev/null || true)" = ntpd ] && return 0 # gone = restart it
 	# Two syncs can finish together (the one after a Wi-Fi join and init's); the mkdir is the
 	# claim, so only one of them starts the daemon.
-	mkdir "$NTPD_PID.claim" 2>/dev/null || return 0
+	mkdir "${NTPD_PID}.claim" 2>/dev/null || return 0
 	# shellcheck disable=SC2046 # one argument per word
-	ntpd -n $(ntp_peers) </dev/null >/dev/null 2>&1 &
-	echo $! >"$NTPD_PID"
-	rmdir "$NTPD_PID.claim"
+	ntpd -n $(ntp_peers || true) </dev/null >/dev/null 2>&1 &
+	echo $! >"${NTPD_PID}"
+	rmdir "${NTPD_PID}.claim"
 }
 
 # clocksync.Path: the standby clock and the alarm trust the clock only once this exists.
@@ -89,10 +90,10 @@ CLOCK_SYNCED=${CLOCK_SYNCED:-/run/soundtap/clock-synced}
 
 sync_clock_and_save() {
 	sync_clock || return 1
-	touch "$CLOCK_SYNCED" 2>/dev/null || true # no /run/soundtap: nothing reads it either
+	touch "${CLOCK_SYNCED}" 2>/dev/null || true # no /run/soundtap: nothing reads it either
 	keep_clock
 	save_action=${CLOCK_SAVE_ACTION:-/etc/init.d/soundtap}
-	[ ! -x "$save_action" ] || "$save_action" save-clock
+	[ ! -x "${save_action}" ] || "${save_action}" save-clock
 }
 
 # Keep retrying after a successful DHCP lease: route can precede usable DNS/WAN.
@@ -100,13 +101,13 @@ sync_clock_and_save() {
 # and each call must not leave another loop running for good.
 CLOCK_RETRY_PID=${CLOCK_RETRY_PID:-/run/soundtap-clock-retry.pid}
 sync_clock_in_background() {
-	pid=$(cat "$CLOCK_RETRY_PID" 2>/dev/null) # none yet
-	[ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && return 0 # gone: start a new one
+	pid=$(cat "${CLOCK_RETRY_PID}" 2>/dev/null) # none yet
+	[ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null && return 0 # gone: start a new one
 	(
 		while ! sync_clock_and_save; do
 			sleep "${CLOCK_RETRY_SECONDS:-60}"
 		done
-		rm -f "$CLOCK_RETRY_PID"
+		rm -f "${CLOCK_RETRY_PID}"
 	) &
-	echo $! >"$CLOCK_RETRY_PID"
+	echo $! >"${CLOCK_RETRY_PID}"
 }

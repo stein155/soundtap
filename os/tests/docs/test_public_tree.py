@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-"""The tree that goes public names nothing of the maintainer's home, and neither its docs nor the
-text files the image ships cite anything of the private history.
+"""The tree that goes public names nothing of the maintainer's home and cites no private history.
 
-The public repository starts from one commit of this tree, so a commit hash or a pull request
+Neither its docs nor the text files the image ships cite anything of the private history. The public repository starts from one commit of this tree, so a commit hash or a pull request
 number of the private repository points at nothing there, and hardware evidence names the
 tested artifact (version and SHA-256) or the date and model instead. The maintainer's
 identifiers are listed here only as SHA-256 digests, so this test does not publish them.
@@ -14,6 +13,7 @@ import ipaddress
 import re
 import subprocess
 import unittest
+from collections.abc import Iterator
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -68,7 +68,7 @@ COMMIT_REFS = (
     re.compile(r"\(" + HEX + r"[,)]"),
     re.compile(r"(?<![\w:])" + HEX + r",? 20\d\d-\d\d-\d\d"),
 )
-GIT_HISTORY = re.compile(r"\bgit history\b", re.I)
+GIT_HISTORY = re.compile(r"\bgit history\b", re.IGNORECASE)
 # A template's example, not a reference.
 PR_EXAMPLES = {".github/PULL_REQUEST_TEMPLATE.md"}
 # The image ships these trees: the rootfs overlay, and the board's scripts, device trees and
@@ -77,20 +77,22 @@ PR_EXAMPLES = {".github/PULL_REQUEST_TEMPLATE.md"}
 SHIPPED = ("os/overlay/", "os/board/")
 
 
-def tracked():
+def tracked() -> list[str]:
+    """Return the tracked files of the tree."""
     return subprocess.run(["git", "ls-files"], cwd=ROOT, check=True, capture_output=True,
                           text=True).stdout.splitlines()
 
 
-def text_of(path):
+def text_of(path: str) -> str | None:
+    """Return the UTF-8 text of the tracked file `path`, or None when it is not a readable text file."""
     try:
         return (ROOT / path).read_text(encoding="utf-8")
     except (UnicodeDecodeError, IsADirectoryError, FileNotFoundError):
         return None
 
 
-def candidates(text):
-    """Every string in text that could be one of the identifiers, in their digest form."""
+def candidates(text: str) -> set[str]:
+    """Return every string in text that could be one of the identifiers, in their digest form."""
     low = text.lower()
     found = set()
     for word in WORD.findall(low):
@@ -101,8 +103,8 @@ def candidates(text):
     return found
 
 
-def shipped_text_files():
-    """(path, text) of every tracked text file under SHIPPED but the Markdown and the patches."""
+def shipped_text_files() -> Iterator[tuple[str, str]]:
+    """Yield (path, text) of every tracked text file under SHIPPED but the Markdown and the patches."""
     for path in tracked():
         if not path.startswith(SHIPPED) or path.endswith((".md", ".patch")):
             continue
@@ -111,12 +113,14 @@ def shipped_text_files():
             yield path, text
 
 
-def owner_identifiers(text):
+def owner_identifiers(text: str) -> list[str]:
+    """Return the strings in `text` whose digest is one of the maintainer's identifiers."""
     return sorted(c for c in candidates(text)
                   if hashlib.sha256(c.encode()).hexdigest() in OWNER_DIGESTS)
 
 
-def home_lan_addresses(text):
+def home_lan_addresses(text: str) -> list[str]:
+    """Return the IPv4 addresses in `text` that lie in the maintainer's home LAN."""
     hits = []
     for addr in IPV4.findall(text):
         try:
@@ -127,8 +131,8 @@ def home_lan_addresses(text):
     return hits
 
 
-def prose(text):
-    """Markdown outside fenced blocks and inline code spans."""
+def prose(text: str) -> str:
+    """Return the Markdown outside fenced blocks and inline code spans."""
     out, fence = [], False
     for line in text.splitlines():
         if re.match(r"^ {0,3}(`{3,}|~{3,})", line):
@@ -139,9 +143,11 @@ def prose(text):
     return "\n".join(out)
 
 
-def history_refs(text):
-    """Pull request numbers, commit hashes and pointers into git history in a Markdown text,
-    or in a script or config file, where a `...` span is left out as in Markdown."""
+def history_refs(text: str) -> list[str]:
+    """Return the pull request numbers, commit hashes and pointers into git history in a text.
+
+    The text is Markdown, or a script or config file, where a `...` span is left out as in Markdown.
+    """
     hits = [f"#{n}" for n in PR_REF.findall(prose(text))]
     for rx in COMMIT_REFS:
         hits += [h for h in rx.findall(text)
@@ -151,7 +157,10 @@ def history_refs(text):
 
 
 class PublicTreeTest(unittest.TestCase):
-    def test_no_owner_identifiers(self):
+    """The tracked tree is fit to publish."""
+
+    def test_no_owner_identifiers(self) -> None:
+        """No tracked file names or holds one of the maintainer's identifiers."""
         found = {}
         for path in tracked():
             text = text_of(path)
@@ -162,7 +171,8 @@ class PublicTreeTest(unittest.TestCase):
         self.assertEqual(found, {}, "the maintainer's serials, MACs, SSID, hosts or "
                          "addresses: use SERIAL0000000000A, 02:00:00:xx:xx:xx, 192.0.2.x")
 
-    def test_no_home_lan_addresses(self):
+    def test_no_home_lan_addresses(self) -> None:
+        """No tracked file names or holds an address of the maintainer's home LAN."""
         found = {}
         for path in tracked():
             hits = home_lan_addresses(path + "\n" + (text_of(path) or ""))
@@ -171,7 +181,8 @@ class PublicTreeTest(unittest.TestCase):
         self.assertEqual(found, {}, "the maintainer's home LAN: use 192.0.2.x, or 10.0.1.x "
                          "where a test needs a private address")
 
-    def test_docs_cite_no_private_history(self):
+    def test_docs_cite_no_private_history(self) -> None:
+        """No Markdown file cites a pull request, commit or the git history of the private repository."""
         found = {}
         for path in tracked():
             if not path.endswith(".md"):
@@ -184,7 +195,8 @@ class PublicTreeTest(unittest.TestCase):
         self.assertEqual(found, {}, "name hardware evidence by artifact version and SHA-256, "
                          "or by date and model, and say what a PR did instead of its number")
 
-    def test_shipped_files_cite_no_private_history(self):
+    def test_shipped_files_cite_no_private_history(self) -> None:
+        """No text file the image ships cites a pull request, commit or the git history."""
         found = {}
         for path, text in shipped_text_files():
             hits = history_refs(text)
@@ -193,14 +205,16 @@ class PublicTreeTest(unittest.TestCase):
         self.assertEqual(found, {}, "a comment in a file the image ships says what a change did, "
                          "not its PR number or commit; hardware evidence by date and model")
 
-    def test_shipped_files_are_the_image_text(self):
+    def test_shipped_files_are_the_image_text(self) -> None:
+        """The shipped files are the overlay and board text files, without patches and Markdown."""
         paths = {path for path, _ in shipped_text_files()}
         self.assertIn("os/overlay/etc/init.d/soundtap", paths)
         self.assertIn("os/board/rootfs/post-build.sh", paths)
         self.assertIn("os/overlay/opt/soundtap/wifi.conf.sample", paths)
         self.assertFalse([p for p in paths if p.endswith((".patch", ".md"))])
 
-    def test_the_checks_catch_what_they_are_for(self):
+    def test_the_checks_catch_what_they_are_for(self) -> None:
+        """The checks find home addresses and history references and pass placeholders and syntax."""
         home = str(HOME_LAN.network_address + 12)
         self.assertEqual(home_lan_addresses(f"leader {home}, router 192.168.1.1"), [home])
         self.assertEqual(home_lan_addresses("leader 10.0.1.12, doc 192.0.2.12"), [])
@@ -214,7 +228,7 @@ class PublicTreeTest(unittest.TestCase):
                                       "SHA-256 `95f04731…dedc7c5c`, "
                                       "0.1.0 sha256:1a2b3c4d 2026-11-15, build 2026-11-14"), [])
         # Shell and device-tree syntax is not a reference; a comment that cites one is.
-        self.assertEqual(history_refs('#!/bin/sh\n[ $# -ge 2 ] || n=${#list}\n'
+        self.assertEqual(history_refs("#!/bin/sh\n[ $# -ge 2 ] || n=${#list}\n"
                                       "#address-cells = <1>;\n# from owner/repo#12\n"), [])
         self.assertEqual(history_refs("# Fixed in #2292; see commit 4e5fa7f7.\n"),
                          ["#2292", "4e5fa7f7"])

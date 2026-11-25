@@ -21,6 +21,7 @@ SHEBANG = re.compile(rb"#!.*[/ ](ba|a|da)?sh( |$)")
 
 
 def scripts(root: Path) -> list[str]:
+    """Return the tracked shell scripts under root, by name or shebang, without submodules or vendored modules."""
     listed = subprocess.run(["git", "-C", str(root), "ls-files", "-s", "-z"],
                             capture_output=True, check=True).stdout
     out = []
@@ -47,6 +48,7 @@ def scripts(root: Path) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
+    """Write the shell scripts of the repository root in argv[1], NUL-separated, to stdout."""
     root = Path(argv[1] if len(argv) > 1 else Path(__file__).resolve().parents[2])
     sys.stdout.write("".join(f"{p}\0" for p in scripts(root)))
     return 0

@@ -7,20 +7,27 @@
 import sys
 from pathlib import Path
 
+USAGE_ARGC = 2
+
 
 def main() -> None:
-    tree = Path(sys.argv[1]) if len(sys.argv) == 2 else Path(".")
+    """Check the WLA device tree is the default, in arch/arm/dts and in its Makefile."""
+    tree = Path(sys.argv[1]) if len(sys.argv) == USAGE_ARGC else Path()
     config = (tree / ".config").read_text()
     if 'CONFIG_DEFAULT_DEVICE_TREE="am335x-soundtap-wla"' not in config.splitlines():
-        raise SystemExit("WLA default device tree missing")
+        msg = "WLA default device tree missing"
+        raise SystemExit(msg)
     if "# CONFIG_OF_UPSTREAM is not set" not in config.splitlines():
-        raise SystemExit("WLA DTS must use arch/arm/dts")
+        msg = "WLA DTS must use arch/arm/dts"
+        raise SystemExit(msg)
     dts = tree / "arch/arm/dts/am335x-soundtap-wla.dts"
     if not dts.is_file():
-        raise SystemExit(f"WLA DTS missing: {dts}")
+        msg = f"WLA DTS missing: {dts}"
+        raise SystemExit(msg)
     makefile = (dts.parent / "Makefile").read_text()
     if "dtb-y += am335x-soundtap-wla.dtb" not in makefile:
-        raise SystemExit("WLA DTS missing from arch/arm/dts/Makefile")
+        msg = "WLA DTS missing from arch/arm/dts/Makefile"
+        raise SystemExit(msg)
     print("WLA U-Boot DTS path/config passed")
 
 

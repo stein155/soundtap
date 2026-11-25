@@ -19,6 +19,7 @@ import sys
 import threading
 import zlib
 from pathlib import Path
+from types import ModuleType
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "os/installer/module"
@@ -28,18 +29,23 @@ KERNEL_PARTITION = 0x500000
 ROOTFS_PARTITION = 0x6000000
 ENV_PARTITION = 0x20000
 ENV_SIZE = 0x2000
+UIMAGE_MAGIC = b"\x27\x05\x19\x56"
 
 
-def load_uboot_env():
+def load_uboot_env() -> ModuleType:
+    """Load os/support/uboot_env.py."""
     spec = importlib.util.spec_from_file_location("uboot_env", ROOT / "os" / "support" / "uboot_env.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-def written_env(flash: Path, bootloaders: bool):
-    """The entries the install left and the problems with their format: with our boot chain the
-    redundant environment, both copies (ADR 0010); without it Bose's single 8 KiB copy."""
+def written_env(flash: Path, *, bootloaders: bool) -> tuple[list[bytes], list[str]]:
+    """Return the entries the install left and the problems with their format.
+
+    With our boot chain the redundant environment, both copies (ADR 0010); without it Bose's
+    single 8 KiB copy.
+    """
     uboot_env = load_uboot_env()
     primary = (flash / "NAND.U-Boot-Env").read_bytes()
     try:
@@ -62,19 +68,21 @@ def written_env(flash: Path, bootloaders: bool):
     return entries, problems
 
 
-def gate_bose_uboot():
+def gate_bose_uboot() -> bytes:
+    """Return the offline gate's stand-in for stock's U-Boot."""
     return load_gate().bose_uboot()
 
 
-def load_gate():
+def load_gate() -> ModuleType:
+    """Load the offline installer gate, whose helpers the dry run shares."""
     spec = importlib.util.spec_from_file_location("wla_gate", GATE)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-def stock_stream(package: Path):
-    """Everything stock hands the installer: the package after module 1's header and payload."""
+def stock_stream(package: Path) -> bytes:
+    """Return everything stock hands the installer: the package after module 1's header and payload."""
     spec = importlib.util.spec_from_file_location("stu_check", ROOT / "os/support/stu_check.py")
     stu_check = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(stu_check)
@@ -92,7 +100,8 @@ def stock_stream(package: Path):
 FACTORY_BYTES_USED = 6321
 
 
-def blank_environment(bootcmd=b"bootcmd=run nand_boot;"):
+def blank_environment(bootcmd: bytes = b"bootcmd=run nand_boot;") -> bytes:
+    """Return a Bose-format mtd5 as full as a factory one, with no vendor entries in it."""
     entries = b"\x00".join([
         b"baudrate=115200", bootcmd,
         b"nand_args2=run bootargs_defaults;setenv bootargs ${bootargs} ubi.mtd=9,2048",
@@ -110,7 +119,8 @@ def blank_environment(bootcmd=b"bootcmd=run nand_boot;"):
             + b"\xff" * (ENV_PARTITION - ENV_SIZE))
 
 
-def prepare_flash(root: Path, bootloaders: bool):
+def prepare_flash(root: Path, *, bootloaders: bool) -> None:
+    """Write the partition files the installer writes into, stock's U-Boot among them when it replaces it."""
     (root / "NAND.Kernel-Pong").write_bytes(b"\x00" * KERNEL_PARTITION)
     (root / "NAND.File-System-Pong").write_bytes(b"\x00" * ROOTFS_PARTITION)
     (root / "NAND.U-Boot-Env").write_bytes(blank_environment())
@@ -122,9 +132,12 @@ def prepare_flash(root: Path, bootloaders: bool):
             (root / name).write_bytes(b"\x00" * 0x20000)
 
 
-def build(work: Path, bootloaders: bool, gate, preview=False):
-    """Reuse the gate's compiler handling: the host one where there is one, a pinned container
-    on a runner that only has Docker. preview builds the preview package's installer (ADR 0133)."""
+def build(work: Path, gate: ModuleType, *, bootloaders: bool, preview: bool = False) -> Path:
+    """Build the installer for the dry run and return its path.
+
+    Reuse the gate's compiler handling: the host one where there is one, a pinned container
+    on a runner that only has Docker. preview builds the preview package's installer (ADR 0133).
+    """
     binary = work / ("wla-installer-dryrun" + ("-preview" if preview else ""))
     # Same port discipline as the gate: the installed binary listens on :40015 because
     # that is where stock calls it, but a dry run shares a runner with the offline gates
@@ -141,7 +154,8 @@ def build(work: Path, bootloaders: bool, gate, preview=False):
     return binary
 
 
-def run(binary: Path, stream: bytes, flash: Path, gate, variant="binky"):
+def run(binary: Path, stream: bytes, flash: Path, gate: ModuleType, variant: str = "binky") -> tuple[int, str]:
+    """Run the installer against the flash files with stock's side of :17008 replayed, and return its exit code and log."""
     coordinator = gate.Coordinator(stream)
     # The installer reads its model from /proc/cmdline, and this host has the wrong one --
     # it refuses unknown hardware before it opens NAND, which is the right thing on a
@@ -157,7 +171,8 @@ def run(binary: Path, stream: bytes, flash: Path, gate, variant="binky"):
         # of a few milliseconds, not a wait; the gate's helper waits in seconds.
         conn = gate.await_listener(process, gate.PORT)
         if conn is None:
-            raise SystemExit("installer never listened on :%d" % gate.PORT)
+            msg = f"installer never listened on :{gate.PORT:d}"
+            raise SystemExit(msg)
         thread = threading.Thread(target=coordinator.run, args=(conn,))
         thread.start()
         thread.join(1800)
@@ -172,15 +187,18 @@ def run(binary: Path, stream: bytes, flash: Path, gate, variant="binky"):
     return process.returncode, log
 
 
-def check_spotty(flash: Path, log: str):
-    """ST20: its own SPL in all four SPL copies and the shared U-Boot, written in the same order
-    as on the other models, and the candidate selected through bootcmd with the ST20's recipes."""
-    entries, problems = written_env(flash, True)
+def check_spotty(flash: Path, log: str) -> list[str]:
+    """Return what the ST20 install got wrong.
+
+    ST20: its own SPL in all four SPL copies and the shared U-Boot, written in the same order
+    as on the other models, and the candidate selected through bootcmd with the ST20's recipes.
+    """
+    entries, problems = written_env(flash, bootloaders=True)
     if b"bootcmd=run nand_boot2;" not in entries:
         problems.append("bootcmd does not select the candidate slot")
     if not any(b"spotty_scm.dtb" in e for e in entries):
         problems.append("the environment does not carry the ST20 recipes")
-    if (flash / "NAND.Kernel-Pong").read_bytes()[:4] != b"\x27\x05\x19\x56":
+    if (flash / "NAND.Kernel-Pong").read_bytes()[:4] != UIMAGE_MAGIC:
         problems.append("the installed kernel does not start with a uImage header")
     if (flash / "NAND.File-System-Pong").read_bytes()[:4] != b"UBI#":
         problems.append("the installed rootfs is not a UBI image")
@@ -190,9 +208,9 @@ def check_spotty(flash: Path, log: str):
     for name in ("NAND.SPL.backup1", "NAND.SPL.backup2", "NAND.SPL.backup3"):
         if (flash / name).read_bytes() != spl:
             problems.append(f"{name} does not hold the same SPL as NAND.SPL")
-    if (flash / "NAND.U-Boot").read_bytes()[:4] != b"\x27\x05\x19\x56":
+    if (flash / "NAND.U-Boot").read_bytes()[:4] != UIMAGE_MAGIC:
         problems.append("no U-Boot image at NAND.U-Boot")
-    if (flash / "NAND.U-Boot").read_bytes()[0x100000:0x100004] != b"\x27\x05\x19\x56":
+    if (flash / "NAND.U-Boot").read_bytes()[0x100000:0x100004] != UIMAGE_MAGIC:
         problems.append("no spare U-Boot at NAND.U-Boot + 1 MiB")
     written = load_gate().boot_chain_writes(log)
     if written != [("NAND.U-Boot", 0x100000), ("NAND.SPL.backup1", 0), ("NAND.SPL.backup2", 0),
@@ -201,29 +219,13 @@ def check_spotty(flash: Path, log: str):
     return problems
 
 
-def check_result(flash: Path, log: str, bootloaders: bool):
+def check_result(flash: Path, log: str, *, bootloaders: bool) -> list[str]:
+    """Return what the WLA install got wrong: images, slot selection, recipes and boot chain."""
     kernel = (flash / "NAND.Kernel-Pong").read_bytes()
     rootfs = (flash / "NAND.File-System-Pong").read_bytes()
-    entries, problems = written_env(flash, bootloaders)
-    if kernel[:4] != b"\x27\x05\x19\x56":
-        problems.append("the installed kernel does not start with a uImage header")
-    name = kernel[32:56].split(b"\x00")[0].decode("ascii", "replace")
-    if not name.startswith("Linub"):
-        problems.append(f"stored uImage name is {name!r}; stock U-Boot's fixsig expects Linub")
-    if rootfs[:4] != b"UBI#":
-        problems.append("the installed rootfs is not a UBI image")
-    bootcmd = next((e for e in entries if e.startswith(b"bootcmd=")), b"")
-    if bootcmd != b"bootcmd=run nand_boot2;":
-        problems.append(f"bootcmd is {bootcmd!r}, not the candidate slot")
-    nand_args2 = next((e for e in entries if e.startswith(b"nand_args2=")), b"")
-    if b"soundtap.nandroot=1" not in nand_args2.split():
-        problems.append("candidate boot arguments do not mount persistent storage")
-    if b"ubi.mtd=NAND.Persistent-Storage,2048" not in nand_args2.split():
-        problems.append("candidate boot arguments do not attach the persistent UBI volume")
-    if "readback verified" not in log:
-        problems.append("no partition readback was reported")
+    entries, problems = written_env(flash, bootloaders=bootloaders)
+    problems += install_problems(kernel, rootfs, entries, log)
     # The recipes and the boot chain are one decision, and it has to hold in both directions.
-    import importlib.util
     spec = importlib.util.spec_from_file_location(
         "wla_env", Path(__file__).resolve().parents[2] / "os" / "support" / "uboot_recipes.py")
     wla_env = importlib.util.module_from_spec(spec)
@@ -240,26 +242,57 @@ def check_result(flash: Path, log: str, bootloaders: bool):
                 key = entry.split(b"=", 1)[0].decode()
                 problems.append(f"{key} was rewritten by a package that carries no bootloader")
     if bootloaders:
-        # The boot chain and the recipes that drive it are one decision. A board running our
-        # U-Boot against Bose's nand_boot would have a bootcmd that resolves to `nboot.e`, which
-        # mainline does not have, so the slot this installer just chose would decide nothing.
-        for expected in mainline:
-            if expected not in written:
-                key = expected.split(b"=", 1)[0].decode()
-                problems.append(f"environment does not carry the mainline {key}")
-        if b"upgrade_available=1" not in written:
-            problems.append("the selection does not keep its boot count in the environment")
-        written = load_gate().boot_chain_writes(log)
-        if written[:1] != [("NAND.U-Boot", 0x100000)] or written[-1:] != [("NAND.U-Boot", 0)]:
-            problems.append(f"boot chain order is wrong: {written}")
-        if log.rfind("bootcmd ->") < log.find("boot chain replaced:"):
-            problems.append("candidate slot selected before boot chain verification")
-        if not 0 <= log.find("bootcmd ->") < log.find("written and verified"):
-            problems.append("boot chain written before our boot recipes")
+        problems += boot_chain_problems(mainline, written, log)
     return problems
 
 
-def main():
+def install_problems(kernel: bytes, rootfs: bytes, entries: list[bytes], log: str) -> list[str]:
+    """Return what is wrong with the installed images, the selected slot and its boot arguments."""
+    problems = []
+    if kernel[:4] != UIMAGE_MAGIC:
+        problems.append("the installed kernel does not start with a uImage header")
+    name = kernel[32:56].split(b"\x00")[0].decode("ascii", "replace")
+    if not name.startswith("Linub"):
+        problems.append(f"stored uImage name is {name!r}; stock U-Boot's fixsig expects Linub")
+    if rootfs[:4] != b"UBI#":
+        problems.append("the installed rootfs is not a UBI image")
+    bootcmd = next((e for e in entries if e.startswith(b"bootcmd=")), b"")
+    if bootcmd != b"bootcmd=run nand_boot2;":
+        problems.append(f"bootcmd is {bootcmd!r}, not the candidate slot")
+    nand_args2 = next((e for e in entries if e.startswith(b"nand_args2=")), b"")
+    if b"soundtap.nandroot=1" not in nand_args2.split():
+        problems.append("candidate boot arguments do not mount persistent storage")
+    if b"ubi.mtd=NAND.Persistent-Storage,2048" not in nand_args2.split():
+        problems.append("candidate boot arguments do not attach the persistent UBI volume")
+    if "readback verified" not in log:
+        problems.append("no partition readback was reported")
+    return problems
+
+
+def boot_chain_problems(mainline: tuple[bytes, ...], written: set[bytes], log: str) -> list[str]:
+    """Return what is wrong with the mainline recipes, the boot count and the boot chain's write order."""
+    problems = []
+    # The boot chain and the recipes that drive it are one decision. A board running our
+    # U-Boot against Bose's nand_boot would have a bootcmd that resolves to `nboot.e`, which
+    # mainline does not have, so the slot this installer just chose would decide nothing.
+    for expected in mainline:
+        if expected not in written:
+            key = expected.split(b"=", 1)[0].decode()
+            problems.append(f"environment does not carry the mainline {key}")
+    if b"upgrade_available=1" not in written:
+        problems.append("the selection does not keep its boot count in the environment")
+    chain = load_gate().boot_chain_writes(log)
+    if chain[:1] != [("NAND.U-Boot", 0x100000)] or chain[-1:] != [("NAND.U-Boot", 0)]:
+        problems.append(f"boot chain order is wrong: {chain}")
+    if log.rfind("bootcmd ->") < log.find("boot chain replaced:"):
+        problems.append("candidate slot selected before boot chain verification")
+    if not 0 <= log.find("bootcmd ->") < log.find("written and verified"):
+        problems.append("boot chain written before our boot recipes")
+    return problems
+
+
+def main() -> None:
+    """Install the package into files, check what it wrote and exit 1 on any problem."""
     parser = argparse.ArgumentParser()
     parser.add_argument("package", type=Path)
     parser.add_argument("--work", type=Path, help="keep the flash files here")
@@ -283,12 +316,12 @@ def main():
     stream = stock_stream(args.package)
     flash = work / "flash"
     flash.mkdir(exist_ok=True)
-    prepare_flash(flash, args.bootloaders)
-    binary = build(work, args.bootloaders, gate, args.preview)
+    prepare_flash(flash, bootloaders=args.bootloaders)
+    binary = build(work, gate, bootloaders=args.bootloaders, preview=args.preview)
     code, log = run(binary, stream, flash, gate, args.variant)
     print(log)
     check = (lambda: check_spotty(flash, log)) if args.variant == "spotty" else \
-        (lambda: check_result(flash, log, args.bootloaders))
+        (lambda: check_result(flash, log, bootloaders=args.bootloaders))
     problems = check() if code == 0 else ["installer failed"]
     if code != 0 or problems:
         for problem in problems:

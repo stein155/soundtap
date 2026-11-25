@@ -78,9 +78,9 @@ void rf_rmw(unsigned reg, unsigned val, unsigned mask)
     rf_write(reg, (val & mask) | (x & ~mask));
 }
 
-void rf_page(unsigned p)
+void rf_page(unsigned page)
 {
-    rf_write(0x1f, p);
+    rf_write(0x1f, page);
 }
 
 void delay(unsigned ticks)

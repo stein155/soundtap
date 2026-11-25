@@ -59,7 +59,7 @@ static void model(void)
         unsigned nch = 2 + rnd() % 4, size = 2 + rnd() % 30, esize = 4;
         unsigned held[5] = {0}, next[5] = {0}, stamp = 0;
         ring_init(&r, (unsigned)(uintptr_t)buf, size, esize, nch);
-        for (unsigned step = 0; step < 400; step++) {
+        for (unsigned round_n = 0; round_n < 400; round_n++) {
             unsigned c = rnd() % nch, total = 0;
             if (rnd() & 1) {
                 unsigned space = ring_space(&r, c), want = 1 + rnd() % 4, slot;

@@ -12,9 +12,12 @@ ROOT = Path(__file__).resolve().parents[3]
 
 @unittest.skipUnless(shutil.which("node"), "browser installer execution requires Node.js")
 class BrowserInstallerTest(unittest.TestCase):
-    def test_installer(self):
+    """The browser installer page, run in Node against a fake speaker."""
+
+    def test_installer(self) -> None:
+        """The installer page walks a fake speaker through every install step it supports."""
         result = subprocess.run(["node", "--input-type=commonjs", "-"], cwd=ROOT,
-                                input=r'''
+                                input=r"""
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const fs = require('node:fs');
@@ -140,7 +143,7 @@ const response = (body, ok = true) => ({ok, json: async () => body});
   assert.equal(calls.filter(([, init]) => init.method === 'POST').length, 1);
   console.log('installer behavior passed');
 })().catch(err => { console.error(err); process.exitCode = 1; });
-''', text=True, capture_output=True, check=False)
+""", text=True, capture_output=True, check=False)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 

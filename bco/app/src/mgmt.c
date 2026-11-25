@@ -122,12 +122,12 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
         o = put32(o, BCOLINK_CAPS); /* capabilities, le32 */
         break;
     case 2: { /* SCAN [start]: status (3 = still scanning), count, entries */
-        int n = wifi_scan(len >= 1 && a[0] == 1);
+        int found = wifi_scan(len >= 1 && a[0] == 1);
         struct wifi_bss b;
-        *o++ = n < 0 ? 3 : 0;
+        *o++ = found < 0 ? 3 : 0;
         unsigned char *cnt = o++;
         *cnt = 0;
-        for (int i = 0; i < n && wifi_bss(i, &b) == 0; i++) {
+        for (int i = 0; i < found && wifi_bss(i, &b) == 0; i++) {
             o = put_bss(o, &b); /* 42 bytes at most, 24 entries fit MGMT_MAX */
             *o++ = b.sec;
             ++*cnt;
@@ -192,8 +192,8 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
     }
     case 12: { /* WIRED_PROBE: status (1 = no wired port in this build), then wired_probe's bytes */
         int w = wired_probe(o + 1);
-        *o = w < 0;
-        o += 1 + (w > 0 ? w : 0);
+        *o = w < 0;               /* cppcheck-suppress knownConditionTrueFalse ; the weak stub fails, wired.c replaces it */
+        o += 1 + (w > 0 ? w : 0); /* cppcheck-suppress knownConditionTrueFalse ; the same stub */
         break;
     }
 #ifdef WILD_OWN

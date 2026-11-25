@@ -111,6 +111,7 @@ static void bringup(void)
     MMIO(0xe001d00c) = 0x25u;
 }
 
+/* cppcheck-suppress unusedFunction ; start.S calls it */
 void first_stage(void)
 {
     bringup();

@@ -16,14 +16,18 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 EXTERNAL = ROOT / "os"
+# A .hash line: "sha256 <digest> <file>".
+HASH_LINE_FIELDS = 3
 
 
 def var(mk: str, name: str) -> str:
-    m = re.search(rf"^\w+_{name}\s*=\s*(.+)$", mk, re.M)
+    """Return the value the .mk text assigns to its <PKG>_name variable, or ""."""
+    m = re.search(rf"^\w+_{name}\s*=\s*(.+)$", mk, re.MULTILINE)
     return m.group(1).strip() if m else ""
 
 
 def main() -> int:
+    """Print each local package licence file whose hash is out of date; return 1 if there is one."""
     bad = []
     for mk_path in sorted(EXTERNAL.glob("package/*/*.mk")):
         mk = mk_path.read_text().replace("\\\n", " ")  # join continued lines
@@ -37,7 +41,7 @@ def main() -> int:
         known = {}
         for line in hash_path.read_text().splitlines():
             parts = line.split()
-            if len(parts) == 3 and parts[0] == "sha256":
+            if len(parts) == HASH_LINE_FIELDS and parts[0] == "sha256":
                 known[parts[2]] = parts[1]
         for name in var(mk, "LICENSE_FILES").split():
             if not (src / name).exists():

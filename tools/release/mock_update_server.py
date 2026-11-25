@@ -40,9 +40,9 @@ than what it runs.
 """
 import argparse
 import http.server
-import os
 import sys
 import zlib
+from collections.abc import Iterable
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "os/support"))
@@ -100,17 +100,20 @@ PREVIEW_MODELS = [
 ]
 
 
-def build_index(package, devices, version, host, urlpath=URLPATH):
-    """The index document in the schema the device parses, one DEVICE per (id, product)
-    in devices; host is the HTTPHOST it fetches from."""
-    with open(package, "rb") as f:
+def build_index(package: str | Path, devices: Iterable[tuple[str, str]], version: str, host: str,
+                urlpath: str = URLPATH) -> bytes:
+    """Build the index document in the schema the device parses.
+
+    One DEVICE per (id, product) in devices; host is the HTTPHOST it fetches from.
+    """
+    with Path(package).open("rb") as f:
         crc = zlib.crc32(f.read())
-    name = os.path.basename(package)
+    name = Path(package).name
     release = (
         '    <HARDWARE REVISION="00.01.00">\n'
         f'      <RELEASE REVISION="{version}" HTTPHOST="{host}" URLPATH="{urlpath}"'
         f' USBPATH="/{urlpath}/Update.stu">\n'
-        f'        <IMAGE SUBID="0" LENGTH="{os.path.getsize(package)}" CRC="0x{crc:08x}"'
+        f'        <IMAGE SUBID="0" LENGTH="{Path(package).stat().st_size}" CRC="0x{crc:08x}"'
         f' FILENAME="{name}"/>\n'
         '      </RELEASE>\n'
         '    </HARDWARE>\n'
@@ -121,25 +124,26 @@ def build_index(package, devices, version, host, urlpath=URLPATH):
             f'<INDEX REVISION="02.11.00">\n{body}</INDEX>\n').encode()
 
 
-def make_handler(options):
+def make_handler(options: argparse.Namespace) -> type[http.server.BaseHTTPRequestHandler]:
+    """Return a request handler for the upload and fetch routes the options configure."""
     package = options.serve
-    served_name = os.path.basename(package) if package else None
+    served_name = Path(package).name if package else None
 
     class H(http.server.BaseHTTPRequestHandler):
-        def log_message(self, *a):  # quiet
+        def log_message(self, *a: object) -> None:  # quiet
             pass
 
-        def _send(self, code, body, content_type):
+        def _send(self, code: int, body: bytes, content_type: str) -> None:
             self.send_response(code)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
 
-        def do_GET(self):
+        def do_GET(self) -> None:
             path = self.path.split("?", 1)[0]
             if package and path == f"/{URLPATH}/{served_name}":
-                with open(package, "rb") as f:
+                with Path(package).open("rb") as f:
                     self._send(200, f.read(), "application/octet-stream")
                 return
             if package:
@@ -151,10 +155,10 @@ def make_handler(options):
                 return
             self._send(200, INDEX_PAGE, "text/html")
 
-        def do_POST(self):
+        def do_POST(self) -> None:
             n = int(self.headers.get("Content-Length", 0))
             data = self.rfile.read(n)
-            with open(options.out, "wb") as f:
+            with Path(options.out).open("wb") as f:
                 f.write(data)
             ok = accept(options.out, options.model)
             self.send_response(202 if ok else 400)
@@ -164,7 +168,8 @@ def make_handler(options):
     return H
 
 
-def main(argv):
+def main(argv: list[str]) -> None:
+    """Write a static index, or serve the upload and fetch routes, as argv asks."""
     ap = argparse.ArgumentParser(description="stand-in for the stock updater")
     ap.add_argument("port", nargs="?", type=int, default=8080)
     ap.add_argument("out", nargs="?", default="/tmp/uploaded.stu")
@@ -196,21 +201,24 @@ def main(argv):
     options = ap.parse_args(argv)
     if options.write_index:
         if not (options.serve and options.host):
-            raise SystemExit("--write-index needs --serve <package> and --host")
-        with open(options.write_index, "wb") as f:
+            msg = "--write-index needs --serve <package> and --host"
+            raise SystemExit(msg)
+        with Path(options.write_index).open("wb") as f:
             f.write(build_index(options.serve, PREVIEW_MODELS if options.preview else MODELS,
                                 options.version, options.host, options.urlpath))
         return
     if options.preview:
-        raise SystemExit("--preview goes with --write-index")
-    if options.serve and not os.path.isfile(options.serve):
-        raise SystemExit(f"no package at {options.serve}")
+        msg = "--preview goes with --write-index"
+        raise SystemExit(msg)
+    if options.serve and not Path(options.serve).is_file():
+        msg = f"no package at {options.serve}"
+        raise SystemExit(msg)
     where = f"http://{options.bind}:{options.port}"
     print(f"mock stock updater on {where} for {options.model or 'the default chain'}")
     print(f"  upload:  POST /update -> {options.out}")
     if options.serve:
         print(f"  fetch:   GET  <anything> -> index offering {options.version}")
-        print(f"           GET  /{URLPATH}/{os.path.basename(options.serve)} -> the package")
+        print(f"           GET  /{URLPATH}/{Path(options.serve).name} -> the package")
     http.server.HTTPServer((options.bind, options.port),
                            make_handler(options)).serve_forever()
 

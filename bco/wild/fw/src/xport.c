@@ -217,14 +217,14 @@ static unsigned rate_i, rate_ok, rate_bad;
 volatile unsigned tx_acked;
 static unsigned tx_free_t, tx_unicast, tx_wait;   /* tx_unicast: attempts of the frame in flight, 0 = group */
 static struct {
-    unsigned z0;
-    unsigned short len, z1, rate, cls;
+    unsigned z0; /* cppcheck-suppress unusedStructMember ; the MAC reads this descriptor */
+    unsigned short len, z1, rate, cls; /* cppcheck-suppress unusedStructMember ; the MAC reads this descriptor */
     unsigned hdrlen;
     unsigned char *hdr;
     unsigned l1;
     unsigned char *p1;
-    unsigned l2, p2;
-    unsigned char z2[0x24];
+    unsigned l2, p2; /* cppcheck-suppress unusedStructMember ; the MAC reads this descriptor */
+    unsigned char z2[0x24]; /* cppcheck-suppress unusedStructMember ; the MAC reads this descriptor */
 } tx_desc;
 
 /* Start an attempt of the staged frame on queue 9 after a random backoff (802.11 DCF): slots in
@@ -250,7 +250,7 @@ static void tx_complete(unsigned status);
 
 static void tx_stage_done(void)
 {
-    unsigned body = (((unsigned *)tx_rec)[2] >> 16) - 0xc4;
+    unsigned body_len = (((unsigned *)tx_rec)[2] >> 16) - 0xc4;
     unsigned char *h = tx_pkt + 0x18;
     copy_bytes(tx_pkt, tx_pkt + 0x8c, 0x38);           /* descriptor to the packet head */
     ring_commit(&l_frm[tx_q], 1, 1);                   /* record: channel 1 -> 2 */
@@ -279,21 +279,21 @@ static void tx_stage_done(void)
             cc[0] = pn, cc[1] = pn >> 8, cc[2] = 0, cc[3] = 0x20;   /* ExtIV, key id 0 */
             cc[4] = pn >> 16, cc[5] = pn >> 24, cc[6] = pn >> 32, cc[7] = pn >> 40;
         }
-        if (!tk || body > sizeof tx_pkt - 0xc4 - 8 || !mac_ccmp_tx(h, tx_pkt + 0xc4, body, tk, pn)) {
+        if (!tk || body_len > sizeof tx_pkt - 0xc4 - 8 || !mac_ccmp_tx(h, tx_pkt + 0xc4, body_len, tk, pn)) {
             ring_commit(&l_frm[tx_q], 2, 1);
             tx_unicast = 0;
             tx_done_q = 0x10 | tx_q;
             tx_complete(1);
             return;
         }
-        tx_desc.l1 = 8 + body + 8;
+        tx_desc.l1 = 8 + body_len + 8;
         tx_desc.p1 = cc;
-        tx_desc.len = 24 + 8 + body + 8 + 4;
+        tx_desc.len = 24 + 8 + body_len + 8 + 4;
         goto start;
     }
-    tx_desc.l1 = body;
+    tx_desc.l1 = body_len;
     tx_desc.p1 = tx_pkt + 0xc4;
-    tx_desc.len = 24 + body + 4;                        /* header + body + FCS */
+    tx_desc.len = 24 + body_len + 4;                    /* header + body + FCS */
 start:
     ring_commit(&l_frm[tx_q], 2, 1);                   /* record: channel 2 -> 3 */
     /* EXPERIMENT: the AC/EDCA queues (0x650 + 4q) never raise a TX-done FIQ on hardware (no medium
@@ -313,7 +313,7 @@ static int frm_in_data(void)
         return 0;
     for (q = 0; q < 4; q++)
         if (ring_avail(&l_frm[q], 1)) {
-            unsigned *e;
+            const unsigned *e;
             ring_take(&l_frm[q], 1, 1, &tx_rec);
             e = (unsigned *)tx_rec;
             tx_q = q;

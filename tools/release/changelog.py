@@ -24,36 +24,43 @@ HEADING = re.compile(r"^## \[(?P<tag>[^\]]+)\](?: - (?P<date>\S+))?\s*$")
 DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
-def section(text, tag):
-    """The body of tag's section; ValueError when it is missing, undated or empty."""
+def section(text: str, tag: str) -> str:
+    """Return the body of tag's section; raise ValueError when it is missing, undated or empty."""
     if not TAG.match(tag):
-        raise ValueError(f"{tag!r} is not a release tag (os-vX.Y.Z or app-vX.Y.Z, with -alpha.N for an alpha)")
+        msg = f"{tag!r} is not a release tag (os-vX.Y.Z or app-vX.Y.Z, with -alpha.N for an alpha)"
+        raise ValueError(msg)
     lines = text.splitlines()
     starts = [(n, HEADING.match(line)) for n, line in enumerate(lines)]
     starts = [(n, m) for n, m in starts if m]
     found = [(n, m) for n, m in starts if m.group("tag") == tag]
     if not found:
-        raise ValueError(f"CHANGELOG.md has no '## [{tag}] - YYYY-MM-DD' section")
+        msg = f"CHANGELOG.md has no '## [{tag}] - YYYY-MM-DD' section"
+        raise ValueError(msg)
     if len(found) > 1:
-        raise ValueError(f"CHANGELOG.md has {len(found)} sections for {tag}")
+        msg = f"CHANGELOG.md has {len(found)} sections for {tag}"
+        raise ValueError(msg)
     n, m = found[0]
     if not m.group("date") or not DATE.match(m.group("date")):
-        raise ValueError(f"the {tag} section needs its release date: '## [{tag}] - YYYY-MM-DD'")
+        msg = f"the {tag} section needs its release date: '## [{tag}] - YYYY-MM-DD'"
+        raise ValueError(msg)
     ends = [k for k, _ in starts if k > n] + [len(lines)]
     body = lines[n + 1:ends[0]]
     if not any(line.lstrip().startswith("- ") for line in body):
-        raise ValueError(f"the {tag} section lists no changes")
+        msg = f"the {tag} section lists no changes"
+        raise ValueError(msg)
     return "\n".join(body).strip() + "\n"
 
 
-def read(root, commit):
+def read(root: Path, commit: str | None) -> str:
+    """Read CHANGELOG.md from commit, or from the working tree under root without one."""
     if commit:
         return subprocess.run(["git", "-C", str(root), "show", f"{commit}:CHANGELOG.md"],
                               check=True, capture_output=True, text=True).stdout
     return (root / "CHANGELOG.md").read_text()
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
+    """Check that the tag has its CHANGELOG.md section and return the exit code."""
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("command", choices=["check"])

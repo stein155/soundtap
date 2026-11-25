@@ -7,11 +7,11 @@
 set -eu
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 docker build --quiet --tag soundtap-rom-usb-loader:bookworm \
-        --file "$here/Dockerfile.loader" "$here" >/dev/null
+        --file "${here}/Dockerfile.loader" "${here}" >/dev/null
 # Root inside the container, because test_loader.sh refuses to run as anyone else:
 # the loader itself insists on being one root process. The container is the boundary.
 exec docker run --rm \
-        --volume "$here:/src" \
+        --volume "${here}:/src" \
         --workdir /src \
         soundtap-rom-usb-loader:bookworm \
         make "$@"

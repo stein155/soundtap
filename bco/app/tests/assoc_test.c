@@ -21,10 +21,10 @@
 
 /* --- mirror of wifi.c's command builders (keep in sync; this test guards the bytes) --- */
 struct auth_cmd {
-    uint16_t algo;
-    uint8_t trans;
-    uint8_t param;
-    uint16_t status;
+    uint16_t algo; /* cppcheck-suppress unusedStructMember ; mirrors the command bytes, compared as bytes */
+    uint8_t trans; /* cppcheck-suppress unusedStructMember ; mirrors the command bytes, compared as bytes */
+    uint8_t param; /* cppcheck-suppress unusedStructMember ; mirrors the command bytes, compared as bytes */
+    uint16_t status; /* cppcheck-suppress unusedStructMember ; mirrors the command bytes, compared as bytes */
 };
 static const unsigned char assoc_tail[22] = {
     0x06, 0x0c, 0x82, 0x84, 0x8b, 0x0c, 0x12, 0x96, 0x18, 0x24, 0x30,

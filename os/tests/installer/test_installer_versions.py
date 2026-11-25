@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-"""docs/installer/versions.json is the one table of models every installer applies: install.sh,
-install.ps1 and the browser installer run here against the cases the table itself yields (each
+"""docs/installer/versions.json is the one table of models every installer applies.
+
+install.sh, install.ps1 and the browser installer run here against the cases the table itself yields (each
 model under any Bose software version, the unsupported models, an unknown one) and must give the
-same verdict as the reference below, with the same words. No installer checks the version."""
+same verdict as the reference below, with the same words. No installer checks the version.
+"""
 import json
 import os
 import re
@@ -12,6 +14,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from collections.abc import Mapping
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -20,7 +23,8 @@ TABLE_TEXT = (INSTALLER / "versions.json").read_text()
 TABLE = json.loads(TABLE_TEXT)
 
 
-def matches(rule, type_, module):
+def matches(rule: Mapping[str, object], type_: str, module: str) -> bool:
+    """Return whether a table rule matches the device type and module type."""
     return ((not rule.get("type") or type_ == rule["type"])
             and (not rule.get("typeContains") or rule["typeContains"] in type_)
             and (not rule.get("moduleType") or module == rule["moduleType"]))
@@ -29,10 +33,12 @@ def matches(rule, type_, module):
 PREVIEW = TABLE.get("preview", [])
 
 
-def reference(type_, module, software=""):
-    """(status, rule): unsupported rules first, then the preview ones, then the supported
-    ones, else unknown. A preview is "preview": installable once its owner confirms it. The
-    Bose software version never counts."""
+def reference(type_: str, module: str, _software: str = "") -> tuple[str, dict[str, object] | None]:
+    """Return the reference (status, rule) for a speaker.
+
+    Unsupported rules first, then the preview ones, then the supported ones, else unknown. A preview is "preview": installable once its owner confirms it. The
+    Bose software version never counts.
+    """
     for rule in TABLE["unsupported"]:
         if matches(rule, type_, module):
             return "no", rule
@@ -42,22 +48,25 @@ def reference(type_, module, software=""):
     return "no", None
 
 
-def device_type(rule):
+def device_type(rule: Mapping[str, object]) -> str:
+    """Return the device type a speaker matching ``rule`` reports."""
     return rule.get("type") or "SoundTouch " + rule["typeContains"] + " Adapter"
 
 
-def cases():
-    """(type, moduleType, softwareVersion) per model, from the table alone. The versions, old,
-    new, unreadable and none, show that the version does not change the verdict."""
+def cases() -> list[tuple[str, str, str]]:
+    """Return (type, moduleType, softwareVersion) per model, from the table alone.
+
+    The versions, old, new, unreadable and none, show that the version does not change the
+    verdict.
+    """
     out = []
     for rule in PREVIEW + TABLE["supported"]:
         t, m = device_type(rule), rule.get("moduleType", "")
-        for version in ("27.0.6.46330.5043500 epdbuild.trunk.hepdswbld04.2022-08-04T11:20:29",
-                        "1.0.0", "99.0.0", "", "unknown"):
-            out.append((t, m, version))
+        out.extend((t, m, version) for version in (
+            "27.0.6.46330.5043500 epdbuild.trunk.hepdswbld04.2022-08-04T11:20:29",
+            "1.0.0", "99.0.0", "", "unknown"))
     for rule in TABLE["unsupported"]:
-        for version in ("99.0.0", "1.0.0"):
-            out.append((device_type(rule), rule.get("moduleType", ""), version))
+        out.extend((device_type(rule), rule.get("moduleType", ""), version) for version in ("99.0.0", "1.0.0"))
     out.append(("Some Other Speaker", "", "99.0.0"))
     return out
 
@@ -66,9 +75,14 @@ CASES = cases()
 
 
 class TableTest(unittest.TestCase):
-    def test_rules_are_complete_and_one_per_line(self):
-        """The file's layout is install.sh's input format (it reads one rule per line),
-        so the layout itself is checked as text."""
+    """The shape of docs/installer/versions.json and the verdicts it yields."""
+
+    def test_rules_are_complete_and_one_per_line(self) -> None:
+        """Every rule is complete and sits on one line of the file.
+
+        The file's layout is install.sh's input format (it reads one rule per line),
+        so the layout itself is checked as text.
+        """
         for rule in TABLE["supported"] + PREVIEW + TABLE["unsupported"]:
             self.assertTrue(rule.get("model"), rule)
             self.assertTrue(rule.get("type") or rule.get("typeContains"), rule)
@@ -77,24 +91,29 @@ class TableTest(unittest.TestCase):
         for rule in TABLE["supported"] + PREVIEW + TABLE["unsupported"]:
             self.assertNotIn("minimum", rule, "no installer checks the Bose software version")
         for rule in PREVIEW:
-            self.assertIs(rule.get("preview"), True, "install.sh tells previews apart by \"preview\": true")
+            self.assertIs(rule.get("preview"), expr2=True, msg='install.sh tells previews apart by "preview": true')
             self.assertNotIn("supported", rule)
         for rule in TABLE["supported"]:
-            self.assertIs(rule.get("supported"), True, "install.sh tells supported rules apart by \"supported\": true")
+            self.assertIs(rule.get("supported"), expr2=True,
+                          msg='install.sh tells supported rules apart by "supported": true')
             self.assertNotIn("preview", rule)
         for rule in TABLE["unsupported"]:
             self.assertNotIn("supported", rule)
             self.assertNotIn("preview", rule)
 
-    def test_series_iii_is_a_preview(self):
+    def test_series_iii_is_a_preview(self) -> None:
+        """An SM2 SoundTouch 20 (Series III) is a preview; the SCM one and the ST10 are supported."""
         self.assertEqual(reference("SoundTouch 20", "sm2")[0], "preview")
         self.assertEqual(reference("SoundTouch 20", "scm")[0], "ok")
         self.assertEqual(reference("SoundTouch 10", "sm2")[0], "ok")
 
-    def test_the_lifestyle_module_is_never_offered(self):
-        """The Lifestyle 600/650 module (bardeen, sm2) has no way back: no installer offers it,
+    def test_the_lifestyle_module_is_never_offered(self) -> None:
+        """No installer offers the Lifestyle 600/650 module.
+
+        The Lifestyle 600/650 module (bardeen, sm2) has no way back: no installer offers it,
         under any name that says Lifestyle. An SM2 Lifestyle adapter (lisa2) looks the same to
-        the installers, so only the SCM adapter is a preview."""
+        the installers, so only the SCM adapter is a preview.
+        """
         for type_ in ("Lifestyle", "Lifestyle 650", "Lifestyle 600"):
             for version in ("27.0.6", "99.0.0"):
                 self.assertEqual(reference(type_, "sm2", version)[0], "no", type_)
@@ -105,7 +124,7 @@ class TableTest(unittest.TestCase):
                 self.assertEqual(rule.get("moduleType"), "scm", rule)
                 self.assertNotRegex(rule["model"], r"600|650|module", rule)
 
-    def test_install_guide_lists_the_supported_models(self):
+    def test_install_guide_lists_the_supported_models(self) -> None:
         """The guide is prose for people; comparing its table's models with the file is the check."""
         guide = (ROOT / "docs/owners/install.md").read_text()
         rows = re.search(r"\| Model \| Oldest Bose software installed from \|\n\| --- \| --- \|\n((?:\|.*\n)+)",
@@ -116,9 +135,12 @@ class TableTest(unittest.TestCase):
 
 
 class InstallersAgreeTest(unittest.TestCase):
-    def check(self, name, got):
+    """install.sh, install.ps1 and the browser installer give the reference verdict for every case."""
+
+    def check(self, name: str, got: list[tuple[str, ...]]) -> None:
+        """Check that an installer's (status, note) per case agrees with the reference."""
         self.assertEqual(len(got), len(CASES), got)
-        for case, (status, note) in zip(CASES, got):
+        for case, (status, note) in zip(CASES, got, strict=False):
             want, rule = reference(*case)
             self.assertEqual(status, want, f"{name}: {case}: {note}")
             if want == "no":
@@ -131,15 +153,16 @@ class InstallersAgreeTest(unittest.TestCase):
                 self.assertIn(rule["model"], note, f"{name}: {case}")
             self.assertNotIn("update Bose", note, f"{name}: {case}")
 
-    def test_install_sh(self):
-        script = r'''
+    def test_install_sh(self) -> None:
+        """install.sh agrees with the reference for every case, under sh and dash."""
+        script = r"""
 . docs/installer/install.sh
 table=$(cat docs/installer/versions.json)
 while IFS='|' read -r t m v; do
 	classify "$table" "$t" "$m" "$v"
 	printf '%s|%s\n' "$status" "$note"
 done
-'''
+"""
         lines = "".join(f"{t}|{m}|{v}\n" for t, m, v in CASES)
         for shell in ("sh", "dash"):  # macOS sh is bash; Debian sh is dash
             if not shutil.which(shell):
@@ -151,8 +174,11 @@ done
                 self.check(shell, [tuple(line.split("|", 1)) for line in out.stdout.splitlines()])
 
     @unittest.skipUnless(shutil.which("node"), "the browser installer runs under Node.js")
-    def test_browser_installer(self):
-        # The page cannot read the speaker: its owner picks the rule the speaker would match.
+    def test_browser_installer(self) -> None:
+        """The browser installer agrees with the reference for every case.
+
+        The page cannot read the speaker: its owner picks the rule the speaker would match.
+        """
         picks = []
         for case in CASES:
             rule = reference(*case)[1]
@@ -165,7 +191,7 @@ done
             else:
                 pick = "other"
             picks.append(pick)
-        program = r'''
+        program = r"""
 const vm = require('node:vm');
 const fs = require('node:fs');
 const source = fs.readFileSync('docs/installer/index.html', 'utf8').match(/<script>([\s\S]*?)<\/script>/)[1];
@@ -206,17 +232,20 @@ vm.runInContext(source, ctx);
   }
   console.log(JSON.stringify(out));
 })().catch((err) => { console.error(err); process.exitCode = 1; });
-'''
+"""
         out = subprocess.run(["node", "--input-type=commonjs", "-e", program], cwd=ROOT,
                              input=json.dumps(picks), text=True, capture_output=True, check=False)
         self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
         self.check("index.html", [tuple(x) for x in json.loads(out.stdout)])
 
     @unittest.skipUnless(shutil.which("pwsh"), "install.ps1 runs under PowerShell")
-    def test_install_ps1(self):
-        # The script runs inside & { }; dot-sourcing the same block keeps its functions.
+    def test_install_ps1(self) -> None:
+        """install.ps1 agrees with the reference for every case.
+
+        The script runs inside & { }; dot-sourcing the same block keeps its functions.
+        """
         source = (INSTALLER / "install.ps1").read_text().replace("\n& {\n", "\n. {\n", 1)
-        program = source + r'''
+        program = source + r"""
 $table = Get-Content -Raw docs/installer/versions.json | ConvertFrom-Json
 foreach ($line in [Console]::In.ReadToEnd().Split("`n")) {
     if (-not $line) { continue }
@@ -224,7 +253,7 @@ foreach ($line in [Console]::In.ReadToEnd().Split("`n")) {
     $r = Get-Verdict $table $t $m
     Write-Output "$($r.Status)|$($r.Note)"
 }
-'''
+"""
         lines = "".join(f"{t}|{m}|{v}\n" for t, m, v in CASES)
         out = subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-Command", program],
                              cwd=ROOT, input=lines, text=True, capture_output=True, check=False,
@@ -247,23 +276,28 @@ WANT_FEEDS = {"192.168.1.10": FEED, "192.168.1.11": PREVIEW_FEED, "192.168.1.110
 
 
 class FeedTest(unittest.TestCase):
-    """ADR 0133: a preview installs only from the preview package, so a speaker whose verdict
-    is preview, picked and confirmed, is sent to the preview feed; every other one to the
-    supported feed. The browser installer's half is in test_browser_installer.py."""
+    """Each installer sends a preview speaker to the preview feed and every other to the supported one.
 
-    def test_every_installer_names_both_feeds(self):
+    ADR 0133: a preview installs only from the preview package, so a speaker whose verdict
+    is preview, picked and confirmed, is sent to the preview feed; every other one to the
+    supported feed. The browser installer's half is in test_browser_installer.py.
+    """
+
+    def test_every_installer_names_both_feeds(self) -> None:
+        """Every installer names both the supported and the preview feed."""
         for name in ("install.sh", "install.ps1", "index.html"):
             text = (INSTALLER / name).read_text()
             self.assertIn(f"'{FEED}'", text, name)
             self.assertIn(f"'{PREVIEW_FEED}'", text, name)
 
-    def test_install_sh(self):
-        script = r'''
+    def test_install_sh(self) -> None:
+        """install.sh picks the preview feed for a preview speaker only."""
+        script = r"""
 . docs/installer/install.sh
 for ip in 192.168.1.10 192.168.1.11 192.168.1.110 192.168.1.1; do
 	printf '%s|%s\n' "$ip" "$(feed_for "$ip" "$LIST")"
 done
-'''
+"""
         for shell in ("sh", "dash"):
             if not shutil.which(shell):
                 continue
@@ -277,20 +311,22 @@ done
                 self.assertEqual(dict(line.split("|", 1) for line in out.stdout.splitlines()), WANT_FEEDS)
 
     @unittest.skipUnless(shutil.which("pwsh"), "install.ps1 runs under PowerShell")
-    def test_install_ps1(self):
+    def test_install_ps1(self) -> None:
+        """install.ps1 picks the preview feed for a preview speaker only."""
         source = (INSTALLER / "install.ps1").read_text().replace("\n& {\n", "\n. {\n", 1)
-        program = source + r'''
+        program = source + r"""
 foreach ($line in [Console]::In.ReadToEnd().Split("`n")) {
     if (-not $line) { continue }
     $n, $ip, $name, $type, $status = $line.Split('|')
     Write-Output "$ip|$(Get-Feed ([pscustomobject]@{ Ip = $ip; Model = $status }))"
 }
-'''
+"""
         out = subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-Command", program],
                              cwd=ROOT, input=LISTED, text=True, capture_output=True, check=False,
                              env={**os.environ, "SOUNDTAP_INSTALLER_FUNCTIONS": "1"})
         self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
         self.assertEqual(dict(line.split("|", 1) for line in out.stdout.splitlines()), WANT_FEEDS)
+
 
 if __name__ == "__main__":
     unittest.main()

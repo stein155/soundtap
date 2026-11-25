@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-"""shell_scripts.py lists what `make lint-shell` checks: every tracked *.sh and every tracked
-file with a sh shebang, never a submodule or an untracked file. Run on a throwaway git
-repository."""
+"""shell_scripts.py lists what `make lint-shell` checks.
+
+That is every tracked *.sh and every tracked file with a sh shebang, never a submodule or an
+untracked file. Run on a throwaway git repository.
+"""
 
 import subprocess
 import sys
@@ -15,12 +17,16 @@ ROOT = Path(__file__).resolve().parents[3]
 CHECK = ROOT / "tools/ci/shell_scripts.py"
 
 
-def git(repo, *args):
+def git(repo: Path, *args: str) -> None:
+    """Run git with args in repo and fail on an error."""
     subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
 
 
 class ShellScriptsTest(unittest.TestCase):
-    def test_lists_tracked_scripts_by_name_or_shebang(self):
+    """shell_scripts.py lists exactly the tracked shell scripts."""
+
+    def test_lists_tracked_scripts_by_name_or_shebang(self) -> None:
+        """Tracked *.sh files and sh-family shebangs are listed; other shebangs, vendored, untracked and submodule paths are not."""
         repo = Path(self.enterContext(tempfile.TemporaryDirectory()))
         git(repo, "init", "-q")
         files = {
@@ -46,12 +52,14 @@ class ShellScriptsTest(unittest.TestCase):
         self.assertEqual(sorted(out.split("\0")[:-1]),
                          ["build.sh", "etc/init.d/soundtap", "hooks/ash", "tools/run", "with space.sh"])
 
-    def test_vendored_modules_are_left_out(self):
+    def test_vendored_modules_are_left_out(self) -> None:
+        """Nothing under app/vendor/ is listed for the repository."""
         out = subprocess.run([sys.executable, str(CHECK), str(ROOT)], check=True,
                              capture_output=True).stdout.decode().split("\0")
         self.assertEqual([p for p in out if p.startswith("app/vendor/")], [])
 
-    def test_the_repository_init_script_is_listed(self):
+    def test_the_repository_init_script_is_listed(self) -> None:
+        """The repository's init scripts without a .sh suffix are listed."""
         out = subprocess.run([sys.executable, str(CHECK), str(ROOT)], check=True,
                              capture_output=True).stdout.decode().split("\0")
         self.assertIn("os/overlay/etc/init.d/soundtap", out)

@@ -1,15 +1,19 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
+"""The WLA's WL1835 Wi-Fi and the NAND partitions its device tree lets Linux write."""
+
 import unittest
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parents[3]
 
 
 class WlaWiLinkTests(unittest.TestCase):
-    def test_wla_delays_sdio_wifi_until_rootfs_has_firmware(self):
+    """The WLA's WiLink device tree, firmware and NAND write permissions."""
+
+    def test_wla_delays_sdio_wifi_until_rootfs_has_firmware(self) -> None:
+        """The WL1835 is built in on SDIO and its firmware and configuration are in the image."""
         dts = (ROOT / "os/board/common/dts/ti/omap/am335x-soundtap-wla.dts").read_text()
         wla_defconfig = (ROOT / "os/configs/soundtap_defconfig").read_text()
 
@@ -28,11 +32,12 @@ class WlaWiLinkTests(unittest.TestCase):
         self.assertIn("BR2_PACKAGE_SOUNDTAP_WL18XX_CONF=y", wla_defconfig)
         self.assertIn("BR2_PACKAGE_LINUX_FIRMWARE_TI_WL18XX=y", wla_defconfig)
 
-    def test_wla_writes_only_its_slots_persistent_storage_and_verified_boot_chain(self):
+    def test_wla_writes_only_its_slots_persistent_storage_and_verified_boot_chain(self) -> None:
+        """Linux may write the slots, persistent storage, boot chain and environment, and nothing else."""
         dtsi = (ROOT / "os/board/common/dts/ti/omap/am335x-soundtap-nand.dtsi").read_text()
         for offset in ("280000", "780000", "c80000", "6c80000"):
             self.assertRegex(
-                dtsi, rf"partition@{offset} \{{.*SOUNDTAP_NAND_SLOT_RW; \}};"
+                dtsi, rf"partition@{offset} \{{.*SOUNDTAP_NAND_SLOT_RW; \}};",
             )
         # cc80000 is deliberately absent from this list. Persistent storage was read-only
         # here until 2026-09-03, which left /mnt/nv as a tmpfs and the speaker unable to
@@ -42,7 +47,7 @@ class WlaWiLinkTests(unittest.TestCase):
         # partitions after proof. Environment, staging and manufacturing data stay shut.
         for offset in ("0", "20000", "40000", "60000", "80000"):
             self.assertRegex(
-                dtsi, rf"partition@{offset} \{{.*SOUNDTAP_NAND_BOOT_RW; \}};"
+                dtsi, rf"partition@{offset} \{{.*SOUNDTAP_NAND_BOOT_RW; \}};",
             )
         # The environment is writable through its own macro, not the slot one: one
         # entry in it decides which slot boots, so firmware that installs into the
@@ -50,7 +55,7 @@ class WlaWiLinkTests(unittest.TestCase):
         self.assertRegex(dtsi, r"partition@260000 \{.*SOUNDTAP_NAND_ENV_RW; \};")
         for offset in ("f280000", "fe00000"):
             self.assertRegex(
-                dtsi, rf"partition@{offset} \{{.*SOUNDTAP_NAND_RO; \}};"
+                dtsi, rf"partition@{offset} \{{.*SOUNDTAP_NAND_RO; \}};",
             )
         wla = (ROOT / "os/board/common/dts/ti/omap/am335x-soundtap-wla.dts").read_text()
         self.assertIn("#define SOUNDTAP_NAND_BOOT_RW soundtap,writable", wla)

@@ -1,36 +1,93 @@
-# make lint-python. Style choices this repository makes on purpose in byte-twiddling tools
-# and tests are ignored below; everything else in the selected rule sets must pass.
+# make lint-python. Every rule ruff has is on. The global ignores are only the pairs ruff
+# itself cannot run together and the pytest-only rules a unittest suite cannot satisfy; the
+# per-file ignores below each name the reason the rule cannot hold in that file.
 line-length = 200
+# Debian bookworm's python3 in the builder image (os/container/Dockerfile.builder) is the oldest that runs these.
+target-version = "py311"
 # Upstream Buildroot (a submodule) is not ours to lint.
 extend-exclude = ["buildroot"]
+# Directories of standalone scripts and the modules they import side by side, put on sys.path
+# by their callers; they are not packages, so they carry no __init__.py.
+namespace-packages = ["app/frontend/scripts", "app/oled/design", "bco/tools", "docs/tools", "os/support"]
 
 [lint]
-select = [
-    "E", "F", # pycodestyle errors, pyflakes
-    "B",      # likely bugs
-    "C4",     # comprehensions
-    "C90",    # complexity
-    "PIE",    # needless constructs
-    "RET",    # return flow
-    "RUF",    # ruff's own checks
-    "SIM",    # simpler forms
-    "UP",     # current Python syntax
-]
+select = ["ALL"]
 ignore = [
-    "E702", # a; b on one line keeps byte-mutation tables readable
-    "E741", # `l` for a line in generator expressions
-    "UP031", # %-formatting keeps the hex dumps and register traces short
+    "D203",  # one-blank-line-before-class: incompatible with D211 (no blank line), which we keep
+    "D213",  # multi-line-summary-second-line: incompatible with D212 (summary on the first line), which we keep
+    "PT009", # pytest-unittest-assertion: the suite runs under unittest, whose assertion methods are its API
+    "PT027", # pytest-unittest-raises-assertion: wants pytest.raises, which unittest does not have
 ]
 
-# Only ever shrinks: these wait for their refactor.
+# Narrow, per-file exceptions, only where a rule cannot hold without changing behaviour.
+#   T201: a command-line tool whose output is its report prints it.
+#   S603: runs a fixed tool with an argument list (never a shell); there is no untrusted input.
+#   S607: the tool (git, openssl, docker, make, sh...) is found on PATH because its directory
+#         differs between macOS, Debian and the pinned build images.
 [lint.per-file-ignores]
-"os/installer/build-stu.py" = ["C901"]
-"os/support/buildroot_wla_nand_check.py" = ["C901"]
-"os/support/check_wla_product_spl.py" = ["C901"]
-"os/support/check_wla_uboot_ram.py" = ["C901", "E501"] # E501: expected-bytes tables
-"os/support/rootfs_check.py" = ["C901"]
-"os/support/stu_check.py" = ["C901"]
-"os/support/wla_stock_route_dryrun.py" = ["C901"]
+# The test suite runs the repository's scripts and host tools by design (S603, S607).
+"os/tests/**/*.py" = ["S603", "S607"]
+# S310: the URL is the test's own server on 127.0.0.1, which ruff cannot see as a literal.
+"os/tests/build/test_dev_loop.py" = ["S310"]
+# S314: parses the index the mock server under test just generated; defusedxml would be a new dependency.
+"os/tests/installer/test_mock_update_server.py" = ["S314"]
+# S311: random.Random(0) drives a seeded, reproducible bit-flip fuzz loop, not a secret.
+"os/tests/installer/test_stu_check.py" = ["S311"]
+"app/frontend/scripts/splash.py" = ["T201"]
+"bco/app/check-first-init.py" = ["T201"]
+# N999: the build (bco-pack, soundtap-bco-app.mk, the BCO app workflow) runs it by this name.
+"bco/tools/copy-records.py" = ["N999", "T201"]
+# PLC0415: MkDocs is imported only when the hook runs; the tests load the module without MkDocs.
+"docs/tools/root_pages.py" = ["PLC0415"]
+# S108: the default work directory stays /tmp/soundtap-build, where the build has always put it.
+"os/installer/build-stu.py" = ["S108", "S603", "T201"]
+"os/support/buildroot_wla_nand_check.py" = ["T201"]
+"os/support/check_dts_memory.py" = ["T201"]
+"os/support/check_provenance.py" = ["S603", "S607", "T201"]
+"os/support/check_wla_product_spl.py" = ["T201"]
+"os/support/check_wla_product_spl_markers.py" = ["S603", "S607", "T201"]
+"os/support/check_wla_uboot_dts.py" = ["T201"]
+"os/support/check_wla_uboot_nand.py" = ["T201"]
+"os/support/check_wla_uboot_ram.py" = ["T201"]
+# PTH115: the digest hashes the raw link text; Path.readlink() normalises "./x" and a trailing "/".
+"os/support/content_digest.py" = ["PTH115", "T201"]
+"os/support/ignore_cves.py" = ["T201"]
+"os/support/kernel_config_check.py" = ["T201"]
+"os/support/models_gen.py" = ["T201"]
+# PTH115: the manifest records the raw link text, as content_digest.py does.
+"os/support/repro_compare.py" = ["PTH115", "T201"]
+"os/support/rootfs_check.py" = ["T201"]
+"os/support/stu_check.py" = ["T201"]
+"os/support/stu_expect.py" = ["T201"]
+"os/support/tool_commands.py" = ["T201"]
+"os/support/uboot_recipes.py" = ["T201"]
+"os/support/wla_stock_route_dryrun.py" = ["S603", "T201"]
+"tools/ci/fake_speaker.py" = ["T201"]
+"tools/ci/go_licenses.py" = ["S603", "S607", "T201"]
+"tools/ci/image_pins.py" = ["T201"]
+"tools/ci/license_hashes.py" = ["T201"]
+# S310: downloads the https "resolved" URL that package-lock.json records for each package.
+"tools/ci/npm_licenses.py" = ["S310"]
+"tools/ci/shell_scripts.py" = ["S603", "S607"]
+"tools/recovery/rom-usb-restore.py" = ["S603", "T201"]
+"tools/release/changelog.py" = ["S603", "S607", "T201"]
+# S310: fetches from the pinned https://github.com and api.github.com hosts.
+# S314: parses the release feed's own index; defusedxml would be a new dependency.
+"tools/release/feed_check.py" = ["S310", "S314", "S603", "S607", "T201"]
+"tools/release/hardware_evidence.py" = ["S603", "T201"]
+# S108: the default upload path stays /tmp/uploaded.stu, which the server prints for the owner.
+"tools/release/mock_update_server.py" = ["S108", "T201"]
+"tools/release/notes.py" = ["S603", "S607", "T201"]
+# S310: requests go to the NVD https API constant.
+"tools/release/os_cves.py" = ["S310", "T201"]
+"tools/release/release_approval.py" = ["T201"]
+"tools/release/release_gate.py" = ["T201"]
+"tools/release/screenshots.py" = ["S603", "S607", "T201"]
+
+[lint.flake8-quotes]
+inline-quotes = "double"
+multiline-quotes = "double"
+docstring-quotes = "double"
 
 [lint.mccabe]
 max-complexity = 15

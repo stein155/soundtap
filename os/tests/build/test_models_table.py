@@ -26,6 +26,7 @@ Text is read only where nothing runs offline: the device trees' bootargs (data),
 variant list (it mounts proc, sysfs and configfs before it reads anything), the kernel names
 build-stu.py passes to require_kernel_model, and post-image.sh's per-model kernel loop.
 """
+import importlib
 import importlib.util
 import os
 import re
@@ -35,6 +36,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import ModuleType
 
 import boot.test_uboot_usb_recovery as uboot_tests
 import installer.test_wla_installer_offline as installer_tests
@@ -53,7 +55,8 @@ SUFFIXES = models_gen.suffixes(TABLE)
 DTS = ROOT / "os/board/common/dts/ti/omap"
 
 
-def load(name, path):
+def load(name: str, path: str) -> ModuleType:
+    """Import the file at path under ROOT as module name."""
     spec = importlib.util.spec_from_file_location(name, ROOT / path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module  # a dataclass looks its module up there
@@ -61,12 +64,13 @@ def load(name, path):
     return module
 
 
-def own_variant(model):
+def own_variant(model: str) -> dict:
+    """Return the table row of model's own variant."""
     return VARIANTS[MODELS[model]["variant"]]
 
 
-def package_modules():
-    """The suffixed modules a universal package carries, as the table derives them."""
+def package_modules() -> set[str]:
+    """Return the suffixed modules a universal package carries, as the table derives them."""
     names = set()
     for m in MODELS.values():
         names |= {f"soundtap-kernel.{m['module_suffix']}", f"soundtap-spl.{m['spl']}",
@@ -75,16 +79,20 @@ def package_modules():
 
 
 class Soundtapd(unittest.TestCase):
-    def test_generated_go_table_is_current(self):
+    """soundtapd's generated model table and the Go code that uses it."""
+
+    def test_generated_go_table_is_current(self) -> None:
+        """The generated Go table is what models_gen.py makes of models.json."""
         self.assertEqual(models_gen.GO_FILE.read_text(), models_gen.go_source(TABLE),
                          "run `go generate ./internal/modeltable` in app/")
 
     @unittest.skipUnless(shutil.which("go"), "needs Go")
-    def test_go_code_follows_the_table(self):
+    def test_go_code_follows_the_table(self) -> None:
+        """The Go model tests of soundtapd pass against the table."""
         done = subprocess.run(
             ["go", "test", "-count=1", "-run", "^(TestModelTable|TestGeneratedTableIsModelsJSON)$",
              "./internal/hw/model", "./internal/modeltable"],
-            cwd=ROOT / "app", capture_output=True, text=True, timeout=600,
+            check=False, cwd=ROOT / "app", capture_output=True, text=True, timeout=600,
             env=dict(os.environ, GOFLAGS="-mod=vendor", GOTOOLCHAIN="local"))
         if done.returncode and "requires go >=" in done.stderr + done.stdout:
             self.skipTest("the host's Go is older than app/go.mod")
@@ -92,8 +100,10 @@ class Soundtapd(unittest.TestCase):
 
 
 class InitScriptTable(unittest.TestCase):
-    def identity(self, cmdline, variant=None):
-        """MODEL, NOCODEC and the codec script the first boot copies, as the init script decides them."""
+    """The init script's model detection and codec script copy."""
+
+    def identity(self, cmdline: str, variant: str | None = None) -> tuple[int, str]:
+        """Return the exit code and MODEL, NOCODEC and the codec script the first boot copies, as the init script decides them."""
         with tempfile.TemporaryDirectory() as d:
             init = InitScript(d)
             (init.proc / "cmdline").write_text(cmdline + "\n")
@@ -108,7 +118,8 @@ class InitScriptTable(unittest.TestCase):
                             'echo "$MODEL $NOCODEC $CODEC"', check=False)
             return done.returncode, done.stdout.strip()
 
-    def test_each_variant_runs_as_its_model(self):
+    def test_each_variant_runs_as_its_model(self) -> None:
+        """Each variant runs as its model with its codec script, from the command line or stock's /proc/variant."""
         for name, v in VARIANTS.items():
             codec = v["codec_script"] or "-"
             # A board without a codec script has no codec: the WLA, the ST300, the Lifestyle
@@ -122,15 +133,19 @@ class InitScriptTable(unittest.TestCase):
                 code, out = self.identity("root=ubi0:rootfs", variant=name)
                 self.assertEqual((code, out.split()[:2]), (0, [v["model"], nocodec]))
 
-    def test_a_variant_the_table_does_not_name_stops_the_boot(self):
+    def test_a_variant_the_table_does_not_name_stops_the_boot(self) -> None:
+        """A variant the table does not name stops the boot."""
         for name in ("st10", "spotty4", "Rhino", "ginger2"):
             with self.subTest(variant=name):
                 self.assertEqual(self.identity(f"variant={name}")[0], 1)
 
-    def test_gadget_console_comes_up_on_every_board_we_boot(self):
-        # Text: the script mounts proc, sysfs and configfs before it reads the command line.
+    def test_gadget_console_comes_up_on_every_board_we_boot(self) -> None:
+        """gadget-console accepts exactly the boards we boot.
+
+        Text: the script mounts proc, sysfs and configfs before it reads the command line.
+        """
         script = (ROOT / "os/overlay/etc/init.d/gadget-console").read_text()
-        accepted = re.search(r"^([a-z0-9|]+)\) ;;$", script, re.M).group(1).split("|")
+        accepted = re.search(r"^([a-z0-9|]+)\) ;;$", script, re.MULTILINE).group(1).split("|")
         self.assertEqual(sorted(accepted), sorted(BOOTED))
 
 
@@ -138,29 +153,34 @@ class InstallerTable(unittest.TestCase):
     """installer.c, module 0 of every package, built for this host."""
 
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
+        """Build the installer for this host."""
         cls.tmp = installer_tests.scratch_dir()
         cls.binary = installer_tests.build_installer(cls.tmp.name, nand=True, bootloaders=True,
                                                      port=installer_tests.free_port())
 
     @classmethod
-    def tearDownClass(cls):
+    def tearDownClass(cls) -> None:
+        """Remove the installer build."""
         cls.tmp.cleanup()
 
-    def ask(self, variant, *args, success=True):
-        out = subprocess.run([str(self.binary), *args], capture_output=True, text=True,
+    def ask(self, variant: str, *args: str, success: bool = True) -> str:
+        """Run the installer with args as if on variant, check its exit status and return its output."""
+        out = subprocess.run([str(self.binary), *args], check=False, capture_output=True, text=True,
                              env={**{k: v for k, v in os.environ.items() if k != "SOUNDTAP_DT_COMPATIBLE"},
                                   "SOUNDTAP_VARIANT": variant})  # no device tree: the module is not judged
         self.assertEqual(out.returncode == 0, success, out.stderr)
         return out.stdout.strip()
 
-    def test_it_installs_on_every_board_we_boot_and_on_no_other(self):
+    def test_it_installs_on_every_board_we_boot_and_on_no_other(self) -> None:
+        """The installer knows every board we boot and no stock-only one."""
         for name, v in VARIANTS.items():
             with self.subTest(variant=name):
                 known = self.ask(name, "--board").split()[1]
                 self.assertEqual(known, "unknown" if v.get("stock_only") else "known")
 
-    def test_recipes_boot_the_tables_tree_and_kernel(self):
+    def test_recipes_boot_the_tables_tree_and_kernel(self) -> None:
+        """The boot recipes load the table's device tree and kernel and pass the variant."""
         for name, v in BOOTED.items():
             with self.subTest(variant=name):
                 env = dict(line.split("=", 1) for line in self.ask(name, "--print-env").splitlines())
@@ -169,7 +189,8 @@ class InstallerTable(unittest.TestCase):
                 self.assertIn(f" variant={name} module_type={v['module_type']} ", env["soundtap_args"])
                 self.assertIn(f" variant={name} ", env["stock_args"])
 
-    def test_it_takes_its_models_modules_and_no_others(self):
+    def test_it_takes_its_models_modules_and_no_others(self) -> None:
+        """Each board takes its model's modules and no other model's."""
         for name, v in BOOTED.items():
             m = MODELS[v["model"]]
             mine = {f"soundtap-kernel.{m['module_suffix']}", f"soundtap-spl.{m['spl']}",
@@ -179,7 +200,8 @@ class InstallerTable(unittest.TestCase):
                     want = module.rsplit(".", 1)[0] if module in mine else "(another model)"
                     self.assertEqual(self.ask(name, "--which-module", module), want)
 
-    def test_it_takes_its_models_kernel_and_no_others(self):
+    def test_it_takes_its_models_kernel_and_no_others(self) -> None:
+        """Each board takes its model's kernel and no other model's."""
         names = {m["kernel_name"] for m in MODELS.values()}
         for name, v in BOOTED.items():
             for kernel in sorted(names):
@@ -188,8 +210,8 @@ class InstallerTable(unittest.TestCase):
                     self.assertEqual(self.ask(name, "--kernel-fits", kernel), want)
 
 
-def unq(s):
-    """A C string literal's text, None for NULL."""
+def unq(s: str) -> str | None:
+    """Return a C string literal's text, None for NULL."""
     return None if s == "NULL" else s.strip('"')
 
 
@@ -197,11 +219,13 @@ def unq(s):
 class UBootTable(unittest.TestCase):
     """Our U-Boot, which tells the board apart before any environment says what it is."""
 
-    def probe(self, model, variant_raw, mfg):
-        r = uboot_tests.UsbRecoveryProbe().run_probe(model, False, variant_raw, mfg=mfg)
+    def probe(self, model: str, variant_raw: str, mfg: str) -> tuple[str, str | None]:
+        """Return the variant and module type U-Boot sets for a board with variant_raw and manufacturing name mfg."""
+        r = uboot_tests.UsbRecoveryProbe().run_probe(model, held=False, variant_raw=variant_raw, mfg=mfg)
         return r["rt_v"], r["env"].get("rt_m")
 
-    def test_it_takes_each_board_for_its_model(self):
+    def test_it_takes_each_board_for_its_model(self) -> None:
+        """U-Boot takes each board for its model, from the manufacturing name or variant_raw alone."""
         for name, m in MODELS.items():
             want = (m["variant"], own_variant(name)["module_type"])
             for raw in m["variant_raw"] or [""]:
@@ -211,11 +235,14 @@ class UBootTable(unittest.TestCase):
                     if m["variant_raw"]:
                         self.assertEqual(self.probe(name, raw, ""), want)
 
-    def test_the_names_it_builds_are_the_tables(self):
-        # The default bootcmd, compiled into the SPL's environment as well, loads
-        # /boot/${rt_v}_${rt_m}.dtb and /boot/uImage-${rt_v}: every row's stem is a model's own
-        # variant, whose files have exactly those names. rt_set_recipes writes the board's own
-        # files (rt_dtb, rt_kernel) and its variant (rt_b).
+    def test_the_names_it_builds_are_the_tables(self) -> None:
+        """The file names U-Boot builds are the table's.
+
+        The default bootcmd, compiled into the SPL's environment as well, loads
+        /boot/${rt_v}_${rt_m}.dtb and /boot/uImage-${rt_v}: every row's stem is a model's own
+        variant, whose files have exactly those names. rt_set_recipes writes the board's own
+        files (rt_dtb, rt_kernel) and its variant (rt_b).
+        """
         recovery = uboot_tests.patch_function(uboot_tests.PATCH, "static int rt_set_recipes(void)")
         self.assertIn('env_get("rt_dtb")', recovery)
         self.assertIn('env_get("rt_kernel")', recovery)
@@ -234,17 +261,18 @@ class UBootTable(unittest.TestCase):
                 self.assertIn(row[0], own)
                 self.assertEqual(VARIANTS[row[0]]["module_type"], VARIANTS[v]["module_type"])
 
-    def board_rows(self):
-        """rt_boards as the patch has it: {variant: (stem, module, mfg, lo, hi, dtb, kernel)}."""
+    def board_rows(self) -> dict[str | None, tuple[str | None, str | None, str | None, int, int, str | None, str | None]]:
+        """Return rt_boards as the patch has it: {variant: (stem, module, mfg, lo, hi, dtb, kernel)}."""
         block = re.search(r"^\+static const struct rt_board rt_boards\[\] = \{(.*?)^\+\};",
-                          uboot_tests.SCM_PATCH, re.M | re.S).group(1)
+                          uboot_tests.SCM_PATCH, re.MULTILINE | re.DOTALL).group(1)
         rows = {}
         for row in re.findall(r"\{ (.*?) \},", block):
             v, stem, m, mfg, lo, hi, dtb, kernel = [f.strip() for f in row.split(",")]
             rows[unq(v)] = (unq(stem), unq(m), unq(mfg), int(lo), int(hi), unq(dtb), unq(kernel))
         return rows
 
-    def test_its_board_rows_are_the_tables(self):
+    def test_its_board_rows_are_the_tables(self) -> None:
+        """U-Boot's board rows are the table's detectable variants, each stemmed on its model's variant."""
         want = {}
         for name, v in VARIANTS.items():
             d = v["detect"]
@@ -257,7 +285,8 @@ class UBootTable(unittest.TestCase):
         for name, row in self.board_rows().items():
             self.assertEqual(row[0], MODELS[VARIANTS[name]["model"]]["variant"], name)
 
-    def test_it_takes_each_detectable_board_for_its_variant(self):
+    def test_it_takes_each_detectable_board_for_its_variant(self) -> None:
+        """U-Boot takes each detectable board for its variant, with its model, module type, tree and kernel."""
         for name, v in VARIANTS.items():
             d = v["detect"]
             if d is None:
@@ -270,27 +299,34 @@ class UBootTable(unittest.TestCase):
                 cases = [("", d["mfg"])]
             for raw, mfg in cases:
                 with self.subTest(variant=name, variant_raw=raw, mfg=mfg):
-                    r = uboot_tests.UsbRecoveryProbe().run_probe(board, False, raw, mfg=mfg)
+                    r = uboot_tests.UsbRecoveryProbe().run_probe(board, held=False, variant_raw=raw, mfg=mfg)
                     self.assertEqual(r["env"].get("rt_b"), name)
                     self.assertEqual(r["rt_v"], MODELS[v["model"]]["variant"])
                     self.assertEqual(r["env"].get("rt_m"), v["module_type"])
                     self.assertEqual(r["env"].get("rt_dtb"), v["dtb"])
                     self.assertEqual(r["env"].get("rt_kernel"), v["kernel"])
 
-    def test_an_scm_count_no_row_knows_stays_an_st20(self):
-        # Below 100 (stock's "mfg"), above taigan (stock's "sm2") and no sample: the ST20's files.
+    def test_an_scm_count_no_row_knows_stays_an_st20(self) -> None:
+        """An SCM count no row knows stays an ST20.
+
+        Below 100 (stock's "mfg"), above taigan (stock's "sm2") and no sample: the ST20's files.
+        """
         for raw in ("", "50", "4000"):
             with self.subTest(variant_raw=raw):
-                r = uboot_tests.UsbRecoveryProbe().run_probe("st20", False, raw, mfg="")
+                r = uboot_tests.UsbRecoveryProbe().run_probe("st20", held=False, variant_raw=raw, mfg="")
                 self.assertEqual((r["rt_v"], r["env"].get("rt_dtb")), ("spotty", "spotty_scm.dtb"))
 
 
 class ImageTable(unittest.TestCase):
-    """/boot as the image build leaves it: both post-build scripts, in the order the defconfig
-    runs them, against a fake tree with stub tools."""
+    """/boot as the image build leaves it.
+
+    Both post-build scripts run, in the order the defconfig runs them, against a fake tree
+    with stub tools.
+    """
 
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
+        """Run the post-build scripts against a fake target tree."""
         cls.tmp = tempfile.TemporaryDirectory()
         tmp = Path(cls.tmp.name)
         target, binaries, host, bindir = tmp / "target", tmp / "images", tmp / "host", tmp / "bin"
@@ -311,7 +347,7 @@ class ImageTable(unittest.TestCase):
         config = tmp / ".config"
         config.write_text(f'BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="{kver}"\nBR2_PACKAGE_DROPBEAR=y\n')
 
-        def tool(path, body):
+        def tool(path: Path, body: str) -> None:
             path.write_text("#!/bin/sh\n" + body + "\n")
             path.chmod(0o755)
 
@@ -329,31 +365,37 @@ class ImageTable(unittest.TestCase):
              'if [ $dir = 1 ]; then mkdir -p "$@"; exit; fi\n'
              'mkdir -p "$(dirname "$2")" && cp "$1" "$2" && chmod "$mode" "$2"')
         defconfig = (ROOT / "os/configs/soundtap_defconfig").read_text()
-        scripts = re.search(r'^BR2_ROOTFS_POST_BUILD_SCRIPT="(.*)"$', defconfig, re.M).group(1)
+        scripts = re.search(r'^BR2_ROOTFS_POST_BUILD_SCRIPT="(.*)"$', defconfig, re.MULTILINE).group(1)
         env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", BINARIES_DIR=str(binaries),
                    HOST_DIR=str(host), BUILD_DIR=str(tmp / "build"), BR2_CONFIG=str(config),
                    SOURCE_DATE_EPOCH="1767225600", SOUNDTAP_COMMIT="0" * 40,
                    BR2_EXTERNAL_SOUNDTAP_PATH=str(ROOT / "os"))
         for script in scripts.split():
             path = script.replace("$(BR2_EXTERNAL_SOUNDTAP_PATH)", str(ROOT / "os"))
-            done = subprocess.run(["sh", path, str(target)], env=env, capture_output=True, text=True)
+            done = subprocess.run(["sh", path, str(target)], check=False, env=env, capture_output=True, text=True)
             if done.returncode:
-                raise AssertionError(f"{path} failed:\n{done.stdout}{done.stderr}")
+                msg = f"{path} failed:\n{done.stdout}{done.stderr}"
+                raise AssertionError(msg)
         cls.boot = target / "boot"
 
     @classmethod
-    def tearDownClass(cls):
+    def tearDownClass(cls) -> None:
+        """Remove the fake tree."""
         cls.tmp.cleanup()
 
-    def test_each_variant_finds_its_tree_and_kernel(self):
+    def test_each_variant_finds_its_tree_and_kernel(self) -> None:
+        """Each variant finds its device tree and kernel in /boot."""
         for name, v in BOOTED.items():
             with self.subTest(variant=name):
                 self.assertEqual((self.boot / v["dtb"]).read_text(), v["dts"])
                 self.assertEqual((self.boot / v["kernel"]).read_text(),
                                  f"Linux-6.12 SoundTap {MODELS[v['model']]['kernel_name']}")
 
-    def test_trees_boot_as_their_variant(self):
-        # Text: a device tree is data, and these bootargs are what a stick or RAM boot passes.
+    def test_trees_boot_as_their_variant(self) -> None:
+        """Each device tree's bootargs name a variant that uses that tree, with its module type.
+
+        Text: a device tree is data, and these bootargs are what a stick or RAM boot passes.
+        """
         for name, v in BOOTED.items():
             dts = (DTS / f"{v['dts']}.dts").read_text()
             args = re.search(r'bootargs = "([^"]*)"', dts).group(1)
@@ -362,10 +404,13 @@ class ImageTable(unittest.TestCase):
                 self.assertEqual(VARIANTS[variant]["dts"], v["dts"])
                 self.assertIn(f" module_type={v['module_type']} ", args)
 
-    def test_post_image_names_each_kernel(self):
-        # Text: post-image.sh needs a whole image build to run.
+    def test_post_image_names_each_kernel(self) -> None:
+        """post-image.sh builds each model's kernel and lists every boot image in SHA256SUMS.
+
+        Text: post-image.sh needs a whole image build to run.
+        """
         post_image = (ROOT / "os/board/image/post-image.sh").read_text()
-        loop = re.search(r"^for model in ([a-z0-9 ]+); do$", post_image, re.M).group(1).split()
+        loop = re.search(r"^for model in ([a-z0-9 ]+); do$", post_image, re.MULTILINE).group(1).split()
         self.assertEqual(sorted(loop), sorted({m["kernel_name"] for m in MODELS.values()}))
         for kind in ("spl", "uboot"):
             for path in TABLE["boot_images"][kind].values():
@@ -377,7 +422,8 @@ class PackageTable(unittest.TestCase):
 
     build_stu = load("build_stu", "os/installer/build-stu.py")
 
-    def test_rootfs_ceilings(self):
+    def test_rootfs_ceilings(self) -> None:
+        """The STU builder and checker hold each model to the table's rootfs ceiling."""
         for name, m in MODELS.items():
             with self.subTest(model=name):
                 for where, limits in (("build-stu.py", self.build_stu.MODEL_ROOTFS_LIMITS),
@@ -389,12 +435,14 @@ class PackageTable(unittest.TestCase):
                                      m["stock_rootfs_limit"], "build-stu.py")
         self.assertEqual(sorted(self.build_stu.MODEL_ROOTFS_LIMITS), sorted(stu_check.MODEL_ROOTFS_LIMITS))
 
-    def test_universal_package_carries_every_models_modules(self):
+    def test_universal_package_carries_every_models_modules(self) -> None:
+        """The universal package carries every model's suffixed modules."""
         for where, modules in (("build-stu.py", self.build_stu.SOUNDTAP_TRI_MODULES),
                                ("stu_check.py", stu_check.SOUNDTAP_TRI_MODULES)):
             self.assertEqual({n for n in modules if "." in n}, package_modules(), where)
 
-    def test_suffixes(self):
+    def test_suffixes(self) -> None:
+        """Only the table's suffixes are stripped from a module name."""
         for where, base in (("build-stu.py", self.build_stu.module_base_name),
                             ("stu_check.py", stu_check.module_base_name)):
             for suffix in SUFFIXES:
@@ -402,15 +450,19 @@ class PackageTable(unittest.TestCase):
             for other in sorted(set(VARIANTS) - set(SUFFIXES)):
                 self.assertEqual(base(f"soundtap-kernel.{other}"), f"soundtap-kernel.{other}", where)
 
-    def test_builder_holds_each_kernel_to_its_model(self):
-        # Text: build_tri_model_stu needs a built installer, kernel, rootfs, SPL and U-Boot.
+    def test_builder_holds_each_kernel_to_its_model(self) -> None:
+        """The STU builder holds each kernel to its model's kernel name.
+
+        Text: build_tri_model_stu needs a built installer, kernel, rootfs, SPL and U-Boot.
+        """
         source = (ROOT / "os/installer/build-stu.py").read_text()
         calls = dict(re.findall(r'require_kernel_model\(args\.(\w+)_kernel, "(\w+)"\)', source))
         self.assertTrue(calls)
         for suffix, kernel in calls.items():
             self.assertEqual({m["kernel_name"] for m in MODELS.values() if m["module_suffix"] == suffix}, {kernel})
 
-    def test_env_tool_recipes(self):
+    def test_env_tool_recipes(self) -> None:
+        """The environment tool's recipes name the table's tree, kernel and module type."""
         tool = load("wla_env", "os/support/uboot_recipes.py")
         for variant, files in tool.MODELS.items():
             v = BOOTED[variant.decode()]
@@ -418,7 +470,8 @@ class PackageTable(unittest.TestCase):
                 self.assertEqual({k.decode(): files[k].decode() for k in files},
                                  {"dtb": v["dtb"], "kernel": v["kernel"], "module_type": v["module_type"]})
 
-    def test_rom_usb_restore(self):
+    def test_rom_usb_restore(self) -> None:
+        """The ROM-USB tool's models and image paths are the table's."""
         tool = load("rom_usb_restore", "tools/recovery/rom-usb-restore.py")
         self.assertEqual(sorted(tool.MODELS), sorted(MODELS))
         for name, m in MODELS.items():
@@ -429,8 +482,9 @@ class PackageTable(unittest.TestCase):
                 self.assertEqual(tool.IMAGE_PATHS[m["spl"]], TABLE["boot_images"]["spl"][m["spl"]])
                 self.assertEqual(tool.IMAGE_PATHS["uboot"], TABLE["boot_images"]["uboot"][m["uboot"]])
 
-    def test_release_approval(self):
-        import release_approval
+    def test_release_approval(self) -> None:
+        """The release approval's devices are the table's models."""
+        release_approval = importlib.import_module("release_approval")
         self.assertEqual(sorted(release_approval.MODELS), sorted(MODELS))
         for name in MODELS:
             v = own_variant(name)

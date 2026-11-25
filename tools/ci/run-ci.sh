@@ -38,36 +38,39 @@ target() {
 	firewall) echo test-firewall ;;
 	bco) echo test-bco ;;
 	vuln) echo vuln ;;
-	*) echo "unknown step $1; steps: $ALL" >&2; return 2 ;;
+	*) echo "unknown step $1; steps: ${ALL}" >&2; return 2 ;;
 	esac
 }
 
-steps=${*:-$ALL}
-for s in $steps; do target "$s" >/dev/null || exit 2; done
+steps=${*:-${ALL}}
+# shellcheck disable=SC2310 # target refuses an unknown step by its status
+for s in ${steps}; do target "${s}" >/dev/null || exit 2; done
 if [ "$#" -eq 1 ]; then
-	exec $MAKE -C "$ROOT" --no-print-directory "$(target "$1")"
+	# shellcheck disable=SC2312 # every step was checked above; || true would switch off set -e inside target
+	exec ${MAKE} -C "${ROOT}" --no-print-directory "$(target "$1")"
 fi
 
-logs=$ROOT/output/ci
-mkdir -p "$logs"
-for s in $steps; do
-	rm -f "$logs/$s.rc"
-	( rc=0; $MAKE -C "$ROOT" --no-print-directory "$(target "$s")" >"$logs/$s.log" 2>&1 || rc=$?
-	  echo "$rc" >"$logs/$s.rc" ) &
+logs=${ROOT}/output/ci
+mkdir -p "${logs}"
+for s in ${steps}; do
+	rm -f "${logs}/${s}.rc"
+	# shellcheck disable=SC2310,SC2312 # every step was checked above; || true would switch off set -e inside target
+	( rc=0; ${MAKE} -C "${ROOT}" --no-print-directory "$(target "${s}")" >"${logs}/${s}.log" 2>&1 || rc=$?
+	  echo "${rc}" >"${logs}/${s}.rc" ) &
 done
 wait
 failed=
-for s in $steps; do
-	rc=$(cat "$logs/$s.rc" 2>/dev/null || echo '?')
-	if [ "$rc" = 0 ]; then
-		echo "ok    $s"
+for s in ${steps}; do
+	rc=$(cat "${logs}/${s}.rc" 2>/dev/null || echo '?')
+	if [ "${rc}" = 0 ]; then
+		echo "ok    ${s}"
 	else
-		echo "FAIL  $s (exit $rc): $logs/$s.log"
-		failed="$failed $s"
+		echo "FAIL  ${s} (exit ${rc}): ${logs}/${s}.log"
+		failed="${failed} ${s}"
 	fi
 done
-for s in $failed; do
-	echo "== $s"
-	tail -n 40 "$logs/$s.log"
+for s in ${failed}; do
+	echo "== ${s}"
+	tail -n 40 "${logs}/${s}.log"
 done
-[ -z "$failed" ]
+[ -z "${failed}" ]

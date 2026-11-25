@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
+"""Tests for kernel_config_check, the hardening check of the kernel configuration."""
+
 import sys
 import unittest
 from pathlib import Path
@@ -12,21 +14,26 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 class KernelConfigCheckTest(unittest.TestCase):
-    def test_fragment_is_hardened(self):
+    """The kernel fragment and a built configuration meet the hardening rules."""
+
+    def test_fragment_is_hardened(self) -> None:
+        """The image's kernel fragment passes the check."""
         text = (ROOT / "os/board/image/linux.fragment").read_text()
         self.assertEqual(problems(text, fragment=True), [])
 
-    def test_built_config_catches_reenabled_and_missing(self):
+    def test_built_config_catches_reenabled_and_missing(self) -> None:
+        """A built configuration with a denied option on or a required one missing fails."""
         good = "\n".join(
             [f"# CONFIG_{n} is not set" for n in DENY]
             + [f"CONFIG_{n}=y" for n in REQUIRE]
-            + [f"CONFIG_{n}=5" for n in NONZERO]
+            + [f"CONFIG_{n}=5" for n in NONZERO],
         )
         self.assertEqual(problems(good, fragment=False), [])
         bad = good.replace("# CONFIG_KPROBES is not set", "CONFIG_KPROBES=y").replace("CONFIG_STRICT_DEVMEM=y", "")
         self.assertEqual(problems(bad, fragment=False), ["CONFIG_KPROBES must be off", "CONFIG_STRICT_DEVMEM must be y"])
 
-    def test_unused_usb_driver_back_as_module_fails(self):
+    def test_unused_usb_driver_back_as_module_fails(self) -> None:
+        """An unused USB driver built as a module fails, and a fragment must turn it off explicitly."""
         good = "\n".join([f"CONFIG_{n}=y" for n in REQUIRE] + [f"CONFIG_{n}=5" for n in NONZERO])
         self.assertEqual(problems(good, fragment=False), [])
         self.assertEqual(
@@ -36,7 +43,8 @@ class KernelConfigCheckTest(unittest.TestCase):
         # A fragment has to say so: a missing line leaves omap2plus's or Kconfig's default.
         self.assertIn("CONFIG_USB_HID must be off", problems(good, fragment=True))
 
-    def test_oops_panics_and_a_panic_resets(self):
+    def test_oops_panics_and_a_panic_resets(self) -> None:
+        """An oops must panic and a panic must reset after a nonzero timeout."""
         base = [f"CONFIG_{n}=y" for n in REQUIRE if n != "PANIC_ON_OOPS"]
         self.assertEqual(
             problems("\n".join([*base, "CONFIG_PANIC_TIMEOUT=5"]), fragment=False),

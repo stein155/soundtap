@@ -105,7 +105,7 @@ static void wr_tx_status(volatile struct wring *r, unsigned *ok, unsigned *faile
 {
     unsigned n = wr_avail(r, 4);
     while (n--) {
-        volatile unsigned *e = wr_reserve(r, 4, 1);
+        const volatile unsigned *e = wr_reserve(r, 4, 1);
         if ((e[3] & 0xffff) == 0)
             (*ok)++;
         else

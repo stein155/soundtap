@@ -36,20 +36,20 @@ hil_init() {
 	case ${SOUNDTAP_HIL_SSH:-auto} in
 	0) hil_ssh=0 ;;
 	1) hil_ssh=1
-	   hil_ssh_run true || hil_fail "no root ssh to $hil_host (SOUNDTAP_HIL_SSH=1 needs an alpha image)" ;;
+	   hil_ssh_run true || hil_fail "no root ssh to ${hil_host} (SOUNDTAP_HIL_SSH=1 needs an alpha image)" ;;
 	*) if hil_ssh_run true; then hil_ssh=1; else hil_ssh=0; fi ;;
 	esac
-	if [ "$hil_ssh" = 1 ]; then
-		echo "speaker: $hil_ip, root ssh (alpha image): confirmations use the one-time token" >&2
+	if [ "${hil_ssh}" = 1 ]; then
+		echo "speaker: ${hil_ip}, root ssh (alpha image): confirmations use the one-time token" >&2
 	else
-		echo "speaker: $hil_ip, no ssh (production image): confirmations need a key held on the speaker" >&2
+		echo "speaker: ${hil_ip}, no ssh (production image): confirmations need a key held on the speaker" >&2
 	fi
 	hil_serial_start
 }
 
 # hil_ssh_run <command>: runs a command on the speaker as root, bounded.
 hil_ssh_run() {
-	set -- ssh -o ConnectTimeout=5 -o BatchMode=yes -o ServerAliveInterval=5 -o ServerAliveCountMax=2 "root@$hil_host" "$1"
+	set -- ssh -o ConnectTimeout=5 -o BatchMode=yes -o ServerAliveInterval=5 -o ServerAliveCountMax=2 "root@${hil_host}" "$1"
 	if command -v timeout >/dev/null 2>&1; then
 		timeout 15 "$@" 2>/dev/null
 	else
@@ -59,7 +59,7 @@ hil_ssh_run() {
 
 # hil_get <path>: the body of GET <path>, or a failure when the speaker does not answer 2xx.
 hil_get() {
-	curl -sS -f -m 10 "http://$hil_ip$1" 2>/dev/null
+	curl -sS -f -m 10 "http://${hil_ip}$1" 2>/dev/null
 }
 
 # hil_json <field>: one field of the JSON on stdin, dotted for nested objects. A string as
@@ -77,17 +77,17 @@ print(v if isinstance(v, str) else json.dumps(v))' "$1" 2>/dev/null
 # (true or false) and boot_previous. Fails while the speaker does not answer.
 hil_boot() {
 	h=''
-	if h=$(hil_get /api/health) && boot_id=$(printf '%s' "$h" | hil_json boot.id); then
-		boot_slot=$(printf '%s' "$h" | hil_json boot.slot)
-		boot_confirmed=$(printf '%s' "$h" | hil_json boot.confirmed)
-		boot_previous=$(printf '%s' "$h" | hil_json boot.previous)
-		[ -n "$boot_id" ]
+	if h=$(hil_get /api/health) && boot_id=$(printf '%s' "${h}" | hil_json boot.id); then
+		boot_slot=$(printf '%s' "${h}" | hil_json boot.slot)
+		boot_confirmed=$(printf '%s' "${h}" | hil_json boot.confirmed)
+		boot_previous=$(printf '%s' "${h}" | hil_json boot.previous)
+		[ -n "${boot_id}" ]
 		return
 	fi
 	# An image older than /api/health's boot answers without it; over SSH the boot can
 	# still be read from the shell, as these scripts did before.
-	[ "$hil_ssh" = 1 ] && [ -n "${h:-}" ] || return 1
-	boot_id=$(hil_ssh_run 'cat /proc/sys/kernel/random/boot_id') && [ -n "$boot_id" ] || return 1
+	[ "${hil_ssh}" = 1 ] && [ -n "${h:-}" ] || return 1
+	boot_id=$(hil_ssh_run 'cat /proc/sys/kernel/random/boot_id') && [ -n "${boot_id}" ] || return 1
 	case $(hil_ssh_run 'grep -o "ubi.mtd=[89]" /proc/cmdline | head -n 1') in
 	ubi.mtd=8) boot_slot=PING ;;
 	ubi.mtd=9) boot_slot=PONG ;;
@@ -102,34 +102,34 @@ hil_boot() {
 }
 
 # hil_since <epoch seconds>: seconds since then.
-hil_since() { echo $(($(date +%s) - $1)); }
+hil_since() { echo $(($(date +%s || true) - $1)); }
 
 # hil_wait_boot <boot id>: waits until the speaker answers from a boot other than that
 # one, at most SOUNDTAP_HIL_TIMEOUT seconds; then boot_* describe the new boot.
 hil_wait_boot() {
 	hil_t0=$(date +%s)
 	while :; do
-		if hil_boot && [ "$boot_id" != "$1" ]; then
+		if hil_boot && [ "${boot_id}" != "$1" ]; then
 			return 0
 		fi
-		[ "$(hil_since "$hil_t0")" -lt "$hil_timeout" ] ||
-			hil_fail "not back $hil_timeout s after the reboot"
-		sleep "$hil_poll"
+		[ "$(hil_since "${hil_t0}" || true)" -lt "${hil_timeout}" ] ||
+			hil_fail "not back ${hil_timeout} s after the reboot"
+		sleep "${hil_poll}"
 	done
 }
 
 # hil_wait_confirmed: waits until soundtapd has confirmed the running boot (a minute after
 # it started), at most SOUNDTAP_HIL_TIMEOUT seconds. A new boot on the way fails it.
 hil_wait_confirmed() {
-	hil_t0=$(date +%s) hil_boot0=$boot_id
+	hil_t0=$(date +%s) hil_boot0=${boot_id}
 	while :; do
 		if hil_boot; then
-			[ "$boot_id" = "$hil_boot0" ] || hil_fail "the speaker rebooted before it confirmed its boot"
-			[ "$boot_confirmed" != true ] || return 0
+			[ "${boot_id}" = "${hil_boot0}" ] || hil_fail "the speaker rebooted before it confirmed its boot"
+			[ "${boot_confirmed}" != true ] || return 0
 		fi
-		[ "$(hil_since "$hil_t0")" -lt "$hil_timeout" ] ||
-			hil_fail "boot not confirmed $hil_timeout s after it answered"
-		sleep "$hil_poll"
+		[ "$(hil_since "${hil_t0}" || true)" -lt "${hil_timeout}" ] ||
+			hil_fail "boot not confirmed ${hil_timeout} s after it answered"
+		sleep "${hil_poll}"
 	done
 }
 
@@ -140,12 +140,12 @@ hil_wait_confirmed() {
 hil_gated() {
 	hil_what=$1 hil_method=$2 hil_path=$3
 	shift 3
-	if [ "$hil_ssh" = 1 ]; then
+	if [ "${hil_ssh}" = 1 ]; then
 		set -- -H "X-SoundTap-Device-Token: $(hil_ssh_run 'cat /run/soundtap/confirm-token 2>/dev/null' || true)" "$@"
 	else
-		hil_prompt_hold "$hil_what"
+		hil_prompt_hold "${hil_what}"
 	fi
-	curl -sS -o /dev/stderr -w '%{http_code}' -X "$hil_method" "http://$hil_ip$hil_path" "$@" || true
+	curl -sS -o /dev/stderr -w '%{http_code}' -X "${hil_method}" "http://${hil_ip}${hil_path}" "$@" || true
 }
 
 # hil_prompt_hold <what>: tells whoever is at the speaker to confirm now. The request goes
@@ -169,9 +169,9 @@ hil_manual() {
 # hil_fail <message>: stops the run, with the console's last lines when there is one.
 hil_fail() {
 	echo "FAIL: $*" >&2
-	if [ -n "$console_log" ] && [ -s "$console_log" ]; then
-		echo "last console lines ($console_log):" >&2
-		tail -n 20 "$console_log" >&2
+	if [ -n "${console_log}" ] && [ -s "${console_log}" ]; then
+		echo "last console lines (${console_log}):" >&2
+		tail -n 20 "${console_log}" >&2
 	fi
 	exit 1
 }
@@ -181,20 +181,20 @@ hil_fail() {
 # boot that stalls before the network says where it stopped.
 hil_serial_start() {
 	[ -n "${SOUNDTAP_HIL_SERIAL:-}" ] || return 0
-	[ -r "$SOUNDTAP_HIL_SERIAL" ] || hil_fail "cannot read the serial device $SOUNDTAP_HIL_SERIAL"
+	[ -r "${SOUNDTAP_HIL_SERIAL}" ] || hil_fail "cannot read the serial device ${SOUNDTAP_HIL_SERIAL}"
 	console_log=${SOUNDTAP_HIL_CONSOLE_LOG:-hil-console-$(date +%Y%m%d-%H%M%S).log}
-	: >>"$console_log"
+	: >>"${console_log}"
 	# stty sets the device open as stdin, the same one cat then reads: on macOS a setting
 	# made through another descriptor is gone when that one closes.
 	{
 		stty 115200 raw -echo 2>/dev/null ||
-			echo "warning: could not set $SOUNDTAP_HIL_SERIAL to 115200 baud" >&2
+			echo "warning: could not set ${SOUNDTAP_HIL_SERIAL} to 115200 baud" >&2
 		exec cat
-	} <"$SOUNDTAP_HIL_SERIAL" >>"$console_log" &
+	} <"${SOUNDTAP_HIL_SERIAL}" >>"${console_log}" &
 	hil_console_pid=$!
 	trap 'kill "$hil_console_pid" 2>/dev/null || true' EXIT
 	trap 'exit 130' INT TERM
-	echo "console: $SOUNDTAP_HIL_SERIAL at 115200 baud, kept in $console_log" >&2
+	echo "console: ${SOUNDTAP_HIL_SERIAL} at 115200 baud, kept in ${console_log}" >&2
 }
 
 # hil_volume_save / hil_volume_restore: the volume before the run, put back after it.
@@ -202,8 +202,8 @@ hil_volume_save() {
 	hil_volume0=$(hil_get /api/volume | hil_json volume) || hil_volume0=''
 }
 hil_volume_restore() {
-	[ -n "$hil_volume0" ] || return 0
-	curl -sS -f -m 10 -o /dev/null -X POST "http://$hil_ip/api/volume" \
-		-H 'Content-Type: application/json' -d "{\"volume\":$hil_volume0}" 2>/dev/null ||
-		echo "warning: could not put the volume back to $hil_volume0" >&2
+	[ -n "${hil_volume0}" ] || return 0
+	curl -sS -f -m 10 -o /dev/null -X POST "http://${hil_ip}/api/volume" \
+		-H 'Content-Type: application/json' -d "{\"volume\":${hil_volume0}}" 2>/dev/null ||
+		echo "warning: could not put the volume back to ${hil_volume0}" >&2
 }

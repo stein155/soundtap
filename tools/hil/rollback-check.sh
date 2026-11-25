@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-# shellcheck disable=SC2154 # hil_* and boot_* are set by lib.sh, sourced below.
 # Prove the boot-count rollback on a bench speaker (layer 3; ADR 0010).
 #
 #   rollback-check.sh <speaker-ip>
@@ -27,94 +26,107 @@
 set -eu
 ip=$1
 here=$(dirname "$0")
-. "$here/lib.sh"
-hil_init "$ip"
+. "${here}/lib.sh"
+hil_init "${ip}"
 
 # Alpha: the boot is read over SSH, as soundtapd is frozen and its API silent.
 sp() { hil_ssh_run "$1"; }
 ssh_slot() { sp 'grep -o "ubi.mtd=[89]" /proc/cmdline | head -n 1'; }
+# shellcheck disable=SC2310 # a probe of the speaker: its failure is handled right here
 ssh_bootid() { sp 'cat /proc/sys/kernel/random/boot_id' || true; }
 ssh_confirmed() { sp 'cat /tmp/soundtap.log* | grep -q "msg=\"boot confirmed\""'; }
 # The next boot_id after $1, within the timeout.
 ssh_next_boot() {
 	t0=$(date +%s) b=$1
-	while [ -z "$b" ] || [ "$b" = "$1" ]; do
-		[ "$(hil_since "$t0")" -lt "$hil_timeout" ] || hil_fail "not back $hil_timeout s after a reset"
-		sleep "$hil_poll"; b=$(ssh_bootid)
+	while [ -z "${b}" ] || [ "${b}" = "$1" ]; do
+		# shellcheck disable=SC2310,SC2312 # hil_since only prints the elapsed seconds
+		[ "$(hil_since "${t0}")" -lt "${hil_timeout}" ] || hil_fail "not back ${hil_timeout} s after a reset"
+		sleep "${hil_poll}"; b=$(ssh_bootid)
 	done
-	echo "$b"
+	echo "${b}"
 }
 
 reboot_speaker() {
 	code=$(hil_gated "$1" POST /api/reboot -m 90 -H 'Content-Type: application/json' -d '{"confirm":true}')
 	echo
-	[ "$code" = 200 ] || hil_fail "reboot: HTTP $code"
+	[ "${code}" = 200 ] || hil_fail "reboot: HTTP ${code}"
 }
 
-if [ "$hil_ssh" = 1 ]; then
+if [ "${hil_ssh}" = 1 ]; then
+	# shellcheck disable=SC2312 # a reading of the speaker; a failed one reads as empty
 	boot=$(ssh_bootid) bad=$(ssh_slot)
-	[ -n "$boot" ] && [ -n "$bad" ] || { echo "no root ssh to $ip" >&2; exit 2; }
-	echo "slot under test: $bad"
+	[ -n "${boot}" ] && [ -n "${bad}" ] || { echo "no root ssh to ${ip}" >&2; exit 2; }
+	echo "slot under test: ${bad}"
 	reboot_speaker "reboot into the slot under test"
 	# bootlimit is 4, so at most five boots land on the slot under test before altbootcmd.
 	n=0
 	while :; do
-		boot=$(ssh_next_boot "$boot")
-		[ "$(ssh_slot)" = "$bad" ] || break
+		boot=$(ssh_next_boot "${boot}")
+		# shellcheck disable=SC2310,SC2312 # a reading of the speaker; a failed one reads as empty
+		[ "$(ssh_slot)" = "${bad}" ] || break
 		n=$((n + 1))
-		[ "$n" -le 6 ] || hil_fail "still on $bad after $n unconfirmed boots"
+		[ "${n}" -le 6 ] || hil_fail "still on ${bad} after ${n} unconfirmed boots"
 		# soundtapd confirms a minute after it starts; ssh answers well before that.
 		t0=$(date +%s)
+		# shellcheck disable=SC2016,SC2310 # the speaker expands $(pidof); a failed freeze is retried right here
 		until sp 'kill -STOP $(pidof soundtapd)'; do
-			[ "$(hil_since "$t0")" -lt 40 ] || hil_fail "could not freeze soundtapd in time"
+			# shellcheck disable=SC2310,SC2312 # hil_since only prints the elapsed seconds
+			[ "$(hil_since "${t0}")" -lt 40 ] || hil_fail "could not freeze soundtapd in time"
 			sleep 2
 		done
-		! ssh_confirmed || hil_fail "boot $n on $bad confirmed before the freeze"
-		echo "boot $n on $bad: soundtapd frozen, waiting for the watchdog"
+		# shellcheck disable=SC2310 # a probe of the speaker: its failure is handled right here
+		! ssh_confirmed || hil_fail "boot ${n} on ${bad} confirmed before the freeze"
+		echo "boot ${n} on ${bad}: soundtapd frozen, waiting for the watchdog"
 	done
 	good=$(ssh_slot)
-	echo "fell back to $good after $n unconfirmed boots"
+	echo "fell back to ${good} after ${n} unconfirmed boots"
 	t0=$(date +%s)
+	# shellcheck disable=SC2310 # a probe of the speaker: its failure is handled right here
 	until ssh_confirmed; do
-		[ "$(hil_since "$t0")" -lt "$hil_timeout" ] || hil_fail "fallback boot not confirmed"
-		sleep "$hil_poll"
+		# shellcheck disable=SC2310,SC2312 # hil_since only prints the elapsed seconds
+		[ "$(hil_since "${t0}")" -lt "${hil_timeout}" ] || hil_fail "fallback boot not confirmed"
+		sleep "${hil_poll}"
 	done
+	# shellcheck disable=SC2310 # a probe of the speaker: its failure is handled right here
 	sp 'cat /tmp/soundtap.log* | grep -q "booted by fallback"' || hil_fail "soundtapd did not see the fallback"
 	# The selection must survive a normal reboot.
-	reboot_speaker "a normal reboot, which must stay on $good"
-	boot=$(ssh_next_boot "$boot")
-	[ "$(ssh_slot)" = "$good" ] || hil_fail "the next reboot went back to $bad"
-	echo "PASS: $bad -> $good, kept after a reboot"
+	reboot_speaker "a normal reboot, which must stay on ${good}"
+	boot=$(ssh_next_boot "${boot}")
+	# shellcheck disable=SC2310,SC2312 # a reading of the speaker; a failed one reads as empty
+	[ "$(ssh_slot)" = "${good}" ] || hil_fail "the next reboot went back to ${bad}"
+	echo "PASS: ${bad} -> ${good}, kept after a reboot"
 	exit 0
 fi
 
-hil_boot || { echo "no running boot in http://$ip/api/health (an image older than that report needs root ssh)" >&2; exit 2; }
-bad=$boot_slot
-[ -n "$bad" ] || hil_fail "the speaker runs from no NAND slot"
-echo "slot under test: $bad"
+# shellcheck disable=SC2310 # a probe of the speaker: its failure is handled right here
+hil_boot || { echo "no running boot in http://${ip}/api/health (an image older than that report needs root ssh)" >&2; exit 2; }
+bad=${boot_slot}
+[ -n "${bad}" ] || hil_fail "the speaker runs from no NAND slot"
+echo "slot under test: ${bad}"
 reboot_speaker "reboot into the slot under test"
 n=0
 while :; do
-	hil_wait_boot "$boot_id"
-	[ "$boot_slot" = "$bad" ] || break
+	hil_wait_boot "${boot_id}"
+	[ "${boot_slot}" = "${bad}" ] || break
 	n=$((n + 1))
-	[ "$n" -le 6 ] || hil_fail "still on $bad after $n unconfirmed boots"
-	[ "$boot_confirmed" = false ] || hil_fail "boot $n on $bad confirmed before the script saw it"
-	echo "boot $n on $bad: rebooting it before soundtapd confirms it"
-	this=$boot_id
-	reboot_speaker "reboot $n before the boot confirm: hold at once"
+	[ "${n}" -le 6 ] || hil_fail "still on ${bad} after ${n} unconfirmed boots"
+	[ "${boot_confirmed}" = false ] || hil_fail "boot ${n} on ${bad} confirmed before the script saw it"
+	echo "boot ${n} on ${bad}: rebooting it before soundtapd confirms it"
+	this=${boot_id}
+	reboot_speaker "reboot ${n} before the boot confirm: hold at once"
 	# The reboot follows its answer by a second; a boot that confirmed meanwhile reset the
 	# count, and the fallback would come late or not at all.
-	if hil_boot && [ "$boot_id" = "$this" ] && [ "$boot_confirmed" = true ]; then
-		hil_fail "boot $n on $bad confirmed before it rebooted: hold the key sooner"
+	# shellcheck disable=SC2310 # a probe of the speaker: its failure is handled right here
+	if hil_boot && [ "${boot_id}" = "${this}" ] && [ "${boot_confirmed}" = true ]; then
+		hil_fail "boot ${n} on ${bad} confirmed before it rebooted: hold the key sooner"
 	fi
-	boot_id=$this
+	boot_id=${this}
 done
-good=$boot_slot
-echo "fell back to $good after $n unconfirmed boots"
+good=${boot_slot}
+echo "fell back to ${good} after ${n} unconfirmed boots"
 hil_wait_confirmed
 # soundtapd selects the slot it fell back to when it confirms; a normal reboot shows it did.
-reboot_speaker "a normal reboot, which must stay on $good"
-hil_wait_boot "$boot_id"
-[ "$boot_slot" = "$good" ] || hil_fail "the next reboot went back to $bad"
-echo "PASS: $bad -> $good, kept after a reboot"
+reboot_speaker "a normal reboot, which must stay on ${good}"
+hil_wait_boot "${boot_id}"
+[ "${boot_slot}" = "${good}" ] || hil_fail "the next reboot went back to ${bad}"
+echo "PASS: ${bad} -> ${good}, kept after a reboot"

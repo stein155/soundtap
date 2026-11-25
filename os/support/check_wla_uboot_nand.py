@@ -78,7 +78,7 @@ WAY_BACK = (b"nboot.e ${kloadaddr} 0 ${kernel0_nand_address}; fixsig; ",
 
 
 def bose_boot_path(image: bytes, config: str) -> str:
-    """What makes this U-Boot boot Bose's way, or "" when nothing does."""
+    """Return what makes this U-Boot boot Bose's way, or "" when nothing does."""
     if b"bootcmd=run " in image:
         return "bootcmd=run "
     if image.count(b"nboot.e") != sum(image.count(r) for r in WAY_BACK):
@@ -89,19 +89,24 @@ def bose_boot_path(image: bytes, config: str) -> str:
     return ""
 
 
-def main(out: Path, env_in_nand: bool = False) -> None:
+def main(out: Path, *, env_in_nand: bool = False) -> None:
+    """Check the built U-Boot boots our NAND chain, carries no Bose boot path and can boot stock."""
     config = (out / ".config").read_text()
     image = (out / "u-boot.img").read_bytes()
     for value in REQUIRED + (PRODUCT_ONLY if env_in_nand else PROBE_ONLY):
         if value not in config.splitlines() and value not in config:
-            raise SystemExit(f"missing {value}")
+            msg = f"missing {value}"
+            raise SystemExit(msg)
     chain = BOOTCOMMAND.split("; ")
     if config.find(f'CONFIG_BOOTCOMMAND="{BOOTCOMMAND}"') < 0:
-        raise SystemExit("config lacks exact NAND boot command")
+        msg = "config lacks exact NAND boot command"
+        raise SystemExit(msg)
     if not all(image.find(step.encode()) >= 0 for step in chain):
-        raise SystemExit("u-boot.img lacks complete NAND boot command chain")
+        msg = "u-boot.img lacks complete NAND boot command chain"
+        raise SystemExit(msg)
     if BOOTCOMMAND.encode() not in image:
-        raise SystemExit("u-boot.img lacks fixed UBI bootcmd")
+        msg = "u-boot.img lacks fixed UBI bootcmd"
+        raise SystemExit(msg)
     # Bose's own boot path must not be what this U-Boot boots, whatever the mode. A product
     # U-Boot will *read* nand_boot out of mtd5 at runtime -- that is how the slot is chosen --
     # but it must not carry a default that boots Bose's way. The one place nboot.e may
@@ -110,10 +115,12 @@ def main(out: Path, env_in_nand: bool = False) -> None:
     # `fixsig` is no longer on this list: the name is theirs, the implementation is ours
     # (cmd/fixsig.c), and a U-Boot without it cannot boot a slot their updater wrote.
     if bose_boot_path(image, config):
-        raise SystemExit(f"u-boot.img retains Bose boot path: {bose_boot_path(image, config)}")
+        msg = f"u-boot.img retains Bose boot path: {bose_boot_path(image, config)}"
+        raise SystemExit(msg)
     for needed in (b"fixsig", b"variant_raw"):
         if needed not in image:
-            raise SystemExit(f"u-boot.img cannot boot stock firmware: {needed.decode()} missing")
+            msg = f"u-boot.img cannot boot stock firmware: {needed.decode()} missing"
+            raise SystemExit(msg)
     mode = "product, environment from mtd5" if env_in_nand else "probe, no environment"
     print(f"WLA U-Boot NAND boot passed ({mode}): "
           "variant_raw picks binky/rhino, Pong then Ping, then reset")
@@ -124,5 +131,6 @@ if __name__ == "__main__":
     env_in_nand = "--env-in-nand" in args
     args = [a for a in args if a != "--env-in-nand"]
     if len(args) != 1:
-        raise SystemExit(f"usage: {sys.argv[0]} [--env-in-nand] OUT")
-    main(Path(args[0]), env_in_nand)
+        msg = f"usage: {sys.argv[0]} [--env-in-nand] OUT"
+        raise SystemExit(msg)
+    main(Path(args[0]), env_in_nand=env_in_nand)

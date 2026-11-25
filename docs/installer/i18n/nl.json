@@ -26,7 +26,7 @@
   "copyFail": "Selecteer en kopieer zelf",
   "br.intro": "Deze pagina vraagt een SoundTouch waar nog de software van Bose op staat om SoundTap te downloaden van de updateserver van SoundTap en te installeren. De speaker blijft op je wifi en doet het werk zelf. Na ongeveer vier minuten start hij opnieuw op, met SoundTap.",
   "br.ip": "Het IP-adres van de speaker",
-  "br.ipHint": "In de Bose-app: Instellingen, Luidsprekerinstellingen, je speaker, Info. Of zoek het op in je router.",
+  "br.ipHint": "In de Bose-app: Instellingen, Instellingen luidspreker, je speaker, Informatie over. Of zoek het op in je router.",
   "br.previewAgree": "Voor dit model is SoundTap een proefversie: het is uitgewerkt aan de hand van de software van Bose zelf en niemand heeft het nog op dit model gebruikt. Misschien speelt het niets af, en misschien is niet bewezen dat je terug kunt naar Bose. Ik installeer het toch.",
   "br.go": "SoundTap installeren",
   "br.pickModel": "Kies eerst je speaker in stap 1.",

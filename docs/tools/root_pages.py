@@ -13,9 +13,17 @@ github_links.py (the next hook) sends what is not on the site to GitHub. GitHub'
 
 The functions below the hooks do the rewriting and need no MkDocs; os/tests/docs tests them.
 """
+from __future__ import annotations
+
 import posixpath
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from mkdocs.config.defaults import MkDocsConfig
+    from mkdocs.structure.files import Files
+    from mkdocs.structure.pages import Page
 
 # Repository path -> path on the site (relative to docs_dir).
 PAGES = {
@@ -28,12 +36,13 @@ PAGES = {
 SITE = {site: repo for repo, site in PAGES.items()}
 LINK = re.compile(r"\]\((?!https?:|mailto:|#|/)([^)\s]+)\)")
 ATTR = re.compile(r'\b(href|src|srcset)="(?!https?:|mailto:|#|/)([^"\s]+)"')
-ALERT = re.compile(r"^> \[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*\n((?:>.*(?:\n|$))*)", re.M)
+ALERT = re.compile(r"^> \[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*\n((?:>.*(?:\n|$))*)", re.MULTILINE)
 ADMONITION = {"NOTE": "note", "TIP": "tip", "IMPORTANT": "info", "WARNING": "warning",
               "CAUTION": "danger"}
 
 
-def on_files(files, config):
+def on_files(files: Files, config: MkDocsConfig) -> Files:
+    """Add the root pages to the site, docs/README.md as documentation.md."""
     from mkdocs.structure.files import File
 
     root = Path(config["config_file_path"]).resolve().parent
@@ -52,18 +61,20 @@ def on_files(files, config):
     return files
 
 
-def on_page_markdown(markdown, page, config, files):
+def on_page_markdown(markdown: str, page: Page, config: MkDocsConfig, files: Files) -> str:
+    """Rewrite the links and alerts of a page for the site."""
+    del files  # MkDocs passes every argument by keyword; this hook needs no file list.
     blob = config["repo_url"].rstrip("/") + "/blob/main/"
     return rewrite(markdown, page.file.src_uri, blob)
 
 
-def repo_path(src_uri):
-    """The repository path a site page was read from."""
+def repo_path(src_uri: str) -> str:
+    """Return the repository path a site page was read from."""
     return SITE.get(src_uri, "docs/" + src_uri)
 
 
-def site_path(repo):
-    """A repository path's place on the site, or None when it is not there."""
+def site_path(repo: str) -> str | None:
+    """Return a repository path's place on the site, or None when it is not there."""
     if repo in PAGES:
         return PAGES[repo]
     if repo.startswith("docs/"):
@@ -71,19 +82,22 @@ def site_path(repo):
     return None
 
 
-def _resolve(target, repo_dir):
+def _resolve(target: str, repo_dir: str) -> tuple[str, str, str]:
     path, sep, anchor = target.partition("#")
     full = posixpath.normpath(posixpath.join(repo_dir, path))
     return full, ("/" if path.endswith("/") else ""), sep + anchor
 
 
-def rewrite(markdown, src_uri, blob):
-    """markdown is the page at src_uri on the site; blob is the GitHub URL files resolve under."""
+def rewrite(markdown: str, src_uri: str, blob: str) -> str:
+    """Rewrite the links of `markdown`, the page at src_uri on the site.
+
+    blob is the GitHub URL files resolve under.
+    """
     repo = repo_path(src_uri)
     repo_dir, site_dir = posixpath.dirname(repo), posixpath.dirname(src_uri) or "."
     generated = repo in PAGES and not repo.startswith("docs/")
 
-    def link(m):
+    def link(m: re.Match[str]) -> str:
         target = m.group(1)
         if target.startswith("#"):
             return m.group(0)
@@ -95,7 +109,7 @@ def rewrite(markdown, src_uri, blob):
             return f"]({posixpath.relpath(full, posixpath.join('docs', site_dir))}{slash}{anchor})"
         return m.group(0)
 
-    def attr(m):
+    def attr(m: re.Match[str]) -> str:
         name, target = m.groups()
         full, slash, anchor = _resolve(target, repo_dir)
         site = site_path(full)
@@ -114,9 +128,9 @@ def rewrite(markdown, src_uri, blob):
     return alerts(markdown)
 
 
-def alerts(markdown):
-    """GitHub's `> [!WARNING]` blocks as MkDocs admonitions."""
-    def admonition(m):
+def alerts(markdown: str) -> str:
+    """Turn GitHub's `> [!WARNING]` blocks into MkDocs admonitions."""
+    def admonition(m: re.Match[str]) -> str:
         body = [re.sub(r"^> ?", "", line) for line in m.group(2).splitlines()]
         return (f"!!! {ADMONITION[m.group(1)]}\n\n"
                 + "".join(f"    {line}\n" if line.strip() else "\n" for line in body) + "\n")

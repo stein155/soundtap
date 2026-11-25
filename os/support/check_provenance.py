@@ -26,6 +26,7 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -39,21 +40,24 @@ IMAGE_SKIP = {"dev", "proc", "sys", "tmp", "run", "mnt", "var/run"}
 
 
 def sha(path: Path) -> str:
+    """Return the SHA-256 of the file, in hex."""
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def is_binary(path: Path) -> bool:
-    with open(path, "rb") as f:
+    """Return whether the file's first 8000 bytes hold a NUL."""
+    with path.open("rb") as f:
         return b"\0" in f.read(8000)
 
 
 def is_elf(path: Path) -> bool:
-    with open(path, "rb") as f:
+    """Return whether the file starts with the ELF magic."""
+    with path.open("rb") as f:
         return f.read(4) == b"\x7fELF"
 
 
-def image_files(rootfs: Path):
-    """Every regular file of the image, outside IMAGE_SKIP, in a stable order."""
+def image_files(rootfs: Path) -> Iterator[Path]:
+    """Yield every regular file of the image, outside IMAGE_SKIP, in a stable order."""
     for top, dirs, names in os.walk(rootfs):
         rel = Path(top).relative_to(rootfs).as_posix()
         dirs[:] = sorted(d for d in dirs if (d if rel == "." else f"{rel}/{d}") not in IMAGE_SKIP)
@@ -63,8 +67,8 @@ def image_files(rootfs: Path):
                 yield path
 
 
-def tree_files(tree):
-    """Tracked files; a tree without git (the test container) is walked, minus build output."""
+def tree_files(tree: str | Path) -> list[str]:
+    """Return the tracked files; a tree without git (the test container) is walked, minus build output."""
     try:
         out = subprocess.run(["git", "-C", str(tree), "ls-files", "-z"], capture_output=True, check=True).stdout
         return out.decode().split("\0")[:-1]
@@ -76,32 +80,31 @@ def tree_files(tree):
         return found
 
 
-def entry_errors(manifest) -> list:
+def entry_errors(manifest: list[dict]) -> list[str]:
+    """Return what each manifest entry lacks or gets wrong."""
     errors = []
     for i, e in enumerate(manifest):
         name = f"entry {i} ({e.get('source', '?')[:40]})"
-        for key in ("source", "version", "license"):
-            if not e.get(key):
-                errors.append(f"{name}: missing {key}")
+        errors.extend(f"{name}: missing {key}" for key in ("source", "version", "license") if not e.get(key))
         if e.get("origin") not in ORIGINS:
             errors.append(f"{name}: origin must be one of {sorted(ORIGINS)}")
-        if re.search(r"bose|soundtouch", e.get("source", ""), re.I):
+        if re.search(r"bose|soundtouch", e.get("source", ""), re.IGNORECASE):
             errors.append(f"{name}: a Bose product is not an allowed source")
         if not e.get("files") and not e.get("globs"):
             errors.append(f"{name}: lists no files")
-        for path, digest in e.get("files", {}).items():
-            if not re.fullmatch(r"[0-9a-f]{64}", digest):
-                errors.append(f"{name}: {path} has no sha256")
+        errors.extend(f"{name}: {path} has no sha256"
+                      for path, digest in e.get("files", {}).items() if not re.fullmatch(r"[0-9a-f]{64}", digest))
     return errors
 
 
-def check(manifest, tree=ROOT, rootfs=None) -> list:
+def check(manifest: list[dict], tree: str | Path = ROOT, rootfs: str | Path | None = None) -> list[str]:
+    """Return every binary in the tree or image without matching provenance, and every stale entry."""
     errors = entry_errors(manifest)
     files = {p: d for e in manifest for p, d in e.get("files", {}).items()}
     globs = [g for e in manifest for g in e.get("globs", [])]
     seen = set()
 
-    def verify(where, path, key):
+    def verify(where: str, path: Path, key: str) -> None:
         seen.add(key)
         if key in files and sha(path) != files[key]:
             errors.append(f"WRONG HASH: {where} is {sha(path)[:12]}, the manifest says {files[key][:12]}")
@@ -126,7 +129,8 @@ def check(manifest, tree=ROOT, rootfs=None) -> list:
     return errors
 
 
-def main(argv=None) -> int:
+def main(argv: list[str] | None = None) -> int:
+    """Check the manifest against the tree, and the image when given, and return the exit code."""
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--rootfs", type=Path)
     args = ap.parse_args(argv)

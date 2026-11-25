@@ -27,22 +27,41 @@ import json
 import threading
 import time
 import uuid
+from collections.abc import Callable, Mapping
+from dataclasses import InitVar, dataclass
+from email.message import Message
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlsplit, parse_qs
+from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 BOOTLIMIT = 4
 
+# A request's headers: the handler's message, or a plain mapping in a test.
+Headers = Mapping[str, str] | Message
+# An answer: the HTTP status and the JSON body.
+Answer = tuple[int, dict[str, object]]
 
-def other(slot):
+
+def other(slot: str) -> str:
+    """Return the slot that is not slot."""
     return "PONG" if slot == "PING" else "PING"
 
 
+@dataclass(eq=False)
 class FakeSpeaker:
-    def __init__(self, slot="PING", build="0.1.0", confirm_after=1.0, down_for=0.2,
-                 reboot_delay=0.0, hold_window=5.0, token_file=None):
+    """A speaker's API, its boot slots and U-Boot's boot count, with a key a test can hold."""
+
+    slot: InitVar[str] = "PING"
+    build: InitVar[str] = "0.1.0"
+    confirm_after: float = 1.0
+    down_for: float = 0.2
+    reboot_delay: float = 0.0
+    hold_window: float = 5.0
+    token_file: str | None = None
+
+    def __post_init__(self, slot: str, build: str) -> None:
+        """Start on slot, both slots holding build, with the running boot confirmed long ago."""
         self.cond = threading.Condition()
-        self.confirm_after, self.down_for = confirm_after, down_for
-        self.reboot_delay, self.hold_window = reboot_delay, hold_window
         # The NAND: what each slot holds, which one the environment selects.
         self.builds = {"PING": build, "PONG": build}
         self.selected = slot
@@ -52,7 +71,7 @@ class FakeSpeaker:
         self.unconfirmed = False
         # The running boot: confirmed long ago.
         self.running, self.boot_id = slot, str(uuid.uuid4())
-        self.booted_at = time.monotonic() - confirm_after
+        self.booted_at = time.monotonic() - self.confirm_after
         self.confirmed, self.previous = True, "reboot"
         self.app = None
         self.volume = 12
@@ -62,7 +81,6 @@ class FakeSpeaker:
         self.never_back = False
         # The press: requests waiting for it, holds not yet taken.
         self.waiting = self.holds = 0
-        self.token_file = token_file
         self._new_token()
         # What happened, for the tests: (method, path, how it was confirmed).
         self.requests = []
@@ -70,14 +88,14 @@ class FakeSpeaker:
 
     # --- the speaker's side -------------------------------------------------------------
 
-    def _new_token(self):
+    def _new_token(self) -> None:
         self.token = uuid.uuid4().hex
         if self.token_file:
-            with open(self.token_file, "w") as f:
+            with Path(self.token_file).open("w") as f:
                 f.write(self.token + "\n")
 
-    def _tick(self):
-        """Moves time on: a reset that is due, a boot confirm that is due."""
+    def tick(self) -> None:
+        """Move time on: a reset that is due, a boot confirm that is due."""
         now = time.monotonic()
         if self.pending and not self.never_back and now >= self.up_at:
             self._boot(self.pending)
@@ -88,16 +106,17 @@ class FakeSpeaker:
             self.count, self.confirmed, self.cold = 0, True, True
             self.unconfirmed = False
 
-    def down(self):
+    def down(self) -> bool:
+        """Return whether the speaker is off the network for a reset."""
         return self.pending is not None and time.monotonic() >= self.down_from
 
-    def _reset(self, how, delay=0.0):
+    def _reset(self, how: str, delay: float = 0.0) -> None:
         now = time.monotonic()
         self.pending = how
         self.down_from = now + delay
         self.up_at = now + delay + self.down_for
 
-    def _boot(self, how):
+    def _boot(self, how: str) -> None:
         if (self.cold or how == "power loss") and not self.unconfirmed:
             self.count = 0
         self.count += 1
@@ -110,14 +129,14 @@ class FakeSpeaker:
         self.volume = 30  # a boot does not keep the bench's volume
         self.boots.append(self.running)
 
-    def power_cut(self):
-        """The person at the speaker pulls the plug and puts it back."""
+    def power_cut(self) -> None:
+        """Cut the power and restore it, as the person at the speaker pulling the plug does."""
         with self.cond:
             self.cold = True
             self._reset("power loss")
 
-    def press(self, timeout=10.0):
-        """Holds a key once a request waits for it, as a person reading the prompt does."""
+    def press(self, timeout: float = 10.0) -> bool:
+        """Hold a key once a request waits for it, as a person reading the prompt does."""
         deadline = time.monotonic() + timeout
         with self.cond:
             while self.waiting == 0:
@@ -129,7 +148,7 @@ class FakeSpeaker:
             self.cond.notify_all()
             return True
 
-    def gate(self, token):
+    def gate(self, token: str | None) -> str | None:
         """Whether a dangerous request may run: the token, or a hold in time."""
         if token and token == self.token:
             self._new_token()
@@ -150,18 +169,20 @@ class FakeSpeaker:
 
     # --- the API ------------------------------------------------------------------------
 
-    def health(self):
+    def health(self) -> dict[str, object]:
+        """Return the /api/health body with the running boot."""
         return {"warnings": [], "firewall": "loaded",
                 "boot": {"id": self.boot_id, "slot": self.running,
                          "confirmed": self.confirmed, "previous": self.previous}}
 
-    def version(self):
+    def version(self) -> dict[str, object]:
+        """Return the /api/version body with the running slot's build."""
         app = self.app or self.builds[self.running]
         return {"version": "app-v" + app, "os": self.builds[self.running], "app": app,
                 "commit": "0123abcd", "updatable": True, "updateMode": "firmware", "api": 1}
 
-    def get(self, path):
-        """GET path: (status, JSON body)."""
+    def get(self, path: str) -> Answer:
+        """Answer GET path: (status, JSON body)."""
         self.requests.append(("GET", path, None))
         answers = {"/api/health": self.health, "/api/version": self.version,
                    "/api/volume": lambda: {"volume": self.volume}}
@@ -169,47 +190,57 @@ class FakeSpeaker:
             return 404, {"error": "not found"}
         return 200, answers[path]()
 
-    def post(self, path, query, headers, body):
-        """POST path: (status, JSON body). A dangerous one waits for the hold first."""
+    def post(self, path: str, query: str, headers: Headers, body: bytes) -> Answer:
+        """Answer POST path: (status, JSON body). A dangerous one waits for the hold first."""
         gated = path in ("/api/reboot", "/api/soundtapd") or (
             path == "/api/firmware" and parse_qs(query).get("install") == ["1"])
         how = self.gate(headers.get("X-SoundTap-Device-Token")) if gated else "open"
-        self._tick()  # the boot went on while the request waited for the hold
+        self.tick()  # the boot went on while the request waited for the hold
         self.requests.append(("POST", path, how))
         if how is None:
             return 403, {"error": "hold a button on the speaker to confirm", "code": "not_confirmed"}
-        signed = bool(headers.get("X-SoundTap-Signature"))
-        if path == "/api/volume":
-            self.volume = json.loads(body)["volume"]
-            return 200, {"volume": self.volume}
-        if path == "/api/reboot":
-            if json.loads(body or b"{}").get("confirm") is not True:
-                return 400, {"error": "confirm"}
-            self._reset("reboot", self.reboot_delay)
-            return 200, {"status": "rebooting"}
-        if path == "/api/firmware":
-            if headers.get("X-SoundTap-Confirm") != "install" or not signed:
-                return 400, {"error": "unsigned or unconfirmed"}
-            target = other(self.running)
-            self.builds[target] = body.decode().strip()
-            self.selected = target
-            # The selection's write: upgrade_available, and the count starts over.
-            self.unconfirmed, self.count = True, 0
-            return 200, {"slot": target, "runningSlot": self.running}
-        if path == "/api/soundtapd":
-            if not signed:
-                return 400, {"error": "unsigned"}
-            self.app = body.decode().strip()
-            return 200, {"status": "restarting"}
-        return 404, {"error": "not found"}
+        answers: dict[str, Callable[[Headers, bytes], Answer]] = {
+            "/api/volume": self._post_volume, "/api/reboot": self._post_reboot,
+            "/api/firmware": self._post_firmware, "/api/soundtapd": self._post_soundtapd}
+        if path not in answers:
+            return 404, {"error": "not found"}
+        return answers[path](headers, body)
+
+    def _post_volume(self, _headers: Headers, body: bytes) -> Answer:
+        self.volume = json.loads(body)["volume"]
+        return 200, {"volume": self.volume}
+
+    def _post_reboot(self, _headers: Headers, body: bytes) -> Answer:
+        if json.loads(body or b"{}").get("confirm") is not True:
+            return 400, {"error": "confirm"}
+        self._reset("reboot", self.reboot_delay)
+        return 200, {"status": "rebooting"}
+
+    def _post_firmware(self, headers: Headers, body: bytes) -> Answer:
+        if headers.get("X-SoundTap-Confirm") != "install" or not headers.get("X-SoundTap-Signature"):
+            return 400, {"error": "unsigned or unconfirmed"}
+        target = other(self.running)
+        self.builds[target] = body.decode().strip()
+        self.selected = target
+        # The selection's write: upgrade_available, and the count starts over.
+        self.unconfirmed, self.count = True, 0
+        return 200, {"slot": target, "runningSlot": self.running}
+
+    def _post_soundtapd(self, headers: Headers, body: bytes) -> Answer:
+        if not headers.get("X-SoundTap-Signature"):
+            return 400, {"error": "unsigned"}
+        self.app = body.decode().strip()
+        return 200, {"status": "restarting"}
 
 
-def make_handler(sp):
+def make_handler(sp: FakeSpeaker) -> type[BaseHTTPRequestHandler]:
+    """Return a request handler class that serves sp."""
+
     class Handler(BaseHTTPRequestHandler):
-        def log_message(self, *args):
+        def log_message(self, *args: object) -> None:
             pass
 
-        def reply(self, code, body):
+        def reply(self, code: int, body: dict[str, object]) -> None:
             data = json.dumps(body).encode()
             self.send_response(code)
             self.send_header("Content-Type", "application/json")
@@ -217,20 +248,20 @@ def make_handler(sp):
             self.end_headers()
             self.wfile.write(data)
 
-        def off_network(self):
-            """A speaker that is resetting does not answer: the connection just closes."""
-            sp._tick()
+        def off_network(self) -> bool:
+            """Close the connection unanswered while the speaker resets, as a resetting speaker does; return whether it did."""
+            sp.tick()
             if sp.down():
                 self.close_connection = True
                 return True
             return False
 
-        def do_GET(self):
+        def do_GET(self) -> None:
             with sp.cond:
                 if not self.off_network():
                     self.reply(*sp.get(urlsplit(self.path).path))
 
-        def do_POST(self):
+        def do_POST(self) -> None:
             body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
             url = urlsplit(self.path)
             with sp.cond:
@@ -240,15 +271,16 @@ def make_handler(sp):
     return Handler
 
 
-def serve(sp, port=0):
-    """Starts the fake on 127.0.0.1 in a thread; returns the server (server_address[1])."""
+def serve(sp: FakeSpeaker, port: int = 0) -> ThreadingHTTPServer:
+    """Start the fake on 127.0.0.1 in a thread; return the server (server_address[1])."""
     httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(sp))
     httpd.daemon_threads = True
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     return httpd
 
 
-def main():
+def main() -> None:
+    """Serve a fake speaker until Ctrl-C, holding a key at each Enter."""
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--confirm-after", type=float, default=60.0)

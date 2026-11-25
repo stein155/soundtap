@@ -303,7 +303,7 @@ static int host_tx_done(unsigned q, unsigned *buf, unsigned *status)
     if (!ring_avail(&H_frm[q], 3))
         return 0;
     ring_take(&H_frm[q], 3, 1, &slot);
-    unsigned *e = (unsigned *)(uintptr_t)slot;
+    const unsigned *e = (unsigned *)(uintptr_t)slot;
     *buf = e[1], *status = e[3];
     ring_commit(&H_frm[q], 3, 1);
     unsigned last = H_frm[q].nch - 1u; /* the host's last channel hands the slot back to 0 */

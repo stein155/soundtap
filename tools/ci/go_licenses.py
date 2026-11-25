@@ -81,10 +81,12 @@ def parse_go_list(text: str) -> list[dict]:
 
 
 def go(module_dir: Path, *args: str) -> str:
+    """Run go with args in module_dir, offline, and return its output; exit on a failure."""
     env = dict(os.environ, GOWORK="off", GOFLAGS="-mod=readonly", GOPROXY="off")
-    result = subprocess.run(["go", *args], cwd=module_dir, env=env, capture_output=True, text=True)
+    result = subprocess.run(["go", *args], check=False, cwd=module_dir, env=env, capture_output=True, text=True)
     if result.returncode != 0:
-        raise SystemExit(f"go {' '.join(args)} failed in {module_dir}:\n{result.stderr}")
+        msg = f"go {' '.join(args)} failed in {module_dir}:\n{result.stderr}"
+        raise SystemExit(msg)
     return result.stdout
 
 
@@ -92,17 +94,19 @@ def built_modules(module_dir: Path) -> set[str]:
     """Modules that provide a package the main module's packages import, tests excluded.
 
     -e keeps going past a package that does not load (the embedded web UI is absent until
-    it is built); its imports are still listed."""
+    it is built); its imports are still listed.
+    """
     listing = go(module_dir, "list", "-e", "-deps", "-f", "{{with .Module}}{{.Path}}{{end}}", "./...")
     return {line for line in listing.splitlines() if line}
 
 
 def allowed(entry: str) -> bool:
-    """An SPDX id, or a choice "A OR B" of which one alternative is enough."""
+    """Return whether entry is allowed: an SPDX id, or a choice "A OR B" of which one alternative is enough."""
     return any(alternative.strip() in ALLOWED for alternative in entry.split(" OR "))
 
 
 def classify(text: str) -> str | None:
+    """Return the SPDX id of the licence text, or None for a text no rule recognises."""
     words = " ".join(text.lower().split())
     for spdx, phrases in TEXTS:
         if all(phrase in words for phrase in phrases):
@@ -111,7 +115,7 @@ def classify(text: str) -> str | None:
 
 
 def module_licences(directory: Path) -> tuple[set[str], list[str]]:
-    """The licences the files at the module root show, and the files no rule recognises."""
+    """Return the licences the files at the module root show, and the files no rule recognises."""
     found, unknown = set(), []
     for path in sorted(directory.iterdir()):
         if path.is_file() and LICENCE_FILE.match(path.name):
@@ -124,11 +128,13 @@ def module_licences(directory: Path) -> tuple[set[str], list[str]]:
 
 
 def notice_modules(notice: str) -> dict[str, list[str]]:
+    """Return NOTICE.md's Go module table: each module's listed licences."""
     lines = notice.splitlines()
     try:
         start = lines.index(NOTICE_HEADER)
     except ValueError:
-        raise SystemExit(f"NOTICE.md has no Go module table ({NOTICE_HEADER})") from None
+        msg = f"NOTICE.md has no Go module table ({NOTICE_HEADER})"
+        raise SystemExit(msg) from None
     rows = {}
     for line in lines[start + 2:]:
         if not line.startswith("|"):
@@ -139,7 +145,7 @@ def notice_modules(notice: str) -> dict[str, list[str]]:
 
 
 def matches(listed: str, found: str) -> bool:
-    """A row's GPL-family entry carries -only or -or-later; the text shows only the family."""
+    """Return whether a row's entry names the licence found; a GPL-family entry carries -only or -or-later, the text only the family."""
     return listed in (found, f"{found}-only", f"{found}-or-later")
 
 
@@ -148,44 +154,47 @@ def problems(modules: list[dict], notice: dict[str, list[str]],
     """built: the modules compiled in; None checks every module given.
 
     Every built module needs a row. A module only in the graph (a test dependency) may have
-    one; a row for a module outside the graph is stale."""
+    one; a row for a module outside the graph is stale.
+    """
     errors = []
     in_graph = {module["Path"] for module in modules if not module.get("Main")}
     for module in modules:
         if module.get("Main") or (built is not None and module["Path"] not in built):
             continue
-        path, version = module["Path"], module.get("Version", "")
-        name = f"{path} {version}".strip()
-        source = module.get("Replace") or module
-        directory = source.get("Dir")
-        if not directory or not Path(directory).is_dir():
-            errors.append(f"{name} is not in the module cache: run `go mod download` in app/")
-            continue
-        found, unknown = module_licences(Path(directory))
-        listed = notice.get(path)
-        if unknown:
-            errors.append(f"{name}: cannot tell the licence of {', '.join(unknown)}")
-        if not found and not unknown:
-            errors.append(f"{name} has no LICENSE or COPYING file")
-        if listed is None:
-            errors.append(f"{name} has no row in NOTICE.md's Go module table "
-                          f"(its licence file says {', '.join(sorted(found)) or 'nothing known'})")
-            continue
-        for spdx in listed:
-            if not allowed(spdx):
-                errors.append(f"{name}: {spdx} is not compatible with GPL-3.0-only (ADR 0124)")
-        for spdx in sorted(found):
-            if not any(matches(entry, spdx) for entry in listed):
-                errors.append(f"{name}: NOTICE.md says {', '.join(listed)}, its licence file {spdx}")
-        for entry in listed:
-            if found and not any(matches(entry, spdx) for spdx in found):
-                errors.append(f"{name}: NOTICE.md lists {entry}, which no licence file shows")
-    for path in sorted(set(notice) - in_graph):
-        errors.append(f"NOTICE.md lists {path}, which app/go.mod does not use")
+        errors.extend(module_problems(module, notice.get(module["Path"])))
+    errors.extend(f"NOTICE.md lists {path}, which app/go.mod does not use" for path in sorted(set(notice) - in_graph))
+    return errors
+
+
+def module_problems(module: dict, listed: list[str] | None) -> list[str]:
+    """Return what is wrong with one built module whose NOTICE.md row is listed (None: no row)."""
+    path, version = module["Path"], module.get("Version", "")
+    name = f"{path} {version}".strip()
+    source = module.get("Replace") or module
+    directory = source.get("Dir")
+    if not directory or not Path(directory).is_dir():
+        return [f"{name} is not in the module cache: run `go mod download` in app/"]
+    found, unknown = module_licences(Path(directory))
+    errors = []
+    if unknown:
+        errors.append(f"{name}: cannot tell the licence of {', '.join(unknown)}")
+    if not found and not unknown:
+        errors.append(f"{name} has no LICENSE or COPYING file")
+    if listed is None:
+        errors.append(f"{name} has no row in NOTICE.md's Go module table "
+                      f"(its licence file says {', '.join(sorted(found)) or 'nothing known'})")
+        return errors
+    errors.extend(f"{name}: {spdx} is not compatible with GPL-3.0-only (ADR 0124)"
+                  for spdx in listed if not allowed(spdx))
+    errors.extend(f"{name}: NOTICE.md says {', '.join(listed)}, its licence file {spdx}"
+                  for spdx in sorted(found) if not any(matches(entry, spdx) for entry in listed))
+    errors.extend(f"{name}: NOTICE.md lists {entry}, which no licence file shows"
+                  for entry in listed if found and not any(matches(entry, spdx) for spdx in found))
     return errors
 
 
 def main() -> None:
+    """Check the Go modules' licences against NOTICE.md and exit 1 on a problem."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--module-dir", type=Path, default=Path("app"))
     parser.add_argument("--notice", type=Path, default=Path("NOTICE.md"))

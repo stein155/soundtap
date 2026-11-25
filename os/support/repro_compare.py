@@ -30,9 +30,11 @@ SUMS = "SHA256SUMS"
 EXTRA_SUMS = "extra.SHA256SUMS"
 MANIFEST = "rootfs-tree.manifest"
 ROOTFS = "rootfs.ubi"
+SHA256_HEX_LEN = 64
 
 
 def sha256(path: Path) -> str:
+    """Return the SHA-256 of the file at path, in hex."""
     digest = hashlib.sha256()
     with path.open("rb") as f:
         for block in iter(lambda: f.read(1 << 20), b""):
@@ -41,14 +43,15 @@ def sha256(path: Path) -> str:
 
 
 def read_sums(path: Path) -> dict[str, str]:
-    """name -> digest, from sha256sum's output ("digest  name" or "digest *name")."""
+    """Name -> digest, from sha256sum's output ("digest  name" or "digest *name")."""
     sums = {}
     for n, line in enumerate(path.read_text().splitlines(), 1):
         if not line.strip():
             continue
         digest, sep, name = line.partition(" ")
-        if not sep or len(digest) != 64 or not name:
-            raise ValueError(f"{path}:{n}: not a sha256sum line: {line!r}")
+        if not sep or len(digest) != SHA256_HEX_LEN or not name:
+            msg = f"{path}:{n}: not a sha256sum line: {line!r}"
+            raise ValueError(msg)
         sums[name[1:] if name[:1] in " *" else name] = digest
     return sums
 
@@ -76,6 +79,7 @@ def manifest(tree: Path) -> list[str]:
 
 
 def parse_manifest(path: Path) -> dict[str, tuple[str, ...]]:
+    """Return path -> (type, mode, size, content) from a manifest file."""
     entries = {}
     for line in path.read_text().splitlines():
         attrs, _, rel = line.partition("\t")
@@ -84,11 +88,13 @@ def parse_manifest(path: Path) -> dict[str, tuple[str, ...]]:
 
 
 def save(images: Path, dest: Path, extra: list[Path]) -> None:
+    """Check IMAGES against its SHA256SUMS and copy it, its manifest and the extra files to dest."""
     sums = read_sums(images / SUMS)
     bad = [name for name, digest in sums.items()
            if not (images / name).is_file() or sha256(images / name) != digest]
     if bad:
-        raise SystemExit(f"{images}/{SUMS} does not match: {', '.join(bad)}")
+        msg = f"{images}/{SUMS} does not match: {', '.join(bad)}"
+        raise SystemExit(msg)
     if dest.exists():
         shutil.rmtree(dest)
     dest.mkdir(parents=True)
@@ -108,6 +114,7 @@ def save(images: Path, dest: Path, extra: list[Path]) -> None:
 
 
 def compare_manifests(a: dict, b: dict) -> list[str]:
+    """Return one line per path that is only in one manifest or differs between them."""
     fields = ("type", "mode", "size", "content")
     out = []
     for rel in sorted(a.keys() | b.keys()):
@@ -116,16 +123,17 @@ def compare_manifests(a: dict, b: dict) -> list[str]:
         elif rel not in a:
             out.append(f"only in B: /{rel}")
         elif a[rel] != b[rel]:
-            changed = [f for f, x, y in zip(fields, a[rel], b[rel]) if x != y]
+            changed = [f for f, x, y in zip(fields, a[rel], b[rel], strict=False) if x != y]
             out.append(f"differs: /{rel} ({', '.join(changed)})")
     return out
 
 
 def compare(a: Path, b: Path) -> tuple[bool, list[str]]:
-    """(same, report lines)."""
+    """Return whether the two saved builds are the same, and the report lines."""
     names = sorted({p.name for d in (a, b) for p in d.glob(f"*{SUMS}")})
     if SUMS not in names:
-        raise SystemExit(f"neither {a} nor {b} holds {SUMS}")
+        msg = f"neither {a} nor {b} holds {SUMS}"
+        raise SystemExit(msg)
     report, differ = [], set()
     for sums_name in names:
         if not (a / sums_name).is_file() or not (b / sums_name).is_file():
@@ -148,22 +156,25 @@ def compare(a: Path, b: Path) -> tuple[bool, list[str]]:
         report.extend(lines)
         if lines:
             differ.add(sums_name)
-    ma, mb = a / MANIFEST, b / MANIFEST
     if ROOTFS in differ:
-        if ma.is_file() and mb.is_file():
-            tree = compare_manifests(parse_manifest(ma), parse_manifest(mb))
-            if tree:
-                report.append(f"{ROOTFS}: {len(tree)} paths of the packed tree differ")
-                report.extend(f"  {line}" for line in tree)
-            else:
-                report.append(f"{ROOTFS}: the packed trees are the same, so mkfs.ubifs or "
-                              "ubinize made the difference (UUID, timestamp, sequence number)")
-        else:
-            report.append(f"{ROOTFS}: no {MANIFEST} in both; save both builds to list paths")
+        report.extend(rootfs_report(a, b))
     return not differ, report
 
 
+def rootfs_report(a: Path, b: Path) -> list[str]:
+    """Return the report lines naming the paths of the packed tree that differ."""
+    ma, mb = a / MANIFEST, b / MANIFEST
+    if not (ma.is_file() and mb.is_file()):
+        return [f"{ROOTFS}: no {MANIFEST} in both; save both builds to list paths"]
+    tree = compare_manifests(parse_manifest(ma), parse_manifest(mb))
+    if not tree:
+        return [f"{ROOTFS}: the packed trees are the same, so mkfs.ubifs or "
+                "ubinize made the difference (UUID, timestamp, sequence number)"]
+    return [f"{ROOTFS}: {len(tree)} paths of the packed tree differ", *(f"  {line}" for line in tree)]
+
+
 def main() -> int:
+    """Run the save, compare or manifest command and return the exit code."""
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="cmd", required=True)

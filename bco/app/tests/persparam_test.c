@@ -24,7 +24,8 @@ static void rec(uint32_t key, const uint8_t *val, unsigned vl)
 
 int main(void)
 {
-    uint8_t mac[6], z[8] = {0}, m[8] = {0x00, 0x0c, 0x8a, 1, 2, 3, 0, 0}, x[4] = {1, 2, 3, 4};
+    uint8_t mac[6];
+    const uint8_t z[8] = {0}, m[8] = {0x00, 0x0c, 0x8a, 1, 2, 3, 0, 0}, x[4] = {1, 2, 3, 4};
     memset(sec, 0xff, sizeof sec);
     put32(sec, 0x80808080);
     memcpy(sec + 0x10, "PersParam", 9);

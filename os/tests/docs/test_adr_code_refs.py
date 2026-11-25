@@ -41,7 +41,9 @@ must be removed, and the list may not grow past ALLOWLIST_CEILING. A new referen
 import posixpath
 import re
 import subprocess
+import tempfile
 import unittest
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -64,11 +66,11 @@ METHOD = re.compile(rf"^func\s+\(\s*(?:{IDENT}\s+)?\*?\s*({IDENT})(?:\[[^\]]*\])
 SINGLE = re.compile(rf"^(?:type|var|const)\s+({IDENT}(?:\s*,\s*{IDENT})*)")
 GROUP_OPEN = re.compile(r"^(?:type|var|const)\s*\(\s*$")
 GROUP_MEMBER = re.compile(rf"^\t({IDENT}(?:\s*,\s*{IDENT})*)\b")
-PACKAGE = re.compile(rf"^package\s+({IDENT})", re.M)
+PACKAGE = re.compile(rf"^package\s+({IDENT})", re.MULTILINE)
 
 
-def prose_lines(text):
-    """Lines outside fenced code blocks, numbered from 1."""
+def prose_lines(text: str) -> Iterator[tuple[int, str]]:
+    """Yield the lines outside fenced code blocks, numbered from 1."""
     fence = None
     for n, line in enumerate(text.splitlines(), 1):
         marker = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
@@ -86,12 +88,14 @@ def prose_lines(text):
 class Decls:
     """Top-level names and methods declared in some Go source, plus every word in it."""
 
-    def __init__(self, sources=()):
+    def __init__(self, sources: Iterable[str] = ()) -> None:
+        """Collect the declarations of every text in `sources`."""
         self.names, self.methods, self.words = set(), set(), set()
         for text in sources:
             self.add(text)
 
-    def add(self, text):
+    def add(self, text: str) -> None:
+        """Add the declarations and words of one Go source text."""
         group = False
         for line in text.splitlines():
             if group:
@@ -110,8 +114,8 @@ class Decls:
                 self.names.update(re.split(r"\s*,\s*", m.group(1)))
         self.words.update(re.findall(r"\b\w+\b", text))
 
-    def has(self, name, member=None):
-        """name is declared (or is a method name); member, if given, belongs to it."""
+    def has(self, name: str, member: str | None = None) -> bool:
+        """Return whether name is declared (or is a method name) and member, if given, belongs to it."""
         if name not in self.names and name not in {m for _, m in self.methods}:
             return False
         return member is None or (name, member) in self.methods or member in self.words
@@ -120,7 +124,8 @@ class Decls:
 class Tree:
     """The tracked files of a checkout and its Go packages, read on demand."""
 
-    def __init__(self, root, files):
+    def __init__(self, root: Path, files: Iterable[str]) -> None:
+        """Index the tracked `files` under `root` and the Go packages among them."""
         self.root = root
         self.files = set(files)
         self.known = self.files | {str(p) for f in self.files for p in Path(f).parents}
@@ -133,22 +138,25 @@ class Tree:
                 if m:
                     self.packages.setdefault(m.group(1), set()).add(posixpath.dirname(name))
 
-    def read(self, name):
+    def read(self, name: str) -> str:
+        """Return the text of the tracked file `name`."""
         return (self.root / name).read_text(errors="replace")
 
-    def decls(self, *names):
+    def decls(self, *names: str) -> Decls:
+        """Return the declarations of the files `names`, cached."""
         key = tuple(sorted(names))
         if key not in self._decls:
             self._decls[key] = Decls(self.read(n) for n in key)
         return self._decls[key]
 
-    def package_decls(self, directory):
+    def package_decls(self, directory: str) -> Decls:
+        """Return the declarations of the non-test Go files in `directory`."""
         return self.decls(*(f for f in self.files if posixpath.dirname(f) == directory
                             and f.endswith(".go") and not f.endswith("_test.go")))
 
 
-def tick_error(tree, ref):
-    """What is wrong with one backticked reference (rules 1, 3 and 5), or None."""
+def tick_error(tree: Tree, ref: str) -> str | None:
+    """Return what is wrong with one backticked reference (rules 1, 3 and 5), or None."""
     if ref.startswith(CODE_ROOTS):
         ref = ref.split()[0]  # A command line: the script is the reference.
         if any(c in ref for c in SKIP_CHARS) or "..." in ref:
@@ -168,8 +176,8 @@ def tick_error(tree, ref):
     return None
 
 
-def link_error(tree, name, label, target):
-    """What is wrong with one link from the ADR at name (rules 2 and 4), or None."""
+def link_error(tree: Tree, name: str, label: str, target: str) -> str | None:
+    """Return what is wrong with one link from the ADR at name (rules 2 and 4), or None."""
     if re.match(r"^[a-z][a-z0-9+.-]*:", target) or target.startswith(("#", "/")):
         return None
     path = posixpath.normpath(posixpath.join(posixpath.dirname(name), target.partition("#")[0]))
@@ -191,8 +199,8 @@ def link_error(tree, name, label, target):
     return None if decls.has(ident, member) else f"missing symbol {label} in {path}"
 
 
-def reference_errors(tree, name, text):
-    """Unresolved references in one ADR, as 'file: message' without line numbers."""
+def reference_errors(tree: Tree, name: str, text: str) -> list[str]:
+    """Return the unresolved references in one ADR, as 'file: message' without line numbers."""
     errors = []
     for _, line in prose_lines(text):
         found = [tick_error(tree, m.group(1).strip()) for m in TICK.finditer(line)]
@@ -204,19 +212,22 @@ def reference_errors(tree, name, text):
     return errors
 
 
-def read_allowlist(path):
+def read_allowlist(path: Path) -> list[str]:
+    """Return the entries of the allow-list at `path`, without comments and blank lines."""
     if not path.exists():
         return []
     return [line.strip() for line in path.read_text().splitlines()
             if line.strip() and not line.lstrip().startswith("#")]
 
 
-def tracked(root):
+def tracked(root: Path) -> list[str]:
+    """Return the files git tracks under `root`."""
     return subprocess.run(["git", "ls-files"], cwd=root, check=True, capture_output=True,
                           text=True).stdout.split()
 
 
-def all_errors(root):
+def all_errors(root: Path) -> list[str]:
+    """Return the unresolved code references of every ADR under `root`."""
     tree = Tree(root, tracked(root))
     errors = []
     for adr in sorted((root / ADRS).glob("[0-9][0-9][0-9][0-9]-*.md")):
@@ -226,15 +237,20 @@ def all_errors(root):
 
 
 class AdrCodeRefsTest(unittest.TestCase):
+    """The ADRs in this tree against the allow-list."""
+
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
+        """Collect the unresolved references and the allow-list once."""
         cls.errors = all_errors(ROOT)
         cls.allowed = read_allowlist(ALLOWLIST)
 
-    def test_every_reference_not_on_the_allow_list_resolves(self):
+    def test_every_reference_not_on_the_allow_list_resolves(self) -> None:
+        """Every code reference in an ADR resolves unless the allow-list names it."""
         self.assertEqual([e for e in self.errors if e not in self.allowed], [])
 
-    def test_allow_list_only_shrinks(self):
+    def test_allow_list_only_shrinks(self) -> None:
+        """The allow-list holds no resolved, duplicate or extra entries."""
         stale = [e for e in self.allowed if e not in self.errors]
         self.assertEqual(stale, [], "these references resolve now: remove them from the allow-list")
         self.assertEqual(len(self.allowed), len(set(self.allowed)), "duplicate allow-list entries")
@@ -243,7 +259,9 @@ class AdrCodeRefsTest(unittest.TestCase):
 
 
 class AdrCodeRefRulesTest(unittest.TestCase):
-    GO = '''package release
+    """The five reference rules on a small fake tree."""
+
+    GO = """package release
 
 import "errors"
 
@@ -265,10 +283,10 @@ func Verify() error { return nil }
 func (m *Manager) Check() {}
 
 func (k PublicKey[T]) String() string { return "" }
-'''
+"""
 
-    def tree(self, files):
-        import tempfile
+    def tree(self, files: dict[str, str]) -> Tree:
+        """Write `files` to a temporary checkout and return its Tree."""
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         root = Path(tmp.name)
@@ -277,7 +295,8 @@ func (k PublicKey[T]) String() string { return "" }
             (root / name).write_text(text)
         return Tree(root, files)
 
-    def test_declarations(self):
+    def test_declarations(self) -> None:
+        """Top-level, grouped and method declarations are found; imports are not."""
         d = Decls([self.GO])
         for name in ("PublicKey", "Manager", "level", "APILevel", "minLevel", "ErrClockNotSet",
                      "Verify", "Check", "String"):
@@ -290,7 +309,8 @@ func (k PublicKey[T]) String() string { return "" }
         self.assertFalse(d.has("Manager", "Gone"))
         self.assertFalse(d.has("errors"))
 
-    def test_rules(self):
+    def test_rules(self) -> None:
+        """Good references pass and each broken one is reported once, fenced code skipped."""
         tree = self.tree({"app/internal/release/release.go": self.GO,
                           "app/internal/release/release_test.go": "package release\nfunc Hidden() {}\n",
                           "os/board/init.sh": "#!/bin/sh\n"})
@@ -323,8 +343,8 @@ Broken: `app/gone.go`, `app/internal/release/release.go:Gone`, `release.Gone`,
             f"{adr}: missing path app/internal/old/release.go",
         ])
 
-    def test_allowlist_ignores_comments_and_blank_lines(self):
-        import tempfile
+    def test_allowlist_ignores_comments_and_blank_lines(self) -> None:
+        """Comments and blank lines in the allow-list are not entries."""
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "allow.txt"
             path.write_text("# header\n\n0001-x.md: missing path app/gone.go\n")

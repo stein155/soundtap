@@ -38,7 +38,7 @@ int main(void)
     memset(ab, 0xa5, sizeof ab);
     int blen = wstation_assoc(ab, sizeof ab, own, ap, rates, ss, sl);
     assert(blen == (int)(4 + (2 + sl) + 10 + 6 + 22));
-    uint8_t *d = ab + 8, *p = d + 0xc4;
+    const uint8_t *d = ab + 8, *p = d + 0xc4;
     assert(d[0x18] == 0x00);                        /* FC: assoc request */
     assert(!memcmp(d + 0x1c, ap, 6) && !memcmp(d + 0x22, own, 6) && !memcmp(d + 0x28, ap, 6));
     assert(p[0] == 0x11 && p[1] == 0 && p[2] == 1 && p[3] == 0); /* cap + listen */

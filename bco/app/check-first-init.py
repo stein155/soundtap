@@ -14,8 +14,10 @@ the code is ours, ADR 0031).
 
 Needs `unicorn` (pip).
 """
+import contextlib
 import json
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from unicorn import (
@@ -28,7 +30,6 @@ from unicorn import (
     UcError,
 )
 from unicorn.arm_const import UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_R0, UC_ARM_REG_SP
-import contextlib
 
 SRAM = 0x00400000
 LOAD = 0x0040DA00  # where BFL runs the first stage
@@ -39,13 +40,19 @@ BANDS = ((0xE0007000, 0xE0008000), (0xE001D000, 0xE001E000), (0x70000000, 0x7000
 # (bit 29), attempt 1 (0xe00070f0 bits 8..9) is valid.
 MEASURE = {0: 0xA00D0F07}
 MEASURE_DEFAULT = 0x800D0703
+MEASURE_REG = 0xE0007844
+# SDRAM command register: its command bits clear once the command is done.
+SDRAM_CMD_REG = 0xE001D004
+# Angel semihosting SYS_EXIT in r0 ends the run.
+SEMIHOST_SYS_EXIT = 0x18
 
 
-def in_band(addr):
+def in_band(addr: int) -> bool:
+    """Return whether `addr` lies in one of the bring-up trace bands."""
     return any(lo <= addr < hi for lo, hi in BANDS)
 
 
-def run(code, load, start, regs=None):
+def run(code: bytes, load: int, start: int, regs: dict[int, int] | None = None) -> list[tuple[int, int]]:
     """Execute first-stage `code` loaded at `load`; return the ordered bring-up writes."""
     uc = Uc(UC_ARCH_ARM, UC_MODE_ARM)
     for base, size in ((SRAM, 0x100000), (0x40000000, 0x800000), (SDRAM, 0x1000000),
@@ -60,16 +67,16 @@ def run(code, load, start, regs=None):
     writes = []
     regs = dict(regs or {})
 
-    def mmio(base):
-        def rd(uc, offset, size, ud):
+    def mmio(base: int) -> tuple[Callable[[Uc, int, int, object], int], Callable[[Uc, int, int, int, object], None]]:
+        def rd(_uc: Uc, offset: int, _size: int, _ud: object) -> int:
             addr = base + offset
-            if addr == 0xE0007844:
+            if addr == MEASURE_REG:
                 return MEASURE.get(regs.get(0xE00070F0, 0) >> 8 & 3, MEASURE_DEFAULT)
-            if addr == 0xE001D004:  # SDRAM command bits clear once the command is done
+            if addr == SDRAM_CMD_REG:
                 return regs.get(addr, 0) & ~0x180000
             return regs.get(addr, 0)
 
-        def wr(uc, offset, size, value, ud):
+        def wr(_uc: Uc, offset: int, _size: int, value: int, _ud: object) -> None:
             addr = base + offset
             regs[addr] = value
             if in_band(addr):
@@ -90,30 +97,34 @@ def run(code, load, start, regs=None):
     return writes
 
 
-def _map_on_demand(uc, access, addr, size, value, ud):
+def _map_on_demand(uc: Uc, _access: int, addr: int, *_rest: object) -> bool:
+    """Map the 1 MiB around an unmapped access so the run goes on (size, value, user data unused)."""
     with contextlib.suppress(UcError):
         uc.mem_map(addr & ~0xFFFFF, 0x100000)
     return True
 
 
-def _semihost(uc, intno, ud):
-    # Stock crt0 uses angel semihosting; SYS_EXIT (r0==0x18) ends the run.
-    if uc.reg_read(UC_ARM_REG_R0) == 0x18:
+def _semihost(uc: Uc, _intno: int, _ud: object) -> None:
+    """Handle an angel semihosting call: SYS_EXIT stops the run, anything else returns."""
+    if uc.reg_read(UC_ARM_REG_R0) == SEMIHOST_SYS_EXIT:
         uc.emu_stop()
     else:
         uc.reg_write(UC_ARM_REG_PC, uc.reg_read(UC_ARM_REG_LR))
 
 
-def _stop_in_sdram(uc, addr, size, ud):
+def _stop_in_sdram(uc: Uc, _addr: int, _size: int, _ud: object) -> None:
+    """Stop the run once execution reaches SDRAM."""
     uc.emu_stop()
 
 
-def expected():
+def expected() -> list[tuple[int, int]]:
+    """Return the pinned bring-up writes from first-init-trace.json."""
     doc = json.loads((Path(__file__).with_name("first-init-trace.json")).read_text())
     return [(int(a, 16), int(v, 16)) for a, v in doc["writes"]]
 
 
-def main():
+def main() -> None:
+    """Check the first stage at argv[1] against the pinned trace, with and without a running PLL."""
     want = expected()
     code = Path(sys.argv[1]).read_bytes()[0x18:]  # BFL loads image +0x18 at LOAD
     got = run(code, LOAD, LOAD)

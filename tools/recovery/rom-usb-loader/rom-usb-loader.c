@@ -536,7 +536,6 @@ read_image(const char *path, const char *required_name, size_t maximum,
 	char actual_text[65];
 	const char *base;
 	int fd;
-	ssize_t count;
 	size_t offset = 0;
 
 	base = strrchr(path, '/');
@@ -566,7 +565,7 @@ read_image(const char *path, const char *required_name, size_t maximum,
 	image->name = required_name;
 	image->size = (size_t)st.st_size;
 	while (offset < image->size) {
-		count = read(fd, image->data + offset, image->size - offset);
+		ssize_t count = read(fd, image->data + offset, image->size - offset);
 		if (count <= 0) {
 			log_line("failed reading %s: %s", required_name,
 			    count == 0 ? "unexpected EOF" : strerror(errno));
@@ -863,7 +862,7 @@ rndis_close(struct rndis_device *rndis)
 }
 
 static void LIBUSB_CALL
-notification_complete(struct libusb_transfer *transfer)
+notification_complete(struct libusb_transfer *transfer) /* cppcheck-suppress constParameterCallback ; libusb fixes the callback type */
 {
 	struct notification *notification = transfer->user_data;
 
@@ -954,10 +953,12 @@ rndis_command(struct rndis_device *rndis, const uint8_t *command,
 		uint64_t cancel_deadline = now_ms() + 100;
 
 		(void)libusb_cancel_transfer(transfer);
+		/* cppcheck-suppress knownConditionTrueFalse ; notification_complete sets it inside libusb_handle_events_timeout */
 		while (!notification.complete && now_ms() < cancel_deadline) {
 			struct timeval timeout = { .tv_sec = 0, .tv_usec = 5000 };
 			(void)libusb_handle_events_timeout(rndis->ctx, &timeout);
 		}
+		/* cppcheck-suppress knownConditionTrueFalse ; as above */
 		if (!notification.complete) {
 			log_line("RNDIS status cancellation did not complete within 100ms; terminating safely");
 			_exit(EXIT_FAILURE);
@@ -1111,7 +1112,7 @@ serve_image(struct rndis_device *rndis, const struct image *image)
 	uint16_t ip_id = 1, client_port = 0, block = 1, ack;
 	uint64_t request_deadline = now_ms() + REQUEST_DEADLINE_MS;
 	uint64_t transfer_deadline;
-	size_t offset = 0, chunk, payload_len;
+	size_t offset = 0, payload_len;
 	unsigned retries = 0;
 	bool have_peer = false, rrq_received = false;
 	char filename[128];
@@ -1120,7 +1121,6 @@ serve_image(struct rndis_device *rndis, const struct image *image)
 		int length = rndis_receive_ethernet(rndis, packet, sizeof(packet),
 		    USB_BULK_TIMEOUT_MS);
 		struct arp_request arp;
-		size_t arp_reply_len;
 
 		if (length < 0)
 			return false;
@@ -1131,8 +1131,9 @@ serve_image(struct rndis_device *rndis, const struct image *image)
 			    memcmp(arp.sender_ip, client_ip, 4) != 0 ||
 			    memcmp(arp.target_ip, server_ip, 4) != 0)
 				return false;
-			arp_reply_len = build_arp_reply(packet, sizeof(packet), &arp,
+			size_t arp_reply_len = build_arp_reply(packet, sizeof(packet), &arp,
 			    host_mac, server_ip);
+
 			if (arp_reply_len == 0 ||
 			    !rndis_send_ethernet(rndis, packet, arp_reply_len))
 				return false;
@@ -1218,7 +1219,7 @@ serve_image(struct rndis_device *rndis, const struct image *image)
 			log_line("whole-transfer deadline reached at block=%u", block);
 			return false;
 		}
-		chunk = image->size - offset;
+		size_t chunk = image->size - offset;
 		if (chunk > 512)
 			chunk = 512;
 		payload_len = build_tftp_data(payload, sizeof(payload), block,
@@ -1698,7 +1699,7 @@ usage(const char *program)
 }
 
 int
-main(int argc, char **argv)
+main(int argc, char **argv) /* cppcheck-suppress unusedFunction ; test_stage.c renames main to loader_main and drives it */
 {
 	struct image mlo = {0}, uboot = {0}, payload = {0};
 	struct hotplug_session rom = {0}, spl = {0}, third = {0};

@@ -2,8 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-"""Write soundtapd's copy of the model table, app/internal/modeltable/table_gen.go, from
-os/models.json.
+"""Write soundtapd's copy of the model table, app/internal/modeltable/table_gen.go, from os/models.json.
 
     models_gen.py           write the Go file
     models_gen.py --check   exit 1 when the Go file is not what os/models.json gives
@@ -18,6 +17,9 @@ import json
 import sys
 from pathlib import Path
 
+# The model table as json.loads gives it.
+Table = dict[str, dict]
+
 ROOT = Path(__file__).resolve().parents[2]
 TABLE = ROOT / "os/models.json"
 GO_FILE = ROOT / "app/internal/modeltable/table_gen.go"
@@ -25,52 +27,64 @@ GO_FILE = ROOT / "app/internal/modeltable/table_gen.go"
 MODEL_KEYS = {"variant", "module_suffix", "spl", "uboot", "kernel_name", "stock_rootfs_limit",
               "mfg_product", "variant_raw"}
 VARIANT_KEYS = {"model", "product", "module_type", "dtb", "kernel", "dts", "codec_script", "detect"}
+# An SCM board's variant_raw range: its low and high bound.
+VARIANT_RAW_RANGE_LEN = 2
 
 
-def check_detect(name, variant, stock_only):
-    """detect is how our U-Boot finds the board: SM2 boards by name, SCM boards by count."""
+def check_detect(name: str, variant: dict, *, stock_only: bool) -> None:
+    """Check how our U-Boot finds the board: SM2 boards by name, SCM boards by count."""
     detect = variant["detect"]
     if detect is None:
         return
     if stock_only:
-        raise ValueError(f"variant {name}: our U-Boot cannot detect a board it does not boot")
+        msg = f"variant {name}: our U-Boot cannot detect a board it does not boot"
+        raise ValueError(msg)
     if variant["module_type"] == "sm2" and set(detect) != {"mfg"}:
-        raise ValueError(f"variant {name}: an SM2 board is detected by its manufacturing name")
-    if variant["module_type"] == "scm" and (set(detect) != {"variant_raw"} or len(detect["variant_raw"]) != 2):
-        raise ValueError(f"variant {name}: an SCM board is detected by a variant_raw range")
+        msg = f"variant {name}: an SM2 board is detected by its manufacturing name"
+        raise ValueError(msg)
+    if variant["module_type"] == "scm" and (set(detect) != {"variant_raw"} or len(detect["variant_raw"]) != VARIANT_RAW_RANGE_LEN):
+        msg = f"variant {name}: an SCM board is detected by a variant_raw range"
+        raise ValueError(msg)
 
 
-def load(path=TABLE):
-    """The table, after the checks every consumer takes for granted."""
+def load(path: str | Path = TABLE) -> Table:
+    """Return the table, after the checks every consumer takes for granted."""
     table = json.loads(Path(path).read_text())
     models, variants = table["models"], table["variants"]
     for name, model in models.items():
         if set(model) != MODEL_KEYS:
-            raise ValueError(f"model {name}: keys {sorted(model)}, want {sorted(MODEL_KEYS)}")
+            msg = f"model {name}: keys {sorted(model)}, want {sorted(MODEL_KEYS)}"
+            raise ValueError(msg)
         own = variants.get(model["variant"])
         if own is None or own["model"] != name or own.get("stock_only"):
-            raise ValueError(f"model {name}: its variant {model['variant']} is not one of its own")
+            msg = f"model {name}: its variant {model['variant']} is not one of its own"
+            raise ValueError(msg)
         for key in ("module_suffix", "spl", "uboot"):
             if model[key] not in variants or variants[model[key]].get("stock_only"):
-                raise ValueError(f"model {name}: {key} {model[key]} is not a variant SoundTap boots")
+                msg = f"model {name}: {key} {model[key]} is not a variant SoundTap boots"
+                raise ValueError(msg)
     for name, variant in variants.items():
         if set(variant) - {"stock_only"} != VARIANT_KEYS:
-            raise ValueError(f"variant {name}: keys {sorted(variant)}, want {sorted(VARIANT_KEYS)}")
+            msg = f"variant {name}: keys {sorted(variant)}, want {sorted(VARIANT_KEYS)}"
+            raise ValueError(msg)
         if variant["model"] not in models:
-            raise ValueError(f"variant {name}: unknown model {variant['model']}")
+            msg = f"variant {name}: unknown model {variant['model']}"
+            raise ValueError(msg)
         stock_only = bool(variant.get("stock_only"))
         if any((variant[k] is None) != stock_only for k in ("dtb", "kernel", "dts")):
-            raise ValueError(f"variant {name}: dtb, kernel and dts are null exactly when it is stock_only")
-        check_detect(name, variant, stock_only)
+            msg = f"variant {name}: dtb, kernel and dts are null exactly when it is stock_only"
+            raise ValueError(msg)
+        check_detect(name, variant, stock_only=stock_only)
     for kind in ("spl", "uboot"):
         used = {model[kind] for model in models.values()}
         if used != set(table["boot_images"][kind]):
-            raise ValueError(f"boot_images.{kind} names {sorted(table['boot_images'][kind])}, the models use {sorted(used)}")
+            msg = f"boot_images.{kind} names {sorted(table['boot_images'][kind])}, the models use {sorted(used)}"
+            raise ValueError(msg)
     return table
 
 
-def suffixes(table):
-    """Every module suffix a package may carry, in table order."""
+def suffixes(table: Table) -> list[str]:
+    """Return every module suffix a package may carry, in table order."""
     out = []
     for model in table["models"].values():
         for key in ("module_suffix", "spl", "uboot"):
@@ -79,11 +93,13 @@ def suffixes(table):
     return out
 
 
-def go_string(value):
+def go_string(value: str | None) -> str:
+    """Return value as a Go string literal, "" for None."""
     return json.dumps(value or "")
 
 
-def go_source(table):
+def go_source(table: Table) -> str:
+    """Return the Go source of soundtapd's copy of the table."""
     spdx = "SPDX-"  # split, so REUSE does not read this file's header in these literals
     lines = [
         f"// {spdx}License-Identifier: GPL-3.0-only",
@@ -119,7 +135,8 @@ def go_source(table):
     return "\n".join(lines)
 
 
-def main(argv):
+def main(argv: list[str]) -> int:
+    """Write or check the Go file and return the exit code."""
     want = go_source(load())
     if argv[1:] == ["--check"]:
         if not GO_FILE.exists() or GO_FILE.read_text() != want:

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
@@ -21,9 +20,11 @@ ROOT = Path(__file__).resolve().parents[3]
 PATCH = (ROOT / "os/bootloader/uboot/uboot-2026.07-spl-second-uboot.patch").read_text()
 
 
-def patch_function(signature):
-    """The function as the patched file has it: from its signature to its closing brace, which
-    the diff may carry as an added line or as context."""
+def patch_function(signature: str) -> str:
+    """Return the function as the patched file has it, from its signature to its closing brace.
+
+    The diff may carry the closing brace as an added line or as context.
+    """
     lines = PATCH.split("+" + signature, 1)[1].split("\n")
     end = next(i for i, line in enumerate(lines) if line in ("+}", " }"))
     return signature + "\n".join(line[1:] for line in lines[:end + 1])
@@ -64,16 +65,22 @@ int main(void)
 
 
 class SplSecondUBoot(unittest.TestCase):
-    def test_our_name_is_the_one_mkimage_gives(self):
-        """The SPL compares the image name mkimage writes; the two spellings live in a patch
-        and two build scripts that only a cross build runs, so they are compared as text."""
-        name = re.search(r'^\+#define SOUNDTAP_UBOOT_NAME\s+"([^"]+)"$', PATCH, re.M).group(1)
+    """The SPL's choice between the two U-Boot copies."""
+
+    def test_our_name_is_the_one_mkimage_gives(self) -> None:
+        """The SPL compares the image name mkimage writes.
+
+        The two spellings live in a patch and two build scripts that only a cross build runs,
+        so they are compared as text.
+        """
+        name = re.search(r'^\+#define SOUNDTAP_UBOOT_NAME\s+"([^"]+)"$', PATCH, re.MULTILINE).group(1)
         for script in ("os/bootloader/build-wla-uboot.sh", "os/package/soundtap-bootloaders/build-variant.sh"):
             self.assertIn(f'-n "{name}"', (ROOT / script).read_text(), script)
 
     @unittest.skipUnless(shutil.which("cc"), "needs a C compiler")
-    def test_which_copy_boots(self):
-        define = re.search(r"^\+(#define SOUNDTAP_UBOOT_NAME.*)$", PATCH, re.M).group(1)
+    def test_which_copy_boots(self) -> None:
+        """For every pair of copy contents the SPL boots the expected copy, or none."""
+        define = re.search(r"^\+(#define SOUNDTAP_UBOOT_NAME.*)$", PATCH, re.MULTILINE).group(1)
         functions = "\n".join(patch_function(s) for s in (
             "static bool __maybe_unused spl_nand_ours(const struct spl_image_info *spl_image)",
             "static int __maybe_unused spl_nand_load_uboot(struct spl_image_info *spl_image,"))

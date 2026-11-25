@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
+"""The web UI's npm licence bundle (tools/ci/npm_licenses.py)."""
+
 import hashlib
 import importlib.util
 import unittest
@@ -13,12 +15,16 @@ SPEC.loader.exec_module(lic)
 
 
 class PackageDirTest(unittest.TestCase):
-    def test_scoped_and_unscoped_same_basename_split(self):
+    """Package directories and the bundle's lock digest."""
+
+    def test_scoped_and_unscoped_same_basename_split(self) -> None:
+        """A scoped and an unscoped package of the same name get different directories."""
         plain = {"url": "https://registry.npmjs.org/react/-/react-19.3.0.tgz"}
         scoped = {"url": "https://registry.npmjs.org/@types/react/-/react-19.3.0.tgz"}
         self.assertNotEqual(lic.package_dir(plain), lic.package_dir(scoped))
 
-    def test_the_bundle_matches_the_lock(self):
+    def test_the_bundle_matches_the_lock(self) -> None:
+        """The licence bundle was made from the current package-lock.json."""
         lock = ROOT / "app/frontend/package-lock.json"
         bundle = ROOT / "app/frontend/THIRD_PARTY_LICENSES.txt"
         digest = hashlib.sha256(lock.read_bytes()).hexdigest()

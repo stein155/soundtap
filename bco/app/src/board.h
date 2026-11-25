@@ -23,7 +23,7 @@ static inline void matrix(void)
 /* AHB clock from the live clock block, same formula as stock 0x6015b510; 24 MHz fallback. */
 static inline unsigned ahb_hz(void)
 {
-    volatile unsigned *r = (void *)0xe0007000;
+    const volatile unsigned *r = (void *)0xe0007000;
     unsigned pll = r[0], n = (pll >> 16) & 0x1f, m = (pll >> 8) & 0xff, div = r[4] & 0x3f;
     if ((r[1] & 7) != 1 || (pll >> 31) || !n || !div)
         return 24000000u;
@@ -32,14 +32,14 @@ static inline unsigned ahb_hz(void)
 
 static inline void say(const char *s)
 {
-    volatile unsigned char *tx = (void *)(0xb1001e80);
-    volatile unsigned *status = (void *)(0xb1001f44);
+    volatile unsigned char *thr = (void *)(0xb1001e80);
+    const volatile unsigned *status = (void *)(0xb1001f44);
     while (*s) {
         /* status bit2 is not "busy" on hardware (it never clears), so this is a
          * fixed ~1 ms wait per char (> 87 us char time); poll the real ready bit once known. */
         unsigned budget = 3000;
         while ((*status & 4) && --budget) {}
-        *tx = *s++;
+        *thr = *s++;
     }
 }
 
@@ -77,6 +77,7 @@ static inline void low_vectors(void (*undef)(void), void (*swi)(void),
     for (unsigned i = 1; i <= 4; i++)
         t[i] = 0xe59ff014; /* ldr pc, [pc, #0x14] -> t[i + 7] */
     t[8] = (unsigned)undef, t[9] = (unsigned)swi, t[10] = (unsigned)pabort, t[11] = (unsigned)dabort;
+    /* cppcheck-suppress duplicateExpression ; register offset 0x04 in words, written as every other offset */
     INTC[0x04 / 4] = 0xea000000u | (((LOW_VECTORS - 0xffff0008u) >> 2) & 0xffffff);
 }
 

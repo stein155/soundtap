@@ -44,8 +44,8 @@ int main(void)
 
     /* scan: start -> still scanning (3), poll -> results */
     unsigned char one = 1;
-    n = ask(2, &one, 1, r); assert(r[6] == 3 && r[7] == 0 && fake_scanning);
-    n = ask(2, 0, 0, r); assert(r[6] == 3);
+    ask(2, &one, 1, r); assert(r[6] == 3 && r[7] == 0 && fake_scanning);
+    ask(2, 0, 0, r); assert(r[6] == 3);
     fake_scanning = 0, fake_nbss = 2;
     n = ask(2, 0, 0, r);
     assert(r[6] == 0 && r[7] == 2 && n == MGMT_HDR + 2 + 2 * 13);
@@ -58,36 +58,36 @@ int main(void)
     /* profile: ssid, security 1, the 32-byte PMK, the 32-byte seed */
     unsigned char sp[1 + 4 + 2 + 32 + 32] = {4, 't', 'e', 's', 't', 1, 32};
     memset(sp + 7, 0xab, 32), memset(sp + 39, 0xcd, 32);
-    n = ask(3, sp, sizeof sp, r);
+    ask(3, sp, sizeof sp, r);
     assert(r[6] == 0 && fake_joins == 1 && fake_ssid_len == 4 && fake_pmk[31] == 0xab &&
            fake_seed[0] == 0xcd);
     /* the reply got lost: the driver resends with the same seq and must not join twice */
     unsigned char first[MGMT_MAX]; memcpy(first, r, MGMT_HDR + 1);
     n = again(3, sp, sizeof sp, r);
     assert(fake_joins == 1 && n == MGMT_HDR + 1 && !memcmp(r, first, n));
-    n = again(5, 0, 0, r); assert(r[7] == WIFI_JOINING); /* a query with a stale seq still runs */
+    again(5, 0, 0, r); assert(r[7] == WIFI_JOINING); /* a query with a stale seq still runs */
     n = ask(5, 0, 0, r);
     assert(r[7] == WIFI_JOINING && r[8] == 4 && !memcmp(r + 9, "test", 4) && r[19] == 6 &&
            (signed char)r[20] == -50);
     for (unsigned i = 0; i + 4 <= n; i++) assert(memcmp(r + i, "\xab\xab\xab\xab", 4)); /* PMK never echoed */
-    n = ask(3, sp, sizeof sp - 1, r); assert(r[6] == 1);              /* no seed */
-    sp[5] = 0; n = ask(3, sp, sizeof sp, r); assert(r[6] == 2);       /* open: unsupported */
-    sp[5] = 1, sp[0] = 0; n = ask(3, sp, sizeof sp, r); assert(r[6] == 1); /* empty ssid */
+    ask(3, sp, sizeof sp - 1, r); assert(r[6] == 1);              /* no seed */
+    sp[5] = 0; ask(3, sp, sizeof sp, r); assert(r[6] == 2);       /* open: unsupported */
+    sp[5] = 1, sp[0] = 0; ask(3, sp, sizeof sp, r); assert(r[6] == 1); /* empty ssid */
     assert(fake_joins == 1);
-    n = ask(4, 0, 0, r); assert(r[6] == 0 && fake_leaves == 1);
-    n = ask(5, 0, 0, r); assert(r[7] == WIFI_IDLE && r[8] == 0);
+    ask(4, 0, 0, r); assert(r[6] == 0 && fake_leaves == 1);
+    ask(5, 0, 0, r); assert(r[7] == WIFI_IDLE && r[8] == 0);
     /* AP: channel 6, 100 TU, a 40-byte body; status lists the clients; stop */
     extern unsigned fake_ap_chan, fake_ap_bint, fake_ap_len, fake_ap_stops;
     unsigned char ap[3 + 40] = {6, 0, 100};
-    n = ask(6, ap, sizeof ap, r);
+    ask(6, ap, sizeof ap, r);
     assert(r[6] == 0 && fake_ap_chan == 6 && fake_ap_bint == 100 && fake_ap_len == 40);
     n = ask(8, 0, 0, r);
     assert(r[6] == 0 && r[7] == 1 && r[13] == 0x77 && n == MGMT_HDR + 8 + 4 * WIFI_AP_COUNTERS &&
            r[14] == 0x11 && r[18] == 0x22);
-    n = ask(7, 0, 0, r); assert(r[6] == 0 && fake_ap_stops == 1);
-    n = ask(8, 0, 0, r); assert(r[7] == 0);
-    ap[0] = 14; n = ask(6, ap, sizeof ap, r); assert(r[6] == 1);       /* no channel 14 */
-    n = ask(6, ap, 2, r); assert(r[6] == 1);                           /* short */
+    ask(7, 0, 0, r); assert(r[6] == 0 && fake_ap_stops == 1);
+    ask(8, 0, 0, r); assert(r[7] == 0);
+    ap[0] = 14; ask(6, ap, sizeof ap, r); assert(r[6] == 1);       /* no channel 14 */
+    ask(6, ap, 2, r); assert(r[6] == 1);                           /* short */
     n = ask(12, 0, 0, r); assert(n == MGMT_HDR + 1 && r[1] == (12 | 0x80) && r[6] == 1); /* no wired port in this build */
     /* LINK_STATS: tx ok, failed, dropped, link dropped, to the radio */
     n = ask(14, 0, 0, r);
@@ -121,7 +121,7 @@ int main(void)
     mgmt_uptime += 1;                                                  /* the heartbeat */
     assert(mgmt_flow_due(rep) && rep[7] == 3);
     unsigned char off = 0;
-    n = ask(13, &off, 1, r); assert(r[6] == 0 && r[9] == 0 && !mgmt_flow);
+    ask(13, &off, 1, r); assert(r[6] == 0 && r[9] == 0 && !mgmt_flow);
     fake_tx_free = 6, mgmt_uptime += 1000;
     assert(mgmt_flow_due(rep) == 0);                                   /* off: no reports */
 

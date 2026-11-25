@@ -38,7 +38,7 @@ void dma_init(void)
 static unsigned engine(unsigned *blk, unsigned ch, unsigned mode, unsigned n, const void *src,
                        void *dst, const void *hdr, const unsigned char *tk, unsigned long long pn)
 {
-    unsigned i, st = 0, done = ch == 1 ? 0x20 : 0x200000, r18;
+    unsigned i, st = 0, done_bit = ch == 1 ? 0x20 : 0x200000, r18;
     blk[0] = 24u << 24 | 0x10 << 8 | mode;
     blk[1] = n;
     blk[2] = (unsigned)src;
@@ -52,7 +52,7 @@ static unsigned engine(unsigned *blk, unsigned ch, unsigned mode, unsigned n, co
     r18 = REG(0x018);
     REG(0x018) = r18 | 2;
     REG(0xb04) = ch;
-    for (i = 0; i < 100000 && !((st = REG(0xb18)) & done); i++)
+    for (i = 0; i < 100000 && !((st = REG(0xb18)) & done_bit); i++)
         ;
     REG(0xb14) = ch;
     REG(0x018) = r18;
@@ -121,12 +121,12 @@ static volatile unsigned rxq_in, rxq_out;
  * DSSS/CCK (index < 8) 5, OFDM 11 (stock per-rate table, default basic-rate set). */
 static unsigned char ack_hdr[4];
 static struct {
-    unsigned short len, z0, rate, cls;
+    unsigned short len, z0, rate, cls; /* cppcheck-suppress unusedStructMember ; the MAC reads this descriptor */
     unsigned hdrlen;
     unsigned char *hdr;
     unsigned l1;
     const unsigned char *p1;
-    unsigned l2;                                /* no second segment */
+    unsigned l2; /* no second segment */ /* cppcheck-suppress unusedStructMember ; the MAC reads this descriptor */
 } ack_desc;
 
 static void send_ack(const unsigned char *e)
@@ -251,6 +251,7 @@ void mac_send_mgmt(void *desc, unsigned backoff)
 
 /* Host data/management frame on access-class queue q (0..7): the MAC reads the descriptor pointer
  * from its queue state and starts on the 0x650 + 4q bit-23 edge (stock 0x1197c). */
+/* cppcheck-suppress unusedFunction ; unused; part of the MAC queue interface in hw.h */
 void tx_mac_start(unsigned q, void *desc)
 {
     qstate[q] = (unsigned)desc;

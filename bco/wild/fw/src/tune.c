@@ -90,9 +90,9 @@ static int synth_pll(unsigned band, unsigned sclass)
         unsigned G = T_g[sclass * 6 + ip * 3 + band], H = T_h[sclass * 6 + ip * 3 + band];
         r30 |= (G & 7) | ((H << 4) & 0x70);
     }
-    if (!rf_write(0x33, r33)) return 1;
-    if (!rf_write(0x0c, r0c)) return 1;
-    return rf_write(0x30, r30) ? 0 : 1;
+    if (!rf_write(0x33, r33)) return 1; /* cppcheck-suppress knownConditionTrueFalse ; the test's fake rf_write never fails */
+    if (!rf_write(0x0c, r0c)) return 1; /* cppcheck-suppress knownConditionTrueFalse ; as above */
+    return rf_write(0x30, r30) ? 0 : 1; /* cppcheck-suppress knownConditionTrueFalse ; as above */
 }
 
 /* 0x8404: step reg 0x24 to seed, start a cap measurement (reg 0x25 bit 0x1000), poll reg 0x26
@@ -162,8 +162,9 @@ static void vco_cal(unsigned cap)
 
     int seed = (signed char)entry[3];
     unsigned short m = 0;
-    int prev = 0, final = seed;
+    int final = seed;
     if (!cap_meas(seed, &m, cap) && m != 0) {
+        int prev;
         if (m >= 0xa00) {
             for (;;) {                    /* measurement high: lower the seed */
                 prev = m;
@@ -212,7 +213,7 @@ static void vco_cal(unsigned cap)
 static void tune_chan(unsigned chanidx, unsigned band, unsigned sclass)
 {
     const unsigned char *cf = chanfreq[chanidx];
-    unsigned char *entry = synth[chanidx];
+    const unsigned char *entry = synth[chanidx];
     cur_chan = chanidx;
 
     unsigned f = ((cf[4] << 8) & 0xf00) | ((cf[2] & 8) ? 0x4000u : 0u);

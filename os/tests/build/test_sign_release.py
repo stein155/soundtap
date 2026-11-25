@@ -1,12 +1,13 @@
-#!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-"""sign-release.sh signs an OS release only with passing reports for all four models made
-against the exact asset, and leaves it a draft; --publish makes public only a draft whose
+"""sign-release.sh signs an OS release only with passing reports for all four models.
+
+The reports must be made against the exact asset, and the release is left a draft; --publish makes public only a draft whose
 .sig states that release. An OS release carries the preview package (ADR 0133) beside it,
 signed alike only when it differs from the asset in its installer alone. gh and sign.sh are
-stubbed: nothing reaches GitHub and no key is used; the packages are real STU chains, small."""
+stubbed: nothing reaches GitHub and no key is used; the packages are real STU chains, small.
+"""
 import hashlib
 import importlib.util
 import json
@@ -17,6 +18,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import TypedDict, Unpack
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
@@ -27,8 +29,8 @@ bstu = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(bstu)
 
 
-def package(**changed):
-    """A small soundtap-tri chain, as build-stu.py assembles it; changed swaps payloads."""
+def package(**changed: bytes) -> bytes:
+    """Return a small soundtap-tri chain, as build-stu.py assembles it; changed swaps payloads."""
     payloads = {name: name.encode() + b"x" * 64 for name in bstu.SOUNDTAP_TRI_MODULES}
     payloads.update(changed)
     with tempfile.TemporaryDirectory() as tmp:
@@ -43,10 +45,13 @@ PREVIEW = package(**{"soundtap-installer": b"the preview package's installer"})
 
 
 def sha(data: bytes) -> str:
+    """Return the SHA-256 of data in hex."""
     return hashlib.sha256(data).hexdigest()
 
 
-def write_reports(d: Path, asset_sha=None, fail=None, skip=None):
+def write_reports(d: Path, asset_sha: str | None = None, fail: tuple[str, str] | None = None,
+                  skip: str | None = None) -> None:
+    """Write a passing report per model into d, except skip, with fail's check failed."""
     asset_sha = asset_sha or sha(ASSET)
     d.mkdir(parents=True, exist_ok=True)
     for model, spec in ra.MODELS.items():
@@ -68,18 +73,40 @@ def write_reports(d: Path, asset_sha=None, fail=None, skip=None):
         (d / f"hardware-{model}.json").write_text(json.dumps(report))
 
 
-def statement(kind="core", version="1.0.0", profile="production", data=ASSET):
-    """A .sig line as sign.sh writes it; the signature itself is not checked here."""
+def statement(kind: str = "core", version: str = "1.0.0", profile: str = "production", data: bytes = ASSET) -> str:
+    """Return a .sig line as sign.sh writes it; the signature itself is not checked here."""
     return (f"soundtap-package v1 kind={kind} profile={profile} version={version} "
             f"sha256={sha(data)} sig={'A' * 86}==\n")
 
 
+class RunOptions(TypedDict, total=False):
+    """How run_sign runs sign-release.sh; see run_sign for each option."""
+
+    publish: bool
+    sig: str | None
+    draft: bool
+    preview: str
+    preview_sig: str | None
+
+
 class SignReleaseTests(unittest.TestCase):
-    def run_sign(self, tag, reports, publish=False, sig=None, draft=True, preview="same",
-                 preview_sig=None):
-        """preview: the preview package of an OS release, "same" (only its installer differs),
-        "other" (a payload differs too), "missing", or "extra" (a second -preview asset)."""
-        tmp = Path(self.enterContextTemp())
+    """sign-release.sh against stubbed gh and sign.sh."""
+
+    def run_sign(self, tag: str, reports: Path | None,
+                 **options: Unpack[RunOptions]) -> tuple[subprocess.CompletedProcess[str], bool]:
+        """Run sign-release.sh for tag; return the run and whether it published.
+
+        publish passes --publish; sig is the asset's .sig; draft is what gh says the release is.
+        preview: the preview package of an OS release, "same" (only its installer differs),
+        "other" (a payload differs too), "missing", or "extra" (a second -preview asset).
+        preview_sig is its .sig, by default the asset's statement over its bytes.
+        """
+        publish = options.get("publish", False)
+        sig = options.get("sig")
+        draft = options.get("draft", True)
+        preview = options.get("preview", "same")
+        preview_sig = options.get("preview_sig")
+        tmp = Path(self.make_temp_dir())
         release = tmp / "release"
         release.mkdir()
         (release / "Update-soundtap.stu").write_bytes(ASSET)
@@ -129,24 +156,27 @@ esac
         args.append(tag)
         if reports is not None:
             args.append(str(reports))
-        done = subprocess.run(args, env=env, capture_output=True, text=True)
+        done = subprocess.run(args, check=False, env=env, capture_output=True, text=True)
         self.calls = log.read_text() if log.exists() else ""
         self.uploaded = "release upload" in self.calls
         self.signed = signed.read_text() if signed.exists() else ""
         self.signed_files = signed_files.read_text().split() if signed_files.exists() else []
         return done, "--draft=false" in self.calls
 
-    def enterContextTemp(self):
+    def make_temp_dir(self) -> str:
+        """Make a temporary directory removed after the test."""
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d)
         return d
 
-    def reports(self, **kw):
-        d = Path(self.enterContextTemp()) / "reports"
+    def reports(self, **kw: str | tuple[str, str]) -> Path:
+        """Write reports into a fresh directory, as write_reports takes kw, and return it."""
+        d = Path(self.make_temp_dir()) / "reports"
         write_reports(d, **kw)
         return d
 
-    def test_all_four_models_pass(self):
+    def test_all_four_models_pass(self) -> None:
+        """With passing reports for all four models the release is signed, uploaded and left a draft."""
         done, published = self.run_sign("os-v1.0.0", self.reports())
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(self.signed, "core production 1.0.0\n")
@@ -154,63 +184,73 @@ esac
         # Signed, still a draft: the maintainer's bench speakers take it first.
         self.assertFalse(published)
 
-    def test_os_release_without_reports_is_refused(self):
+    def test_os_release_without_reports_is_refused(self) -> None:
+        """An OS release without reports is refused."""
         done, published = self.run_sign("os-v1.0.0", None)
         self.assertNotEqual(done.returncode, 0)
         self.assertFalse(self.uploaded)
         self.assertFalse(published)
 
-    def test_missing_wla_report_is_refused(self):
+    def test_missing_wla_report_is_refused(self) -> None:
+        """A missing WLA report is refused."""
         done, _published = self.run_sign("os-v1.0.0", self.reports(skip="wla"))
         self.assertIn("no wla hardware report", done.stderr)
         self.assertFalse(self.uploaded)
 
-    def test_missing_st300_report_is_refused(self):
+    def test_missing_st300_report_is_refused(self) -> None:
+        """A missing ST300 report is refused."""
         done, _published = self.run_sign("os-v1.0.0", self.reports(skip="st300"))
         self.assertIn("no st300 hardware report", done.stderr)
         self.assertFalse(self.uploaded)
 
-    def test_failed_st300_tv_input_is_refused(self):
+    def test_failed_st300_tv_input_is_refused(self) -> None:
+        """A failed ST300 TV input check is refused."""
         done, _published = self.run_sign("os-v1.0.0", self.reports(fail=("st300", "tv-input")))
         self.assertIn("tv-input", done.stderr)
         self.assertFalse(self.uploaded)
 
-    def test_failed_wla_rf_check_is_refused(self):
+    def test_failed_wla_rf_check_is_refused(self) -> None:
+        """A failed WLA RF configuration check is refused."""
         done, _published = self.run_sign("os-v1.0.0", self.reports(fail=("wla", "rf-config")))
         self.assertIn("rf-config", done.stderr)
         self.assertFalse(self.uploaded)
 
-    def test_report_for_other_bytes_is_refused(self):
+    def test_report_for_other_bytes_is_refused(self) -> None:
+        """A report made against other bytes is refused."""
         done, _published = self.run_sign("os-v1.0.0", self.reports(asset_sha=sha(b"other")))
         self.assertIn("other bytes", done.stderr)
         self.assertFalse(self.uploaded)
 
-    def test_changed_evidence_is_refused(self):
+    def test_changed_evidence_is_refused(self) -> None:
+        """Evidence changed after the report is refused."""
         d = self.reports()
         (d / "hardware-st20-dmesg.txt").write_text("edited afterwards\n")
         done, _published = self.run_sign("os-v1.0.0", d)
         self.assertIn("hash mismatch", done.stderr)
         self.assertFalse(self.uploaded)
 
-    def test_app_release_needs_no_reports(self):
+    def test_app_release_needs_no_reports(self) -> None:
+        """An app release needs no reports."""
         done, published = self.run_sign("app-v1.0.0", None)
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertTrue(self.uploaded)
         self.assertFalse(published)
 
-    def test_app_release_is_signed_as_the_app_of_its_tag(self):
-        # Not os/VERSION: an app release names its own version (ADR 0048).
+    def test_app_release_is_signed_as_the_app_of_its_tag(self) -> None:
+        """An app release is signed as the app at its tag's version, not os/VERSION (ADR 0048)."""
         done, _ = self.run_sign("app-v2.3.4", None)
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(self.signed, "app production 2.3.4\n")
 
-    def test_other_tags_are_not_signed(self):
+    def test_other_tags_are_not_signed(self) -> None:
+        """A tag that is no release's is not signed."""
         done, published = self.run_sign("candidate-abc", None)
         self.assertNotEqual(done.returncode, 0)
         self.assertEqual(self.signed, "")
         self.assertFalse(published)
 
-    def test_publish_makes_the_signed_draft_public(self):
+    def test_publish_makes_the_signed_draft_public(self) -> None:
+        """--publish makes the signed draft public and latest, signing and uploading nothing."""
         done, published = self.run_sign("os-v1.0.0", None, publish=True, sig=statement())
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertTrue(published)
@@ -219,16 +259,16 @@ esac
         self.assertEqual(self.signed, "")
         self.assertFalse(self.uploaded)
 
-    def test_publish_of_an_app_is_never_latest(self):
+    def test_publish_of_an_app_is_never_latest(self) -> None:
+        """A published app release is never latest."""
         done, published = self.run_sign("app-v2.3.4", None, publish=True,
                                         sig=statement(kind="app", version="2.3.4"))
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertTrue(published)
         self.assertIn("--latest=false", self.calls)
 
-    # ADR 0035: an alpha (X.Y.Z-alpha.N) is signed as a production release without the four
-    # hardware reports, says so, and is published as a prerelease, never latest.
-    def test_an_alpha_is_signed_without_reports_and_says_so(self):
+    def test_an_alpha_is_signed_without_reports_and_says_so(self) -> None:
+        """ADR 0035: an alpha (X.Y.Z-alpha.N) is signed as a production release without the four hardware reports, and says so."""
         done, published = self.run_sign("os-v1.0.0-alpha.1", None)
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(self.signed, "core production 1.0.0-alpha.1\n")
@@ -236,19 +276,21 @@ esac
         self.assertTrue(self.uploaded)
         self.assertFalse(published)
 
-    def test_reports_given_for_an_alpha_are_still_checked(self):
+    def test_reports_given_for_an_alpha_are_still_checked(self) -> None:
+        """Reports given for an alpha are still checked."""
         done, _ = self.run_sign("os-v1.0.0-alpha.1", self.reports(fail=("st20", "wifi")))
         self.assertNotEqual(done.returncode, 0)
         self.assertFalse(self.uploaded)
 
-    def test_only_an_alpha_suffix_skips_the_reports(self):
-        # Other suffixes still need the reports (and the real sign.sh refuses their version).
+    def test_only_an_alpha_suffix_skips_the_reports(self) -> None:
+        """Other suffixes still need the reports (and the real sign.sh refuses their version)."""
         for tag in ("os-v1.0.0-alpha", "os-v1.0.0-beta.1", "os-v1.0.0-rc.1"):
             done, _ = self.run_sign(tag, None)
             self.assertIn("needs the hardware reports", done.stderr, tag)
             self.assertFalse(self.uploaded, tag)
 
-    def test_publish_of_an_alpha_is_a_prerelease_never_latest(self):
+    def test_publish_of_an_alpha_is_a_prerelease_never_latest(self) -> None:
+        """A published alpha is a prerelease, never latest."""
         for tag, kind in (("os-v1.0.0-alpha.2", "core"), ("app-v1.0.0-alpha.2", "app")):
             done, published = self.run_sign(tag, None, publish=True,
                                             sig=statement(kind=kind, version="1.0.0-alpha.2"))
@@ -256,18 +298,21 @@ esac
             self.assertTrue(published)
             self.assertIn("--draft=false --prerelease --latest=false\n", self.calls)
 
-    def test_publish_of_a_release_is_not_a_prerelease(self):
+    def test_publish_of_a_release_is_not_a_prerelease(self) -> None:
+        """A published release is not a prerelease."""
         done, _published = self.run_sign("os-v1.0.0", None, publish=True, sig=statement())
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertIn("--draft=false --prerelease=false --latest\n", self.calls)
 
-    def test_publish_of_an_alpha_needs_the_alphas_statement(self):
+    def test_publish_of_an_alpha_needs_the_alphas_statement(self) -> None:
+        """Publishing an alpha needs the alpha's own statement."""
         done, published = self.run_sign("os-v1.0.0-alpha.2", None, publish=True,
                                         sig=statement(version="1.0.0"))
         self.assertNotEqual(done.returncode, 0)
         self.assertFalse(published)
 
-    def test_publish_needs_this_releases_statement(self):
+    def test_publish_needs_this_releases_statement(self) -> None:
+        """Publishing needs a .sig stating this release."""
         for name, sig in {
             "no .sig": None,
             "empty .sig": "",
@@ -280,15 +325,15 @@ esac
             self.assertNotEqual(done.returncode, 0, name)
             self.assertFalse(published, name)
 
-    def test_publish_needs_a_draft(self):
+    def test_publish_needs_a_draft(self) -> None:
+        """Publishing needs a draft."""
         done, published = self.run_sign("os-v1.0.0", None, publish=True, sig=statement(),
                                         draft=False)
         self.assertIn("not a draft", done.stderr)
         self.assertFalse(published)
 
-    # ADR 0133: the preview package is signed with the release, as the same kind, profile and
-    # version over its own bytes, and only when it is the asset with its installer swapped.
-    def test_the_preview_package_is_signed_with_the_release(self):
+    def test_the_preview_package_is_signed_with_the_release(self) -> None:
+        """ADR 0133: the preview package is signed with the release, as the same kind, profile and version over its own bytes."""
         for tag, reports in (("os-v1.0.0", self.reports()), ("os-v1.0.0-alpha.1", None)):
             with self.subTest(tag=tag):
                 done, published = self.run_sign(tag, reports)
@@ -300,7 +345,8 @@ esac
                 self.assertIn("Update-soundtap-preview.stu.sig", upload)
                 self.assertFalse(published)
 
-    def test_an_os_release_without_its_preview_package_is_not_signed(self):
+    def test_an_os_release_without_its_preview_package_is_not_signed(self) -> None:
+        """An OS release without exactly one preview package is not signed."""
         for preview in ("missing", "extra"):
             with self.subTest(preview=preview):
                 done, _ = self.run_sign("os-v1.0.0", self.reports(), preview=preview)
@@ -309,19 +355,22 @@ esac
                 self.assertEqual(self.signed, "")
                 self.assertFalse(self.uploaded)
 
-    def test_a_preview_package_with_other_payloads_is_not_signed(self):
+    def test_a_preview_package_with_other_payloads_is_not_signed(self) -> None:
+        """A preview package that differs beyond its installer is not signed."""
         done, _ = self.run_sign("os-v1.0.0", self.reports(), preview="other")
         self.assertNotEqual(done.returncode, 0)
         self.assertIn("only its installer swapped", done.stderr)
         self.assertEqual(self.signed, "")
         self.assertFalse(self.uploaded)
 
-    def test_an_app_release_carries_no_preview_package(self):
+    def test_an_app_release_carries_no_preview_package(self) -> None:
+        """An app release carries no preview package."""
         done, _ = self.run_sign("app-v2.3.4", None)
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(self.signed_files, ["Update-soundtap.stu"])
 
-    def test_publish_needs_the_preview_packages_statement_too(self):
+    def test_publish_needs_the_preview_packages_statement_too(self) -> None:
+        """Publishing an OS release needs the preview package's own statement too."""
         for name, preview_sig in {
             "no .sig": None,
             "the asset's statement": statement(),

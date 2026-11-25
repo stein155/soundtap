@@ -27,11 +27,13 @@ PROMPT = ">>> Hold a button on the speaker now"
 class Run:
     """One script run, with a person at the speaker who reads its prompts."""
 
-    def __init__(self, sp, script, *args, env=None, hold=True, hold_after=0.0, cwd=None):
+    def __init__(self, sp: FakeSpeaker, script: str, *args: str, env: dict[str, str] | None = None,
+                 hold: bool = True, hold_after: float = 0.0) -> None:
+        """Run `script` with `args` to the end, holding the key `hold_after` seconds after each prompt if `hold`."""
         self.sp = sp
         self.prompts, self.manual, self.err, self.out = 0, 0, [], []
         self.hold, self.hold_after = hold, hold_after
-        self.proc = subprocess.Popen(["sh", str(HIL / script), *args], env=env, cwd=cwd,
+        self.proc = subprocess.Popen(["sh", str(HIL / script), *args], env=env,
                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                      stderr=subprocess.PIPE, text=True)
         out = threading.Thread(target=lambda: self.out.extend(self.proc.stdout))
@@ -55,7 +57,10 @@ class Run:
 
 
 class HilScriptTest(unittest.TestCase):
-    def setUp(self):
+    """The tools/hil scripts against a fake speaker on a production or alpha image."""
+
+    def setUp(self) -> None:
+        """Make a temporary bin with an ssh that finds no port 22, and a signed candidate STU."""
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.dir = Path(self.tmp.name)
@@ -69,14 +74,16 @@ class HilScriptTest(unittest.TestCase):
         self.stu.write_text("0.2.0\n")
         Path(str(self.stu) + ".sig").write_text("c2lnbmF0dXJl\n")
 
-    def stub_ssh(self, body):
+    def stub_ssh(self, body: str) -> None:
+        """Replace ssh with a stub that logs its command and then runs `body`."""
         ssh = self.bin / "ssh"
         ssh.write_text("#!/bin/sh\n"
                        f"for last; do :; done\nprintf '%s\\n' \"$last\" >>'{self.ssh_calls}'\n"
                        + body + "\n")
         ssh.chmod(0o755)
 
-    def speaker(self, **kw):
+    def speaker(self, **kw: float | str) -> tuple[FakeSpeaker, str]:
+        """Serve a fake speaker made with `kw`; return it and its address."""
         kw.setdefault("token_file", str(self.token))
         sp = FakeSpeaker(**kw)
         httpd = serve(sp)
@@ -84,20 +91,24 @@ class HilScriptTest(unittest.TestCase):
         self.addCleanup(httpd.shutdown)
         return sp, f"127.0.0.1:{httpd.server_address[1]}"
 
-    def env(self, **extra):
+    def env(self, **extra: str) -> dict[str, str]:
+        """Return the scripts' environment with the stub ssh first on PATH and `extra` on top."""
         env = dict(os.environ, PATH=f"{self.bin}{os.pathsep}{os.environ['PATH']}",
                    SOUNDTAP_HIL_POLL="0.05", SOUNDTAP_HIL_TIMEOUT="20", SOUNDTAP_HIL_SSH="auto",
                    SOUNDTAP_HIL_SERIAL="")
         env.update(extra)
         return env
 
-    def ssh_commands(self):
+    def ssh_commands(self) -> list[str]:
+        """Return the commands the stub ssh was asked to run."""
         return self.ssh_calls.read_text().splitlines() if self.ssh_calls.exists() else []
 
-    def gated(self, sp):
+    def gated(self, sp: FakeSpeaker) -> list[tuple[str, str]]:
+        """Return each gated POST the speaker took (volume aside) with how it was authorised."""
         return [(p, how) for m, p, how in sp.requests if m == "POST" and p != "/api/volume"]
 
-    def test_install_candidate_on_a_production_image(self):
+    def test_install_candidate_on_a_production_image(self) -> None:
+        """Without SSH the install and the reboot each wait for the hold, and the slot switches."""
         sp, addr = self.speaker()
         run = Run(sp, "install-candidate.sh", addr, str(self.stu), env=self.env())
         self.assertEqual(run.code, 0, run.stderr + run.stdout)
@@ -113,7 +124,8 @@ class HilScriptTest(unittest.TestCase):
         # Only the probe for SSH went to port 22.
         self.assertEqual(self.ssh_commands(), ["true"])
 
-    def test_install_without_the_hold_stops_before_anything_is_written(self):
+    def test_install_without_the_hold_stops_before_anything_is_written(self) -> None:
+        """An install nobody holds the key for fails with 403 and writes and reboots nothing."""
         sp, addr = self.speaker(hold_window=0.5)
         run = Run(sp, "install-candidate.sh", addr, str(self.stu), env=self.env(), hold=False)
         self.assertEqual(run.code, 1)
@@ -122,7 +134,8 @@ class HilScriptTest(unittest.TestCase):
         self.assertEqual((sp.selected, sp.builds["PONG"]), ("PING", "0.1.0"))
         self.assertEqual(sp.boots, [], "it rebooted")
 
-    def test_install_candidate_on_an_alpha_image_uses_the_token(self):
+    def test_install_candidate_on_an_alpha_image_uses_the_token(self) -> None:
+        """With root SSH the script reads the confirm token and asks for no hold."""
         self.stub_ssh(f"case $last in true) exit 0 ;; *confirm-token*) cat '{self.token}' ;; "
                       "*) exit 1 ;; esac")
         sp, addr = self.speaker()
@@ -133,7 +146,8 @@ class HilScriptTest(unittest.TestCase):
         self.assertEqual(self.gated(sp), [("/api/firmware", "token"), ("/api/reboot", "token")])
         self.assertEqual(sp.running, "PONG")
 
-    def test_a_reboot_that_does_not_come_back_fails_with_the_console(self):
+    def test_a_reboot_that_does_not_come_back_fails_with_the_console(self) -> None:
+        """A speaker that does not come back fails the run and shows and logs the serial console."""
         console = self.dir / "uart"
         console.write_text("U-Boot SPL 2026.01\nTrying to boot from NAND\n")
         log = self.dir / "console.log"
@@ -148,7 +162,8 @@ class HilScriptTest(unittest.TestCase):
         self.assertIn("U-Boot SPL 2026.01", log.read_text())
         self.assertNotIn("PASS", run.stdout)
 
-    def test_install_app(self):
+    def test_install_app(self) -> None:
+        """install-app.sh installs soundtapd after one hold and leaves the volume as it was."""
         sp, addr = self.speaker()
         app = self.dir / "soundtapd"
         app.write_text("0.2.1\n")
@@ -161,7 +176,8 @@ class HilScriptTest(unittest.TestCase):
         self.assertEqual(self.gated(sp), [("/api/soundtapd", "hold")])
         self.assertEqual(sp.volume, 7)
 
-    def test_boot_soak(self):
+    def test_boot_soak(self) -> None:
+        """boot-soak.sh reports the install, each warm reboot and the cold boot, then passes."""
         sp, addr = self.speaker()
         run = Run(sp, "boot-soak.sh", addr, str(self.stu), "1", "2", "1", env=self.env())
         self.assertEqual(run.code, 0, run.stderr + run.stdout)
@@ -175,7 +191,8 @@ class HilScriptTest(unittest.TestCase):
         self.assertEqual((run.prompts, run.manual), (4, 1))
         self.assertEqual(sp.boots, ["PONG"] * 4)
 
-    def test_rollback_on_a_production_image(self):
+    def test_rollback_on_a_production_image(self) -> None:
+        """rollback-check.sh sees four unconfirmed boots fall back to the other slot, which stays."""
         sp, addr = self.speaker(confirm_after=2.0)
         run = Run(sp, "rollback-check.sh", addr, env=self.env())
         self.assertEqual(run.code, 0, run.stderr + run.stdout)
@@ -187,29 +204,32 @@ class HilScriptTest(unittest.TestCase):
         self.assertEqual(sp.selected, "PONG")
         self.assertEqual(run.prompts, 6)
 
-    def test_the_fake_keeps_an_install_through_three_power_cuts(self):
-        # ADR 0010, bootlimit 4: an unconfirmed selection keeps its count across power cuts,
-        # so three cuts before the confirm leave the fourth boot on the new slot; after four
-        # unconfirmed boots the fifth boots the old one.
+    def test_the_fake_keeps_an_install_through_three_power_cuts(self) -> None:
+        """The fake keeps an unconfirmed slot through three power cuts and falls back after the fourth.
+
+        ADR 0010, bootlimit 4: an unconfirmed selection keeps its count across power cuts,
+        so three cuts before the confirm leave the fourth boot on the new slot; after four
+        unconfirmed boots the fifth boots the old one.
+        """
         sp = FakeSpeaker(confirm_after=60.0, down_for=0.0)
 
-        def gated():
+        def gated() -> dict[str, str]:
             return {"X-SoundTap-Device-Token": sp.token, "X-SoundTap-Signature": "c2ln",
                     "X-SoundTap-Confirm": "install"}
 
         self.assertEqual(sp.post("/api/firmware", "install=1", gated(), b"0.2.0")[0], 200)
         self.assertEqual(sp.post("/api/reboot", "", gated(), b'{"confirm":true}')[0], 200)
-        sp._tick()
+        sp.tick()
         for _ in range(3):
             sp.power_cut()
-            sp._tick()
+            sp.tick()
         self.assertEqual((sp.boots, sp.count), (["PONG"] * 4, 4))
         sp.power_cut()
-        sp._tick()
+        sp.tick()
         self.assertEqual(sp.boots[-1], "PING")
 
-    def test_rollback_fails_when_a_boot_confirms_before_its_reboot(self):
-        # The person holds the key too late: the boot confirms while the reboot waits.
+    def test_rollback_fails_when_a_boot_confirms_before_its_reboot(self) -> None:
+        """The check fails when the key is held too late and the boot confirms while the reboot waits."""
         sp, addr = self.speaker(confirm_after=1.0, reboot_delay=1.0)
         run = Run(sp, "rollback-check.sh", addr, env=self.env(), hold_after=1.5)
         self.assertEqual(run.code, 1, run.stdout)

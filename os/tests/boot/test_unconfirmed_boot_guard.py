@@ -13,11 +13,12 @@ LIMIT = int(re.search(r"const BootLimit = (\d+)", BOOTSELECT).group(1))
 
 
 def scratch2(count: int) -> str:
-    """SCRATCH2 holding U-Boot's count as Linux reads it: big-endian, so byte-swapped."""
+    """Return SCRATCH2 holding U-Boot's count as Linux reads it: big-endian, so byte-swapped."""
     return f"0x{count:02X}0001B0"
 
 
 def run(scratch2: str, cmdline: str = "soundtap.nandroot=1", model: str = "") -> str:
+    """Run unconfirmed_boot_guard; return "CRASH_REBOOT/WATCHDOG_SECONDS/WATCHDOG_NETWORK reboot-mode"."""
     with tempfile.TemporaryDirectory() as d:
         init = InitScript(d)
         (init.proc / "cmdline").write_text(cmdline + "\n")
@@ -31,8 +32,8 @@ def run(scratch2: str, cmdline: str = "soundtap.nandroot=1", model: str = "") ->
         return f"{out} {mode.read_text().strip()}"
 
 
-def crash_loop(scratch2: str) -> list:
-    """A soundtapd that dies at once, over and over, before it ever confirms the boot."""
+def crash_loop(scratch2: str) -> list[str]:
+    """Run a soundtapd that dies at once, over and over, before it ever confirms the boot; return its starts and reboots."""
     with tempfile.TemporaryDirectory() as d:
         init = InitScript(d)
         init.stub("devmem", f"echo {scratch2}")
@@ -50,32 +51,46 @@ def crash_loop(scratch2: str) -> list:
 
 
 class UnconfirmedBootGuard(unittest.TestCase):
-    def test_the_module_does_not_change_the_verdict(self):
-        """Every board under our U-Boot counts boots the same way; the module type or model
-        it boots as must not decide whether recovery is armed."""
+    """unconfirmed_boot_guard and the crash-loop reboot it arms."""
+
+    def test_the_module_does_not_change_the_verdict(self) -> None:
+        """The module type or model a board boots as does not decide whether recovery is armed.
+
+        Every board under our U-Boot counts boots the same way.
+        """
         for count in ("0x010001B0", "0x00000000"):
             verdicts = {run(count, f"soundtap.nandroot=1 variant={variant} module_type={module}", model)
                         for variant, module, model in (("rhino", "sm2", "st10"), ("spotty", "scm", "st20"),
                                                        ("binky", "sm2", "wla"), ("ginger", "sm2", "st300"))}
             self.assertEqual(len(verdicts), 1, verdicts)
 
-    # The reboot mode is set_reboot_mode's alone (test_reboot_mode.py): the guard leaves the
-    # one the test seeds, cold, as it is.
-    def test_counting_bootloader_arms_recovery(self):
+    def test_counting_bootloader_arms_recovery(self) -> None:
+        """A counting bootloader arms recovery.
+
+        The reboot mode is set_reboot_mode's alone (test_reboot_mode.py): the guard leaves the
+        one the test seeds, cold, as it is.
+        """
         self.assertEqual(run("0x010001B0"), "1/300/0 cold")
 
-    def test_confirmed_or_non_counting_boot_stays_unarmed(self):
+    def test_confirmed_or_non_counting_boot_stays_unarmed(self) -> None:
+        """A confirmed or non-counting boot leaves recovery unarmed."""
         self.assertEqual(run("0x00000000"), "//1 cold")
 
-    def test_both_slots_tried_stays_up(self):
-        # Counts 1 to bootlimit try the selected slot, bootlimit+1 to 2*bootlimit+1 the
-        # fallback (ADR 0010): armed through the fallback's last try, not past it.
+    def test_both_slots_tried_stays_up(self) -> None:
+        """Recovery stays armed through the fallback slot's last try, not past it.
+
+        Counts 1 to bootlimit try the selected slot, bootlimit+1 to 2*bootlimit+1 the
+        fallback (ADR 0010).
+        """
         self.assertEqual(run(scratch2(2 * LIMIT + 1)), "1/300/0 cold")
         self.assertEqual(run(scratch2(2 * LIMIT + 2)), "//1 cold")
 
-    def test_crash_loop_on_counting_bootloader_reboots(self):
-        # The ST20 path: daemon exits keep the hardware watchdog fed, so only this
-        # reboot lets U-Boot count the slot out.
+    def test_crash_loop_on_counting_bootloader_reboots(self) -> None:
+        """A crash loop under a counting bootloader reboots after five starts.
+
+        The ST20 path: daemon exits keep the hardware watchdog fed, so only this
+        reboot lets U-Boot count the slot out.
+        """
         self.assertEqual(crash_loop("0x010001B0"), ["soundtapd -home /mnt/nv/soundtap"] * 5 + ["reboot -f"])
 
 

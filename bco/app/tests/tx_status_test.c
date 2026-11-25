@@ -16,7 +16,7 @@ int main(void)
     /* Two reports cross ring wrap; stage 3 makes them available to stage 4. */
     local.ch[3].pos = local.ch[4].pos = local.ch[4].lim = 3;
     records[3][3] = 0x12340000; /* high bits are not status */
-    records[0][3] = 7;
+    records[0][3] = 7; /* cppcheck-suppress unreadVariable ; wr_tx_status reads it through the ring */
     wr_commit(&local, 3, 2);
     wr_tx_status(&local, &ok, &failed);
     assert(ok == 1 && failed == 1);

@@ -7,7 +7,7 @@
 #define MGMT_MAX 1536
 
 /* req/rsp: whole messages. Returns the reply length, 0 when the request is malformed. */
-unsigned mgmt_handle(const unsigned char *req, unsigned n, unsigned char *rsp);
+unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r);
 extern unsigned char mgmt_wifi_mac[6]; /* the device's Wi-Fi MAC (PersParam MAC0), reported in HELLO */
 extern volatile unsigned mgmt_uptime; /* ms since boot, set by the main loop, reported in HELLO */
 

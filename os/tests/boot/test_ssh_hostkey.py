@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[3]
 SSH = (ROOT / "os/overlay/opt/soundtap/ssh.sh").read_text()
 
 
-def boot(nv, keygen):
+def boot(nv: str, keygen: str) -> Path:
     """Run ssh.sh once against a temporary /mnt/nv with a stub dropbearkey."""
     bins = Path(nv, "bin")
     bins.mkdir(exist_ok=True)
@@ -32,13 +32,17 @@ def boot(nv, keygen):
 
 
 class HostKey(unittest.TestCase):
-    def test_failed_keygen_is_retried_on_the_next_boot(self):
+    """ssh.sh's handling of the Dropbear host key."""
+
+    def test_failed_keygen_is_retried_on_the_next_boot(self) -> None:
+        """A key file dropbearkey left empty is made again on the next boot."""
         with tempfile.TemporaryDirectory() as nv:
             boot(nv, ': >"$f"; exit 1')  # dropbearkey dies after creating the file
             key = boot(nv, 'echo KEY >"$f"')  # next boot, it works
             self.assertEqual(key.read_text(), "KEY\n")
 
-    def test_good_key_is_kept(self):
+    def test_good_key_is_kept(self) -> None:
+        """A good key is kept across boots."""
         with tempfile.TemporaryDirectory() as nv:
             boot(nv, 'echo FIRST >"$f"')
             key = boot(nv, 'echo SECOND >"$f"')

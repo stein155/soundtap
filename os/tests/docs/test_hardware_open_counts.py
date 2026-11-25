@@ -10,11 +10,14 @@ ROOT = Path(__file__).resolve().parents[3]
 HEADING = re.compile(r"^### (.+) \((\d+) open\)\s*$")
 
 
-def count_errors(text):
-    """A row is open when its status cell is `open`, alone or followed by a colon and a note."""
+def count_errors(text: str) -> list[str]:
+    """Return each heading whose open count differs from its open rows.
+
+    A row is open when its status cell is `open`, alone or followed by a colon and a note.
+    """
     errors, section = [], None
 
-    def close():
+    def close() -> None:
         if section and section[1] != section[2]:
             errors.append(f"{section[0]}: heading says {section[1]} open, {section[2]} rows are")
 
@@ -33,13 +36,17 @@ def count_errors(text):
 
 
 class HardwareOpenCountsTest(unittest.TestCase):
-    def test_headings_match_open_rows(self):
+    """The open counts in the hardware checklist's headings."""
+
+    def test_headings_match_open_rows(self) -> None:
+        """Each model's heading states the number of its open rows."""
         text = (ROOT / "docs/hardware/hardware-test.md").read_text()
         models = [m.group(1) for m in map(HEADING.match, text.splitlines()) if m]
         self.assertEqual(models, ["ST10", "ST20", "WLA", "ST300"])
         self.assertEqual(count_errors(text), [])
 
-    def test_counts_open_rows_only(self):
+    def test_counts_open_rows_only(self) -> None:
+        """Only rows whose status is open count, and a wrong count is reported."""
         text = """### ST10 (2 open)
 
 | Prove on the speaker | Status |

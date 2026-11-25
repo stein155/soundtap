@@ -11,7 +11,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[3]
 SPEC = importlib.util.spec_from_file_location("build_stu", ROOT / "os/installer/build-stu.py")
 build = importlib.util.module_from_spec(SPEC)
@@ -21,8 +20,8 @@ LAYOUT_VOL = 0x7FFFEFFF
 VID_OFF, DATA_OFF = 2048, 4096
 
 
-def peb(vol, lnum, sqnum, data):
-    """One physical eraseblock as ubinize writes it: EC header, VID header, data."""
+def peb(vol: int, lnum: int, sqnum: int, data: bytes) -> bytes:
+    """Return one physical eraseblock as ubinize writes it: EC header, VID header, data."""
     raw = bytearray(b"\xff" * PEB)
     raw[:4] = b"UBI#"
     struct.pack_into(">II", raw, 16, VID_OFF, DATA_OFF)
@@ -34,10 +33,13 @@ def peb(vol, lnum, sqnum, data):
 
 
 class StuExpectation(unittest.TestCase):
-    """os/support/stu_expect.py derives what the guest compares NAND with, from the package
-    alone. Run here on a package whose answer is known."""
+    """os/support/stu_expect.py derives what the guest compares NAND with, from the package alone.
 
-    def test_expectation_comes_from_the_package(self):
+    Run here on a package whose answer is known.
+    """
+
+    def test_expectation_comes_from_the_package(self) -> None:
+        """The kernel and rootfs volume hashes the guest expects come from the package alone."""
         leb = PEB - DATA_OFF
         reserved = 4
         table = struct.pack(">I", reserved) + b"\0" * 168
@@ -72,38 +74,44 @@ class StuExpectation(unittest.TestCase):
 
 
 class GuestSetup(unittest.TestCase):
-    """nandsim-install-test.sh needs Docker, QEMU and a built package, so it runs in every
+    """The install gate's guest setup is pinned and hermetic.
+
+    nandsim-install-test.sh needs Docker, QEMU and a built package, so it runs in every
     Build rather than here. These check its pins and its hermetic setup as text: a pinned
     image digest or archive date is a fact in the file, and no run on a checkout could show
-    what a run on a differently configured runner would fetch."""
+    what a run on a differently configured runner would fetch.
+    """
 
     script = (ROOT / "os/tests/installer/nandsim-install-test.sh").read_text()
 
-    def test_guest_kernel_ships_nandsim_on_both_arches(self):
-        # Debian's arm64 kernel has no nandsim; Ubuntu's modules-extra has it.
+    def test_guest_kernel_ships_nandsim_on_both_arches(self) -> None:
+        """The guest runs Ubuntu, whose modules-extra has nandsim; Debian's arm64 kernel has none."""
         self.assertIn("RUNNER_IMAGE=ubuntu:24.04@sha256:", self.script)
         container = self.script[self.script.index("container.sh"):]
         self.assertIn('"linux-modules-extra-$KVER"', container)
         self.assertIn("aarch64|arm64) GUEST_ARCH=arm64", self.script)
         self.assertNotIn("--platform", self.script)
 
-    def test_qemu_needs_no_network_rom_and_docker_output_is_removable(self):
+    def test_qemu_needs_no_network_rom_and_docker_output_is_removable(self) -> None:
+        """QEMU runs without a network ROM and the Docker output belongs to the caller."""
         self.assertEqual(self.script.count("-nic none"), 2)
         self.assertIn('chown -R "$HOST_UID:$HOST_GID" /work', self.script)
         self.assertIn("npm ci --silent && SOUNDTAP_WEB_OUT_DIR=/out/web npm run build", self.script)
         # The work directory is in the checkout, where any docker daemon can mount it.
         self.assertIn('WORK=$(mktemp -d "$REPO/output/nandsim.XXXXXX")', self.script)
 
-    def test_guest_packages_come_from_a_frozen_archive(self):
+    def test_guest_packages_come_from_a_frozen_archive(self) -> None:
+        """Guest packages come from a dated Ubuntu snapshot."""
         self.assertRegex(self.script, r"APT_SNAPSHOT=\d{8}T\d{6}Z")
         self.assertIn("https://snapshot.ubuntu.com/ubuntu/$APT_SNAPSHOT/", self.script)
 
-    def test_guest_packages_are_fetched_once_per_setup(self):
-        self.assertIn('GUEST_IMAGE=soundtap-nandsim-guest:$APT_SNAPSHOT-$GUEST_ARCH-$(sha256sum',
+    def test_guest_packages_are_fetched_once_per_setup(self) -> None:
+        """Guest packages are fetched once into a cached image, never inside the container script."""
+        self.assertIn("GUEST_IMAGE=soundtap-nandsim-guest:$APT_SNAPSHOT-$GUEST_ARCH-$(sha256sum",
                       self.script)
         self.assertIn('docker image inspect "$GUEST_IMAGE"', self.script)
         self.assertIn('"$GUEST_IMAGE" sh /work/container.sh', self.script)
-        container = self.script[self.script.index("cat >\"$WORK/container.sh\""):
+        container = self.script[self.script.index('cat >"$WORK/container.sh"'):
                                 self.script.index("\nCONTAINER\n")]
         self.assertNotIn("apt-get", container)
 

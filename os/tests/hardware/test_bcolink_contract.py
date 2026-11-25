@@ -16,36 +16,47 @@ APP = ROOT / "bco/app/src"
 DRIVER = ROOT / "os/board/rootfs/linux-patches/0007-net-usb-add-soundtap-bco-link-driver.patch"
 
 
-def defines(text):
+def defines(text: str) -> dict[str, int]:
+    """Return every numeric #define in `text` by name."""
     return {m[1]: int(m[2], 0) for m in re.finditer(r"#define\s+(\w+)\s+(0x[0-9a-fA-F]+|\d+)u?\b", text)}
 
 
 class BcoLinkContract(unittest.TestCase):
-    def setUp(self):
+    """The BCO app and the kernel driver agree on the link."""
+
+    def setUp(self) -> None:
+        """Read the defines of both sides and the driver patch."""
         self.app = defines((APP / "bcolink.h").read_text() + (APP / "mgmt.h").read_text())
         self.patch = DRIVER.read_text()
         self.drv = defines(self.patch)
 
-    def test_framing(self):
+    def test_framing(self) -> None:
+        """Header size, maximum frame and channel numbers are the same on both sides."""
         for name in ("BCOLINK_HDR", "BCOLINK_MAX", "BCOLINK_CH_CTRL", "BCOLINK_CH_WIFI", "BCOLINK_CH_WIRED"):
             self.assertEqual(self.app[name], self.drv[name], name)
         self.assertEqual(self.app["MGMT_HDR"], self.drv["BCO_MGMT_HDR"])
         self.assertEqual(self.app["MGMT_MAX"], self.drv["BCOLINK_MAX"])
 
-    def test_protocol_level(self):
+    def test_protocol_level(self) -> None:
+        """Both sides speak the same protocol level."""
         self.assertEqual(self.app["BCOLINK_PROTO"], self.drv["BCO_LINK_PROTO"])
 
-    def test_capabilities_and_layouts(self):
-        # Flow control and the counters are capabilities, not a new level: both sides name the
-        # same bits and the same reply layouts (ADR 0031).
+    def test_capabilities_and_layouts(self) -> None:
+        """Both sides name the same capability bits and reply layouts.
+
+        Flow control and the counters are capabilities, not a new level: both sides name the
+        same bits and the same reply layouts (ADR 0031).
+        """
         for app, drv in (("BCOLINK_CAP_FLOW", "BCOLINK_CAP_FLOW"), ("BCOLINK_CAP_STATS", "BCOLINK_CAP_STATS"),
                          ("MGMT_FLOW_LEN", "BCO_FLOW_LEN"), ("MGMT_STATS_N", "BCO_STATS_N")):
             self.assertEqual(self.app[app], self.drv[drv], app)
 
-    def test_held_queue_is_watched(self):
-        # A queue stopped for want of credit must not stay stopped when a report or a frame is
-        # lost: whatever stops it also schedules the watch that counts afresh.
-        funcs = re.findall(r"\n\+static [^\n]*\b(\w+)\([^)]*\)\n\+\{(.*?)\n\+\}", self.patch, re.S)
+    def test_held_queue_is_watched(self) -> None:
+        """Whatever stops a queue for want of credit also schedules the watch that counts afresh.
+
+        A queue stopped for want of credit must not stay stopped when a report or a frame is lost.
+        """
+        funcs = re.findall(r"\n\+static [^\n]*\b(\w+)\([^)]*\)\n\+\{(.*?)\n\+\}", self.patch, re.DOTALL)
         stoppers = [name for name, body in funcs if "netif_stop_queue" in body]
         self.assertTrue(stoppers)
         for name, body in funcs:
@@ -53,13 +64,14 @@ class BcoLinkContract(unittest.TestCase):
                 self.assertIn("schedule_delayed_work(&b->flow_work", body, name)
         self.assertIn("INIT_DELAYED_WORK(&b->flow_work, bco_flow_watch)", self.patch)
 
-    def test_usb_match(self):
-        want = "USB_DEVICE_AND_INTERFACE_INFO(0x%04x, 0x%04x, USB_CLASS_VENDOR_SPEC, 0x%02x, %d)" % (
-            self.app["BCOLINK_USB_VID"], self.app["BCOLINK_USB_PID"],
-            self.app["BCOLINK_USB_SUBCLASS"], self.app["BCOLINK_USB_PROTO"])
+    def test_usb_match(self) -> None:
+        """The driver matches the USB ids, subclass and protocol the app announces."""
+        want = (f"USB_DEVICE_AND_INTERFACE_INFO(0x{self.app['BCOLINK_USB_VID']:04x}, 0x{self.app['BCOLINK_USB_PID']:04x}, "
+                f"USB_CLASS_VENDOR_SPEC, 0x{self.app['BCOLINK_USB_SUBCLASS']:02x}, {self.app['BCOLINK_USB_PROTO']:d})")
         self.assertIn(want, self.patch)
 
-    def test_message_types(self):
+    def test_message_types(self) -> None:
+        """The driver's message type numbers are the ones the app's management code handles."""
         names = re.search(r"enum \{ (T_HELLO = 1[^}]*)\}", self.patch)[1].replace("\n+", " ")
         driver, nxt = {}, 1
         for n in (n.strip() for n in names.split(",") if n.strip()):
@@ -69,23 +81,26 @@ class BcoLinkContract(unittest.TestCase):
             nxt += 1
         mgmt = (APP / "mgmt.c").read_text()
         # dev-phase requests (WILD_OWN builds only) are sent raw by tools/wildload.c, not the driver
-        mgmt = re.sub(r"#ifdef WILD_OWN\n    case .*?#endif", "", mgmt, flags=re.S)
+        mgmt = re.sub(r"#ifdef WILD_OWN\n    case .*?#endif", "", mgmt, flags=re.DOTALL)
         app = {int(m[1]): m[2] for m in re.finditer(r"case (\d+):(?: \{)? /\* (\w+)", mgmt)}
         self.assertEqual(driver, app)
 
-    def test_hunk_count(self):
+    def test_hunk_count(self) -> None:
+        """The driver patch's hunk header counts the lines the new file has."""
         lines = self.patch.split("\n")
         i = next(k for k, line in enumerate(lines) if line.startswith("+++ b/drivers/net/usb/soundtap_bco.c"))
         count = int(re.match(r"@@ -0,0 \+1,(\d+) @@", lines[i + 1])[1])
         body = [line for line in lines[i + 2 : i + 2 + count + 1] if line.startswith("+")]
         self.assertEqual(count, len(body))
 
-    def test_eth_gets_carrier(self):
-        # Every port starts without carrier and rx drops frames for a port without it,
-        # so eth0's open (and the transport coming back) must raise it.
-        ops = re.search(r"bco_eth_ops = \{(.*?)\};", self.patch, re.S)[1]
+    def test_eth_gets_carrier(self) -> None:
+        """eth0's open (and the transport coming back) raises its carrier.
+
+        Every port starts without carrier and rx drops frames for a port without it.
+        """
+        ops = re.search(r"bco_eth_ops = \{(.*?)\};", self.patch, re.DOTALL)[1]
         opener = re.search(r"\.ndo_open = (\w+)", ops)[1]
-        body = re.search(rf"static int {opener}\(struct net_device \*dev\)\n\+\{{(.*?)\n\+\}}", self.patch, re.S)[1]
+        body = re.search(rf"static int {opener}\(struct net_device \*dev\)\n\+\{{(.*?)\n\+\}}", self.patch, re.DOTALL)[1]
         self.assertIn("netif_carrier_on(dev)", body)
         self.assertRegex(self.patch, r"\.reset = bco_reset,")
 

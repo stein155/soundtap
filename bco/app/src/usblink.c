@@ -340,4 +340,5 @@ int usblink_send(unsigned ch, const unsigned char *p, unsigned n)
         return 0;
 }
 
+/* cppcheck-suppress unusedFunction ; unused; removing it would change the BCO app image the ST20s run */
 unsigned usblink_configured(void) { return configured; }

@@ -188,7 +188,7 @@ int swu_listen_and_accept(struct swu_link *link, int port)
     return 0;
 }
 
-int swu_send(struct swu_link *link, unsigned type, unsigned message_id, int has_sequence,
+int swu_send(const struct swu_link *link, unsigned type, unsigned message_id, int has_sequence,
              unsigned sequence, const unsigned char *contents, int contents_len,
              const char *type_name)
 {
@@ -211,7 +211,7 @@ int swu_send(struct swu_link *link, unsigned type, unsigned message_id, int has_
 
 static unsigned char receive_buffer[SWU_MAX_ENVELOPE];
 
-int swu_receive(struct swu_link *link, struct swu_message *message)
+int swu_receive(const struct swu_link *link, struct swu_message *message)
 {
     unsigned char head[4];
     if (read_all(link->fd, head, 4) < 0) return -1;
@@ -304,7 +304,7 @@ void swu_parse_data_response(const unsigned char *contents, int len, unsigned lo
     }
 }
 
-int swu_status(struct swu_link *link, unsigned state, unsigned progress)
+int swu_status(const struct swu_link *link, unsigned state, unsigned progress)
 {
     unsigned char contents[16];
     int n = swu_put_field_varint(contents, 1, state);
@@ -313,7 +313,7 @@ int swu_status(struct swu_link *link, unsigned state, unsigned progress)
     return swu_send(link, SWU_EVENT, SWU_MSG_STATUS, 0, 0, contents, n, "SoftwareUpdateStatus");
 }
 
-int swu_failure(struct swu_link *link)
+int swu_failure(const struct swu_link *link)
 {
     unsigned char contents[8];
     int n = swu_put_field_varint(contents, 1, 8);       /* software_failure */
@@ -325,7 +325,7 @@ int swu_failure(struct swu_link *link)
  * SoftwareUpdateExit, so a trace build walks those candidates and records what stock does.
  * Release builds must not guess: they only report status and let the caller decide.
  */
-void swu_report_terminal(struct swu_link *link)
+void swu_report_terminal(const struct swu_link *link)
 {
 #ifdef SOUNDTAP_TRACE_UDP
     struct { unsigned id; const char *name; } candidates[] = {

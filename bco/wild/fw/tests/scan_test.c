@@ -226,14 +226,15 @@ static void active_scan(void)
     CHECK(dwell_state == 0 && rx_chan == 0 && (REG(0x604) & 1), "scan stopped, receiver off");
     pump(4);
     host_events();
-    struct event *e = find_event(0xc4);
+    const struct event *e = find_event(0xc4);
     CHECK(e && e->module == 2 && e->src == 0x13 && e->len == 24, "active scan ends with 0xc4");
     CHECK(e && e->payload[8] == 1, "its snapshot names channel 1");
 }
 
 static void passive_scan(void)
 {
-    unsigned char p[5] = {6, 0, 3, 0, 6}, f[64];
+    const unsigned char p[5] = {6, 0, 3, 0, 6};
+    unsigned char f[64];
     sim_init();
     nev = 0, tunes = 0;
     dg_rxkeep = 5;

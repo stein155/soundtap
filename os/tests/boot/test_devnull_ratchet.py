@@ -11,6 +11,7 @@ A lint, so a text check: what it holds is how the scripts are written, not what 
 """
 import subprocess
 import unittest
+from collections.abc import Iterator
 from pathlib import Path
 
 # "the line above is a comment" also accepts an unrelated comment; reviewing the
@@ -23,7 +24,8 @@ BASELINE = {
 }
 
 
-def unexplained(lines):
+def unexplained(lines: list[str]) -> int:
+    """Count the unexplained 2>/dev/null in lines."""
     count = 0
     for i, line in enumerate(lines):
         if "2>/dev/null" not in line or line.lstrip().startswith("#"):
@@ -36,7 +38,8 @@ def unexplained(lines):
     return count
 
 
-def scripts():
+def scripts() -> Iterator[tuple[str, list[str]]]:
+    """Yield (name, lines) of every tracked shell script in the overlay trees."""
     names = subprocess.check_output(["git", "-C", str(ROOT), "ls-files", *TREES], text=True)
     for name in names.split():
         lines = (ROOT / name).read_text(errors="replace").splitlines()
@@ -45,12 +48,16 @@ def scripts():
 
 
 class DevNullRatchet(unittest.TestCase):
-    def test_no_new_unexplained_devnull(self):
+    """The count of unexplained 2>/dev/null per script."""
+
+    def test_no_new_unexplained_devnull(self) -> None:
+        """No script has more unexplained 2>/dev/null than its baseline."""
         grown = {name: (n, BASELINE.get(name, 0)) for name, lines in scripts()
                  if (n := unexplained(lines)) > BASELINE.get(name, 0)}
         self.assertEqual(grown, {}, "explain each new 2>/dev/null in a comment, or let the error show")
 
-    def test_counting(self):
+    def test_counting(self) -> None:
+        """A trailing or preceding comment explains a 2>/dev/null; a commented-out line does not count."""
         self.assertEqual(unexplained(["x 2>/dev/null", "y 2>/dev/null # absent on the WLA",
                                       "# may not exist yet", "z 2>/dev/null", "# 2>/dev/null"]), 1)
 

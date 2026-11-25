@@ -6,6 +6,7 @@
 #include <sound/pcm_params.h>
 #include <sound/soc.h>
 
+/* cppcheck-suppress missingInclude ; a header of the kernel tree this module builds in */
 #include "davinci-mcasp.h"
 
 struct soundtap_audio {
@@ -19,7 +20,7 @@ struct soundtap_audio {
 static bool substream_is_spdif(struct snd_pcm_substream *substream)
 {
 	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
-	struct soundtap_audio *priv = snd_soc_card_get_drvdata(rtd->card);
+	const struct soundtap_audio *priv = snd_soc_card_get_drvdata(rtd->card);
 
 	return priv->spdif;
 }
@@ -29,7 +30,7 @@ static bool substream_is_spdif(struct snd_pcm_substream *substream)
 static bool substream_is_auxclk(struct snd_pcm_substream *substream)
 {
 	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
-	struct soundtap_audio *priv = snd_soc_card_get_drvdata(rtd->card);
+	const struct soundtap_audio *priv = snd_soc_card_get_drvdata(rtd->card);
 
 	return priv->auxclk;
 }

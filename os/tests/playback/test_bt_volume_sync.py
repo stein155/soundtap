@@ -11,10 +11,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 BT = (ROOT / "os/overlay/opt/soundtap/bt.sh").read_text()
-FUNC = re.search(r"^\tpush_speaker_volume\(\) \{\n.*?^\t\}\n", BT, re.S | re.M)
+FUNC = re.search(r"^\tpush_speaker_volume\(\) \{\n.*?^\t\}\n", BT, re.DOTALL | re.MULTILINE)
 
 
-def push(speaker, btvol, wget_ok=True):
+def push(speaker: int, btvol: int | str, *, wget_ok: bool = True) -> tuple[list[str], str]:
     """Run the function with `speaker` as GET /api/volume; return (bluealsa-cli calls, btvol after)."""
     with tempfile.TemporaryDirectory() as d:
         bin_dir = Path(d)
@@ -31,28 +31,36 @@ def push(speaker, btvol, wget_ok=True):
 
 
 class SpeakerVolumeToPhone(unittest.TestCase):
-    def test_a_speaker_change_is_written_to_the_pcm_and_remembered(self):
+    """push_speaker_volume writes the speaker's volume to the phone's PCM."""
+
+    def test_a_speaker_change_is_written_to_the_pcm_and_remembered(self) -> None:
+        """A changed speaker volume is written to the PCM and remembered."""
         self.assertEqual(push(35, 30), (["volume /pcm/x 44"], "35"))
 
-    def test_an_unchanged_volume_writes_nothing(self):
+    def test_an_unchanged_volume_writes_nothing(self) -> None:
+        """An unchanged volume writes nothing to the PCM."""
         self.assertEqual(push(30, 30), ([], "30"))
 
-    def test_the_speaker_level_wins_the_first_sync_of_a_connection(self):
+    def test_the_speaker_level_wins_the_first_sync_of_a_connection(self) -> None:
+        """The first sync of a connection writes the speaker's level to the phone."""
         self.assertEqual(push(35, ""), (["volume /pcm/x 44"], "35"))
 
-    def test_a_phone_level_does_not_count_before_the_first_sync(self):
+    def test_a_phone_level_does_not_count_before_the_first_sync(self) -> None:
+        """The poll loop ignores the phone's level until the first sync has happened."""
         self.assertIn('if [ -n "$btvol" ] && [ "$want" != "$btvol" ]; then', BT)
 
-    def test_a_failed_read_writes_nothing(self):
+    def test_a_failed_read_writes_nothing(self) -> None:
+        """A failed read of the speaker's volume writes nothing."""
         self.assertEqual(push(35, 30, wget_ok=False), ([], "30"))
 
-    def test_what_is_written_reads_back_as_the_same_speaker_volume(self):
-        # the loop's phone-to-speaker mapping, so the property change is not posted back
+    def test_what_is_written_reads_back_as_the_same_speaker_volume(self) -> None:
+        """Every written level maps back to the same speaker volume, so the change is not posted back."""
         for v in range(101):
             raw = (v * 127 + 50) // 100
             self.assertEqual((raw * 100 + 63) // 127, v, v)
 
-    def test_the_poll_loop_calls_it_after_finding_the_pcm(self):
+    def test_the_poll_loop_calls_it_after_finding_the_pcm(self) -> None:
+        """The poll loop pushes the volume only after it has found the PCM."""
         self.assertLess(BT.index("pcm=$(bluealsa-cli list-pcms"), BT.index("\t\t\tpush_speaker_volume\n"))
 
 

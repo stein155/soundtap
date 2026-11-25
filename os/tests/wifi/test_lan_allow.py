@@ -14,11 +14,13 @@ HOOK = ROOT / "os/overlay/usr/share/udhcpc/default.script.d/soundtap-log"
 
 
 class LanAllow:
-    def __init__(self, tmp: str, ruleset: bool = True):
+    """lan-allow.sh run against a recording nft stub in a temp directory."""
+
+    def __init__(self, tmp: str, *, ruleset: bool = True) -> None:
+        """Put the nft stub in tmp; `list set` answers whether the production ruleset is loaded, everything else is logged."""
         self.tmp = Path(tmp)
         self.calls = self.tmp / "nft.calls"
         nft = self.tmp / "nft"
-        # `list set` answers whether the production ruleset is loaded; everything else is logged.
         nft.write_text("#!/bin/sh\n"
                        f'[ "$1" = list ] && exit {0 if ruleset else 1}\n'
                        f'echo "$*" >>{self.calls}\n')
@@ -26,16 +28,21 @@ class LanAllow:
         self.env = {"PATH": "/usr/bin:/bin", "SOUNDTAP_NFT": str(nft),
                     "SOUNDTAP_LAN_STATE": str(self.tmp / "state/lan-net")}
 
-    def __call__(self, *args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(["sh", str(SCRIPT), *args], env=self.env,
+    def __call__(self, *args: str) -> subprocess.CompletedProcess[str]:
+        """Run lan-allow.sh with args."""
+        return subprocess.run(["sh", str(SCRIPT), *args], check=False, env=self.env,
                               capture_output=True, text=True, timeout=10)
 
     def nft(self) -> list[str]:
+        """Return the logged nft calls."""
         return self.calls.read_text().splitlines() if self.calls.exists() else []
 
 
 class LanAllowTest(unittest.TestCase):
-    def test_a_lease_adds_its_network_not_its_address(self):
+    """lan-allow.sh and the udhcpc hook that calls it."""
+
+    def test_a_lease_adds_its_network_not_its_address(self) -> None:
+        """A lease adds its network to lan_nets, not its address."""
         with tempfile.TemporaryDirectory() as tmp:
             lan = LanAllow(tmp)
             self.assertEqual(lan("add", "wlan0", "192.168.178.57", "255.255.255.0").returncode, 0)
@@ -47,7 +54,8 @@ class LanAllowTest(unittest.TestCase):
                 "add element ip filter lan_nets { 10.1.0.0/16 }",
             ])
 
-    def test_a_renewal_changes_nothing_and_a_new_subnet_replaces_the_old(self):
+    def test_a_renewal_changes_nothing_and_a_new_subnet_replaces_the_old(self) -> None:
+        """A renewal changes nothing and a lease on a new subnet replaces the old one."""
         with tempfile.TemporaryDirectory() as tmp:
             lan = LanAllow(tmp)
             lan("add", "wlan0", "192.168.1.20", "255.255.255.0")
@@ -59,7 +67,8 @@ class LanAllowTest(unittest.TestCase):
                 "add element ip filter lan_nets { 10.0.0.0/8 }",
             ])
 
-    def test_two_interfaces_on_one_subnet_share_one_element(self):
+    def test_two_interfaces_on_one_subnet_share_one_element(self) -> None:
+        """Two interfaces on one subnet share one element, removed only with the last."""
         with tempfile.TemporaryDirectory() as tmp:
             lan = LanAllow(tmp)
             lan("add", "wlan0", "192.168.1.20", "255.255.255.0")
@@ -69,10 +78,13 @@ class LanAllowTest(unittest.TestCase):
             lan("del", "eth0")
             self.assertEqual(lan.nft()[-1], "delete element ip filter lan_nets { 192.168.1.0/24 }")
 
-    def test_del_empties_the_state_file_init_made_shared(self):
-        # init makes lan-net.<iface> root's and writable for soundtapd's DHCP in a sticky
-        # directory (ADR 0066): neither may remove the other's file, so del empties it, and an
-        # empty file is no subnet.
+    def test_del_empties_the_state_file_init_made_shared(self) -> None:
+        """Del empties the shared state file instead of removing it.
+
+        init makes lan-net.<iface> root's and writable for soundtapd's DHCP in a sticky
+        directory (ADR 0066): neither may remove the other's file, so del empties it, and an
+        empty file is no subnet.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             lan = LanAllow(tmp)
             state = Path(tmp) / "state"
@@ -88,13 +100,15 @@ class LanAllowTest(unittest.TestCase):
                                          "delete element ip filter lan_nets { 192.168.1.0/24 }",
                                          "add element ip filter lan_nets { 192.168.1.0/24 }"])
 
-    def test_del_of_an_interface_without_address_is_quiet(self):
+    def test_del_of_an_interface_without_address_is_quiet(self) -> None:
+        """Del of an interface that never had an address succeeds and changes nothing."""
         with tempfile.TemporaryDirectory() as tmp:
             lan = LanAllow(tmp)
             self.assertEqual(lan("del", "wlan1").returncode, 0)
             self.assertEqual(lan.nft(), [])
 
-    def test_a_malformed_lease_is_refused_and_adds_nothing(self):
+    def test_a_malformed_lease_is_refused_and_adds_nothing(self) -> None:
+        """A malformed address or mask is refused and adds nothing."""
         with tempfile.TemporaryDirectory() as tmp:
             lan = LanAllow(tmp)
             for addr, mask in (("", ""), ("192.168.1.300", "24"), ("1.2.3", "255.255.255.0"),
@@ -103,14 +117,16 @@ class LanAllowTest(unittest.TestCase):
                     self.assertEqual(lan("add", "wlan0", addr, mask).returncode, 1)
             self.assertEqual(lan.nft(), [])
 
-    def test_without_the_production_ruleset_it_does_nothing(self):
+    def test_without_the_production_ruleset_it_does_nothing(self) -> None:
+        """Without the production ruleset loaded it changes nothing and keeps no state."""
         with tempfile.TemporaryDirectory() as tmp:
             lan = LanAllow(tmp, ruleset=False)
             self.assertEqual(lan("add", "wlan0", "192.168.1.20", "255.255.255.0").returncode, 0)
             self.assertEqual(lan.nft(), [])
             self.assertFalse((Path(tmp) / "state").exists())
 
-    def test_the_udhcpc_hook_hands_the_lease_to_it(self):
+    def test_the_udhcpc_hook_hands_the_lease_to_it(self) -> None:
+        """The udhcpc hook hands bound and renew leases to it and a deconfig as del."""
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp, "out")
             stub = Path(tmp, "lan-allow")
@@ -120,7 +136,7 @@ class LanAllowTest(unittest.TestCase):
                    "ip": "192.168.1.20", "subnet": "255.255.255.0"}
             for event in ("bound", "renew", "deconfig"):
                 # bound and renew chmod resolv.conf; that may fail off the speaker, the hook goes on.
-                subprocess.run(["sh", str(HOOK), event], env=env, capture_output=True, timeout=10)
+                subprocess.run(["sh", str(HOOK), event], check=False, env=env, capture_output=True, timeout=10)
             self.assertEqual(out.read_text().splitlines(), [
                 "add wlan0 192.168.1.20 255.255.255.0",
                 "add wlan0 192.168.1.20 255.255.255.0",

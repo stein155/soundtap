@@ -16,6 +16,7 @@ digest). A tag alone fails: a moved tag would change what a build or a test runs
 import os
 import re
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 DIGEST = re.compile(r"@sha256:[0-9a-f]{64}\b")
@@ -53,18 +54,25 @@ FLAG_OPTIONS = {
 
 RUN = re.compile(r"(?:\bdocker|\bpodman|\$\(DOCKER\)|\$\{?DOCKER\}?)\s+(?:run|create)\b")
 WORD = re.compile(r"""(?:"[^"]*"|'[^']*'|[^\s"'])+""")
-MAKE_ASSIGN = re.compile(r"^(\w+)\s*[:?]?=\s*(.*?)\s*$", re.M)
-SHELL_ASSIGN = re.compile(r"""^\s*(?:export\s+|local\s+)?(\w+)=((?:"[^"]*"|'[^']*'|[^\s"'])*)""", re.M)
+MAKE_ASSIGN = re.compile(r"^(\w+)\s*[:?]?=\s*(.*?)\s*$", re.MULTILINE)
+SHELL_ASSIGN = re.compile(r"""^\s*(?:export\s+|local\s+)?(\w+)=((?:"[^"]*"|'[^']*'|[^\s"'])*)""", re.MULTILINE)
 VAR_WORD = re.compile(r"^\$(?:\{(\w+)\}|\((\w+)\)|(\w+))$")
+# The shortest quoted word: the two quotes.
+QUOTED_MIN_LENGTH = 2
+
+# What a scan finds: the line, the image (None for a problem without one) and the problem.
+Found = tuple[int, str | None, str | None]
 
 
 def unquote(word: str) -> str:
-    if len(word) >= 2 and word[0] == word[-1] and word[0] in "\"'":
+    """Return word without the quotes around it."""
+    if len(word) >= QUOTED_MIN_LENGTH and word[0] == word[-1] and word[0] in "\"'":
         return word[1:-1]
     return word
 
 
 def shell_value(raw: str) -> str:
+    """Return the value a shell assignment gives, the default of a ${OVERRIDE:-default}."""
     value = unquote(raw)
     if m := re.fullmatch(r"\$\{\w+:?-(.*)\}", value):  # ${OVERRIDE:-default}
         return m[1]
@@ -72,6 +80,7 @@ def shell_value(raw: str) -> str:
 
 
 def assignments(path: Path, text: str) -> dict[str, list[str]]:
+    """Return the values text assigns to each variable, read as make or shell by path's name."""
     found: dict[str, list[str]] = {}
     if path.name == "Makefile" or path.suffix == ".mk":
         for name, value in MAKE_ASSIGN.findall(text):
@@ -83,18 +92,20 @@ def assignments(path: Path, text: str) -> dict[str, list[str]]:
 
 
 def pinned_or_local(image: str) -> bool:
+    """Return whether image is pinned by digest or built in this repository."""
     if DIGEST.search(image):
         return True
     return image.split("@")[0].split(":")[0] in LOCAL
 
 
 def in_comment(text: str, pos: int) -> bool:
+    """Return whether pos in text lies in a comment."""
     line = text[text.rfind("\n", 0, pos) + 1:pos]
     return re.search(r"(^|\s|@)#", line) is not None
 
 
-def run_images(path: Path, text: str, assigned: dict[str, list[str]], root: Path):
-    """Yields (line, image or None, problem) for each docker run in text."""
+def run_images(text: str, assigned: dict[str, list[str]], root: Path) -> Iterator[Found]:
+    """Yield (line, image or None, problem) for each docker run in text."""
     flat = text.replace("\\\n", "  ")  # continuation lines; offsets stay those of text
     for m in RUN.finditer(flat):
         if in_comment(flat, m.start()):
@@ -124,7 +135,8 @@ def run_images(path: Path, text: str, assigned: dict[str, list[str]], root: Path
         yield from resolve(line, image, assigned, root)
 
 
-def resolve(line: int, image: str, assigned: dict[str, list[str]], root: Path):
+def resolve(line: int, image: str, assigned: dict[str, list[str]], root: Path) -> Iterator[Found]:
+    """Yield the image or images a docker run's image word stands for, or a problem."""
     if image in SUBSTITUTIONS:
         source, name = SUBSTITUTIONS[image]
         text = (root / source).read_text()
@@ -141,7 +153,8 @@ def resolve(line: int, image: str, assigned: dict[str, list[str]], root: Path):
         yield line, value, None
 
 
-def scanned(root: Path):
+def scanned(root: Path) -> Iterator[Path]:
+    """Yield the files under root that can name an image: Makefiles, shell scripts, workflows and Dockerfiles."""
     for top, dirs, names in os.walk(root):
         rel = Path(top).relative_to(root)
         # A directory with its own .git is another checkout (a worktree or clone kept inside
@@ -163,31 +176,42 @@ def scanned(root: Path):
                     yield path
 
 
+def dockerfile_images(text: str) -> list[Found]:
+    """Return the image each FROM of a Dockerfile pulls, leaving out scratch and earlier stages."""
+    found: list[Found] = []
+    stages = set()
+    for n, line in enumerate(text.splitlines(), 1):
+        if m := re.match(r"\s*FROM\s+(?:--platform=\S+\s+)?(\S+)(?:\s+AS\s+(\S+))?", line, re.IGNORECASE):
+            if m[1] != "scratch" and m[1] not in stages:
+                found.append((n, m[1], None))
+            if m[2]:
+                stages.add(m[2])
+    return found
+
+
+def script_images(path: Path, text: str, root: Path) -> list[Found]:
+    """Return the images a Makefile, script or workflow names: docker runs, *_IMAGE assignments and workflow images."""
+    found: list[Found] = []
+    assigned = assignments(path, text)
+    found.extend(run_images(text, assigned, root))
+    pattern = MAKE_ASSIGN if path.name == "Makefile" else SHELL_ASSIGN
+    for m in pattern.finditer(text):
+        if re.search(r"(?i)image$", m[1]):
+            value = m[2] if path.name == "Makefile" else shell_value(m[2])
+            found.append((text.count("\n", 0, m.start()) + 1, value, None))
+    if path.suffix in (".yml", ".yaml"):
+        found.extend((text.count("\n", 0, m.start()) + 1, unquote(m[1] or m[2]), None)
+                     for m in re.finditer(r"^\s*(?:-\s*)?(?:image|container):\s*(\S+)|uses:\s*docker://(\S+)", text, re.MULTILINE))
+    return found
+
+
 def problems(root: Path) -> list[str]:
+    """Return a line for each image under root that is neither pinned by digest nor built here."""
     out = []
     for path in scanned(root):
         text = path.read_text(errors="replace")
         rel = path.relative_to(root)
-        found: list[tuple[int, str | None, str | None]] = []
-        if "Dockerfile" in path.name:
-            stages = set()
-            for n, line in enumerate(text.splitlines(), 1):
-                if m := re.match(r"\s*FROM\s+(?:--platform=\S+\s+)?(\S+)(?:\s+AS\s+(\S+))?", line, re.I):
-                    if m[1] != "scratch" and m[1] not in stages:
-                        found.append((n, m[1], None))
-                    if m[2]:
-                        stages.add(m[2])
-        else:
-            assigned = assignments(path, text)
-            found.extend(run_images(path, text, assigned, root))
-            pattern = MAKE_ASSIGN if path.name == "Makefile" else SHELL_ASSIGN
-            for m in pattern.finditer(text):
-                if re.search(r"(?i)image$", m[1]):
-                    value = m[2] if path.name == "Makefile" else shell_value(m[2])
-                    found.append((text.count("\n", 0, m.start()) + 1, value, None))
-            if path.suffix in (".yml", ".yaml"):
-                for m in re.finditer(r"^\s*(?:-\s*)?(?:image|container):\s*(\S+)|uses:\s*docker://(\S+)", text, re.M):
-                    found.append((text.count("\n", 0, m.start()) + 1, unquote(m[1] or m[2]), None))
+        found = dockerfile_images(text) if "Dockerfile" in path.name else script_images(path, text, root)
         for line, image, problem in found:
             if problem:
                 out.append(f"{rel}:{line}: {problem}")
@@ -197,6 +221,7 @@ def problems(root: Path) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
+    """Print every unpinned image under the repository root in argv[1]; return 1 if there is one."""
     root = Path(argv[1] if len(argv) > 1 else Path(__file__).resolve().parents[2])
     found = problems(root)
     for p in found:

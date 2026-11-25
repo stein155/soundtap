@@ -31,22 +31,26 @@ SOURCES = ("app/frontend", "docs/tools")
 RECORD = "docs/assets/screenshots.source"
 
 
-class Refused(Exception):
-    pass
+class RefusedError(Exception):
+    """A git command failed or the UI sources are not committed."""
 
 
 def git(root: Path, *args: str) -> str:
-    done = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True)
+    """Run git in root and return its output; raise RefusedError when it fails."""
+    done = subprocess.run(["git", "-C", str(root), *args], check=False, capture_output=True, text=True)
     if done.returncode != 0:
-        raise Refused(f"git {' '.join(args)}: {done.stderr.strip()}")
+        msg = f"git {' '.join(args)}: {done.stderr.strip()}"
+        raise RefusedError(msg)
     return done.stdout.strip()
 
 
 def trees(root: Path, rev: str) -> dict[str, str]:
+    """Return the git tree of each source path at rev."""
     return {path: git(root, "rev-parse", f"{rev}:{path}") for path in SOURCES}
 
 
 def parse(text: str) -> dict[str, str]:
+    """Parse a record into its path to tree mapping, skipping comments and blank lines."""
     found = {}
     for line in text.splitlines():
         if line.strip() and not line.startswith("#"):
@@ -56,14 +60,16 @@ def parse(text: str) -> dict[str, str]:
 
 
 def ready(root: Path) -> None:
+    """Raise RefusedError when the UI sources have uncommitted changes."""
     dirty = git(root, "status", "--porcelain", "--", *SOURCES)
     if dirty:
-        raise Refused(
+        raise RefusedError(
             "uncommitted changes under " + " and ".join(SOURCES)
             + ": commit them first, the record names HEAD's trees\n" + dirty)
 
 
 def record(root: Path) -> str:
+    """Write the record of HEAD's source trees and return its text."""
     ready(root)
     lines = [f"{path} {tree}" for path, tree in trees(root, "HEAD").items()]
     text = ("# Written by make screenshots (tools/release/screenshots.py): the trees the README\n"
@@ -74,9 +80,10 @@ def record(root: Path) -> str:
 
 
 def check(root: Path, commit: str) -> list[str]:
+    """Return the problems with commit's record; an empty list when it names commit's own trees."""
     try:
         made = parse(git(root, "show", f"{commit}:{RECORD}"))
-    except Refused:
+    except RefusedError:
         return [f"{commit} has no {RECORD}: run make screenshots and commit docs/assets"]
     problems = []
     for path, tree in trees(root, commit).items():
@@ -89,6 +96,7 @@ def check(root: Path, commit: str) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
+    """Run the command given in argv and return the exit code."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[2])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -108,7 +116,7 @@ def main(argv: list[str]) -> int:
             if problems:
                 return 1
             print(f"README screenshots were made from {args.commit}'s web UI")
-    except Refused as err:
+    except RefusedError as err:
         print(f"screenshots.py: {err}", file=sys.stderr)
         return 1
     return 0

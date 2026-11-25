@@ -33,26 +33,28 @@ esac
 G=/sys/kernel/config/usb_gadget/soundtap
 mount -t configfs configfs /sys/kernel/config 2>/dev/null || true # already mounted, or no configfs
 [ -d /sys/kernel/config/usb_gadget ] || exit 0
-mkdir -p "$G/functions/acm.gs0" "$G/functions/acm.gs1" "$G/functions/rndis.usb0" \
-	"$G/configs/c.1/strings/0x409" "$G/strings/0x409" 2>/dev/null || exit 0 # no gadget support in this kernel
+mkdir -p "${G}/functions/acm.gs0" "${G}/functions/acm.gs1" "${G}/functions/rndis.usb0" \
+	"${G}/configs/c.1/strings/0x409" "${G}/strings/0x409" 2>/dev/null || exit 0 # no gadget support in this kernel
 
 # The ROM's ids on purpose: the udev rule on the development host grants a
 # usable mode only to those, and the product string still tells them apart.
-echo 0x0451 >"$G/idVendor"
-echo 0x6141 >"$G/idProduct"
-echo SoundTap >"$G/strings/0x409/manufacturer"
-echo "SoundTap NAND boot" >"$G/strings/0x409/product"
-echo soundtapnand0 >"$G/strings/0x409/serialnumber"
-echo "acm+raw+rndis" >"$G/configs/c.1/strings/0x409/configuration"
-ln -sf "$G/functions/acm.gs0" "$G/configs/c.1/" 2>/dev/null || true # already linked on a restart
-ln -sf "$G/functions/acm.gs1" "$G/configs/c.1/" 2>/dev/null || true # already linked on a restart
+echo 0x0451 >"${G}/idVendor"
+echo 0x6141 >"${G}/idProduct"
+echo SoundTap >"${G}/strings/0x409/manufacturer"
+echo "SoundTap NAND boot" >"${G}/strings/0x409/product"
+echo soundtapnand0 >"${G}/strings/0x409/serialnumber"
+echo "acm+raw+rndis" >"${G}/configs/c.1/strings/0x409/configuration"
+ln -sf "${G}/functions/acm.gs0" "${G}/configs/c.1/" 2>/dev/null || true # already linked on a restart
+ln -sf "${G}/functions/acm.gs1" "${G}/configs/c.1/" 2>/dev/null || true # already linked on a restart
+# shellcheck disable=SC2250 # os/support/rootfs_check.py matches this text as written
 ln -sf "$G/functions/rndis.usb0" "$G/configs/c.1/" 2>/dev/null || true # already linked on a restart
+# shellcheck disable=SC2012 # UDC names are plain kernel device names
 udc=$(ls /sys/class/udc 2>/dev/null | head -n1) # no UDC on this board
-[ -n "$udc" ] || exit 0
-echo "$udc" >"$G/UDC" 2>/dev/null || exit 0 # UDC busy or absent: no console
+[ -n "${udc}" ] || exit 0
+echo "${udc}" >"${G}/UDC" 2>/dev/null || exit 0 # UDC busy or absent: no console
 
 i=0
-while [ "$i" -lt 10 ] && [ ! -c /dev/ttyGS0 ]; do
+while [ "${i}" -lt 10 ] && [ ! -c /dev/ttyGS0 ]; do
 	i=$((i + 1))
 	sleep 1
 done

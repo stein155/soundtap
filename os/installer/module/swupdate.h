@@ -52,17 +52,17 @@ int swu_put_varint(unsigned char *out, unsigned long long value);
 int swu_put_field_varint(unsigned char *out, int field, unsigned long long value);
 
 int swu_listen_and_accept(struct swu_link *link, int port);
-int swu_send(struct swu_link *link, unsigned type, unsigned message_id, int has_sequence,
+int swu_send(const struct swu_link *link, unsigned type, unsigned message_id, int has_sequence,
              unsigned sequence, const unsigned char *contents, int contents_len,
              const char *type_name);
-int swu_receive(struct swu_link *link, struct swu_message *message);
+int swu_receive(const struct swu_link *link, struct swu_message *message);
 
 void swu_parse_start(const unsigned char *contents, int len, struct swu_start *out);
 void swu_parse_data_response(const unsigned char *contents, int len, unsigned long long *count,
                              const unsigned char **data, int *data_len, unsigned long long *eos);
 
-int swu_status(struct swu_link *link, unsigned state, unsigned progress);
-int swu_failure(struct swu_link *link);
-void swu_report_terminal(struct swu_link *link);
+int swu_status(const struct swu_link *link, unsigned state, unsigned progress);
+int swu_failure(const struct swu_link *link);
+void swu_report_terminal(const struct swu_link *link);
 
 #endif

@@ -26,6 +26,7 @@
 #define DOORBELL() (WREG[0x210 / 4] |= 4)
 
 /* GCC may emit these for aggregate copies even freestanding; nothing else here provides them. */
+/* cppcheck-suppress unusedFunction ; GCC calls it for aggregate copies */
 void *memcpy(void *d, const void *s, unsigned n)
 {
     unsigned char *o = d;
@@ -35,6 +36,7 @@ void *memcpy(void *d, const void *s, unsigned n)
     return d;
 }
 
+/* cppcheck-suppress unusedFunction ; GCC calls it for aggregate initialisation */
 void *memset(void *d, int c, unsigned n)
 {
     unsigned char *o = d;
@@ -186,7 +188,7 @@ static void tx_reclaim(void)
     unsigned ok = 0, failed = 0;
     for (unsigned c = 0; c < 4; c++) {
         while (wr_avail(&frm[c], 3)) {
-            volatile unsigned *e = wr_reserve(&frm[c], 3, 1);
+            const volatile unsigned *e = wr_reserve(&frm[c], 3, 1);
             unsigned buf = e[1], off = buf - txfbase;
             wr_commit(&frm[c], 3, 1);
             if (off < NTXFBUF * TXFBUF && off % TXFBUF == 0 && txbusy[off / TXFBUF] &&
@@ -502,7 +504,7 @@ static const unsigned char ap_mrates[8] = {2, 2, 2, 2, 2, 2, 2, 2}; /* 1 Mb/s: e
 
 /* A client's core peer slot is its index: unicast to a client goes through its slot, as the
  * station's frames go through PEER_AP; a PEER_NONE frame goes to the BSS, which is us. */
-static void ap_peer(struct client *c, unsigned cmd)
+static void ap_peer(const struct client *c, unsigned cmd)
 {
     unsigned char pr[10] = {0};
     copy(pr, c->mac, 6);
@@ -519,7 +521,7 @@ static void ap_drop(struct client *c)
 }
 
 /* to a client (its peer slot) or, with c = 0, to every client */
-static int ap_send(struct client *c, unsigned fc, const unsigned char *a1, const unsigned char *a3,
+static int ap_send(const struct client *c, unsigned fc, const unsigned char *a1, const unsigned char *a3,
                    const unsigned char *r, unsigned et, const unsigned char *body, unsigned blen)
 {
     unsigned a = tx_buf();
@@ -630,7 +632,7 @@ static void rx_ap(const volatile unsigned char *b, unsigned len)
 /* An Ethernet frame from the SCM's wlan1: fromDS to an associated client or to every client. */
 static int ap_tx_eth(const unsigned char *f, unsigned n)
 {
-    struct client *c = 0;
+    const struct client *c = 0;
     if (!ap_ready || !same(f + 6, own, 6) || (!(f[0] & 1) && (!(c = ap_client(f, 0)) || c->state != 2)) ||
         !ap_send(c, 0x0208, f, f + 6, c ? c->rates : ap_mrates, f[12] << 8 | f[13], f + 14, n - 14)) {
         wifi_tx_drop++;
@@ -642,7 +644,7 @@ static int ap_tx_eth(const unsigned char *f, unsigned n)
 static void rx_frames(void)
 {
     while (wr_avail(&sup, 3)) {
-        volatile unsigned *e = wr_reserve(&sup, 3, 1);
+        const volatile unsigned *e = wr_reserve(&sup, 3, 1);
         unsigned buf = e[0], len = e[2] >> 16;
 #ifdef WILD_OWN
         dg_sup3++;
@@ -808,7 +810,7 @@ static void scan_step(void)
         scan_chan = 1;
     }
     if (!SCAN_ALL_ACTIVE && scan_pass < SCAN_PASSES - 1) { /* passive beacon-listen passes (disabled: RX is deaf without a TX) */
-        unsigned p[2] = {scan_chan | 250u << 16, 6};
+        const unsigned p[2] = {scan_chan | 250u << 16, 6};
         wr_cmd(&tx, 0xc1, 0x0013, 1, p, 6);
     } else {
         unsigned w[16];
@@ -971,7 +973,7 @@ static void retry(void)
 static void snonce(unsigned char out[32])
 {
     unsigned char mix[6 + 16];
-    unsigned v[4] = {now, wifi_rx_frames, wifi_tx_frames, WREG[0x580 / 4]};
+    const unsigned v[4] = {now, wifi_rx_frames, wifi_tx_frames, WREG[0x580 / 4]};
     copy(mix, own, 6);
     for (unsigned i = 0; i < 16; i++)
         mix[6 + i] = v[i / 4] >> 8 * (i % 4);
@@ -1296,7 +1298,7 @@ void wifi_poll(unsigned t)
             unsigned prog = wifi_tx_ok + wifi_tx_failed;
             if (prog != last_prog || txnfree)
                 last_prog = prog, last_prog_t = now;
-            else if (!txnfree && due(last_prog_t + 3000)) {
+            else if (due(last_prog_t + 3000)) {
                 hex("link lost tx wedge ", prog);
                 drop_link();
                 wifi_reset_core();

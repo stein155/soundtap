@@ -20,8 +20,12 @@ import urllib.request
 from collections import defaultdict
 from pathlib import Path
 
+# A licence file at a package's root: "package/LICENSE" in the tarball.
+PACKAGE_ROOT_DEPTH = 2
+
 
 def package_tarballs(lock_path: Path) -> list[dict]:
+    """Return each package the lock resolves, with its tarball URL and SHA-512 integrity, sorted by URL."""
     lock = json.loads(lock_path.read_text())
     tarballs = []
     for location, package in lock["packages"].items():
@@ -30,7 +34,8 @@ def package_tarballs(lock_path: Path) -> list[dict]:
         if not url:
             continue
         if not integrity or not integrity.startswith("sha512-"):
-            raise ValueError(f"missing SHA-512 integrity for {url}")
+            msg = f"missing SHA-512 integrity for {url}"
+            raise ValueError(msg)
         name = Path(urllib.parse.urlparse(url).path).name
         digest = base64.b64decode(integrity.removeprefix("sha512-"))
         tarballs.append({
@@ -51,6 +56,7 @@ def package_dir(tarball: dict) -> str:
 
 
 def download(url: str, path: Path, expected: bytes) -> bytes:
+    """Return the tarball at path, downloading it from url first if needed; fail unless its SHA-512 is expected."""
     if path.exists():
         data = path.read_bytes()
     else:
@@ -59,11 +65,13 @@ def download(url: str, path: Path, expected: bytes) -> bytes:
         path.write_bytes(data)
     if hashlib.sha512(data).digest() != expected:
         path.unlink(missing_ok=True)
-        raise ValueError(f"npm integrity mismatch for {url}")
+        msg = f"npm integrity mismatch for {url}"
+        raise ValueError(msg)
     return data
 
 
 def license_bundle(tarballs: list[dict], download_dir: Path, lock_digest: str) -> str:
+    """Return the licence bundle: each licence text once, with the packages that carry it."""
     licenses = defaultdict(list)
     for package in tarballs:
         archive = download_dir / package_dir(package) / package["file"]
@@ -71,9 +79,9 @@ def license_bundle(tarballs: list[dict], download_dir: Path, lock_digest: str) -
             candidates = [
                 member for member in source.getmembers()
                 if member.isfile()
-                and len(Path(member.name).parts) == 2
+                and len(Path(member.name).parts) == PACKAGE_ROOT_DEPTH
                 and Path(member.name).name.lower().startswith(
-                    ("license", "copying", "notice", "unlicense")
+                    ("license", "copying", "notice", "unlicense"),
                 )
             ]
             texts = []
@@ -97,6 +105,7 @@ def license_bundle(tarballs: list[dict], download_dir: Path, lock_digest: str) -
 
 
 def main() -> None:
+    """Write the licence bundle, or with --check fail when it was made from another lock."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--lock", type=Path, required=True)
     parser.add_argument("--licenses", type=Path, required=True)
@@ -107,7 +116,8 @@ def main() -> None:
     lock_digest = hashlib.sha256(args.lock.read_bytes()).hexdigest()
     if args.check:
         if args.licenses.read_text().splitlines()[1] != f"package-lock sha256: {lock_digest}":
-            raise SystemExit("npm license bundle is stale: rerun tools/ci/npm_licenses.py")
+            msg = "npm license bundle is stale: rerun tools/ci/npm_licenses.py"
+            raise SystemExit(msg)
         return
     if args.download_dir is None:
         parser.error("--download-dir is required to write the bundle")

@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
+"""The release gate's hardware evidence report (tools/release/hardware_evidence.py)."""
+
 import json
 import sys
 import tempfile
@@ -16,9 +18,12 @@ from installer.test_stu_check import valid_stu
 
 
 class HardwareEvidenceTests(unittest.TestCase):
+    """A hardware report passes only for the exact artifact, commit, model and evidence."""
+
     COMMIT = "a" * 40
 
-    def fixture(self, root, target="st10"):
+    def fixture(self, root: Path, target: str = "st10") -> tuple[Path, Path, dict[str, object]]:
+        """Write a complete passing report for `target` under `root`; return its path, artifact and content."""
         artifact = root / "Update.stu"
         artifact.write_bytes(b"candidate")
         evidence = {}
@@ -46,26 +51,30 @@ class HardwareEvidenceTests(unittest.TestCase):
         report_path.write_text(json.dumps(report))
         return report_path, artifact, report
 
-    def validate(self, report, artifact, commit=None):
+    def validate(self, report: Path, artifact: Path, commit: str | None = None) -> None:
+        """Validate `report` for `artifact` at `commit`, with source and provenance checks stubbed."""
         with mock.patch.object(hardware_evidence, "validate_source"), \
                 mock.patch.object(hardware_evidence, "validate_artifact_provenance"):
             hardware_evidence.validate(
-                report, artifact, artifact, commit or self.COMMIT, Path("/repo")
+                report, artifact, artifact, commit or self.COMMIT, Path("/repo"),
             )
 
-    def test_complete_exact_report_passes(self):
+    def test_complete_exact_report_passes(self) -> None:
+        """A complete ST10 report for the exact artifact passes."""
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             report, artifact, _ = self.fixture(root)
             self.validate(report, artifact)
 
-    def test_complete_st20_report_passes(self):
+    def test_complete_st20_report_passes(self) -> None:
+        """A complete ST20 report passes."""
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             report_path, artifact, _report = self.fixture(root, "st20")
             self.validate(report_path, artifact)
 
-    def test_artifact_or_commit_mismatch_is_rejected(self):
+    def test_artifact_or_commit_mismatch_is_rejected(self) -> None:
+        """Other artifact bytes or another release commit are refused."""
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             report, artifact, _ = self.fixture(root)
@@ -75,7 +84,8 @@ class HardwareEvidenceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "release commit"):
                 self.validate(report, artifact, "b" * 40)
 
-    def test_missing_failed_or_extra_check_is_rejected(self):
+    def test_missing_failed_or_extra_check_is_rejected(self) -> None:
+        """A check that did not pass or one the model does not have is refused."""
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             report_path, artifact, report = self.fixture(root)
@@ -88,7 +98,8 @@ class HardwareEvidenceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "keys differ"):
                 self.validate(report_path, artifact)
 
-    def test_evidence_escape_and_hash_mismatch_are_rejected(self):
+    def test_evidence_escape_and_hash_mismatch_are_rejected(self) -> None:
+        """Evidence outside the report's directory or with another hash is refused."""
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             report_path, artifact, report = self.fixture(root)
@@ -102,7 +113,8 @@ class HardwareEvidenceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "hash mismatch"):
                 self.validate(report_path, artifact)
 
-    def test_non_object_report_is_rejected(self):
+    def test_non_object_report_is_rejected(self) -> None:
+        """A report that is not a JSON object is refused."""
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             report = root / "report.json"
@@ -112,7 +124,8 @@ class HardwareEvidenceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "report must be an object"):
                 self.validate(report, artifact)
 
-    def test_duplicate_keys_and_invalid_timestamp_are_rejected(self):
+    def test_duplicate_keys_and_invalid_timestamp_are_rejected(self) -> None:
+        """Duplicate JSON keys and an invalid UTC time are refused."""
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             report_path, artifact, report = self.fixture(root)
@@ -124,7 +137,8 @@ class HardwareEvidenceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "valid UTC"):
                 self.validate(report_path, artifact)
 
-    def test_empty_or_duplicate_evidence_is_rejected(self):
+    def test_empty_or_duplicate_evidence_is_rejected(self) -> None:
+        """An empty evidence file or one file used for two kinds of evidence is refused."""
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             report_path, artifact, report = self.fixture(root)
@@ -143,14 +157,16 @@ class HardwareEvidenceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "unique files"):
                 self.validate(report_path, artifact)
 
-    def test_source_commit_and_cleanliness_are_enforced(self):
+    def test_source_commit_and_cleanliness_are_enforced(self) -> None:
+        """A checkout at another commit than the report's is refused."""
         with mock.patch.object(
             hardware_evidence.subprocess, "check_output",
             side_effect=["b" * 40 + "\n"],
         ), self.assertRaisesRegex(ValueError, "report commit"):
             hardware_evidence.validate_source(Path("/repo"), self.COMMIT)
 
-    def test_artifact_provenance_is_model_specific(self):
+    def test_artifact_provenance_is_model_specific(self) -> None:
+        """Each model's artifact matches its own module chain, and a dirty checkout is refused."""
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             st10 = root / "st10.stu"
@@ -162,14 +178,14 @@ class HardwareEvidenceTests(unittest.TestCase):
                 "st20": hardware_evidence.sha256(st20),
             }
             hardware_evidence.validate_artifact_provenance(
-                st10, st10, "st10", hashes
+                st10, st10, "st10", hashes,
             )
             hardware_evidence.validate_artifact_provenance(
-                st20, st20, "st20", hashes
+                st20, st20, "st20", hashes,
             )
             with self.assertRaisesRegex(ValueError, "module chain mismatch"):
                 hardware_evidence.validate_artifact_provenance(
-                    st10, st20, "st20", {**hashes, "st20": hashes["st20"]}
+                    st10, st20, "st20", {**hashes, "st20": hashes["st20"]},
                 )
         with mock.patch.object(
             hardware_evidence.subprocess, "check_output",

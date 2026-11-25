@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-"""Every bluetoothctl call in the overlay and soundtapd is in tool_commands' list, and nothing
-calls wpa_cli: soundtapd speaks to wpa_supplicant over its control socket."""
+"""Every bluetoothctl call in the overlay and soundtapd is in tool_commands' list, and nothing calls wpa_cli.
+
+soundtapd speaks to wpa_supplicant over its control socket.
+"""
 import re
 import sys
 import tempfile
@@ -22,7 +24,8 @@ GO = [(re.compile(r'"bluetoothctl",\s*"([a-z-]+)"'), "usr/bin/bluetoothctl"),
       (re.compile(r'"wpa_cli",\s*"-i",\s*\w+,\s*"([a-z_]+)"'), "usr/sbin/wpa_cli")]
 
 
-def calls():
+def calls() -> set[tuple[str, str]]:
+    """Return the (tool path, command) pairs the overlay scripts and soundtapd call."""
     found = set()
     for path in (ROOT / "os/overlay").rglob("*"):
         if path.is_file() and path.suffix in ("", ".sh"):
@@ -37,7 +40,10 @@ def calls():
 
 
 class ToolCommands(unittest.TestCase):
-    def test_every_call_is_listed(self):
+    """The image's tool command list covers every call."""
+
+    def test_every_call_is_listed(self) -> None:
+        """Every bluetoothctl call is listed and nothing calls wpa_cli."""
         found = calls()
         self.assertIn(("usr/bin/bluetoothctl", "devices"), found)  # the scan itself works
         self.assertEqual([c for c in found if c[0] == "usr/sbin/wpa_cli"], [])
@@ -45,7 +51,8 @@ class ToolCommands(unittest.TestCase):
                           and c[1] not in tool_commands.COMMANDS[c[0]])
         self.assertEqual(unlisted, [], "add these to os/support/tool_commands.py COMMANDS")
 
-    def test_missing_command_fails(self):
+    def test_missing_command_fails(self) -> None:
+        """A tool binary that lacks a listed command is reported."""
         with tempfile.TemporaryDirectory() as tmp:
             for rel, commands in tool_commands.COMMANDS.items():
                 path = Path(tmp) / rel

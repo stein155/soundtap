@@ -14,23 +14,42 @@ the previous release of the same lane, grouped from the commit subjects.
 import argparse
 import re
 import subprocess
+from collections.abc import Sequence
+from dataclasses import dataclass
 
 GROUPS = [
-    ("Fixes", re.compile(r"^(fix|fixes|fixed)\b|\bfix(es)?\b", re.I)),
-    ("Build and CI", re.compile(r"^(build|ci|deps?|chore)\b", re.I)),
-    ("Documentation", re.compile(r"^docs?\b", re.I)),
+    ("Fixes", re.compile(r"^(fix|fixes|fixed)\b|\bfix(es)?\b", re.IGNORECASE)),
+    ("Build and CI", re.compile(r"^(build|ci|deps?|chore)\b", re.IGNORECASE)),
+    ("Documentation", re.compile(r"^docs?\b", re.IGNORECASE)),
 ]
 OTHER = "Changes"
 
 
-def group(subject):
+@dataclass(frozen=True)
+class Release:
+    """One release to write notes for.
+
+    preview: (asset, sha256) of the preview package (ADR 0133), on the os lane.
+    """
+
+    lane: str
+    version: str
+    asset: str
+    sha256: str
+    os_api: str | None = None
+    preview: Sequence[str] | None = None
+
+
+def group(subject: str) -> str:
+    """Return the notes group a commit subject belongs in."""
     for name, rx in GROUPS:
         if rx.search(subject):
             return name
     return OTHER
 
 
-def changes(previous, paths):
+def changes(previous: str, paths: list[str]) -> list[str]:
+    """Return the commit subjects since previous that touch paths; none without a previous tag."""
     if not previous:
         return []
     out = subprocess.run(
@@ -40,8 +59,10 @@ def changes(previous, paths):
     return [s.strip() for s in out.splitlines() if s.strip()]
 
 
-def render(lane, version, asset, sha256, previous, subjects, os_api=None, preview=None):
-    """preview: (asset, sha256) of the preview package (ADR 0133), on the os lane."""
+def render(release: Release, previous: str, subjects: list[str]) -> str:
+    """Return the Markdown notes for release, with the changes since previous."""
+    lane, version, asset, sha256 = release.lane, release.version, release.asset, release.sha256
+    os_api, preview = release.os_api, release.preview
     if lane == "os":
         title = f"SoundTap Core {version}"
         intro = ("One update for every supported speaker: the Bose SoundTouch 10, the SoundTouch 20 "
@@ -101,7 +122,8 @@ def render(lane, version, asset, sha256, previous, subjects, os_api=None, previe
     return "\n".join(lines)
 
 
-def main():
+def main() -> None:
+    """Print the notes for the release given on the command line."""
     p = argparse.ArgumentParser()
     p.add_argument("lane", choices=["os", "app"])
     p.add_argument("version")
@@ -113,8 +135,8 @@ def main():
     a = p.parse_args()
     # The app lane only changes with soundtap/; Core carries everything.
     paths = ["app"] if a.lane == "app" else ["."]
-    print(render(a.lane, a.version, a.asset, a.sha256, a.previous, changes(a.previous, paths), a.os_api,
-                 a.preview))
+    release = Release(a.lane, a.version, a.asset, a.sha256, os_api=a.os_api, preview=a.preview)
+    print(render(release, a.previous, changes(a.previous, paths)))
 
 
 if __name__ == "__main__":

@@ -11,15 +11,19 @@ import pathlib
 import unittest
 
 REPO = pathlib.Path(__file__).resolve().parents[3]
+HASH_LINE_FIELDS = 3
 
 
 class LocalHashTests(unittest.TestCase):
-    def test_pinned_repository_sources_match(self):
+    """Hashes of local package sources match the files in the repository."""
+
+    def test_pinned_repository_sources_match(self) -> None:
+        """Every sha256 line naming a file in os/drivers or os/bootloader matches that file."""
         checked = 0
         for hash_file in (REPO / "os/package").rglob("*.hash"):
             for line in hash_file.read_text().splitlines():
                 parts = line.split()
-                if len(parts) != 3 or parts[0] != "sha256":
+                if len(parts) != HASH_LINE_FIELDS or parts[0] != "sha256":
                     continue
                 source = next((d / parts[2] for d in (REPO / "os/drivers", REPO / "os/bootloader")
                                if (d / parts[2]).is_file()), None)

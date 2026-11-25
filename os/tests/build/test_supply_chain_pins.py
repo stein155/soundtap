@@ -13,6 +13,7 @@ import os
 import re
 import unittest
 from collections import Counter
+from collections.abc import Iterator
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -21,7 +22,8 @@ ROOT = Path(__file__).resolve().parents[3]
 SKIP = {ROOT / d for d in (".git", "buildroot", ".cache", "dl", "output", "artifacts", "dist", "os/rootfs", "os/bootloader/build")}
 
 
-def files(*patterns):
+def files(*patterns: str) -> Iterator[Path]:
+    """Yield the repository files whose name matches one of patterns, skipping untracked trees."""
     for top, dirs, names in os.walk(ROOT):
         dirs[:] = [d for d in dirs if d != "node_modules" and Path(top, d) not in SKIP
                    and not Path(top, d, ".git").exists()]
@@ -31,13 +33,17 @@ def files(*patterns):
 
 
 class SupplyChainPins(unittest.TestCase):
-    def test_alpine_images_are_digest_pinned(self):
+    """Images and patches cannot change behind the repository's back."""
+
+    def test_alpine_images_are_digest_pinned(self) -> None:
+        """Every alpine image reference carries an @sha256 digest."""
         for path in files("*.sh", "*.yml", "*.yaml", "*Dockerfile*"):
             for n, line in enumerate(path.read_text(errors="replace").splitlines(), 1):
                 for ref in re.findall(r"\balpine:[\w.-]+(?:@sha256:[0-9a-f]{64})?", line):
                     self.assertIn("@sha256:", ref, f"{path.relative_to(ROOT)}:{n}: {ref}")
 
-    def test_patch_numbers_are_unique_per_directory(self):
+    def test_patch_numbers_are_unique_per_directory(self) -> None:
+        """No two patches in one directory share a number."""
         numbers = Counter()
         for path in files("*.patch"):
             if m := re.match(r"(\d{4})-", path.name):

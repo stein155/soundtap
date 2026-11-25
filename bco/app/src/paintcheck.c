@@ -22,7 +22,7 @@ void app_main(void)
     UART[2] = 2 * ahb_hz() / BAUD - 2;
     say("RTCH paintcheck\r\n");
     for (unsigned i = 0; i < N; i++) {
-        volatile unsigned *p = (volatile unsigned *)addrs[i];
+        const volatile unsigned *p = (volatile unsigned *)addrs[i];
         hex("at ", addrs[i]);
         hex(" w0 ", p[0]);
         hex(" w1 ", p[1]);

@@ -15,7 +15,7 @@
 #   BT UART:      /dev/ttyO2 + TIInit_11.8.32.bts, 115200 → 3000000 baud
 set -u
 LOG=/tmp/soundtap.log
-log() { echo "[soundtap] $*" | tee -a "$LOG"; }
+log() { echo "[soundtap] $*" | tee -a "${LOG}"; }
 # Where state, the kernel's files and our scripts live. A test points these at a temp tree.
 NV_DIR=/mnt/nv
 RUN_DIR=/run/soundtap
@@ -38,47 +38,49 @@ APP_DIR=/run/audio-bin/app
 # boots). 32 KiB like the boot trace: one overwrite per 15 minutes is ~3 MB/day of flash
 # traffic, and the ST20 shares this flash with stock. Below 2 MiB free it writes nothing.
 run_subcommand() {
-NVLOG=$NV_DIR/soundtap
+NVLOG=${NV_DIR}/soundtap
 if [ "${1:-}" = rotate-logs ]; then
-	[ -e "$RUN_DIR/persistent-storage" ] && [ -s "$NVLOG/current-boot.log" ] || exit 0
-	rm -f "$NVLOG/previous-boot.2.log"
-	[ ! -e "$NVLOG/previous-boot.1.log" ] || mv "$NVLOG/previous-boot.1.log" "$NVLOG/previous-boot.2.log"
-	[ ! -e "$NVLOG/previous-boot.log" ] || mv "$NVLOG/previous-boot.log" "$NVLOG/previous-boot.1.log"
-	mv "$NVLOG/current-boot.log" "$NVLOG/previous-boot.log" && sync
+	[ -e "${RUN_DIR}/persistent-storage" ] && [ -s "${NVLOG}/current-boot.log" ] || exit 0
+	rm -f "${NVLOG}/previous-boot.2.log"
+	[ ! -e "${NVLOG}/previous-boot.1.log" ] || mv "${NVLOG}/previous-boot.1.log" "${NVLOG}/previous-boot.2.log"
+	[ ! -e "${NVLOG}/previous-boot.log" ] || mv "${NVLOG}/previous-boot.log" "${NVLOG}/previous-boot.1.log"
+	mv "${NVLOG}/current-boot.log" "${NVLOG}/previous-boot.log" && sync
 	exit $?
 fi
 if [ "${1:-}" = save-log ]; then
+	# shellcheck disable=SC2250 # os/support/rootfs_check.py or its test matches this text as written
 	[ -e "$RUN_DIR/persistent-storage" ] || exit 0
 	# -P: plain df puts a long volume name (ubi1:persistent_volume) on a line of its own
 	# and leaves free_kb empty.
-	free_kb=$(df -kP "$NV_DIR" 2>/dev/null | awk 'NR==2 {print $4}')
+	free_kb=$(df -kP "${NV_DIR}" 2>/dev/null | awk 'NR==2 {print $4}')
 	[ "${free_kb:-0}" -ge 2048 ] 2>/dev/null || exit 0  # not a number when df failed: skip
 	# rm first: $NVLOG is soundtapd's (ADR 0066), and root writes no file through a link in it.
-	rm -f "$NVLOG/current-boot.log.tmp"
-	tail -c 32768 "$LOG" >"$NVLOG/current-boot.log.tmp" 2>/dev/null &&  # a failed copy is retried at the next save
-		mv "$NVLOG/current-boot.log.tmp" "$NVLOG/current-boot.log" && sync
+	rm -f "${NVLOG}/current-boot.log.tmp"
+	tail -c 32768 "${LOG}" >"${NVLOG}/current-boot.log.tmp" 2>/dev/null &&  # a failed copy is retried at the next save
+		mv "${NVLOG}/current-boot.log.tmp" "${NVLOG}/current-boot.log" && sync
 	exit $?
 fi
 if [ "${1:-}" = save-clock ]; then
+	# shellcheck disable=SC2250 # os/support/rootfs_check.py or its test matches this text as written
 	[ -e "$RUN_DIR/persistent-storage" ] || exit 0
 	now=$(date +%s 2>/dev/null || echo 0)  # busybox date always works; 0 means unset
-	[ "$now" -ge 1577836800 ] 2>/dev/null || exit 0  # 0 is below the floor: skip
+	[ "${now}" -ge 1577836800 ] 2>/dev/null || exit 0  # 0 is below the floor: skip
 	# A name per process: the sync after a Wi-Fi join and init's background retry can save
 	# at the same moment, and with one shared name each would take or truncate the other's file.
-	rm -f "$NV_DIR/soundtap-clock.tmp.$$"  # /mnt/nv is shared with soundtapd: no link followed
-	printf '%s\n' "$now" >"$NV_DIR/soundtap-clock.tmp.$$" \
-		&& mv "$NV_DIR/soundtap-clock.tmp.$$" "$NV_DIR/soundtap-clock" && sync
+	rm -f "${NV_DIR}/soundtap-clock.tmp.$$"  # /mnt/nv is shared with soundtapd: no link followed
+	printf '%s\n' "${now}" >"${NV_DIR}/soundtap-clock.tmp.$$" \
+		&& mv "${NV_DIR}/soundtap-clock.tmp.$$" "${NV_DIR}/soundtap-clock" && sync
 	exit $?
 fi
 # soundtapd's Wi-Fi manager runs this after a join: the clock from NTP now, instead of at
 # the boot's next retry. One sync loop at a time (clock.sh), whoever asks.
 if [ "${1:-}" = sync-clock ]; then
-	[ ! -p "$RUN_DIR/log.fifo" ] || LOG=$RUN_DIR/log.fifo
-	if sync_clock_and_save >>"$LOG" 2>&1; then
-		echo "[soundtap] clock synchronized after the Wi-Fi join" >>"$LOG"
+	[ ! -p "${RUN_DIR}/log.fifo" ] || LOG=${RUN_DIR}/log.fifo
+	if sync_clock_and_save >>"${LOG}" 2>&1; then
+		echo "[soundtap] clock synchronized after the Wi-Fi join" >>"${LOG}"
 	else
-		echo "[soundtap] WARNING: clock synchronization degraded; retrying" >>"$LOG"
-		sync_clock_in_background >>"$LOG" 2>&1
+		echo "[soundtap] WARNING: clock synchronization degraded; retrying" >>"${LOG}"
+		sync_clock_in_background >>"${LOG}" 2>&1
 	fi
 	exit 0
 fi
@@ -104,12 +106,13 @@ fi
 # this line the kernel's own default applies, cold.
 set_reboot_mode() {
 mode=cold
-if grep -qw 'soundtap\.nandroot=1' "$PROC_DIR/cmdline" 2>/dev/null; then  # always readable; quiet anyway
+if grep -qw 'soundtap\.nandroot=1' "${PROC_DIR}/cmdline" 2>/dev/null; then  # always readable; quiet anyway
 	case "$(devmem 0x44e3e068 2>/dev/null || echo 0)" in  # devmem absent outside dev builds: 0
 	0x????01B0|0x????01b0) mode=warm ;;
+	*) ;;
 	esac
 fi
-echo "$mode" >"$SYS_DIR/kernel/reboot/mode" 2>/dev/null || true  # a kernel without reboot mode
+echo "${mode}" >"${SYS_DIR}/kernel/reboot/mode" 2>/dev/null || true  # a kernel without reboot mode
 }
 
 # --- filesystems + busybox applets --------------------------------------------
@@ -154,7 +157,7 @@ set_kernel_params
 set_kernel_params() {
 for kv in kernel/panic=5 vm/panic_on_oom=2 vm/min_free_kbytes=2000 vm/vfs_cache_pressure=500 \
 	fs/protected_symlinks=1 fs/protected_hardlinks=1 fs/protected_regular=2 fs/protected_fifos=2; do
-	echo "${kv#*=}" >"$PROC_DIR/sys/${kv%%=*}" 2>/dev/null || true  # key absent on older kernels
+	echo "${kv#*=}" >"${PROC_DIR}/sys/${kv%%=*}" 2>/dev/null || true  # key absent on older kernels
 done
 }
 
@@ -168,12 +171,12 @@ done
 start_logging() {
 LOG_FILE=/tmp/soundtap.log
 LOG_FIFO=/run/soundtap/log.fifo
-if syslogd -O "$LOG_FILE" -s 256 -b 1 -S 2>/dev/null && rm -f "$LOG_FIFO" && mkfifo "$LOG_FIFO"; then  # no syslogd: the else branch logs to the file
-	exec 9<>"$LOG_FIFO"
-	LOG=$LOG_FIFO
+if syslogd -O "${LOG_FILE}" -s 256 -b 1 -S 2>/dev/null && rm -f "${LOG_FIFO}" && mkfifo "${LOG_FIFO}"; then  # no syslogd: the else branch logs to the file
+	exec 9<>"${LOG_FIFO}"
+	LOG=${LOG_FIFO}
 	(
 		trap 'exit 0' HUP INT TERM
-		while true; do logger -t soundtap <"$LOG" || sleep 1; done
+		while true; do logger -t soundtap <"${LOG}" || sleep 1; done
 	) &
 fi
 }
@@ -181,9 +184,9 @@ detect_kernel() {
 MAINLINE=0
 NANDROOT=0
 SOUNDTAPD_BIN=/opt/soundtap/soundtapd
-case "$(uname -r 2>/dev/null)" in 6.*) MAINLINE=1;; esac  # only picks the kernel family
-grep -qw 'soundtap\.nandroot=1' "$PROC_DIR/cmdline" 2>/dev/null && NANDROOT=1  # always readable; quiet anyway
-if [ "$MAINLINE" = 1 ]; then
+case "$(uname -r 2>/dev/null)" in 6.*) MAINLINE=1;; *) ;; esac  # only picks the kernel family
+grep -qw 'soundtap\.nandroot=1' "${PROC_DIR}/cmdline" 2>/dev/null && NANDROOT=1  # always readable; quiet anyway
+if [ "${MAINLINE}" = 1 ]; then
 	# Keep the realtime path off xz-compressed USB: cold page faults there underrun the DAC
 	# whenever a receiver or decoder starts. From NAND they do not, and RAM copies would pin
 	# 20 MB more and push the kernel into direct reclaim, so on NAND only soundtapd is
@@ -192,18 +195,18 @@ if [ "$MAINLINE" = 1 ]; then
 	# second copy of it (about 9 MB) until the old process has gone. tmpfs only takes
 	# what is used, so the headroom costs no RAM.
 	audio_bins="/usr/bin/librespot /usr/bin/ffmpeg /usr/bin/mpg123 /usr/bin/aplay /usr/bin/shairport-sync /usr/bin/snapserver /usr/bin/snapclient"
-	[ "$NANDROOT" = 0 ] || audio_bins=
+	[ "${NANDROOT}" = 0 ] || audio_bins=
 	mkdir -p /run/audio-bin
 	if mount -t tmpfs -o mode=0755,size=48m tmpfs /run/audio-bin 2>/dev/null; then  # no room: the else branch runs from flash
-		for src in $audio_bins; do
-			[ ! -x "$src" ] || cp "$src" /run/audio-bin/
+		for src in ${audio_bins}; do
+			[ ! -x "${src}" ] || cp "${src}" /run/audio-bin/
 		done
-		PATH=/run/audio-bin:$PATH
+		PATH=/run/audio-bin:${PATH}
 		export PATH
 		# soundtapd's own copy sits apart, in a directory grant_soundtapd hands to its user:
 		# /api/soundtapd swaps it there, and a file soundtapd could write must not be on
 		# root's PATH.
-		mkdir -p "$APP_DIR" && cp /opt/soundtap/soundtapd "$APP_DIR/" && SOUNDTAPD_BIN=$APP_DIR/soundtapd
+		mkdir -p "${APP_DIR}" && cp /opt/soundtap/soundtapd "${APP_DIR}/" && SOUNDTAPD_BIN=${APP_DIR}/soundtapd
 	fi
 fi
 }
@@ -219,16 +222,18 @@ fi
 read_boot_watchdog() {
 WATCHDOG_DISARM=/run/soundtap/booted
 NETWORK_READY=/run/soundtap/network-ready
-rm -f "$WATCHDOG_DISARM" "$NETWORK_READY"
+rm -f "${WATCHDOG_DISARM}" "${NETWORK_READY}"
 WATCHDOG_SECONDS=
 WATCHDOG_NETWORK=1
 CRASH_REBOOT=
-for word in $(cat "$PROC_DIR/cmdline" 2>/dev/null); do  # always readable; quiet anyway
-	case "$word" in
+# shellcheck disable=SC2013 # the kernel command line is one line of words
+for word in $(cat "${PROC_DIR}/cmdline" 2>/dev/null); do  # always readable; quiet anyway
+	case "${word}" in
 	soundtap.watchdog=[1-9]*)
 		seconds=${word#soundtap.watchdog=}
-		case "$seconds" in *[!0-9]*) ;; *) WATCHDOG_SECONDS=$seconds;; esac
+		case "${seconds}" in *[!0-9]*) ;; *) WATCHDOG_SECONDS=${seconds};; esac
 		;;
+	*) ;;
 	esac
 done
 # Never arm this on a NAND boot. Rebooting is only a way out when the next boot lands
@@ -237,7 +242,7 @@ done
 # speaker unreachable for a different reason than the one being guarded against. On
 # the WLA that loop is invisible too — no UART, and no gadget console for long enough
 # to read anything.
-if [ "$NANDROOT" = 1 ] && [ -n "$WATCHDOG_SECONDS" ]; then
+if [ "${NANDROOT}" = 1 ] && [ -n "${WATCHDOG_SECONDS}" ]; then
 	log "nand boot: boot watchdog not armed (a reboot would return to this same slot)"
 	WATCHDOG_SECONDS=
 fi
@@ -252,42 +257,44 @@ fi
 # The count's magic in SCRATCH2 says whether this bootloader counts, not the module name:
 # every model runs the same boot chain.
 unconfirmed_boot_guard() {
-if [ "$NANDROOT" = 1 ]; then
+if [ "${NANDROOT}" = 1 ]; then
 	scratch2=$(devmem 0x44e3e068 2>/dev/null || echo 0)  # devmem absent outside dev builds: 0
-	case "$scratch2" in
+	case "${scratch2}" in
 	0x????01B0|0x????01b0)
 		count=$(( (scratch2 >> 24 & 0xff) | (scratch2 >> 8 & 0xff00) ))
 		# set_reboot_mode made the reboot warm already, so the count survives the
 		# reboot below. U-Boot stores the count it booted by here either way.
+		# shellcheck disable=SC2250 # os/support/rootfs_check.py or its test matches this text as written
 		if [ "$count" -le 9 ]; then
 			WATCHDOG_SECONDS=300
 			WATCHDOG_NETWORK=0
 			CRASH_REBOOT=1
-			log "nand boot: boot watchdog armed, U-Boot boot count $count"
+			log "nand boot: boot watchdog armed, U-Boot boot count ${count}"
 		else
-			log "nand boot: boot count $count, both slots tried; boot watchdog not armed"
+			log "nand boot: boot count ${count}, both slots tried; boot watchdog not armed"
 		fi
 		;;
+	*) ;;
 	esac
 fi
 }
 start_boot_watchdog() {
-if [ "$MAINLINE" = 1 ] && [ -n "$WATCHDOG_SECONDS" ]; then
+if [ "${MAINLINE}" = 1 ] && [ -n "${WATCHDOG_SECONDS}" ]; then
 	WATCHDOG_LOG=/media/usb/soundtap-ram-watchdog.log
 	watchdog_log() {
 		log "$*"
-		[ -d /media/usb ] && printf '%s %s\n' "$(date 2>/dev/null)" "$*" >>"$WATCHDOG_LOG" 2>/dev/null || true  # stick may be pulled at any moment
+		[ -d /media/usb ] && printf '%s %s\n' "$(date 2>/dev/null)" "$*" >>"${WATCHDOG_LOG}" 2>/dev/null || true  # stick may be pulled at any moment
 	}
 	(
 		watchdog_log "mainline watchdog: armed for ${WATCHDOG_SECONDS}s"
-		for _ in $(seq 1 "$WATCHDOG_SECONDS"); do
-			if [ -e "$WATCHDOG_DISARM" ] && { [ "$WATCHDOG_NETWORK" = 0 ] || [ -e "$NETWORK_READY" ]; }; then
+		for _ in $(seq 1 "${WATCHDOG_SECONDS}"); do
+			if [ -e "${WATCHDOG_DISARM}" ] && { [ "${WATCHDOG_NETWORK}" = 0 ] || [ -e "${NETWORK_READY}" ]; }; then
 				watchdog_log "mainline watchdog: disarmed, soundtapd and network came up"
 				exit 0
 			fi
 			sleep 1
 		done
-		watchdog_log "mainline watchdog: soundtapd=$([ -e "$WATCHDOG_DISARM" ] && echo ready || echo missing) network=$([ -e "$NETWORK_READY" ] && echo ready || echo missing), rebooting"
+		watchdog_log "mainline watchdog: soundtapd=$([ -e "${WATCHDOG_DISARM}" ] && echo ready || echo missing || true) network=$([ -e "${NETWORK_READY}" ] && echo ready || echo missing || true), rebooting"
 		sync
 		reboot -f
 	) &
@@ -298,12 +305,12 @@ fi
 # Without syslogd the shared file still needs a bound. Copy-truncate loses the lines
 # written in between, which is why syslogd's rotation is the normal path.
 trim_log_without_syslogd() {
-[ "$LOG" = "$LOG_FILE" ] && (
+[ "${LOG}" = "${LOG_FILE}" ] && (
 	while sleep 60; do
-		bytes=$(wc -c <"$LOG" 2>/dev/null || echo 0)  # log may be rotated meanwhile: 0
-		if [ "$bytes" -gt 524288 ]; then
-			tail -c 262144 "$LOG" >"$LOG.trim" 2>/dev/null && cat "$LOG.trim" >"$LOG"  # a failed trim is retried in 60 s
-			rm -f "$LOG.trim"
+		bytes=$(wc -c <"${LOG}" 2>/dev/null || echo 0)  # log may be rotated meanwhile: 0
+		if [ "${bytes}" -gt 524288 ]; then
+			tail -c 262144 "${LOG}" >"${LOG}.trim" 2>/dev/null && cat "${LOG}.trim" >"${LOG}"  # a failed trim is retried in 60 s
+			rm -f "${LOG}.trim"
 		fi
 	done
 ) &
@@ -322,18 +329,18 @@ trim_log_without_syslogd() {
 # Bounded: at most 20 s + 15 s, and only when eth0 is missing.
 st20_bco_link() {
 	n=0
-	while [ ! -e "$SYS_DIR/class/net/eth0" ] && [ $n -lt 20 ]; do sleep 1; n=$((n + 1)); done
-	if [ ! -e "$SYS_DIR/class/net/eth0" ]; then
+	while [ ! -e "${SYS_DIR}/class/net/eth0" ] && [ "${n}" -lt 20 ]; do sleep 1; n=$((n + 1)); done
+	if [ ! -e "${SYS_DIR}/class/net/eth0" ]; then
 		log "st20: no BCO link after ${n}s, rebinding musb-hdrc.1"
-		echo musb-hdrc.1 >"$SYS_DIR/bus/platform/drivers/musb-hdrc/unbind" 2>>"$LOG" || true
-		echo musb-hdrc.1 >"$SYS_DIR/bus/platform/drivers/musb-hdrc/bind" 2>>"$LOG" || true
+		echo musb-hdrc.1 >"${SYS_DIR}/bus/platform/drivers/musb-hdrc/unbind" 2>>"${LOG}" || true
+		echo musb-hdrc.1 >"${SYS_DIR}/bus/platform/drivers/musb-hdrc/bind" 2>>"${LOG}" || true
 		n=0
-		while [ ! -e "$SYS_DIR/class/net/eth0" ] && [ $n -lt 15 ]; do sleep 1; n=$((n + 1)); done
-		[ -e "$SYS_DIR/class/net/eth0" ] || log "ERROR: st20 BCO link still missing"
+		while [ ! -e "${SYS_DIR}/class/net/eth0" ] && [ "${n}" -lt 15 ]; do sleep 1; n=$((n + 1)); done
+		[ -e "${SYS_DIR}/class/net/eth0" ] || log "ERROR: st20 BCO link still missing"
 	fi
 	# The own BCO app (ADR 0031) shows up as soundtap_bco's bcolink0 with wlan0 and eth0 on top;
 	# stock's app is a plain USB Ethernet gadget, eth0 alone.
-	if [ -e "$SYS_DIR/class/net/bcolink0" ]; then
+	if [ -e "${SYS_DIR}/class/net/bcolink0" ]; then
 		BCO_OWN=1
 		log "st20: own BCO link, wlan0 and eth0 are the BCO's ports"
 	fi
@@ -342,16 +349,16 @@ st20_bco_link() {
 st20_eth0() {
 	st20_addr=192.168.1.101/24 st20_gw=192.168.1.100 st20_dns=192.168.1.100
 	for f in /mnt/nv/soundtap/st20-eth0 /run/soundtap/st20-eth0; do
-		[ -r "$f" ] || continue
-		read -r a g d <"$f" || true
-		case "$a" in */*) st20_addr=$a st20_gw=$g st20_dns=${d:-$g}; break ;; esac
+		[ -r "${f}" ] || continue
+		read -r a g d <"${f}" || true
+		case "${a}" in */*) st20_addr=${a} st20_gw=${g} st20_dns=${d:-${g}}; break ;; *) ;; esac
 	done
-	ifconfig eth0 up 2>>"$LOG" || true
-	ip addr add "$st20_addr" dev eth0 2>>"$LOG" || true
-	/opt/soundtap/lan-allow.sh add eth0 "$st20_addr" || true  # logs its own failure
-	ip route replace default via "$st20_gw" dev eth0 2>>"$LOG" || true
-	printf 'nameserver %s\n' "$st20_dns" >/etc/resolv.conf
-	log "st20 eth0: $st20_addr via $st20_gw dns $st20_dns"
+	ifconfig eth0 up 2>>"${LOG}" || true
+	ip addr add "${st20_addr}" dev eth0 2>>"${LOG}" || true
+	/opt/soundtap/lan-allow.sh add eth0 "${st20_addr}" || true  # logs its own failure
+	ip route replace default via "${st20_gw}" dev eth0 2>>"${LOG}" || true
+	printf 'nameserver %s\n' "${st20_dns}" >/etc/resolv.conf
+	log "st20 eth0: ${st20_addr} via ${st20_gw} dns ${st20_dns}"
 }
 
 # Persistent UBI is shared by both A/B rootfs slots. Find it by label: partition numbers
@@ -363,16 +370,17 @@ PERSIST_MTD=$(sed -n '
 s/^mtd\([0-9][0-9]*\):.*"NAND\.Persistent-Storage"$/\1/p
 s/^mtd\([0-9][0-9]*\):.*"NAND\.Persistant-Storage"$/\1/p
 ' /proc/mtd 2>/dev/null | head -n 1)  # no /proc/mtd means no persistent storage, handled below
-if { [ "$MAINLINE" = 0 ] || [ "$NANDROOT" = 1 ]; } && [ -n "$PERSIST_MTD" ] \
-	&& [ -c /dev/ubi_ctrl ] && [ -c "/dev/mtd$PERSIST_MTD" ]; then
+if { [ "${MAINLINE}" = 0 ] || [ "${NANDROOT}" = 1 ]; } && [ -n "${PERSIST_MTD}" ] \
+	&& [ -c /dev/ubi_ctrl ] && [ -c "/dev/mtd${PERSIST_MTD}" ]; then
 	# The installer puts ubi.mtd=<persistent>,2048 on the kernel command line, so on a slot it
 	# selected the volume is already ubi1 and there is nothing to attach. Try anyway when it is
 	# not, but expect it to fail here: BusyBox's ubiattach prints -O in its usage and then
 	# rejects it, and without the 2048-byte VID header offset UBI_IOCATT answers EINVAL.
 	if [ ! -d /sys/class/ubi/ubi1 ]; then
+		# shellcheck disable=SC2250 # os/support/rootfs_check.py matches this text as written
 		ubiattach -m "$PERSIST_MTD" -O 2048 -d 1 /dev/ubi_ctrl >>"$LOG" 2>&1 || true
 	fi
-	mount -t ubifs ubi1:persistent_volume /mnt/nv >>"$LOG" 2>&1 || true
+	mount -t ubifs ubi1:persistent_volume /mnt/nv >>"${LOG}" 2>&1 || true
 fi
 PERSISTENT_CLOCK=0
 rm -f /run/soundtap/persistent-storage
@@ -391,7 +399,7 @@ else
 	mount -t ubifs -o ro ubi1:persistent_volume /mnt/nv 2>/dev/null || true
 	cp /mnt/nv/soundtap/st20-eth0 /run/soundtap/st20-eth0 2>/dev/null || true  # absent on a new ST20: plain DHCP
 	umount /mnt/nv 2>/dev/null || true  # may already be unmounted
-	if mount -t tmpfs -o mode=0755,size=8m tmpfs /mnt/nv 2>>"$LOG"; then
+	if mount -t tmpfs -o mode=0755,size=8m tmpfs /mnt/nv 2>>"${LOG}"; then
 		log "WARNING: persistent storage unavailable or read-only; using volatile /mnt/nv"
 	else
 		log "ERROR: persistent storage unavailable and volatile /mnt/nv mount failed"
@@ -401,38 +409,38 @@ fi
 restore_clock() {
 CLOCK_FILE=/mnt/nv/soundtap-clock
 now=$(date +%s 2>/dev/null || echo 0)  # busybox date always works; 0 means unset
-if [ "$now" -lt 1577836800 ] 2>/dev/null && read -r build_time </etc/soundtap-build-epoch; then  # not a number reads as unset
-	case "$build_time" in
+if [ "${now}" -lt 1577836800 ] 2>/dev/null && read -r build_time </etc/soundtap-build-epoch; then  # not a number reads as unset
+	case "${build_time}" in
 	''|*[!0-9]*) ;;
-	*) [ "$build_time" -ge 1577836800 ] 2>/dev/null && date -u -s "@$build_time" >>"$LOG" 2>&1 || true;;  # not a number: no clock set
+	*) [ "${build_time}" -ge 1577836800 ] 2>/dev/null && date -u -s "@${build_time}" >>"${LOG}" 2>&1 || true;;  # not a number: no clock set
 	esac
 fi
-if [ "$PERSISTENT_CLOCK" = 1 ] && [ -r "$CLOCK_FILE" ]; then
-	read -r saved_time <"$CLOCK_FILE" || saved_time=
-	case "$saved_time" in
+if [ "${PERSISTENT_CLOCK}" = 1 ] && [ -r "${CLOCK_FILE}" ]; then
+	read -r saved_time <"${CLOCK_FILE}" || saved_time=
+	case "${saved_time}" in
 		''|*[!0-9]*) ;;
 		*)
 			now=$(date +%s 2>/dev/null || echo 0)  # busybox date always works; 0 means unset
-			if [ "$saved_time" -ge 1577836800 ] 2>/dev/null &&  # not a number: no clock set
-				[ "$saved_time" -le 4102444800 ] 2>/dev/null &&  # not a number: no clock set
-				[ "$saved_time" -gt "$now" ] 2>/dev/null; then  # not a number: no clock set
-				date -u -s "@$saved_time" >>"$LOG" 2>&1 || true
+			if [ "${saved_time}" -ge 1577836800 ] 2>/dev/null &&  # not a number: no clock set
+				[ "${saved_time}" -le 4102444800 ] 2>/dev/null &&  # not a number: no clock set
+				[ "${saved_time}" -gt "${now}" ] 2>/dev/null; then  # not a number: no clock set
+				date -u -s "@${saved_time}" >>"${LOG}" 2>&1 || true
 			fi
 			;;
 	esac
 fi
-log "boot $(date 2>/dev/null)"  # date output is decoration only
+log "boot $(date 2>/dev/null || true)"  # date output is decoration only
 }
 save_clock() {
-	[ "$PERSISTENT_CLOCK" != 1 ] || "$INIT_SCRIPT" save-clock
+	[ "${PERSISTENT_CLOCK}" != 1 ] || "${INIT_SCRIPT}" save-clock
 }
 start_clock_saver() {
-if [ "$PERSISTENT_CLOCK" = 1 ]; then
+if [ "${PERSISTENT_CLOCK}" = 1 ]; then
 	(
 		trap 'save_clock; exit 0' HUP INT TERM
 		while sleep 900; do
 			save_clock || log "WARNING: persistent clock save failed"
-			"$INIT_SCRIPT" save-log || true
+			"${INIT_SCRIPT}" save-log || true
 		done
 	) &
 fi
@@ -440,13 +448,13 @@ fi
 rotate_boot_logs() {
 mkdir -p /mnt/nv/soundtap /mnt/nv/bluetooth /mnt/nv/bluealsa
 # What the last boot left, clean shutdown or not, becomes previous-boot.log.
-"$INIT_SCRIPT" rotate-logs || true
+"${INIT_SCRIPT}" rotate-logs || true
 BOOT_TRACE=/mnt/nv/soundtap-boot.log
 # Flash, and on the ST20 shared with stock and nearly full: keep the last 32 KiB.
-[ "$(wc -c <"$BOOT_TRACE" 2>/dev/null || echo 0)" -le 65536 ] \
-	|| { tail -c 32768 "$BOOT_TRACE" >"$BOOT_TRACE.tmp" && mv "$BOOT_TRACE.tmp" "$BOOT_TRACE"; } 2>/dev/null  # trim failure leaves the old trace
+[ "$(wc -c <"${BOOT_TRACE}" 2>/dev/null || echo 0 || true)" -le 65536 ] \
+	|| { tail -c 32768 "${BOOT_TRACE}" >"${BOOT_TRACE}.tmp" && mv "${BOOT_TRACE}.tmp" "${BOOT_TRACE}"; } 2>/dev/null  # trim failure leaves the old trace
 }
-bootmark() { printf '%s %s\n' "$(date 2>/dev/null)" "$*" >>"$BOOT_TRACE" 2>/dev/null || true; }  # flash full or absent: the RAM log has it
+bootmark() { printf '%s %s\n' "$(date 2>/dev/null)" "$*" >>"${BOOT_TRACE}" 2>/dev/null || true; }  # flash full or absent: the RAM log has it
 mark_storage_ready() {
 bootmark "persistent storage ready"
 # A speaker that "never came back" after a reboot may have booted fine with a dead network
@@ -457,9 +465,9 @@ NETFAIL_LOG=/mnt/nv/soundtap-netfail.log
 netwatch() {
 	(
 		n=0
-		while [ $n -lt 180 ]; do
+		while [ "${n}" -lt 180 ]; do
 			route=$(ip -4 route show default 2>/dev/null | head -n 1)  # no route yet: retry
-			[ -z "$route" ] || { bootmark "network up after ${n}s: $route"; exit 0; }
+			[ -z "${route}" ] || { bootmark "network up after ${n}s: ${route}"; exit 0; }
 			sleep 5
 			n=$((n + 5))
 		done
@@ -467,10 +475,10 @@ netwatch() {
 			bootmark "no default route after ${n}s (setup AP)"
 			exit 0
 		fi
-		bootmark "no default route after ${n}s; state in $NETFAIL_LOG"
+		bootmark "no default route after ${n}s; state in ${NETFAIL_LOG}"
 		# The file, not $LOG: with syslogd that is the FIFO, which never ends and whose
 		# lines a second reader would take away from the logger.
-		{ date; ip addr; ip route; cat /proc/net/wireless; tail -n 150 "$LOG_FILE"; } >"$NETFAIL_LOG" 2>&1
+		{ date; ip addr; ip route; cat /proc/net/wireless; tail -n 150 "${LOG_FILE}"; } >"${NETFAIL_LOG}" 2>&1
 	) &
 }
 
@@ -481,15 +489,15 @@ netwatch() {
 # means the last one never did (a hang, or a crash loop cut short by a reboot), and it goes.
 soundtapd_base() {
 	# rm first: the directory is soundtapd's, and root writes no file through a link in it.
-	rm -f "$APP_DIR/soundtapd.new"
-	cp /opt/soundtap/soundtapd "$APP_DIR/soundtapd.new" \
-		&& chmod 755 "$APP_DIR/soundtapd.new" \
-		&& mv "$APP_DIR/soundtapd.new" "$APP_DIR/soundtapd"
+	rm -f "${APP_DIR}/soundtapd.new"
+	cp /opt/soundtap/soundtapd "${APP_DIR}/soundtapd.new" \
+		&& chmod 755 "${APP_DIR}/soundtapd.new" \
+		&& mv "${APP_DIR}/soundtapd.new" "${APP_DIR}/soundtapd"
 }
 drop_soundtapd_override() {
 	log "soundtapd override dropped: $*"
 	bootmark "soundtapd override dropped: $*"
-	rm -f "$SOUNDTAPD_OVERRIDE.gz" "$SOUNDTAPD_OVERRIDE.base" "$SOUNDTAPD_OVERRIDE.trial"
+	rm -f "${SOUNDTAPD_OVERRIDE}.gz" "${SOUNDTAPD_OVERRIDE}.base" "${SOUNDTAPD_OVERRIDE}.trial"
 }
 # app_usable says whether the owner can still get out of a running app: its web page loads,
 # and an empty POST to the app and firmware update routes gets a 4xx refusal (not 404,
@@ -499,26 +507,26 @@ app_usable() {
 	wget -q -T 10 -O- http://127.0.0.1/ 2>/dev/null | grep -qi '<html' || return 1  # a refusal fails the grep
 	for route in update firmware; do
 		wget -T 10 -O /dev/null --header 'Content-Type: application/json' --post-data '{}' \
-			"http://127.0.0.1/api/$route" 2>&1 | grep 'HTTP/1.1 4[0-9][0-9]' | grep -qv ' 404 ' || return 1
+			"http://127.0.0.1/api/${route}" 2>&1 | grep 'HTTP/1.1 4[0-9][0-9]' | grep -qv ' 404 ' || return 1
 	done
 }
 check_soundtapd_override() {
 SOUNDTAPD_OVERRIDE=/mnt/nv/soundtap/soundtapd.override
-if [ -f "$SOUNDTAPD_OVERRIDE.base" ]; then
-	if [ "$SOUNDTAPD_BIN" != "$APP_DIR/soundtapd" ]; then
+if [ -f "${SOUNDTAPD_OVERRIDE}.base" ]; then
+	if [ "${SOUNDTAPD_BIN}" != "${APP_DIR}/soundtapd" ]; then
 		drop_soundtapd_override "no /run/audio-bin"
-	elif [ -f "$SOUNDTAPD_OVERRIDE.trial" ]; then
+	elif [ -f "${SOUNDTAPD_OVERRIDE}.trial" ]; then
 		drop_soundtapd_override "it never ran 60 s"
-	elif [ "$(sha256sum /opt/soundtap/soundtapd | cut -d' ' -f1)" != "$(cat "$SOUNDTAPD_OVERRIDE.base")" ]; then
+	elif [ "$(sha256sum /opt/soundtap/soundtapd | cut -d' ' -f1 || true)" != "$(cat "${SOUNDTAPD_OVERRIDE}.base" || true)" ]; then
 		drop_soundtapd_override "made for other firmware"
-	elif : >"$SOUNDTAPD_OVERRIDE.trial" \
-		&& rm -f "$APP_DIR/soundtapd.new" \
-		&& gunzip -c "$SOUNDTAPD_OVERRIDE.gz" >"$APP_DIR/soundtapd.new" \
-		&& chmod 755 "$APP_DIR/soundtapd.new" \
-		&& mv "$APP_DIR/soundtapd.new" "$APP_DIR/soundtapd"; then
+	elif : >"${SOUNDTAPD_OVERRIDE}.trial" \
+		&& rm -f "${APP_DIR}/soundtapd.new" \
+		&& gunzip -c "${SOUNDTAPD_OVERRIDE}.gz" >"${APP_DIR}/soundtapd.new" \
+		&& chmod 755 "${APP_DIR}/soundtapd.new" \
+		&& mv "${APP_DIR}/soundtapd.new" "${APP_DIR}/soundtapd"; then
 		log "soundtapd: running the uploaded override"
 	else
-		rm -f "$APP_DIR/soundtapd.new"
+		rm -f "${APP_DIR}/soundtapd.new"
 		drop_soundtapd_override "unreadable"
 	fi
 fi
@@ -540,68 +548,70 @@ soundtapd_loop() {
 	delay=2
 	while true; do
 		t0=$(cut -d. -f1 /proc/uptime)
-		rm -f "$WATCHDOG_DISARM"
+		rm -f "${WATCHDOG_DISARM}"
 		# shellcheck disable=SC2086 # SOUNDTAPD_EXEC is a command and its word, or nothing
+		# shellcheck disable=SC2250 # os/support/rootfs_check.py or its test matches this text as written
 		${SOUNDTAPD_EXEC:-} "$SOUNDTAPD_BIN" -home /mnt/nv/soundtap "$@" >>"$LOG" 2>&1 &
 		pid=$!
 		(
 			sleep 60
 			miss=0
 			ok=0
-			while kill -0 "$pid" 2>/dev/null; do  # soundtapd gone: the loop ends
+			while kill -0 "${pid}" 2>/dev/null; do  # soundtapd gone: the loop ends
 				if wget -q -T 10 -O /dev/null http://127.0.0.1/api/info 2>/dev/null; then  # refused or no answer counts as a miss
 					miss=0
 					ok=$((ok + 1))
-					if [ -f "$SOUNDTAPD_OVERRIDE.trial" ]; then
+					if [ -f "${SOUNDTAPD_OVERRIDE}.trial" ]; then
 						if app_usable; then
-							rm -f "$SOUNDTAPD_OVERRIDE.trial"
-						elif [ "$ok" -ge 10 ] && soundtapd_base; then
+							rm -f "${SOUNDTAPD_OVERRIDE}.trial"
+						elif [ "${ok}" -ge 10 ] && soundtapd_base; then
 							# Five minutes of answers on /api/info, but no way out of it from the UI.
 							drop_soundtapd_override "its web page or update routes do not answer"
-							kill "$pid" 2>/dev/null  # may already have exited
+							kill "${pid}" 2>/dev/null  # may already have exited
 							exit 0
 						fi
 					fi
-					[ "$ok" -ne 20 ] || : >"$ROOT_RUN_DIR/soundtapd.healthy"
+					[ "${ok}" -ne 20 ] || : >"${ROOT_RUN_DIR}/soundtapd.healthy"
 				else
 					ok=0
 					miss=$((miss + 1))
-					if [ "$miss" -ge 5 ]; then
-						log "soundtapd: no answer on /api/info 5 times, killing $pid"
-						: >"$ROOT_RUN_DIR/soundtapd.hung"
-						kill "$pid" 2>/dev/null  # may already have exited
+					if [ "${miss}" -ge 5 ]; then
+						log "soundtapd: no answer on /api/info 5 times, killing ${pid}"
+						: >"${ROOT_RUN_DIR}/soundtapd.hung"
+						kill "${pid}" 2>/dev/null  # may already have exited
 						sleep 10
-						kill -9 "$pid" 2>/dev/null  # may already have exited
+						kill -9 "${pid}" 2>/dev/null  # may already have exited
 						exit 0
 					fi
 				fi
 				sleep 30
 			done
 		) &
-		wait "$pid"
+		wait "${pid}"
 		rc=$?
 		ran=$(($(cut -d. -f1 /proc/uptime) - t0))
-		[ "$ran" -le 60 ] || delay=2
-		log "soundtapd exited ($rc), restarting in ${delay}s"
-		[ ! -e "$ROOT_RUN_DIR/soundtapd.healthy" ] || fails=0
-		if [ -e "$ROOT_RUN_DIR/soundtapd.hung" ] || [ "$ran" -lt 120 ]; then
+		[ "${ran}" -le 60 ] || delay=2
+		log "soundtapd exited (${rc}), restarting in ${delay}s"
+		[ ! -e "${ROOT_RUN_DIR}/soundtapd.healthy" ] || fails=0
+		if [ -e "${ROOT_RUN_DIR}/soundtapd.hung" ] || [ "${ran}" -lt 120 ]; then
 			fails=$((fails + 1))
 		fi
-		rm -f "$ROOT_RUN_DIR/soundtapd.healthy" "$ROOT_RUN_DIR/soundtapd.hung"
+		rm -f "${ROOT_RUN_DIR}/soundtapd.healthy" "${ROOT_RUN_DIR}/soundtapd.hung"
 		# The built-in copy goes in first: dropping the override first would take .base, and
 		# with it every retry, should this copy fail.
-		if [ "$fails" -ge 3 ] && [ -f "$SOUNDTAPD_OVERRIDE.base" ]; then
+		if [ "${fails}" -ge 3 ] && [ -f "${SOUNDTAPD_OVERRIDE}.base" ]; then
 			if soundtapd_base; then
 				drop_soundtapd_override "it failed 3 times in a row"
 				fails=0
 			else
-				rm -f "$APP_DIR/soundtapd.new"
+				rm -f "${APP_DIR}/soundtapd.new"
 				log "ERROR: restoring the firmware's soundtapd failed, retrying after the next failure"
 			fi
 		fi
 		# A soundtapd that keeps dying never reaches its boot confirm, but as long as it binds
 		# its listener first the boot watchdog is disarmed and no reboot comes, so U-Boot
 		# never counts this slot out. Stock reboots when its main applications die too.
+		# shellcheck disable=SC2250 # os/support/rootfs_check.py or its test matches this text as written
 		if [ "$fails" -ge 5 ] && [ -n "$CRASH_REBOOT" ]; then
 			case "$(devmem 0x44e3e068 2>/dev/null || echo 0)" in  # 0 once confirmed
 			0x????01B0|0x????01b0)
@@ -610,11 +620,12 @@ soundtapd_loop() {
 				sync
 				reboot -f
 				;;
+			*) ;;
 			esac
 		fi
-		sleep "$delay"
+		sleep "${delay}"
 		delay=$((delay * 2))
-		[ "$delay" -le 30 ] || delay=30
+		[ "${delay}" -le 30 ] || delay=30
 	done
 }
 # BlueZ owns /var/lib/bluetooth, a link the image carries to /mnt/nv/bluetooth: pairings
@@ -639,7 +650,7 @@ export SOUNDTAP_FIRMWARE
 # bus_writers lets the media daemons, which run as their own users in group audio
 # (ADR 0066), write the source bus. soundtapd reads it as a member of audio.
 bus_writers() {
-	chgrp audio "$1" && chmod 0660 "$1" || log "ERROR: $1 not writable for group audio; receivers stay silent"
+	{ chgrp audio "$1" && chmod 0660 "$1"; } || log "ERROR: $1 not writable for group audio; receivers stay silent"
 }
 
 start_snapserver() {
@@ -656,8 +667,9 @@ start_snapserver() {
 	# the way out, after the tap has already been written. Announcing 46875 here made
 	# every remote Snapclient render 2.3 % slow. The edited copy goes to /run: / is read-only.
 	snap_rate=${SOUNDTAP_BUS_RATE:-48000}
+	# shellcheck disable=SC2250 # os/support/rootfs_check.py or its test matches this text as written
 	sed "s|sampleformat=[0-9]*:16:2|sampleformat=$snap_rate:16:2|" /etc/snapserver.conf \
-		>/run/soundtap/snapserver.conf && log "snapserver stream announced at $snap_rate Hz"
+		>/run/soundtap/snapserver.conf && log "snapserver stream announced at ${snap_rate} Hz"
 	# Hold the tap open for the life of this script. snapserver reads it non-blocking and
 	# takes a missing writer -- before soundtapd opens it, or while its mixer restarts --
 	# as end of file, logging an error each time. This fd never writes.
@@ -678,9 +690,9 @@ PROC_MODEL=""
 CMD_MODEL=""
 CMD_VARIANT=""
 IDENTITY_INVALID=0
-if [ -r "$PROC_DIR/variant" ]; then
-	read -r PROC_VARIANT <"$PROC_DIR/variant" || PROC_VARIANT=""
-	case "$PROC_VARIANT" in
+if [ -r "${PROC_DIR}/variant" ]; then
+	read -r PROC_VARIANT <"${PROC_DIR}/variant" || PROC_VARIANT=""
+	case "${PROC_VARIANT}" in
 		spotty|lisa|mojo|taigan) PROC_MODEL=st20 ;;
 		rhino|spotty3|mojo3|burns|lisa2) PROC_MODEL=st10 ;;
 		binky) PROC_MODEL=wla ;;
@@ -689,27 +701,29 @@ if [ -r "$PROC_DIR/variant" ]; then
 		*) IDENTITY_INVALID=1 ;;
 	esac
 fi
-for field in $(cat "$PROC_DIR/cmdline" 2>/dev/null); do  # always readable; quiet anyway
-	case "$field" in
+# shellcheck disable=SC2013 # the kernel command line is one line of words
+for field in $(cat "${PROC_DIR}/cmdline" 2>/dev/null); do  # always readable; quiet anyway
+	case "${field}" in
 		variant=*)
 			value=${field#variant=}
-			case "$value" in spotty|lisa|mojo|taigan) value_model=st20;; rhino|spotty3|mojo3|burns|lisa2) value_model=st10;; binky) value_model=wla;; ginger|bardeen) value_model=st300;; *) IDENTITY_INVALID=1; continue;; esac
-			if [ -n "$CMD_MODEL" ] && [ "$CMD_MODEL" != "$value_model" ]; then IDENTITY_INVALID=1; fi
-			CMD_MODEL=$value_model
-			CMD_VARIANT=$value
+			case "${value}" in spotty|lisa|mojo|taigan) value_model=st20;; rhino|spotty3|mojo3|burns|lisa2) value_model=st10;; binky) value_model=wla;; ginger|bardeen) value_model=st300;; *) IDENTITY_INVALID=1; continue;; esac
+			if [ -n "${CMD_MODEL}" ] && [ "${CMD_MODEL}" != "${value_model}" ]; then IDENTITY_INVALID=1; fi
+			CMD_MODEL=${value_model}
+			CMD_VARIANT=${value}
 			;;
+		*) ;;
 	esac
 done
-if [ "$IDENTITY_INVALID" = 1 ] \
-	|| { [ -n "$PROC_MODEL" ] && [ -n "$CMD_MODEL" ] && [ "$PROC_MODEL" != "$CMD_MODEL" ]; }; then
+if [ "${IDENTITY_INVALID}" = 1 ] \
+	|| { [ -n "${PROC_MODEL}" ] && [ -n "${CMD_MODEL}" ] && [ "${PROC_MODEL}" != "${CMD_MODEL}" ]; }; then
 	MODEL=unknown
-	log "ERROR: conflicting immutable hardware identity: proc=$PROC_MODEL cmdline=$CMD_MODEL"
-elif [ -n "$PROC_MODEL$CMD_MODEL" ]; then
-	DETECTED_MODEL=${PROC_MODEL:-$CMD_MODEL}
-	if [ -f "$NV_DIR/model" ] && [ "$(cat "$NV_DIR/model" 2>/dev/null)" != "$DETECTED_MODEL" ]; then  # unreadable reads as a conflict, logged below
-		log "WARNING: ignored persisted model conflicting with hardware: $(cat "$NV_DIR/model" 2>/dev/null)"  # same file as the line above
+	log "ERROR: conflicting immutable hardware identity: proc=${PROC_MODEL} cmdline=${CMD_MODEL}"
+elif [ -n "${PROC_MODEL}${CMD_MODEL}" ]; then
+	DETECTED_MODEL=${PROC_MODEL:-${CMD_MODEL}}
+	if [ -f "${NV_DIR}/model" ] && [ "$(cat "${NV_DIR}/model" 2>/dev/null || true)" != "${DETECTED_MODEL}" ]; then  # unreadable reads as a conflict, logged below
+		log "WARNING: ignored persisted model conflicting with hardware: $(cat "${NV_DIR}/model" 2>/dev/null || true)"  # same file as the line above
 	fi
-	MODEL=$DETECTED_MODEL
+	MODEL=${DETECTED_MODEL}
 else
 	MODEL=unknown
 	log "ERROR: immutable hardware identity unavailable"
@@ -718,10 +732,10 @@ export MODEL
 # The SM2 boards with no codec: the Wireless Link's line output and the ST300's S/PDIF
 # into its soundbar both come up as card 0 from a built-in driver and share one path.
 NOCODEC=0
-case "$MODEL" in wla|st300) NOCODEC=1 ;; esac
+case "${MODEL}" in wla|st300) NOCODEC=1 ;; *) ;; esac
 # The SoundTouch adapter on the SM2 sends I2S to a converter: stock disables its AIC3256.
 [ "${CMD_VARIANT:-${PROC_VARIANT:-}}" = lisa2 ] && NOCODEC=1
-if [ "$MODEL" = unknown ]; then
+if [ "${MODEL}" = unknown ]; then
 	log "ERROR: refusing hardware and network bring-up without one trusted model"
 	exit 1
 fi
@@ -734,37 +748,37 @@ CODEC_DIR=/mnt/nv/soundtap/codec
 }
 codec_script_from_other_slot() {
 	name=$1
-	[ -s "$CODEC_DIR/$name" ] && return 0
+	[ -s "${CODEC_DIR}/${name}" ] && return 0
 	running=$(sed -n 's/.*ubi\.mtd=\([89]\),.*/\1/p' /proc/cmdline)
-	[ -n "$running" ] || { log "ERROR: codec script $name: running slot unknown"; return 1; }
+	[ -n "${running}" ] || { log "ERROR: codec script ${name}: running slot unknown"; return 1; }
 	other=$((17 - running))
 	mnt=/run/soundtap/other-slot
 	in_other=
-	mkdir -p "$mnt" "$CODEC_DIR"
+	mkdir -p "${mnt}" "${CODEC_DIR}"
 	# -O 2048: ubiformat -s 2048 put the VID headers there; without it the attach fails.
-	if ubiattach -m "$other" -d 7 -O 2048 >>"$LOG" 2>&1; then
-		if mount -t ubifs -o ro ubi7:rootfs "$mnt" >>"$LOG" 2>&1; then
-			[ -s "$mnt/lib/firmware/$name" ] && in_other=1
-			rm -f "$CODEC_DIR/$name.tmp"  # the directory is soundtapd's: no link followed
-			cp "$mnt/lib/firmware/$name" "$CODEC_DIR/$name.tmp" 2>>"$LOG" \
-				&& grep -q '^w ' "$CODEC_DIR/$name.tmp" && sync \
-				&& mv "$CODEC_DIR/$name.tmp" "$CODEC_DIR/$name"
-			umount "$mnt"
+	if ubiattach -m "${other}" -d 7 -O 2048 >>"${LOG}" 2>&1; then
+		if mount -t ubifs -o ro ubi7:rootfs "${mnt}" >>"${LOG}" 2>&1; then
+			[ -s "${mnt}/lib/firmware/${name}" ] && in_other=1
+			rm -f "${CODEC_DIR}/${name}.tmp"  # the directory is soundtapd's: no link followed
+			cp "${mnt}/lib/firmware/${name}" "${CODEC_DIR}/${name}.tmp" 2>>"${LOG}" \
+				&& grep -q '^w ' "${CODEC_DIR}/${name}.tmp" && sync \
+				&& mv "${CODEC_DIR}/${name}.tmp" "${CODEC_DIR}/${name}"
+			umount "${mnt}"
 		fi
-		ubidetach -d 7 >>"$LOG" 2>&1
+		ubidetach -d 7 >>"${LOG}" 2>&1
 	fi
-	rm -f "$CODEC_DIR/$name.tmp"
+	rm -f "${CODEC_DIR}/${name}.tmp"
 	# The other slot holds the only lasting copy when it did not reach persistent storage:
 	# soundtapd then refuses an update that would overwrite that slot and lose the script.
-	if [ -n "$in_other" ] && { [ ! -e /run/soundtap/persistent-storage ] || [ ! -s "$CODEC_DIR/$name" ]; }; then
-		echo "mtd$other" >/run/soundtap/codec-only-in-other-slot
-		log "ERROR: codec script $name is only in mtd$other; updates are refused until it is kept"
+	if [ -n "${in_other}" ] && { [ ! -e /run/soundtap/persistent-storage ] || [ ! -s "${CODEC_DIR}/${name}" ]; }; then
+		echo "mtd${other}" >/run/soundtap/codec-only-in-other-slot
+		log "ERROR: codec script ${name} is only in mtd${other}; updates are refused until it is kept"
 	fi
-	if [ -s "$CODEC_DIR/$name" ]; then
-		log "codec script $name copied from mtd$other"
+	if [ -s "${CODEC_DIR}/${name}" ]; then
+		log "codec script ${name} copied from mtd${other}"
 		return 0
 	fi
-	log "ERROR: no codec script $name in $CODEC_DIR or mtd$other; audio stays muted"
+	log "ERROR: no codec script ${name} in ${CODEC_DIR} or mtd${other}; audio stays muted"
 	return 1
 }
 # The SoundTouch 30 Series I and the Portable run the ST20's board with their own codec scripts.
@@ -778,9 +792,10 @@ ST10_CODEC=rhino_sm2_normal.cfg
 grep -qw 'variant=spotty3' /proc/cmdline 2>/dev/null && ST10_CODEC=spotty_sm2_normal.cfg  # always readable; quiet anyway
 grep -qw 'variant=mojo3' /proc/cmdline 2>/dev/null && ST10_CODEC=mojo_sm2_normal.cfg  # always readable; quiet anyway
 grep -qw 'variant=burns' /proc/cmdline 2>/dev/null && ST10_CODEC=burns_sm2_normal.cfg  # always readable; quiet anyway
-case "$MODEL" in
-st10) [ "$NOCODEC" = 1 ] || codec_script_from_other_slot "$ST10_CODEC" || true ;;
-st20) codec_script_from_other_slot "$ST20_CODEC" || true ;;
+case "${MODEL}" in
+st10) [ "${NOCODEC}" = 1 ] || codec_script_from_other_slot "${ST10_CODEC}" || true ;;
+st20) codec_script_from_other_slot "${ST20_CODEC}" || true ;;
+*) ;;
 esac
 }
 # Light the Wireless Link's status lamp as soon as we know which box this is. The LED
@@ -789,7 +804,7 @@ esac
 # reads as a speaker that did not start. Full brightness, because this is the "on"
 # state; soundtapd replaces it with the connecting blink within a second or two.
 light_wla_lamp() {
-if [ "$MODEL" = wla ] && [ -w /sys/class/leds/wla:white:wifi/brightness ]; then
+if [ "${MODEL}" = wla ] && [ -w /sys/class/leds/wla:white:wifi/brightness ]; then
 	echo 100 >/sys/class/leds/wla:white:wifi/brightness 2>/dev/null || true  # LED absent on early WLA trees
 fi
 }
@@ -798,28 +813,31 @@ fi
 soc_mac() {
 	hi=$(devmem 0x44E10634 32 2>/dev/null) || return 0  # no devmem: the wlan0/eth0 fallback below
 	lo=$(devmem 0x44E10630 32 2>/dev/null) || return 0  # same
-	[ -n "$hi" ] && [ -n "$lo" ] && [ $((hi | (lo & 0xffff))) -ne 0 ] || return 0
+	[ -n "${hi}" ] && [ -n "${lo}" ] && [ $((hi | (lo & 0xffff))) -ne 0 ] || return 0
 	printf '%02X%02X%02X%02X%02X%02X' $((hi & 255)) $((hi >> 8 & 255)) $((hi >> 16 & 255)) \
 		$((hi >> 24 & 255)) $((lo & 255)) $((lo >> 8 & 255))
 }
 device_identity() {
 BCO_OWN=0
-if [ "${MODEL:-st10}" = st20 ] && [ "$MAINLINE" = 1 ]; then
+if [ "${MODEL:-st10}" = st20 ] && [ "${MAINLINE}" = 1 ]; then
 	st20_bco_link
 fi
-if [ "${MODEL:-st10}" = st20 ] && [ "$BCO_OWN" = 0 ]; then
+if [ "${MODEL:-st10}" = st20 ] && [ "${BCO_OWN}" = 0 ]; then
+	# shellcheck disable=SC2002 # cat keeps a missing node quiet and the status 0
 	identity_mac=$(cat /sys/class/net/eth0/address 2>/dev/null | tr -d ':')  # no eth0 on this model: fall back below
 else
 	# Stock's deviceID on these models is the AM335x's own MAC (control module mac_id0),
 	# not the Wi-Fi chip's, as read on an ST10 and a WLA.
 	identity_mac=$(soc_mac)
-	[ -n "$identity_mac" ] || identity_mac=$(cat /sys/class/net/wlan0/address 2>/dev/null | tr -d ':')  # no devmem: fall back to wlan0
-	[ -n "$identity_mac" ] || identity_mac=$(cat /sys/class/net/eth0/address 2>/dev/null | tr -d ':')  # no wlan0 yet: fall back to eth0
+	# shellcheck disable=SC2002 # cat keeps a missing node quiet and the status 0
+	[ -n "${identity_mac}" ] || identity_mac=$(cat /sys/class/net/wlan0/address 2>/dev/null | tr -d ':')  # no devmem: fall back to wlan0
+	# shellcheck disable=SC2002 # cat keeps a missing node quiet and the status 0
+	[ -n "${identity_mac}" ] || identity_mac=$(cat /sys/class/net/eth0/address 2>/dev/null | tr -d ':')  # no wlan0 yet: fall back to eth0
 fi
-if [ -n "$identity_mac" ]; then
+if [ -n "${identity_mac}" ]; then
 	identity_suffix=${identity_mac#??????}
-	SOUNDTAP_DEVICE_ID=$(printf '%s' "$identity_mac" | tr '[:lower:]' '[:upper:]')
-	SOUNDTAP_DEFAULT_NAME="SoundTap-$(printf '%s' "${MODEL:-st10}" | tr '[:lower:]' '[:upper:]')-$identity_suffix"
+	SOUNDTAP_DEVICE_ID=$(printf '%s' "${identity_mac}" | tr '[:lower:]' '[:upper:]')
+	SOUNDTAP_DEFAULT_NAME="SoundTap-$(printf '%s' "${MODEL:-st10}" | tr '[:lower:]' '[:upper:]')-${identity_suffix}"
 	export SOUNDTAP_DEVICE_ID SOUNDTAP_DEFAULT_NAME
 fi
 }
@@ -833,13 +851,15 @@ fi
 # the fallback, for a board with no readable serial and for a binary that will not run.
 snapclient_id() {
 	id=$(timeout 15 /opt/soundtap/soundtapd -print-identity 2>/dev/null | head -n1 | tr -cd 'A-Za-z0-9-')  # older soundtapd lacks the flag: MAC below
-	if [ -z "$id" ]; then
+	if [ -z "${id}" ]; then
+		# shellcheck disable=SC2002 # cat keeps a missing node quiet and the status 0
 		id=$(cat /sys/class/net/wlan0/address 2>/dev/null | tr -d ':')  # no wlan0 yet: fall back to eth0
-		[ -n "$id" ] || id=$(cat /sys/class/net/eth0/address 2>/dev/null | tr -d ':')  # no eth0 either: empty, handled below
-		[ -n "$id" ] || id=local
+		# shellcheck disable=SC2002 # cat keeps a missing node quiet and the status 0
+		[ -n "${id}" ] || id=$(cat /sys/class/net/eth0/address 2>/dev/null | tr -d ':')  # no eth0 either: empty, handled below
+		[ -n "${id}" ] || id=local
 		log "identity unavailable; snapcast host id falls back to the MAC"
 	fi
-	printf 'soundtap-%s' "$id"
+	printf 'soundtap-%s' "${id}"
 }
 
 select_wifi_mode() {
@@ -849,7 +869,7 @@ if [ "${MODEL:-st10}" = "st20" ]; then
 	# and that recovery path matters MOST once the own app runs (BCO_OWN=1): a dead own app
 	# is reached only through this UART (bootloader L1->L2 TFTP, flash.go).
 	SOUNDTAP_BCO_TTY=/dev/ttyS0
-	if [ "$BCO_OWN" = 0 ]; then
+	if [ "${BCO_OWN}" = 0 ]; then
 		SOUNDTAP_WIFI_MODE=bco
 		SOUNDTAP_AIRPLAY_MODE=bco-ap1
 	else
@@ -868,28 +888,28 @@ export SOUNDTAP_WIFI_MODE SOUNDTAP_AIRPLAY_MODE SOUNDTAP_BCO_TTY
 st20_codec() {
 	if [ -c /dev/snd/pcmC0D0p ]; then
 		for chip in /sys/class/gpio/gpiochip*; do
-			case "$(readlink -f "$chip")" in *4804c000*) gpio1_base=${chip##*gpiochip};; esac
+			case "$(readlink -f "${chip}")" in *4804c000*) gpio1_base=${chip##*gpiochip};; *) ;; esac
 		done
 		if [ -n "${gpio1_base:-}" ]; then
 			mute_gpio=$((gpio1_base + 17))
 			ampstby_gpio=$((gpio1_base + 23))
-			echo "$mute_gpio" >/sys/class/gpio/export 2>/dev/null || true  # already exported (EBUSY)
-			echo "$ampstby_gpio" >/sys/class/gpio/export 2>/dev/null || true  # already exported (EBUSY)
-			echo low >"/sys/class/gpio/gpio$mute_gpio/direction"
-			echo low >"/sys/class/gpio/gpio$ampstby_gpio/direction"
-			MUTE_GPIO=/sys/class/gpio/gpio$mute_gpio/value
-			log "ST20 amplifier muted for codec setup (gpio$ampstby_gpio=0 gpio$mute_gpio=0)"
+			echo "${mute_gpio}" >/sys/class/gpio/export 2>/dev/null || true  # already exported (EBUSY)
+			echo "${ampstby_gpio}" >/sys/class/gpio/export 2>/dev/null || true  # already exported (EBUSY)
+			echo low >"/sys/class/gpio/gpio${mute_gpio}/direction"
+			echo low >"/sys/class/gpio/gpio${ampstby_gpio}/direction"
+			MUTE_GPIO=/sys/class/gpio/gpio${mute_gpio}/value
+			log "ST20 amplifier muted for codec setup (gpio${ampstby_gpio}=0 gpio${mute_gpio}=0)"
 			# gpio1_24, the amplifier's active-low fault line (flat 56 on stock).
 			AMP_FAULT_GPIO=$((gpio1_base + 24))
 			export AMP_FAULT_GPIO
 		fi
 		if [ -x /usr/sbin/aic3256-bitbang ] && [ ! -e /dev/spidev0.1 ] && \
-			/usr/sbin/aic3256-bitbang "$CODEC_DIR/$ST20_CODEC" >>"$LOG" 2>&1; then
+			/usr/sbin/aic3256-bitbang "${CODEC_DIR}/${ST20_CODEC}" >>"${LOG}" 2>&1; then
 			AIC_GPIO_SPI=1
 			log "ST20 AIC3256 initialized over GPIO SPI"
-		elif /usr/sbin/aic3256-loader --probe-only >>"$LOG" 2>&1; then
+		elif /usr/sbin/aic3256-loader --probe-only >>"${LOG}" 2>&1; then
 			log "ST20 inherited AIC3256 configuration verified"
-		elif /usr/sbin/aic3256-loader >>"$LOG" 2>&1; then
+		elif /usr/sbin/aic3256-loader >>"${LOG}" 2>&1; then
 			log "ST20 AIC3256 initialized"
 		else
 			AUDIO_NOINIT=1
@@ -897,8 +917,8 @@ st20_codec() {
 		fi
 		export MUTE_GPIO AUDIO_NOINIT AIC_GPIO_SPI
 		if [ "${AUDIO_NOINIT:-0}" != 1 ] && [ -n "${ampstby_gpio:-}" ]; then
-			echo high >"/sys/class/gpio/gpio$ampstby_gpio/direction"
-			log "ST20 amplifier active (gpio$ampstby_gpio=1), still muted"
+			echo high >"/sys/class/gpio/gpio${ampstby_gpio}/direction"
+			log "ST20 amplifier active (gpio${ampstby_gpio}=1), still muted"
 		fi
 	else
 		AUDIO_NOINIT=1
@@ -907,7 +927,8 @@ st20_codec() {
 	fi
 }
 select_audio_output() {
-if [ "$MAINLINE" = 1 ] && [ "$MODEL" = st20 ]; then
+# shellcheck disable=SC2250 # os/tests/hardware/test_wla_audio.py matches this text as written
+if [ "${MAINLINE}" = 1 ] && [ "${MODEL}" = st20 ]; then
 	SNAPCLIENT_SOUNDCARD=plughw:0,0
 	SNAPCLIENT_SAMPLEFORMAT='46875:16:*'
 	AUDIO_EXTERNAL_INIT=1
@@ -918,7 +939,7 @@ elif [ "$MAINLINE" = 1 ] && [ "$NOCODEC" = 1 ]; then
 	# session, and the only trace is one warning line that reads the same as a board with no
 	# driver at all. Ten seconds is paid once, and only on a board that really has no card.
 	i=0
-	while [ "$i" -lt 10 ] && [ ! -c /dev/snd/pcmC0D0p ]; do
+	while [ "${i}" -lt 10 ] && [ ! -c /dev/snd/pcmC0D0p ]; do
 		i=$((i + 1))
 		sleep 1
 	done
@@ -933,7 +954,7 @@ elif [ "$MAINLINE" = 1 ] && [ "$NOCODEC" = 1 ]; then
 		AUDIO_EXTERNAL_INIT=1
 		WLA_AUDIO_READY=1
 		export AUDIO_MIX AUDIO_EXTERNAL_INIT WLA_AUDIO_READY
-		log "mainline $MODEL: PCM ready on card0"
+		log "mainline ${MODEL}: PCM ready on card0"
 		# No capture stream is held open: the analog stage does not need the McASP receiver.
 		# mute_out alone (gpio552: low silent, high sound) decides, and soundtapd drives it
 		# through MUTE_GPIO. See docs/hardware/wla/the-analog-jack-stays-silent.md.
@@ -949,14 +970,14 @@ elif [ "$MAINLINE" = 1 ] && [ "$NOCODEC" = 1 ]; then
 		SNAPCLIENT_SOUNDCARD=plughw:0,0
 		SNAPCLIENT_SAMPLEFORMAT='48000:16:*'
 		export AUDIO_MIX AUDIO_NOINIT WLA_AUDIO_READY
-		log "WARNING: mainline $MODEL PCM unavailable; audio services disabled"
+		log "WARNING: mainline ${MODEL} PCM unavailable; audio services disabled"
 	fi
 elif [ "$MAINLINE" = 1 ]; then
 	SNAPCLIENT_SOUNDCARD=plughw:0,0
 	SNAPCLIENT_SAMPLEFORMAT='46875:16:*'
 	AUDIO_EXTERNAL_INIT=1
 	for chip in /sys/class/gpio/gpiochip*; do
-		case "$(readlink -f "$chip")" in *481ac000*) gpio2_base=${chip##*gpiochip};; esac
+		case "$(readlink -f "${chip}")" in *481ac000*) gpio2_base=${chip##*gpiochip};; *) ;; esac
 	done
 	if [ -n "${gpio2_base:-}" ]; then
 		MUTE_GPIO=/sys/class/gpio/gpio$((gpio2_base + 8))/value
@@ -966,22 +987,24 @@ elif [ "$MAINLINE" = 1 ]; then
 	# before anything opens the card; AUDIO_EXTERNAL_INIT tells soundtapd that is not its job.
 	# The load happens once, below, with the amplifier muted first.
 	export AUDIO_EXTERNAL_INIT
-	log "mainline local audio dev=$SNAPCLIENT_SOUNDCARD mute=${MUTE_GPIO:-unavailable}"
+	log "mainline local audio dev=${SNAPCLIENT_SOUNDCARD} mute=${MUTE_GPIO:-unavailable}"
 else
 	SNAPCLIENT_SOUNDCARD=shelby
 	SNAPCLIENT_SAMPLEFORMAT='48000:16:*'
 fi
 mkdir -p /run/soundtap
+# shellcheck disable=SC2250 # os/tests/hardware/test_wla_audio.py matches this text as written
 if [ "$AUDIO_MIX" = "1" ] && [ ! -p /run/soundtap/source.pcm ]; then
-	mkfifo /run/soundtap/source.pcm 2>>"$LOG" || true
+	mkfifo /run/soundtap/source.pcm 2>>"${LOG}" || true
 fi
-[ "$AUDIO_MIX" = "1" ] && bus_writers /run/soundtap/source.pcm
+[ "${AUDIO_MIX}" = "1" ] && bus_writers /run/soundtap/source.pcm
 if [ ! -p /run/soundtap/snapcast.pcm ]; then
 	rm -f /run/soundtap/snapcast.pcm
-	mkfifo /run/soundtap/snapcast.pcm 2>>"$LOG" || true
+	mkfifo /run/soundtap/snapcast.pcm 2>>"${LOG}" || true
 fi
 # ALSA's hardware clock paces local output. Snapcast is only a best-effort tap: a full
 # broadcast pipe drops a block instead of blocking the speaker and causing an xrun.
+# shellcheck disable=SC2250 # os/support/rootfs_check.py or its test matches this text as written
 AUDIO_DEV="alsa:$SNAPCLIENT_SOUNDCARD"
 AUDIO_TAP=/run/soundtap/snapcast.pcm
 unset AUDIO_PHYSICAL_RATE
@@ -990,16 +1013,17 @@ export AUDIO_DEV AUDIO_TAP
 
 load_stock_modules() {
 # --- Bose sound/board modules for stock-kernel boots ----------------------------
+# shellcheck disable=SC2012 # plain kernel release and firmware names; ls sorts them
 KREL=$(ls /lib/modules 2>/dev/null | head -1)
-if [ "$MAINLINE" = 0 ] && [ -n "$KREL" ]; then
-	[ -f "/lib/modules/$KREL/modules.dep" ] || depmod 2>/dev/null || true  # no depmod in the image: modules load by path
-	if [ "$MODEL" = wla ]; then
+if [ "${MAINLINE}" = 0 ] && [ -n "${KREL}" ]; then
+	[ -f "/lib/modules/${KREL}/modules.dep" ] || depmod 2>/dev/null || true  # no depmod in the image: modules load by path
+	if [ "${MODEL}" = wla ]; then
 		stock_modules="snd-binky wakeup-source"
 	else
 		stock_modules="snd-shelby snd-shelby2 snd-aic3256 shelby-led shelby-keypad ir wakeup-source"
 	fi
-	for m in $stock_modules; do
-		modprobe "$m" 2>>"$LOG" && log "loaded $m" || true
+	for m in ${stock_modules}; do
+		modprobe "${m}" 2>>"${LOG}" && log "loaded ${m}" || true
 	done
 fi
 bootmark "stock modules loaded"
@@ -1012,28 +1036,28 @@ bootmark "stock modules loaded"
 #    variant is unknown or its blob isn't shipped. Wait up to 5 s; soundtapd re-checks on play.
 init_audio_hardware() {
 AIC_CFG=/sys/class/sound/snd_aic3256
-if [ "$MAINLINE" = 1 ] && [ "$NOCODEC" = 1 ]; then
-	log "mainline $MODEL: no AIC3256 codec"
-elif [ "$MAINLINE" = 1 ] && [ "$MODEL" = st20 ]; then
+if [ "${MAINLINE}" = 1 ] && [ "${NOCODEC}" = 1 ]; then
+	log "mainline ${MODEL}: no AIC3256 codec"
+elif [ "${MAINLINE}" = 1 ] && [ "${MODEL}" = st20 ]; then
 	st20_codec
-elif [ "$MAINLINE" = 1 ]; then
-	[ -n "${MUTE_GPIO:-}" ] && printf '%s' 0 >"$MUTE_GPIO" 2>/dev/null || true  # no mute line on this model
+elif [ "${MAINLINE}" = 1 ]; then
+	[ -n "${MUTE_GPIO:-}" ] && printf '%s' 0 >"${MUTE_GPIO}" 2>/dev/null || true  # no mute line on this model
 	codec_ok=0
 	if [ -z "${MUTE_GPIO:-}" ]; then
 		:
-	elif [ "${AIC_GPIO_SPI:-0}" = 1 ] || /usr/sbin/aic3256-loader >>"$LOG" 2>&1; then
+	elif [ "${AIC_GPIO_SPI:-0}" = 1 ] || /usr/sbin/aic3256-loader >>"${LOG}" 2>&1; then
 		codec_ok=1
 	# The ST10's codec answers 0xff on every register, in all four SPI modes and either reset
 	# polarity -- a part whose SDOUT is not wired to the SoC. Writes still land, so the blind
 	# pass is the fallback rather than silence (measured). Remember it: every
 	# readback then costs 200 polls ending in ETIMEDOUT, and soundtapd applies the gain more
 	# than once.
-	elif /usr/sbin/aic3256-loader --blind >>"$LOG" 2>&1; then
+	elif /usr/sbin/aic3256-loader --blind >>"${LOG}" 2>&1; then
 		codec_ok=1
 		mkdir -p /run/soundtap && : >/run/soundtap/codec-blind
 		log "mainline: AIC3256 configured blind (it reads back 0xff)"
 	fi
-	if [ "$codec_ok" = 1 ]; then
+	if [ "${codec_ok}" = 1 ]; then
 		# The DSP gain pass is a separate, non-fatal step. Chaining it into the same
 		# && meant a failure there set AUDIO_NOINIT, which makes setMute a no-op — so
 		# the amp would never unmute and the speaker would be silent, over what is
@@ -1043,15 +1067,16 @@ elif [ "$MAINLINE" = 1 ]; then
 		# This prevents a codec buffer flip from interrupting live PCM and cracking.
 		dd if=/dev/zero bs=384000 count=5 2>/dev/null \
 			| aplay -q -D hw:0,0 -t raw -f S32_LE -r 48000 -c 2 \
-				--buffer-time=1000000 --period-time=80000 >>"$LOG" 2>&1 &
+				--buffer-time=1000000 --period-time=80000 >>"${LOG}" 2>&1 &
 		clock_pid=$!
 		sleep 1
 		if [ "${AIC_GPIO_SPI:-0}" = 1 ]; then
-			/usr/sbin/aic3256-bitbang --volume >>"$LOG" 2>&1
+			/usr/sbin/aic3256-bitbang --volume >>"${LOG}" 2>&1
 		else
-			/usr/sbin/aic3256-loader --volume >>"$LOG" 2>&1 \
-				|| /usr/sbin/aic3256-loader --volume-blind >>"$LOG" 2>&1
+			/usr/sbin/aic3256-loader --volume >>"${LOG}" 2>&1 \
+				|| /usr/sbin/aic3256-loader --volume-blind >>"${LOG}" 2>&1
 		fi
+		# shellcheck disable=SC2181 # the status of whichever loader ran in the if above
 		if [ $? -eq 0 ]; then
 			mkdir -p /run/soundtap
 			: >/run/soundtap/codec-gain-ready
@@ -1059,36 +1084,38 @@ elif [ "$MAINLINE" = 1 ]; then
 		else
 			log "mainline codec at default gain; soundtapd applies it once audio flows"
 		fi
-		wait "$clock_pid" 2>/dev/null || true  # clock job may already be reaped
+		wait "${clock_pid}" 2>/dev/null || true  # clock job may already be reaped
 	else
 		AUDIO_NOINIT=1
 		export AUDIO_NOINIT
 		log "ERROR: mainline codec init unavailable; unmute disabled"
 	fi
-elif [ -d "$AIC_CFG" ]; then
+elif [ -d "${AIC_CFG}" ]; then
 	VARIANT=$(sed -n 's/.*[ ]variant=\([a-z0-9][a-z0-9]*\).*/\1/p' /proc/cmdline)
 	AIC=""
-	if [ "$MODEL" = st20 ]; then
-		AIC=/lib/firmware/$ST20_CODEC
-	elif [ -n "$VARIANT" ]; then
-		AIC=$(ls /lib/firmware/${VARIANT}_*_normal.cfg 2>/dev/null | head -1)  # no codec config: logged below
+	if [ "${MODEL}" = st20 ]; then
+		AIC=/lib/firmware/${ST20_CODEC}
+	elif [ -n "${VARIANT}" ]; then
+		# shellcheck disable=SC2012 # plain kernel release and firmware names; ls sorts them
+		AIC=$(ls /lib/firmware/"${VARIANT}"_*_normal.cfg 2>/dev/null | head -1)  # no codec config: logged below
 	fi
-	[ -n "$AIC" ] || AIC=/lib/firmware/rhino_sm2_normal.cfg
-	log "aic3256 variant=${VARIANT:-?} config=$(basename "$AIC")"
-	printf '%s' "$(basename "$AIC")" > "$AIC_CFG/configuredFile" 2>>"$LOG" || true
+	[ -n "${AIC}" ] || AIC=/lib/firmware/rhino_sm2_normal.cfg
+	log "aic3256 variant=${VARIANT:-?} config=$(basename "${AIC}")"
+	printf '%s' "$(basename "${AIC}")" > "${AIC_CFG}/configuredFile" 2>>"${LOG}" || true
 	for i in $(seq 1 10); do
-		[ "$(cat $AIC_CFG/configured 2>/dev/null)" = "1" ] && break  # node appears late: polled
+		[ "$(cat "${AIC_CFG}/configured" 2>/dev/null || true)" = "1" ] && break  # node appears late: polled
 		sleep 0.5
 	done
-	log "aic3256 configured=$(cat $AIC_CFG/configured 2>/dev/null)"  # node may be missing: logged as empty
+	log "aic3256 configured=$(cat "${AIC_CFG}/configured" 2>/dev/null || true)"  # node may be missing: logged as empty
 fi
 
 # 2. snd_shelby2: set source mode to "wifi" (enables McASP DMA clock for streaming).
-[ "$MAINLINE" = 1 ] || [ "$NOCODEC" = 1 ] || printf '%s' wifi > /sys/class/sound/snd_shelby/source 2>>"$LOG" || true
+[ "${MAINLINE}" = 1 ] || [ "${NOCODEC}" = 1 ] || printf '%s' wifi > /sys/class/sound/snd_shelby/source 2>>"${LOG}" || true
 
 # 3. Amp GPIOs.
 #    gpio72 = mute line (deassert_muteoutn): start muted (0), player sets 1 to unmute.
 #    gpio75 = amp power: keep high (amp always active on ST10 — confirmed by probe).
+# shellcheck disable=SC2250 # os/support/buildroot_wla_nand_check.py and the WLA tests match this text as written
 if [ "$MAINLINE" = 1 ] && [ "$MODEL" = wla ]; then
 	# Not "no codec" after all. The only connector on this box is a 3.5 mm pair, aux
 	# in and aux out, and behind it is a DAC/ADC with a reset line -- Bose's gpiodev
@@ -1108,7 +1135,7 @@ if [ "$MAINLINE" = 1 ] && [ "$MODEL" = wla ]; then
 	gpio_num() {
 		bank=$(($1 / 32))
 		line=$(($1 % 32))
-		case $bank in
+		case ${bank} in
 			0) addr=44e07000 ;;
 			1) addr=4804c000 ;;
 			2) addr=481ac000 ;;
@@ -1116,9 +1143,9 @@ if [ "$MAINLINE" = 1 ] && [ "$MODEL" = wla ]; then
 			*) return 1 ;;
 		esac
 		for chip in /sys/class/gpio/gpiochip*; do
-			dev=$(readlink -f "$chip/device" 2>/dev/null) || continue  # chip without a device link: skip
-			if [ "${dev##*/}" = "$addr.gpio" ]; then
-				echo $(($(cat "$chip/base") + line))
+			dev=$(readlink -f "${chip}/device" 2>/dev/null) || continue  # chip without a device link: skip
+			if [ "${dev##*/}" = "${addr}.gpio" ]; then
+				echo $(($(cat "${chip}/base" || true) + line))
 				return 0
 			fi
 		done
@@ -1126,36 +1153,36 @@ if [ "$MAINLINE" = 1 ] && [ "$MODEL" = wla ]; then
 	}
 	gpio_set() { # gpio_set <bose-number> <value> <what>
 		n=$(gpio_num "$1") || { log "amp GPIO $3: no chip for Bose gpio$1"; return 1; }
-		[ -d /sys/class/gpio/gpio$n ] || echo "$n" > /sys/class/gpio/export 2>/dev/null  # already exported (EBUSY)
-		echo out > /sys/class/gpio/gpio$n/direction 2>/dev/null  # write failure shows on the value write below
-		if ! printf '%s' "$2" > /sys/class/gpio/gpio$n/value 2>/dev/null; then  # logged in the branch below
-			log "amp GPIO $3: cannot write gpio$n (Bose gpio$1)"
+		[ -d "/sys/class/gpio/gpio${n}" ] || echo "${n}" > /sys/class/gpio/export 2>/dev/null  # already exported (EBUSY)
+		echo out > "/sys/class/gpio/gpio${n}/direction" 2>/dev/null  # write failure shows on the value write below
+		if ! printf '%s' "$2" > "/sys/class/gpio/gpio${n}/value" 2>/dev/null; then  # logged in the branch below
+			log "amp GPIO $3: cannot write gpio${n} (Bose gpio$1)"
 			return 1
 		fi
-		log "amp GPIO $3: Bose gpio$1 = linux gpio$n := $2"
+		log "amp GPIO $3: Bose gpio$1 = linux gpio${n} := $2"
 		return 0
 	}
 	gpio_set 74 0 dac_adc_reset   # DAC/ADC out of reset
 	gpio_set 86 0 dsp_reset       # DSP out of reset
 	gpio_set 75 1 ampstby         # analog stage active
 	gpio_set 72 0 mute_out        # muted; soundtapd unmutes
-	mute_n=$(gpio_num 72) && [ -e /sys/class/gpio/gpio$mute_n/value ] &&
+	mute_n=$(gpio_num 72) && [ -e "/sys/class/gpio/gpio${mute_n}/value" ] &&
 		MUTE_GPIO=/sys/class/gpio/gpio$mute_n/value
 	[ -n "${MUTE_GPIO:-}" ] && export MUTE_GPIO
 	log "amp GPIOs: wla mute=${MUTE_GPIO:-unavailable}"
-elif [ "$MODEL" = st300 ]; then
+elif [ "${MODEL}" = st300 ]; then
 	# Held by gpio-hogs in the device tree at the values stock holds on a running ST300.
 	# The amplifiers are the soundbar's, not this module's.
 	log "amp GPIOs: st300 held by the device tree"
 elif [ "$MAINLINE" = 1 ]; then
-	[ -n "${MUTE_GPIO:-}" ] && printf '%s' 0 >"$MUTE_GPIO" 2>/dev/null || true  # no mute line on this model
+	[ -n "${MUTE_GPIO:-}" ] && printf '%s' 0 >"${MUTE_GPIO}" 2>/dev/null || true  # no mute line on this model
 	log "amp GPIOs: mainline muted"
 elif [ "${MODEL:-st10}" = "st20" ]; then
 	# ST20 probe: mute_out=gpio49, amp enable=gpio55. Keep both low until soundtapd
 	# starts the measured three-second wake sequence.
 	for g in 49 55; do
-		echo "$g" > /sys/class/gpio/export 2>/dev/null || true  # already exported (EBUSY)
-		echo low > /sys/class/gpio/gpio${g}/direction 2>/dev/null || true  # already exported line keeps working
+		echo "${g}" > /sys/class/gpio/export 2>/dev/null || true  # already exported (EBUSY)
+		echo low > "/sys/class/gpio/gpio${g}/direction" 2>/dev/null || true  # already exported line keeps working
 	done
 	printf '%s' 0 > /sys/class/gpio/gpio49/value 2>/dev/null || true  # logged by the line below
 	log "amp GPIOs: st20 gpio49=0 (muted), gpio55=0 (standby)"
@@ -1163,8 +1190,8 @@ elif [ "${MODEL:-st10}" = "wla" ]; then
 	log "amp GPIOs: wla line-level output; no codec, mute, or amp GPIO control"
 else
 	for g in 72 75; do
-		echo "$g" > /sys/class/gpio/export 2>/dev/null || true  # already exported (EBUSY)
-		echo out > /sys/class/gpio/gpio${g}/direction 2>/dev/null || true  # already exported line keeps working
+		echo "${g}" > /sys/class/gpio/export 2>/dev/null || true  # already exported (EBUSY)
+		echo out > "/sys/class/gpio/gpio${g}/direction" 2>/dev/null || true  # already exported line keeps working
 	done
 	printf '%s' 1 > /sys/class/gpio/gpio75/value 2>/dev/null || true  # amp_active
 	printf '%s' 0 > /sys/class/gpio/gpio72/value 2>/dev/null || true  # muted (player unmutes)
@@ -1179,7 +1206,8 @@ bootmark "codec and amplifier initialized"
 #    Say out loud which one was installed, and shout if none was: without /etc/asound.conf
 #    ALSA falls back to the raw card, and every client opens hw:0,0 behind soundtapd's
 #    own aplay.
-if [ "$AUDIO_MIX" = "1" ]; then
+# shellcheck disable=SC2250 # os/tests/hardware/test_wla_audio.py matches this text as written
+if [ "${AUDIO_MIX}" = "1" ]; then
 	ASOUND_SRC=/etc/asound.conf.bus
 elif [ "$NOCODEC" = 1 ]; then
 	ASOUND_SRC=/etc/asound.conf.wla
@@ -1187,10 +1215,10 @@ else
 	ASOUND_SRC=/etc/asound.conf.shelby
 fi
 # /etc/asound.conf is the image's link to this copy: / is read-only.
-if cp "$ASOUND_SRC" /run/soundtap/asound.conf 2>>"$LOG"; then
-	log "ALSA config: $ASOUND_SRC"
+if cp "${ASOUND_SRC}" /run/soundtap/asound.conf 2>>"${LOG}"; then
+	log "ALSA config: ${ASOUND_SRC}"
 else
-	log "WARNING: $ASOUND_SRC could not be installed as /etc/asound.conf;"
+	log "WARNING: ${ASOUND_SRC} could not be installed as /etc/asound.conf;"
 	log "WARNING: ALSA clients will open the card directly instead of the source bus"
 fi
 }
@@ -1213,70 +1241,71 @@ soundtapd_user() {
 }
 # shared_dir <dir>: root's, group soundtapd may add its own entries, never touch root's.
 shared_dir() {
-	mkdir -p "$1" && chgrp "$SOUNDTAPD_USER" "$1" && chmod 1775 "$1" || log "ERROR: $1 not shared with soundtapd"
+	{ mkdir -p "$1" && chgrp "${SOUNDTAPD_USER}" "$1" && chmod 1775 "$1"; } || log "ERROR: $1 not shared with soundtapd"
 }
 # shared_file <file>: root's (the sticky directory's owner, so protected_regular lets both
 # open it), writable by group soundtapd. For what root and soundtapd's DHCP both write.
 shared_file() {
 	[ ! -L "$1" ] || rm -f "$1"
 	[ -e "$1" ] || : >"$1"
-	chgrp "$SOUNDTAPD_USER" "$1" && chmod 0664 "$1" || log "ERROR: $1 not writable for soundtapd"
+	{ chgrp "${SOUNDTAPD_USER}" "$1" && chmod 0664 "$1"; } || log "ERROR: $1 not writable for soundtapd"
 }
 # grant <mode> <node...>: device nodes that exist go to group soundtapd with mode.
 grant() {
 	mode=$1
 	shift
 	for node in "$@"; do
-		[ -e "$node" ] || continue  # a glob with no match, or a node this model lacks
-		[ ! -d "$node" ] || continue  # /dev/snd/by-path and the like: nodes only
-		chgrp "$SOUNDTAPD_USER" "$node" && chmod "$mode" "$node" || log "ERROR: $node not granted to soundtapd"
+		[ -e "${node}" ] || continue  # a glob with no match, or a node this model lacks
+		[ ! -d "${node}" ] || continue  # /dev/snd/by-path and the like: nodes only
+		{ chgrp "${SOUNDTAPD_USER}" "${node}" && chmod "${mode}" "${node}"; } || log "ERROR: ${node} not granted to soundtapd"
 	done
 }
 grant_soundtapd() {
-[ -n "$SOUNDTAPD_USER" ] || { log "no soundtapd user: soundtapd runs as root"; return 0; }
+[ -n "${SOUNDTAPD_USER}" ] || { log "no soundtapd user: soundtapd runs as root"; return 0; }
 # Runtime directories. /run is the pid files' and wpa_supplicant's and hostapd's control
 # directories'; the lock file is libubootenv's.
-shared_dir "$VAR_RUN"
-shared_dir "$RUN_DIR"
+shared_dir "${VAR_RUN}"
+shared_dir "${RUN_DIR}"
 # The log FIFO: the scripts soundtapd runs (udhcpc's) log into it as soundtapd.
-[ ! -p "$RUN_DIR/log.fifo" ] || { chgrp "$SOUNDTAPD_USER" "$RUN_DIR/log.fifo" && chmod 0620 "$RUN_DIR/log.fifo"; } || log "ERROR: the log FIFO is not writable for soundtapd"
-mkdir -p "$VAR_RUN/lock" && shared_file "$VAR_RUN/lock/fw_printenv.lock" && chmod 0666 "$VAR_RUN/lock/fw_printenv.lock"
-mkdir -p "$ROOT_RUN_DIR" && chgrp "$SOUNDTAPD_USER" "$ROOT_RUN_DIR" && chmod 0750 "$ROOT_RUN_DIR" || log "ERROR: $ROOT_RUN_DIR not reachable for soundtapd"
-for f in ntp-servers lan-net.eth0 lan-net.wlan0 lan-net.wlan1; do shared_file "$RUN_DIR/$f"; done
-shared_file "$TMP_DIR/resolv.conf"
-[ ! -d "$APP_DIR" ] || chown -R "$SOUNDTAPD_USER:$SOUNDTAPD_USER" "$APP_DIR" || log "ERROR: $APP_DIR not soundtapd's; /api/soundtapd cannot swap it"
+[ ! -p "${RUN_DIR}/log.fifo" ] || { chgrp "${SOUNDTAPD_USER}" "${RUN_DIR}/log.fifo" && chmod 0620 "${RUN_DIR}/log.fifo"; } || log "ERROR: the log FIFO is not writable for soundtapd"
+mkdir -p "${VAR_RUN}/lock" && shared_file "${VAR_RUN}/lock/fw_printenv.lock" && chmod 0666 "${VAR_RUN}/lock/fw_printenv.lock"
+# shellcheck disable=SC2250 # os/support/rootfs_check.py or its test matches this text as written
+{ mkdir -p "$ROOT_RUN_DIR" && chgrp "$SOUNDTAPD_USER" "$ROOT_RUN_DIR" && chmod 0750 "$ROOT_RUN_DIR"; } || log "ERROR: $ROOT_RUN_DIR not reachable for soundtapd"
+for f in ntp-servers lan-net.eth0 lan-net.wlan0 lan-net.wlan1; do shared_file "${RUN_DIR}/${f}"; done
+shared_file "${TMP_DIR}/resolv.conf"
+[ ! -d "${APP_DIR}" ] || chown -R "${SOUNDTAPD_USER}:${SOUNDTAPD_USER}" "${APP_DIR}" || log "ERROR: ${APP_DIR} not soundtapd's; /api/soundtapd cannot swap it"
 # The tap stays root's and soundtapd writes it as its group. Owned by soundtapd, it would be
 # a FIFO root does not own in a group-writable sticky directory: protected_fifos=2 then
 # refuses root the O_CREAT open of start_snapserver's exec 6<>, and a failed redirection
 # on exec ends this script, before soundtapd and the network (2026-11-22, WLA).
-[ ! -p "$RUN_DIR/snapcast.pcm" ] || { chgrp "$SOUNDTAPD_USER" "$RUN_DIR/snapcast.pcm" && chmod 0664 "$RUN_DIR/snapcast.pcm"; } || log "ERROR: snapcast tap not writable for soundtapd"
+[ ! -p "${RUN_DIR}/snapcast.pcm" ] || { chgrp "${SOUNDTAPD_USER}" "${RUN_DIR}/snapcast.pcm" && chmod 0664 "${RUN_DIR}/snapcast.pcm"; } || log "ERROR: snapcast tap not writable for soundtapd"
 # The media daemons' runtime directories, made before soundtapd (which cannot chown).
-mkdir -p "$RUN_DIR/spotify" && chown spotify:audio "$RUN_DIR/spotify" && chmod 0700 "$RUN_DIR/spotify" || log "ERROR: $RUN_DIR/spotify not librespot's"
+{ mkdir -p "${RUN_DIR}/spotify" && chown spotify:audio "${RUN_DIR}/spotify" && chmod 0700 "${RUN_DIR}/spotify"; } || log "ERROR: ${RUN_DIR}/spotify not librespot's"
 # snapserver rewrites the server.json soundtapd seeds and keeps (snapserver_state.go).
-mkdir -p "$RUN_DIR/snapserver" && chown "snapcast:$SOUNDTAPD_USER" "$RUN_DIR/snapserver" && chmod 2770 "$RUN_DIR/snapserver" || log "ERROR: $RUN_DIR/snapserver not shared"
+{ mkdir -p "${RUN_DIR}/snapserver" && chown "snapcast:${SOUNDTAPD_USER}" "${RUN_DIR}/snapserver" && chmod 2770 "${RUN_DIR}/snapserver"; } || log "ERROR: ${RUN_DIR}/snapserver not shared"
 # Devices. Read-write: the watchdog, keypad and buttons, IR, the panel's and the codec's SPI,
 # the serial links to the BCO and the soundbar processor, ALSA, the stock lamps and panel.
-grant 0660 "$DEV_DIR"/watchdog "$DEV_DIR"/watchdog0 "$DEV_DIR"/lirc0 "$DEV_DIR"/ir "$DEV_DIR"/shelby-keypad \
-	"$DEV_DIR"/input/event* "$DEV_DIR"/spidev* "$DEV_DIR"/i2c-* "$DEV_DIR"/ttyS0 "$DEV_DIR"/snd/* \
-	"$DEV_DIR"/shelby-leds/* "$DEV_DIR"/fb0
+grant 0660 "${DEV_DIR}"/watchdog "${DEV_DIR}"/watchdog0 "${DEV_DIR}"/lirc0 "${DEV_DIR}"/ir "${DEV_DIR}"/shelby-keypad \
+	"${DEV_DIR}"/input/event* "${DEV_DIR}"/spidev* "${DEV_DIR}"/i2c-* "${DEV_DIR}"/ttyS0 "${DEV_DIR}"/snd/* \
+	"${DEV_DIR}"/shelby-leds/* "${DEV_DIR}"/fb0
 # The SCM adapter's Bose link: ttyS0 is its BCO, as on every SCM board, and UART0 is ttyS1.
-[ "${CMD_VARIANT:-${PROC_VARIANT:-}}" != lisa ] || grant 0660 "$DEV_DIR"/ttyS1
+[ "${CMD_VARIANT:-${PROC_VARIANT:-}}" != lisa ] || grant 0660 "${DEV_DIR}"/ttyS1
 # NAND read-only: the readback of every write, fw_printenv, the serial and the Wi-Fi
 # calibration. A write needs soundtap-root.
-grant 0640 "$DEV_DIR"/mtd[0-9]*
+grant 0640 "${DEV_DIR}"/mtd[0-9]*
 # sysfs: the lamps, GPIO export (the lines' attributes are handed over by soundtap-root,
 # or below for those init exported), pstore's records, the firmware search path.
-grant 0664 "$SYS_DIR"/class/leds/*/brightness "$SYS_DIR"/class/leds/*/trigger
-grant 0220 "$SYS_DIR"/class/gpio/export "$SYS_DIR"/class/gpio/unexport
-for line in "$SYS_DIR"/class/gpio/gpio[0-9]*; do
-	[ -d "$line" ] || continue
+grant 0664 "${SYS_DIR}"/class/leds/*/brightness "${SYS_DIR}"/class/leds/*/trigger
+grant 0220 "${SYS_DIR}"/class/gpio/export "${SYS_DIR}"/class/gpio/unexport
+for line in "${SYS_DIR}"/class/gpio/gpio[0-9]*; do
+	[ -d "${line}" ] || continue
 	for a in value direction active_low edge; do
-		[ ! -e "$line/$a" ] || chown "$SOUNDTAPD_USER:$SOUNDTAPD_USER" "$line/$a" || log "ERROR: $line/$a not soundtapd's"
+		[ ! -e "${line}/${a}" ] || chown "${SOUNDTAPD_USER}:${SOUNDTAPD_USER}" "${line}/${a}" || log "ERROR: ${line}/${a} not soundtapd's"
 	done
 done
-[ ! -d "$SYS_DIR/fs/pstore" ] || { chgrp -R soundtapd "$SYS_DIR/fs/pstore" && chmod -R g+rwX "$SYS_DIR/fs/pstore"; } || log "WARNING: pstore records stay root's"
+[ ! -d "${SYS_DIR}/fs/pstore" ] || { chgrp -R soundtapd "${SYS_DIR}/fs/pstore" && chmod -R g+rwX "${SYS_DIR}/fs/pstore"; } || log "WARNING: pstore records stay root's"
 # The Wi-Fi manager links the region's wl18xx-conf.bin here; root sets where the loader looks.
-echo "$RUN_DIR/firmware" >"$SYS_DIR/module/firmware_class/parameters/path" 2>/dev/null || true  # no firmware loader parameter: the image's default stays
+echo "${RUN_DIR}/firmware" >"${SYS_DIR}/module/firmware_class/parameters/path" 2>/dev/null || true  # no firmware loader parameter: the image's default stays
 migrate_nv_owner
 }
 
@@ -1286,17 +1315,17 @@ migrate_nv_owner
 # stays root's, shared (wifi.conf*), so soundtapd cannot remove what BlueZ or librespot own.
 # The media daemons' trees go to their users the same way, which soundtapd did as root.
 migrate_nv_owner() {
-[ -e "$RUN_DIR/persistent-storage" ] || return 0  # tmpfs fallback: nothing to keep
-shared_dir "$NV_DIR"
-mkdir -p "$NV_DIR/soundtap"
+[ -e "${RUN_DIR}/persistent-storage" ] || return 0  # tmpfs fallback: nothing to keep
+shared_dir "${NV_DIR}"
+mkdir -p "${NV_DIR}/soundtap"
 # The boot logs are the init script's, written anew each boot; soundtapd only reads them.
-find "$NV_DIR/soundtap" ! -user "$SOUNDTAPD_USER" ! -name "current-boot.log*" ! -name "previous-boot*.log" -exec chown -h "$SOUNDTAPD_USER:$SOUNDTAPD_USER" {} + 2>>"$LOG" || log "ERROR: $NV_DIR/soundtap not all soundtapd's"
-for f in "$NV_DIR"/wifi.conf "$NV_DIR"/wifi.conf.good "$NV_DIR"/wifi.conf.known "$NV_DIR"/.wifi.conf*.tmp-*; do
-	[ ! -e "$f" ] || [ -L "$f" ] || chown "$SOUNDTAPD_USER:$SOUNDTAPD_USER" "$f" || log "ERROR: $f not soundtapd's"
+find "${NV_DIR}/soundtap" ! -user "${SOUNDTAPD_USER}" ! -name "current-boot.log*" ! -name "previous-boot*.log" -exec chown -h "${SOUNDTAPD_USER}:${SOUNDTAPD_USER}" {} + 2>>"${LOG}" || log "ERROR: ${NV_DIR}/soundtap not all soundtapd's"
+for f in "${NV_DIR}"/wifi.conf "${NV_DIR}"/wifi.conf.good "${NV_DIR}"/wifi.conf.known "${NV_DIR}"/.wifi.conf*.tmp-*; do
+	[ ! -e "${f}" ] || [ -L "${f}" ] || chown "${SOUNDTAPD_USER}:${SOUNDTAPD_USER}" "${f}" || log "ERROR: ${f} not soundtapd's"
 done
-mkdir -p "$NV_DIR/spotify/cache" "$NV_DIR/spotify/system"
-find "$NV_DIR/spotify" ! -user spotify -exec chown -h spotify:audio {} + 2>>"$LOG" || log "ERROR: $NV_DIR/spotify not librespot's"
-chmod 0700 "$NV_DIR/spotify" "$NV_DIR/spotify/system"
+mkdir -p "${NV_DIR}/spotify/cache" "${NV_DIR}/spotify/system"
+find "${NV_DIR}/spotify" ! -user spotify -exec chown -h spotify:audio {} + 2>>"${LOG}" || log "ERROR: ${NV_DIR}/spotify not librespot's"
+chmod 0700 "${NV_DIR}/spotify" "${NV_DIR}/spotify/system"
 }
 
 # mark_network_ready tells the boot watchdog the network is up. soundtapd's Wi-Fi manager
@@ -1304,42 +1333,44 @@ chmod 0700 "$NV_DIR/spotify" "$NV_DIR/spotify/system"
 mark_network_ready() {
 	# Once handed over the marker is soundtapd's: protected_regular=2 refuses root's O_CREAT
 	# open of it in this sticky directory, and a failed redirection on : ends the shell.
-	[ -e "$NETWORK_READY" ] || : >"$NETWORK_READY"
-	[ -z "$SOUNDTAPD_USER" ] || chown "$SOUNDTAPD_USER" "$NETWORK_READY" 2>/dev/null || true  # gone already: nothing to hand over
+	[ -e "${NETWORK_READY}" ] || : >"${NETWORK_READY}"
+	[ -z "${SOUNDTAPD_USER}" ] || chown "${SOUNDTAPD_USER}" "${NETWORK_READY}" 2>/dev/null || true  # gone already: nothing to hand over
 }
 
 # soundtap-root answers soundtapd (ADR 0066). Supervised like soundtapd: it never gives up,
 # and soundtapd's requests fail while it restarts. soundtapd is started through it, already
 # as its own user, once the socket is there.
 start_root_helper() {
-[ -n "$SOUNDTAPD_USER" ] && [ -x "$ROOT_HELPER" ] || return 0
+[ -n "${SOUNDTAPD_USER}" ] && [ -x "${ROOT_HELPER}" ] || return 0
 (
 	trap 'exit 0' HUP INT TERM
 	while true; do
-		"$ROOT_HELPER" serve >>"$LOG" 2>&1
+		"${ROOT_HELPER}" serve >>"${LOG}" 2>&1
 		log "soundtap-root exited ($?), restarting in 2s"
 		sleep 2
 	done
 ) &
 for _ in $(seq 1 50); do
-	[ ! -S "$ROOT_RUN_DIR/sock" ] || break
+	[ ! -S "${ROOT_RUN_DIR}/sock" ] || break
 	sleep 0.1
 done
-[ -S "$ROOT_RUN_DIR/sock" ] || log "ERROR: soundtap-root not listening; soundtapd starts without it"
+[ -S "${ROOT_RUN_DIR}/sock" ] || log "ERROR: soundtap-root not listening; soundtapd starts without it"
+# shellcheck disable=SC2250 # os/support/rootfs_check.py or its test matches this text as written
 SOUNDTAPD_EXEC="$ROOT_HELPER exec-soundtapd"
 log "soundtap-root up; soundtapd runs as soundtapd"
 }
 
 set_hostname() {
-mac=$identity_mac
+mac=${identity_mac}
 room_host=$(head -c 64 /mnt/nv/soundtap/hostname 2>/dev/null | head -n 1) || room_host=  # no file before the first boot of soundtapd
-case $room_host in
+case ${room_host} in
 '' | *[!a-z0-9-]* | -*) room_host= ;;
+*) ;;
 esac
-if [ -n "$room_host" ] && hostname "$room_host" 2>/dev/null; then  # name rejected: the MAC name below
+if [ -n "${room_host}" ] && hostname "${room_host}" 2>/dev/null; then  # name rejected: the MAC name below
 	:
 else
-	[ -n "$mac" ] && hostname "soundtap-${mac#??????}" 2>/dev/null || hostname "soundtap-$MODEL" 2>/dev/null || true  # name rejected: try the model name
+	[ -n "${mac}" ] && hostname "soundtap-${mac#??????}" 2>/dev/null || hostname "soundtap-${MODEL}" 2>/dev/null || true  # name rejected: try the model name
 fi
 }
 
@@ -1350,14 +1381,14 @@ ifconfig lo 127.0.0.1 up 2>/dev/null
 # trees enable it: stock wires the same rear port on all of them. TV audio starts about 30 s after a cold boot
 # with or without it (measured on the ST300).
 CPSW_PORT=0
-[ "$MODEL" = st300 ] && CPSW_PORT=1
+[ "${MODEL}" = st300 ] && CPSW_PORT=1
 grep -qwE 'variant=(spotty3|mojo3|burns|lisa2)' /proc/cmdline 2>/dev/null && CPSW_PORT=1  # always readable; quiet anyway
-if [ "$CPSW_PORT" = 1 ]; then
+if [ "${CPSW_PORT}" = 1 ]; then
 	for m in phy-gmii-sel davinci_mdio ti_cpsw_new; do
-		modprobe "$m" 2>>"$LOG" && log "loaded $m" || log "WARNING: $m did not load, no wired port"
+		{ modprobe "${m}" 2>>"${LOG}" && log "loaded ${m}"; } || log "WARNING: ${m} did not load, no wired port"
 	done
 fi
-if { [ "$MODEL" = st20 ] && [ "$BCO_OWN" = 1 ]; } || [ "$CPSW_PORT" = 1 ]; then
+if { [ "${MODEL}" = st20 ] && [ "${BCO_OWN}" = 1 ]; } || [ "${CPSW_PORT}" = 1 ]; then
 	# The own BCO: wlan0 like on the ST10 (soundtapd's Wi-Fi manager); eth0 is the BCO's wired port.
 	# The ST300 and the Series III: eth0 is the AM335x CPSW's rear port, on the same watcher.
 	# DHCP in the background so a speaker without a cable goes on with Wi-Fi. Two things make
@@ -1370,17 +1401,17 @@ if { [ "$MODEL" = st20 ] && [ "$BCO_OWN" = 1 ]; } || [ "$CPSW_PORT" = 1 ]; then
 		was=
 		while :; do
 			idx=$(cat /sys/class/net/eth0/ifindex 2>/dev/null)  # gone while the BCO resets
-			if [ -n "$idx" ]; then  # no eth0 (BCO resetting): wait for it
+			if [ -n "${idx}" ]; then  # no eth0 (BCO resetting): wait for it
 				# a new eth0, or one taken down: carrier is unreadable until it is up again
-				cat /sys/class/net/eth0/carrier >/dev/null 2>&1 || ifconfig eth0 up 2>>"$LOG"
-				now=$idx:$(cat /sys/class/net/eth0/carrier 2>/dev/null)  # empty while still down
-				if [ "$now" != "$was" ]; then
-					was=$now
-					[ -r /run/soundtap-udhcpc-eth0.pid ] && kill "$(cat /run/soundtap-udhcpc-eth0.pid)" 2>/dev/null  # may have exited
-					ip addr flush dev eth0 2>>"$LOG"
+				cat /sys/class/net/eth0/carrier >/dev/null 2>&1 || ifconfig eth0 up 2>>"${LOG}"
+				now=${idx}:$(cat /sys/class/net/eth0/carrier 2>/dev/null)  # empty while still down
+				if [ "${now}" != "${was}" ]; then
+					was=${now}
+					[ -r /run/soundtap-udhcpc-eth0.pid ] && kill "$(cat /run/soundtap-udhcpc-eth0.pid || true)" 2>/dev/null  # may have exited
+					ip addr flush dev eth0 2>>"${LOG}"
 					if [ "${now#*:}" = 1 ]; then
-						udhcpc -i eth0 -p /run/soundtap-udhcpc-eth0.pid -b -O ntpsrv -x "hostname:$(hostname)" >>"$LOG" 2>&1
-						log "dhcp eth0 (wired port, ifindex $idx)"
+						udhcpc -i eth0 -p /run/soundtap-udhcpc-eth0.pid -b -O ntpsrv -x "hostname:$(hostname || true)" >>"${LOG}" 2>&1
+						log "dhcp eth0 (wired port, ifindex ${idx})"
 					else
 						log "eth0 has no link (no cable): Wi-Fi only"
 					fi
@@ -1389,7 +1420,7 @@ if { [ "$MODEL" = st20 ] && [ "$BCO_OWN" = 1 ]; } || [ "$CPSW_PORT" = 1 ]; then
 			sleep 3
 		done
 	) &
-elif [ "$MODEL" = st20 ]; then
+elif [ "${MODEL}" = st20 ]; then
 	st20_eth0
 	mark_network_ready
 	# eth0 is the BCO's USB CDC-ECM function, so every BCO power cycle (its own reset, a
@@ -1399,13 +1430,13 @@ elif [ "$MODEL" = st20 ]; then
 	(
 		while sleep 5; do
 			[ -d /sys/class/net/eth0 ] || continue
-			[ "$(cat /sys/class/net/eth0/device/../idProduct 2>/dev/null)" = 1235 ] && continue  # eth0 may vanish during a BCO reset
+			[ "$(cat /sys/class/net/eth0/device/../idProduct 2>/dev/null || true)" = 1235 ] && continue  # eth0 may vanish during a BCO reset
 			ip -4 addr show dev eth0 2>/dev/null | grep -q 'inet ' && continue  # eth0 may vanish during a BCO reset
 			log "st20 eth0 came back without an address (BCO reset)"
 			st20_eth0
 		done
 	) &
-elif ifconfig eth0 up 2>/dev/null && udhcpc -i eth0 -b -O ntpsrv -x "hostname:$(hostname)" 2>>"$LOG"; then  # no eth0: the else branch handles it
+elif ifconfig eth0 up 2>/dev/null && udhcpc -i eth0 -b -O ntpsrv -x "hostname:$(hostname || true)" 2>>"${LOG}"; then  # no eth0: the else branch handles it
 	log "dhcp eth0"
 	for _ in $(seq 1 20); do
 		if ip addr show dev eth0 2>/dev/null | grep -q 'inet '; then  # no eth0: no address
@@ -1423,8 +1454,8 @@ lock_modules() {
 # no two builds would be the same (ADR 0011). What keeps a module from outside the image
 # out is that loading ends here, once start_wired has the ST300's CPSW modules in; every
 # modprobe of a mainline boot belongs before this step. One way, until the next boot.
-if [ "$MAINLINE" = 1 ]; then
-	if echo 1 >"$PROC_DIR/sys/kernel/modules_disabled" 2>>"$LOG"; then
+if [ "${MAINLINE}" = 1 ]; then
+	if echo 1 >"${PROC_DIR}/sys/kernel/modules_disabled" 2>>"${LOG}"; then
 		log "module loading closed"
 	else
 		log "WARNING: module loading stays open"
@@ -1435,9 +1466,9 @@ fi
 # it runs, and keeps the setup AP's marker here. Always named: a speaker whose join fails
 # opens its setup AP long after soundtapd started.
 start_wifi() {
-SOUNDTAP_SETUP_AP_MARKER=$RUN_DIR/setup-ap
+SOUNDTAP_SETUP_AP_MARKER=${RUN_DIR}/setup-ap
 export SOUNDTAP_SETUP_AP_MARKER
-if [ "$SOUNDTAP_WIFI_MODE" = "scm" ]; then
+if [ "${SOUNDTAP_WIFI_MODE}" = "scm" ]; then
 	log "wifi: soundtapd brings it up"
 else
 	log "wifi skipped (st20 BCO owns WiFi)"
@@ -1445,18 +1476,19 @@ fi
 netwatch
 }
 # ALPHA only: root SSH with no password, absent from a production image (ADR 0011).
+# shellcheck disable=SC2086 # SOUNDTAPD_ARGS is a word list. On the function, as os/support/rootfs_check.py wants start_root_helper right above soundtapd_loop
 start_services() {
 [ ! -x /opt/soundtap/ssh.sh ] || /opt/soundtap/ssh.sh
 # Never hold the boot back for the clock. A router that lost power with the speaker is the
 # common case, and soundtapd, the keys and the setup flow waited up to 30 s for its route
 # (seen on the ST20). Until NTP answers the clock is the one saved at the last shutdown.
-sync_clock_in_background >>"$LOG" 2>&1
+sync_clock_in_background >>"${LOG}" 2>&1
 log "clock sync running in the background"
 
 # --- the open stack (replaces BoseApp) ----------------------------------------
 mkdir -p /run/dbus /var/run/dbus
-dbus-daemon --system --fork 2>>"$LOG" && log "dbus up" || true
-avahi-daemon -D 2>>"$LOG" && log "avahi up (mDNS)" || true
+dbus-daemon --system --fork 2>>"${LOG}" && log "dbus up" || true
+avahi-daemon -D 2>>"${LOG}" && log "avahi up (mDNS)" || true
 bootmark "dbus and avahi started"
 # nqptp, AirPlay 2's clock, is soundtapd's to start and restart (ADR 0121).
 
@@ -1466,16 +1498,16 @@ bootmark "dbus and avahi started"
 # needed (bt.sh only attaches by hand on st10). bluealsa-aplay opening a PCM is safe
 # here too: AUDIO_MIX routes ALSA's default into the source-bus FIFO, not the card.
 # If the adapter is missing for any reason bt.sh says so and exits 0.
-"$OPT_DIR/bt.sh" &
+"${OPT_DIR}/bt.sh" &
 bootmark "bluetooth started"
 # The infrared receiver, when the kernel gave us one. rc-core boots with only the raw lirc
 # interface enabled, so without this a remote reaches /dev/lirc0 and nothing else -- no key
 # events, no input device that means anything. Enabling every decoder costs nothing on a
 # silent line and means the first press is already decoded, whatever the remote speaks.
 for rc in /sys/class/rc/rc*; do
-	[ -w "$rc/protocols" ] || continue
-	echo "+nec +rc-5 +rc-6 +jvc +sony +sharp" >"$rc/protocols" 2>>"$LOG" \
-		&& log "ir: decoders enabled on ${rc##*/}" \
+	[ -w "${rc}/protocols" ] || continue
+	{ echo "+nec +rc-5 +rc-6 +jvc +sony +sharp" >"${rc}/protocols" 2>>"${LOG}" \
+		&& log "ir: decoders enabled on ${rc##*/}"; } \
 		|| log "ir: could not enable decoders on ${rc##*/}"
 done
 
@@ -1490,10 +1522,10 @@ SOUNDTAP_MULTIROOM="${SOUNDTAP_MULTIROOM:-0}"
 [ -f /mnt/nv/soundtap/multiroom-enabled ] && SOUNDTAP_MULTIROOM=1
 export SOUNDTAP_MULTIROOM
 bootmark "spotify state ready"
-if [ "$NOCODEC" != 1 ] || [ "${WLA_AUDIO_READY:-0}" = 1 ]; then
+if [ "${NOCODEC}" != 1 ] || [ "${WLA_AUDIO_READY:-0}" = 1 ]; then
 	start_snapserver && log "snapserver handed to soundtapd" || true
 else
-	log "snapserver disabled: $MODEL PCM unavailable"
+	log "snapserver disabled: ${MODEL} PCM unavailable"
 fi
 
 # Give soundtapd the exact local Snapclient ID so its multiroom API can anchor groups.
@@ -1504,15 +1536,14 @@ export SOUNDTAP_SNAPCLIENT_ID
 # soundtapd — speaker API + marge + web UI on :80, plus player/buttons/LEDs/AirPlay.
 # Respawn on exit: a panic must not brick the speaker until a power-cycle. The bring-up
 # above (modules/network/audio) is one-shot; only the daemon is kept alive.
-# shellcheck disable=SC2086 # SOUNDTAPD_ARGS is a word list; the listen addr comes from the model profile
 bootmark "snapserver set up"
 start_root_helper
 soundtapd_loop ${SOUNDTAPD_ARGS:-} &
 log "soundtapd :80 supervised (pid $!)"
 bootmark "soundtapd supervisor launched"
 
-if [ "$SNAPSERVER_STARTED" = 1 ]; then
-	log "snapclient handed to soundtapd, format=$SNAPCLIENT_SAMPLEFORMAT (server: $(head -n 1 /mnt/nv/soundtap/multiroom-server 2>/dev/null || echo own))"  # no file means this speaker serves itself
+if [ "${SNAPSERVER_STARTED}" = 1 ]; then
+	log "snapclient handed to soundtapd, format=${SNAPCLIENT_SAMPLEFORMAT} (server: $(head -n 1 /mnt/nv/soundtap/multiroom-server 2>/dev/null || echo own || true))"  # no file means this speaker serves itself
 else
 	log "snapclient disabled: local snapserver unavailable"
 fi
@@ -1522,6 +1553,7 @@ log "stack up"
 
 # The boot, in order. Each step above sets globals that the later ones read.
 main() {
+	# shellcheck source=../../opt/soundtap/clock.sh
 	. /opt/soundtap/clock.sh
 	run_subcommand "$@"
 	mount_filesystems

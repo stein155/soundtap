@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
@@ -22,7 +21,8 @@ PATCH = (ROOT / "os/bootloader/uboot/uboot-2026.07-bootcount-env.patch").read_te
 BOOTSELECT = (ROOT / "app/internal/flash/bootselect.go").read_text()
 
 
-def patch_function(signature):
+def patch_function(signature: str) -> str:
+    """Return the function with this signature as the patch adds it, without the diff's '+' column."""
     body = PATCH.split("+" + signature)[1].split("\n+}\n")[0]
     return "\n".join(line[1:] for line in ("+" + signature + body + "\n+}").split("\n"))
 
@@ -106,10 +106,12 @@ int main(void)
 
 @unittest.skipUnless(shutil.which("cc"), "needs a C compiler")
 class BootCountAcrossResets(unittest.TestCase):
+    """The patched bootcount_store and bootcount_load over a run of boots."""
+
     LIMIT = int(re.search(r"const BootLimit = (\d+)", BOOTSELECT).group(1))
 
-    def boots(self, resets, env):
-        """The bootcmd each boot runs: its count, or 0 for altbootcmd; and NAND saves."""
+    def boots(self, resets: str, env: dict[str, int]) -> tuple[list[int], int]:
+        """Return the bootcmd each boot runs (its count, or 0 for altbootcmd) and the NAND saves."""
         functions = "\n".join(patch_function(s) for s in ("void bootcount_store(ulong a)", "ulong bootcount_load(void)"))
         setup = " ".join(f'env_set_ulong("{k}", {v});' for k, v in env.items())
         src = (PROBE.replace("FUNCTIONS", functions).replace("RESETS", f'"{resets}"')
@@ -121,38 +123,49 @@ class BootCountAcrossResets(unittest.TestCase):
         counts, saves = out.split("|")
         return [int(c) for c in counts.split()], int(saves)
 
-    def tries(self, n):
-        """bootcmd for the first bootlimit boots, then altbootcmd (0), over n boots."""
+    def tries(self, n: int) -> list[int]:
+        """Return bootcmd for the first bootlimit boots, then altbootcmd (0), over n boots."""
         return [c if c <= self.LIMIT else 0 for c in range(1, n + 1)]
 
-    def test_an_unconfirmed_slot_falls_back_across_power_cuts(self):
-        # The install: altbootcmd, bootlimit and upgrade_available in one write.
+    def test_an_unconfirmed_slot_falls_back_across_power_cuts(self) -> None:
+        """An unconfirmed slot falls back after bootlimit boots, even when every boot is a power cut.
+
+        The install sets altbootcmd, bootlimit and upgrade_available in one write.
+        """
         boots, saves = self.boots("ccccccc", {"bootlimit": self.LIMIT, "upgrade_available": 1})
         self.assertEqual(boots, self.tries(7))
         # One save per boot up to bootlimit + 1, then none: altbootcmd runs either way.
         self.assertEqual(saves, self.LIMIT + 1)
 
-    def test_three_power_cuts_leave_a_boot_to_confirm(self):
-        # Owner, 2026-11-20 (ADR 0010): three power cuts during trial boots, each before
-        # that boot's confirm, never roll back a good update; the fourth boot is still the
-        # new slot. Four unconfirmed boots do: the fifth runs altbootcmd.
+    def test_three_power_cuts_leave_a_boot_to_confirm(self) -> None:
+        """Three power cuts during trial boots leave a fourth boot on the new slot to confirm.
+
+        Owner, 2026-11-20 (ADR 0010): three power cuts during trial boots, each before
+        that boot's confirm, never roll back a good update; the fourth boot is still the
+        new slot. Four unconfirmed boots do: the fifth runs altbootcmd.
+        """
         boots, _ = self.boots("ccccc", {"bootlimit": self.LIMIT, "upgrade_available": 1})
         self.assertEqual(boots, [1, 2, 3, 4, 0])
 
-    def test_warm_and_cold_resets_add_up(self):
+    def test_warm_and_cold_resets_add_up(self) -> None:
+        """Warm and cold resets count together."""
         boots, _ = self.boots("cwcwcwc", {"bootlimit": self.LIMIT, "upgrade_available": 1})
         self.assertEqual(boots, self.tries(7))
 
-    def test_a_confirmed_slot_counts_in_the_rtc_alone(self):
-        # No upgrade_available: no NAND write on any boot, and a warm reset loop (the
-        # watchdog) still falls back.
+    def test_a_confirmed_slot_counts_in_the_rtc_alone(self) -> None:
+        """A confirmed slot counts in the RTC alone.
+
+        No upgrade_available: no NAND write on any boot, and a warm reset loop (the
+        watchdog) still falls back.
+        """
         boots, saves = self.boots("cwwwwww", {"bootlimit": self.LIMIT})
         self.assertEqual((boots, saves), (self.tries(7), 0))
         # A cold reset starts it over, as before: that is what upgrade_available is for.
         boots, saves = self.boots("cccc", {"bootlimit": self.LIMIT})
         self.assertEqual((boots, saves), ([1, 1, 1, 1], 0))
 
-    def test_upgrade_available_without_bootlimit_writes_nothing(self):
+    def test_upgrade_available_without_bootlimit_writes_nothing(self) -> None:
+        """upgrade_available without a bootlimit counts nothing and writes nothing."""
         boots, saves = self.boots("ccc", {"upgrade_available": 1})
         self.assertEqual((boots, saves), ([1, 1, 1], 0))
 

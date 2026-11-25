@@ -16,8 +16,8 @@ RESTORE = "mv /run/audio-bin/app/soundtapd.new /run/audio-bin/app/soundtapd"
 COPY = "cp /opt/soundtap/soundtapd /run/audio-bin/app/soundtapd.new"
 
 
-def run_loop(daemon_body, uptime_step, cp_fails_once=False):
-    """Runs soundtapd_loop with an override installed; returns (calls, log, override files left)."""
+def run_loop(daemon_body: str, uptime_step: int, *, cp_fails_once: bool = False) -> tuple[list[str], str, list[str]]:
+    """Run soundtapd_loop with an override installed; return (calls, log, override files left)."""
     with tempfile.TemporaryDirectory() as d:
         init = InitScript(d)
         override = init.nv / "soundtap/soundtapd.override"
@@ -46,8 +46,8 @@ def run_loop(daemon_body, uptime_step, cp_fails_once=False):
         return init.calls(), init.log.read_text(), left
 
 
-def restart_delays(run_lengths):
-    """Runs soundtapd_loop over runs of the given lengths; returns the logged restart delays."""
+def restart_delays(run_lengths: list[int]) -> list[int]:
+    """Run soundtapd_loop over runs of the given lengths; return the logged restart delays."""
     with tempfile.TemporaryDirectory() as d:
         init = InitScript(d)
         init.stub("sleep")
@@ -67,9 +67,11 @@ def restart_delays(run_lengths):
                 for line in init.log.read_text().splitlines() if "restarting in " in line]
 
 
-def run_trial(usable):
-    """Runs soundtapd_loop on an override on trial whose /api/info answers; only when usable
-    do its web page and update routes answer too. Returns (calls, log, override files left)."""
+def run_trial(*, usable: bool) -> tuple[list[str], str, list[str]]:
+    """Run soundtapd_loop on an override on trial whose /api/info answers; return (calls, log, override files left).
+
+    Only when usable do its web page and update routes answer too.
+    """
     with tempfile.TemporaryDirectory() as d:
         init = InitScript(d)
         override = init.nv / "soundtap/soundtapd.override"
@@ -101,26 +103,33 @@ def run_trial(usable):
 
 
 class SoundtapdRollback(unittest.TestCase):
-    def test_override_answering_only_api_info_rolls_back(self):
+    """soundtapd_loop's restarts and override rollback."""
+
+    def test_override_answering_only_api_info_rolls_back(self) -> None:
+        """An override whose web page and update routes do not answer is rolled back."""
         calls, log, left = run_trial(usable=False)
         self.assertIn("soundtapd override dropped: its web page or update routes do not answer", log)
         self.assertEqual(calls.count(RESTORE), 1)
         self.assertEqual(left, [])
 
-    def test_usable_override_is_kept(self):
+    def test_usable_override_is_kept(self) -> None:
+        """A usable override is kept and leaves its trial marker behind."""
         calls, log, left = run_trial(usable=True)
         self.assertNotIn("override dropped", log)
         self.assertEqual(calls.count(RESTORE), 0)
         self.assertEqual(left, ["soundtapd.override.base", "soundtapd.override.gz"])
 
-    def test_restarts_back_off_and_never_give_up(self):
-        # Short runs double the wait from 2 s to at most 30 s; a run over 60 s starts at 2 s again.
+    def test_restarts_back_off_and_never_give_up(self) -> None:
+        """Short runs double the wait from 2 s to at most 30 s; a run over 60 s starts at 2 s again."""
         self.assertEqual(restart_delays([1, 1, 1, 1, 1, 1, 1, 61, 1, 60, 1]),
                          [2, 4, 8, 16, 30, 30, 30, 2, 4, 8, 16])
 
-    def test_hung_override_rolls_back(self):
-        # Each run lives 200 s, past the 120 s window, and is killed by the liveness check
-        #: before, the count reset on every kill and the override ran forever.
+    def test_hung_override_rolls_back(self) -> None:
+        """A hung override is rolled back.
+
+        Each run lives 200 s, past the 120 s window, and is killed by the liveness check:
+        before, the count reset on every kill and the override ran forever.
+        """
         calls, log, left = run_loop("exec /bin/sleep 600", 200)
         self.assertGreaterEqual(log.count("no answer on /api/info 5 times"), 3)
         self.assertIn("soundtapd override dropped: it failed 3 times in a row", log)
@@ -128,9 +137,12 @@ class SoundtapdRollback(unittest.TestCase):
         self.assertEqual(calls.count("soundtapd -home /mnt/nv/soundtap"), 4)
         self.assertEqual(left, [])
 
-    def test_failed_restore_is_retried(self):
-        # The first copy of the built-in binary fails: the override and its markers
-        # stay, so the next quick exit tries again and that copy goes in.
+    def test_failed_restore_is_retried(self) -> None:
+        """A failed restore of the built-in binary is retried.
+
+        The first copy of the built-in binary fails: the override and its markers
+        stay, so the next quick exit tries again and that copy goes in.
+        """
         calls, log, left = run_loop("exit 1", 10, cp_fails_once=True)
         self.assertIn("restoring the firmware's soundtapd failed, retrying", log)
         self.assertEqual(calls.count(COPY), 2)

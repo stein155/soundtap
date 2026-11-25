@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-"""image_pins.py finds every container image the repository pulls and fails on one that is
-not pinned by digest. Run against the real tree, and against small fake trees that show it
-reads each place an image can be named."""
+"""image_pins.py finds every container image the repository pulls and fails on one not pinned by digest.
+
+Run against the real tree, and against small fake trees that show it reads each place an
+image can be named.
+"""
 
 import sys
 import tempfile
@@ -18,33 +20,40 @@ PIN = "@sha256:" + "a" * 64
 
 
 class ImagePinsTest(unittest.TestCase):
-    def tree(self, files):
+    """Every image named in the tree is pinned by digest or built here."""
+
+    def tree(self, files: dict[str, str]) -> list[str]:
+        """Write files into a temporary tree and return the problems image_pins finds in it."""
         tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
         for name, text in files.items():
             (tmp / name).parent.mkdir(parents=True, exist_ok=True)
             (tmp / name).write_text(text)
         return image_pins.problems(tmp)
 
-    def test_the_repository_pins_every_image(self):
+    def test_the_repository_pins_every_image(self) -> None:
+        """The repository pins every image it pulls."""
         self.assertEqual(image_pins.problems(ROOT), [])
 
-    def test_a_makefile_image_needs_a_digest(self):
+    def test_a_makefile_image_needs_a_digest(self) -> None:
+        """A Makefile image variable without a digest is reported."""
         found = self.tree({"Makefile": "PYTHON_IMAGE := python:3.12-slim\n"
                                        f"GO_IMAGE := golang:$(V)-bookworm{PIN}\n"})
         self.assertEqual(found, ["Makefile:1: python:3.12-slim is not pinned by @sha256"])
 
-    def test_a_docker_run_resolves_its_variable(self):
+    def test_a_docker_run_resolves_its_variable(self) -> None:
+        """A docker run naming a shell variable is checked against the variable's default."""
         script = ("#!/bin/sh\nNODE_IMAGE=${NODE_IMAGE:-node:24}\nKVM=\n"
-                  "[ -c /dev/kvm ] && KVM=\"--device /dev/kvm\"\n"
-                  "docker run --rm $KVM -v \"$PWD\":/w \\\n  -w /w \"$NODE_IMAGE\" npm ci\n")
+                  '[ -c /dev/kvm ] && KVM="--device /dev/kvm"\n'
+                  'docker run --rm $KVM -v "$PWD":/w \\\n  -w /w "$NODE_IMAGE" npm ci\n')
         found = self.tree({"build": script})
         self.assertIn("build:2: node:24 is not pinned by @sha256", found)
         self.assertIn("build:5: node:24 is not pinned by @sha256", found)
         self.assertEqual(len(found), 2, found)
 
-    def test_a_folded_workflow_command_is_read_across_lines(self):
+    def test_a_folded_workflow_command_is_read_across_lines(self) -> None:
+        """A folded workflow run command and a docker:// action are both read."""
         workflow = ("jobs:\n  build:\n    steps:\n      - run: >-\n"
-                    "          docker run --rm -v \"$PWD:/docs\" -w /docs\n"
+                    '          docker run --rm -v "$PWD:/docs" -w /docs\n'
                     "          squidfunk/mkdocs-material:9.7.7\n          build\n"
                     "      - uses: docker://alpine:3.20\n")
         found = self.tree({".github/workflows/docs.yml": workflow})
@@ -52,22 +61,26 @@ class ImagePinsTest(unittest.TestCase):
             ".github/workflows/docs.yml:5: squidfunk/mkdocs-material:9.7.7 is not pinned by @sha256",
             ".github/workflows/docs.yml:8: alpine:3.20 is not pinned by @sha256"])
 
-    def test_dockerfile_from_needs_a_digest_but_not_a_stage(self):
+    def test_dockerfile_from_needs_a_digest_but_not_a_stage(self) -> None:
+        """A Dockerfile FROM needs a digest unless it names an earlier stage."""
         found = self.tree({"Dockerfile": "FROM debian:bookworm-slim AS base\nFROM base\n"
                                          f"FROM alpine:3.20{PIN}\n"})
         self.assertEqual(found, ["Dockerfile:1: debian:bookworm-slim is not pinned by @sha256"])
 
-    def test_images_built_here_and_comments_pass(self):
+    def test_images_built_here_and_comments_pass(self) -> None:
+        """Images built in the repository and comments are not reported."""
         found = self.tree({"run.sh": "# docker run is how this works\n"
                                      "docker run --rm soundtap-rom-usb-loader:bookworm make\n"})
         self.assertEqual(found, [])
 
-    def test_an_unknown_option_is_reported_not_guessed(self):
+    def test_an_unknown_option_is_reported_not_guessed(self) -> None:
+        """An unknown docker run option is reported instead of guessed."""
         found = self.tree({"run.sh": "docker run --gpus all debian:bookworm\n"})
         self.assertEqual(len(found), 1)
         self.assertIn("unknown docker run option --gpus", found[0])
 
-    def test_every_local_image_says_where_it_comes_from(self):
+    def test_every_local_image_says_where_it_comes_from(self) -> None:
+        """Every local image carries a reason saying where it is built."""
         for name, reason in image_pins.LOCAL.items():
             self.assertTrue(reason.strip(), name)
 

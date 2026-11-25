@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-"""`make stu` asks for all three models: a missing ST20 kernel stops it. Beside the universal
-package it builds the preview package (ADR 0133) from the same inputs."""
+"""`make stu` asks for all three models: a missing ST20 kernel stops it.
+
+Beside the universal package it builds the preview package (ADR 0133) from the same inputs.
+"""
 import os
 import subprocess
 import tempfile
@@ -14,7 +16,10 @@ SCRIPT = ROOT / "os/installer/build-universal-stu.sh"
 
 
 class UniversalTarget(unittest.TestCase):
-    def test_tri_target_refuses_a_missing_st20_kernel(self):
+    """build-universal-stu.sh and `make stu` build the three-model package and its preview."""
+
+    def test_tri_target_refuses_a_missing_st20_kernel(self) -> None:
+        """The tri-model target stops when the ST20 kernel is missing."""
         env = dict(os.environ, SOUNDTAP_STU_TARGET="soundtap-tri",
                    SOUNDTAP_SPOTTY_KERNEL="/nonexistent/uImage-st20")
         done = subprocess.run(["sh", str(SCRIPT)], env=env, capture_output=True, text=True,
@@ -22,7 +27,7 @@ class UniversalTarget(unittest.TestCase):
         self.assertEqual(done.returncode, 2, done.stderr)
         self.assertIn("refusing a two-model package", done.stderr)
 
-    def test_make_stu_asks_for_tri(self):
+    def test_make_stu_asks_for_tri(self) -> None:
         """`make stu` runs the builder for all three models, with each model's boot payloads."""
         with tempfile.TemporaryDirectory() as tmp:
             seen = Path(tmp) / "seen"
@@ -40,12 +45,15 @@ class UniversalTarget(unittest.TestCase):
                            ("BINKY_UBOOT", "wla-uboot/u-boot.img")):
             self.assertIn(f"SOUNDTAP_{name}=/out/images/{path}", lines)
 
-    def test_the_preview_package_is_the_same_build_with_the_preview_installer(self):
-        """The script itself, with the toolchain and Python stubbed: the preview installer
+    def test_the_preview_package_is_the_same_build_with_the_preview_installer(self) -> None:
+        """The preview installer goes into <name>-preview.stu only, and both packages are checked.
+
+        The script itself, with the toolchain and Python stubbed: the preview installer
         (WLA_PREVIEW=1) goes into <name>-preview.stu only, both packages are checked, the pair
-        is compared, and each gets its own .sha256."""
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
+        is compared, and each gets its own .sha256.
+        """
+        with tempfile.TemporaryDirectory() as tmp_name:
+            tmp = Path(tmp_name)
             log = tmp / "log"
             bin_ = tmp / "bin"
             bin_.mkdir()

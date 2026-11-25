@@ -12,10 +12,11 @@ from pathlib import Path
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "wla-stock-17008-handshake-20260913.txt"
 
 
-def facts():
+def facts() -> dict[str, str]:
+    """Return the key=value facts of the fixture, comments and blank lines left out."""
     out = {}
-    for line in FIXTURE.read_text().splitlines():
-        line = line.strip()
+    for raw in FIXTURE.read_text().splitlines():
+        line = raw.strip()
         if not line or line.startswith("#"):
             continue
         key, _, value = line.partition("=")
@@ -24,23 +25,28 @@ def facts():
 
 
 class TestHandshakeFacts(unittest.TestCase):
-    def test_installer_speaks_first(self):
+    """The handshake facts the installer design depends on."""
+
+    def test_installer_speaks_first(self) -> None:
+        """The installer speaks first and stock answers with SoftwareUpdateStart."""
         f = facts()
         self.assertEqual(f["installer_speaks_first"], "SoftwareUpdateStatus")
         self.assertEqual(f["stock_first_reply"], "SoftwareUpdateStart")
         self.assertEqual(f["silent_installer_failure_code"], "bad_url")
 
-    def test_pull_framing(self):
+    def test_pull_framing(self) -> None:
+        """Stock pulls 16384-byte blocks from sequence 2 and the reply mirrors the sequence."""
         f = facts()
         self.assertEqual(f["data_request_first_sequence"], "2")
         self.assertEqual(f["data_request_bytes"], "16384")
         self.assertEqual(f["data_response_sequence_mirrors_request"], "true")
 
-    def test_stock_declares_no_crc(self):
-        # The installer, not stock, is responsible for validating package content.
+    def test_stock_declares_no_crc(self) -> None:
+        """Stock declares no CRC: the installer, not stock, validates the package content."""
         self.assertEqual(facts()["start_update_crc"], "0")
 
-    def test_toolchain_boundary(self):
+    def test_toolchain_boundary(self) -> None:
+        """A static C module runs under the stock kernel; a static Go module does not."""
         f = facts()
         self.assertEqual(f["go_static_arm_module_runs_under_stock_kernel"], "false")
         self.assertEqual(f["c_static_arm_module_runs_under_stock_kernel"], "true")

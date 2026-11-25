@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-"""The ROM-USB read script, run offline against stub commands. The restore is
-tools/recovery/rom-usb-restore.py (test_rom_usb_restore.py)."""
+"""The ROM-USB read script, run offline against stub commands.
+
+The restore is tools/recovery/rom-usb-restore.py (test_rom_usb_restore.py).
+"""
 import os
 import subprocess
 import tempfile
@@ -30,7 +32,8 @@ for arg; do case "$arg" in *:/dump) dir=${arg%:/dump};; esac; done
 }
 """
 
-def stubs(directory, **scripts):
+def stubs(directory: Path, **scripts: str) -> None:
+    """Write each script into directory as an executable named after its keyword."""
     directory.mkdir(parents=True, exist_ok=True)
     for name, body in scripts.items():
         path = directory / name
@@ -39,16 +42,20 @@ def stubs(directory, **scripts):
 
 
 class WlaRecoveryScripts(unittest.TestCase):
-    def setUp(self):
+    """rom-usb-read.sh and the loader's FIFO handling."""
+
+    def setUp(self) -> None:
+        """Make a temp directory, removed after the test."""
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(subprocess.run, ["rm", "-rf", str(self.tmp)])
 
-    def run_sh(self, args, **env):
+    def run_sh(self, args: list[str], **env: str) -> subprocess.CompletedProcess[str]:
+        """Run args with the stub bin directory first on PATH and env added."""
         full = {**os.environ, "PATH": f"{self.tmp}/bin:{os.environ['PATH']}", **env}
-        return subprocess.run(args, env=full, capture_output=True, text=True, timeout=60)
+        return subprocess.run(args, check=False, env=full, capture_output=True, text=True, timeout=60)
 
-    def test_fifo_read_write_fd(self):
-        # The loader keeps a FIFO open read-write so a reader started first still gets the stream.
+    def test_fifo_read_write_fd(self) -> None:
+        """A FIFO kept open read-write still hands a reader started first the stream."""
         script = """set -eu
 fifo=$1/in; data=stream-before-writer
 mkfifo "$fifo"
@@ -62,7 +69,8 @@ test "$(cat "$1/out")" = "$data"
 """
         subprocess.run(["sh", "-c", script, "sh", str(self.tmp)], check=True, timeout=30)
 
-    def dump_setup(self):
+    def dump_setup(self) -> dict[str, str]:
+        """Stub power, lsusb, docker and the build scripts; return the environment the read script needs."""
         t = self.tmp
         stubs(t / "bin", power="printf '%s\\n' \"$1\" >> \"$POWER_LOG\"",
               lsusb="printf '0451:6141\\n'", sleep=":", docker=DUMP_DOCKER,
@@ -76,7 +84,8 @@ test "$(cat "$1/out")" = "$data"
         return {"ARGV": str(t / "argv"), "ROM_USB_REPO": str(t / "repo"), "HOME": str(t / "home"),
                 "POWER_LOG": str(t / "power.log")}
 
-    def test_dump_one(self):
+    def test_dump_one(self) -> None:
+        """One partition is read with the power cycled, and a wrong board CRC is refused."""
         t = self.tmp
         env = self.dump_setup()
         dump = RECOVERY / "rom-usb-read.sh"
@@ -90,7 +99,8 @@ test "$(cat "$1/out")" = "$data"
         self.assertNotEqual(r.returncode, 0, "wrong board CRC accepted")
         self.assertFalse((t / "parent/dump-bad").exists())
 
-    def test_dump_one_without_power_command_asks_for_power(self):
+    def test_dump_one_without_power_command_asks_for_power(self) -> None:
+        """Without a power command the script asks for the board to be powered on."""
         t = self.tmp
         env = self.dump_setup()
         r = self.run_sh([str(RECOVERY / "rom-usb-read.sh"), "mtd7", "0x780000", "0x3",
@@ -99,7 +109,8 @@ test "$(cat "$1/out")" = "$data"
         self.assertIn("Power the board on into ROM USB now", r.stderr)
         self.assertFalse((t / "power.log").exists())
 
-    def test_dump_one_refuses_the_protected_backup(self):
+    def test_dump_one_refuses_the_protected_backup(self) -> None:
+        """A dump into the protected backup directory, however spelled, is refused."""
         t = self.tmp
         env = self.dump_setup()
         backup = t / "parent/backup"

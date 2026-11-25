@@ -22,6 +22,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from typing import Never
 
 ROOT = Path(__file__).resolve().parents[2]
 BOARD = ROOT / "os/board/rootfs"
@@ -34,18 +35,37 @@ DEFCONFIG = ROOT / "os/configs/soundtap_defconfig"
 MAKEFILE = ROOT / "Makefile"
 WLA_FIRMWARE_SHA256 = "95f04731257febabc358b95ff06dbb2025d047c6ad3ae0239c8afb92dedc7c5c"
 NAND_GEOMETRY = json.loads((ROOT / "os/board/nand-geometry.json").read_text())
-def fail(message):
-    raise SystemExit(f"WLA Buildroot profile: {message}")
+# A UBI LEB on this NAND: the 128 KiB PEB less the two headers' 2 KiB pages.
+UBI_LEB = 126_976
+# Linux's default UBI bad-PEB reserve, per 1024 PEBs, when the fragment sets none.
+DEFAULT_BEB_LIMIT = 20
+# Kernel patches the profile carries (check_kernel_patches lists them).
+KERNEL_PATCH_COUNT = 10
+# Splitting init.d/soundtap on the WLA amp branch gives at least the part before it and the branch.
+MIN_SPLIT_PARTS = 2
 
 
-def check_device_tree():
+def fail(message: str) -> Never:
+    """Stop the check with message, naming the profile."""
+    msg = f"WLA Buildroot profile: {message}"
+    raise SystemExit(msg)
+
+
+def code_lines(text: str) -> str:
+    """Return the lines of a shell script that are not comments."""
+    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+
+
+def check_device_tree() -> None:
+    """Check the WLA device tree opens the partitions Linux may write."""
     dts = PROFILE_DTS.read_text()
     for macro in ("BOOT_RW", "SLOT_RW", "ENV_RW", "PERSISTENT_RW"):
         if f"#define SOUNDTAP_NAND_{macro} soundtap,writable" not in dts:
             fail(f"the WLA device tree no longer opens SOUNDTAP_NAND_{macro}")
 
 
-def check_gadget_console():
+def check_gadget_console() -> None:
+    """Check the USB gadget console is started and never blocks boot on a missing host."""
     overlay = BOARD / "rootfs-overlay/etc/inittab"
     post_build = BOARD / "post-build.sh"
     gadget = ROOT / "os/overlay/etc/init.d/gadget-console"
@@ -69,7 +89,8 @@ def check_gadget_console():
         fail(f"gadget console writes to /dev/ttyGS0 without detaching, which blocks boot: {stripped}")
 
 
-def check_rootfs_contract():
+def check_rootfs_contract() -> None:
+    """Check the image can write its own NAND, matches the NAND geometry and installs the WLA boot files."""
     defconfig = DEFCONFIG.read_text()
     post_build = (BOARD / "post-build.sh").read_text()
     # One image: the WiLink board configuration comes from the same package on every model.
@@ -82,7 +103,7 @@ def check_rootfs_contract():
     if "BR2_PACKAGE_MTD=y" not in defconfig:
         fail("WLA profile has no mtd-utils: the speaker cannot write its own NAND")
     volume_lebs = NAND_GEOMETRY["volume_lebs"]
-    volume_size = volume_lebs * 126_976
+    volume_size = volume_lebs * UBI_LEB
     for profile in ("nand",):
         config = DEFCONFIG.read_text()
         ubinize = (BOARD / "ubinize.cfg").read_text()
@@ -95,7 +116,7 @@ def check_rootfs_contract():
         # The nand fragment leaves the reserve at the kernel default, which is 20.
         fragment = (ROOT / "os/board/image/linux.fragment").read_text()
         beb = re.search(r"CONFIG_MTD_UBI_BEB_LIMIT=(\d+)", fragment)
-        if int(beb.group(1) if beb else 20) != NAND_GEOMETRY["beb_limit_per_1024"]:
+        if int(beb.group(1) if beb else DEFAULT_BEB_LIMIT) != NAND_GEOMETRY["beb_limit_per_1024"]:
             fail(f"{profile} UBI bad-PEB reserve differs from nand-geometry.json")
     # The WiLink drivers are built in; the only modules are the ST300 CPSW ones.
     fragment = (ROOT / "os/board/image/linux.fragment").read_text()
@@ -110,14 +131,25 @@ def check_rootfs_contract():
         fail("post-build does not install the WLA kernel for U-Boot")
 
 
-def check_bluetooth():
-    """The Bluetooth radio is the other half of the WL1835 that already carries Wi-Fi.
+def check_bluetooth() -> None:
+    """Check every piece of the WLA's Bluetooth is there.
+
+    The Bluetooth radio is the other half of the WL1835 that already carries Wi-Fi.
     Every piece of it is a separate file, and any one missing means the adapter silently
-    never appears -- which is how it stayed off for so long."""
+    never appears -- which is how it stayed off for so long.
+    """
     dts = PROFILE_DTS.read_text()
     fragment = (ROOT / "os/board/image/linux.fragment").read_text()
     post_build = (BOARD / "post-build.sh").read_text()
     init = (ROOT / "os/overlay/etc/init.d/soundtap").read_text()
+    check_bluetooth_kernel(dts, fragment)
+    check_bluetooth_firmware(post_build)
+    check_bluetooth_userspace(init)
+    check_bluetooth_audio()
+
+
+def check_bluetooth_kernel(dts: str, fragment: str) -> None:
+    """Check the device tree and kernel configuration declare the WiLink Bluetooth."""
     # Bose's own binky_sm2.dtb puts the BT UART on serial@48024000 -- the &uart2 of
     # am33xx.dtsi -- with spi0_sclk/spi0_d0 as rx/tx and i2c0_sda/i2c0_scl as cts/rts,
     # and names the enable line bt_enable at gpionum 63, which is gpio1_31.
@@ -138,6 +170,10 @@ def check_bluetooth():
             'CONFIG_EXTRA_FIRMWARE="ti-connectivity/TIInit_11.8.32.bts"' not in fragment:
         fail("built-in CONFIG_BT_HCIUART without TIInit_11.8.32.bts in EXTRA_FIRMWARE asks "
              "for its firmware before the root filesystem that holds it is mounted")
+
+
+def check_bluetooth_firmware(post_build: str) -> None:
+    """Check the WiLink8 init script comes from our tree, pinned, with its provenance."""
     # hci_ll asks for ti-connectivity/TIInit_<version>.bts by the version it reads off the
     # chip. linux-firmware ships 6.2.31, 6.6.15 and 7.2.31 -- all WiLink6/7 -- so the
     # WiLink8 script has to come from the copy in this repo.
@@ -156,6 +192,10 @@ def check_bluetooth():
         fail("post-build installs a file extracted from Bose NAND into the image")
     if "lib/firmware/ti-connectivity/TIInit_11.8.32.bts" not in post_build:
         fail("post-build does not install the WiLink8 Bluetooth init script")
+
+
+def check_bluetooth_userspace(init: str) -> None:
+    """Check init starts Bluetooth and bt.sh can restart its stack without btmgmt."""
     if "wla bluetooth disabled" in init:
         fail("init.d/soundtap still refuses to start Bluetooth on the WLA")
     # The Audio/Loudspeaker class is deliberately not set from bt.sh: every attempt to do
@@ -164,8 +204,7 @@ def check_bluetooth():
     # until the hang is understood -- a class is polish, a process that never exits on
     # every boot is not.
     bt_sh = (ROOT / "os/overlay/opt/soundtap/bt.sh").read_text()
-    code = "\n".join(l for l in bt_sh.splitlines() if not l.lstrip().startswith("#"))
-    if "btmgmt" in code:
+    if "btmgmt" in code_lines(bt_sh):
         fail("bt.sh runs btmgmt again; it hangs at boot for reasons the comment in that "
              "file records, and a stuck btmgmt blocks every later one")
     runtime = (ROOT / "os/package/soundtap-runtime/soundtap-runtime.mk").read_text()
@@ -184,6 +223,10 @@ def check_bluetooth():
              "together; a bluetoothd restart leaves Bluetooth silently dead")
     if 'kill -0 "$BLUETOOTHD_PID"' not in bt:
         fail("nothing in bt.sh notices bluetoothd going away")
+
+
+def check_bluetooth_audio() -> None:
+    """Check ALSA clients reach the source bus and alsa-lib can convert to the card."""
     # AUDIO_MIX copies /etc/asound.conf.bus from the overlay. Without it the cp fails and
     # every ALSA client -- bluealsa-aplay included -- opens the card behind soundtapd.
     bus = ROOT / "os/overlay/etc/asound.conf.bus"
@@ -203,18 +246,19 @@ def check_bluetooth():
             fail(f"alsa-lib is built without the {plugin} PCM plugin: "
                  "nothing can convert between the bus format and the card")
 
+def check_amp_gpio_numbering() -> None:
+    """Check the WLA amp GPIOs are resolved through their bank.
 
-
-def check_amp_gpio_numbering():
-    """Bose numbers the four AM335x banks as one flat space; Linux numbers a line from its
+    Bose numbers the four AM335x banks as one flat space; Linux numbers a line from its
     chip's base, and the bases are handed out in registration order, not by address. Writing
     /sys/class/gpio/gpio72 on this kernel addresses nothing: the path does not exist and the
-    write is swallowed. Every one of these lines has to be resolved through its bank."""
+    write is swallowed. Every one of these lines has to be resolved through its bank.
+    """
     init = (ROOT / "os/overlay/etc/init.d/soundtap").read_text()
     # Several branches share that condition; the amp one is the last, and it is the only
     # one that ends in the shared elif chain for the other models.
     parts = init.split('if [ "$MAINLINE" = 1 ] && [ "$MODEL" = wla ]; then')
-    if len(parts) < 2:
+    if len(parts) < MIN_SPLIT_PARTS:
         fail("cannot find the mainline WLA amp-GPIO branch in init.d/soundtap")
     branch = parts[-1].split("elif", 1)[0]
     if "gpio_num()" not in branch or "481ac000" not in branch:
@@ -222,46 +266,54 @@ def check_amp_gpio_numbering():
              "a flat Bose number writes to a path that does not exist and the amplifier "
              "stays in standby")
     # Comments in that branch name the old paths on purpose, so read the code only.
-    code = "\n".join(l for l in branch.splitlines() if not l.lstrip().startswith("#"))
+    code = code_lines(branch)
     for flat in ("gpio72", "gpio74", "gpio75", "gpio86"):
         if "/sys/class/gpio/" + flat in code:
             fail(f"init.d/soundtap still writes /sys/class/gpio/{flat} on the mainline WLA; "
                  "that is Bose's numbering, not Linux's")
 
 
-def check_one_identity():
-    """Groups are lists of device ids, so snapcast has to answer to the same one. The host
+def check_one_identity() -> None:
+    """Check snapcast's host id is the speaker's own identity.
+
+    Groups are lists of device ids, so snapcast has to answer to the same one. The host
     id used to be built from a MAC of its own -- a different interface from the device id
-    on most models, and neither of them on a board whose factory serial can be read."""
+    on most models, and neither of them on a board whose factory serial can be read.
+    """
     init = (ROOT / "os/overlay/etc/init.d/soundtap").read_text()
     if "soundtapd -print-identity" not in init:
         fail("the snapcast host id is not derived from the speaker identity; the audio "
              "layer would carry a second name for one box")
-    code = "\n".join(l for l in init.splitlines() if not l.lstrip().startswith("#"))
-    if 'SOUNDTAP_SNAPCLIENT_ID="soundtap-$snap_mac"' in code:
+    if 'SOUNDTAP_SNAPCLIENT_ID="soundtap-$snap_mac"' in code_lines(init):
         fail("init.d/soundtap still builds the snapcast host id straight from a MAC")
 
 
-def check_mute_gpio_resolves():
-    """What silences this speaker is mute_out and nothing else, and what kept it silent for
+def check_mute_gpio_resolves() -> None:
+    """Check MUTE_GPIO is derived through the GPIO bank lookup.
+
+    What silences this speaker is mute_out and nothing else, and what kept it silent for
     months was that MUTE_GPIO never reached soundtapd: the init tested /sys/class/gpio/gpio72,
     which does not exist on this kernel, so setMute() returned on an empty path and the
     amplifier was never taken out of mute. Bisected on the board 2026-09-18 -- gpio552 low is
     silent and high is sound, while ampstby and a held-open capture changed nothing.
 
     So the thing worth pinning is not a capture. It is that MUTE_GPIO is derived through the
-    bank lookup rather than from Bose's flat number."""
+    bank lookup rather than from Bose's flat number.
+    """
     init = (ROOT / "os/overlay/etc/init.d/soundtap").read_text()
     if "mute_n=$(gpio_num 72)" not in init or "MUTE_GPIO=/sys/class/gpio/gpio$mute_n/value" not in init:
         fail("the WLA init no longer derives MUTE_GPIO through the GPIO bank lookup; "
              "soundtapd cannot unmute the amplifier without it")
 
 
-def check_audio_outputs():
-    """The only connector on this box is a 3.5 mm pair. The analog link on McASP0 is the
+def check_audio_outputs() -> None:
+    """Check the analog link is card 0 and clocked at the rate it really produces.
+
+    The only connector on this box is a 3.5 mm pair. The analog link on McASP0 is the
     output that reaches it, and it has to be card 0; S/PDIF shares the same jack for an
     optical plug. Both were wrong for a long time in ways that are silent rather than
-    loud, so pin the parts that cannot be seen from a boot log."""
+    loud, so pin the parts that cannot be seen from a boot log.
+    """
     dts = PROFILE_DTS.read_text()
     init = (ROOT / "os/overlay/etc/init.d/soundtap").read_text()
     driver = (ROOT / "os/drivers/soundtap-st10-audio.c").read_text()
@@ -271,7 +323,7 @@ def check_audio_outputs():
     # everywhere else in this tree.
     if dts.index("sound_analog:") > dts.index('compatible = "bose,soundtap-mcasp-spdif"'):
         fail("the S/PDIF sound node probes before the analog one; card 0 would be S/PDIF")
-    if 'AM335X_PIN_MII1_COL' in dts.split("mcasp0_pins:")[1].split("};")[0]:
+    if "AM335X_PIN_MII1_COL" in dts.split("mcasp0_pins:")[1].split("};")[0]:
         fail("mcasp0 claims mii1_col, which mcasp1_axr2 already has: pinctrl will refuse")
     if "serial-dir = <2 1 0 0>" not in dts:
         fail("McASP0 serializer directions do not match Bose's: 0 receives, 1 transmits")
@@ -279,7 +331,7 @@ def check_audio_outputs():
     # ti,tx-clock-only: without it a clock-provider format drives the receive clock pins
     # as outputs, and lcd_data12/13 are inputs on this board.
     st10_dts = (ROOT / "os/board/common/dts/ti/omap/am335x-soundtap-st10.dts").read_text()
-    def _mcasp0(text):
+    def _mcasp0(text: str) -> list[str]:
         body = text.split("&mcasp0 {", 1)[1].split("\n};", 1)[0]
         return sorted(line.strip() for line in body.splitlines()
                       if line.strip() and not line.strip().startswith(("/*", "*", "//")))
@@ -316,8 +368,8 @@ def check_audio_outputs():
         fail("the analog link still claims a rate its divider chain cannot produce")
 
 
-def check_kernel_patches():
-    """The defconfig has to name a kernel patch directory that exists.
+def check_kernel_patches() -> None:
+    """Check the defconfig names a kernel patch directory that exists and holds every patch.
 
     It once named a directory that was never created, so Buildroot would have built an
     unpatched kernel and said nothing about it.
@@ -341,11 +393,12 @@ def check_kernel_patches():
     # Eight since 2026-10-26: omap_wdt keeps counting through a restart.
     # Nine since 2026-11-06: the McASP S/PDIF (DIT) path accepts 46875 Hz (ST300).
     # Ten since 2026-11-08: a DIT McASP can also receive I2S, the ST300's TV input.
-    if len(names) != 10:
+    if len(names) != KERNEL_PATCH_COUNT:
         fail(f"the profile should carry ten kernel patches; it carries {len(names)}: {names}")
 
 
-def main():
+def main() -> int:
+    """Run every check in order and return 0 when all hold."""
     for _name, check in (("device tree", check_device_tree), ("USB gadget", check_gadget_console),
                           ("kernel patches", check_kernel_patches),
                           ("rootfs contract", check_rootfs_contract),

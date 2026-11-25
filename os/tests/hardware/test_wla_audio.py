@@ -1,16 +1,19 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
+"""The WLA's audio: the one McASP machine driver, its device tree, clocks, rates and the init script."""
+
 import re
 import unittest
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parents[3]
 
 
 class WlaAudioTests(unittest.TestCase):
-    def test_kernel_builds_the_one_machine_driver_source(self):
+    """The WLA audio path in the kernel, device tree, init script and ALSA configuration."""
+
+    def test_kernel_builds_the_one_machine_driver_source(self) -> None:
         """os/drivers/soundtap-st10-audio.c is the only copy of the McASP machine driver.
 
         A second copy inside a linux patch once drifted: it matched only bose,soundtap-mcasp-audio
@@ -31,7 +34,8 @@ class WlaAudioTests(unittest.TestCase):
         source = (ROOT / "os/drivers/soundtap-st10-audio.c").read_text()
         self.assertIn('"bose,soundtap-mcasp-spdif"', source)
 
-    def test_binky_uses_builtin_mcasp1_spdif_without_codec_controls(self):
+    def test_binky_uses_builtin_mcasp1_spdif_without_codec_controls(self) -> None:
+        """The WLA plays through McASP1 S/PDIF with no codec or amplifier controls."""
         dts = (ROOT / "os/board/common/dts/ti/omap/am335x-soundtap-wla.dts").read_text()
         machine = (ROOT / "os/drivers/soundtap-st10-audio.c").read_text()
         init = (ROOT / "os/overlay/etc/init.d/soundtap").read_text()
@@ -56,13 +60,13 @@ class WlaAudioTests(unittest.TestCase):
         # Only the ST300's S/PDIF capture is pinned to 44100. The AUX in on mcasp0
         # shares 46875 with playback; pinning it too left no rate and AUX silent.
         self.assertIn("SNDRV_PCM_STREAM_CAPTURE && soundtap_spdif", machine)
-        compatibles = " ".join(re.findall(r'compatible\s*=\s*([^;]*);', dts)).lower()
+        compatibles = " ".join(re.findall(r"compatible\s*=\s*([^;]*);", dts)).lower()
         for codec in ("aic3256", "tlv320", "amplifier"):
             self.assertNotIn(codec, compatibles)
         start = init.index('if [ "$MAINLINE" = 1 ] && [ "$NOCODEC" = 1 ]; then')
         end = init.index('elif [ "$MAINLINE" = 1 ]; then', start)
         wla = init[start:end]
-        ready = wla[wla.index('if [ -c /dev/snd/pcmC0D0p ]; then'):wla.index('\telse', wla.index('if [ -c /dev/snd/pcmC0D0p ]; then'))]
+        ready = wla[wla.index("if [ -c /dev/snd/pcmC0D0p ]; then"):wla.index("\telse", wla.index("if [ -c /dev/snd/pcmC0D0p ]; then"))]
         self.assertIn("AUDIO_MIX=1", wla)
         self.assertIn("[ -c /dev/snd/pcmC0D0p ]", wla)
         self.assertIn("WLA_AUDIO_READY=1", wla)
@@ -70,7 +74,7 @@ class WlaAudioTests(unittest.TestCase):
         # The local snapclient never opens the card; soundtapd builds its command line
         # (TestSnapclientArgsAnchorOrFollower) and stops it as its own child, with no
         # BusyBox pkill or killall.
-        self.assertNotIn('snapclient --player alsa', init)
+        self.assertNotIn("snapclient --player alsa", init)
         soundtapd = (ROOT / "app/cmd/soundtapd/main.go").read_text()
         self.assertNotIn('"pkill"', soundtapd)
         self.assertNotIn('"killall"', soundtapd)
@@ -90,7 +94,7 @@ class WlaAudioTests(unittest.TestCase):
         # rate rule from sysclk while the parameters are refined, which happens first.
         # With it still zero the rule accepted nothing and the card could not be opened
         # at all -- measured on the board 2026-09-18.
-        assert "soundtap_startup" in machine
+        self.assertIn("soundtap_startup", machine)
         startup = machine[machine.index("static int soundtap_startup"):machine.index("static int soundtap_hw_params")]
         self.assertIn("soundtap_set_clocks(cpu_dai, soundtap_spdif, soundtap_auxclk)", startup)
         self.assertIn("MCASP_CLKDIV_AUXCLK, 2", machine)

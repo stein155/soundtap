@@ -18,7 +18,10 @@ WANT = {"fs/protected_symlinks": "1", "fs/protected_hardlinks": "1",
 
 
 class TmpProtection(unittest.TestCase):
-    def test_init_sets_the_fs_protections(self):
+    """set_kernel_params against a temp /proc/sys."""
+
+    def test_init_sets_the_fs_protections(self) -> None:
+        """Init sets the /tmp protections and the panic settings."""
         with tempfile.TemporaryDirectory() as tmp:
             init = InitScript(tmp)
             for d in ("kernel", "vm", "fs"):
@@ -27,7 +30,8 @@ class TmpProtection(unittest.TestCase):
             got = {k: (init.proc / "sys" / k).read_text().strip() for k in WANT}
         self.assertEqual(got, WANT)
 
-    def test_a_key_the_kernel_lacks_does_not_stop_the_rest(self):
+    def test_a_key_the_kernel_lacks_does_not_stop_the_rest(self) -> None:
+        """A key the kernel lacks does not stop the other writes."""
         with tempfile.TemporaryDirectory() as tmp:
             init = InitScript(tmp)
             (init.proc / "sys/fs").mkdir(parents=True)  # no kernel/ or vm/: those writes fail

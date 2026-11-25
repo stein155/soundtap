@@ -19,34 +19,42 @@ from pathlib import Path
 from boot.init_script import InitScript
 
 
-def owner_calls(init):
+def owner_calls(init: InitScript) -> list[str]:
+    """Return the recorded chown, chgrp and chmod calls."""
     return [c for c in init.calls() if c.split()[0] in ("chown", "chgrp", "chmod")]
 
 
 class GrantSoundtapd(unittest.TestCase):
-    def setUp(self):
+    """grant_soundtapd and soundtapd_user."""
+
+    def setUp(self) -> None:
+        """Make an init script root with chown, chgrp and chmod stubbed."""
         self.dir = tempfile.TemporaryDirectory()
         self.init = InitScript(self.dir.name)
         for cmd in ("chown", "chgrp", "chmod"):
             self.init.stub(cmd)
 
-    def tearDown(self):
+    def tearDown(self) -> None:
+        """Remove the temp root."""
         self.dir.cleanup()
 
-    def node(self, path):
+    def node(self, path: Path) -> Path:
+        """Create an empty file at path, with its parents."""
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text("")
         return p
 
-    def test_without_the_user_nothing_changes(self):
+    def test_without_the_user_nothing_changes(self) -> None:
+        """Without the soundtapd user nothing changes owner and soundtapd runs as root."""
         self.init.stub("id", "exit 1")
-        r = self.init.run("soundtapd_user\ngrant_soundtapd\necho \"user=[$SOUNDTAPD_USER]\"")
+        r = self.init.run('soundtapd_user\ngrant_soundtapd\necho "user=[$SOUNDTAPD_USER]"')
         self.assertIn("user=[]", r.stdout)
         self.assertEqual(owner_calls(self.init), [])
         self.assertIn("soundtapd runs as root", self.init.log.read_text())
 
-    def test_devices_and_directories(self):
+    def test_devices_and_directories(self) -> None:
+        """Init hands soundtapd its device nodes, sysfs files and shared runtime directories, and root keeps the FIFOs."""
         init = self.init
         dev, sysfs = init.dev, init.sys
         for n in ("watchdog", "lirc0", "input/event0", "spidev1.0", "ttyS0", "snd/pcmC0D0p", "mtd0", "mtd8"):
@@ -92,12 +100,13 @@ class GrantSoundtapd(unittest.TestCase):
         self.assertEqual((sysfs / "module/firmware_class/parameters/path").read_text(), f"{init.run_dir}/firmware\n")
         self.assertFalse(init.log.exists() and "ERROR" in init.log.read_text(), init.log.exists() and init.log.read_text())
 
-    def test_a_link_in_place_of_a_shared_file_is_not_followed(self):
+    def test_a_link_in_place_of_a_shared_file_is_not_followed(self) -> None:
+        """A symlink in place of a shared file is replaced, not followed."""
         init = self.init
         target = Path(self.dir.name) / "elsewhere"
         target.write_text("root's\n")
         (init.run_dir / "ntp-servers").symlink_to(target)
-        init.run("SOUNDTAPD_USER=soundtapd\nshared_file \"$RUN_DIR/ntp-servers\"")
+        init.run('SOUNDTAPD_USER=soundtapd\nshared_file "$RUN_DIR/ntp-servers"')
         self.assertFalse((init.run_dir / "ntp-servers").is_symlink())
         self.assertEqual(target.read_text(), "root's\n")
         self.assertNotIn(f"chgrp soundtapd {target}", owner_calls(init))
@@ -106,7 +115,8 @@ class GrantSoundtapd(unittest.TestCase):
 class MigrateNVOwner(unittest.TestCase):
     """The first boot after the update hands soundtapd its state; later boots write nothing."""
 
-    def migrate(self, user):
+    def migrate(self, user: str) -> tuple[list[str], str]:
+        """Run migrate_nv_owner with SOUNDTAPD_USER=user over a sample /mnt/nv; return (owner calls, log)."""
         with tempfile.TemporaryDirectory() as d:
             init = InitScript(d)
             for cmd in ("chown", "chgrp", "chmod"):
@@ -122,7 +132,8 @@ class MigrateNVOwner(unittest.TestCase):
             log = init.log.read_text() if init.log.exists() else ""
             return [c.replace(d, "") for c in owner_calls(init)], log
 
-    def test_first_boot_hands_everything_over(self):
+    def test_first_boot_hands_everything_over(self) -> None:
+        """The first boot hands soundtapd its state, but not root's clock file or init's boot logs."""
         calls, log = self.migrate("root")  # none of the test's files is root's: an old build's
         chowned = " ".join(c for c in calls if c.startswith("chown -h root:root"))
         for f in ("soundtap", "soundtap/presets.json", "soundtap/presets.json.settings", "soundtap/codec/rhino_sm2_normal.cfg"):
@@ -134,11 +145,13 @@ class MigrateNVOwner(unittest.TestCase):
         self.assertIn("chmod 1775 /mnt/nv", calls)
         self.assertNotIn("not all", log)  # the test machine has no spotify user: that tree is not checked here
 
-    def test_later_boots_write_nothing_in_its_home(self):
+    def test_later_boots_write_nothing_in_its_home(self) -> None:
+        """Later boots change no owner in soundtapd's home."""
         calls, _ = self.migrate(str(os.getuid()))  # every file already the user's (find takes a uid)
         self.assertFalse([c for c in calls if c.startswith("chown -h") and "/soundtap" in c], calls)
 
-    def test_without_persistent_storage_nothing_is_touched(self):
+    def test_without_persistent_storage_nothing_is_touched(self) -> None:
+        """Without persistent storage nothing changes owner."""
         with tempfile.TemporaryDirectory() as d:
             init = InitScript(d)
             for cmd in ("chown", "chgrp", "chmod"):
@@ -148,7 +161,10 @@ class MigrateNVOwner(unittest.TestCase):
 
 
 class StartsAsItsOwnUser(unittest.TestCase):
-    def test_network_ready_is_soundtapds(self):
+    """How init starts soundtapd as its own user."""
+
+    def test_network_ready_is_soundtapds(self) -> None:
+        """The network-ready marker is made and given to soundtapd."""
         with tempfile.TemporaryDirectory() as d:
             init = InitScript(d)
             init.stub("chown")
@@ -156,9 +172,12 @@ class StartsAsItsOwnUser(unittest.TestCase):
             self.assertTrue((init.run_dir / "network-ready").exists())
             self.assertIn(f"chown soundtapd {init.run_dir}/network-ready", init.calls())
 
-    def test_network_ready_is_not_reopened_once_soundtapds(self):
-        # protected_regular=2 refuses root's O_CREAT open of soundtapd's marker in the sticky
-        # /run/soundtap, and a failed redirection on ":" ends the shell: init leaves it be.
+    def test_network_ready_is_not_reopened_once_soundtapds(self) -> None:
+        """An existing network-ready marker is left as it is.
+
+        protected_regular=2 refuses root's O_CREAT open of soundtapd's marker in the sticky
+        /run/soundtap, and a failed redirection on ":" ends the shell: init leaves it be.
+        """
         with tempfile.TemporaryDirectory() as d:
             init = InitScript(d)
             init.stub("chown")
@@ -167,7 +186,8 @@ class StartsAsItsOwnUser(unittest.TestCase):
             init.run(f'SOUNDTAPD_USER=soundtapd NETWORK_READY="{marker}"\nmark_network_ready')
             self.assertEqual(marker.read_text(), "soundtapd's\n")
 
-    def test_soundtapd_starts_through_the_helper(self):
+    def test_soundtapd_starts_through_the_helper(self) -> None:
+        """With the user, soundtapd starts through soundtap-root's exec-soundtapd once the helper serves."""
         with tempfile.TemporaryDirectory() as d:
             init = InitScript(d)
             helper = init.bin / "soundtap-root"
@@ -188,7 +208,8 @@ class StartsAsItsOwnUser(unittest.TestCase):
             self.assertIn("soundtap-root serve", init.calls())
             self.assertIn("soundtap-root exec-soundtapd /run/audio-bin/app/soundtapd -home /mnt/nv/soundtap -no-audio", init.calls())
 
-    def test_without_the_user_soundtapd_starts_directly(self):
+    def test_without_the_user_soundtapd_starts_directly(self) -> None:
+        """Without the soundtapd user soundtapd starts directly, not through the helper."""
         with tempfile.TemporaryDirectory() as d:
             init = InitScript(d)
             r = init.run(f'SOUNDTAPD_USER= ROOT_HELPER="{init.bin}/soundtap-root"\nstart_root_helper\necho "exec=[$SOUNDTAPD_EXEC]"')

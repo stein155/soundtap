@@ -18,7 +18,10 @@ CLOCK = ROOT / "os/overlay/opt/soundtap/clock.sh"
 
 
 class KeepClockTest(unittest.TestCase):
-    def run_keep(self, tmp, claimed):
+    """keep_clock's claim on starting ntpd."""
+
+    def run_keep(self, tmp: str, *, claimed: bool) -> tuple[int, pathlib.Path]:
+        """Run keep_clock with a stub ntpd, the claim held by another caller or not; return (ntpd starts, pid file)."""
         bin_dir = pathlib.Path(tmp, "bin")
         bin_dir.mkdir()
         starts = pathlib.Path(tmp, "starts")
@@ -32,14 +35,16 @@ class KeepClockTest(unittest.TestCase):
         subprocess.run(["sh", "-c", f". {CLOCK}; keep_clock; wait"], env=env, check=True)
         return starts.read_text().count("started") if starts.exists() else 0, pid_file
 
-    def test_starts_ntpd_and_releases_the_claim(self):
+    def test_starts_ntpd_and_releases_the_claim(self) -> None:
+        """Without a claim held it starts ntpd once and releases the claim."""
         with tempfile.TemporaryDirectory() as tmp:
             n, pid_file = self.run_keep(tmp, claimed=False)
             self.assertEqual(n, 1)
             self.assertTrue(pid_file.exists())
             self.assertFalse(pathlib.Path(f"{pid_file}.claim").exists())
 
-    def test_backs_off_while_another_caller_holds_the_claim(self):
+    def test_backs_off_while_another_caller_holds_the_claim(self) -> None:
+        """While another caller holds the claim it starts nothing."""
         with tempfile.TemporaryDirectory() as tmp:
             n, pid_file = self.run_keep(tmp, claimed=True)
             self.assertEqual(n, 0)
@@ -51,10 +56,13 @@ DEFAULT = ["time.cloudflare.com", "time.google.com"]
 
 
 class NtpPeersTest(unittest.TestCase):
-    """ntpd asks the lease's servers, then the owner's list or the default; never the
-    NTP Pool's default zone, whose terms a distributed device may not use."""
+    """ntpd asks the lease's servers, then the owner's list or the default.
 
-    def peers(self, lease=None, own=None, vendor_zone=None):
+    Never the NTP Pool's default zone, whose terms a distributed device may not use.
+    """
+
+    def peers(self, lease: str | None = None, own: str | None = None, vendor_zone: str | None = None) -> list[str]:
+        """Run ntp_peers with this lease, owner's list and vendor zone; return the servers it names."""
         with tempfile.TemporaryDirectory() as tmp:
             dhcp = pathlib.Path(tmp, "ntp-servers")
             if lease is not None:
@@ -71,28 +79,35 @@ class NtpPeersTest(unittest.TestCase):
         self.assertEqual(args[::2], ["-p"] * (len(args) // 2), args)
         return args[1::2]
 
-    def test_lease_servers_come_before_the_default(self):
+    def test_lease_servers_come_before_the_default(self) -> None:
+        """The lease's servers come before the default ones."""
         self.assertEqual(self.peers(lease="192.168.1.1 10.0.0.5"), ["192.168.1.1", "10.0.0.5", *DEFAULT])
 
-    def test_without_a_lease_server_only_the_default(self):
+    def test_without_a_lease_server_only_the_default(self) -> None:
+        """Without a lease server only the default servers are asked."""
         self.assertEqual(self.peers(), DEFAULT)
 
-    def test_the_default_never_uses_the_pools_default_zone(self):
+    def test_the_default_never_uses_the_pools_default_zone(self) -> None:
+        """No server is in the NTP Pool's default zone, with or without a vendor zone."""
         for name in self.peers() + self.peers(vendor_zone="soundtap.pool.ntp.org"):
             self.assertNotRegex(name, r"^([0-3]\.)?pool\.ntp\.org$")
 
-    def test_a_vendor_zone_comes_first_in_the_default(self):
+    def test_a_vendor_zone_comes_first_in_the_default(self) -> None:
+        """A vendor zone's three servers come before the default ones."""
         self.assertEqual(self.peers(vendor_zone="soundtap.pool.ntp.org"),
                          ["0.soundtap.pool.ntp.org", "1.soundtap.pool.ntp.org", "2.soundtap.pool.ntp.org", *DEFAULT])
 
-    def test_the_owners_list_replaces_the_default_after_the_lease(self):
+    def test_the_owners_list_replaces_the_default_after_the_lease(self) -> None:
+        """The owner's list replaces the default, after the lease's servers."""
         self.assertEqual(self.peers(lease="192.168.1.1", own=NV_FIXTURE.read_text()),
                          ["192.168.1.1", "ntp.home.arpa", "192.168.1.2"])
 
-    def test_an_owners_list_without_a_name_keeps_the_default(self):
+    def test_an_owners_list_without_a_name_keeps_the_default(self) -> None:
+        """An owner's list without a server name keeps the default."""
         self.assertEqual(self.peers(own="# nothing yet\n\n"), DEFAULT)
 
-    def test_words_ntpd_would_take_for_options_are_dropped(self):
+    def test_words_ntpd_would_take_for_options_are_dropped(self) -> None:
+        """Words ntpd would take for options or shell code are dropped."""
         got = self.peers(lease="192.168.1.1 -S", own="-S /tmp/x ntp.example $(reboot)\n")
         self.assertEqual(got, ["192.168.1.1", "ntp.example"])
 
@@ -100,7 +115,8 @@ class NtpPeersTest(unittest.TestCase):
 class ClockRetryTest(unittest.TestCase):
     """A failed sync starts one retry loop, however often Wi-Fi rejoins meanwhile."""
 
-    def test_rejoins_do_not_stack_retry_loops(self):
+    def test_rejoins_do_not_stack_retry_loops(self) -> None:
+        """Five rejoins in a row start a single retry loop."""
         with tempfile.TemporaryDirectory() as tmp:
             calls = pathlib.Path(tmp, "calls")
             script = (
@@ -122,10 +138,13 @@ class ClockRetryTest(unittest.TestCase):
 
 
 class SyncClockStepTest(unittest.TestCase):
-    """soundtapd runs `init.d/soundtap sync-clock` after a Wi-Fi join: one sync now, and the
-    retry loop only when that fails, both in the log."""
+    """soundtapd runs `init.d/soundtap sync-clock` after a Wi-Fi join.
 
-    def run_step(self, synced: bool) -> str:
+    One sync now, and the retry loop only when that fails, both in the log.
+    """
+
+    def run_step(self, *, synced: bool) -> str:
+        """Run the sync-clock subcommand with a sync that succeeds or fails; return the log."""
         with tempfile.TemporaryDirectory() as tmp:
             init = InitScript(tmp)
             done = init.run(
@@ -137,13 +156,15 @@ class SyncClockStepTest(unittest.TestCase):
             self.assertNotIn("boot went on", done.stdout)
             return init.log.read_text()
 
-    def test_a_good_sync_starts_no_retry_loop(self):
+    def test_a_good_sync_starts_no_retry_loop(self) -> None:
+        """A good sync is logged and starts no retry loop."""
         log = self.run_step(synced=True)
         self.assertIn("sync\n", log)
         self.assertIn("clock synchronized after the Wi-Fi join", log)
         self.assertNotIn("retry-loop", log)
 
-    def test_a_failed_sync_hands_over_to_the_retry_loop(self):
+    def test_a_failed_sync_hands_over_to_the_retry_loop(self) -> None:
+        """A failed sync is logged as degraded and starts the retry loop."""
         log = self.run_step(synced=False)
         self.assertIn("WARNING: clock synchronization degraded; retrying", log)
         self.assertIn("retry-loop", log)

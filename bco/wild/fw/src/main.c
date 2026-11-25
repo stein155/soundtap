@@ -53,7 +53,7 @@ static void blocks_init(void)
 static void desc_init(void)
 {
     static const unsigned char ids[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 21};
-    static unsigned char *const ptr[] = {blk.id1, blk.id2, blk.id3, blk.id4, blk.id5, blk.id6, blk.id7,
+    static const unsigned char *const ptr[] = {blk.id1, blk.id2, blk.id3, blk.id4, blk.id5, blk.id6, blk.id7,
                                   blk.id8, 0, blk.id10, blk.id11, blk.id12, blk.id13, blk.id14,
                                   blk.id15, blk.id16, blk.id17, 0, blk.id20, blk.id21};
     unsigned i;

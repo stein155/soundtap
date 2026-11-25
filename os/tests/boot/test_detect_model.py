@@ -18,15 +18,15 @@ DTS = ROOT / "os/board/common/dts/ti/omap"
 
 
 def recipe_cmdline() -> str:
-    """The bootargs the installer's U-Boot recipe sets for an ST10 slot."""
+    """Return the bootargs the installer's U-Boot recipe sets for an ST10 slot."""
     go = (ROOT / "app/internal/flash/recipes.go").read_text()
     block = go[go.index('"soundtap_args=setenv bootargs '):go.index('"stock_args=')]
     args = "".join(re.findall(r'"([^"]*)"', block)).removeprefix("soundtap_args=setenv bootargs ")
     return args.replace("${rmtd}", "8").replace("%s", "rhino", 1).replace("%s", "sm2", 1)
 
 
-def boot(cmdline: str, variant=None, persisted=None):
-    """Runs the boot's identity steps; returns (exit code, "NANDROOT MAINLINE MODEL NOCODEC WATCHDOG", log)."""
+def boot(cmdline: str, variant: str | None = None, persisted: str | None = None) -> tuple[int, str, str]:
+    """Run the boot's identity steps; return (exit code, "NANDROOT MAINLINE MODEL NOCODEC WATCHDOG", log)."""
     with tempfile.TemporaryDirectory() as d:
         init = InitScript(d)
         (init.proc / "cmdline").write_text(cmdline + "\n")
@@ -43,7 +43,10 @@ def boot(cmdline: str, variant=None, persisted=None):
 
 
 class DetectModel(unittest.TestCase):
-    def test_each_board_boots_as_its_model_from_nand(self):
+    """detect_kernel, read_boot_watchdog and detect_model on real command lines."""
+
+    def test_each_board_boots_as_its_model_from_nand(self) -> None:
+        """Each board's device-tree bootargs boot as its model from NAND, with the watchdog not armed."""
         boards = {"st10": "st10 0", "st20": "st20 0", "st20-iii": "st10 0", "wla": "wla 1", "st300": "st300 1"}
         for board, model_nocodec in boards.items():
             with self.subTest(board=board):
@@ -52,33 +55,40 @@ class DetectModel(unittest.TestCase):
                 # The watchdog flag is passed but never armed on NAND: a reboot lands on the same slot.
                 self.assertEqual(boot(cmdline)[:2], (0, f"1 1 {model_nocodec} -"))
 
-    def test_installer_recipe_boots_from_nand(self):
+    def test_installer_recipe_boots_from_nand(self) -> None:
+        """The installer's ST10 recipe boots as an ST10 from NAND."""
         self.assertEqual(boot(recipe_cmdline())[:2], (0, "1 1 st10 0 -"))
 
-    def test_proc_variant_alone_is_enough(self):
+    def test_proc_variant_alone_is_enough(self) -> None:
+        """/proc/variant alone identifies the model."""
         self.assertEqual(boot("root=ubi0:rootfs", variant="binky")[:2], (0, "0 1 wla 1 -"))
 
-    def test_persisted_model_never_overrides_the_hardware(self):
+    def test_persisted_model_never_overrides_the_hardware(self) -> None:
+        """A persisted model that conflicts with the hardware is ignored and logged."""
         code, out, log = boot("variant=binky soundtap.nandroot=1", persisted="st10")
         self.assertEqual((code, out), (0, "1 1 wla 1 -"))
         self.assertIn("ignored persisted model conflicting with hardware: st10", log)
 
-    def test_unknown_variant_stops_the_boot(self):
+    def test_unknown_variant_stops_the_boot(self) -> None:
+        """An unknown variant stops the boot before hardware and network bring-up."""
         code, out, log = boot("variant=nonsense soundtap.nandroot=1")
         self.assertEqual((code, out), (1, ""))
         self.assertIn("refusing hardware and network bring-up", log)
 
-    def test_conflicting_identity_stops_the_boot(self):
+    def test_conflicting_identity_stops_the_boot(self) -> None:
+        """A /proc variant that conflicts with the command line stops the boot."""
         code, _, log = boot("variant=rhino", variant="spotty")
         self.assertEqual(code, 1)
         self.assertIn("conflicting immutable hardware identity: proc=st20 cmdline=st10", log)
 
-    def test_no_identity_stops_the_boot(self):
+    def test_no_identity_stops_the_boot(self) -> None:
+        """A boot with no hardware identity at all stops."""
         code, _, log = boot("root=ubi0:rootfs")
         self.assertEqual(code, 1)
         self.assertIn("immutable hardware identity unavailable", log)
 
-    def test_ram_boot_arms_the_watchdog(self):
+    def test_ram_boot_arms_the_watchdog(self) -> None:
+        """A RAM boot with soundtap.watchdog arms the watchdog."""
         self.assertEqual(boot("variant=rhino soundtap.watchdog=90")[:2], (0, "0 1 st10 0 90"))
 
 

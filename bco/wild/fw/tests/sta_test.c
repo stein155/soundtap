@@ -52,7 +52,7 @@ int main(void)
 {
     unsigned long long pn = 0, *rxpn = 0;
     const unsigned char *k;
-    struct event *e;
+    const struct event *e;
     sim_init();
 
     /* peer table */

@@ -2,8 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-"""Every CVE os/ignore-cves.mk ignores carries a reason, and the reason holds where it can be
-checked offline.
+"""Every CVE os/ignore-cves.mk ignores carries a reason, and the reason holds where it can be checked offline.
 
     ignore_cves.py [--kernel-config output/os/images/kernel.config]
 
@@ -47,11 +46,13 @@ OTHER = re.compile(r"\bfixed (?:in|before) \d[\w.]*|\bmaintainer accepted\b")
 
 
 def kernel_version(defconfig: str) -> tuple[int, ...]:
-    m = re.search(r'^BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="([\d.]+)"', defconfig, re.M)
+    """Return the kernel version the defconfig pins, or () when it pins none."""
+    m = re.search(r'^BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="([\d.]+)"', defconfig, re.MULTILINE)
     return tuple(int(x) for x in m[1].split(".")) if m else ()
 
 
 def config_values(text: str) -> dict[str, str]:
+    """Return each CONFIG_ symbol's value, "n" for the ones set off."""
     values = {}
     for line in text.splitlines():
         if m := re.match(r"(CONFIG_\w+)=(.*)", line):
@@ -62,6 +63,7 @@ def config_values(text: str) -> dict[str, str]:
 
 
 def patches_naming(root: Path, package: str, cve: str) -> list[Path]:
+    """Return our patches for the package that name the CVE."""
     name = package.lower().replace("_", "-")
     dirs = [root / "os/package" / name, root / "os/board/common/patches" / name]
     return [p for d in dirs if d.is_dir() for p in sorted(d.glob("*.patch")) if cve in p.read_text(errors="replace")]
@@ -70,18 +72,20 @@ def patches_naming(root: Path, package: str, cve: str) -> list[Path]:
 class Context:
     """What a reason is checked against."""
 
-    def __init__(self, root: Path, kernel_config: str | None):
+    def __init__(self, root: Path, kernel_config: str | None) -> None:
+        """Read the pinned kernel, linux.fragment and, when given, the built configuration."""
         self.root = root
         self.version = kernel_version((root / "os/configs/soundtap_defconfig").read_text())
         self.fragment = config_values((root / "os/board/image/linux.fragment").read_text())
         self.built = config_values(kernel_config) if kernel_config is not None else None
 
     def pinned(self) -> str:
+        """Return the pinned kernel version for messages."""
         return ".".join(map(str, self.version)) or "not pinned"
 
 
 def kernel_reasons(ctx: Context, package: str, cve: str, reason: str) -> tuple[int, list[str]]:
-    """The kernel forms in reason: how many, and what does not hold."""
+    """Count the kernel forms in reason and return that count with what does not hold."""
     forms, out = 0, []
     for fix in FIX_612.findall(reason):
         forms += 1
@@ -109,6 +113,7 @@ def kernel_reasons(ctx: Context, package: str, cve: str, reason: str) -> tuple[i
 
 
 def entry_problems(ctx: Context, package: str, cve: str, reason: str) -> list[str]:
+    """Return what does not hold in one entry's reason, or that it has none of the forms."""
     if not reason:
         return [f"{cve} has no reason"]
     forms, out = kernel_reasons(ctx, package, cve, reason)
@@ -130,12 +135,11 @@ def entry_problems(ctx: Context, package: str, cve: str, reason: str) -> list[st
 
 
 def ffmpeg_part_problems(root: Path, package: str, cve: str, kind: str, names: str) -> list[str]:
-    """The filters, muxers, demuxers or protocols a reason names must be ones our ffmpeg
-    leaves out."""
+    """Check that the filters, muxers, demuxers or protocols a reason names are ones our ffmpeg leaves out."""
     if package != "SOUNDTAP_FFMPEG":
         return [f"{cve}: 'ffmpeg {kind} ... not built' is for soundtap-ffmpeg only"]
     mk = (root / FFMPEG_MK).read_text() if (root / FFMPEG_MK).exists() else ""
-    m = re.search(rf"^SOUNDTAP_FFMPEG_{kind.upper()}S\s*=\s*(.*)$", mk, re.M)
+    m = re.search(rf"^SOUNDTAP_FFMPEG_{kind.upper()}S\s*=\s*(.*)$", mk, re.MULTILINE)
     if not m or "--disable-everything" not in mk:
         return [f"{cve}: {FFMPEG_MK} lists no {kind}s or does not build --disable-everything"]
     built = set(m.group(1).split())
@@ -144,12 +148,13 @@ def ffmpeg_part_problems(root: Path, package: str, cve: str, kind: str, names: s
 
 
 def problems(root: Path, kernel_config: str | None = None) -> list[str]:
+    """Return every problem with os/ignore-cves.mk under root."""
     ctx = Context(root, kernel_config)
     mk = (root / "os/ignore-cves.mk").read_text()
     out, seen = [], set()
     if ctx.version[:2] != (6, 12):
         out.append(f"the kernel is {ctx.pinned()}, not 6.12: every LINUX entry needs checking again")
-    header = re.search(r"^# Linux ([\d.]+) ", mk, re.M)
+    header = re.search(r"^# Linux ([\d.]+) ", mk, re.MULTILINE)
     if header and tuple(int(x) for x in header[1].split(".")) != ctx.version:
         out.append(f"the header names Linux {header[1]}, the defconfig pins {ctx.pinned()}")
     for n, line in enumerate(mk.splitlines(), 1):
@@ -169,6 +174,7 @@ def problems(root: Path, kernel_config: str | None = None) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
+    """Check os/ignore-cves.mk, print its problems and return the exit code."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--kernel-config", type=Path, help="the built kernel's .config")
     parser.add_argument("--root", type=Path, default=ROOT)

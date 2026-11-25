@@ -98,9 +98,9 @@ int mtd_seek(struct mtd_part *part, unsigned long long offset);
 /* The first good block at or after `offset` when it is block-aligned; `offset` otherwise. */
 unsigned long long mtd_skip_bad(struct mtd_part *part, unsigned long long offset);
 
-/* Read `len` bytes from the physical cursor `*at`, skipping bad blocks the same way writes do,
+/* Read `len` bytes from the physical cursor `*cursor`, skipping bad blocks the same way writes do,
  * and advance it: callers reading in pieces keep one cursor, never a logical offset. */
-int mtd_read(struct mtd_part *part, unsigned long long *at, unsigned char *out, int len);
+int mtd_read(struct mtd_part *part, unsigned long long *cursor, unsigned char *out, int len);
 
 /* CRC32 of `len` bytes from physical `offset` on, read back through the same bad-block map. */
 int mtd_verify_crc(struct mtd_part *part, unsigned long long offset, unsigned long long len,

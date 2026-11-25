@@ -5,6 +5,7 @@
 """Reject artifact/model/profile combinations not approved for release."""
 
 import argparse
+from dataclasses import dataclass
 
 TARGETS = ("st10", "st20", "wla", "st300")
 ARTIFACTS = ("stu", "nand")
@@ -12,8 +13,19 @@ PROFILES = ("alpha", "production")
 PHASES = ("candidate", "promotion")
 
 
-def validate(target, artifact, profile, phase="candidate", hardware_evidence=False,
-             wla_rf_config_evidence=False):
+@dataclass(frozen=True)
+class Evidence:
+    """The validated evidence a promotion needs: model hardware and, for the WLA, its RF configuration."""
+
+    hardware: bool = False
+    wla_rf_config: bool = False
+
+
+NO_EVIDENCE = Evidence()
+
+
+def validate(target: str, artifact: str, profile: str, phase: str = "candidate",
+             evidence: Evidence = NO_EVIDENCE) -> None:
     """Raise SystemExit unless this combination is approved for release.
 
     The argument checks are not redundant with argparse's choices: test_release_gate
@@ -21,29 +33,37 @@ def validate(target, artifact, profile, phase="candidate", hardware_evidence=Fal
     otherwise sail through every rule below and report a gate pass.
     """
     if target not in TARGETS:
-        raise SystemExit(f"RELEASE REJECT: unknown target {target!r}, want one of {TARGETS}")
+        msg = f"RELEASE REJECT: unknown target {target!r}, want one of {TARGETS}"
+        raise SystemExit(msg)
     if artifact not in ARTIFACTS:
-        raise SystemExit(f"RELEASE REJECT: unknown artifact {artifact!r}, want one of {ARTIFACTS}")
+        msg = f"RELEASE REJECT: unknown artifact {artifact!r}, want one of {ARTIFACTS}"
+        raise SystemExit(msg)
     if profile not in PROFILES:
-        raise SystemExit(f"RELEASE REJECT: unknown profile {profile!r}, want one of {PROFILES}")
+        msg = f"RELEASE REJECT: unknown profile {profile!r}, want one of {PROFILES}"
+        raise SystemExit(msg)
     if phase not in PHASES:
-        raise SystemExit(f"RELEASE REJECT: unknown phase {phase!r}, want one of {PHASES}")
+        msg = f"RELEASE REJECT: unknown phase {phase!r}, want one of {PHASES}"
+        raise SystemExit(msg)
 
     if target in ("st20", "wla", "st300") and artifact == "nand":
-        raise SystemExit(f"RELEASE REJECT: {target.upper()} NAND installation is not approved")
+        msg = f"RELEASE REJECT: {target.upper()} NAND installation is not approved"
+        raise SystemExit(msg)
 
-    if target == "wla" and phase == "promotion" and not wla_rf_config_evidence:
+    if target == "wla" and phase == "promotion" and not evidence.wla_rf_config:
+        msg = "RELEASE REJECT: WLA promotion requires exact WLA RF configuration evidence"
         raise SystemExit(
-            "RELEASE REJECT: WLA promotion requires exact WLA RF configuration evidence"
+            msg,
         )
 
-    if phase == "promotion" and not hardware_evidence:
+    if phase == "promotion" and not evidence.hardware:
+        msg = f"RELEASE REJECT: {target} {artifact} promotion requires exact model hardware evidence"
         raise SystemExit(
-            f"RELEASE REJECT: {target} {artifact} promotion requires exact model hardware evidence"
+            msg,
         )
 
 
-def main():
+def main() -> None:
+    """Check the combination given on the command line and report the gate result."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--target", choices=TARGETS, required=True)
     parser.add_argument("--artifact", choices=ARTIFACTS, required=True)
@@ -54,7 +74,8 @@ def main():
     args = parser.parse_args()
     validate(
         args.target, args.artifact, args.profile, args.phase,
-        args.hardware_evidence_validated, args.wla_rf_config_evidence_validated,
+        Evidence(hardware=args.hardware_evidence_validated,
+                 wla_rf_config=args.wla_rf_config_evidence_validated),
     )
     label = "RELEASE" if args.phase == "promotion" else "CANDIDATE"
     print(f"{label} GATE OK: {args.target} {args.profile} {args.artifact}")

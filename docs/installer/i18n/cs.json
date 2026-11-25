@@ -26,7 +26,7 @@
   "copyFail": "Označte a zkopírujte",
   "br.intro": "Tato stránka požádá SoundTouch, ve kterém je stále software Bose, aby si stáhl SoundTap z aktualizačního serveru SoundTap a nainstaloval ho. Reproduktor zůstane ve vaší síti Wi-Fi a všechno udělá sám; asi po čtyřech minutách se restartuje už jako SoundTap.",
   "br.ip": "IP adresa reproduktoru",
-  "br.ipHint": "V aplikaci Bose: Nastavení, Nastavení reproduktoru, váš reproduktor, Informace. Nebo ji najdete ve svém routeru.",
+  "br.ipHint": "V aplikaci Bose: Nastavení, Nastavení reproduktoru, váš reproduktor, O aplikaci. Nebo ji najdete ve svém routeru.",
   "br.previewAgree": "Tento model je zatím jen v předběžné verzi: SoundTap pro něj vznikl podle softwaru Bose a nikdo ho na tomto modelu ještě nespustil. Nemusí hrát a cesta zpět nemusí být ověřená. Přesto ho instaluji.",
   "br.go": "Nainstalovat SoundTap",
   "br.pickModel": "Nejprve vyberte svůj reproduktor v kroku 1.",

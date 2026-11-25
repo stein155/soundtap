@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
+
+"""Tests for the SBOM CVE check tools/release/os_cves.py, with NVD answers recorded."""
 
 import contextlib
 import importlib.util
@@ -41,7 +42,8 @@ SBOM = {
 }
 
 
-def cve(id_, base, version="cvssMetricV31", status="Analyzed"):
+def cve(id_: str, base: float, version: str = "cvssMetricV31", status: str = "Analyzed") -> dict[str, object]:
+    """Return one NVD vulnerability entry with a base score under the given CVSS version."""
     return {"cve": {"id": id_, "vulnStatus": status, "metrics": {version: [{"cvssData": {"baseScore": base}}]}}}
 
 
@@ -57,19 +59,23 @@ NVD = {
 UBOOT_HIT = {"totalResults": 1, "vulnerabilities": [cve("CVE-2099-0001", 9.8)]}
 
 
-def with_uboot_hit(cpe, start):
+def with_uboot_hit(cpe: str, _start: int) -> dict[str, object]:
+    """Answer like NVD, with the synthetic finding for the bootloaders."""
     return UBOOT_HIT if cpe == UBOOT else NVD[cpe]
 
 
 class OsCves(unittest.TestCase):
-    def test_shipped_packages_with_a_cpe(self):
-        # flex only builds the image; the bootloaders are a host package whose output ships.
+    """Which packages are asked about and which CVEs count, are cleared or are not checked."""
+
+    def test_shipped_packages_with_a_cpe(self) -> None:
+        """Shipped packages are checked: flex only builds the image; the bootloaders are a host package whose output ships."""
         self.assertEqual(os_cves.packages(SBOM), {
             AVAHI: ("avahi", "0.8", "avahi"), BUSYBOX: ("busybox", "1.38.0", "busybox"),
             UBOOT: ("soundtap-bootloaders", "2026.07", "host-soundtap-bootloaders")})
         self.assertEqual(os_cves.uncovered(SBOM), ["soundtap-bco-app", "soundtapd"])
 
-    def test_shipped_host_package_is_asked_about(self):
+    def test_shipped_host_package_is_asked_about(self) -> None:
+        """NVD is asked about a shipped host package, and its CVEs count."""
         out = io.StringIO()
         self.assertEqual(os_cves.check(dict(SBOM, vulnerabilities=[]), get=with_uboot_hit, out=out), 2)
         text = out.getvalue()
@@ -77,23 +83,26 @@ class OsCves(unittest.TestCase):
         self.assertIn("3 package(s) checked: avahi, busybox, soundtap-bootloaders\n", text)
         self.assertIn("No CPE, not checked: soundtap-bco-app, soundtapd\n", text)
 
-    def test_host_package_cves_are_cleared_by_bom_ref(self):
+    def test_host_package_cves_are_cleared_by_bom_ref(self) -> None:
+        """A host package's CVE is cleared through its bom-ref."""
         sbom = dict(SBOM, vulnerabilities=[
             {"id": "CVE-2099-0001", "affects": [{"ref": "host-soundtap-bootloaders"}]}])
         out = io.StringIO()
         self.assertEqual(os_cves.check(sbom, get=with_uboot_hit, out=out), 1)  # avahi's 7.8 stays open
         self.assertIn("  soundtap-bootloaders CVE-2099-0001", out.getvalue())
 
-    def test_empty_or_partial_inventory_is_refused(self):
+    def test_empty_or_partial_inventory_is_refused(self) -> None:
+        """An empty or partial SBOM is refused before NVD is asked."""
         comps = SBOM["components"]
         hosts_only = [c for c in comps if c["properties"][0]["value"] == "host"]
         no_bootloaders = [c for c in comps if c["name"] != "soundtap-bootloaders"]
         for bad in ({}, [], {"components": {}}, {"components": []},
                     {"components": hosts_only}, {"components": no_bootloaders}):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
-                os_cves.check(bad, get=lambda cpe, start: self.fail("NVD asked"), out=io.StringIO())
+                os_cves.check(bad, get=lambda _cpe, _start: self.fail("NVD asked"), out=io.StringIO())
 
-    def test_main_exits_2_on_empty_or_broken_json(self):
+    def test_main_exits_2_on_empty_or_broken_json(self) -> None:
+        """The command exits 2 on an empty SBOM or one that is not JSON."""
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "sbom.json"
             for text in ("{}", "not json"):
@@ -101,41 +110,47 @@ class OsCves(unittest.TestCase):
                 with self.subTest(text=text), contextlib.redirect_stderr(io.StringIO()):
                     self.assertEqual(os_cves.main(["os_cves.py", str(path)]), 2)
 
-    def test_score_prefers_newest_cvss(self):
+    def test_score_prefers_newest_cvss(self) -> None:
+        """The score is the newest CVSS version's; None without one."""
         both = {"metrics": {"cvssMetricV2": [{"cvssData": {"baseScore": 4.3}}],
                             "cvssMetricV31": [{"cvssData": {"baseScore": 7.5}}]}}
         self.assertEqual(os_cves.score(both), 7.5)
         self.assertIsNone(os_cves.score({"metrics": {}}))
 
-    def test_unscored_open_cve_counts(self):
+    def test_unscored_open_cve_counts(self) -> None:
+        """An open CVE NVD has not scored yet counts."""
         sbom = dict(SBOM, vulnerabilities=[])
         nvd = {k: {"totalResults": 1, "vulnerabilities": [{"cve": {"id": "CVE-2026-1", "metrics": {}}}]} for k in NVD}
         out = io.StringIO()
-        self.assertEqual(os_cves.check(sbom, get=lambda cpe, start: nvd[cpe], out=out), len(nvd))
+        self.assertEqual(os_cves.check(sbom, get=lambda cpe, _start: nvd[cpe], out=out), len(nvd))
         self.assertIn("CVE-2026-1  unscored", out.getvalue())
 
-    def test_cpe_unknown_to_nvd_is_not_checked(self):
+    def test_cpe_unknown_to_nvd_is_not_checked(self) -> None:
+        """A CPE NVD does not know is listed as not checked and counts nothing."""
         out = io.StringIO()
-        self.assertEqual(os_cves.check(SBOM, get=lambda cpe, start: None, out=out), 0)
+        self.assertEqual(os_cves.check(SBOM, get=lambda _cpe, _start: None, out=out), 0)
         self.assertRegex(out.getvalue(), r"CPE unknown to NVD, not checked: \S")
 
-    def test_ignored_cves_are_cleared_not_open(self):
+    def test_ignored_cves_are_cleared_not_open(self) -> None:
+        """CVEs Buildroot ignores are listed as cleared, not open; rejected ones are dropped."""
         out = io.StringIO()
-        serious = os_cves.check(SBOM, get=lambda cpe, start: NVD[cpe], out=out)
+        serious = os_cves.check(SBOM, get=lambda cpe, _start: NVD[cpe], out=out)
         text = out.getvalue()
         self.assertEqual(serious, 0)
         self.assertIn("avahi 0.8: 1 open\n  CVE-2025-59529   5.5", text)
         self.assertIn("Cleared by Buildroot:\n  avahi CVE-2021-26720\n  avahi CVE-2021-3468", text)
         self.assertNotIn("CVE-2025-00000", text)
 
-    def test_open_high_score_counts(self):
+    def test_open_high_score_counts(self) -> None:
+        """An open CVE at the minimum score or above counts."""
         sbom = dict(SBOM, vulnerabilities=[])
-        self.assertEqual(os_cves.check(sbom, get=lambda cpe, start: NVD[cpe], out=io.StringIO()), 1)
+        self.assertEqual(os_cves.check(sbom, get=lambda cpe, _start: NVD[cpe], out=io.StringIO()), 1)
 
-    def test_pages_until_total(self):
+    def test_pages_until_total(self) -> None:
+        """NVD is paged until the total is reached."""
         starts = []
 
-        def get(cpe, start):
+        def get(_cpe: str, start: int) -> dict[str, object]:
             starts.append(start)
             return {"totalResults": 2 * os_cves.PAGE + 1, "vulnerabilities": [cve(f"CVE-2026-{start}", 1.0)]}
 

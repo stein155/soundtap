@@ -31,16 +31,18 @@ LAYOUT_VOL = 0x7FFFEFFF
 KERNEL_OF = {"ginger": "binky"}
 
 
-def pick(found, *names):
+def pick(found: list[tuple[int, int, int, str]], *names: str) -> tuple[int, int]:
+    """Return the start and size of the first module named, in the order the names are given."""
     for name in names:
         for _header, image, size, mod in found:
             if mod == name:
                 return image, size
-    raise SystemExit(f"package has none of {names}")
+    msg = f"package has none of {names}"
+    raise SystemExit(msg)
 
 
-def ubi_volume(image: bytes, vol_id: int = 0):
-    """Contents of one UBI volume, rebuilt from the PEBs of a ubinize image."""
+def ubi_volume(image: bytes, vol_id: int = 0) -> bytes:
+    """Return the contents of one UBI volume, rebuilt from the PEBs of a ubinize image."""
     lebs, best, reserved = {}, {}, None
     for peb in range(len(image) // PEB):
         raw = image[peb * PEB:(peb + 1) * PEB]
@@ -62,7 +64,8 @@ def ubi_volume(image: bytes, vol_id: int = 0):
         best[lnum] = sqnum
         lebs[lnum] = raw[data_off:]
     if reserved is None or not lebs:
-        raise SystemExit("no UBI volume table or no data for volume 0")
+        msg = "no UBI volume table or no data for volume 0"
+        raise SystemExit(msg)
     leb_size = len(next(iter(lebs.values())))
     out = bytearray(b"\xff" * (reserved * leb_size))
     for lnum, data in lebs.items():
@@ -70,7 +73,8 @@ def ubi_volume(image: bytes, vol_id: int = 0):
     return bytes(out)
 
 
-def main(argv):
+def main(argv: list[str]) -> None:
+    """Print the expected kernel and rootfs values for the package and variants named."""
     data = Path(argv[0]).read_bytes()
     found = stu_check.modules(data)
     for variant in argv[1:]:
@@ -84,7 +88,9 @@ def main(argv):
     # The installer hands ubiformat the module or the module minus the overlap,
     # whichever is a whole number of eraseblocks (install.UBIBodySize).
     body = size if size % PEB == 0 else size - stu_check.OVERLAP
-    assert body % PEB == 0, "rootfs module is not a whole number of eraseblocks"
+    if body % PEB != 0:
+        msg = "rootfs module is not a whole number of eraseblocks"
+        raise AssertionError(msg)
     volume = ubi_volume(data[start:start + body])
     print(f"EXP_VOL_LEN={len(volume)}")
     print(f"EXP_VOL_SHA={hashlib.sha256(volume).hexdigest()}")

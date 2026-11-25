@@ -16,13 +16,13 @@
 /* From linux/mtd/mtd-abi.h. Declared here so the installer builds against any libc, including
  * the cross toolchain's, without depending on kernel headers being installed. */
 struct mtd_info_user_compat {
-    unsigned char type;
-    unsigned int flags;
+    unsigned char type;           /* cppcheck-suppress unusedStructMember ; the kernel's MEMGETINFO layout */
+    unsigned int flags;           /* cppcheck-suppress unusedStructMember ; the same layout */
     unsigned int size;
     unsigned int erasesize;
     unsigned int writesize;
-    unsigned int oobsize;
-    unsigned long long padding;
+    unsigned int oobsize;         /* cppcheck-suppress unusedStructMember ; the same layout */
+    unsigned long long padding;   /* cppcheck-suppress unusedStructMember ; the same layout */
 };
 
 struct erase_info_user_compat {
@@ -42,6 +42,7 @@ struct erase_info_user_compat {
 /* Blocks marked bad by this process, over every partition it opens. */
 static unsigned run_marked;
 
+/* cppcheck-suppress unusedFunction ; the C harness of os/tests/installer/test_wla_installer_offline.py calls it */
 unsigned mtd_marked_this_run(void)
 {
     return run_marked;

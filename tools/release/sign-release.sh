@@ -38,83 +38,85 @@ trap 'rm -rf "$dir"' EXIT
 
 # The statement in the .sig names the kind and the version from the tag, so a speaker can
 # tell an older release from a newer one and an app from a Core package (ADR 0048).
-case $tag in
+case ${tag} in
 os-v*) kind=core version=${tag#os-v} latest=--latest ;;
 app-v*) kind=app version=${tag#app-v} latest=--latest=false ;;
-*) echo "sign-release.sh: $tag is neither os-v* nor app-v*" >&2; exit 1 ;;
+*) echo "sign-release.sh: ${tag} is neither os-v* nor app-v*" >&2; exit 1 ;;
 esac
 # An alpha (ADR 0035): a GitHub prerelease, never latest. sign.sh checks the version itself.
 alpha=
 pre=--prerelease=false
-case $version in
+case ${version} in
 *-alpha.*) alpha=1 pre=--prerelease latest=--latest=false ;;
+*) ;;
 esac
-[ "$(gh release view "$tag" --json isDraft -q .isDraft)" = true ] ||
-	{ echo "sign-release.sh: $tag is not a draft" >&2; exit 1; }
-gh release download "$tag" -D "$dir"
-assets=$(cd "$dir" && ls ./*.sha256 | sed 's|^\./||; s|\.sha256$||')
-asset=$(printf '%s\n' "$assets" | grep -v -e '-preview\.stu$' || true)
-[ -n "$asset" ] && [ "$(echo "$asset" | wc -l)" -eq 1 ] ||
-	{ echo "sign-release.sh: expected exactly one asset with a .sha256 in $tag" >&2; exit 1; }
+[ "$(gh release view "${tag}" --json isDraft -q .isDraft || true)" = true ] ||
+	{ echo "sign-release.sh: ${tag} is not a draft" >&2; exit 1; }
+gh release download "${tag}" -D "${dir}"
+# shellcheck disable=SC2012 # release asset names are plain file names
+assets=$(cd "${dir}" && ls ./*.sha256 | sed 's|^\./||; s|\.sha256$||')
+asset=$(printf '%s\n' "${assets}" | grep -v -e '-preview\.stu$' || true)
+[ -n "${asset}" ] && [ "$(echo "${asset}" | wc -l || true)" -eq 1 ] ||
+	{ echo "sign-release.sh: expected exactly one asset with a .sha256 in ${tag}" >&2; exit 1; }
 # The preview package (ADR 0133): on an OS release exactly the main asset's -preview twin,
 # nothing on an app release.
 preview=
-case $kind in
+case ${kind} in
 core)
 	preview=${asset%.stu}-preview.stu
-	[ "$(printf '%s\n' "$assets" | grep -c -e '-preview\.stu$')" -eq 1 ] &&
-		printf '%s\n' "$assets" | grep -qxF "$preview" ||
-		{ echo "sign-release.sh: $tag needs the preview package $preview with its .sha256, and no other" >&2; exit 1; }
+	{ [ "$(printf '%s\n' "${assets}" | grep -c -e '-preview\.stu$' || true)" -eq 1 ] &&
+		printf '%s\n' "${assets}" | grep -qxF "${preview}"; } ||
+		{ echo "sign-release.sh: ${tag} needs the preview package ${preview} with its .sha256, and no other" >&2; exit 1; }
 	;;
 *)
-	[ "$(echo "$assets" | wc -l)" -eq 1 ] ||
-		{ echo "sign-release.sh: expected exactly one asset with a .sha256 in $tag" >&2; exit 1; }
+	[ "$(echo "${assets}" | wc -l || true)" -eq 1 ] ||
+		{ echo "sign-release.sh: expected exactly one asset with a .sha256 in ${tag}" >&2; exit 1; }
 	;;
 esac
-(cd "$dir" && sha256sum -c "$asset.sha256")
-[ -z "$preview" ] || (cd "$dir" && sha256sum -c "$preview.sha256")
+(cd "${dir}" && sha256sum -c "${asset}.sha256")
+[ -z "${preview}" ] || (cd "${dir}" && sha256sum -c "${preview}.sha256")
 
-if [ -n "$publish" ]; then
+if [ -n "${publish}" ]; then
 	# Publish only the draft that carries this release's own statements: the bytes the
 	# maintainer's speakers took, signed as this tag, the preview package's included.
-	for a in "$asset" $preview; do
-		[ -s "$dir/$a.sig" ] ||
-			{ echo "sign-release.sh: $tag has no $a.sig: sign it first" >&2; exit 1; }
-		hex=$(sha256sum "$dir/$a" | cut -d ' ' -f 1)
-		want="soundtap-package v1 kind=$kind profile=production version=$version sha256=$hex sig="
-		case $(head -n 1 "$dir/$a.sig") in
-		"$want"*) ;;
-		*) echo "sign-release.sh: $a.sig does not state $kind $version production for these bytes" >&2; exit 1 ;;
+	for a in "${asset}" ${preview}; do
+		[ -s "${dir}/${a}.sig" ] ||
+			{ echo "sign-release.sh: ${tag} has no ${a}.sig: sign it first" >&2; exit 1; }
+		hex=$(sha256sum "${dir}/${a}" | cut -d ' ' -f 1)
+		want="soundtap-package v1 kind=${kind} profile=production version=${version} sha256=${hex} sig="
+		case $(head -n 1 "${dir}/${a}.sig") in
+		"${want}"*) ;;
+		*) echo "sign-release.sh: ${a}.sig does not state ${kind} ${version} production for these bytes" >&2; exit 1 ;;
 		esac
 	done
-	gh release edit "$tag" --draft=false "$pre" "$latest"
-	if [ -n "$alpha" ]; then
-		echo "published $tag as a prerelease, not latest"
+	gh release edit "${tag}" --draft=false "${pre}" "${latest}"
+	if [ -n "${alpha}" ]; then
+		echo "published ${tag} as a prerelease, not latest"
 	else
-		echo "published $tag"
+		echo "published ${tag}"
 	fi
 	exit 0
 fi
 
-case $tag in
+case ${tag} in
 os-v*)
-	if [ -n "$alpha" ] && [ -z "$reports" ]; then
-		echo "sign-release.sh: $tag is an alpha: signing it WITHOUT the four hardware reports;" \
+	if [ -n "${alpha}" ] && [ -z "${reports}" ]; then
+		echo "sign-release.sh: ${tag} is an alpha: signing it WITHOUT the four hardware reports;" \
 			"it is published as a prerelease, never latest (ADR 0035)" >&2
 	else
-		[ -n "$reports" ] ||
+		[ -n "${reports}" ] ||
 			{ echo "sign-release.sh: an OS release needs the hardware reports directory" >&2; exit 1; }
-		python3 "$here/release_approval.py" --asset "$dir/$asset" --reports "$reports"
+		python3 "${here}/release_approval.py" --asset "${dir}/${asset}" --reports "${reports}"
 	fi
 	;;
+*) ;;
 esac
-if [ -n "$preview" ]; then
-	python3 "$here/../../os/support/stu_check.py" same-payloads "$dir/$asset" "$dir/$preview" ||
-		{ echo "sign-release.sh: $preview is not $asset with only its installer swapped" >&2; exit 1; }
+if [ -n "${preview}" ]; then
+	python3 "${here}/../../os/support/stu_check.py" same-payloads "${dir}/${asset}" "${dir}/${preview}" ||
+		{ echo "sign-release.sh: ${preview} is not ${asset} with only its installer swapped" >&2; exit 1; }
 fi
-rm -f "$dir/$asset.sig" ${preview:+"$dir/$preview.sig"}
-# A release is signed with the release key, never with an owner key left in the environment.
-SOUNDTAP_OWNER_KEY_FILE= SOUNDTAP_SIGN_PROFILE=production SOUNDTAP_PACKAGE_KIND=$kind SOUNDTAP_PACKAGE_VERSION=$version \
-	"$here/sign.sh" "$dir/$asset" ${preview:+"$dir/$preview"}
-gh release upload --clobber "$tag" "$dir/$asset.sig" ${preview:+"$dir/$preview.sig"}
-echo "signed $tag${alpha:+ as an alpha}, still a draft: install it on your own speakers, then: sign-release.sh --publish $tag"
+rm -f "${dir}/${asset}.sig" ${preview:+"${dir}/${preview}.sig"}
+SOUNDTAP_SIGN_PROFILE=production SOUNDTAP_PACKAGE_KIND=${kind} SOUNDTAP_PACKAGE_VERSION=${version} \
+	"${here}/sign.sh" "${dir}/${asset}" ${preview:+"${dir}/${preview}"}
+gh release upload --clobber "${tag}" "${dir}/${asset}.sig" ${preview:+"${dir}/${preview}.sig"}
+echo "signed ${tag}${alpha:+ as an alpha}, still a draft: install it on your own speakers, then: sign-release.sh --publish ${tag}"

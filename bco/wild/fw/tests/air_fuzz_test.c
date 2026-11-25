@@ -18,7 +18,7 @@ static const unsigned char TK[16] = {0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0
                                      0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f};
 #define ITER 40000u
 
-static unsigned char f[0x4000]; /* at least the receive area: air_put copies what fits there */
+static unsigned char fbuf[0x4000]; /* at least the receive area: air_put copies what fits there */
 static unsigned held[NRX], nheld; /* buffers the host keeps for a while */
 static unsigned long long last_pn[5];
 static unsigned delivered, deciphered, kept_max;
@@ -43,45 +43,45 @@ static void install_keys(void)
 /* A starting frame of each kind; returns its length with FCS. */
 static unsigned template(unsigned kind)
 {
-    unsigned n = 0, body = rnd() % 300;
+    unsigned n = 0, filler = rnd() % 300;
     const unsigned char *a1 = rnd() & 1 ? OWN : BCAST;
     switch (kind) {
     case 0: /* beacon / probe response: fixed fields then SSID, rates, DS, RSN IEs */
     case 1:
-        n = hdr(f, kind ? 0x50 : 0x80, 0, kind ? OWN : BCAST, BSSID, BSSID);
-        memset(f + n, 0, 12), n += 12;
-        f[n++] = 0, f[n++] = 4, memcpy(f + n, "Home", 4), n += 4;
-        f[n++] = 1, f[n++] = 8;
+        n = hdr(fbuf, kind ? 0x50 : 0x80, 0, kind ? OWN : BCAST, BSSID, BSSID);
+        memset(fbuf + n, 0, 12), n += 12;
+        fbuf[n++] = 0, fbuf[n++] = 4, memcpy(fbuf + n, "Home", 4), n += 4;
+        fbuf[n++] = 1, fbuf[n++] = 8;
         for (unsigned i = 0; i < 8; i++)
-            f[n++] = 0x82 + i;
-        f[n++] = 3, f[n++] = 1, f[n++] = 6;
-        f[n++] = 48, f[n++] = 20;
+            fbuf[n++] = 0x82 + i;
+        fbuf[n++] = 3, fbuf[n++] = 1, fbuf[n++] = 6;
+        fbuf[n++] = 48, fbuf[n++] = 20;
         for (unsigned i = 0; i < 20; i++)
-            f[n++] = rnd();
+            fbuf[n++] = rnd();
         return n + 4;
     case 2: /* management for the station */
-        n = hdr(f, (rnd() % 16) << 4, 0, a1, BSSID, BSSID);
+        n = hdr(fbuf, (rnd() % 16) << 4, 0, a1, BSSID, BSSID);
         break;
     case 3: /* ACK */
-        f[0] = 0xd4, f[1] = 0, f[2] = f[3] = 0;
-        memcpy(f + 4, rnd() & 1 ? OWN : BSSID, 6);
+        fbuf[0] = 0xd4, fbuf[1] = 0, fbuf[2] = fbuf[3] = 0;
+        memcpy(fbuf + 4, rnd() & 1 ? OWN : BSSID, 6);
         return 14;
     case 4: /* plain data */
-        n = hdr(f, 0x08, 0x02, a1, BSSID, BSSID);
+        n = hdr(fbuf, 0x08, 0x02, a1, BSSID, BSSID);
         break;
     default: { /* protected data, PN near the key's last one */
         unsigned keyid = rnd() % 4;
         unsigned long long base = a1 == BCAST ? last_pn[1 + keyid] : last_pn[0];
         unsigned long long pn = base + rnd() % 8 - (base >= 2 ? 2 : 0); /* replays included */
-        n = hdr(f, 0x08, 0x42, a1, rnd() % 8 ? BSSID : OWN, BSSID);
-        f[n++] = pn, f[n++] = pn >> 8, f[n++] = 0, f[n++] = 0x20 | keyid << 6;
-        f[n++] = pn >> 16, f[n++] = pn >> 24, f[n++] = pn >> 32, f[n++] = pn >> 40;
-        body += 8;
+        n = hdr(fbuf, 0x08, 0x42, a1, rnd() % 8 ? BSSID : OWN, BSSID);
+        fbuf[n++] = pn, fbuf[n++] = pn >> 8, fbuf[n++] = 0, fbuf[n++] = 0x20 | keyid << 6;
+        fbuf[n++] = pn >> 16, fbuf[n++] = pn >> 24, fbuf[n++] = pn >> 32, fbuf[n++] = pn >> 40;
+        filler += 8;
         break;
     }
     }
-    for (unsigned i = 0; i < body; i++)
-        f[n++] = rnd();
+    for (unsigned i = 0; i < filler; i++)
+        fbuf[n++] = rnd();
     return n + 4;
 }
 
@@ -130,7 +130,7 @@ static void check_pn(void)
 
 int main(void)
 {
-    static const unsigned engine[] = {0x200000, 0x200000, 0x200000, 0x240000, 0x210000, 0x220000};
+    static const unsigned engine_end[] = {0x200000, 0x200000, 0x200000, 0x240000, 0x210000, 0x220000};
     sim_init();
     for (unsigned i = 0; i < NRX; i++)
         host_supply(i);
@@ -142,11 +142,11 @@ int main(void)
             dwell_state = states[rnd() % 7];
             joined = rnd() % 4 != 0;
             rx_chan = rnd() % 15;
-            REG(0xb18) = rnd() % 400 ? engine[rnd() % 6] : 0; /* rarely: the engine never ends */
+            REG(0xb18) = rnd() % 400 ? engine_end[rnd() % 6] : 0; /* rarely: the engine never ends */
         }
         unsigned len = template(rnd() % 7);
         for (unsigned m = rnd() % 6; m--;)
-            f[rnd() % (len + 8 < sizeof f ? len + 8 : sizeof f)] ^= 1u << (rnd() % 8);
+            fbuf[rnd() % (len + 8 < sizeof fbuf ? len + 8 : sizeof fbuf)] ^= 1u << (rnd() % 8);
         switch (rnd() % 10) {
         case 0:
             len = rnd() % 0x1000; /* anything the length field can say */
@@ -161,8 +161,8 @@ int main(void)
         len &= 0xffff;
         unsigned st = ST_IN | (rnd() % 8 ? ST_ADDR : 0) | (rnd() % 16 ? 0 : ST_FCS) |
                       (rnd() % 32 ? 0 : 0x800);
-        unsigned fc = rnd() % 16 ? f[0] : rnd();
-        air_put(f, len, (signed char)rnd(), rnd() % 16);
+        unsigned fc = rnd() % 16 ? fbuf[0] : rnd();
+        air_put(fbuf, len, (signed char)rnd(), rnd() % 16);
         REG(0x6b4) = rnd() & 4;
         air_fiq(fc, st);
         if (dwell_fired)

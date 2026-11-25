@@ -10,6 +10,14 @@ import os
 import stat
 import tempfile
 from pathlib import Path
+from typing import Protocol
+
+
+class _Digest(Protocol):
+    """The part of a hashlib hash object the walk feeds."""
+
+    def update(self, data: bytes, /) -> None:
+        """Feed data into the hash."""
 
 
 def _excluded(relative: str, exclusions: tuple[str, ...]) -> bool:
@@ -20,7 +28,7 @@ def _excluded(relative: str, exclusions: tuple[str, ...]) -> bool:
 
 
 def _entry_digest(
-    digest, root: Path, relative: str, exclusions: tuple[str, ...]
+    digest: _Digest, root: Path, relative: str, exclusions: tuple[str, ...],
 ) -> None:
     if _excluded(relative, exclusions):
         return
@@ -48,7 +56,8 @@ def _entry_digest(
             child_relative = f"{relative}/{child.name}" if relative else child.name
             _entry_digest(digest, root, child_relative, exclusions)
         return
-    raise ValueError(f"unsupported file type: {path}")
+    msg = f"unsupported file type: {path}"
+    raise ValueError(msg)
 
 
 def content_digest(paths: list[Path], exclusions: tuple[str, ...] = ()) -> str:
@@ -73,14 +82,15 @@ def update_stamp(path: Path, value: str) -> None:
 
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
-        mode="w", dir=path.parent, prefix=path.name + ".", delete=False
+        mode="w", dir=path.parent, prefix=path.name + ".", delete=False,
     ) as temporary:
         temporary.write(contents)
         temporary_path = Path(temporary.name)
-    os.replace(temporary_path, path)
+    temporary_path.replace(path)
 
 
 def main() -> None:
+    """Print the digest of the paths named on the command line, and update the stamp if asked."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paths", nargs="+", type=Path)
     parser.add_argument(
@@ -90,7 +100,7 @@ def main() -> None:
         help="relative file or subtree to omit (directory inputs only)",
     )
     parser.add_argument(
-        "--stamp", type=Path, help="update this digest stamp atomically"
+        "--stamp", type=Path, help="update this digest stamp atomically",
     )
     args = parser.parse_args()
     exclusions = tuple(item.strip("/") for item in args.exclude)

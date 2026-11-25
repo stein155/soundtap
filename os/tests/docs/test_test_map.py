@@ -13,8 +13,10 @@ TEST_FILE = re.compile(r"(^|/)(test_[^/]+\.(py|sh|c)|[^/]+_test\.(go|c|sh)|[^/]+
 
 
 class TestMapTest(unittest.TestCase):
-    def test_every_test_file_is_in_a_listed_directory(self):
-        # Only the table counts: the prose below it names directories that hold no tests.
+    """The test map against the tracked test files."""
+
+    def test_every_test_file_is_in_a_listed_directory(self) -> None:
+        """Every test file is under a directory the table lists; the prose below it does not count."""
         rows = "".join(line for line in MAP.read_text().splitlines() if line.startswith("| "))
         listed = set(re.findall(r"`([\w./-]+/)`", rows))
         files = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True,

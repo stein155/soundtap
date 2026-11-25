@@ -21,7 +21,7 @@ set -eu
 
 if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then echo "usage: rootfs-run-test.sh <package.stu>" >&2; exit 1; fi
 REPO=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
-PKG=$(CDPATH= cd -- "$(dirname -- "$1")" && pwd)/$(basename -- "$1")
+PKG=$(CDPATH= cd -- "$(dirname -- "$1")" && pwd || true)/$(basename -- "$1")
 RUNNER_IMAGE=ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac
 # The same frozen archive as layer 1, so qemu-user is the same bytes on every run.
 APT_SNAPSHOT=20261020T000000Z
@@ -49,18 +49,18 @@ rm -rf /var/lib/apt/lists/*
 SETUP
 )
 # Built once per setup and reused, as layer 1 does: the snapshot can be slow to fetch.
-IMAGE=soundtap-rootfs-run:$APT_SNAPSHOT-$(printf '%s%s' "$SETUP" "$UBI_READER" | sha256sum | cut -c1-12)
-if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+IMAGE=soundtap-rootfs-run:${APT_SNAPSHOT}-$(printf '%s%s' "${SETUP}" "${UBI_READER}" | sha256sum | cut -c1-12)
+if ! docker image inspect "${IMAGE}" >/dev/null 2>&1; then
   c=soundtap-rootfs-run-setup-$$
-  printf '%s\n' "$SETUP" | docker run -i --name "$c" -e APT_SNAPSHOT="$APT_SNAPSHOT" \
-    -e UBI_READER="$UBI_READER" "$RUNNER_IMAGE" sh -s || { docker rm -f "$c" >/dev/null; exit 1; }
-  docker commit "$c" "$IMAGE" >/dev/null
-  docker rm "$c" >/dev/null
+  printf '%s\n' "${SETUP}" | docker run -i --name "${c}" -e APT_SNAPSHOT="${APT_SNAPSHOT}" \
+    -e UBI_READER="${UBI_READER}" "${RUNNER_IMAGE}" sh -s || { docker rm -f "${c}" >/dev/null; exit 1; }
+  docker commit "${c}" "${IMAGE}" >/dev/null
+  docker rm "${c}" >/dev/null
 fi
 
 # Everything is unpacked inside the container, so no root-owned files land on the runner.
-docker run --rm -i -v "$PKG":/pkg.stu:ro -v "$REPO/os/support":/repo/os/support:ro \
-  -v "$REPO/os/board":/repo/os/board:ro "$IMAGE" sh -s <<'RUN'
+docker run --rm -i -v "${PKG}":/pkg.stu:ro -v "${REPO}/os/support":/repo/os/support:ro \
+  -v "${REPO}/os/board":/repo/os/board:ro "${IMAGE}" sh -s <<'RUN'
 set -eu
 fail() { echo "FAIL: $*" >&2; exit 1; }
 python3 -I - <<'PY'

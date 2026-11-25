@@ -16,12 +16,15 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 class PatchesParse(unittest.TestCase):
-    def test_every_patch_parses(self):
+    """The patches under os/ are well formed."""
+
+    def test_every_patch_parses(self) -> None:
+        """Every patch reads without an error under git apply --numstat."""
         patches = sorted((ROOT / "os").rglob("*.patch"))
         self.assertTrue(patches, "no patches found under os/")
         bad = []
         for p in patches:
-            r = subprocess.run(["git", "apply", "--numstat", str(p)], cwd=p.parent, capture_output=True, text=True, timeout=30)
+            r = subprocess.run(["git", "apply", "--numstat", str(p)], check=False, cwd=p.parent, capture_output=True, text=True, timeout=30)
             if r.returncode != 0:
                 bad.append(f"{p.relative_to(ROOT)}: {r.stderr.strip()}")
         self.assertEqual(bad, [])

@@ -27,15 +27,10 @@ jobs:
   lint:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    env:
-      # lint-go judges what changed against the base: on a pull request the merge commit's
-      # first parent, on main nothing new. Two commits of history are all that takes.
-      GO_LINT_BASE: ${{ github.event_name == 'pull_request' && 'HEAD^1' || 'HEAD' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 2
       # external-tree-check wants the Buildroot submodule at its pin: one commit, not its history.
       - run: git submodule update --init --depth 1 buildroot
       - run: tools/ci/run-ci.sh lint

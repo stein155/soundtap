@@ -1,12 +1,14 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
+"""build-stu.py: UBI packing and validation, boot payload checks and the self-contained chain."""
 import importlib.util
 import struct
 import sys
 import tempfile
 import unittest
 import zlib
+from collections.abc import Mapping
 from pathlib import Path
 from unittest import mock
 
@@ -17,7 +19,8 @@ build = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(build)
 
 
-def ubi_image(path):
+def ubi_image(path: Path) -> tuple[bytearray, int, int]:
+    """Write a minimal valid UBI image to ``path``; return it with its record and superblock offsets."""
     data = bytearray(build.UBI_PEB * 3)
     record = build.UBI_MIN_IO * 2
     struct.pack_into(">I", data, record, build.UBI_VOLUME_LEBS)
@@ -34,17 +37,20 @@ def ubi_image(path):
     return data, record, superblock
 
 
-def valid_mlo(payload=b"spl"):
-    """The shape the mask ROM reads from NAND, as found on a stock WLA's mtd0:
-    a TI configuration header, then a GP header at 0x200 whose size covers
-    everything after that header, then the SPL."""
+def valid_mlo(payload: bytes = b"spl") -> bytes:
+    """Return an MLO in the shape the mask ROM reads from NAND.
+
+    As found on a stock WLA's mtd0: a TI configuration header, then a GP header at 0x200 whose size covers
+    everything after that header, then the SPL.
+    """
     ch = bytearray(b"\xff" * 0x200)
     ch[0:8] = struct.pack("<II", 0x40, 0x0c)
     ch[20:30] = b"CHSETTINGS"
     return bytes(ch) + struct.pack("<II", len(payload) + 8, 0x402F0400) + payload
 
 
-def valid_uboot(payload=b"u-boot"):
+def valid_uboot(payload: bytes = b"u-boot") -> bytes:
+    """Return a legacy uImage U-Boot with valid header and payload CRCs."""
     header = bytearray(64)
     struct.pack_into(">IIIIIII", header, 0, 0x27051956, 0, 0, len(payload),
                      0x80800000, 0x80800000, zlib.crc32(payload) & 0xFFFFFFFF)
@@ -52,7 +58,8 @@ def valid_uboot(payload=b"u-boot"):
     return bytes(header) + payload
 
 
-def valid_kernel(payload=b"kernel"):
+def valid_kernel(payload: bytes = b"kernel") -> bytes:
+    """Return a legacy uImage kernel named for the binky model, with valid CRCs."""
     header = bytearray(64)
     header[32:32 + len(b"Linux-6.12 SoundTap binky")] = b"Linux-6.12 SoundTap binky"
     struct.pack_into(">IIIIIII", header, 0, 0x27051956, 0, 0, len(payload),
@@ -62,7 +69,10 @@ def valid_kernel(payload=b"kernel"):
 
 
 class UbiValidationTest(unittest.TestCase):
-    def test_pack_ubifs_enables_space_fixup(self):
+    """UBIFS packing and the UBI geometry contract build-stu.py checks."""
+
+    def test_pack_ubifs_enables_space_fixup(self) -> None:
+        """mkfs.ubifs is asked for the free-space fixup."""
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(build, "sh") as run:
             rootfs = Path(tmp) / "rootfs"
             rootfs.mkdir()
@@ -71,7 +81,8 @@ class UbiValidationTest(unittest.TestCase):
             build.pack_ubifs(rootfs, out)
         self.assertIn("-F", run.call_args.args[0])
 
-    def test_source_date_epoch_normalizes_rootfs_before_packing(self):
+    def test_source_date_epoch_normalizes_rootfs_before_packing(self) -> None:
+        """SOURCE_DATE_EPOCH sets every rootfs timestamp, symlinks included, before packing."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "rootfs"
             root.mkdir()
@@ -87,15 +98,17 @@ class UbiValidationTest(unittest.TestCase):
             self.assertEqual(int(regular.stat().st_mtime), 123)
             self.assertEqual(int(symlink.lstat().st_mtime), 123)
 
-    def test_invalid_source_date_epoch_is_rejected(self):
+    def test_invalid_source_date_epoch_is_rejected(self) -> None:
+        """A non-integer or zero SOURCE_DATE_EPOCH is refused."""
         with tempfile.TemporaryDirectory() as tmp:
             for value in ("not-an-integer", "0"):
                 with self.subTest(value=value), mock.patch.dict(
-                    "os.environ", {"SOURCE_DATE_EPOCH": value}
+                    "os.environ", {"SOURCE_DATE_EPOCH": value},
                 ), self.assertRaisesRegex(RuntimeError, "SOURCE_DATE_EPOCH"):
                     build.pack_ubifs(Path(tmp), Path(tmp) / "rootfs.ubifs")
 
-    def test_geometry_and_autoresize_contract(self):
+    def test_geometry_and_autoresize_contract(self) -> None:
+        """A UBI image off the autoresize or LEB geometry contract is refused."""
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "ubi.img"
             data, record, superblock = ubi_image(path)
@@ -122,7 +135,8 @@ class UbiValidationTest(unittest.TestCase):
                 with self.subTest(message=message), self.assertRaisesRegex(RuntimeError, message):
                     build.validate_ubi(path)
 
-    def test_ubi_capacity_contract(self):
+    def test_ubi_capacity_contract(self) -> None:
+        """The volume LEB count is what the partition leaves after UBI overhead and the bad-block reserve."""
         geometry = build.NAND_GEOMETRY
         overhead = (geometry["layout_pebs"] + geometry["wear_leveling_pebs"]
                     + geometry["atomic_leb_change_pebs"])
@@ -131,7 +145,8 @@ class UbiValidationTest(unittest.TestCase):
         self.assertEqual(geometry["partition_pebs"] - overhead
                          - geometry["bad_peb_reserve"], geometry["volume_lebs"])
 
-    def test_missing_space_fixup_is_rejected(self):
+    def test_missing_space_fixup_is_rejected(self) -> None:
+        """A UBIFS superblock without the free-space fixup flag is refused."""
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "ubi.img"
             data, _record, superblock = ubi_image(path)
@@ -142,13 +157,17 @@ class UbiValidationTest(unittest.TestCase):
 
 
 class MainlineStuTest(unittest.TestCase):
-    def test_prebuilt_ubi_rejects_rootfs_override(self):
+    """The mainline boot payloads and the self-contained WLA chain."""
+
+    def test_prebuilt_ubi_rejects_rootfs_override(self) -> None:
+        """--ubi together with --rootfs is a usage error."""
         with tempfile.TemporaryDirectory() as tmp:
             argv = ["build-stu.py", "--ubi", f"{tmp}/rootfs.ubi", "--rootfs", tmp]
             with mock.patch.object(sys, "argv", argv), self.assertRaises(SystemExit):
                 build.main()
 
-    def test_bose_kernel_marker_keeps_canonical_crc(self):
+    def test_bose_kernel_marker_keeps_canonical_crc(self) -> None:
+        """The Linub kernel marker still repairs to the canonical header CRC."""
         payload = b"kernel"
         header = bytearray(64)
         struct.pack_into(">IIIIIII4B", header, 0, 0x27051956, 0, 0,
@@ -168,7 +187,8 @@ class MainlineStuTest(unittest.TestCase):
         struct.pack_into(">I", repaired, 4, 0)
         self.assertEqual(zlib.crc32(repaired) & 0xFFFFFFFF, stored)
 
-    def test_bootloader_header_and_partition_checks(self):
+    def test_bootloader_header_and_partition_checks(self) -> None:
+        """MLO and U-Boot images with a bad header or over their partition size are refused."""
         build.validate_mlo(valid_mlo())
         build.validate_uboot(valid_uboot())
         for image, validator, message in (
@@ -186,7 +206,8 @@ class MainlineStuTest(unittest.TestCase):
                 validator(image)
         build.validate_mlo(valid_mlo() + b"x")
 
-    def test_self_contained_wla_chain_is_explicit_and_valid(self):
+    def test_self_contained_wla_chain_is_explicit_and_valid(self) -> None:
+        """The self-contained WLA chain carries exactly the four native modules and validates."""
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "Update-wla.stu"
             payloads = {name: f"repo-built:{name}".encode() for name in build.WLA_MODULES}
@@ -194,7 +215,8 @@ class MainlineStuTest(unittest.TestCase):
             modules = build.validate_stu(bytearray(out.read_bytes()), "wla")
         self.assertEqual([module[3] for module in modules], build.WLA_MODULES)
 
-    def test_self_contained_wla_headers_use_native_magic(self):
+    def test_self_contained_wla_headers_use_native_magic(self) -> None:
+        """The self-contained WLA chain uses RTCH magic and numbers its modules from 1."""
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "Update-wla.stu"
             payloads = {name: f"repo-built:{name}".encode() for name in build.WLA_MODULES}
@@ -205,9 +227,10 @@ class MainlineStuTest(unittest.TestCase):
             self.assertEqual(struct.unpack_from(">I", data, header + 0x9C)[0], size)
             self.assertEqual(struct.unpack_from(">I", data, header + 0xA0)[0], index + 1)
 
-    def test_offline_wla_probe_uses_stock_module_names_without_stock_input(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
+    def test_offline_wla_probe_uses_stock_module_names_without_stock_input(self) -> None:
+        """The offline probe package wears stock module names and ordinals without any stock input."""
+        with tempfile.TemporaryDirectory() as tmp_name:
+            tmp = Path(tmp_name)
             payloads = {name: f"repo-built-probe:{name}".encode() for name in build.WLA_PROBE_MODULES}
             build.assemble_self_contained_stu(payloads, tmp / "probe.stu", "wla-probe")
             data = (tmp / "probe.stu").read_bytes()
@@ -217,9 +240,12 @@ class MainlineStuTest(unittest.TestCase):
         self.assertEqual([struct.unpack_from(">I", data, h + 0xA0)[0] for h, *_ in modules], list(build.WLA_STOCK_ORDINALS))
         self.assertEqual([struct.unpack_from(">I", data, h + 0x130)[0] for h, *_ in modules], [0, 2, 2, 0, 0, 0, 0, 0])
 
-    def test_release_cli_rejects_offline_wla_probe_profile(self):
-        """wla-probe is offline-only; the self-contained route needs the WLA target and all
-        three boot payloads. Each is refused before anything is packed."""
+    def test_release_cli_rejects_offline_wla_probe_profile(self) -> None:
+        """The release CLI refuses wla-probe and an incomplete self-contained call before packing.
+
+        wla-probe is offline-only; the self-contained route needs the WLA target and all
+        three boot payloads. Each is refused before anything is packed.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             given = [f"--kernel={tmp}/k", f"--mlo={tmp}/m", f"--u-boot={tmp}/u"]
             for argv in (["--target", "wla-probe", "--self-contained", *given],
@@ -235,9 +261,10 @@ class MainlineStuTest(unittest.TestCase):
                 preflight.assert_not_called()
                 assemble.assert_not_called()
 
-    def test_self_contained_wla_chain_needs_no_firmware_base(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
+    def test_self_contained_wla_chain_needs_no_firmware_base(self) -> None:
+        """The self-contained chain is assembled without any stock firmware in the repository."""
+        with tempfile.TemporaryDirectory() as tmp_name:
+            tmp = Path(tmp_name)
             payloads = {name: f"repo-built:{name}".encode() for name in build.WLA_MODULES}
             missing_repo = tmp / "repo-without-base"
             self.assertFalse((missing_repo / "os/stock").exists())
@@ -246,9 +273,10 @@ class MainlineStuTest(unittest.TestCase):
             modules = build.validate_stu(bytearray((tmp / "Update-wla.stu").read_bytes()), "wla")
         self.assertEqual([module[3] for module in modules], build.WLA_MODULES)
 
-    def test_self_contained_command_reaches_assembler_with_four_native_modules(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
+    def test_self_contained_command_reaches_assembler_with_four_native_modules(self) -> None:
+        """The --self-contained command passes the four native payloads to the assembler."""
+        with tempfile.TemporaryDirectory() as tmp_name:
+            tmp = Path(tmp_name)
             rootfs = tmp / "rootfs"
             required = [
                 "bin/busybox", "opt/soundtap/soundtapd", "usr/bin/librespot", "etc/init.d/soundtap",
@@ -272,7 +300,7 @@ class MainlineStuTest(unittest.TestCase):
             mlo.write_bytes(valid_mlo(b"\x0f\x00\x00\xeaSPL"))
             uboot.write_bytes(valid_uboot())
             captured = {}
-            def assemble(payloads, out, _target):
+            def assemble(payloads: Mapping[str, bytes], out: Path, _target: str) -> None:
                 captured.update(payloads)
                 out.write_bytes(b"stu")
             args = ["build-stu.py", "--target", "wla", "--self-contained", "--rootfs", str(rootfs),

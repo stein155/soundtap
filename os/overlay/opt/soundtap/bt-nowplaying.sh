@@ -32,21 +32,21 @@ json() {
 
 read_player() {
 	show=$(printf 'player.show\nquit\n' | bluetoothctl 2>/dev/null) || return 1 # no player connected
-	status=$(field "$show" "Status")
-	[ -n "$status" ] || return 1
-	printf '%s\t%s\t%s\t%s\n' "$status" "$(field "$show" "Track.Title")" \
-		"$(field "$show" "Track.Artist")" "$(field "$show" "Track.Album")"
+	status=$(field "${show}" "Status")
+	[ -n "${status}" ] || return 1
+	printf '%s\t%s\t%s\t%s\n' "${status}" "$(field "${show}" "Track.Title" || true)" \
+		"$(field "${show}" "Track.Artist" || true)" "$(field "${show}" "Track.Album" || true)"
 }
 
 push() {
 	line=$1
-	title=$(printf '%s' "$line" | cut -f2)
-	artist=$(printf '%s' "$line" | cut -f3)
-	album=$(printf '%s' "$line" | cut -f4)
+	title=$(printf '%s' "${line}" | cut -f2)
+	artist=$(printf '%s' "${line}" | cut -f3)
+	album=$(printf '%s' "${line}" | cut -f4)
 	body=$(printf '{"source":"BLUETOOTH","track":"%s","artist":"%s","album":"%s"}' \
-		"$(json "$title")" "$(json "$artist")" "$(json "$album")")
+		"$(json "${title}" || true)" "$(json "${artist}" || true)" "$(json "${album}" || true)")
 	wget -qO /dev/null --header='Content-Type: application/json' \
-		--post-data="$body" "$API/api/nowplaying" >/dev/null 2>&1
+		--post-data="${body}" "${API}/api/nowplaying" >/dev/null 2>&1
 }
 
 case "${1:-}" in
@@ -55,11 +55,11 @@ case "${1:-}" in
 		out=$(field "Status: playing
 	Track.Title: In Your Eyes
 	Track.Artist: Alesso" "Track.Title")
-		[ "$out" = "In Your Eyes" ] || { echo "field() broke: $out" >&2; exit 1; }
+		[ "${out}" = "In Your Eyes" ] || { echo "field() broke: ${out}" >&2; exit 1; }
 		out=$(field "$(printf 'Track.Title: Part One\tPart Two')" "Track.Title")
-		[ "$out" = "Part One Part Two" ] || { echo "field() kept a tab: $out" >&2; exit 1; }
+		[ "${out}" = "Part One Part Two" ] || { echo "field() kept a tab: ${out}" >&2; exit 1; }
 		out=$(json 'a "12\" mix"')
-		[ "$out" = 'a \"12\\\" mix\"' ] || { echo "json() broke: $out" >&2; exit 1; }
+		[ "${out}" = 'a \"12\\\" mix\"' ] || { echo "json() broke: ${out}" >&2; exit 1; }
 		echo "demo ok"
 		;;
 	"") read_player ;;

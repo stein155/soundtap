@@ -17,7 +17,9 @@ import shutil
 import struct
 import subprocess
 import zlib
+from collections.abc import Iterator, Sequence
 from pathlib import Path
+from typing import TypedDict
 
 REPO = Path(__file__).resolve().parents[2]
 NAND_GEOMETRY = json.loads((REPO / "os/board/nand-geometry.json").read_text())
@@ -41,6 +43,12 @@ UBI_MIN_IO   = 2048
 UBI_MAX_LEBS = NAND_GEOMETRY["volume_lebs"]
 UBI_VOLUME_LEBS = NAND_GEOMETRY["volume_lebs"]
 UBIFS_FLG_SPACE_FIXUP = 4
+UIMAGE_MAGIC = 0x27051956
+UIMAGE_HEADER_SIZE = 64
+INSTALLER_MIN_BYTES = 4096   # a repo-built ARM installer is never smaller than one page
+MLO_MIN_DECLARED_SIZE = 4    # a GP header must declare at least one instruction
+MLO_LOAD_MIN = 0x40200000    # the SRAM window the ROM loads the SPL into
+MLO_LOAD_END = 0x40310000
 MAX_KERNEL_BYTES = 4_980_736  # Keep the NAND builder's 256 KiB slot reserve.
 ST10_MODULES = [
     "SoftwareUpdateInstaller", "ARMUpdate", "UbootUpdate", "SCMReset_Update",
@@ -74,7 +82,23 @@ SOUNDTAP_TRI_MODULES = [
 SOUNDTAP_DUO_MODULES = [name for name in SOUNDTAP_TRI_MODULES if not name.endswith(".spotty")]
 MODEL_ROOTFS_LIMITS = {"rhino": 86_114_304, "binky": 89_653_248, "spotty": 84_279_296}
 WLA_STOCK_ORDINALS = (1, 2, 3, 4, 2, 2, 3, 3)
-PROFILES = {
+
+
+class Profile(TypedDict, total=False):
+    """A package target: its module chain, container magic and stock size budgets."""
+
+    modules: list[str]
+    magic: bytes
+    stock_sha256: str
+    stock_ubi_module_size: int
+    stock_ubi_bytes: int
+    stock_stu_bytes: int
+
+
+ByteData = bytes | bytearray
+Module = tuple[int, int, int, str]
+
+PROFILES: dict[str, Profile] = {
     "st10": {
         "modules": ST10_MODULES,
         "stock_sha256": "cc36bd1345ae1fce66b7ffd9186e762f07d49f271358c659a89b62550359d22e",
@@ -176,11 +200,13 @@ STOCK_UBI_BYTES = PROFILES["st10"]["stock_ubi_bytes"]
 STOCK_STU_BYTES = PROFILES["st10"]["stock_stu_bytes"]
 
 
-def _be(buf, o):
+def _be(buf: ByteData, o: int) -> int:
+    """Return the big-endian 32-bit word at offset ``o``."""
     return struct.unpack_from(">I", buf, o)[0]
 
 
-def walk_modules(buf):
+def walk_modules(buf: ByteData) -> Iterator[Module]:
+    """Yield (header offset, image offset, image size, name) for each module in the chain."""
     n, h = len(buf), 0
     while h + HDR <= n:
         size = _be(buf, h + SIZE_OFF)
@@ -192,15 +218,18 @@ def walk_modules(buf):
         h = img + size - OVERLAP
 
 
-def module_image_crc_ok(buf, h, img, size):
+def module_image_crc_ok(buf: ByteData, h: int, img: int, size: int) -> bool:
+    """Return whether the module image matches the CRC its header stores."""
     return (zlib.crc32(bytes(buf[img: img + size])) & 0xFFFFFFFF) == _be(buf, h + IMGCRC_OFF)
 
 
-def module_header_crc_ok(buf, h):
+def module_header_crc_ok(buf: ByteData, h: int) -> bool:
+    """Return whether the module header matches its own header CRC."""
     return (zlib.crc32(bytes(buf[h + 0x14: h + PKG_HCRC2_OFF])) & 0xFFFFFFFF) == _be(buf, h + PKG_HCRC2_OFF)
 
 
-def module_base_name(name):
+def module_base_name(name: str) -> str:
+    """Return the module name without its model suffix."""
     for model in ("binky", "rhino", "spotty"):
         suffix = "." + model
         if name.endswith(suffix):
@@ -208,76 +237,99 @@ def module_base_name(name):
     return name
 
 
-def module_model(name):
+def module_model(name: str) -> str | None:
+    """Return the model a module name is suffixed with, or None for a shared module."""
     suffix = name.rsplit(".", 1)[-1]
     return suffix if suffix in MODEL_ROOTFS_LIMITS else None
 
 
-def profile_for_modules(names, target=None):
+def profile_for_modules(names: list[str], target: str | None = None) -> tuple[str, Profile]:
+    """Return the target and profile whose module chain is ``names``, or raise."""
     if target is not None:
         profile = PROFILES.get(target)
         if profile is None or names != profile["modules"]:
-            raise RuntimeError(f"module chain mismatch for {target}: {names}")
+            msg = f"module chain mismatch for {target}: {names}"
+            raise RuntimeError(msg)
         return target, profile
     matches = [name for name, profile in PROFILES.items() if names == profile["modules"]]
     if len(matches) != 1:
-        raise RuntimeError(f"module chain mismatch for {target or 'supported targets'}: {names}")
+        msg = f"module chain mismatch for {target or 'supported targets'}: {names}"
+        raise RuntimeError(msg)
     return matches[0], PROFILES[matches[0]]
 
 
-def validate_stu(buf, target=None):
+def validate_stu(buf: ByteData, target: str | None = None) -> list[Module]:
+    """Check the container, every module's CRCs and the size budgets; return the modules."""
     modules = list(walk_modules(buf))
     names = [name for _h, _img, _size, name in modules]
     profile_name, profile = profile_for_modules(names, target)
     expected_magic = b"RTCH" if profile_name == "wla" else b"BOSE"
     if bytes(buf[4:8]) != expected_magic:
-        raise RuntimeError(f"package magic is {bytes(buf[4:8])!r}, expected {expected_magic!r}")
+        msg = f"package magic is {bytes(buf[4:8])!r}, expected {expected_magic!r}"
+        raise RuntimeError(msg)
     if _be(buf, PKG_SIZE_OFF) != len(buf):
-        raise RuntimeError("package size mismatch")
+        msg = "package size mismatch"
+        raise RuntimeError(msg)
     if _be(buf, PKG_HCRC_OFF) != (zlib.crc32(bytes(buf[:PKG_HCRC_OFF])) & 0xFFFFFFFF):
-        raise RuntimeError("package header CRC invalid")
+        msg = "package header CRC invalid"
+        raise RuntimeError(msg)
     if len(buf) > profile["stock_stu_bytes"]:
-        raise RuntimeError(
+        msg = (
             f"package {len(buf):,} B exceeds Bose streamer baseline "
             f"{profile['stock_stu_bytes']:,} B"
         )
+        raise RuntimeError(
+            msg,
+        )
     if modules[-1][1] + modules[-1][2] != len(buf):
-        raise RuntimeError("trailing or truncated package data")
+        msg = "trailing or truncated package data"
+        raise RuntimeError(msg)
     for h, img, size, name in modules:
         if size <= OVERLAP:
-            raise RuntimeError(f"{name}: module size does not exceed the header overlap")
+            msg = f"{name}: module size does not exceed the header overlap"
+            raise RuntimeError(msg)
         if not module_header_crc_ok(buf, h):
-            raise RuntimeError(f"{name}: header CRC invalid")
+            msg = f"{name}: header CRC invalid"
+            raise RuntimeError(msg)
         if not module_image_crc_ok(buf, h, img, size):
-            raise RuntimeError(f"{name}: image CRC invalid")
+            msg = f"{name}: image CRC invalid"
+            raise RuntimeError(msg)
         base_name = module_base_name(name)
         if base_name in ("ubi.img", "soundtap-rootfs") and size > NAND_MTD8:
-            raise RuntimeError(f"{name} {size:,} B > rootfs partition {NAND_MTD8:,} B")
+            msg = f"{name} {size:,} B > rootfs partition {NAND_MTD8:,} B"
+            raise RuntimeError(msg)
         rootfs_limit = MODEL_ROOTFS_LIMITS.get(module_model(name), profile["stock_ubi_module_size"])
         if base_name in ("ubi.img", "soundtap-rootfs") and size > rootfs_limit:
-            raise RuntimeError(
+            msg = (
                 f"{name} {size:,} B exceeds rootfs baseline "
                 f"{rootfs_limit:,} B"
+            )
+            raise RuntimeError(
+                msg,
             )
     return modules
 
 
-def validate_recovery_payloads(stock, candidate, changed=frozenset({"ubi.img"}), target=None):
+def validate_recovery_payloads(
+        stock: ByteData, candidate: ByteData, changed: frozenset[str] | set[str] = frozenset({"ubi.img"}),
+        target: str | None = None) -> None:
     """Require every boot/recovery payload except rootfs to remain byte-identical."""
     stock_modules = list(walk_modules(stock))
     candidate_modules = list(walk_modules(candidate))
     profile_name, _profile = profile_for_modules([module[3] for module in stock_modules], target)
     candidate_profile, _candidate = profile_for_modules(
-        [module[3] for module in candidate_modules], target
+        [module[3] for module in candidate_modules], target,
     )
     if candidate_profile != profile_name:
-        raise RuntimeError("candidate target differs from stock recovery container")
+        msg = "candidate target differs from stock recovery container"
+        raise RuntimeError(msg)
     for index, ((_, stock_img, stock_size, stock_name),
                 (candidate_header, candidate_img, candidate_size, candidate_name)) in enumerate(
-                    zip(stock_modules, candidate_modules)):
+                    zip(stock_modules, candidate_modules, strict=False)):
         stock_header = stock_modules[index][0]
         if stock_name != candidate_name:
-            raise RuntimeError("recovery module order changed")
+            msg = "recovery module order changed"
+            raise RuntimeError(msg)
         stock_head = bytearray(stock[stock_header:stock_header + HDR])
         candidate_head = bytearray(candidate[candidate_header:candidate_header + HDR])
         if index == 0:
@@ -289,7 +341,8 @@ def validate_recovery_payloads(stock, candidate, changed=frozenset({"ubi.img"}),
                 stock_head[offset:offset + 4] = b"\0" * 4
                 candidate_head[offset:offset + 4] = b"\0" * 4
         if candidate_head != stock_head:
-            raise RuntimeError(f"{stock_name}: stock module header changed")
+            msg = f"{stock_name}: stock module header changed"
+            raise RuntimeError(msg)
         if stock_name in changed:
             continue
         # The last 0x14 bytes overlap the next module header and are packaging, not payload.
@@ -297,42 +350,51 @@ def validate_recovery_payloads(stock, candidate, changed=frozenset({"ubi.img"}),
         stock_payload = bytes(stock[stock_img:stock_img + stock_size - overlap])
         candidate_payload = bytes(candidate[candidate_img:candidate_img + candidate_size - overlap])
         if stock_payload != candidate_payload:
-            raise RuntimeError(f"{stock_name}: stock boot/recovery payload changed")
+            msg = f"{stock_name}: stock boot/recovery payload changed"
+            raise RuntimeError(msg)
 
 
-def sh(cmd):
-    r = subprocess.run(cmd, capture_output=True)
+def sh(cmd: Sequence[str]) -> subprocess.CompletedProcess[bytes]:
+    """Run ``cmd`` and raise with its stderr when it fails."""
+    r = subprocess.run(cmd, check=False, capture_output=True)
     if r.returncode:
-        raise RuntimeError(f"{cmd[0]} failed:\n{r.stderr.decode()}")
+        msg = f"{cmd[0]} failed:\n{r.stderr.decode()}"
+        raise RuntimeError(msg)
     return r
 
 
-def md5file(p):
-    return hashlib.md5(p.read_bytes()).hexdigest()
+def md5file(p: Path) -> str:
+    """Return the MD5 of a file, printed as a transfer checksum."""
+    return hashlib.md5(p.read_bytes(), usedforsecurity=False).hexdigest()
 
 
-def preflight_tools(*tools):
+def preflight_tools(*tools: str) -> None:
+    """Exit unless every named tool is on PATH."""
     missing = [t for t in tools if shutil.which(t) is None]
     if missing:
-        raise SystemExit(f"missing: {', '.join(missing)}  (install mtd-utils)")
+        msg = f"missing: {', '.join(missing)}  (install mtd-utils)"
+        raise SystemExit(msg)
 
 
 def pack_ubifs(rootfs: Path, out: Path) -> None:
+    """Pack the rootfs tree into a UBIFS image, with reproducible timestamps when asked."""
     source_date_epoch = os.environ.get("SOURCE_DATE_EPOCH")
     if source_date_epoch is not None:
         try:
             epoch = int(source_date_epoch)
         except ValueError as error:
-            raise RuntimeError("SOURCE_DATE_EPOCH must be an integer") from error
+            msg = "SOURCE_DATE_EPOCH must be an integer"
+            raise RuntimeError(msg) from error
         if epoch <= 0:
-            raise RuntimeError("SOURCE_DATE_EPOCH must be positive")
+            msg = "SOURCE_DATE_EPOCH must be positive"
+            raise RuntimeError(msg)
         for path in (rootfs, *rootfs.rglob("*")):
             os.utime(path, (epoch, epoch), follow_symlinks=False)
     device_table = out.parent / "device-table.txt"
     device_table.write_text(
         "/dev d 0755 0 0 - - - - -\n"
         "/dev/console c 0600 0 0 5 1 - - -\n"
-        "/dev/null c 0666 0 0 1 3 - - -\n"
+        "/dev/null c 0666 0 0 1 3 - - -\n",
     )
     command = ["mkfs.ubifs",
                "-r", str(rootfs),
@@ -346,12 +408,13 @@ def pack_ubifs(rootfs: Path, out: Path) -> None:
 
 
 def pack_ubi(ubifs: Path, out: Path) -> None:
+    """Wrap a UBIFS image in a one-volume UBI image and validate it."""
     cfg = ubifs.parent / "ubinize.cfg"
     cfg.write_text(
         "[rootfs]\nmode=ubi\n"
         f"image={ubifs}\n"
         f"vol_size={UBI_VOLUME_LEBS * UBI_LEB}\n"
-        "vol_id=0\nvol_name=rootfs\nvol_type=dynamic\nvol_flags=autoresize\n"
+        "vol_id=0\nvol_name=rootfs\nvol_type=dynamic\nvol_flags=autoresize\n",
     )
     sh(["ubinize", "-o", str(out),
         "-p", str(UBI_PEB), "-m", str(UBI_MIN_IO), "-s", str(UBI_MIN_IO),
@@ -361,14 +424,17 @@ def pack_ubi(ubifs: Path, out: Path) -> None:
 
 
 def validate_ubi(path: Path) -> None:
+    """Check the UBI image's alignment, autoresize flag, superblock and geometry."""
     data = path.read_bytes()
     if len(data) % UBI_PEB:
-        raise RuntimeError("UBI image is not PEB-aligned")
+        msg = "UBI image is not PEB-aligned"
+        raise RuntimeError(msg)
     # Volume-table record 0 starts at the data area of layout PEB 0.
     record = UBI_MIN_IO * 2
     reserved_pebs = struct.unpack_from(">I", data, record)[0]
     if data[record + 144] & 1 == 0:
-        raise RuntimeError("rootfs UBI volume must use stock autoresize semantics")
+        msg = "rootfs UBI volume must use stock autoresize semantics"
+        raise RuntimeError(msg)
     for peb in range(len(data) // UBI_PEB):
         vid = peb * UBI_PEB + UBI_MIN_IO
         if data[vid:vid + 4] != b"UBI!":
@@ -378,33 +444,40 @@ def validate_ubi(path: Path) -> None:
             superblock = peb * UBI_PEB + UBI_MIN_IO * 2
             break
     else:
-        raise RuntimeError("rootfs UBIFS superblock is missing")
+        msg = "rootfs UBIFS superblock is missing"
+        raise RuntimeError(msg)
     if data[superblock:superblock + 4] != b"1\x18\x10\x06":
-        raise RuntimeError("rootfs UBIFS superblock magic is invalid")
+        msg = "rootfs UBIFS superblock magic is invalid"
+        raise RuntimeError(msg)
     flags = struct.unpack_from("<I", data, superblock + 28)[0]
     if bool(flags & UBIFS_FLG_SPACE_FIXUP) != NAND_GEOMETRY["space_fixup"]:
-        raise RuntimeError("rootfs UBIFS free-space fixup differs from NAND contract")
+        msg = "rootfs UBIFS free-space fixup differs from NAND contract"
+        raise RuntimeError(msg)
     leb_cnt, max_leb_cnt = struct.unpack_from("<II", data, superblock + 40)
     if (reserved_pebs != UBI_VOLUME_LEBS or not 0 < leb_cnt <= reserved_pebs
             or max_leb_cnt != UBI_MAX_LEBS):
+        msg = f"unsafe UBI geometry: volume={reserved_pebs}, leb_cnt={leb_cnt}, max={max_leb_cnt}"
         raise RuntimeError(
-            f"unsafe UBI geometry: volume={reserved_pebs}, leb_cnt={leb_cnt}, max={max_leb_cnt}"
+            msg,
         )
 
 
 def replace_module(
-        buf: bytearray, name: str, payload: bytes, shared_tail: bool = False,
+        buf: bytearray, name: str, payload: bytes, *, shared_tail: bool = False,
         include_overlap: bool = False,
 ) -> bytearray:
+    """Return a copy of the container with one module's payload replaced and its header updated."""
     modules = list(walk_modules(buf))
     index = next((i for i, module in enumerate(modules) if module[3] == name), None)
     if index is None:
-        raise RuntimeError(f"container.bin missing {name}")
+        msg = f"container.bin missing {name}"
+        raise RuntimeError(msg)
     h, img, size, _ = modules[index]
     overlap = OVERLAP if index + 1 < len(modules) else 0
     if shared_tail:
         if not overlap or payload[-overlap:] != b"\xff" * overlap:
-            raise RuntimeError(f"{name}: shared module tail must be erased padding")
+            msg = f"{name}: shared module tail must be erased padding"
+            raise RuntimeError(msg)
         if not include_overlap:
             payload = payload[:-overlap]
     region = payload + bytes(buf[img + size - overlap:img + size])
@@ -437,15 +510,18 @@ def assemble_self_contained_stu(
     """
     expected = PROFILES[target]["modules"]
     if list(payloads) != expected:
-        raise RuntimeError("self-contained payloads do not match the target module chain")
+        msg = "self-contained payloads do not match the target module chain"
+        raise RuntimeError(msg)
     versions = versions or {}
     if set(versions) - set(expected):
-        raise RuntimeError("version metadata names a module outside the chain")
+        msg = "version metadata names a module outside the chain"
+        raise RuntimeError(msg)
     headers = []
     for index, name in enumerate(expected):
         payload = payloads[name]
         if not payload:
-            raise RuntimeError(f"{name}: empty self-contained payload")
+            msg = f"{name}: empty self-contained payload"
+            raise RuntimeError(msg)
         header = bytearray(HDR)
         header[0x18:0x18 + len(name)] = name.encode("ascii")
         size = len(payload) + (OVERLAP if index + 1 < len(expected) else 0)
@@ -458,7 +534,8 @@ def assemble_self_contained_stu(
         if name in versions:
             version = versions[name].encode("ascii")
             if len(version) > MODULE_VERSION_MAX:
-                raise RuntimeError(f"{name}: version string does not fit the module header")
+                msg = f"{name}: version string does not fit the module header"
+                raise RuntimeError(msg)
             struct.pack_into(">I", header, MODULE_VERSION_FLAG_OFF, 1)
             header[MODULE_VERSION_OFF:MODULE_VERSION_OFF + len(version)] = version
         headers.append(header)
@@ -486,24 +563,34 @@ def assemble_self_contained_stu(
     out.write_bytes(image)
 
 
+def require_kernel_uimage(image: ByteData) -> None:
+    """Raise unless the kernel is a legacy uImage within the reserved Pong budget."""
+    if len(image) > MAX_KERNEL_BYTES or len(image) < UIMAGE_HEADER_SIZE or _be(image, 0) != UIMAGE_MAGIC:
+        msg = "mainline uImage is invalid or exceeds the reserved Pong budget"
+        raise RuntimeError(msg)
+
+
 def bose_kernel_payload(path: Path) -> bytes:
+    """Return the kernel payload with the Linub name stock U-Boot's fixsig repairs, padded."""
     image = bytearray(path.read_bytes())
-    if len(image) > MAX_KERNEL_BYTES or len(image) < 64 or _be(image, 0) != 0x27051956:
-        raise RuntimeError("mainline uImage is invalid or exceeds the reserved Pong budget")
+    require_kernel_uimage(image)
     canonical = bytearray(image[:64])
     stored_crc = _be(canonical, 4)
     struct.pack_into(">I", canonical, 4, 0)
-    if not image[32:37] == b"Linux" or zlib.crc32(canonical) & 0xFFFFFFFF != stored_crc:
-        raise RuntimeError("mainline uImage must have a valid canonical Linux header")
+    if image[32:37] != b"Linux" or zlib.crc32(canonical) & 0xFFFFFFFF != stored_crc:
+        msg = "mainline uImage must have a valid canonical Linux header"
+        raise RuntimeError(msg)
     size = _be(image, 12)
     if size != len(image) - 64 or zlib.crc32(image[64:]) & 0xFFFFFFFF != _be(image, 24):
-        raise RuntimeError("mainline uImage payload CRC or size is invalid")
+        msg = "mainline uImage payload CRC or size is invalid"
+        raise RuntimeError(msg)
     image[32:37] = b"Linub"
     repaired = bytearray(image[:64])
     repaired[32:37] = b"Linux"
     struct.pack_into(">I", repaired, 4, 0)
     if zlib.crc32(repaired) & 0xFFFFFFFF != stored_crc:
-        raise RuntimeError("Bose fixsig simulation failed")
+        msg = "Bose fixsig simulation failed"
+        raise RuntimeError(msg)
     padded_size = (len(image) + UBI_MIN_IO - 1) // UBI_MIN_IO * UBI_MIN_IO
     if padded_size - len(image) < OVERLAP:
         padded_size += UBI_MIN_IO
@@ -511,9 +598,9 @@ def bose_kernel_payload(path: Path) -> bytes:
 
 
 def native_kernel_payload(path: Path) -> bytes:
+    """Return the kernel payload unchanged after checking its header, padded."""
     image = path.read_bytes()
-    if len(image) > MAX_KERNEL_BYTES or len(image) < 64 or _be(image, 0) != 0x27051956:
-        raise RuntimeError("mainline uImage is invalid or exceeds the reserved Pong budget")
+    require_kernel_uimage(image)
     header = bytearray(image[:64])
     stored_crc = _be(header, 4)
     struct.pack_into(">I", header, 4, 0)
@@ -521,7 +608,8 @@ def native_kernel_payload(path: Path) -> bytes:
     if (image[32:37] != b"Linux" or zlib.crc32(header) & 0xFFFFFFFF != stored_crc
             or size != len(image) - 64
             or zlib.crc32(image[64:]) & 0xFFFFFFFF != _be(image, 24)):
-        raise RuntimeError("mainline uImage has an invalid canonical header or payload")
+        msg = "mainline uImage has an invalid canonical header or payload"
+        raise RuntimeError(msg)
     padded_size = (len(image) + UBI_MIN_IO - 1) // UBI_MIN_IO * UBI_MIN_IO
     if padded_size - len(image) < OVERLAP:
         padded_size += UBI_MIN_IO
@@ -529,15 +617,19 @@ def native_kernel_payload(path: Path) -> bytes:
 
 
 def require_kernel_model(path: Path, model: str) -> None:
+    """Raise unless the uImage names the kernel built for ``model``."""
     image = path.read_bytes()
-    if len(image) < 64:
-        raise RuntimeError(f"{path}: mainline uImage is truncated")
+    if len(image) < UIMAGE_HEADER_SIZE:
+        msg = f"{path}: mainline uImage is truncated"
+        raise RuntimeError(msg)
     name = image[32:64].split(b"\0", 1)[0].decode("ascii", "strict")
     if name != f"Linux-6.12 SoundTap {model}":
-        raise RuntimeError(f"{path}: kernel name is {name!r}, expected model {model!r}")
+        msg = f"{path}: kernel name is {name!r}, expected model {model!r}"
+        raise RuntimeError(msg)
 
 
 def native_spl_payload(mlo: bytes) -> bytes:
+    """Return the MLO followed by the erased overlap the next module header takes."""
     # STU chains replace each nonfinal module's trailing overlap with next header.
     # Preserve raw MLO tail; NAND's following bytes must remain erased.
     return mlo + b"\xff" * OVERLAP
@@ -555,25 +647,31 @@ def validate_mlo(image: bytes) -> None:
     The raw vectors-at-zero form is the USB path's, and belongs in no partition.
     """
     if len(image) <= GP_HEADER_OFFSET + 8 or len(image) > NAND_SPL:
-        raise RuntimeError(f"MLO is invalid or exceeds mtd0 {NAND_SPL:,} B")
+        msg = f"MLO is invalid or exceeds mtd0 {NAND_SPL:,} B"
+        raise RuntimeError(msg)
     if image[:4] != b"\x40\x00\x00\x00" or b"CHSETTINGS" not in image[:GP_HEADER_OFFSET]:
-        raise RuntimeError("MLO lacks the TI configuration header the ROM reads from NAND")
+        msg = "MLO lacks the TI configuration header the ROM reads from NAND"
+        raise RuntimeError(msg)
     size, load = struct.unpack_from("<II", image, GP_HEADER_OFFSET)
     # The stock image declares less than it stores -- its bytes run past the size
     # field, to a page boundary -- so require only that what it declares is present.
     # The exact-fit rule belongs to our own build, in os/support/check_wla_product_spl.py.
-    if size < 4 or GP_HEADER_OFFSET + size > len(image):
-        raise RuntimeError("MLO GP header declares more than the image holds")
-    if load & 3 or load < 0x40200000 or load + size > 0x40310000:
-        raise RuntimeError("MLO has an invalid TI GP/SPL header")
+    if size < MLO_MIN_DECLARED_SIZE or GP_HEADER_OFFSET + size > len(image):
+        msg = "MLO GP header declares more than the image holds"
+        raise RuntimeError(msg)
+    if load & 3 or load < MLO_LOAD_MIN or load + size > MLO_LOAD_END:
+        msg = "MLO has an invalid TI GP/SPL header"
+        raise RuntimeError(msg)
     # No check on the first instruction: the stock SPL starts with a branch, not
     # U-Boot's vector table. That U-Boot's own build emits vectors there is asserted
     # where it is built, in os/support/check_wla_product_spl.py.
 
 
 def validate_uboot(image: bytes) -> None:
-    if len(image) < 64 or len(image) > NAND_UBOOT or _be(image, 0) != 0x27051956:
-        raise RuntimeError(f"u-boot.img is invalid or exceeds mtd4 {NAND_UBOOT:,} B")
+    """Raise unless the image is a legacy uImage that fits mtd4."""
+    if len(image) < UIMAGE_HEADER_SIZE or len(image) > NAND_UBOOT or _be(image, 0) != UIMAGE_MAGIC:
+        msg = f"u-boot.img is invalid or exceeds mtd4 {NAND_UBOOT:,} B"
+        raise RuntimeError(msg)
     header = bytearray(image[:64])
     stored_crc = _be(header, 4)
     struct.pack_into(">I", header, 4, 0)
@@ -581,7 +679,8 @@ def validate_uboot(image: bytes) -> None:
     if (size != len(image) - 64
             or zlib.crc32(header) & 0xFFFFFFFF != stored_crc
             or zlib.crc32(image[64:]) & 0xFFFFFFFF != _be(image, 24)):
-        raise RuntimeError("u-boot.img has an invalid legacy uImage header")
+        msg = "u-boot.img has an invalid legacy uImage header"
+        raise RuntimeError(msg)
 
 
 def validate_sizes(ubi_bytes: int, stu_bytes: int, target: str = "st10") -> None:
@@ -590,9 +689,12 @@ def validate_sizes(ubi_bytes: int, stu_bytes: int, target: str = "st10") -> None
     for what, got, limit in (("ubi.img", ubi_bytes, profile["stock_ubi_bytes"]),
                              ("STU", stu_bytes, profile["stock_stu_bytes"])):
         if got > limit:
-            raise RuntimeError(
+            msg = (
                 f"{what} is {got:,} B, {got - limit:,} B over the stock budget of {limit:,} B "
                 f"({got / 2**20:.1f} MiB vs {limit / 2**20:.1f} MiB) — trim the rootfs"
+            )
+            raise RuntimeError(
+                msg,
             )
     print(f"  size: ubi {ubi_bytes / 2**20:.1f} MiB, STU {stu_bytes / 2**20:.1f} MiB "
                f"({target} stock budget {profile['stock_stu_bytes'] / 2**20:.1f} MiB)")
@@ -635,26 +737,43 @@ TRI_VERSIONS = {
 }
 
 
-def build_tri_model_stu(args) -> None:
-    """rhino + binky, and spotty too when its kernel is passed."""
-    installer = args.installer.read_bytes()
-    if installer[:4] != b"\x7fELF" or len(installer) < 4096:
-        raise RuntimeError("--installer must be the repo-built ARM installer binary")
+def read_installer(path: Path) -> bytes:
+    """Return the installer binary, refusing anything but a repo-built ARM ELF."""
+    installer = path.read_bytes()
+    if installer[:4] != b"\x7fELF" or len(installer) < INSTALLER_MIN_BYTES:
+        msg = "--installer must be the repo-built ARM installer binary"
+        raise RuntimeError(msg)
+    return installer
+
+
+def read_boot_payloads(args: argparse.Namespace) -> tuple[bytes, bytes]:
+    """Return the --mlo and --u-boot images after validating both."""
     mlo, uboot = args.mlo.read_bytes(), args.u_boot.read_bytes()
     validate_mlo(mlo)
     validate_uboot(uboot)
+    return mlo, uboot
+
+
+def build_tri_model_stu(args: argparse.Namespace) -> None:
+    """Rhino + binky, and spotty too when its kernel is passed."""
+    installer = read_installer(args.installer)
+    mlo, uboot = read_boot_payloads(args)
     require_kernel_model(args.rhino_kernel, "st10")
     if args.spotty_kernel:
         require_kernel_model(args.spotty_kernel, "st20")
         if not args.spotty_mlo:
-            raise RuntimeError("an ST20 kernel needs --spotty-mlo: its ROM boots NAND before USB, "
-                               "so it takes the USB-first SPL")
+            msg = (
+                "an ST20 kernel needs --spotty-mlo: its ROM boots NAND before USB, "
+                               "so it takes the USB-first SPL"
+            )
+            raise RuntimeError(msg)
         spotty_mlo = args.spotty_mlo.read_bytes()
         validate_mlo(spotty_mlo)
     # Rhino and binky use one universal kernel. Board identity, DTB and bootargs come from
     # the shared U-Boot environment, not from bytes baked into the image.
     if args.binky_kernel.read_bytes() != args.rhino_kernel.read_bytes():
-        raise RuntimeError("rhino and binky must use the same universal kernel bytes")
+        msg = "rhino and binky must use the same universal kernel bytes"
+        raise RuntimeError(msg)
     payloads = {
         "soundtap-installer": installer,
         "soundtap-kernel.rhino": bose_kernel_payload(args.rhino_kernel),
@@ -673,7 +792,7 @@ def build_tri_model_stu(args) -> None:
     assemble_self_contained_stu(payloads, args.out, target, versions)
 
 
-def build_universal_stu(args, ubi: Path) -> None:
+def build_universal_stu(args: argparse.Namespace, ubi: Path) -> None:
     """One package for every route: stock's :17008 and SoundTap's own web API.
 
     Stock authenticates the four magic bytes at 0x004 and takes module 0 by position, not by
@@ -683,13 +802,10 @@ def build_universal_stu(args, ubi: Path) -> None:
 
     The kernel carries the Linub name for the same reason the stock-route package does: the
     fallback arm of the slot_boot recipe reads the raw kernel partition and runs fixsig over
-    it, and that is the path proven on hardware."""
-    installer = args.installer.read_bytes()
-    if installer[:4] != b"\x7fELF" or len(installer) < 4096:
-        raise RuntimeError("--installer must be the repo-built ARM installer binary")
-    mlo, uboot = args.mlo.read_bytes(), args.u_boot.read_bytes()
-    validate_mlo(mlo)
-    validate_uboot(uboot)
+    it, and that is the path proven on hardware.
+    """
+    installer = read_installer(args.installer)
+    mlo, uboot = read_boot_payloads(args)
     payloads = {
         "soundtap-installer": installer,
         "soundtap-kernel": bose_kernel_payload(args.kernel),
@@ -700,13 +816,10 @@ def build_universal_stu(args, ubi: Path) -> None:
     assemble_self_contained_stu(payloads, args.out, "soundtap", UNIVERSAL_VERSIONS)
 
 
-def build_stock_route_stu(args, ubi: Path) -> None:
-    installer = args.installer.read_bytes()
-    if installer[:4] != b"\x7fELF" or len(installer) < 4096:
-        raise RuntimeError("--installer must be the repo-built ARM installer binary")
-    mlo, uboot = args.mlo.read_bytes(), args.u_boot.read_bytes()
-    validate_mlo(mlo)
-    validate_uboot(uboot)
+def build_stock_route_stu(args: argparse.Namespace, ubi: Path) -> None:
+    """Assemble the stock module chain stock firmware accepts on :17008, carrying our payloads."""
+    installer = read_installer(args.installer)
+    mlo, uboot = read_boot_payloads(args)
     payloads = {
         "SoftwareUpdateInstaller": installer,
         "ARMUpdate": UNUSED_MODULE_NOTICE,
@@ -722,7 +835,8 @@ def build_stock_route_stu(args, ubi: Path) -> None:
     assemble_self_contained_stu(payloads, args.out, "wla-stock-route", STOCK_ROUTE_VERSIONS)
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
+    """Return the command-line parser for every package shape."""
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--rootfs",    type=Path, default=REPO / "os/rootfs")
     ap.add_argument("--work-dir",  type=Path, default=Path("/tmp/soundtap-build"))
@@ -747,9 +861,11 @@ def main() -> None:
     ap.add_argument("--spotty-mlo", type=Path, help="ST20 NAND SPL (out-st20-spl/MLO)")
     ap.add_argument("--rhino-rootfs", type=Path,
                     help="shared tri-model rootfs carrying every model's DTB and config")
-    args = ap.parse_args()
-    if args.target == "wla-probe":
-        ap.error("wla-probe is offline-only and has no release CLI path")
+    return ap
+
+
+def check_tri_model_args(ap: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """Refuse a --tri-model call without its inputs, or a tri/duo target without --tri-model."""
     if args.tri_model:
         tri_inputs = (args.installer, args.rhino_kernel, args.rhino_rootfs, args.binky_kernel,
                       args.mlo, args.u_boot)
@@ -762,6 +878,10 @@ def main() -> None:
             ap.error("--tri-model assembles its own container and payload set")
     elif args.target in ("soundtap-tri", "soundtap-duo"):
         ap.error(f"--target {args.target} requires --tri-model")
+
+
+def check_universal_args(ap: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """Refuse a --universal call without its inputs, or the soundtap target without --universal."""
     if args.universal:
         if args.target != "soundtap" or not args.installer or not args.kernel \
                 or not args.ubi or not args.mlo or not args.u_boot:
@@ -771,6 +891,10 @@ def main() -> None:
             ap.error("--universal assembles its own container")
     elif args.target == "soundtap":
         ap.error("--target soundtap requires --universal")
+
+
+def check_stock_route_args(ap: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """Refuse a --stock-route call without its inputs, or its target without --stock-route."""
     if args.stock_route:
         if args.target != "wla-stock-route" or not args.installer or not args.kernel \
                 or not args.ubi or not args.mlo or not args.u_boot:
@@ -780,6 +904,15 @@ def main() -> None:
             ap.error("--stock-route assembles its own container")
     elif args.target == "wla-stock-route":
         ap.error("--target wla-stock-route requires --stock-route")
+
+
+def check_mode_args(ap: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """Exit with a usage error unless exactly one complete package shape was asked for."""
+    if args.target == "wla-probe":
+        ap.error("wla-probe is offline-only and has no release CLI path")
+    check_tri_model_args(ap, args)
+    check_universal_args(ap, args)
+    check_stock_route_args(ap, args)
     if args.self_contained and (args.target != "wla" or not args.kernel or not args.mlo or not args.u_boot):
         ap.error("--self-contained requires --target wla, --kernel, --mlo and --u-boot")
     if not (args.self_contained or args.stock_route or args.universal or args.tri_model):
@@ -787,11 +920,10 @@ def main() -> None:
 
     if args.ubi and args.rootfs != REPO / "os/rootfs":
         ap.error("--ubi and --rootfs are mutually exclusive")
-    if not args.ubi and not args.tri_model:
-        preflight_tools("mkfs.ubifs", "ubinize")
-    # Sanity-check the rootfs: every file the runtime depends on must be present, so a
-    # broken rootfs build (missing overlay, renamed path) fails here instead of shipping
-    # a firmware that boots without audio routing or source hooks.
+
+
+def required_rootfs_files(target: str) -> list[str]:
+    """Return every rootfs file the runtime of ``target`` depends on."""
     required = [
         "bin/busybox",                  # init and shell target
         "opt/soundtap/soundtapd",         # the daemon
@@ -805,12 +937,12 @@ def main() -> None:
         "opt/soundtap/bt-source.sh",
         "opt/soundtap/spotify-source.sh",
     ]
-    if args.target == "st10":
+    if target == "st10":
         required += [
             "boot/rhino_sm2.dtb",       # ST10 U-Boot loads this before the kernel
             "usr/sbin/hostapd",         # setup AP (soundtapd's Wi-Fi manager)
         ]
-    elif args.target == "st20":
+    elif target == "st20":
         required += [
             "boot/spotty_scm.dtb",      # stock ST20 U-Boot DTB path
         ]
@@ -819,6 +951,11 @@ def main() -> None:
             "boot/binky_sm2.dtb",       # stock WLA U-Boot DTB path
             "usr/sbin/hostapd",         # setup AP (soundtapd's Wi-Fi manager)
         ]
+    return required
+
+
+def rootfs_executables(target: str) -> list[str]:
+    """Return the rootfs files that must carry an executable bit for ``target``."""
     executables = [
         "bin/busybox",
         "opt/soundtap/soundtapd",
@@ -830,25 +967,37 @@ def main() -> None:
         "opt/soundtap/bt-source.sh",
         "opt/soundtap/spotify-source.sh",
     ]
-    if args.target in ("st10", "wla"):
+    if target in ("st10", "wla"):
         executables += ["usr/sbin/hostapd"]
-    if not args.ubi and not args.tri_model:
-        missing = [p for p in required if not (args.rootfs / p).is_file()]
-        if missing:
-            raise SystemExit(
-                f"{args.rootfs} is missing required files (build the Buildroot rootfs first): "
-                + ", ".join(missing)
-            )
-        for link in ("init", "sbin/init"):
-            path = args.rootfs / link
-            if not path.is_symlink() or path.readlink() != Path("/bin/busybox"):
-                raise SystemExit(f"{path} must be a symlink to /bin/busybox")
-        not_executable = [p for p in executables if not (args.rootfs / p).stat().st_mode & 0o111]
-        if not_executable:
-            raise SystemExit(
-                f"{args.rootfs} has non-executable boot files: " + ", ".join(not_executable)
-            )
+    return executables
 
+
+def check_rootfs(rootfs: Path, target: str) -> None:
+    """Exit unless the rootfs tree holds every file, link and executable bit the runtime needs.
+
+    A broken rootfs build (missing overlay, renamed path) fails here instead of shipping a
+    firmware that boots without audio routing or source hooks.
+    """
+    missing = [p for p in required_rootfs_files(target) if not (rootfs / p).is_file()]
+    if missing:
+        raise SystemExit(
+            f"{rootfs} is missing required files (build the Buildroot rootfs first): "
+            + ", ".join(missing),
+        )
+    for link in ("init", "sbin/init"):
+        path = rootfs / link
+        if not path.is_symlink() or path.readlink() != Path("/bin/busybox"):
+            msg = f"{path} must be a symlink to /bin/busybox"
+            raise SystemExit(msg)
+    not_executable = [p for p in rootfs_executables(target) if not (rootfs / p).stat().st_mode & 0o111]
+    if not_executable:
+        raise SystemExit(
+            f"{rootfs} has non-executable boot files: " + ", ".join(not_executable),
+        )
+
+
+def prepare_ubi(args: argparse.Namespace) -> Path | None:
+    """Validate the given UBI image, or pack one from the rootfs; return the UBI path."""
     args.work_dir.mkdir(parents=True, exist_ok=True)
     ubi = args.ubi
     if args.tri_model:
@@ -858,9 +1007,26 @@ def main() -> None:
     else:
         ubifs = args.work_dir / "soundtap.ubifs"
         ubi = args.work_dir / "poc_ubi.img"
-        print("=== mkfs.ubifs ==="); pack_ubifs(args.rootfs, ubifs)
-        print("=== ubinize ===");    pack_ubi(ubifs, ubi)
-    print("=== assemble STU ===")
+        print("=== mkfs.ubifs ===")
+        pack_ubifs(args.rootfs, ubifs)
+        print("=== ubinize ===")
+        pack_ubi(ubifs, ubi)
+    return ubi
+
+
+def build_self_contained_stu(args: argparse.Namespace, ubi: Path) -> None:
+    """Assemble the native four-module WLA chain."""
+    mlo, uboot = read_boot_payloads(args)
+    assemble_self_contained_stu({
+        "soundtap-kernel": native_kernel_payload(args.kernel),
+        "soundtap-rootfs": ubi.read_bytes(),
+        "soundtap-spl": native_spl_payload(mlo),
+        "soundtap-uboot": uboot,
+    }, args.out, args.target)
+
+
+def assemble_package(args: argparse.Namespace, ubi: Path | None) -> None:
+    """Assemble the package shape the command line asked for."""
     if args.tri_model:
         build_tri_model_stu(args)
     elif args.universal:
@@ -868,15 +1034,21 @@ def main() -> None:
     elif args.stock_route:
         build_stock_route_stu(args, ubi)
     elif args.self_contained:
-        mlo, uboot = args.mlo.read_bytes(), args.u_boot.read_bytes()
-        validate_mlo(mlo)
-        validate_uboot(uboot)
-        assemble_self_contained_stu({
-            "soundtap-kernel": native_kernel_payload(args.kernel),
-            "soundtap-rootfs": ubi.read_bytes(),
-            "soundtap-spl": native_spl_payload(mlo),
-            "soundtap-uboot": uboot,
-        }, args.out, args.target)
+        build_self_contained_stu(args, ubi)
+
+
+def main() -> None:
+    """Check the command line and the rootfs, then build and write the STU."""
+    ap = build_parser()
+    args = ap.parse_args()
+    check_mode_args(ap, args)
+    if not args.ubi and not args.tri_model:
+        preflight_tools("mkfs.ubifs", "ubinize")
+        check_rootfs(args.rootfs, args.target)
+
+    ubi = prepare_ubi(args)
+    print("=== assemble STU ===")
+    assemble_package(args, ubi)
     print(f"\n=== DONE ===\n  {args.out}\n  md5: {md5file(args.out)}")
 
 

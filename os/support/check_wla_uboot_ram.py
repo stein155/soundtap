@@ -4,11 +4,11 @@
 
 """Check offline properties needed for WLA ROM USB RAM proof."""
 
-import sys
-import os
-import struct
 import hashlib
+import os
 import re
+import struct
+import sys
 import zlib
 from pathlib import Path
 
@@ -18,6 +18,19 @@ UBOOT_LOAD_ADDRESS = 0x80100000
 WLA_DRAM_TOP = 0x90000000
 DRAM_IMAGE_CAP = WLA_DRAM_TOP - UBOOT_LOAD_ADDRESS
 PRE_DDR_SYMBOLS = ("s_init", "board_init_f", "sdram_init")
+UIMAGE_MAGIC = 0x27051956
+UIMAGE_HEADER_SIZE = 64
+# Flattened device tree structure tokens.
+FDT_BEGIN_NODE = 1
+FDT_END_NODE = 2
+FDT_PROP = 3
+FDT_END = 9
+# The first ARM vector, `b` over the vector table, that a raw SPL starts with.
+ARM_VECTOR_LEN = 4
+# The ST10 kernel install's chain: crc32, then erase, then write, each behind a `then`.
+KERNEL_INSTALL_GATES = 3
+# The largest blob the ROM-USB restore may fetch: 16 MiB.
+NAND_SCRIPT_LIMIT = 0x1000000
 
 NAND_INSTALL = os.environ.get("WLA_UBOOT_NAND_INSTALL") == "1"
 POST_ENV_RESET = os.environ.get("WLA_UBOOT_POST_ENV_RESET") == "1"
@@ -28,15 +41,15 @@ NAND_DUMP = os.environ.get("WLA_UBOOT_NAND_DUMP", "")
 NAND_SCRIPT = os.environ.get("WLA_UBOOT_NAND_SCRIPT", "")
 # The netconsole preamble every probe starts with. Spelled once here and once in the
 # build script, so a probe that drifts in either place fails this check.
-NET = ('setenv ethact usb_ether; setenv ipaddr 192.168.2.2; setenv netmask 255.255.255.0; '
-       'setenv serverip 192.168.2.1; setenv ncip 192.168.2.1; setenv stdout nc; '
-       'setenv stderr nc; sleep 10; ')
+NET = ("setenv ethact usb_ether; setenv ipaddr 192.168.2.2; setenv netmask 255.255.255.0; "
+       "setenv serverip 192.168.2.1; setenv ncip 192.168.2.1; setenv stdout nc; "
+       "setenv stderr nc; sleep 10; ")
 
 
-def dump_piece(name, offset, length):
-    """One read-checksum-upload step. Reads only; nothing here writes NAND."""
-    return (f'nand read 0x82000000 {offset} {length}; crc32 0x82000000 {length}; '
-            f'echo DP-{name}-crc; tftpput 0x82000000 {length} {name}; echo DP-{name}-sent;')
+def dump_piece(name: str, offset: str, length: str) -> str:
+    """Return one read-checksum-upload step. Reads only; nothing here writes NAND."""
+    return (f"nand read 0x82000000 {offset} {length}; crc32 0x82000000 {length}; "
+            f"echo DP-{name}-crc; tftpput 0x82000000 {length} {name}; echo DP-{name}-sent;")
 
 
 if NAND_SCRIPT:
@@ -44,23 +57,23 @@ if NAND_SCRIPT:
     # length and crc32 this build was made for. Console up for RU-start, then nulldev across
     # the transfer: see build-wla-uboot.sh for the three shapes tried on the board.
     sc_len, _, sc_crc = NAND_SCRIPT.partition(":")
-    BOOTCOMMAND = (NET + 'echo RU-start; setenv stdout nulldev; setenv stderr nulldev; '
-                   'tftpboot 0x81000000 soundtap-rom-usb; '
-                   f'if crc32 -v 0x81000000 {sc_len} {sc_crc}; then source 0x81000000; '
-                   'else setenv stdout nc; setenv stderr nc; echo RU-blob-refused; fi')
+    BOOTCOMMAND = (NET + "echo RU-start; setenv stdout nulldev; setenv stderr nulldev; "
+                   "tftpboot 0x81000000 soundtap-rom-usb; "
+                   f"if crc32 -v 0x81000000 {sc_len} {sc_crc}; then source 0x81000000; "
+                   "else setenv stdout nc; setenv stderr nc; echo RU-blob-refused; fi")
 elif PING_BACKUP_PROBE:
     # mtd6, then mtd8 in six 16 MiB pieces: the board has 128 MiB of RAM and the
     # partition is 96 MiB, so it cannot be read in one go.
-    steps = ('nand read 0x82000000 0x280000 0x500000; crc32 0x82000000 0x500000; '
-             'echo PB-mtd6-crc; tftpput 0x82000000 0x500000 mtd6; echo PB-mtd6-sent; ')
+    steps = ("nand read 0x82000000 0x280000 0x500000; crc32 0x82000000 0x500000; "
+             "echo PB-mtd6-crc; tftpput 0x82000000 0x500000 mtd6; echo PB-mtd6-sent; ")
     for n in range(6):
         offset = 0xc80000 + n * 0x1000000
-        steps += (f'nand read 0x82000000 {offset:#x} 0x1000000; crc32 0x82000000 0x1000000; '
-                  f'echo PB-mtd8-{n}-crc; tftpput 0x82000000 0x1000000 mtd8.{n}; '
-                  f'echo PB-mtd8-{n}-sent; ')
-    BOOTCOMMAND = NET + 'echo PB-start; nand info; nand bad; ' + steps + 'echo PB-end'
+        steps += (f"nand read 0x82000000 {offset:#x} 0x1000000; crc32 0x82000000 0x1000000; "
+                  f"echo PB-mtd8-{n}-crc; tftpput 0x82000000 0x1000000 mtd8.{n}; "
+                  f"echo PB-mtd8-{n}-sent; ")
+    BOOTCOMMAND = NET + "echo PB-start; nand info; nand bad; " + steps + "echo PB-end"
 elif NAND_DUMP:
-    BOOTCOMMAND = NET + 'echo DP-start; nand info; nand bad;'
+    BOOTCOMMAND = NET + "echo DP-start; nand info; nand bad;"
     for piece in NAND_DUMP.split():
         name, offset, length = piece.split(":")
         BOOTCOMMAND += " " + dump_piece(name, offset, length)
@@ -69,16 +82,22 @@ elif os.environ.get("ST10_UBOOT_KERNEL_INSTALL"):
     # One kernel into the ST10's Pong slot, then reset. Padded to the whole partition so
     # the crc32 covers exactly what is written; a mismatch erases nothing.
     KERNEL_INSTALL = os.environ["ST10_UBOOT_KERNEL_INSTALL"]
-    BOOTCOMMAND = ('setenv ethact usb_ether; setenv ipaddr 192.168.2.2; setenv netmask 255.255.255.0; setenv serverip 192.168.2.1; setenv ncip 192.168.2.1; setenv stdout nc; setenv stderr nc; sleep 10; echo KI-start; setenv stdout nulldev; setenv stderr nulldev; tftpboot 0x82000000 st10-kernel-pong; mark 7; '
-                   f'if crc32 -v 0x82000000 0x500000 {KERNEL_INSTALL}; then mark 8; '
-                   'if nand erase 0x780000 0x500000; then mark 9; '
-                   'if nand write 0x82000000 0x780000 0x500000; then mark 10; reset; fi; fi; fi')
+    BOOTCOMMAND = ("setenv ethact usb_ether; setenv ipaddr 192.168.2.2; setenv netmask 255.255.255.0; "
+                   "setenv serverip 192.168.2.1; setenv ncip 192.168.2.1; setenv stdout nc; setenv stderr nc; "
+                   "sleep 10; echo KI-start; setenv stdout nulldev; setenv stderr nulldev; "
+                   "tftpboot 0x82000000 st10-kernel-pong; mark 7; "
+                   f"if crc32 -v 0x82000000 0x500000 {KERNEL_INSTALL}; then mark 8; "
+                   "if nand erase 0x780000 0x500000; then mark 9; "
+                   "if nand write 0x82000000 0x780000 0x500000; then mark 10; reset; fi; fi; fi")
 elif os.environ.get("WLA_UBOOT_FIT_NC_PROBE") == "1":
     # The first boot of this chain on a model nobody has run it on. Every echo is a
     # step, so silence localises: no FIT-start means U-Boot never reached its command,
     # no FIT-fetched means the network did not come up, and FIT-bootm-returned means the
     # payload was rejected rather than never delivered.
-    BOOTCOMMAND = ('setenv ethact usb_ether; setenv ipaddr 192.168.2.2; setenv netmask 255.255.255.0; setenv serverip 192.168.2.1; setenv ncip 192.168.2.1; setenv stdout nc; setenv stderr nc; sleep 5; echo FIT-start; setenv stdout nulldev; setenv stderr nulldev; tftpboot ${loadaddr} soundtap-ram-nand.itb; bootm ${loadaddr}')
+    BOOTCOMMAND = ("setenv ethact usb_ether; setenv ipaddr 192.168.2.2; setenv netmask 255.255.255.0; "
+                   "setenv serverip 192.168.2.1; setenv ncip 192.168.2.1; setenv stdout nc; setenv stderr nc; "
+                   "sleep 5; echo FIT-start; setenv stdout nulldev; setenv stderr nulldev; "
+                   "tftpboot ${loadaddr} soundtap-ram-nand.itb; bootm ${loadaddr}")
 # One chain, not two. This used to start a second, independent `if`, so its final
 # `else` overwrote whatever the chain above had decided and fourteen probes -- every
 # backup, the erase and write probes, the install, DHCP, memtest -- were checked
@@ -101,13 +120,17 @@ NO_WATCHDOG = os.environ.get("WLA_UBOOT_NO_WATCHDOG") == "1" or bool(KERNEL_INST
 
 
 def require(config: str, value: str) -> None:
+    """Stop unless the configuration has the line value."""
     if value not in config.splitlines():
-        raise SystemExit(f"missing {value}")
+        msg = f"missing {value}"
+        raise SystemExit(msg)
 
 
 def reject(config: str, value: str) -> None:
+    """Stop when the configuration has the line value."""
     if value in config.splitlines():
-        raise SystemExit(f"unexpected {value}")
+        msg = f"unexpected {value}"
+        raise SystemExit(msg)
 
 
 def require_usb0_peripheral(payload: bytes) -> None:
@@ -115,12 +138,14 @@ def require_usb0_peripheral(payload: bytes) -> None:
     marker = b"\xd0\x0d\xfe\xed"
     start = payload.rfind(marker)
     if start < 0 or start + 40 > len(payload):
-        raise SystemExit("u-boot-dtb.bin lacks appended DTB")
+        msg = "u-boot-dtb.bin lacks appended DTB"
+        raise SystemExit(msg)
     _, total, off_struct, off_strings, _, _, _, _, size_strings, size_struct = struct.unpack(
-        ">10I", payload[start:start + 40]
+        ">10I", payload[start:start + 40],
     )
     if start + total > len(payload):
-        raise SystemExit("appended DTB is truncated")
+        msg = "appended DTB is truncated"
+        raise SystemExit(msg)
     dtb = payload[start:start + total]
     strings = dtb[off_strings:off_strings + size_strings]
     structure = dtb[off_struct:off_struct + size_struct]
@@ -129,13 +154,13 @@ def require_usb0_peripheral(payload: bytes) -> None:
     while offset < len(structure):
         token, = struct.unpack_from(">I", structure, offset)
         offset += 4
-        if token == 1:
+        if token == FDT_BEGIN_NODE:
             end = structure.index(b"\0", offset)
             stack.append(structure[offset:end].decode())
             offset = (end + 4) & ~3
-        elif token == 2:
+        elif token == FDT_END_NODE:
             stack.pop()
-        elif token == 3:
+        elif token == FDT_PROP:
             length, name_offset = struct.unpack_from(">II", structure, offset)
             offset += 8
             end = strings.index(b"\0", name_offset)
@@ -144,90 +169,143 @@ def require_usb0_peripheral(payload: bytes) -> None:
             offset = (offset + length + 3) & ~3
             if stack[-1] == "usb@47401000" and name == b"dr_mode" and value == b"peripheral\0":
                 return
-        elif token == 9:
+        elif token == FDT_END:
             break
-    raise SystemExit("appended DTB USB0 dr_mode is not peripheral")
+    msg = "appended DTB USB0 dr_mode is not peripheral"
+    raise SystemExit(msg)
 
 
 def check_legacy_uimage(image: bytes, payload: bytes) -> None:
-    if len(image) < 64:
-        raise SystemExit("u-boot.img is smaller than legacy uImage header")
+    """Check u-boot.img is a legacy uImage, CRCs intact, around exactly u-boot-dtb.bin at the load address."""
+    if len(image) < UIMAGE_HEADER_SIZE:
+        msg = "u-boot.img is smaller than legacy uImage header"
+        raise SystemExit(msg)
     magic, hcrc, _, size, load, entry, dcrc, _, _, _, _, _ = struct.unpack(
-        ">7I4B32s", image[:64]
+        ">7I4B32s", image[:UIMAGE_HEADER_SIZE],
     )
-    if magic != 0x27051956:
-        raise SystemExit("u-boot.img is not legacy uImage")
-    header = bytearray(image[:64])
+    if magic != UIMAGE_MAGIC:
+        msg = "u-boot.img is not legacy uImage"
+        raise SystemExit(msg)
+    header = bytearray(image[:UIMAGE_HEADER_SIZE])
     struct.pack_into(">I", header, 4, 0)
     if zlib.crc32(header) & 0xFFFFFFFF != hcrc:
-        raise SystemExit("legacy uImage header CRC mismatch")
-    if size != len(payload) or image[64:] != payload:
-        raise SystemExit("legacy uImage does not append exact u-boot-dtb.bin")
+        msg = "legacy uImage header CRC mismatch"
+        raise SystemExit(msg)
+    if size != len(payload) or image[UIMAGE_HEADER_SIZE:] != payload:
+        msg = "legacy uImage does not append exact u-boot-dtb.bin"
+        raise SystemExit(msg)
     if zlib.crc32(payload) & 0xFFFFFFFF != dcrc:
-        raise SystemExit("legacy uImage data CRC mismatch")
+        msg = "legacy uImage data CRC mismatch"
+        raise SystemExit(msg)
     if load != UBOOT_LOAD_ADDRESS or entry != UBOOT_LOAD_ADDRESS:
-        raise SystemExit("legacy uImage load/entry does not match legacy SPL address")
+        msg = "legacy uImage load/entry does not match legacy SPL address"
+        raise SystemExit(msg)
     if b"soundtap-nand-pins" not in payload:
-        raise SystemExit("u-boot-dtb.bin lacks required WLA NAND device tree")
+        msg = "u-boot-dtb.bin lacks required WLA NAND device tree"
+        raise SystemExit(msg)
 
 
 def check_uboot_link(elf: bytes, link_map: str, image: bytes) -> None:
+    """Check the ELF entry, the map's link address and the uImage header all agree."""
     if elf[:4] != b"\x7fELF" or elf[4:6] != b"\x01\x01":
-        raise SystemExit("u-boot is not little-endian ELF32")
+        msg = "u-boot is not little-endian ELF32"
+        raise SystemExit(msg)
     entry, = struct.unpack_from("<I", elf, 24)
     match = re.search(r"^\s*(0x)?([0-9a-fA-F]+)\s+__image_copy_start\b", link_map, re.MULTILINE)
     if not match:
-        raise SystemExit("u-boot.map lacks __image_copy_start")
+        msg = "u-boot.map lacks __image_copy_start"
+        raise SystemExit(msg)
     link = int(match.group(2), 16)
     if entry != link or link != UBOOT_LOAD_ADDRESS:
+        msg = f"u-boot ELF/map link {link:#x}, entry {entry:#x}, expected {UBOOT_LOAD_ADDRESS:#x}"
         raise SystemExit(
-            f"u-boot ELF/map link {link:#x}, entry {entry:#x}, expected {UBOOT_LOAD_ADDRESS:#x}"
+            msg,
         )
     _, _, _, _, load, entry_header, _, _, _, _, _, _ = struct.unpack(
-        ">7I4B32s", image[:64]
+        ">7I4B32s", image[:UIMAGE_HEADER_SIZE],
     )
     if load != link or entry_header != entry:
-        raise SystemExit("legacy uImage load/entry does not match U-Boot ELF/map link")
+        msg = "legacy uImage load/entry does not match U-Boot ELF/map link"
+        raise SystemExit(msg)
 
 
 def main() -> None:
+    """Check the U-Boot build in OUT (or the default) for the properties the RAM proof needs."""
     args = sys.argv[1:]
     if len(args) > 1:
-        raise SystemExit("usage: check_wla_uboot_ram.py [OUT]")
+        msg = "usage: check_wla_uboot_ram.py [OUT]"
+        raise SystemExit(msg)
     out = Path(args[0]) if args else Path("os/bootloader/build/out-uboot-wla")
     config = (out / ".config").read_text()
+    check_config(config)
+    mlo = (out / "MLO").read_bytes()
+    check_mlo(config, mlo)
+    image = (out / "u-boot.img").read_bytes()
+    payload = (out / "u-boot-dtb.bin").read_bytes()
+    check_uboot_image(out, image, payload)
+    if POST_ENV_RESET:
+        check_post_env_reset(out)
+    check_spl(out, mlo)
+    print(f"WLA U-Boot RAM properties passed: raw-vector USB-Net SPL {len(mlo)}/{SPL_SIZE_LIMIT} bytes "
+          f"at {SPL_TEXT_BASE:#x}; legacy uImage {len(image)}/{DRAM_IMAGE_CAP} bytes load/entry "
+          f"{UBOOT_LOAD_ADDRESS:#x}; {BOOTCOMMAND!r} env-free bootcmd and RNDIS USB Ethernet")
+
+
+def check_config(config: str) -> None:
+    """Check the U-Boot configuration, in the order each knob's rules build on the last."""
+    check_base_config(config)
+    if NAND_INSTALL:
+        check_install_config(config)
+    check_env_config(config)
+    if KERNEL_INSTALL_ENV:
+        check_kernel_install(config)
+    if NAND_SCRIPT:
+        check_nand_script(config)
+    check_lab_config(config)
+
+
+def check_base_config(config: str) -> None:
+    """Check what every WLA RAM build carries, its bootcmd included."""
     for value in (
-        'CONFIG_DEFAULT_DEVICE_TREE="am335x-soundtap-wla"', 'CONFIG_SPL=y',
-        'CONFIG_SPL_NET=y', 'CONFIG_SPL_USB_GADGET=y', 'CONFIG_SPL_USB_ETHER=y',
-        'CONFIG_SPL_LEGACY_IMAGE_FORMAT=y',
-        'CONFIG_TEXT_BASE=0x80100000',
-        'CONFIG_SPL_TEXT_BASE=0x402f0400', 'CONFIG_SPL_SIZE_LIMIT=0xfc00',
-        'CONFIG_SPL_SYS_MALLOC_F_LEN=0x2000', '# CONFIG_SPL_SYS_MALLOC is not set',
-        'CONFIG_USB_ETHER=y', 'CONFIG_USB_ETH_RNDIS=y', 'CONFIG_CMD_DHCP=y',
+        'CONFIG_DEFAULT_DEVICE_TREE="am335x-soundtap-wla"', "CONFIG_SPL=y",
+        "CONFIG_SPL_NET=y", "CONFIG_SPL_USB_GADGET=y", "CONFIG_SPL_USB_ETHER=y",
+        "CONFIG_SPL_LEGACY_IMAGE_FORMAT=y",
+        "CONFIG_TEXT_BASE=0x80100000",
+        "CONFIG_SPL_TEXT_BASE=0x402f0400", "CONFIG_SPL_SIZE_LIMIT=0xfc00",
+        "CONFIG_SPL_SYS_MALLOC_F_LEN=0x2000", "# CONFIG_SPL_SYS_MALLOC is not set",
+        "CONFIG_USB_ETHER=y", "CONFIG_USB_ETH_RNDIS=y", "CONFIG_CMD_DHCP=y",
         'CONFIG_SYS_PROMPT="WLA> "',
         # The install build must never autoboot: it exists to be typed at.
-        'CONFIG_BOOTDELAY=-1' if NAND_INSTALL else 'CONFIG_BOOTDELAY=0',
+        "CONFIG_BOOTDELAY=-1" if NAND_INSTALL else "CONFIG_BOOTDELAY=0",
         # Every build but the product one must be unsteerable: nothing in mtd5 may change
         # what it does. The product build is the opposite -- mtd5 is this board's slot
         # selector -- and it must have exactly one backing store, or U-Boot has more than
         # one place an environment could come from.
-        'CONFIG_ENV_IS_IN_NAND=y' if ENV_IN_NAND else 'CONFIG_ENV_IS_NOWHERE=y',
+        "CONFIG_ENV_IS_IN_NAND=y" if ENV_IN_NAND else "CONFIG_ENV_IS_NOWHERE=y",
         # Kconfig stores a double quote inside a string value escaped, so compare against
         # the escaped form. Only the install bootcmd contains any.
         'CONFIG_BOOTCOMMAND="' + BOOTCOMMAND.replace("\\", "\\\\").replace('"', '\\"') + '"',
     ):
         require(config, value)
-    if NAND_INSTALL:
-        # Exactly the tools an install needs, and still no way to write the
-        # environment: a saved env would outrank the built-in bootcmd for good.
-        for value in ('CONFIG_CMD_MEMORY=y', 'CONFIG_CMD_CRC32=y',
-                      'CONFIG_CMD_TFTPBOOT=y', 'CONFIG_CMD_TFTPPUT=y',
-                      'CONFIG_CMD_NAND=y'):
-            require(config, value)
-        for value in ('CONFIG_CMD_SAVEENV=y', 'CONFIG_ENV_IS_IN_NAND=y'):
-            reject(config, value)
-        if BOOTCOMMAND != "true":
-            raise SystemExit("install build must not carry a bootcmd")
+
+
+def check_install_config(config: str) -> None:
+    """Check the install build has exactly the tools an install needs and no bootcmd."""
+    # Exactly the tools an install needs, and still no way to write the
+    # environment: a saved env would outrank the built-in bootcmd for good.
+    for value in ("CONFIG_CMD_MEMORY=y", "CONFIG_CMD_CRC32=y",
+                  "CONFIG_CMD_TFTPBOOT=y", "CONFIG_CMD_TFTPPUT=y",
+                  "CONFIG_CMD_NAND=y"):
+        require(config, value)
+    for value in ("CONFIG_CMD_SAVEENV=y", "CONFIG_ENV_IS_IN_NAND=y"):
+        reject(config, value)
+    if BOOTCOMMAND != "true":
+        msg = "install build must not carry a bootcmd"
+        raise SystemExit(msg)
+
+
+def check_env_config(config: str) -> None:
+    """Check only the product build reads its environment from NAND, and every build has NAND and UBI."""
     # No lab build may take its orders from flash: a saved environment would outrank the
     # compiled-in bootcmd, and an install or restore U-Boot has to do exactly what it was
     # built to do. The product build is the one exception -- on this board the environment
@@ -236,90 +314,113 @@ def main() -> None:
     #
     # MTD_RAW_NAND=n removes ENV_IS_IN_NAND from Kconfig output entirely.
     if ENV_IN_NAND:
-        require(config, 'CONFIG_ENV_IS_IN_NAND=y')
-        require(config, 'CONFIG_ENV_OFFSET=0x260000')
-        require(config, 'CONFIG_ENV_SIZE=0x8000')
-        require(config, 'CONFIG_ENV_REDUNDANT=y')
-        require(config, 'CONFIG_ENV_OFFSET_REDUND=0x240000')
-        require(config, 'CONFIG_CMD_SAVEENV=y')
+        require(config, "CONFIG_ENV_IS_IN_NAND=y")
+        require(config, "CONFIG_ENV_OFFSET=0x260000")
+        require(config, "CONFIG_ENV_SIZE=0x8000")
+        require(config, "CONFIG_ENV_REDUNDANT=y")
+        require(config, "CONFIG_ENV_OFFSET_REDUND=0x240000")
+        require(config, "CONFIG_CMD_SAVEENV=y")
     else:
-        require(config, '# CONFIG_ENV_IS_IN_NAND is not set')
+        require(config, "# CONFIG_ENV_IS_IN_NAND is not set")
     # NAND/UBI belong to every variant that can reach a bootcmd.
     for value in (
-        'CONFIG_CMD_NAND=y', 'CONFIG_CMD_MTDPARTS=y', 'CONFIG_MTD_PARTITIONS=y',
-        'CONFIG_CMD_UBI=y', 'CONFIG_CMD_UBIFS=y', 'CONFIG_MTD_UBI=y',
+        "CONFIG_CMD_NAND=y", "CONFIG_CMD_MTDPARTS=y", "CONFIG_MTD_PARTITIONS=y",
+        "CONFIG_CMD_UBI=y", "CONFIG_CMD_UBIFS=y", "CONFIG_MTD_UBI=y",
     ):
         require(config, value)
-    if KERNEL_INSTALL_ENV:
-        # The second build in this tree that writes flash, held the same way as the first:
-        # one partition, only behind a crc32 on the image it fetched, every step gated on
-        # the one before it, and no other partition offset allowed to appear at all.
-        require(config, "CONFIG_HUSH_PARSER=y")
-        require(config, "CONFIG_CRC32_VERIFY=y")
-        require(config, "CONFIG_CMD_CRC32=y")
-        require(config, "CONFIG_CMD_TFTPBOOT=y")
-        require(config, "CONFIG_CMD_WLAMARK=y")
-        require(config, "CONFIG_ENV_IS_NOWHERE=y")
-        reject(config, "CONFIG_CMD_SAVEENV=y")
-        # Bare hex, the form U-Boot prints and the WLA install already requires. The first
-        # two ST10 attempts passed 0x315128be and stopped at marker 7 -- fetched, checksum
-        # refused -- with the slot untouched.
-        if not re.fullmatch(r"[0-9a-f]{1,8}", KERNEL_INSTALL_ENV):
-            raise SystemExit("ST10_UBOOT_KERNEL_INSTALL must be U-Boot's own crc32 form")
-        writes = re.findall(r"nand (?:erase|write) (?:0x[0-9a-f]+ )?(0x[0-9a-f]+) (0x[0-9a-f]+)",
-                            BOOTCOMMAND)
-        if sorted(set(writes)) != [("0x780000", "0x500000")]:
-            raise SystemExit(f"install bootcmd writes ranges outside Kernel-Pong: {writes}")
-        if BOOTCOMMAND.count("nand erase") != 1 or BOOTCOMMAND.count("nand write") != 1:
-            raise SystemExit("install bootcmd must erase and write exactly one partition")
-        if BOOTCOMMAND.index("crc32 -v") > BOOTCOMMAND.index("nand erase"):
-            raise SystemExit("install bootcmd erases before checking the image it fetched")
-        if BOOTCOMMAND.count("; then ") != 3 or "; then mark 10; reset; fi" not in BOOTCOMMAND:
-            raise SystemExit("install bootcmd does not gate each step on the previous one")
-        for word in ("saveenv", "scrub", "markbad", "ubi ", "ubifs", "0x0 ", "0x80000 ",
-                     "0x280000", "0xc80000", "0x6c80000", "0x260000"):
-            if word in BOOTCOMMAND:
-                raise SystemExit(f"install bootcmd reaches beyond Kernel-Pong: {word}")
-    if NAND_SCRIPT:
-        # The one build that writes NAND. Everything it writes comes from the script in the
-        # blob, so the gate is the blob: exact length and crc32 before `source`, the hush
-        # parser so that gate is a gate, and no saved environment that could replace it.
-        for value in ("CONFIG_HUSH_PARSER=y", "CONFIG_CRC32_VERIFY=y", "CONFIG_CMD_CRC32=y",
-                      "CONFIG_CMD_TFTPBOOT=y", "CONFIG_CMD_SOURCE=y", "CONFIG_LEGACY_IMAGE_FORMAT=y",
-                      "CONFIG_CMD_NAND_TRIMFFS=y", "CONFIG_CMD_ITEST=y", "CONFIG_ENV_IS_NOWHERE=y"):
-            require(config, value)
-        reject(config, "CONFIG_CMD_SAVEENV=y")
-        if not re.fullmatch(r"0x[0-9a-f]+", sc_len) or not re.fullmatch(r"[0-9a-f]{8}", sc_crc):
-            raise SystemExit("WLA_UBOOT_NAND_SCRIPT must be 0xLENGTH:crc32 with eight hex digits")
-        if int(sc_len, 16) > 0x1000000:
-            raise SystemExit("WLA_UBOOT_NAND_SCRIPT blob exceeds 16 MiB")
-        if BOOTCOMMAND.index("crc32 -v") > BOOTCOMMAND.index("source"):
-            raise SystemExit("restore bootcmd sources the blob before checking it")
+
+
+def check_kernel_install(config: str) -> None:
+    """Check the ST10 kernel install writes Kernel-Pong only, behind a crc32, one gated step at a time."""
+    # The second build in this tree that writes flash, held the same way as the first:
+    # one partition, only behind a crc32 on the image it fetched, every step gated on
+    # the one before it, and no other partition offset allowed to appear at all.
+    require(config, "CONFIG_HUSH_PARSER=y")
+    require(config, "CONFIG_CRC32_VERIFY=y")
+    require(config, "CONFIG_CMD_CRC32=y")
+    require(config, "CONFIG_CMD_TFTPBOOT=y")
+    require(config, "CONFIG_CMD_WLAMARK=y")
+    require(config, "CONFIG_ENV_IS_NOWHERE=y")
+    reject(config, "CONFIG_CMD_SAVEENV=y")
+    # Bare hex, the form U-Boot prints and the WLA install already requires. The first
+    # two ST10 attempts passed 0x315128be and stopped at marker 7 -- fetched, checksum
+    # refused -- with the slot untouched.
+    if not re.fullmatch(r"[0-9a-f]{1,8}", KERNEL_INSTALL_ENV):
+        msg = "ST10_UBOOT_KERNEL_INSTALL must be U-Boot's own crc32 form"
+        raise SystemExit(msg)
+    writes = re.findall(r"nand (?:erase|write) (?:0x[0-9a-f]+ )?(0x[0-9a-f]+) (0x[0-9a-f]+)",
+                        BOOTCOMMAND)
+    if sorted(set(writes)) != [("0x780000", "0x500000")]:
+        msg = f"install bootcmd writes ranges outside Kernel-Pong: {writes}"
+        raise SystemExit(msg)
+    if BOOTCOMMAND.count("nand erase") != 1 or BOOTCOMMAND.count("nand write") != 1:
+        msg = "install bootcmd must erase and write exactly one partition"
+        raise SystemExit(msg)
+    if BOOTCOMMAND.index("crc32 -v") > BOOTCOMMAND.index("nand erase"):
+        msg = "install bootcmd erases before checking the image it fetched"
+        raise SystemExit(msg)
+    if BOOTCOMMAND.count("; then ") != KERNEL_INSTALL_GATES or "; then mark 10; reset; fi" not in BOOTCOMMAND:
+        msg = "install bootcmd does not gate each step on the previous one"
+        raise SystemExit(msg)
+    for word in ("saveenv", "scrub", "markbad", "ubi ", "ubifs", "0x0 ", "0x80000 ",
+                 "0x280000", "0xc80000", "0x6c80000", "0x260000"):
+        if word in BOOTCOMMAND:
+            msg = f"install bootcmd reaches beyond Kernel-Pong: {word}"
+            raise SystemExit(msg)
+
+
+def check_nand_script(config: str) -> None:
+    """Check the restore build sources its blob only after checking its length and crc32."""
+    # The one build that writes NAND. Everything it writes comes from the script in the
+    # blob, so the gate is the blob: exact length and crc32 before `source`, the hush
+    # parser so that gate is a gate, and no saved environment that could replace it.
+    for value in ("CONFIG_HUSH_PARSER=y", "CONFIG_CRC32_VERIFY=y", "CONFIG_CMD_CRC32=y",
+                  "CONFIG_CMD_TFTPBOOT=y", "CONFIG_CMD_SOURCE=y", "CONFIG_LEGACY_IMAGE_FORMAT=y",
+                  "CONFIG_CMD_NAND_TRIMFFS=y", "CONFIG_CMD_ITEST=y", "CONFIG_ENV_IS_NOWHERE=y"):
+        require(config, value)
+    reject(config, "CONFIG_CMD_SAVEENV=y")
+    if not re.fullmatch(r"0x[0-9a-f]+", sc_len) or not re.fullmatch(r"[0-9a-f]{8}", sc_crc):
+        msg = "WLA_UBOOT_NAND_SCRIPT must be 0xLENGTH:crc32 with eight hex digits"
+        raise SystemExit(msg)
+    if int(sc_len, 16) > NAND_SCRIPT_LIMIT:
+        msg = "WLA_UBOOT_NAND_SCRIPT blob exceeds 16 MiB"
+        raise SystemExit(msg)
+    if BOOTCOMMAND.index("crc32 -v") > BOOTCOMMAND.index("source"):
+        msg = "restore bootcmd sources the blob before checking it"
+        raise SystemExit(msg)
+
+
+def check_lab_config(config: str) -> None:
+    """Check the watchdog knob, the absent SPL loaders and the USB gadget functions."""
     # The watchdog is a separate knob: it is the board's only negative indicator, so a run
     # may drop NAND/MMC while keeping it, or drop only the watchdog as the control for
     # whether the 50.4 s reset really came from it. The product NAND boot never autostarts
     # it: the SPL's timer guards U-Boot until the kernel takes over.
     no_watchdog = NO_WATCHDOG or os.environ.get("WLA_UBOOT_NAND_BOOT") == "1"
-    require(config, '# CONFIG_WATCHDOG_AUTOSTART is not set' if no_watchdog
-            else 'CONFIG_WATCHDOG_AUTOSTART=y')
+    require(config, "# CONFIG_WATCHDOG_AUTOSTART is not set" if no_watchdog
+            else "CONFIG_WATCHDOG_AUTOSTART=y")
     for value in (
-        'CONFIG_SPL_ETH=y', 'CONFIG_SPL_MTD=y', 'CONFIG_SPL_NAND_SUPPORT=y',
-        'CONFIG_SPL_NAND_DRIVERS=y', 'CONFIG_SPL_NAND_ECC=y', 'CONFIG_SPL_NAND_BASE=y',
-        'CONFIG_SPL_OS_BOOT=y', 'CONFIG_SPL_NAND_AM33XX_BCH=y', 'CONFIG_SPL_I2C=y',
-        'CONFIG_SPL_DM_I2C=y', 'CONFIG_SPL_SERIAL=y', 'CONFIG_SPL_FALCON_BOOT_MMCSD=y',
-        'CONFIG_SPL_MMC=y', 'CONFIG_SPL_FAT_SUPPORT=y', 'CONFIG_SPL_DFU=y',
-        'CONFIG_SPL_USB_HOST=y', 'CONFIG_SPL_USB_STORAGE=y',
+        "CONFIG_SPL_ETH=y", "CONFIG_SPL_MTD=y", "CONFIG_SPL_NAND_SUPPORT=y",
+        "CONFIG_SPL_NAND_DRIVERS=y", "CONFIG_SPL_NAND_ECC=y", "CONFIG_SPL_NAND_BASE=y",
+        "CONFIG_SPL_OS_BOOT=y", "CONFIG_SPL_NAND_AM33XX_BCH=y", "CONFIG_SPL_I2C=y",
+        "CONFIG_SPL_DM_I2C=y", "CONFIG_SPL_SERIAL=y", "CONFIG_SPL_FALCON_BOOT_MMCSD=y",
+        "CONFIG_SPL_MMC=y", "CONFIG_SPL_FAT_SUPPORT=y", "CONFIG_SPL_DFU=y",
+        "CONFIG_SPL_USB_HOST=y", "CONFIG_SPL_USB_STORAGE=y",
     ):
         reject(config, value)
     # Only the product writes its environment: the USB recovery selects the slot it wrote,
     # and the boot count of an unconfirmed slot lives there (ADR 0010).
     if not ENV_IN_NAND:
-        reject(config, 'CONFIG_CMD_SAVEENV=y')
-    for value in ('CONFIG_USB_GADGET_DOWNLOAD=y', 'CONFIG_USB_FUNCTION_ACM=y'):
+        reject(config, "CONFIG_CMD_SAVEENV=y")
+    for value in ("CONFIG_USB_GADGET_DOWNLOAD=y", "CONFIG_USB_FUNCTION_ACM=y"):
         require(config, value)
-    mlo = (out / "MLO").read_bytes()
-    if len(mlo) < 4 or mlo[:4] != bytes.fromhex("0f0000ea"):
-        raise SystemExit("MLO must start with raw ARM SPL vectors, not TI GP header")
+
+
+def check_mlo(config: str, mlo: bytes) -> None:
+    """Check the MLO is a raw-vector SPL and, outside diagnostic builds, the one the loader pins."""
+    if len(mlo) < ARM_VECTOR_LEN or mlo[:ARM_VECTOR_LEN] != bytes.fromhex("0f0000ea"):
+        msg = "MLO must start with raw ARM SPL vectors, not TI GP header"
+        raise SystemExit(msg)
     loader = (Path(__file__).parents[2] / "tools" / "recovery" / "rom-usb-loader" / "rom-usb-loader.c").read_text()
     approved = re.search(r'approved_usb_spl_sha256\[\] =\s*"([0-9a-f]{64})"', loader)
     # The pin covers the default path, where the loader supplies the hash itself and
@@ -334,57 +435,79 @@ def main() -> None:
     if not diagnostic and not os.environ.get("WLA_UBOOT_LEGACY_SPL") and (
         not approved or approved.group(1) != hashlib.sha256(mlo).hexdigest()
     ):
-        raise SystemExit("loader USB SPL hash does not match MLO")
-    image = (out / "u-boot.img").read_bytes()
-    payload = (out / "u-boot-dtb.bin").read_bytes()
+        msg = "loader USB SPL hash does not match MLO"
+        raise SystemExit(msg)
+
+
+def check_uboot_image(out: Path, image: bytes, payload: bytes) -> None:
+    """Check u-boot.img wraps this U-Boot at its link address, fits in DRAM and speaks USB Ethernet."""
     check_legacy_uimage(image, payload)
     check_uboot_link((out / "u-boot").read_bytes(), (out / "u-boot.map").read_text(), image)
     require_usb0_peripheral(payload)
     if len(image) > DRAM_IMAGE_CAP:
+        msg = f"u-boot.img {len(image)} exceeds WLA DRAM window {DRAM_IMAGE_CAP}"
         raise SystemExit(
-            f"u-boot.img {len(image)} exceeds WLA DRAM window {DRAM_IMAGE_CAP}"
+            msg,
         )
     for string in (b"CDC Ethernet", b"RNDIS"):
         if string not in image:
-            raise SystemExit(f"u-boot.img missing {string.decode()} USB Ethernet string")
-    if POST_ENV_RESET:
-        patch = (Path(__file__).parents[2] / "os" / "bootloader" / "uboot" /
-                 "wla-uboot-post-env-reset.patch").read_text()
-        if "+\tINITCALL(initr_env);\n+\treset_cpu();" not in patch:
-            raise SystemExit("post-env reset is not immediately after initr_env")
-        disasm = (out / "u-boot-disasm.txt").read_text()
-        board_init_r = re.search(r"<board_init_r>:(.*?)(?:\n\n|\Z)", disasm, re.S)
-        if not board_init_r or "<reset_cpu>" not in board_init_r.group(1):
-            raise SystemExit("post-env reset call absent from board_init_r")
+            msg = f"u-boot.img missing {string.decode()} USB Ethernet string"
+            raise SystemExit(msg)
+
+
+def check_post_env_reset(out: Path) -> None:
+    """Check the post-env reset probe resets right after initr_env."""
+    patch = (Path(__file__).parents[2] / "os" / "bootloader" / "uboot" /
+             "wla-uboot-post-env-reset.patch").read_text()
+    if "+\tINITCALL(initr_env);\n+\treset_cpu();" not in patch:
+        msg = "post-env reset is not immediately after initr_env"
+        raise SystemExit(msg)
+    disasm = (out / "u-boot-disasm.txt").read_text()
+    board_init_r = re.search(r"<board_init_r>:(.*?)(?:\n\n|\Z)", disasm, re.DOTALL)
+    if not board_init_r or "<reset_cpu>" not in board_init_r.group(1):
+        msg = "post-env reset call absent from board_init_r"
+        raise SystemExit(msg)
+
+
+def check_spl(out: Path, mlo: bytes) -> None:
+    """Check the SPL fits the ROM window, keeps its SRAM stack and loads U-Boot over USB only."""
     if len(mlo) > SPL_SIZE_LIMIT:
-        raise SystemExit(f"SPL {len(mlo)} exceeds SRAM limit {SPL_SIZE_LIMIT}")
+        msg = f"SPL {len(mlo)} exceeds SRAM limit {SPL_SIZE_LIMIT}"
+        raise SystemExit(msg)
     symbols = (out / "spl-symbols.txt").read_text()
     if not re.search(r"^[0-9a-f]+ T spl_parse_legacy_header$", symbols, re.MULTILINE):
-        raise SystemExit("SPL legacy uImage parser is absent")
+        msg = "SPL legacy uImage parser is absent"
+        raise SystemExit(msg)
     for name in PRE_DDR_SYMBOLS:
         match = re.search(rf"^([0-9a-f]+) [A-Za-z] {name}$", symbols, re.MULTILINE)
         if not match or int(match.group(1), 16) >= SPL_TEXT_BASE + SPL_SIZE_LIMIT:
-            raise SystemExit(f"SPL pre-DDR symbol outside ROM window: {name}")
+            msg = f"SPL pre-DDR symbol outside ROM window: {name}"
+            raise SystemExit(msg)
     spl_disasm = (out / "spl-disasm.txt").read_text()
     if "<spl_relocate_stack_gd>" not in spl_disasm:
-        raise SystemExit("SPL lost spl_relocate_stack_gd")
-    reloc = re.search(r"<spl_relocate_stack_gd>:(.*?)(?:\n\n|\Z)", spl_disasm, re.S).group(1)
+        msg = "SPL lost spl_relocate_stack_gd"
+        raise SystemExit(msg)
+    reloc = re.search(r"<spl_relocate_stack_gd>:(.*?)(?:\n\n|\Z)", spl_disasm, re.DOTALL).group(1)
     if "0x100000" not in reloc:
-        raise SystemExit("SPL does not set the 1 MiB simple-malloc pool; dm_init() will fail with -ENOMEM")
+        msg = "SPL does not set the 1 MiB simple-malloc pool; dm_init() will fail with -ENOMEM"
+        raise SystemExit(msg)
     if "memcpy" in reloc:
-        raise SystemExit("SPL moves gd; the SRAM stack must be kept")
+        msg = "SPL moves gd; the SRAM stack must be kept"
+        raise SystemExit(msg)
     uboot_disasm = (out / "u-boot-disasm.txt").read_text()
     if "<board_nand_pinmux>" not in uboot_disasm:
-        raise SystemExit("U-Boot lacks the board_nand_pinmux hook; NAND will probe as -ENODEV")
+        msg = "U-Boot lacks the board_nand_pinmux hook; NAND will probe as -ENODEV"
+        raise SystemExit(msg)
     if " spl_net_load_image_usb" not in symbols:
-        raise SystemExit("SPL lacks USB-net stage2 loader")
+        msg = "SPL lacks USB-net stage2 loader"
+        raise SystemExit(msg)
     if any(name in symbols for name in ("spl_mmc_load_image", "spl_nand_load_image")):
-        raise SystemExit("SPL retains MMC or NAND stage2 loader")
+        msg = "SPL retains MMC or NAND stage2 loader"
+        raise SystemExit(msg)
     size = (out / "spl-size.txt").read_text()
     if ".text" not in size or ".bss" not in size:
-        raise SystemExit("missing SPL size report")
-    print(f"WLA U-Boot RAM properties passed: raw-vector USB-Net SPL {len(mlo)}/{SPL_SIZE_LIMIT} bytes at {SPL_TEXT_BASE:#x}; legacy uImage {len(image)}/{DRAM_IMAGE_CAP} bytes load/entry {UBOOT_LOAD_ADDRESS:#x}; {BOOTCOMMAND!r} env-free bootcmd and RNDIS USB Ethernet")
-
+        msg = "missing SPL size report"
+        raise SystemExit(msg)
 
 if __name__ == "__main__":
     main()

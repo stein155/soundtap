@@ -83,7 +83,7 @@
   "next.open": "Ouvrez ensuite <a>http://soundtap.local</a> sur n’importe quel téléphone, tablette ou ordinateur connecté au même réseau. Par la suite, les mises à jour se font depuis la page de l’enceinte.",
   "next.stuck": "Toujours rien après dix minutes ? Laissez-la branchée et consultez <a>En cas de problème</a>.",
   "s6.title": "Revenir à Bose",
-  "back.how": "Sur la page de l’enceinte, ouvrez <b>Réglages → Mises à jour</b>, choisissez le fichier <code>Update.stu</code> de Bose (celui que vous avez enregistré) et confirmez. Lorsqu’elle vous le demande, maintenez une touche de l’enceinte enfoncée pendant deux secondes, puis laissez-la branchée pendant l’installation et le redémarrage.",
+  "back.how": "Sur la page de l’enceinte, ouvrez <b>Paramètres → Mises à jour</b>, choisissez le fichier <code>Update.stu</code> de Bose (celui que vous avez enregistré) et confirmez. Lorsqu’elle vous le demande, maintenez une touche de l’enceinte enfoncée pendant deux secondes, puis laissez-la branchée pendant l’installation et le redémarrage.",
   "back.notReset": "Ce n’est pas une réinitialisation d’usine : le logiciel Bose est remis en place, mais une partie de ce que SoundTap a écrit reste sur l’enceinte.",
   "back.st20": "Sur une SoundTouch 20, la puce réseau conserve le logiciel de SoundTap ; y remettre celui de Bose reste pour l’instant une opération réservée aux développeurs.",
   "back.rescue": "Une méthode par clé USB est intégrée pour le cas où SoundTap ne démarrerait plus, mais elle n’a encore fait ses preuves sur aucun modèle. Le <a>guide d’installation</a> donne les détails et toutes les exceptions.",

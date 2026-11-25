@@ -15,7 +15,7 @@ static const unsigned char TK[16] = {0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0
 static const unsigned char GTK[16] = {0xe0, 0xe1, 0xe2, 0xe3, 0xe4, 0xe5, 0xe6, 0xe7,
                                       0xe8, 0xe9, 0xea, 0xeb, 0xec, 0xed, 0xee, 0xef};
 static const unsigned char OTHER[6] = {0x02, 0x99, 0x99, 0x99, 0x99, 0x99};
-static unsigned char f[0x1000];
+static unsigned char fbuf[0x1000];
 
 static void setup(int with_keys)
 {
@@ -70,9 +70,9 @@ static void recycle(const struct rxd *d)
 
 static unsigned mgmt_frame(unsigned fc, const unsigned char *a1, unsigned body)
 {
-    hdr(f, fc, 0, a1, BSSID, BSSID);
+    hdr(fbuf, fc, 0, a1, BSSID, BSSID);
     for (unsigned i = 0; i < body; i++)
-        f[24 + i] = i * 7 + 3;
+        fbuf[24 + i] = i * 7 + 3;
     return 24 + body + 4;
 }
 
@@ -81,16 +81,16 @@ static unsigned mgmt_frame(unsigned fc, const unsigned char *a1, unsigned body)
 static unsigned data_frame(const unsigned char *a1, const unsigned char *a2, int prot, unsigned keyid,
                            unsigned long long pn, unsigned body)
 {
-    unsigned n = hdr(f, 0x08, 0x02 | (prot ? 0x40 : 0), a1, a2, BSSID);
+    unsigned n = hdr(fbuf, 0x08, 0x02 | (prot ? 0x40 : 0), a1, a2, BSSID);
     if (prot) {
-        f[n++] = pn, f[n++] = pn >> 8, f[n++] = 0, f[n++] = 0x20 | keyid << 6;
-        f[n++] = pn >> 16, f[n++] = pn >> 24, f[n++] = pn >> 32, f[n++] = pn >> 40;
+        fbuf[n++] = pn, fbuf[n++] = pn >> 8, fbuf[n++] = 0, fbuf[n++] = 0x20 | keyid << 6;
+        fbuf[n++] = pn >> 16, fbuf[n++] = pn >> 24, fbuf[n++] = pn >> 32, fbuf[n++] = pn >> 40;
     }
     for (unsigned i = 0; i < body; i++)
-        f[n++] = i * 13 + 1;
+        fbuf[n++] = i * 13 + 1;
     if (prot)
         for (unsigned i = 0; i < 8; i++)
-            f[n++] = 0xc0 + i;
+            fbuf[n++] = 0xc0 + i;
     return n + 4;
 }
 
@@ -103,7 +103,7 @@ static void keep_filter(void)
         unsigned fc = sub << 4, want = (0x3e0fu >> sub) & 1;
         setup(0);
         unsigned len = mgmt_frame(fc, OWN, 6);
-        air_rx(f, len, ST_IN | ST_ADDR);
+        air_rx(fbuf, len, ST_IN | ST_ADDR);
         CHECK((rxq_in == 1) == want, "mgmt subtype %u kept=%u", sub, rxq_in);
         /* a unicast probe response is ACKed even when it is not kept */
         CHECK(acked() == (want || sub == 5), "mgmt subtype %u ACKed", sub);
@@ -111,26 +111,26 @@ static void keep_filter(void)
             const unsigned char *r = d.buf + 0x94;
             CHECK(r[0] == 24 && r[1] == 24 && r[2] == 48 && r[3] == 0xc4 && r[7] == 0, "record");
             CHECK(r[4] == (unsigned char)-60 && r[5] == 0 && r[6] == 0x0c, "level, channel, rate");
-            CHECK(!memcmp(d.buf + 0xac, f, 24), "header at +0xac");
-            CHECK(!memcmp(d.buf + 0xcc, f + 24, 6), "body at +0xcc");
+            CHECK(!memcmp(d.buf + 0xac, fbuf, 24), "header at +0xac");
+            CHECK(!memcmp(d.buf + 0xcc, fbuf + 24, 6), "body at +0xcc");
             CHECK(d.end == 0x94 + 24 + len - 4, "end %#x", d.end);
             CHECK(d.peer == 6, "no peer slot for an unknown transmitter");
         }
     }
     setup(0);
     unsigned len = mgmt_frame(0xb0, OWN, 6);
-    air_rx(f, len, ST_IN | ST_ADDR | ST_FCS);
+    air_rx(fbuf, len, ST_IN | ST_ADDR | ST_FCS);
     CHECK(rxq_in == 0 && !acked(), "FCS error: neither kept nor ACKed");
-    air_rx(f, len, ST_IN);
+    air_rx(fbuf, len, ST_IN);
     CHECK(rxq_in == 0 && !acked(), "not for us: neither kept nor ACKed");
-    air_rx(f, 27, ST_IN | ST_ADDR);
+    air_rx(fbuf, 27, ST_IN | ST_ADDR);
     CHECK(rxq_in == 0 && !acked(), "27 bytes: too short");
-    air_put(f, len, -60, 11);
+    air_put(fbuf, len, -60, 11);
     air_fiq(0xa0, ST_IN | ST_ADDR);
     CHECK(rxq_in == 0, "frame control differs from the latched one: not kept");
-    air_rx(f, sizeof rxarea - RX_WRAP + 1, ST_IN | ST_ADDR);
+    air_rx(fbuf, sizeof rxarea - RX_WRAP + 1, ST_IN | ST_ADDR);
     CHECK(rxq_in == 0, "longer than the area past the wrap: not kept");
-    air_rx(f, sizeof rxarea - RX_WRAP, ST_IN | ST_ADDR);
+    air_rx(fbuf, sizeof rxarea - RX_WRAP, ST_IN | ST_ADDR);
     CHECK(rxq_in == 1, "longest frame kept");
 
     /* the ACK to our frame in flight */
@@ -150,34 +150,34 @@ static void keep_filter(void)
      * never ACKed; QoS and null data not kept */
     setup(0);
     len = data_frame(OWN, BSSID, 0, 0, 0, 20);
-    air_rx(f, len, ST_IN | ST_ADDR);
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
     CHECK(rxq_in == 0 && !acked(), "data before the join dropped");
     joined = 1;
-    air_rx(f, len, ST_IN | ST_ADDR);
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
     CHECK(rxq_in == 1 && acked(), "unicast data kept and ACKed");
     REG(0x670) = 0;
     len = data_frame(BCAST, BSSID, 0, 0, 0, 20);
-    air_rx(f, len, ST_IN);
+    air_rx(fbuf, len, ST_IN);
     CHECK(rxq_in == 2 && !acked(), "broadcast data kept, not ACKed");
     len = data_frame(OWN, BSSID, 0, 0, 0, 0);
-    air_rx(f, len, ST_IN | ST_ADDR);
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
     CHECK(rxq_in == 2, "null data (no body) not kept");
     len = data_frame(OWN, BSSID, 0, 0, 0, 20);
-    f[0] = 0x88;
-    air_rx(f, len, ST_IN | ST_ADDR);
+    fbuf[0] = 0x88;
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
     CHECK(rxq_in == 2, "QoS data not kept");
 
     /* a full queue: unicast data is still ACKed, management is not */
-    f[0] = 0x08;
-    air_rx(f, len, ST_IN | ST_ADDR);
-    air_rx(f, len, ST_IN | ST_ADDR);
+    fbuf[0] = 0x08;
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
     CHECK(rxq_in - rxq_out == RXQ, "queue full");
     REG(0x670) = 0;
-    air_rx(f, len, ST_IN | ST_ADDR);
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
     CHECK(rxq_in - rxq_out == RXQ && acked(), "unicast data ACKed with the queue full");
     REG(0x670) = 0;
     len = mgmt_frame(0xb0, OWN, 6);
-    air_rx(f, len, ST_IN | ST_ADDR);
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
     CHECK(!acked(), "management not ACKed with the queue full");
     for (unsigned i = 0; i < RXQ; i++) {
         CHECK(delivered(&d), "queued frame %u delivered", i);
@@ -191,23 +191,23 @@ static void read_pointer(void)
     struct rxd d;
     setup(0);
     unsigned len = mgmt_frame(0xb0, OWN, 50); /* 24 + 50 + 4 = 78 */
-    air_rx(f, len, ST_IN | ST_ADDR);
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
     CHECK(REG(0x644) == ((4 + 78 + 7) & ~7u), "pointer past the frame, 8-aligned: %#x", REG(0x644));
     CHECK(REG(0x604) & 0x100, "MAC interrupt requested");
     CHECK(delivered(&d), "first frame");
     CHECK(REG(0x678) == ((8 + 78 - 4 - 1) & ~7u), "MAC may write up to the first frame's end");
     recycle(&d);
     REG(0x644) = RX_WRAP - 8;
-    air_rx(f, len, ST_IN | ST_ADDR);
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
     CHECK(REG(0x644) == 0, "pointer wraps to 0 past %#x", RX_WRAP);
-    CHECK(delivered(&d) && !memcmp(d.buf + 0xac, f, 24), "frame at the end of the area");
+    CHECK(delivered(&d) && !memcmp(d.buf + 0xac, fbuf, 24), "frame at the end of the area");
     CHECK(REG(0x678) == RX_WRAP - 8, "limit held below the wrap after the last frame");
     recycle(&d);
 
     /* the MAC wrote over a queued frame (its length changed): dropped, not delivered */
     setup(0);
-    air_rx(f, len, ST_IN | ST_ADDR);
-    air_rx(f, len, ST_IN | ST_ADDR);
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
     put_le16((unsigned char *)rxarea, 300);
     CHECK(delivered(&d) && d.end == 0x94 + 24 + 74, "the intact second frame only");
     recycle(&d);
@@ -223,7 +223,7 @@ static void record_fields(void)
         for (unsigned i = 0; i < 12; i++) {
             setup(0);
             unsigned len = mgmt_frame(0xb0, OWN, 2);
-            air_put(f, len, -71, rate_code(rates[i], lp));
+            air_put(fbuf, len, -71, rate_code(rates[i], lp));
             air_fiq(0xb0, ST_IN | ST_ADDR);
             if (!delivered(&d))
                 CHECK(0, "rate %u not delivered", rates[i]);
@@ -237,24 +237,24 @@ static void record_fields(void)
     rx_chan = 9;
     dwell_state = 4;
     unsigned len = mgmt_frame(0x80, BCAST, 12);
-    air_rx(f, len, ST_IN | ST_ADDR);
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
     CHECK(delivered(&d) && d.buf[0x94 + 5] == 9 && d.peer == 0, "channel 9, AP slot 0");
 
     /* the largest data frame is cut to the host buffer */
     setup(0);
     joined = 1;
     len = data_frame(OWN, BSSID, 0, 0, 0, sizeof rxarea - RX_WRAP - 28);
-    air_rx(f, len, ST_IN | ST_ADDR);
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
     CHECK(rxq_in == 1, "kept");
     CHECK(delivered(&d) && d.end == RXBUF - 8, "cut to the host buffer (%#x)", d.end);
-    CHECK(!memcmp(d.buf + 0xcc, f + 24, RXBUF - 0xcc), "body up to the cut");
+    CHECK(!memcmp(d.buf + 0xcc, fbuf + 24, RXBUF - 0xcc), "body up to the cut");
 }
 
 static int deliver_ccmp(struct rxd *d, unsigned st, unsigned long long pn, unsigned body)
 {
     unsigned len = data_frame(OWN, BSSID, 1, 0, pn, body);
     REG(0xb18) = st;
-    air_rx(f, len, ST_IN | ST_ADDR);
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
     return delivered(d);
 }
 
@@ -270,7 +270,7 @@ static void ccmp(void)
     unsigned long long pn = 0xa1b2c3d4e5f6ull;
     CHECK(d.buf[0x94 + 7] == 1, "record says deciphered");
     CHECK(d.buf[0xac + 1] == 0x02, "protected bit cleared (FromDS kept)");
-    CHECK(!memcmp(d.buf + 0xcc, f + 32, 50) && d.end == 0x94 + 24 + 24 + 50,
+    CHECK(!memcmp(d.buf + 0xcc, fbuf + 32, 50) && d.end == 0x94 + 24 + 24 + 50,
           "body without CCMP header or MIC");
     CHECK(*last == pn, "receive PN advanced to %llx", *last);
     CHECK(dma_b[0] == (24u << 24 | 0x10 << 8 | 0x40) && dma_b[1] == 50, "engine: decipher 50 bytes");
@@ -279,7 +279,7 @@ static void ccmp(void)
           "engine: in place, header staged before it");
     CHECK(dma_b[5] == (unsigned)pn && dma_b[6] == (unsigned)(pn >> 32), "engine: PN split");
     CHECK(!memcmp(&dma_b[10], TK, 16), "engine: the AP's pairwise key");
-    CHECK(!memcmp(rx_stage + 56 + 50, f + 32 + 50, 8), "MIC staged after the data");
+    CHECK(!memcmp(rx_stage + 56 + 50, fbuf + 32 + 50, 8), "MIC staged after the data");
     recycle(&d);
 
     CHECK(!deliver_ccmp(&d, 0x200000, pn, 50), "replayed PN dropped");
@@ -297,11 +297,11 @@ static void ccmp(void)
 
     /* no ExtIV, unknown transmitter, length bounds */
     unsigned len = data_frame(OWN, BSSID, 1, 0, 5, 20);
-    f[24 + 3] = 0;
-    air_rx(f, len, ST_IN | ST_ADDR);
+    fbuf[24 + 3] = 0;
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
     CHECK(!delivered(&d), "CCMP header without ExtIV dropped");
     len = data_frame(OWN, OTHER, 1, 0, 6, 20);
-    air_rx(f, len, ST_IN | ST_ADDR);
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
     CHECK(!delivered(&d), "no pairwise key for an unknown transmitter");
     CHECK(!deliver_ccmp(&d, 0x200000, 7, 0), "no data at all: dropped");
     unsigned maxn = 0x6c0 - 0x94 - 24 - 8 + 16; /* n = len - 4 */
@@ -313,13 +313,13 @@ static void ccmp(void)
     /* group: broadcast, key id 1 -> group key 1; key id 2 has none */
     len = data_frame(BCAST, BSSID, 1, 1, 3, 30);
     REG(0xb18) = 0x200000;
-    air_rx(f, len, ST_IN);
+    air_rx(fbuf, len, ST_IN);
     CHECK(delivered(&d) && !memcmp(&dma_b[10], GTK, 16), "group frame under group key 1");
     recycle(&d);
     sta_rxkey(0, 1, 1, &last);
     CHECK(*last == 3, "group PN tracked separately");
     len = data_frame(BCAST, BSSID, 1, 2, 4, 30);
-    air_rx(f, len, ST_IN);
+    air_rx(fbuf, len, ST_IN);
     CHECK(!delivered(&d), "no group key 2");
 
     /* no host buffer: the frame waits, its PN unused; then it is deciphered again, once */

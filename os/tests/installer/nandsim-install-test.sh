@@ -58,20 +58,21 @@ if [ -z "${SCENARIOS:-}" ]; then
   SCENARIOS="${MODEL:-st10}/${SLOT:-8}/$(printf '%s' "${BADBLOCKS:-none}" | tr , +)"
 fi
 for f in "$@"; do
-  test -f "$f" || { echo "no such package: $f" >&2; exit 1; }
+  test -f "${f}" || { echo "no such package: ${f}" >&2; exit 1; }
 done
 REPO=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 # The work directory is bind-mounted into containers, so it sits in the checkout, which the
 # docker daemon sees wherever it runs. A mktemp in the host's /tmp worked only where the
 # daemon shares that /tmp, so each caller had to set TMPDIR into the checkout itself.
-mkdir -p "$REPO/output"
+mkdir -p "${REPO}/output"
+# shellcheck disable=SC2250 # os/tests/installer/test_nandsim_install.py matches this text as written
 WORK=$(mktemp -d "$REPO/output/nandsim.XXXXXX")
 # A step timeout kills the docker client, not the guest container, so qemu kept running and
 # slowed every later job on the shared host. One name per runner: a runner runs one job at a
 # time, so a container with its name is always a leftover of its own previous job.
 # A hosted runner is called "GitHub Actions 12"; docker takes no space in a name.
 GUEST=soundtap-nandsim-guest-$(printf %s "${RUNNER_NAME:-local-$$}" | tr -c 'a-zA-Z0-9_.-' -)
-docker rm -f "$GUEST" >/dev/null 2>&1 || true
+docker rm -f "${GUEST}" >/dev/null 2>&1 || true
 trap 'docker rm -f "$GUEST" >/dev/null 2>&1; rm -rf "$WORK"' EXIT
 GO_IMAGE=golang:1.26@sha256:37cfcca63222ec499bec5e8ad7aad52dbf7529db36d5812b8eae2f0621aa92d6
 NODE_IMAGE=${NODE_IMAGE:-node:24@sha256:9d266751ca3d7fdbe651c878ffd5ad0a42fed49a18c283509267c97f025b7496}
@@ -92,16 +93,16 @@ esac
 KVM=
 # Rootless docker maps container root to us already; a chown to our uid would map
 # to a subuid we cannot delete.
-HOST_UID=$(id -u) HOST_GID=$(id -g)
+HOST_UID=$(id -u || true) HOST_GID=$(id -g)
 docker info --format '{{.SecurityOptions}}' | grep -q rootless && HOST_UID=0 HOST_GID=0
-if [ -c /dev/kvm ] && docker run --rm --device /dev/kvm "$RUNNER_IMAGE" true >/dev/null 2>&1; then
+if [ -c /dev/kvm ] && docker run --rm --device /dev/kvm "${RUNNER_IMAGE}" true >/dev/null 2>&1; then
   KVM="--device /dev/kvm"
 fi
 
 echo "== build soundtapd (production HTTP install path) and derive what the install must leave"
 # In a copy, as `make web` does: no node_modules or root-owned dist in the checkout, and a
 # test run beside this one keeps the embed directory it compiled against.
-docker run --rm --user "$HOST_UID:$HOST_GID" -e HOME=/tmp -v "$REPO/app":/src:ro -v "$WORK":/out -w /tmp "$NODE_IMAGE" \
+docker run --rm --user "${HOST_UID}:${HOST_GID}" -e HOME=/tmp -v "${REPO}/app":/src:ro -v "${WORK}":/out -w /tmp "${NODE_IMAGE}" \
   sh -euc 'mkdir -p /tmp/internal/web && cp /src/internal/web/openapi.json /tmp/internal/web/ &&
     cp -a /src/frontend /tmp/frontend && cd /tmp/frontend && rm -rf node_modules &&
     npm ci --silent && SOUNDTAP_WEB_OUT_DIR=/out/web npm run build'
@@ -109,29 +110,29 @@ n=0
 PKGS=""
 for f in "$@"; do
   n=$((n + 1))
-  cp "$f" "$WORK/update$n.stu"
-  PKGS="$PKGS /update$n.stu"
+  cp "${f}" "${WORK}/update${n}.stu"
+  PKGS="${PKGS} /update${n}.stu"
 done
 # The expectation comes from the last package (what ends up in the slot); the first
 # one only tells the power-cut case where its rootfs starts.
 # Docker cannot create the dist mountpoint inside the read-only /src; a fresh checkout lacks it.
-mkdir -p "$REPO/app/internal/web/dist"
-docker run --rm --user "$HOST_UID:$HOST_GID" -e HOME=/tmp -e GOPATH=/tmp/go -e GOCACHE=/tmp/gocache \
-  -e GOARCH="$GOARCH" -v "$REPO/app":/src:ro -v "$WORK/web":/src/internal/web/dist:ro -v "$WORK":/out \
-  -v "$REPO/os/support":/repo/os/support:ro -v "$REPO/os/board":/repo/os/board:ro -w /src "$GO_IMAGE" \
+mkdir -p "${REPO}/app/internal/web/dist"
+docker run --rm --user "${HOST_UID}:${HOST_GID}" -e HOME=/tmp -e GOPATH=/tmp/go -e GOCACHE=/tmp/gocache \
+  -e GOARCH="${GOARCH}" -v "${REPO}/app":/src:ro -v "${WORK}/web":/src/internal/web/dist:ro -v "${WORK}":/out \
+  -v "${REPO}/os/support":/repo/os/support:ro -v "${REPO}/os/board":/repo/os/board:ro -w /src "${GO_IMAGE}" \
   sh -euc 'CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/soundtapd ./cmd/soundtapd
     python3 /repo/os/support/stu_expect.py /out/update1.stu rhino binky spotty ginger >/out/first.env
     grep -E "^EXP_(ROOTFS_OFF|ROOTFS_LEN)" /out/first.env | sed "s/^EXP_/FIRST_/" >/out/expect.env
-    python3 /repo/os/support/stu_expect.py /out/update'"$n"'.stu rhino binky spotty ginger >>/out/expect.env
+    python3 /repo/os/support/stu_expect.py /out/update'"${n}"'.stu rhino binky spotty ginger >>/out/expect.env
     env -u GOARCH go run ./internal/ubootenv/envfixture/gen >/out/factory-env.bin'
 
-echo "== assemble the guest (scenarios: $SCENARIOS)"
+echo "== assemble the guest (scenarios: ${SCENARIOS})"
 {
-  echo "PKGS=\"$PKGS\""
-  echo "SCENARIOS=\"$SCENARIOS\""
-  cat "$WORK/expect.env"
-} >"$WORK/guest.env"
-cat >"$WORK/init" <<'GUEST'
+  echo "PKGS=\"${PKGS}\""
+  echo "SCENARIOS=\"${SCENARIOS}\""
+  cat "${WORK}/expect.env"
+} >"${WORK}/guest.env"
+cat >"${WORK}/init" <<'GUEST'
 #!/bin/sh
 # PID 1 in the guest. Everything it needs is in the initramfs; there is no disk.
 set -eu
@@ -236,10 +237,10 @@ post() {
 
 start_daemon() {
   # Fresh home means no local password. The client is loopback, as it is on-speaker.
-  # Unsigned on purpose: the package under test is the build's own, not a release.
+  # Unsigned on purpose: the package under test is the build's own, not a release. It
+  # installs on the press, which the one-time token stands in for, on any profile (ADR 0048).
   mkdir -p /tmp/soundtap /etc/soundtap /run/soundtap
-  : >/tmp/soundtap/allow-unsigned
-  echo alpha >/etc/soundtap/profile # allow-unsigned counts on alpha only
+  echo alpha >/etc/soundtap/profile # the image under test is an alpha build
   # The OS level the image would provide (ADR 0035): exactly what this app needs.
   /soundtapd -os-api >/etc/soundtap/os-api
   # Own session: a power cut takes the whole group.
@@ -495,8 +496,9 @@ echo GUEST-RESULT=0
 sync
 poweroff -f
 GUEST
-chmod +x "$WORK/init"
+chmod +x "${WORK}/init"
 
+# shellcheck disable=SC2250 # os/tests/installer/test_nandsim_install.py matches this text as written
 cat >"$WORK/container.sh" <<'CONTAINER'
 #!/bin/sh
 set -eu
@@ -579,7 +581,7 @@ CONTAINER
 # The guest's packages come from a dated snapshot that can take half an hour to fetch
 # (28 minutes once on the build host, which ran the gate out of time). They are installed once
 # into a local image named after this setup script and reused by every later run.
-cat >"$WORK/setup.sh" <<'SETUP'
+cat >"${WORK}/setup.sh" <<'SETUP'
 set -eu
 export DEBIAN_FRONTEND=noninteractive
 # https needs certificates, which this image lacks; bootstrap them from the default
@@ -605,24 +607,27 @@ apt-get -qq install -y --no-install-recommends "linux-modules-extra-$KVER" >/dev
 apt-get clean
 rm -rf /var/lib/apt/lists/*
 SETUP
+# shellcheck disable=SC2250 # os/tests/installer/test_nandsim_install.py matches this text as written
 GUEST_IMAGE=soundtap-nandsim-guest:$APT_SNAPSHOT-$GUEST_ARCH-$(sha256sum <"$WORK/setup.sh" | cut -c1-12)
+# shellcheck disable=SC2250 # os/tests/installer/test_nandsim_install.py matches this text as written
 if ! docker image inspect "$GUEST_IMAGE" >/dev/null 2>&1; then
   c=soundtap-nandsim-setup-$$
-  docker run -i --name "$c" -e GUEST_ARCH="$GUEST_ARCH" -e APT_SNAPSHOT="$APT_SNAPSHOT" \
-    "$RUNNER_IMAGE" sh -s <"$WORK/setup.sh" || { docker rm -f "$c" >/dev/null; exit 1; }
-  docker commit "$c" "$GUEST_IMAGE" >/dev/null
-  docker rm "$c" >/dev/null
+  docker run -i --name "${c}" -e GUEST_ARCH="${GUEST_ARCH}" -e APT_SNAPSHOT="${APT_SNAPSHOT}" \
+    "${RUNNER_IMAGE}" sh -s <"${WORK}/setup.sh" || { docker rm -f "${c}" >/dev/null; exit 1; }
+  docker commit "${c}" "${GUEST_IMAGE}" >/dev/null
+  docker rm "${c}" >/dev/null
 fi
 
 # ubi.mtd= is not on the kernel command line any more: nandsim is a module, so no kernel
 # parameter could attach it at boot anyway. What soundtapd reads is the /proc/cmdline the
 # guest builds per scenario.
-docker run --rm --name "$GUEST" $KVM -e QEMU_AUDIO_DRV=none -e GUEST_ARCH="$GUEST_ARCH" -e LIB_ARCH="$LIB_ARCH" \
-  -e HOST_UID="$HOST_UID" -e HOST_GID="$HOST_GID" -e APT_SNAPSHOT="$APT_SNAPSHOT" \
-  -e GUEST_TIMEOUT="${GUEST_TIMEOUT:-2400}" -e SCENARIOS="$SCENARIOS" \
+# shellcheck disable=SC2086,SC2250 # KVM is empty or the --device option for /dev/kvm; os/tests/installer/test_nandsim_install.py matches this text as written
+docker run --rm --name "${GUEST}" ${KVM} -e QEMU_AUDIO_DRV=none -e GUEST_ARCH="${GUEST_ARCH}" -e LIB_ARCH="${LIB_ARCH}" \
+  -e HOST_UID="${HOST_UID}" -e HOST_GID="${HOST_GID}" -e APT_SNAPSHOT="${APT_SNAPSHOT}" \
+  -e GUEST_TIMEOUT="${GUEST_TIMEOUT:-2400}" -e SCENARIOS="${SCENARIOS}" \
   -v "$WORK":/work "$GUEST_IMAGE" sh /work/container.sh | tee "$WORK/guest.log"
 
-for sc in $SCENARIOS; do
-  grep -qF "[$sc] GUEST-RESULT=0" "$WORK/guest.log" || { echo "NANDSIM INSTALL TEST FAILED in $sc" >&2; exit 1; }
+for sc in ${SCENARIOS}; do
+  grep -qF "[${sc}] GUEST-RESULT=0" "${WORK}/guest.log" || { echo "NANDSIM INSTALL TEST FAILED in ${sc}" >&2; exit 1; }
 done
 echo "NANDSIM INSTALL TEST PASSED"

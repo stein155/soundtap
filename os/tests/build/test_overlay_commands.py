@@ -15,7 +15,10 @@ ABSENT = ("curl",)
 
 
 class OverlayCommandsTest(unittest.TestCase):
-    def test_scripts_call_only_tools_the_image_has(self):
+    """Overlay shell scripts call only commands the image ships."""
+
+    def test_scripts_call_only_tools_the_image_has(self) -> None:
+        """No overlay shell script calls a tool missing from the image."""
         found = []
         for path in sorted(OVERLAY.rglob("*")):
             if not path.is_file():
@@ -28,9 +31,8 @@ class OverlayCommandsTest(unittest.TestCase):
                 continue
             for n, line in enumerate(text.splitlines(), 1):
                 code = line.split("#", 1)[0]
-                for tool in ABSENT:
-                    if re.search(rf"(^|[\s;|&(`$]){tool}(\s|$)", code):
-                        found.append(f"{path.relative_to(ROOT)}:{n}: {tool}")
+                found.extend(f"{path.relative_to(ROOT)}:{n}: {tool}" for tool in ABSENT
+                             if re.search(rf"(^|[\s;|&(`$]){tool}(\s|$)", code))
         self.assertEqual(found, [])
 
 

@@ -34,7 +34,8 @@ def write_images(images: Path, files: dict, tree: dict | None = None) -> None:
         path.write_bytes(data)
 
 
-def run(*args, env=None):
+def run(*args: str | Path, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    """Run repro_compare.py with args."""
     return subprocess.run([sys.executable, str(COMPARE), *map(str, args)], capture_output=True,
                           text=True, env=env, check=False)
 
@@ -44,11 +45,16 @@ TREE = {"usr/bin/soundtapd": b"daemon", "etc/os-release": b"v1"}
 
 
 class ReproCompare(unittest.TestCase):
-    def setUp(self):
+    """repro_compare.py saves a build's images and names every difference between two."""
+
+    def setUp(self) -> None:
+        """Create a temporary directory removed after the test."""
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(subprocess.run, ["rm", "-rf", str(self.tmp)], check=False)
 
-    def saved(self, name, files=IMAGES, tree=TREE, extra=None):
+    def saved(self, name: str, files: dict[str, bytes] = IMAGES, tree: dict[str, bytes] = TREE,
+              extra: bytes | None = None) -> Path:
+        """Write a fake image directory, save it as name with extra as its STU, and return the saved path."""
         images = self.tmp / f"images-{name}"
         write_images(images, files, tree)
         args = ["save", images, self.tmp / name]
@@ -61,14 +67,16 @@ class ReproCompare(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         return self.tmp / name
 
-    def test_same_builds_pass(self):
+    def test_same_builds_pass(self) -> None:
+        """Two identical builds compare as reproducible."""
         r = run("compare", self.saved("a", extra=b"stu"), self.saved("b", extra=b"stu"))
         self.assertEqual(r.returncode, 0, r.stdout)
         self.assertIn("SHA256SUMS: 3 of 3 files the same", r.stdout)
         self.assertIn("extra.SHA256SUMS: 1 of 1 files the same", r.stdout)
         self.assertIn("reproducible", r.stdout)
 
-    def test_names_each_image_that_differs(self):
+    def test_names_each_image_that_differs(self) -> None:
+        """Each image that differs is named, and only those."""
         b = self.saved("b", files={**IMAGES, "zImage": b"other kernel", "wla-spl/MLO": b"x"})
         r = run("compare", self.saved("a"), b)
         self.assertEqual(r.returncode, 1)
@@ -77,7 +85,8 @@ class ReproCompare(unittest.TestCase):
         self.assertNotIn("differs: rootfs.ubi", r.stdout)
         self.assertIn("NOT reproducible", r.stdout)
 
-    def test_rootfs_difference_lists_the_paths(self):
+    def test_rootfs_difference_lists_the_paths(self) -> None:
+        """A rootfs difference lists the paths of the packed tree that differ."""
         tree = {**TREE, "usr/bin/soundtapd": b"other daemon", "etc/extra": b""}
         del tree["etc/os-release"]
         b = self.saved("b", files={**IMAGES, "rootfs.ubi": b"other ubi"}, tree=tree)
@@ -89,24 +98,28 @@ class ReproCompare(unittest.TestCase):
         self.assertIn("only in A: /etc/os-release", r.stdout)
         self.assertIn("only in B: /etc/extra", r.stdout)
 
-    def test_same_tree_points_at_the_image_writer(self):
+    def test_same_tree_points_at_the_image_writer(self) -> None:
+        """A rootfs image that differs over the same tree points at the image writer."""
         b = self.saved("b", files={**IMAGES, "rootfs.ubi": b"other ubi"})
         r = run("compare", self.saved("a"), b)
         self.assertEqual(r.returncode, 1)
         self.assertIn("the packed trees are the same, so mkfs.ubifs or ubinize", r.stdout)
 
-    def test_stu_difference_is_named(self):
+    def test_stu_difference_is_named(self) -> None:
+        """A difference in the STU is named."""
         r = run("compare", self.saved("a", extra=b"stu"), self.saved("b", extra=b"other"))
         self.assertEqual(r.returncode, 1)
         self.assertIn("differs: Update.stu", r.stdout)
 
-    def test_image_missing_from_one_build(self):
+    def test_image_missing_from_one_build(self) -> None:
+        """An image missing from one build is reported as only in the other."""
         files = {k: v for k, v in IMAGES.items() if k != "zImage"}
         r = run("compare", self.saved("a"), self.saved("b", files=files))
         self.assertEqual(r.returncode, 1)
         self.assertIn("only in A: zImage", r.stdout)
 
-    def test_save_refuses_images_that_do_not_match_their_sums(self):
+    def test_save_refuses_images_that_do_not_match_their_sums(self) -> None:
+        """Save refuses images that do not match their SHA256SUMS and saves nothing."""
         images = self.tmp / "images"
         write_images(images, IMAGES)
         (images / "zImage").write_bytes(b"changed after the build")
@@ -115,7 +128,8 @@ class ReproCompare(unittest.TestCase):
         self.assertIn("zImage", r.stderr)
         self.assertFalse((self.tmp / "a").exists())
 
-    def test_manifest_records_type_mode_size_content_and_link(self):
+    def test_manifest_records_type_mode_size_content_and_link(self) -> None:
+        """The manifest records each path's type, mode, size, content digest and link target."""
         tree = self.tmp / "tree"
         (tree / "bin").mkdir(parents=True)
         (tree / "bin").chmod(0o750)
@@ -135,7 +149,8 @@ class ReproCompare(unittest.TestCase):
         self.assertEqual(attrs["bin/tool"], ["f", "4755", "1", digest])
         self.assertEqual(attrs["bin/hard"], attrs["bin/tool"])
 
-    def test_mode_change_alone_is_a_difference(self):
+    def test_mode_change_alone_is_a_difference(self) -> None:
+        """A mode change alone is a difference."""
         a, b = self.saved("a"), self.saved("b", files={**IMAGES, "rootfs.ubi": b"other ubi"})
         manifest = (b / "rootfs-tree.manifest").read_text().replace("f 0644", "f 0755", 1)
         (b / "rootfs-tree.manifest").write_text(manifest)
@@ -146,7 +161,9 @@ class ReproCompare(unittest.TestCase):
 class ReproCheckScript(unittest.TestCase):
     """repro-check.sh builds twice from an empty output/os and compares."""
 
-    def check(self, differ=False, env_extra=None, ccache=True):
+    def check(self, *, differ: bool = False, env_extra: dict[str, str] | None = None,
+              ccache: bool = True) -> tuple[subprocess.CompletedProcess[str], list[str], Path]:
+        """Run repro-check.sh on a fake repository with a stub make; return its result, the make calls and the repository."""
         tmp = Path(tempfile.mkdtemp())
         self.addCleanup(subprocess.run, ["rm", "-rf", str(tmp)], check=False)
         repo = tmp / "repo"
@@ -191,7 +208,8 @@ fi
         calls = (tmp / "calls").read_text().splitlines() if (tmp / "calls").exists() else []
         return r, calls, repo
 
-    def test_two_clean_builds_with_the_same_ids(self):
+    def test_two_clean_builds_with_the_same_ids(self) -> None:
+        """The check runs two clean builds with the same ids and the warm cache, then compares."""
         r, calls, repo = self.check()
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(calls, [
@@ -204,13 +222,15 @@ fi
         self.assertTrue((repo / "output/repro/a/rootfs-tree.manifest").is_file())
         self.assertTrue((repo / "output/repro/b/Update-soundtap-buildroot.stu").is_file())
 
-    def test_a_difference_fails_and_names_the_path(self):
+    def test_a_difference_fails_and_names_the_path(self) -> None:
+        """A difference fails the check and names the path."""
         r, _, _ = self.check(differ=True)
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertIn("differs: rootfs.ubi", r.stdout)
         self.assertIn("differs: /etc/build (content)", r.stdout)
 
-    def test_fresh_ccache_for_the_second_build_and_put_back(self):
+    def test_fresh_ccache_for_the_second_build_and_put_back(self) -> None:
+        """REPRO_FRESH_CCACHE gives the second build an empty cache and puts the warm one back."""
         r, calls, repo = self.check(env_extra={"REPRO_FRESH_CCACHE": "1"})
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertTrue(calls[0].endswith("ccache=warm"))
@@ -219,13 +239,15 @@ fi
         self.assertEqual((cache / "obj").read_text(), "warm")
         self.assertFalse((repo / ".cache/buildroot-ccache.repro-kept").exists())
 
-    def test_images_only(self):
+    def test_images_only(self) -> None:
+        """REPRO_STU=0 builds and compares the images only."""
         r, calls, repo = self.check(env_extra={"REPRO_STU": "0"})
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual([c.split()[0] for c in calls], ["os", "os"])
         self.assertFalse((repo / "output/repro/a/extra.SHA256SUMS").exists())
 
-    def test_refuses_without_the_build_ids(self):
+    def test_refuses_without_the_build_ids(self) -> None:
+        """The check refuses to start without the build ids."""
         r, calls, _ = self.check(env_extra={"SOURCE_DATE_EPOCH": ""})
         self.assertNotEqual(r.returncode, 0)
         self.assertEqual(calls, [])

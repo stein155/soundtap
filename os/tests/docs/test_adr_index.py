@@ -12,8 +12,11 @@ ROW = re.compile(r"^\| \[(\d{4})\]\((\d{4}-[^)]+\.md)\) \| (.+?) \| [^|]+ \|\s*$
 H1 = re.compile(r"^# (\d{4})\. (.+?)\s*$")
 
 
-def index_errors(index, titles):
-    """index is the README's text; titles maps a file name to its H1 line."""
+def index_errors(index: str, titles: dict[str, str]) -> list[str]:
+    """Return how the index disagrees with the ADR files.
+
+    index is the README's text; titles maps a file name to its H1 line.
+    """
     errors, listed = [], set()
     for line in index.splitlines():
         m = ROW.match(line)
@@ -33,11 +36,15 @@ def index_errors(index, titles):
 
 
 class AdrIndexTest(unittest.TestCase):
-    def test_index_titles_are_the_files_titles(self):
+    """The index against the ADR files."""
+
+    def test_index_titles_are_the_files_titles(self) -> None:
+        """Every ADR is in the index under its own number and title."""
         titles = {p.name: p.read_text().splitlines()[0] for p in ADRS.glob("[0-9][0-9][0-9][0-9]-*.md")}
         self.assertEqual(index_errors((ADRS / "README.md").read_text(), titles), [])
 
-    def test_mismatch_and_missing_entries_are_reported(self):
+    def test_mismatch_and_missing_entries_are_reported(self) -> None:
+        """Another title in the index and an unlisted ADR are reported."""
         index = "| [0001](0001-a.md) | One daemon | accepted |\n| [0002](0002-b.md) | Old | accepted |\n"
         titles = {"0001-a.md": "# 0001. One daemon", "0002-b.md": "# 0002. New",
                   "0003-c.md": "# 0003. Unlisted"}

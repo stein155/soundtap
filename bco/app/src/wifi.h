@@ -15,17 +15,17 @@ struct wifi_bss {
 };
 
 int wifi_init(const unsigned char mac[6]);  /* boot the core (blocking, ~1 s); 0 when up */
-void wifi_poll(unsigned now_ms);             /* call from the main loop */
+void wifi_poll(unsigned t);                  /* call from the main loop */
 
 unsigned wifi_state(void);
 /* start = 1 begins a scan when the radio is free. Returns -1 while one runs, else the number of
  * cached results (wifi_bss 0..n-1). Connected, the cache is returned without leaving the channel. */
 int wifi_scan(int start);
-int wifi_bss(unsigned i, struct wifi_bss *b);
+int wifi_bss(unsigned i, struct wifi_bss *o);
 /* Join a WPA2-PSK network: the 32-byte PMK and 32 random bytes from the SCM for the SNonce.
  * Returns 0 when the join started (state goes JOINING, then UP or FAILED). */
-int wifi_join(const unsigned char *ssid, unsigned ssid_len, const unsigned char pmk[32],
-              const unsigned char seed[32]);
+int wifi_join(const unsigned char *ssid, unsigned ssid_len, const unsigned char k[32],
+              const unsigned char s[32]);
 void wifi_leave(void);
 /* Reboot the WiLD core (same ~1 s bring-up as wifi_init), clearing a sticky radio wedge without a
  * DM870 re-flash. Driven from T_FORGET; the caller leaves the station link first. */
@@ -34,7 +34,7 @@ int wifi_wild_write(unsigned off, const unsigned char *p, unsigned n);
 int wifi_wild_boot(unsigned len, unsigned crc);
 int wifi_wild_peek(unsigned off, unsigned n);
 /* The network joined or being joined; 0 (and an empty entry) when idle. */
-int wifi_current(struct wifi_bss *b);
+int wifi_current(struct wifi_bss *o);
 
 /* Transmit buffers (flow control, ADR 0031): WIFI_TX_BUFS in all, shared by the station and the
  * access point. wifi_tx_free() is how many the SCM may fill now: the free ones less one kept for the

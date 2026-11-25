@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import importlib.util
+"""build-stu.py and os/support/stu_check.py agree on what a valid STU chain, payload and UBI image are."""
 import hashlib
+import importlib.util
 import random
 import struct
 import tempfile
@@ -21,7 +22,8 @@ checker = importlib.util.module_from_spec(CHECK_SPEC)
 CHECK_SPEC.loader.exec_module(checker)
 
 
-def header(name, image):
+def header(name: str, image: bytes) -> bytearray:
+    """Return a module header naming ``image`` with valid size and CRC fields."""
     h = bytearray(bstu.HDR)
     h[0x18:0x18 + len(name)] = name.encode()
     struct.pack_into(">I", h, bstu.SIZE_OFF, len(image))
@@ -31,7 +33,8 @@ def header(name, image):
     return h
 
 
-def valid_stu(module_names=bstu.EXPECTED_MODULES, payloads=None):
+def valid_stu(module_names: list[str] = bstu.EXPECTED_MODULES, payloads: dict[str, bytes] | None = None) -> bytearray:
+    """Return a CRC-valid STU chain of ``module_names``, with small default payloads."""
     payloads = payloads or {}
     data = bytearray()
     for name in reversed(module_names):
@@ -45,11 +48,13 @@ def valid_stu(module_names=bstu.EXPECTED_MODULES, payloads=None):
     return data
 
 
-def valid_mlo(payload=b"spl"):
+def valid_mlo(payload: bytes = b"spl") -> bytes:
+    """Return a GP-headered MLO around ``payload``."""
     return struct.pack("<II", len(payload), 0x402F0400) + payload
 
 
-def valid_uboot(payload=b"u-boot"):
+def valid_uboot(payload: bytes = b"u-boot") -> bytes:
+    """Return a legacy uImage U-Boot with valid header and payload CRCs."""
     header = bytearray(64)
     struct.pack_into(">IIIIIII", header, 0, 0x27051956, 0, 0, len(payload),
                      0x80800000, 0x80800000, zlib.crc32(payload) & 0xFFFFFFFF)
@@ -57,7 +62,8 @@ def valid_uboot(payload=b"u-boot"):
     return bytes(header) + payload
 
 
-def valid_kernel(model):
+def valid_kernel(model: str) -> bytearray:
+    """Return a legacy uImage kernel named for ``model``."""
     payload = b"kernel"
     image = bytearray(64 + len(payload))
     struct.pack_into(">IIIIIII", image, 0, 0x27051956, 0, 0, len(payload),
@@ -72,7 +78,10 @@ def valid_kernel(model):
 
 
 class ValidateSTUTest(unittest.TestCase):
-    def test_extract_ubi_excludes_next_header_overlap(self):
+    """The STU chain, payload and UBI checks of both build-stu.py and stu_check.py."""
+
+    def test_extract_ubi_excludes_next_header_overlap(self) -> None:
+        """The extracted UBI image stops before the overlap the next module header takes."""
         ubi = b"UBI#" + b"x" * (checker.UBI_PEB - 4)
         data = valid_stu(payloads={"ubi.img": ubi})
         with tempfile.TemporaryDirectory() as tmp:
@@ -84,12 +93,14 @@ class ValidateSTUTest(unittest.TestCase):
             self.assertEqual(hashlib.sha256(output.read_bytes()).hexdigest(),
                              hashlib.sha256(ubi).hexdigest())
 
-    def test_valid_complete_chain(self):
+    def test_valid_complete_chain(self) -> None:
+        """A complete ST10 chain validates in both checkers."""
         data = valid_stu()
         self.assertEqual(len(bstu.validate_stu(data, "st10")), len(bstu.EXPECTED_MODULES))
         self.assertEqual(len(checker.validate(data, "st10")), len(bstu.EXPECTED_MODULES))
 
-    def test_eight_module_chain_requires_explicit_target(self):
+    def test_eight_module_chain_requires_explicit_target(self) -> None:
+        """The eight-module chain shared by several models validates only with an explicit target."""
         data = valid_stu()
         with self.assertRaisesRegex(RuntimeError, "module chain mismatch"):
             bstu.validate_stu(data)
@@ -98,7 +109,8 @@ class ValidateSTUTest(unittest.TestCase):
         self.assertEqual(len(bstu.validate_stu(data, "wla-stock")), len(bstu.EXPECTED_MODULES))
         self.assertEqual(len(checker.validate(data, "wla-stock")), len(bstu.EXPECTED_MODULES))
 
-    def test_st20_complete_chain_is_accepted_but_not_as_st10(self):
+    def test_st20_complete_chain_is_accepted_but_not_as_st10(self) -> None:
+        """An ST20 chain validates as ST20 and is refused as ST10."""
         data = valid_stu(bstu.ST20_MODULES)
         self.assertEqual(len(bstu.validate_stu(data, "st20")), 13)
         self.assertEqual(len(checker.validate(data, "st20")), 13)
@@ -107,7 +119,8 @@ class ValidateSTUTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "module chain mismatch"):
             checker.validate(data, "st10")
 
-    def test_tri_model_chain_and_shared_rootfs_limit(self):
+    def test_tri_model_chain_and_shared_rootfs_limit(self) -> None:
+        """The tri-model chain validates and its shared rootfs is held to the profile budget."""
         data = valid_stu(bstu.SOUNDTAP_TRI_MODULES)
         self.assertEqual(len(bstu.validate_stu(data, "soundtap-tri")), 8)
         self.assertEqual(len(checker.validate(data, "soundtap-tri")), 8)
@@ -119,7 +132,7 @@ class ValidateSTUTest(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "soundtap-rootfs exceeds"):
             checker.validate(data, "soundtap-tri")
 
-    def test_duo_chain_carries_no_st20_payload(self):
+    def test_duo_chain_carries_no_st20_payload(self) -> None:
         """ST10 + WLA: six modules, and an ST20 speaker finds nothing of its own in it."""
         data = valid_stu(bstu.SOUNDTAP_DUO_MODULES)
         self.assertEqual(len(bstu.validate_stu(data, "soundtap-duo")), 6)
@@ -131,12 +144,14 @@ class ValidateSTUTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "module chain mismatch"):
             checker.validate(data, "soundtap-tri")
 
-    def test_duo_rootfs_budget_is_the_smaller_of_the_two_models(self):
+    def test_duo_rootfs_budget_is_the_smaller_of_the_two_models(self) -> None:
+        """The duo rootfs budget is the ST10 one, the smaller of its two models."""
         self.assertEqual(bstu.PROFILES["soundtap-duo"]["stock_ubi_module_size"],
                          bstu.PROFILES["st10"]["stock_ubi_module_size"])
         self.assertEqual(checker.PROFILES["soundtap-duo"][1], checker.PROFILES["st10"][1])
 
-    def test_tri_model_assembler_writes_exact_crc_valid_chain(self):
+    def test_tri_model_assembler_writes_exact_crc_valid_chain(self) -> None:
+        """The tri-model assembler writes a chain stu_check.py accepts, in module order."""
         payloads = {name: (name.encode() + b"x" * 64) for name in bstu.SOUNDTAP_TRI_MODULES}
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "Update.stu"
@@ -144,9 +159,12 @@ class ValidateSTUTest(unittest.TestCase):
             found = checker.validate(output.read_bytes(), "soundtap-tri")
         self.assertEqual([module[3] for module in found], bstu.SOUNDTAP_TRI_MODULES)
 
-    def test_preview_package_differs_only_in_its_installer(self):
-        """ADR 0133: the preview package is the universal one with module 0 swapped; a
-        different payload anywhere after it is refused."""
+    def test_preview_package_differs_only_in_its_installer(self) -> None:
+        """The preview package may differ from the universal one only in its installer.
+
+        ADR 0133: the preview package is the universal one with module 0 swapped; a
+        different payload anywhere after it is refused.
+        """
         payloads = {name: (name.encode() + b"x" * 64) for name in bstu.SOUNDTAP_TRI_MODULES}
         with tempfile.TemporaryDirectory() as tmp:
             main, preview = Path(tmp) / "main.stu", Path(tmp) / "preview.stu"
@@ -163,7 +181,8 @@ class ValidateSTUTest(unittest.TestCase):
                     checker.validate_same_payloads(main.read_bytes(), preview.read_bytes())
                 self.assertFalse(checker.same_payloads(main, preview, "soundtap-tri"))
 
-    def test_tri_model_uses_each_models_existing_rootfs_limit(self):
+    def test_tri_model_uses_each_models_existing_rootfs_limit(self) -> None:
+        """Each model-suffixed rootfs is held to its own model's stock rootfs limit."""
         self.assertEqual(bstu.MODEL_ROOTFS_LIMITS, {
             "rhino": bstu.PROFILES["st10"]["stock_ubi_module_size"],
             "binky": bstu.PROFILES["wla"]["stock_ubi_module_size"],
@@ -175,7 +194,8 @@ class ValidateSTUTest(unittest.TestCase):
             "spotty": checker.PROFILES["st20"][1],
         })
 
-    def test_tri_model_kernel_inputs_cannot_be_crossed(self):
+    def test_tri_model_kernel_inputs_cannot_be_crossed(self) -> None:
+        """A kernel built for one model is refused as another model's."""
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "uImage"
             path.write_bytes(valid_kernel("st10"))
@@ -183,29 +203,32 @@ class ValidateSTUTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "expected model 'binky'"):
                 bstu.require_kernel_model(path, "binky")
 
-    def test_st300_chain_is_offline_validation_only(self):
+    def test_st300_chain_is_offline_validation_only(self) -> None:
+        """The ST300 chain validates offline only, and never as an ST10."""
         data = valid_stu(checker.ST300_MODULES)
         self.assertEqual(len(checker.validate(data, "st300")), 9)
         with self.assertRaisesRegex(ValueError, "module chain mismatch"):
             checker.validate(data, "st10")
 
-    def test_recovery_rejects_cross_model_candidate(self):
+    def test_recovery_rejects_cross_model_candidate(self) -> None:
+        """A recovery candidate for another model is refused."""
         with self.assertRaisesRegex(RuntimeError, "module chain mismatch"):
             bstu.validate_recovery_payloads(
-                valid_stu(), valid_stu(bstu.ST20_MODULES), target="st10"
+                valid_stu(), valid_stu(bstu.ST20_MODULES), target="st10",
             )
         with self.assertRaisesRegex(ValueError, "module chain mismatch"):
             checker.validate_recovery(
-                valid_stu(), valid_stu(bstu.ST20_MODULES), target="st10"
+                valid_stu(), valid_stu(bstu.ST20_MODULES), target="st10",
             )
 
-    def test_rejects_corruption_and_trailing_data(self):
+    def test_rejects_corruption_and_trailing_data(self) -> None:
+        """A flipped bit in the package size, a header or an image, trailing data and truncation are refused."""
         good = valid_stu()
         mutations = []
-        b = bytearray(good); b[bstu.PKG_SIZE_OFF] ^= 1; mutations.append(b)
-        b = bytearray(good); b[0x20] ^= 1; mutations.append(b)
-        first_image = bstu.HDR
-        b = bytearray(good); b[first_image] ^= 1; mutations.append(b)
+        for offset in (bstu.PKG_SIZE_OFF, 0x20, bstu.HDR):  # package size, first header, first image
+            b = bytearray(good)
+            b[offset] ^= 1
+            mutations.append(b)
         mutations.append(bytearray(good) + b"garbage")
         mutations.append(bytearray(good[:-1]))
         for broken in mutations:
@@ -214,7 +237,8 @@ class ValidateSTUTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 checker.validate(broken, "st10")
 
-    def test_recovery_payloads_must_stay_stock(self):
+    def test_recovery_payloads_must_stay_stock(self) -> None:
+        """A recovery candidate may not change any stock boot payload or module header."""
         stock = valid_stu()
         bstu.validate_recovery_payloads(stock, bytearray(stock), target="st10")
         candidate = bytearray(stock)
@@ -252,7 +276,8 @@ class ValidateSTUTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "module header changed"):
             checker.validate_recovery(stock, candidate, target="st10")
 
-    def test_random_single_bit_corruption_is_always_rejected(self):
+    def test_random_single_bit_corruption_is_always_rejected(self) -> None:
+        """Any single flipped bit anywhere in the package is refused."""
         good = valid_stu()
         rng = random.Random(0)
         for _ in range(500):
@@ -262,7 +287,8 @@ class ValidateSTUTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 checker.validate(broken, "st10")
 
-    def test_package_cannot_exceed_stock_streamer_budget(self):
+    def test_package_cannot_exceed_stock_streamer_budget(self) -> None:
+        """A package larger than the stock streamer budget is refused."""
         data = valid_stu()
         modules, ubi_size, _stu_size = checker.PROFILES["wla-stock"]
         with mock.patch.dict(checker.PROFILES, {
@@ -275,7 +301,8 @@ class ValidateSTUTest(unittest.TestCase):
                 self.assertRaisesRegex(RuntimeError, "package .* exceeds"):
             bstu.validate_stu(data, "wla-stock")
 
-    def test_mainline_kernel_uses_reserved_slot_budget(self):
+    def test_mainline_kernel_uses_reserved_slot_budget(self) -> None:
+        """A mainline kernel larger than the reserved slot budget is refused."""
         found = []
         for name in checker.WLA_MODULES:
             size = checker.MAX_KERNEL_BYTES + checker.OVERLAP + 1 \
@@ -283,10 +310,11 @@ class ValidateSTUTest(unittest.TestCase):
             found.append((0, 0, size, name))
         with self.assertRaisesRegex(ValueError, "kernel is invalid or too large"):
             checker.validate_mainline_kernel(
-                bytearray(checker.MAX_KERNEL_BYTES + 1), found, "wla"
+                bytearray(checker.MAX_KERNEL_BYTES + 1), found, "wla",
             )
 
-    def test_mainline_st10_kernel_validates_after_fixsig_marker_restore(self):
+    def test_mainline_st10_kernel_validates_after_fixsig_marker_restore(self) -> None:
+        """An ST10 kernel with the Linub marker validates once fixsig restores its name."""
         payload = bytearray(64 + 8)
         struct.pack_into(">I", payload, 0, 0x27051956)
         struct.pack_into(">I", payload, 12, 8)
@@ -300,11 +328,12 @@ class ValidateSTUTest(unittest.TestCase):
         payload += b"\xff" * checker.OVERLAP
         found = [(0, 0, len(payload), "linuxPatched")]
         with mock.patch.object(
-            checker, "profile_for_names", return_value=("st10", (["linuxPatched"], 0, 0))
+            checker, "profile_for_names", return_value=("st10", (["linuxPatched"], 0, 0)),
         ):
             checker.validate_mainline_kernel(payload, found, "st10")
 
-    def test_independent_bootloader_validation(self):
+    def test_independent_bootloader_validation(self) -> None:
+        """stu_check.py checks MLO and U-Boot shape and size on its own."""
         checker.validate_mlo(valid_mlo())
         checker.validate_raw_mlo(b"\x0f\x00\x00\xeaSPL")
         checker.validate_uboot(valid_uboot())
@@ -319,7 +348,8 @@ class ValidateSTUTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "ARM SPL vectors"):
             checker.validate_raw_mlo(valid_mlo())
 
-    def test_bootloader_gate_requires_changed_sane_images(self):
+    def test_bootloader_gate_requires_changed_sane_images(self) -> None:
+        """The bootloader gate passes only when both bootloaders changed to sane images."""
         stock = valid_stu(payloads={"MLO": valid_mlo(b"stock"),
                                     "u-boot.img": valid_uboot(b"stock")})
         candidate = bstu.replace_module(stock, "MLO", valid_mlo(b"mainline"))
@@ -327,7 +357,7 @@ class ValidateSTUTest(unittest.TestCase):
         candidate = bstu.replace_module(
             candidate, "ubi.img",
             b"U" * (checker.UBI_PEB - checker.OVERLAP) + b"\xff" * checker.OVERLAP,
-            True, True,
+            shared_tail=True, include_overlap=True,
         )
         struct.pack_into(">I", candidate, bstu.PKG_SIZE_OFF, len(candidate))
         struct.pack_into(">I", candidate, bstu.PKG_HCRC_OFF,
@@ -343,7 +373,7 @@ class ValidateSTUTest(unittest.TestCase):
                 for target in ("wla-stock", "st10"):
                     with self.subTest(target=target):
                         self.assertTrue(checker.recovery_mainline_bootloaders(
-                            candidate_path, stock_path, target
+                            candidate_path, stock_path, target,
                         ))
                 unchanged = bstu.replace_module(candidate, "MLO", valid_mlo(b"stock"))
                 struct.pack_into(">I", unchanged, bstu.PKG_SIZE_OFF, len(unchanged))
@@ -351,11 +381,13 @@ class ValidateSTUTest(unittest.TestCase):
                                  zlib.crc32(unchanged[:bstu.PKG_HCRC_OFF]) & 0xFFFFFFFF)
                 candidate_path.write_bytes(unchanged)
                 self.assertFalse(checker.recovery_mainline_bootloaders(
-                    candidate_path, stock_path, "wla-stock"
+                    candidate_path, stock_path, "wla-stock",
                 ))
 
-    def test_independent_ubi_geometry_validation(self):
-        def ubi_crc(chunk):
+    def test_independent_ubi_geometry_validation(self) -> None:
+        """stu_check.py checks UBI CRCs, geometry and the free-space fixup on its own."""
+        def ubi_crc(chunk: bytes | bytearray) -> int:
+            """Return the UBI CRC32 (initial value 0xFFFFFFFF, no final inversion) of ``chunk``."""
             return (zlib.crc32(chunk) ^ 0xFFFFFFFF) & 0xFFFFFFFF
 
         data = bytearray(b"\xff" * (checker.UBI_PEB * 3))
@@ -413,7 +445,8 @@ class ValidateSTUTest(unittest.TestCase):
             with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
                 checker.validate_ubi(broken)
 
-    def test_ubi_capacity_contract(self):
+    def test_ubi_capacity_contract(self) -> None:
+        """The volume LEB count is what the partition leaves after UBI overhead and the bad-block reserve."""
         geometry = checker.NAND_GEOMETRY
         overhead = (geometry["layout_pebs"] + geometry["wear_leveling_pebs"]
                     + geometry["atomic_leb_change_pebs"])

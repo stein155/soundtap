@@ -9,7 +9,7 @@ set -eu
 dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 # Pinned by digest (multi-arch index) so a new gcc:13 cannot change what passes.
 IMAGE=gcc:13@sha256:16ae525998c94df36a116c191524256b1d46e72d7a0e9aaf6c153455e40eb5b8
-docker run --rm -v "$dir":/w -w /w "$IMAGE" sh -eu -c '
+docker run --rm -v "${dir}":/w -w /w "${IMAGE}" sh -eu -c '
 for t in tests/*_test.c; do
 	name=$(basename "$t" _test.c)
 	case $name in

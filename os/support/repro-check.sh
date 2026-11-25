@@ -17,31 +17,31 @@ set -eu
 
 repo=$(CDPATH= cd -- "${1:?usage: repro-check.sh REPO}" && pwd)
 : "${SOURCE_DATE_EPOCH:?set SOURCE_DATE_EPOCH}" "${SOUNDTAP_COMMIT:?set SOUNDTAP_COMMIT}"
-out=${REPRO_DIR:-$repo/output/repro}
-compare=$repo/os/support/repro_compare.py
-stu=$repo/dist/Update-soundtap-buildroot.stu
-ccache=$repo/.cache/buildroot-ccache
+out=${REPRO_DIR:-${repo}/output/repro}
+compare=${repo}/os/support/repro_compare.py
+stu=${repo}/dist/Update-soundtap-buildroot.stu
+ccache=${repo}/.cache/buildroot-ccache
 
 build() {
-	echo "repro-check: build $1 of $SOUNDTAP_COMMIT at SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH"
+	echo "repro-check: build $1 of ${SOUNDTAP_COMMIT} at SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}"
 	# Never a warm tree: an incremental build could keep or hide what a clean one changes.
-	rm -rf "$repo/output/os" "$stu"
-	make -C "$repo" os SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" SOUNDTAP_COMMIT="$SOUNDTAP_COMMIT"
+	rm -rf "${repo}/output/os" "${stu}"
+	make -C "${repo}" os SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" SOUNDTAP_COMMIT="${SOUNDTAP_COMMIT}"
 	if [ "${REPRO_STU:-1}" = 1 ]; then
 		# The dry runs judge the package, not its bytes; Build runs them.
-		SOUNDTAP_SKIP_DRY_RUN=1 make -C "$repo" stu
-		python3 "$compare" save "$repo/output/os/images" "$out/$1" --extra "$stu"
+		SOUNDTAP_SKIP_DRY_RUN=1 make -C "${repo}" stu
+		python3 "${compare}" save "${repo}/output/os/images" "${out}/$1" --extra "${stu}"
 	else
-		python3 "$compare" save "$repo/output/os/images" "$out/$1"
+		python3 "${compare}" save "${repo}/output/os/images" "${out}/$1"
 	fi
 }
 
 build a
-if [ "${REPRO_FRESH_CCACHE:-0}" = 1 ] && [ -d "$ccache" ]; then
-	kept=$ccache.repro-kept
-	test ! -e "$kept" || { echo "repro-check: $kept is left from an earlier run; put it back first" >&2; exit 2; }
-	mv "$ccache" "$kept"
+if [ "${REPRO_FRESH_CCACHE:-0}" = 1 ] && [ -d "${ccache}" ]; then
+	kept=${ccache}.repro-kept
+	test ! -e "${kept}" || { echo "repro-check: ${kept} is left from an earlier run; put it back first" >&2; exit 2; }
+	mv "${ccache}" "${kept}"
 	trap 'rm -rf "$ccache"; mv "$kept" "$ccache"' EXIT
 fi
 build b
-python3 "$compare" compare "$out/a" "$out/b"
+python3 "${compare}" compare "${out}/a" "${out}/b"

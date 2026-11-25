@@ -52,6 +52,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import uboot_env
 
+# `uboot_recipes.py [--legacy] DUMP OUT` takes two paths.
+USAGE_ARGC = 2
+
 # U-Boot builds `mtdids` and `mtdparts` into its *default* environment, from
 # CONFIG_MTDIDS_DEFAULT and CONFIG_MTDPARTS_DEFAULT. A stored environment replaces that
 # default whole, and Bose's has neither, so `ubi part NAND.File-System-Pong` then has no
@@ -139,8 +142,8 @@ _SLOT = (b"slot_boot="
          b"fi; fi; fi; reset")
 
 
-def recipes(variant=b"binky"):
-    """The seven entries this board needs, in the order the installer carries them.
+def recipes(variant: bytes = b"binky") -> tuple[bytes, ...]:
+    """Return the seven entries this board needs, in the order the installer carries them.
 
     os/installer/module/installer.c carries TEMPLATES verbatim and fills them the same
     way, per index; os/tests/installer/test_wla_env_recipes.py holds the two to each other.
@@ -162,13 +165,14 @@ TEMPLATES = (PING, PONG, _SLOT, _OURS, _STOCK, MTDIDS, MTDPARTS)
 ARGS = recipes()[3], recipes()[4], recipes()[2]
 
 
-def load(path):
-    """The entries of the environment in the dump at path."""
+def load(path: str | Path) -> list[bytes]:
+    """Return the entries of the environment in the dump at path."""
     entries, _flag = uboot_env.parse(Path(path).read_bytes())
     return entries
 
 
-def rewrite(entries):
+def rewrite(entries: list[bytes]) -> list[bytes]:
+    """Return the entries with our slot recipes in place of Bose's and our boot arguments set."""
     seen = {"nand_boot": False, "nand_boot2": False}
     out = []
     for entry in entries:
@@ -183,7 +187,8 @@ def rewrite(entries):
             out.append(entry)
     for key, found in seen.items():
         if not found:
-            raise SystemExit(f"environment has no {key}; this is not a WLA environment")
+            msg = f"environment has no {key}; this is not a WLA environment"
+            raise SystemExit(msg)
     # Replace or append; Bose's environment has neither. Every occurrence goes, not just
     # the first: a hand-edited environment can carry a key twice, and which one U-Boot
     # ends up using is not something a tool that claims to have installed a value should
@@ -199,15 +204,16 @@ def rewrite(entries):
     return out
 
 
-def main(argv):
+def main(argv: list[str]) -> int:
+    """Rewrite the environment dump named on the command line and write it out."""
     args = argv[1:]
     legacy = bool(args) and args[0] == "--legacy"
     if legacy:
         args = args[1:]
-    if len(args) != 2:
+    if len(args) != USAGE_ARGC:
         raise SystemExit(__doc__.strip().splitlines()[-1].strip())
     out = rewrite(load(args[0]))
-    written = uboot_env.write(args[1], out, legacy)
+    written = uboot_env.write(args[1], out, legacy=legacy)
     bootcmd = next(e for e in out if e.startswith(b"bootcmd="))
     print(f"wrote {', '.join(written)}: {bootcmd.decode()}")
     return 0

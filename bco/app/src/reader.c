@@ -29,7 +29,7 @@ void app_main(void)
     }
     hex("scanhit ", hit);
     if (hit) {
-        volatile unsigned *b = (volatile unsigned *)hit;
+        const volatile unsigned *b = (volatile unsigned *)hit;
         unsigned n = b[1];
         hex("count ", n);
         if (n > 256)
@@ -38,7 +38,7 @@ void app_main(void)
             hex("rec ", b[2 + i]);
     } else {
         say("no magic in WSRAM; raw 0x3001f800:\r\n");
-        volatile unsigned *b = (volatile unsigned *)BUF;
+        const volatile unsigned *b = (volatile unsigned *)BUF;
         for (unsigned i = 0; i < 8; i++)
             hex("raw ", b[i]);
     }
