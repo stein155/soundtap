@@ -242,6 +242,10 @@ SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-135743 # ffmpeg filter dynaudnorm not bu
 SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-135722 # ffmpeg muxers wav, w64 not built
 SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-135723 # ffmpeg demuxer imf not built
 SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-135725 # ffmpeg protocols rtmp, rtmpe, rtmps, rtmpt, rtmpte, rtmpts not built
+# libmodplug.c is only the libmodplug demuxer, and oggenc.c only the Ogg muxers (the Ogg
+# demuxer is oggdec.c); both fixed upstream in 9.1.
+SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-135706 # ffmpeg demuxer libmodplug not built
+SOUNDTAP_FFMPEG_IGNORE_CVES += CVE-2026-135709 # ffmpeg muxers ogg, oga, opus, spx not built
 # libavcodec video code our ffmpeg leaves out: it decodes audio only and encodes pcm_s16le
 # (SOUNDTAP_FFMPEG_DECODERS, _ENCODERS), and builds no bitstream filter. lcevcdec.c and
 # cbs_sei.c are reached only through the H.264 and HEVC decoders.
