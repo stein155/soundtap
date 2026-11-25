@@ -87,6 +87,7 @@ describe('HomePage', () => {
     api.getNowPlaying.mockResolvedValue(PLAYING);
     render(<App />);
     await userEvent.click(await screen.findByRole('button', { name: /^Speaker: / }));
+    await userEvent.click(await screen.findByRole('button', { name: /^More about / }));
     const card = await screen.findByRole('dialog', { name: /^Speaker / });
     const power = await screen.findByRole('button', { name: 'Power' });
     expect(card).toContainElement(power);

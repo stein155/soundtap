@@ -115,6 +115,9 @@ const sl: Messages = {
   presets: 'Prednastavitve',
   presetSlot: 'Prednastavitev {slot}: {name}',
   presetsEdit: 'Uredi',
+  speakersControl: 'Upravljanje',
+  playTogetherWith: 'Predvajaj skupaj z {name}',
+  speakerMore: 'Več o {name}',
   presetEmptyTitle: 'Na voljo vsem',
   presetEmptyHint:
     'Za to prednastavitev niste shranili ničesar. Pritisnite in pridržite odprto prednastavitev, da shranite trenutno predvajano.',

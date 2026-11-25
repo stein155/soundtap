@@ -115,6 +115,9 @@ const tr: Messages = {
   presets: 'Ön ayarlar',
   presetSlot: 'Ön ayar {slot}: {name}',
   presetsEdit: 'Düzenle',
+  speakersControl: 'Kontrol',
+  playTogetherWith: '{name} ile birlikte çal',
+  speakerMore: '{name} hakkında daha fazla',
   presetEmptyTitle: 'Herkese açık',
   presetEmptyHint:
     'Henüz bu ön ayara bir şey kaydetmediniz. Çalan şarkıyı kaydetmek için açık bir ön ayara basın ve bekleyin.',

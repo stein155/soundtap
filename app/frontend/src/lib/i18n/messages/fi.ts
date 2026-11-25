@@ -116,6 +116,9 @@ const fi: Messages = {
   presets: 'Esiasetukset',
   presetSlot: 'Esiasetus {slot}: {name}',
   presetsEdit: 'Muokkaa',
+  speakersControl: 'Ohjaa',
+  playTogetherWith: 'Toista yhdessä: {name}',
+  speakerMore: 'Lisää: {name}',
   presetEmptyTitle: 'Vapaana',
   presetEmptyHint:
     'Tähän esiasetukseen ei ole vielä tallennettu mitään. Tallenna toistettava kohde pitämällä esiasetusta painettuna.',

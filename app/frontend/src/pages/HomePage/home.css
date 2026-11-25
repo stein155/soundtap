@@ -2494,3 +2494,132 @@ span.vol-ico {
   width: 16px;
   height: 16px;
 }
+
+/* The speakers sheet: which speaker this page controls and which play along (the design's
+   "Speaker wisselen"). */
+.spks-sheet {
+  --page-gutter: 16px;
+  display: flex;
+  flex-direction: column;
+  padding: 0 16px 24px;
+  overflow-y: auto;
+}
+
+.spks-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.spks-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 68px;
+  padding: 10px 16px;
+  border: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.spks-row + .spks-row {
+  border-top: 1px solid var(--border);
+}
+
+.spks-row[aria-checked='true'] {
+  box-shadow: inset 3px 0 0 var(--ink);
+}
+
+.spks-row:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.spks-disc {
+  width: 48px;
+  height: 48px;
+  padding: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--surface-2);
+}
+
+.spks-disc svg {
+  width: 100%;
+  height: 100%;
+}
+
+.spks-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.spks-name {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.spks-now {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.spks-tick {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.spks-tick svg {
+  width: 12px;
+  height: 12px;
+}
+
+.spks-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 18px;
+}
+
+.spks-primary {
+  min-height: 54px;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: var(--on-accent);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.spks-link {
+  min-height: 44px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-3);
+  cursor: pointer;
+}

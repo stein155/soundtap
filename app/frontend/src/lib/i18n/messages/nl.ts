@@ -116,6 +116,9 @@ const nl: Messages = {
   presets: 'Presets',
   presetSlot: 'Preset {slot}: {name}',
   presetsEdit: 'Bewerken',
+  speakersControl: 'Bedienen',
+  playTogetherWith: 'Samen met {name} afspelen',
+  speakerMore: 'Meer over {name}',
   presetEmptyTitle: 'Altijd bij de hand',
   presetEmptyHint:
     'Je hebt nog niets opgeslagen onder deze preset. Houd een lege preset ingedrukt om op te slaan wat er nu speelt.',

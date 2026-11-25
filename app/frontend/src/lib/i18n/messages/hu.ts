@@ -116,6 +116,9 @@ const hu: Messages = {
   presets: 'Előbeállítások',
   presetSlot: '{slot}. előbeállítás: {name}',
   presetsEdit: 'Szerkesztés',
+  speakersControl: 'Vezérlés',
+  playTogetherWith: 'Lejátszás együtt: {name}',
+  speakerMore: 'Továbbiak: {name}',
   presetEmptyTitle: 'Bárki számára elérhető',
   presetEmptyHint:
     'Ön még semmit sem mentett ehhez az előbeállításhoz. Tartsa lenyomva az egyik üres előbeállítást a jelenleg játszott zene mentéséhez.',

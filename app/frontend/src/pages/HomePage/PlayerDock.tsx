@@ -40,7 +40,7 @@ export function PlayerDock({
         onTransport={() => void playback.transport()}
         onPlayer={() => layers.show('nowPlaying')}
         onChoose={() => layers.show('presets')}
-        onSpeaker={() => layers.show('speaker')}
+        onSpeaker={() => layers.show('speakers')}
         onVolume={() => layers.show('volume')}
       />
       <VolumePanel

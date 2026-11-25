@@ -117,6 +117,9 @@ const fr: Messages = {
   presets: 'Présélections',
   presetSlot: 'Présélection {slot} : {name}',
   presetsEdit: 'Modifier',
+  speakersControl: 'Contrôler',
+  playTogetherWith: 'Lire avec {name}',
+  speakerMore: 'Plus sur {name}',
   presetEmptyTitle: 'Désormais disponible',
   presetEmptyHint:
     'Vous n’avez encore rien enregistré sur cette présélection. Appuyez longuement sur une présélection active pour enregistrer la source en cours de lecture.',

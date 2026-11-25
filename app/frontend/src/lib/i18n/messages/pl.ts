@@ -115,6 +115,9 @@ const pl: Messages = {
   presets: 'Ustawienia wstępne',
   presetSlot: 'Ustawienie wstępne {slot}: {name}',
   presetsEdit: 'Edytuj',
+  speakersControl: 'Steruj',
+  playTogetherWith: 'Odtwarzaj razem z {name}',
+  speakerMore: 'Więcej: {name}',
   presetEmptyTitle: 'Dostępne bez ograniczeń',
   presetEmptyHint:
     'Nic jeszcze nie zapisano w tych ustawieniach wstępnych. Naciśnij i przytrzymaj otwarte ustawienie wstępne, aby zapisać odtwarzany element.',

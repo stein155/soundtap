@@ -118,6 +118,9 @@ const it: Messages = {
   presets: 'Preset',
   presetSlot: 'Preset {slot}: {name}',
   presetsEdit: 'Modifica',
+  speakersControl: 'Controlla',
+  playTogetherWith: 'Riproduci insieme a {name}',
+  speakerMore: 'Altro su {name}',
   presetEmptyTitle: 'Disponibile',
   presetEmptyHint:
     "Nessun elemento salvato per questo preset. Tieni premuto un preset disponibile per salvare l'elemento in riproduzione.",

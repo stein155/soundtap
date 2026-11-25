@@ -115,6 +115,9 @@ const da: Messages = {
   presets: 'Forudindstillinger',
   presetSlot: 'Forudindstilling {slot}: {name}',
   presetsEdit: 'Rediger',
+  speakersControl: 'Styr',
+  playTogetherWith: 'Afspil sammen med {name}',
+  speakerMore: 'Mere om {name}',
   presetEmptyTitle: 'Intet gemt',
   presetEmptyHint:
     'Du har ikke gemt noget i denne forudindstilling endnu. Tryk på en ledig forudindstilling, og hold den nede for at gemme det, der afspilles.',

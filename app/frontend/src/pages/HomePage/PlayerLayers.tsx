@@ -3,7 +3,9 @@
 
 import { NowPlayingSheet } from '../../components/organisms/NowPlayingSheet';
 import { PresetsSheet } from '../../components/organisms/PresetsSheet';
+import { SpeakersSheet } from '../../components/organisms/SpeakersSheet';
 import { SpeakerCard } from '../../components/organisms/SpeakerCard';
+import type { RecentItem } from '../../lib/recent';
 import type { useFavorites } from '../../hooks/useFavorites';
 import type { useGrouping } from '../../hooks/useGrouping';
 import type { usePlayback } from '../../hooks/usePlayback';
@@ -25,6 +27,21 @@ interface PlayerLayersProps {
   starting: boolean;
   onMute: (room: Room) => void;
 }
+
+// The favorites under the presets: add what is held or plays, play one, remove one.
+const favoriteActions = (
+  favorites: PlayerLayersProps['favorites'],
+  playback: PlayerLayersProps['playback'],
+  entry: () => ReturnType<typeof playingEntry> | undefined
+) => ({
+  items: favorites.items,
+  onAdd: () => {
+    const e = entry();
+    if (e) void favorites.add(e);
+  },
+  onPlay: (item: RecentItem) => void playback.playRecent(item),
+  onRemove: (item: RecentItem) => void favorites.remove(item),
+});
 
 // The layers of the selected room's player: its presets, its card and now playing.
 export function PlayerLayers({
@@ -67,15 +84,11 @@ export function PlayerLayers({
         saving={saving?.entry.name ?? null}
         onSave={(slot) => saving?.store(slot)}
         onStore={(slot) => void playback.storeCurrent(slot)}
-        favorites={{
-          items: favorites.items,
-          onAdd: () => {
-            const entry = saving?.entry ?? playingEntry(live.player.station);
-            if (entry) void favorites.add(entry);
-          },
-          onPlay: (item) => void playback.playRecent(item),
-          onRemove: (item) => void favorites.remove(item),
-        }}
+        favorites={favoriteActions(
+          favorites,
+          playback,
+          () => saving?.entry ?? playingEntry(live.player.station)
+        )}
       />
       <SpeakerCard
         open={open.speaker}
@@ -87,6 +100,13 @@ export function PlayerLayers({
         sleep={sleep}
         onMute={onMute}
         onSettings={(room) => showSettings(room.id)}
+      />
+      <SpeakersSheet
+        open={open.speakers}
+        onClose={() => hide('speakers')}
+        selected={selected}
+        grouping={grouping}
+        onMore={() => show('speaker')}
       />
       <NowPlayingSheet
         open={open.nowPlaying}
@@ -102,7 +122,7 @@ export function PlayerLayers({
         onVolume={group.length > 1 ? volume.setGroupVolume : (v) => volume.setRoomVolume(lead, v)}
         onMute={group.length > 1 ? undefined : () => onMute(lead)}
         onPresets={() => show('presets')}
-        onSpeaker={() => show('speaker')}
+        onSpeaker={() => show('speakers')}
       />
     </>
   );

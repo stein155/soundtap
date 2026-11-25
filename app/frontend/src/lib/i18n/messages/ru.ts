@@ -116,6 +116,9 @@ const ru: Messages = {
   presets: 'Предустановки',
   presetSlot: 'Предустановка {slot}: {name}',
   presetsEdit: 'Изменить',
+  speakersControl: 'Управление',
+  playTogetherWith: 'Играть вместе с {name}',
+  speakerMore: 'Подробнее: {name}',
   presetEmptyTitle: 'Пока не занято',
   presetEmptyHint:
     'В этой предварительной установке нет сохраненных элементов. Нажмите и удерживайте открытую предварительную установку, чтобы сохранить текущее воспроизведение.',

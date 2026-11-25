@@ -117,6 +117,9 @@ const en = {
   presets: 'Presets',
   presetSlot: 'Preset {slot}: {name}',
   presetsEdit: 'Edit',
+  speakersControl: 'Control',
+  playTogetherWith: 'Play together with {name}',
+  speakerMore: 'More about {name}',
   presetEmptyTitle: 'Up for grabs',
   presetEmptyHint:
     "You don't have anything saved to this preset yet. Press & hold an open preset to save what's playing.",

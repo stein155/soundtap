@@ -6,13 +6,21 @@ import type { SearchMode } from '../../components/organisms/SearchSheet';
 import type { FavoriteEntry } from '../../lib/types';
 
 type Layer =
-  'drawer' | 'presets' | 'settings' | 'mediaServers' | 'speaker' | 'nowPlaying' | 'volume';
+  | 'drawer'
+  | 'presets'
+  | 'settings'
+  | 'mediaServers'
+  | 'speaker'
+  | 'speakers'
+  | 'nowPlaying'
+  | 'volume';
 const NONE: Record<Layer, boolean> = {
   drawer: false,
   presets: false,
   settings: false,
   mediaServers: false,
   speaker: false,
+  speakers: false,
   nowPlaying: false,
   volume: false,
 };

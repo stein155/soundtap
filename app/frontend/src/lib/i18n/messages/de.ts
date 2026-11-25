@@ -118,6 +118,9 @@ const de: Messages = {
   presets: 'Presets',
   presetSlot: 'Preset {slot}: {name}',
   presetsEdit: 'Bearbeiten',
+  speakersControl: 'Steuern',
+  playTogetherWith: 'Zusammen mit {name} abspielen',
+  speakerMore: 'Mehr zu {name}',
   presetEmptyTitle: 'Noch offen',
   presetEmptyHint:
     'Sie haben noch keine Quelle für dieses Preset festgelegt. Drücken und halten Sie ein offenes Preset, um die aktuell gespielte Musik zu speichern.',

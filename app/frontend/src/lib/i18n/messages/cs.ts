@@ -116,6 +116,9 @@ const cs: Messages = {
   presets: 'Předvolby',
   presetSlot: 'Předvolba {slot}: {name}',
   presetsEdit: 'Upravit',
+  speakersControl: 'Ovládat',
+  playTogetherWith: 'Přehrávat společně s {name}',
+  speakerMore: 'Více o {name}',
   presetEmptyTitle: 'K dispozici',
   presetEmptyHint:
     'Zatím jste do této předvolby nic neuložili. Stisknutím a podržením otevřené předvolby uložíte přehrávanou položku.',

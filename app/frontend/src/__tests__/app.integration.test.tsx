@@ -37,7 +37,9 @@ const openSettings = async () => {
   await userEvent.click(await screen.findByRole('button', { name: 'Settings' }));
 };
 const openSpeaker = async () => {
+  // The speaker bar opens the speakers; "More about" there opens the selected one's card.
   await userEvent.click(await screen.findByRole('button', { name: /^Speaker: / }));
+  await userEvent.click(await screen.findByRole('button', { name: /^More about / }));
   return screen.findByRole('dialog', { name: /^Speaker / });
 };
 

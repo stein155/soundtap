@@ -116,6 +116,9 @@ const af: Messages = {
   presets: 'Voorinstellings',
   presetSlot: 'Voorinstelling {slot}: {name}',
   presetsEdit: 'Wysig',
+  speakersControl: 'Beheer',
+  playTogetherWith: 'Speel saam met {name}',
+  speakerMore: 'Meer oor {name}',
   presetEmptyTitle: 'Nog oop',
   presetEmptyHint:
     "Daar is nog niks op hierdie voorinstelling gestoor nie. Druk en hou 'n oop voorinstelling om te stoor wat speel.",

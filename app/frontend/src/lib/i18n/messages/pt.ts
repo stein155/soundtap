@@ -117,6 +117,9 @@ const pt: Messages = {
   presets: 'Predefinições',
   presetSlot: 'Predefinição {slot}: {name}',
   presetsEdit: 'Editar',
+  speakersControl: 'Controlar',
+  playTogetherWith: 'Reproduzir em conjunto com {name}',
+  speakerMore: 'Mais sobre {name}',
   presetEmptyTitle: 'Disponíveis',
   presetEmptyHint:
     'Você ainda não tem nada salvo nesta predefinição. Mantenha pressionado e abra a predefinição para salvar o que estiver reproduzindo.',

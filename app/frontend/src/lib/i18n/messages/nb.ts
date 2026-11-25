@@ -115,6 +115,9 @@ const nb: Messages = {
   presets: 'Forhåndsinnstillinger',
   presetSlot: 'Forhåndsinnstilling {slot}: {name}',
   presetsEdit: 'Rediger',
+  speakersControl: 'Styr',
+  playTogetherWith: 'Spill sammen med {name}',
+  speakerMore: 'Mer om {name}',
   presetEmptyTitle: 'Det er fritt frem',
   presetEmptyHint:
     'Du har ikke lagret noe på denne forhåndsinnstillingen enda. Trykk på og hold inne en ledig forhåndsinnstilling for å lagre det som spilles av.',

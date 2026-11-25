@@ -117,6 +117,9 @@ const es: Messages = {
   presets: 'Ajustes predefinidos',
   presetSlot: 'Ajuste predefinido {slot}: {name}',
   presetsEdit: 'Editar',
+  speakersControl: 'Controlar',
+  playTogetherWith: 'Reproducir junto con {name}',
+  speakerMore: 'Más sobre {name}',
   presetEmptyTitle: 'Listo para llevar',
   presetEmptyHint:
     'Aún no hay nada guardado en este ajuste predefinido. Mantén presionado un ajuste predefinido abierto para guardar lo que se está reproduciendo.',
