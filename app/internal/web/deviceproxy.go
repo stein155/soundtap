@@ -20,6 +20,14 @@ import (
 	"time"
 )
 
+// The transport to a peer speaker on the LAN: it answers fast or not at all.
+const (
+	peerDialTimeout     = 2 * time.Second
+	peerTLSTimeout      = 2 * time.Second
+	peerIdleConns       = 2
+	peerConnIdleTimeout = 30 * time.Second
+)
+
 // Everything under /api/devices/{id}/ is forwarded to that speaker's own API.
 //
 // We own both ends, so one Access-Control-Allow-Origin header would let the browser call
@@ -57,7 +65,7 @@ func proxyTimeout(route string) time.Duration {
 	switch {
 	case route == "/api/wifi":
 		return ConfirmWindow + wifiJoinDeadline + pressSlack
-	case route == "/api/bluetooth/clear":
+	case route == "/api/bluetooth/clear", route == bluetoothForgetPath:
 		return ConfirmWindow + bluetoothClearDeadline + pressSlack
 	case route == restorePath, route == "/api/factory-reset":
 		return ConfirmWindow + restoreDeadline + pressSlack
@@ -68,16 +76,13 @@ func proxyTimeout(route string) time.Duration {
 		route == "/api/speaker/notify":
 		return uploadReadTimeout
 	case route == coreUpdatePath:
-		// The press, then the speaker downloads and writes the package before it answers.
+		// The speaker downloads and writes the package before it answers.
 		return ConfirmWindow + uploadReadTimeout + pressSlack
 	case route == "/api/wifi/scan":
 		return wifiScanDeadline + proxyMargin
-	case route == ownerKeyPath:
-		// PUT and DELETE wait for the press, then write the environment twice.
-		return ConfirmWindow + writeDeadline + pressSlack
 	case route == "/api/debug", route == "/api/update":
-		// /api/update waits for a press only for a picked release, which the route
-		// alone cannot tell; the latest-stable path answers at once anyway.
+		// /api/update needs no press, but it asks GitHub for the release list before it
+		// answers; the margin covers a slow one.
 		return ConfirmWindow + pressSlack
 	case strings.HasPrefix(route, "/api/spotify/"):
 		return spotifyDeadline + proxyMargin
@@ -85,6 +90,7 @@ func proxyTimeout(route string) time.Duration {
 		// Forgetting every paired device takes the longest.
 		return bluetoothClearDeadline + proxyMargin
 	}
+
 	return peerTimeout
 }
 
@@ -93,11 +99,13 @@ func proxyTimeout(route string) time.Duration {
 // Speaker peers are private addresses, so this deliberately is not SafeTransport, but the
 // address actually dialled still has to pass peerIPAllowed: a host name such as "localhost."
 // resolves past any check made on the name.
+//
+//nolint:gochecknoglobals // one connection pool shared by every request to a peer speaker
 var peerTransport = &http.Transport{
-	DialContext:         (&net.Dialer{Timeout: 2 * time.Second, Control: peerDialControl}).DialContext,
-	TLSHandshakeTimeout: 2 * time.Second,
-	MaxIdleConnsPerHost: 2,
-	IdleConnTimeout:     30 * time.Second,
+	DialContext:         (&net.Dialer{Timeout: peerDialTimeout, Control: peerDialControl}).DialContext,
+	TLSHandshakeTimeout: peerTLSTimeout,
+	MaxIdleConnsPerHost: peerIdleConns,
+	IdleConnTimeout:     peerConnIdleTimeout,
 }
 
 // errPeerAddress refuses a dial to an address no peer may have.
@@ -109,6 +117,7 @@ func peerDialControl(_, address string, _ syscall.RawConn) error {
 	if err != nil || !peerIPAllowed(net.ParseIP(host)) {
 		return fmt.Errorf("%w: %s", errPeerAddress, address)
 	}
+
 	return nil
 }
 
@@ -117,16 +126,19 @@ func peerDialControl(_, address string, _ syscall.RawConn) error {
 func (s *Server) peerAddress(id string) string {
 	s.devices.mu.Lock()
 	defer s.devices.mu.Unlock()
+
 	rec := s.devices.by[id]
 	// A stale entry's address may belong to another host by now (DHCP reuse).
 	// After a goodbye the address may be handed out again before the entry goes stale.
 	if rec == nil || rec.device.IP == "" || rec.device.Departure || s.devices.clock().Sub(rec.seen) > deviceStale {
 		return ""
 	}
+
 	port := rec.device.Port
 	if port == 0 {
 		port = 80
 	}
+
 	return "http://" + net.JoinHostPort(rec.device.IP, strconv.Itoa(int(port)))
 }
 
@@ -135,53 +147,78 @@ func (s *Server) peerAddress(id string) string {
 // Only /api/ paths are forwarded. A proxy that will fetch any path from any address in
 // its registry is an open relay for anything that can get an entry into that registry,
 // and the registry is filled from unauthenticated multicast.
+// proxiedPath reports whether rest is a path the proxy forwards: one under api/. Dot
+// segments are refused, not cleaned: "api/../x" would pass the prefix check and reach /x
+// on the peer.
+func proxiedPath(rest string) bool {
+	segs := strings.Split(rest, "/")
+
+	return strings.HasPrefix(rest, "api/") && !slices.Contains(segs, "..") && !slices.Contains(segs, ".")
+}
+
 func (s *Server) deviceProxy(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+	deviceID := r.PathValue("id")
+
 	rest := strings.TrimPrefix(r.PathValue("rest"), "/")
-	if id == "" || rest == "" {
+	if deviceID == "" || rest == "" {
 		apiError(w, http.StatusBadRequest, "device and path required")
+
 		return
 	}
-	// Dot segments are refused, not cleaned: "api/../x" would pass the prefix check and
-	// reach /x on the peer.
-	segs := strings.Split(rest, "/")
-	if !strings.HasPrefix(rest, "api/") || slices.Contains(segs, "..") || slices.Contains(segs, ".") {
+
+	if !proxiedPath(rest) {
 		apiError(w, http.StatusForbidden, "only /api/ paths are proxied")
+
 		return
 	}
 	// A request through our own id is served here, not forwarded. The UI keeps the chosen
 	// speaker per browser and the shared soundtap.local can move to that very speaker: a 400
 	// then broke every control of it ("music to Zolder won't start").
-	if s.serial != "" && id == s.serial {
+	if s.serial != "" && deviceID == s.serial {
 		if s.local == nil {
 			apiError(w, http.StatusBadRequest, "that is this speaker")
+
 			return
 		}
+
 		r2 := r.Clone(r.Context())
 		r2.URL.Path, r2.URL.RawPath = "/"+rest, ""
 		s.local.ServeHTTP(w, r2)
-		return
-	}
-	base := s.peerAddress(id)
-	if base == "" {
-		apiError(w, http.StatusNotFound, "unknown device")
-		return
-	}
-	switch err := s.peerVerified(r.Context(), id, base); {
-	case errors.Is(err, errNotThatPeer):
-		apiError(w, http.StatusNotFound, "unknown device")
-		return
-	case err != nil:
-		s.log.Info("peer unreachable", "device", id, "err", err)
-		apiError(w, http.StatusBadGateway, "device unreachable")
-		return
-	}
-	target, err := url.Parse(base)
-	if err != nil {
-		s.fail(w, "peer address", err)
+
 		return
 	}
 
+	base := s.peerAddress(deviceID)
+	if base == "" {
+		apiError(w, http.StatusNotFound, "unknown device")
+
+		return
+	}
+
+	switch err := s.peerVerified(r.Context(), deviceID, base); {
+	case errors.Is(err, errNotThatPeer):
+		apiError(w, http.StatusNotFound, "unknown device")
+
+		return
+	case err != nil:
+		s.log.Info("peer unreachable", "device", deviceID, "err", err)
+		apiError(w, http.StatusBadGateway, "device unreachable")
+
+		return
+	}
+
+	target, err := url.Parse(base)
+	if err != nil {
+		s.fail(w, "peer address", err)
+
+		return
+	}
+
+	s.forwardToPeer(w, r, deviceID, rest, target)
+}
+
+// forwardToPeer proxies r to rest on the peer deviceID at target.
+func (s *Server) forwardToPeer(w http.ResponseWriter, r *http.Request, deviceID, rest string, target *url.URL) {
 	// The event stream is meant to stay open; a deadline would cut it every few seconds.
 	// The browser closing it still ends it, through r.Context().
 	ctx, cancel := context.WithTimeout(r.Context(), proxyTimeout("/"+rest))
@@ -190,6 +227,7 @@ func (s *Server) deviceProxy(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel = context.WithCancel(r.Context())
 	}
 	defer cancel()
+
 	outbound := r.Clone(ctx)
 	// The peer applies its own host and CSRF guard to what arrives. Forwarding this
 	// speaker's Origin would make every proxied write look cross-origin to it.
@@ -206,19 +244,21 @@ func (s *Server) deviceProxy(w http.ResponseWriter, r *http.Request) {
 		Transport: peerTransport,
 		ModifyResponse: func(resp *http.Response) error {
 			sandboxForeign(resp.Header)
+
 			if loc := resp.Header.Get("Location"); loc != "" {
-				if loc = peerLocation(loc, id, target.Host); loc != "" {
+				if loc = peerLocation(loc, deviceID, target.Host); loc != "" {
 					resp.Header.Set("Location", loc)
 				} else {
 					resp.Header.Del("Location")
 				}
 			}
+
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
 			// A speaker that is unplugged, rebooting or re-flashing is the normal case
 			// here, not an error worth a 500: the UI shows it offline and moves on.
-			s.log.Info("peer unreachable", "device", id, "err", err)
+			s.log.Info("peer unreachable", "device", deviceID, "err", err)
 			apiError(w, http.StatusBadGateway, "device unreachable")
 		},
 	}
@@ -232,36 +272,45 @@ var errNotThatPeer = errors.New("address does not answer as that speaker")
 // forwards anything there. The registry is filled from mDNS, which any LAN host can
 // answer, so without this an entry could aim the proxy at any private host and port: a
 // router's or NAS's admin pages.
-func (s *Server) peerVerified(ctx context.Context, id, base string) error {
+func (s *Server) peerVerified(ctx context.Context, deviceID, base string) error {
 	s.devices.mu.Lock()
-	rec := s.devices.by[id]
+	rec := s.devices.by[deviceID]
 	done := rec != nil && rec.verified == base
 	s.devices.mu.Unlock()
+
 	if done {
 		return nil
 	}
+
 	ctx, cancel := context.WithTimeout(ctx, peerTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/info", nil)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/info", http.NoBody)
 	if err != nil {
-		return err
+		return fmt.Errorf("peer info request: %w", err)
 	}
+
 	resp, err := peerTransport.RoundTrip(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("peer info: %w", err)
 	}
+
 	defer func() { _ = resp.Body.Close() }()
+
 	var info struct {
 		ID string `json:"id"`
 	}
-	if resp.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(resp.Body, maxRequestBody)).Decode(&info) != nil || info.ID != id {
+	if resp.StatusCode != http.StatusOK ||
+		json.NewDecoder(io.LimitReader(resp.Body, maxRequestBody)).Decode(&info) != nil || info.ID != deviceID {
 		return errNotThatPeer
 	}
+
 	s.devices.mu.Lock()
-	if rec := s.devices.by[id]; rec != nil {
+	if rec := s.devices.by[deviceID]; rec != nil {
 		rec.verified = base
 	}
 	s.devices.mu.Unlock()
+
 	return nil
 }
 
@@ -269,19 +318,23 @@ func (s *Server) peerVerified(ctx context.Context, id, base string) error {
 // /api/devices/{id}/, so the browser does not land on this speaker. A redirect anywhere
 // else is not followed through the proxy: the browser gets the status without a Location.
 // A relative one already resolves under the proxied path.
-func peerLocation(loc, id, peerHost string) string {
-	u, err := url.Parse(loc)
-	if err != nil || u.Opaque != "" {
+func peerLocation(loc, deviceID, peerHost string) string {
+	parsed, err := url.Parse(loc)
+	if err != nil || parsed.Opaque != "" {
 		return ""
 	}
-	if u.Scheme != "" || u.Host != "" {
-		if (u.Scheme != "http" && u.Scheme != "") || u.Host != peerHost {
+
+	if parsed.Scheme != "" || parsed.Host != "" {
+		if (parsed.Scheme != "http" && parsed.Scheme != "") || parsed.Host != peerHost {
 			return ""
 		}
 	}
-	if u.Scheme == "" && u.Host == "" && !strings.HasPrefix(u.Path, "/") {
+
+	if parsed.Scheme == "" && parsed.Host == "" && !strings.HasPrefix(parsed.Path, "/") {
 		return loc // relative to the proxied path, so it stays on the peer already
 	}
-	out := url.URL{Path: "/api/devices/" + id + u.Path, RawQuery: u.RawQuery, Fragment: u.Fragment}
+
+	out := url.URL{Path: "/api/devices/" + deviceID + parsed.Path, RawQuery: parsed.RawQuery, Fragment: parsed.Fragment}
+
 	return out.String()
 }

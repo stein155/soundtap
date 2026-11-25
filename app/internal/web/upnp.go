@@ -25,8 +25,10 @@ type UPnPRegistry interface {
 func (s *Server) upnpServers(w http.ResponseWriter, r *http.Request) {
 	if s.upnpReg == nil {
 		http.NotFound(w, r)
+
 		return
 	}
+
 	writeJSON(w, http.StatusOK, s.upnpReg.Servers())
 }
 
@@ -38,10 +40,13 @@ const upnpSearchBudget = slowReadDeadline
 func (s *Server) upnpSearch(w http.ResponseWriter, r *http.Request) {
 	if s.upnpReg == nil {
 		http.NotFound(w, r)
+
 		return
 	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), upnpSearchBudget)
 	defer cancel()
+
 	s.upnpReg.Search(ctx, s.log.Info)
 	writeJSON(w, http.StatusOK, s.upnpReg.Servers())
 }
@@ -58,30 +63,41 @@ func (s *Server) upnpPlay(w http.ResponseWriter, r *http.Request) {
 		Server string `json:"server"`
 		Folder string `json:"folder"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&body); err != nil {
+
+	err := json.NewDecoder(io.LimitReader(r.Body, smallBody)).Decode(&body)
+	if err != nil {
 		s.badRequest(w, "bad body", err)
+
 		return
 	}
+
 	if !upnp.MediaURL(r.Context(), body.URL) {
 		s.badRequest(w, "url must be an http(s) media URL", nil)
+
 		return
 	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), writeDeadline)
 	defer cancel()
+
 	s.upnpMu.Lock()
 	s.upnpGen++
 	gen := s.upnpGen
 	s.upnpMu.Unlock()
 	s.snapshotRecent(ctx)
 	s.backend.Wake(ctx)
-	if err := s.backend.Select(ctx, sourceUPnP, "", body.URL, body.Name, "", ""); err != nil {
+
+	err = s.backend.Select(ctx, sourceUPnP, "", body.URL, body.Name, "", "")
+	if err != nil {
 		s.fail(w, "play failed", err)
+
 		return
 	}
+
 	s.log.Info("play upnp", "name", body.Name)
 	s.queueFolder(ctx, gen, body.Server, body.Folder, body.URL)
 	s.hub.nudge()
-	writeJSON(w, http.StatusOK, map[string]string{"status": "playing"})
+	writeJSON(w, http.StatusOK, map[string]string{"status": statusPlaying})
 }
 
 // queueFolder makes the played folder the queue, after the track is selected, because the
@@ -92,12 +108,16 @@ func (s *Server) queueFolder(ctx context.Context, gen uint64, server, folder, ur
 	if s.upnpQueue == nil {
 		return
 	}
+
 	s.upnpMu.Lock()
 	defer s.upnpMu.Unlock()
+
 	if s.upnpGen != gen {
 		return
 	}
+
 	s.upnpQueue.Clear()
+
 	if s.upnpReg == nil || server == "" || folder == "" {
 		return
 	}
@@ -108,10 +128,13 @@ func (s *Server) queueFolder(ctx context.Context, gen uint64, server, folder, ur
 	if s.upnpGen != gen {
 		return
 	}
+
 	if err != nil {
 		s.log.Warn("upnp queue: browse", "err", err)
+
 		return
 	}
+
 	s.upnpQueue.Set(items, url)
 	// The tap only names the track; the folder knows who made it.
 	if it, ok := s.upnpQueue.Step(0); ok {
@@ -125,28 +148,39 @@ func (s *Server) queueFolder(ctx context.Context, gen uint64, server, folder, ur
 func (s *Server) upnpBrowse(w http.ResponseWriter, r *http.Request) {
 	if s.upnpReg == nil {
 		http.NotFound(w, r)
+
 		return
 	}
+
 	usn := r.URL.Query().Get("server")
-	id := r.URL.Query().Get("id")
+	itemID := r.URL.Query().Get("id")
+
 	if usn == "" {
 		s.badRequest(w, "server param required", nil)
+
 		return
 	}
-	if id == "" {
-		id = "0" // default: root
+
+	if itemID == "" {
+		itemID = "0" // default: root
 	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), slowReadDeadline)
 	defer cancel()
-	items, err := s.upnpReg.Browse(ctx, usn, id)
+
+	items, err := s.upnpReg.Browse(ctx, usn, itemID)
 	if errors.Is(err, upnp.ErrUnknownServer) {
 		apiError(w, http.StatusNotFound, "unknown server")
+
 		return
 	}
+
 	if err != nil {
 		s.fail(w, "browse failed", err)
+
 		return
 	}
+
 	writeJSON(w, http.StatusOK, items)
 }
 
@@ -154,32 +188,43 @@ func (s *Server) upnpBrowse(w http.ResponseWriter, r *http.Request) {
 func (s *Server) upnpModes(w http.ResponseWriter, _ *http.Request) {
 	if s.upnpQueue == nil {
 		http.NotFound(w, nil)
+
 		return
 	}
+
 	active, shuffle, repeat := s.upnpQueue.Modes()
-	writeJSON(w, http.StatusOK, map[string]any{"active": active, "shuffle": shuffle, "repeat": repeat}) //nolint:goconst // JSON keys of this one response
+	writeJSON(w, http.StatusOK, map[string]any{keyActive: active, "shuffle": shuffle, "repeat": repeat})
 }
 
 // POST /api/upnp/modes {"shuffle": bool, "repeat": "off"|"all"|"track"}; either may be left out.
 func (s *Server) upnpSetModes(w http.ResponseWriter, r *http.Request) {
 	if s.upnpQueue == nil {
 		http.NotFound(w, r)
+
 		return
 	}
+
 	var body struct {
 		Shuffle *bool   `json:"shuffle"`
 		Repeat  *string `json:"repeat"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
+
+	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, smallBody)).Decode(&body)
+	if err != nil {
 		s.badRequest(w, "invalid request", err)
+
 		return
 	}
+
 	if body.Repeat != nil && !s.upnpQueue.SetRepeat(*body.Repeat) {
 		s.badRequest(w, "repeat must be off, all or track", nil)
+
 		return
 	}
+
 	if body.Shuffle != nil {
 		s.upnpQueue.SetShuffle(*body.Shuffle)
 	}
+
 	s.upnpModes(w, r)
 }

@@ -32,24 +32,32 @@ func Search(ctx context.Context, hc *http.Client, term string) (string, error) {
 	if term == "" {
 		return "", nil
 	}
+
 	u := fmt.Sprintf("%s/search?media=music&entity=song&limit=1&term=%s", base, url.QueryEscape(term))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
 	if err != nil {
 		return "", err
 	}
+
 	req.Header.Set("User-Agent", "SoundTap/1.0")
+
 	resp, err := safehttp.Do(ctx, hc, req)
 	if err != nil {
 		return "", err
 	}
+
 	defer func() { _ = resp.Body.Close() }()
+
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("artwork: status %d", resp.StatusCode)
 	}
+
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 256<<10))
 	if err != nil {
 		return "", err
 	}
+
 	var sr struct {
 		Results []struct {
 			ArtworkURL100 string `json:"artworkUrl100"`
@@ -58,6 +66,7 @@ func Search(ctx context.Context, hc *http.Client, term string) (string, error) {
 	if err := json.Unmarshal(body, &sr); err != nil || len(sr.Results) == 0 {
 		return "", nil
 	}
+
 	art := sr.Results[0].ArtworkURL100
 	if art == "" {
 		return "", nil

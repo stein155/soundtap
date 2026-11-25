@@ -50,13 +50,18 @@ type Store struct {
 // replace a history that may still be intact on disk.
 func Open(path string) *Store {
 	s := &Store{path: path}
+
 	var loaded []Entry
+
 	s.loadErr = atomicjson.Load(path, &loaded)
 	atomicjson.LogLoad(slog.Default(), "recent list", path, s.loadErr)
+
 	if len(loaded) > maxEntries {
 		loaded = loaded[:maxEntries]
 	}
+
 	s.entries = loaded
+
 	return s
 }
 
@@ -70,10 +75,13 @@ func (s *Store) write(next []Entry) error {
 	}
 	// atomicjson fsyncs before the rename: a speaker's normal "off" is a power cut,
 	// and a plain tmp+rename can leave a zero-length file behind one.
-	if err := atomicjson.Write(s.path, next, fileMode); err != nil {
+	err := atomicjson.Write(s.path, next, fileMode)
+	if err != nil {
 		return err
 	}
+
 	s.entries = next
+
 	return nil
 }
 
@@ -83,27 +91,33 @@ func (s *Store) Record(e Entry) error {
 	if e.Source == "" || e.Source == "STANDBY" {
 		return nil
 	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	// Newest first, dropping any earlier entry for the same source+location so one
 	// station cannot fill the list.
 	next := make([]Entry, 0, min(len(s.entries)+1, maxEntries))
+
 	next = append(next, e)
 	for _, x := range s.entries {
 		if len(next) == maxEntries {
 			break
 		}
+
 		if x.Source == e.Source && x.Location == e.Location {
 			// A replay that reports no picture keeps the one looked up before: that
 			// lookup runs once per station, so a lost logo would not come back.
 			if next[0].Art == "" {
 				next[0].Art = x.Art
 			}
+
 			continue
 		}
+
 		next = append(next, x)
 	}
+
 	return s.write(next)
 }
 
@@ -112,14 +126,17 @@ func (s *Store) Record(e Entry) error {
 func (s *Store) SetArt(source, location, art string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	i := slices.IndexFunc(s.entries, func(x Entry) bool {
 		return x.Source == source && x.Location == location && x.Art == ""
 	})
 	if i < 0 {
 		return nil
 	}
+
 	next := slices.Clone(s.entries)
 	next[i].Art = art
+
 	return s.write(next)
 }
 
@@ -127,15 +144,18 @@ func (s *Store) SetArt(source, location, art string) error {
 func (s *Store) Remove(source, location string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	next := make([]Entry, 0, len(s.entries))
 	for _, x := range s.entries {
 		if x.Source != source || x.Location != location {
 			next = append(next, x)
 		}
 	}
+
 	if len(next) == len(s.entries) {
 		return nil
 	}
+
 	return s.write(next)
 }
 
@@ -144,11 +164,13 @@ func (s *Store) Remove(source, location string) error {
 func (s *Store) LastStation() (Entry, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	for _, e := range s.entries {
 		if e.Source == "TUNEIN" && e.Location != "" {
 			return e, true
 		}
 	}
+
 	return Entry{}, false
 }
 
@@ -156,7 +178,9 @@ func (s *Store) LastStation() (Entry, bool) {
 func (s *Store) All() []Entry {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	out := make([]Entry, len(s.entries))
 	copy(out, s.entries)
+
 	return out
 }

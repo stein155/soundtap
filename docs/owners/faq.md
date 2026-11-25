@@ -331,7 +331,8 @@ infrared remote can be taught key by key ([runbook](../../RUNBOOK.md#teaching-th
 ### What do the buttons do?
 
 - **AUX** (the source key): a tap switches between AUX and Bluetooth. Holding it picks
-  Bluetooth, as on stock. Bluetooth pairings are cleared on the speaker's web page.
+  Bluetooth, as on stock. A paired phone is forgotten on the speaker's Bluetooth page, one at
+  a time.
 - **Bluetooth** (Wireless Link): a tap picks Bluetooth; holding it opens pairing.
 - **POWER**: acts on the press. Holding it does nothing more: stock's low-power standby,
   which turns the network off, is not supported, because the speaker could then no longer be
@@ -406,26 +407,24 @@ Not yet as locked down as it will be at 1.0. Like the original Bose software, it
 on your network control the speaker, and there is no login on its web page yet. Published
 packages, alphas included, have no SSH at all, so you never need to log in to the speaker
 (only self-built development images accept a root login without a password): for a bug report, attach the [support bundle](#how-do-i-report-a-bug). Use
-SoundTap 0.x on a network you trust; see [SECURITY.md](../../SECURITY.md). Published updates are signed. Production images refuse unsigned updates; alpha images
-can explicitly allow unsigned development candidates (ADR 0048).
+SoundTap 0.x on a network you trust; see [SECURITY.md](../../SECURITY.md). Published updates are signed, and only a signed release the speaker fetches itself installs without you. A
+file you upload, signed or not, installs only when you press a button on the speaker
+(ADR 0048).
 
 ### Can I install my own builds?
 
-Yes. Build SoundTap yourself, sign the build with an ed25519 key of your own
-(`tools/release/sign.sh` with `SOUNDTAP_OWNER_KEY_FILE`, see
-[RELEASING.md](../../RELEASING.md#signing-your-own-builds)), and paste the key's public half on
-the speaker's Updates page under *Your own signing key*; a button held on the speaker confirms
-it. The page then shows the key's fingerprint. From then on that speaker installs what you
-sign from the Updates page, under the same rules as a SoundTap release:
-a production speaker takes a production build, and going back to an older version needs the
-downgrade confirmation. Other speakers are unaffected. *Remove the key* on the same page, or a
-factory reset, takes it away again; a backup never carries it, and neither a restore nor Home
-Assistant can set it ([ADR 0048](../decisions/0048-signed-updates.md#the-owners-own-key)).
+Yes, without a key. Build SoundTap yourself, open the speaker's Updates page, choose *Other
+ways* → *Upload a file* and pick your `.stu`. The speaker checks it and says it is not signed;
+choose *Install firmware* and hold a button on the speaker to confirm. Every upload waits for
+that press, so nobody else on the network can install one without it
+([RELEASING.md](../../RELEASING.md#installing-your-own-builds),
+[ADR 0048](../decisions/0048-signed-updates.md)). The USB stick at power-on takes your build too,
+renamed `Update.stu`.
 
 ### Why does the speaker ask me to hold a button?
 
-Resetting, rebooting, changing Wi-Fi, forgetting the paired Bluetooth
-devices, installing firmware, setting or removing your own signing key and reading debug data
+Resetting, rebooting, changing Wi-Fi, forgetting a paired Bluetooth
+device, installing an uploaded file and reading debug data
 only go ahead after someone holds a button on the speaker for two seconds within a minute. Any
 button on the speaker itself counts except volume, which keeps working while it waits; a short
 press and the remote do not count. A SoundTouch 300 has no buttons, so there you hold a key on
@@ -436,9 +435,10 @@ button to reset*) and the web page shows the same request. If another request co
 meanwhile, it replaces the first, and the first request's page says so. Everything else, such
 as volume, sources and presets, works without a hold.
 
-One exception: *Update now* installs the latest stable app update without a hold. Choosing a
-specific release still asks for one, as do installing a newer SoundTap Core and uploading
-firmware by hand. These are the production rules; on alpha images a device confirmation token
-can stand in for the hold.
+Updates the speaker fetches itself need no hold: *Update now*, *Update* on a newer app or
+SoundTap Core (it asks once, then the speaker updates and restarts by itself), and choosing a
+specific release (an older one included). Every file you upload asks for the hold, with or
+without its `.sig`: your own build, Bose's update file, or a release you downloaded. These are
+the production rules; on alpha images a device confirmation token can stand in for the hold.
 See [ADR 0055](../decisions/0055-household-token-and-windows.md) and
 [ADR 0118](../decisions/0118-update-button-without-press.md).

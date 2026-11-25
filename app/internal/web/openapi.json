@@ -468,7 +468,7 @@
         "tags": [
           "Playback"
         ],
-        "summary": "The saved favorites, in the order they were saved",
+        "summary": "The saved favorites: the first is the one the list offers",
         "responses": {
           "200": {
             "description": "OK",
@@ -492,7 +492,7 @@
         "tags": [
           "Playback"
         ],
-        "summary": "Remove one favorite",
+        "summary": "Remove one favorite; removing the first, the one the list offers, empties the list",
         "requestBody": {
           "required": true,
           "content": {
@@ -535,7 +535,7 @@
         "tags": [
           "Playback"
         ],
-        "summary": "Save a favorite; a full list answers 409",
+        "summary": "Save the favorite; the list becomes this one alone",
         "requestBody": {
           "required": true,
           "content": {
@@ -2815,6 +2815,60 @@
         ]
       }
     },
+    "/api/bluetooth/forget": {
+      "post": {
+        "tags": [
+          "Connectivity"
+        ],
+        "summary": "Forget one paired device",
+        "description": "Forgets the paired device with this address, as GET /api/bluetooth lists it. The body and the pairing are checked first: a malformed body is 400 and an address no paired device has is 404 at once. Only then does it wait for a key held on the speaker. 404 too when the pairing went while it waited.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "address": {
+                    "type": "string",
+                    "description": "The device's Bluetooth address, AA:BB:CC:DD:EE:FF."
+                  }
+                },
+                "required": [
+                  "address"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
     "/api/wifi/scan": {
       "post": {
         "tags": [
@@ -3554,7 +3608,7 @@
           "Firmware"
         ],
         "summary": "Install the newest SoundTap Core release",
-        "description": "Waits for a button held on the speaker. The speaker downloads the newest stable Core release that is newer than the running one and streams it into the same install as POST /api/firmware?install=1, signature and version checks included. confirm must be true. The answer is the install's report; reboot to start the new slot. 200 with status current when no newer release exists.",
+        "description": "No press: the speaker fetches the release itself and installs it only when its .sig verifies (ADR 0048). The speaker downloads the newest stable Core release that is newer than the running one and streams it into the same install as POST /api/firmware?install=1, signature and version checks included. confirm must be true. The answer is the install's report; once the new slot is written, selected and the report saved, the speaker restarts into it on its own (restarting true), never after a failure. 200 with status current when no newer release exists.",
         "requestBody": {
           "required": true,
           "content": {
@@ -3628,7 +3682,7 @@
           "Firmware"
         ],
         "summary": "Check or install a .stu package",
-        "description": "Raw package as the body (not multipart), streamed and never stored.",
+        "description": "Raw package as the body (not multipart), streamed and never stored. With ?install=1 every package waits for the press on the speaker, signed or not; a signature that does not verify is refused, and an older signed one needs X-SoundTap-Confirm: downgrade (ADR 0048).",
         "parameters": [
           {
             "name": "install",
@@ -3642,7 +3696,7 @@
           {
             "name": "X-SoundTap-Confirm",
             "in": "header",
-            "description": "With ?install=1: install for the same or a newer SoundTap, downgrade for an older one, stock for Bose firmware (ADR 0048).",
+            "description": "With ?install=1: install for the same or a newer SoundTap or an unsigned build, downgrade for an older one, stock for Bose firmware (ADR 0048).",
             "schema": {
               "type": "string"
             }
@@ -3691,7 +3745,7 @@
           "Firmware"
         ],
         "summary": "Replace the soundtapd binary",
-        "description": "Needs a signed upload.",
+        "description": "Every binary waits for the press on the speaker, signed or not; a signature that does not verify is refused (ADR 0048).",
         "parameters": [
           {
             "name": "X-SoundTap-Confirm",
@@ -3771,108 +3825,6 @@
             "$ref": "#/components/responses/Error"
           }
         }
-      }
-    },
-    "/api/owner-key": {
-      "get": {
-        "tags": [
-          "Firmware"
-        ],
-        "summary": "Owner key",
-        "description": "Whether an owner key is set: an ed25519 public key whose signed packages this speaker installs next to the release keys' (ADR 0048).",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OwnerKey"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "Firmware"
-        ],
-        "summary": "Set the owner key",
-        "description": "Waits for a key held on the speaker. key is the base64 of the 32 raw bytes of an ed25519 public key. It is kept in both copies of the U-Boot environment, so the USB-stick recovery trusts it too.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "key"
-                ],
-                "properties": {
-                  "key": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OwnerKey"
-                }
-              }
-            }
-          },
-          "501": {
-            "description": "This speaker has no U-Boot environment to keep a key in."
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/Request"
-          }
-        ]
-      },
-      "delete": {
-        "tags": [
-          "Firmware"
-        ],
-        "summary": "Remove the owner key",
-        "description": "Waits for a key held on the speaker. Afterwards only the release keys are trusted. A factory reset removes it as well.",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OwnerKey"
-                }
-              }
-            }
-          },
-          "501": {
-            "description": "This speaker has no U-Boot environment to keep a key in."
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/Request"
-          }
-        ]
       }
     },
     "/api/channel": {
@@ -4991,6 +4943,12 @@
               "type": "string"
             },
             "description": "What this speaker has: bluetooth (an adapter is present), ir, keypad, aux, display, battery. An open list: ignore values you do not know."
+          },
+          "updateProgress": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 99,
+            "description": "How far an update under way is, in percent: an app release downloading to the speaker (POST /api/update), or a Core package written to the spare slot (POST /api/core-update, or an upload to POST /api/firmware?install=1) as it streams in. Absent when no update runs or its size is unknown. It stops at 99: the last steps follow the last byte."
           }
         },
         "required": [
@@ -5529,6 +5487,10 @@
           "installed": {
             "type": "boolean"
           },
+          "restarting": {
+            "type": "boolean",
+            "description": "The speaker restarts into the installed slot on its own: a Core release it fetched itself (POST /api/core-update)."
+          },
           "slot": {
             "type": "string",
             "description": "Slot written."
@@ -5668,10 +5630,6 @@
           },
           "timezone": {
             "type": "string"
-          },
-          "brightness": {
-            "type": "integer",
-            "description": "Clock peak in percent; absent is the default."
           }
         },
         "required": [
@@ -6105,31 +6063,6 @@
           "boot",
           "counters"
         ]
-      },
-      "OwnerKey": {
-        "type": "object",
-        "required": [
-          "available",
-          "active"
-        ],
-        "properties": {
-          "available": {
-            "type": "boolean",
-            "description": "The speaker has an environment the key can be kept in."
-          },
-          "active": {
-            "type": "boolean",
-            "description": "An owner key is set and trusted."
-          },
-          "key": {
-            "type": "string",
-            "description": "The public key, base64 of its 32 raw bytes."
-          },
-          "fingerprint": {
-            "type": "string",
-            "description": "The first 8 bytes of the key's SHA-256, in hex."
-          }
-        }
       },
       "CrashReport": {
         "type": "object",

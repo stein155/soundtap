@@ -5,6 +5,7 @@ package main
 
 import (
 	"log/slog"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -17,6 +18,12 @@ import (
 
 // keySourceToggle is the source key: AUX and Bluetooth on a tap, Bluetooth on a hold.
 const keySourceToggle = hw.KeySourceToggle
+
+// The volume keys' action names, as the keymaps spell them.
+const (
+	keyVolumeUp   = "VOLUME_UP"
+	keyVolumeDown = "VOLUME_DOWN"
+)
 
 const (
 	holdToStore = 1750 * time.Millisecond
@@ -45,33 +52,45 @@ const (
 func recoveryChords(factoryReset, setupMode func()) []chord {
 	return []chord{
 		// Stock: preset 1 + volume down, ten seconds.
-		{name: "factory-reset", keys: []string{"PRESET_1", "VOLUME_DOWN"}, hold: chordHold, action: factoryReset},
+		{name: "factory-reset", keys: []string{"PRESET_1", keyVolumeDown}, hold: chordHold, action: factoryReset},
 		// Stock: preset 2 + volume down, held until the light turns amber.
-		{name: "setup-mode", keys: []string{"PRESET_2", "VOLUME_DOWN"}, hold: chordHold, action: setupMode},
+		{name: "setup-mode", keys: []string{"PRESET_2", keyVolumeDown}, hold: chordHold, action: setupMode},
 		// The Wireless Link has only these two keys, and a network that went away left it
 		// with no way into setup short of a USB update. Our gesture, see docs/hardware/wla/buttons.md.
-		{name: "setup-mode-two-keys", keys: []string{keySourceToggle, sourceBluetooth}, hold: chordHold, action: setupMode},
+		{
+			name: "setup-mode-two-keys", keys: []string{keySourceToggle, sourceBluetooth},
+			hold: chordHold, action: setupMode,
+		},
 	}
 }
 
 // resetLock is the operations lock a physical factory reset takes and never gives back:
 // soundtapd exits holding it, so no install starts between the reset and the restart. A
 // package variable, so its open lock file is never collected and closed under it.
+//
+//nolint:gochecknoglobals // process-wide state: held from the reset until the process exits
 var resetLock oplock.Lock
 
 // exclusive runs action under the operations lock, taken when the chord fires and not when
 // it was pressed: a BCO flash never sets firmwareActive, and an install that started while
-// the chord was counting down must still win. release false keeps the lock after
-// action returns.
-func exclusive(op *oplock.Lock, release bool, refused, action func()) func() {
+// the chord was counting down must still win. The lock is given back when action returns.
+func exclusive(op *oplock.Lock, refused, action func()) func() {
+	return exclusiveKept(op, refused, func() {
+		defer op.Unlock()
+
+		action()
+	})
+}
+
+// exclusiveKept is exclusive that keeps the lock after action returns.
+func exclusiveKept(op *oplock.Lock, refused, action func()) func() {
 	return func() {
 		if !op.TryLock() {
 			refused()
+
 			return
 		}
-		if release {
-			defer op.Unlock()
-		}
+
 		action()
 	}
 }
@@ -135,6 +154,8 @@ const (
 
 // chordCounting is set while a chord is held and has not fired, so the lamps show it is
 // working: stock has its own lamp state for this, and the holds run for many seconds.
+//
+//nolint:gochecknoglobals // process-wide state: the key loops set it, the lamp loop reads it
 var chordCounting atomic.Bool
 
 // chord is a two-or-more-key gesture held for a while — the stock speaker's
@@ -150,24 +171,38 @@ type chord struct {
 
 func newButtonHandler(sp keyActor, log *slog.Logger, chords ...chord) *buttonHandler {
 	return &buttonHandler{
-		sp:        sp,
-		log:       log,
-		holds:     map[int]*time.Timer{},
-		repeats:   map[int]chan struct{}{},
-		chords:    chords,
-		down:      map[string]bool{},
-		downIndex: map[string]int{},
-		swallow:   map[string]bool{},
+		sp:           sp,
+		log:          log,
+		feedback:     nil,
+		chime:        nil,
+		auxHoldBT:    false,
+		btPair:       nil,
+		holds:        map[int]*time.Timer{},
+		repeats:      map[int]chan struct{}{},
+		chords:       chords,
+		down:         map[string]bool{},
+		downIndex:    map[string]int{},
+		chordTimer:   nil,
+		chordStop:    nil,
+		chordArmed:   "",
+		chordSince:   time.Time{},
+		swallow:      map[string]bool{},
+		confirms:     false,
+		confirmKey:   "",
+		confirmTimer: nil,
+		confirmLog:   nil,
 	}
 }
 
 func isVolumeKey(action string) bool {
-	return action == "VOLUME_UP" || action == "VOLUME_DOWN"
+	return action == keyVolumeUp || action == keyVolumeDown
 }
 
 // Handle takes one key edge of the panel, a key device or the remote (hw.KeySink).
+//
+//nolint:revive // hw.KeySink's signature: pressed is the edge, which Handle routes on
 func (h *buttonHandler) Handle(index int, pressed bool, action string) {
-	if h.confirming(pressed, action) {
+	if pressed && h.confirmPressed(action) || !pressed && h.confirmReleased(action) {
 		return
 	}
 	// An install owns the speaker, as stock's update state does: no preset, source,
@@ -177,39 +212,58 @@ func (h *buttonHandler) Handle(index int, pressed bool, action string) {
 	if pressed && !isVolumeKey(action) && firmwareActive.Load() {
 		h.log.Info("button ignored: firmware install in progress", "key", action)
 		h.show("Updating")
+
 		return
 	}
+
 	h.down[action] = pressed
 	if pressed {
 		frontPanel.Touch()
+
 		h.downIndex[action] = index
 		delete(h.swallow, action)
 	} else if h.swallow[action] {
 		delete(h.swallow, action)
+
 		return
 	}
-	if h.chordEdge(pressed, action) {
+
+	if pressed {
+		if h.chordPressed() {
+			return
+		}
+
+		h.dispatchPress(index, action)
+
 		return
 	}
-	h.dispatch(index, pressed, action)
+
+	if h.chordReleased(action) {
+		return
+	}
+
+	h.dispatchRelease(index, action)
 }
 
-// chordEdge takes an edge that arms or ends a recovery chord, and reports whether it
-// took it.
-func (h *buttonHandler) chordEdge(pressed bool, action string) bool {
-	if pressed {
-		if !h.armChord() {
-			return false
-		}
-		// The gesture is a chord now, not two single presses: drop the store
-		// timer the preset key armed and the ramp the volume key started, so
-		// releasing out of a recovery combo cannot also store a preset.
-		h.cancelGestures()
-		return true
+// chordPressed takes a press that arms a recovery chord, and reports whether it took it.
+func (h *buttonHandler) chordPressed() bool {
+	if !h.armChord() {
+		return false
 	}
+	// The gesture is a chord now, not two single presses: drop the store
+	// timer the preset key armed and the ramp the volume key started, so
+	// releasing out of a recovery combo cannot also store a preset.
+	h.cancelGestures()
+
+	return true
+}
+
+// chordReleased takes a release that ends a recovery chord, and reports whether it took it.
+func (h *buttonHandler) chordReleased(action string) bool {
 	if h.chordArmed == "" || !contains(h.chords, h.chordArmed, action) {
 		return false
 	}
+
 	held := time.Since(h.chordSince)
 	if h.disarmChord() {
 		if held < chordMeant {
@@ -223,25 +277,37 @@ func (h *buttonHandler) chordEdge(pressed bool, action string) bool {
 			}
 		}
 	}
+
 	return true
 }
 
-// dispatch acts on an edge that is neither a confirmation nor part of a chord.
-func (h *buttonHandler) dispatch(index int, pressed bool, action string) {
+// dispatchRelease acts on a release that is neither a confirmation nor part of a chord.
+func (h *buttonHandler) dispatchRelease(index int, action string) {
 	switch {
 	case strings.HasPrefix(action, "PRESET_"):
-		h.preset(index, pressed, action)
+		h.presetReleased(index, action)
 	case isVolumeKey(action):
-		if pressed {
-			h.startRepeat(index, action)
-		} else {
-			h.stopRepeat(index)
-		}
+		h.stopRepeat(index)
 	case action == sourceBluetooth && h.btPair != nil:
-		h.bluetoothHold(index, pressed)
+		h.bluetoothReleased(index)
 	case action == keySourceToggle && h.auxHoldBT:
-		h.sourceToggleHold(index, pressed)
-	case pressed:
+		h.sourceToggleReleased(index)
+	default: // the other keys act on their press
+	}
+}
+
+// dispatchPress acts on a press that is neither a confirmation nor part of a chord.
+func (h *buttonHandler) dispatchPress(index int, action string) {
+	switch {
+	case strings.HasPrefix(action, "PRESET_"):
+		h.presetPressed(index, action)
+	case isVolumeKey(action):
+		h.startRepeat(index, action)
+	case action == sourceBluetooth && h.btPair != nil:
+		h.bluetoothPressed(index)
+	case action == keySourceToggle && h.auxHoldBT:
+		h.sourceTogglePressed(index)
+	default:
 		// On press, including POWER, and that is stock's behaviour rather than an
 		// oversight. CSystemController's key handler branches on a per-product flag
 		// before it looks at the state field: without it, `tst.w r3xf000` takes
@@ -254,36 +320,46 @@ func (h *buttonHandler) dispatch(index int, pressed bool, action string) {
 	}
 }
 
-// confirming takes the keys that confirm a waiting request, and reports whether it took
-// this edge. While a request waits, a key on the panel other than volume belongs to the
+// confirmReleased takes the release of the key held to confirm a waiting request, and
+// reports whether it took it (confirmPressed).
+func (h *buttonHandler) confirmReleased(action string) bool {
+	if h.confirmKey == "" || action != h.confirmKey {
+		return false
+	}
+
+	if h.confirmTimer.Stop() {
+		h.log.Info("button released before it confirmed", "key", action, "hold", confirmHold)
+		confirmer.remind()
+	}
+
+	h.confirmKey, h.confirmTimer = "", nil
+
+	return true
+}
+
+// confirmPressed takes the keys that confirm a waiting request, and reports whether it took
+// this press. While a request waits, a key on the panel other than volume belongs to the
 // confirmation: held for confirmHold it confirms the request that was waiting when the
 // key went down, and a shorter press confirms nothing. Neither plays, stores or switches
 // anything, and the release is swallowed. Volume keys keep working, so someone can still
 // turn the speaker down while it waits.
-func (h *buttonHandler) confirming(pressed bool, action string) bool {
-	if !pressed {
-		if h.confirmKey == "" || action != h.confirmKey {
-			return false
-		}
-		if h.confirmTimer.Stop() {
-			h.log.Info("button released before it confirmed", "key", action, "hold", confirmHold)
-			confirmer.remind()
-		}
-		h.confirmKey, h.confirmTimer = "", nil
-		return true
-	}
+func (h *buttonHandler) confirmPressed(action string) bool {
 	if !h.confirms || isVolumeKey(action) {
 		return false
 	}
+
 	gen := confirmer.waiting()
 	if gen == 0 {
 		return false
 	}
+
 	if h.confirmKey != "" {
 		// One key confirms; a second one pressed meanwhile does nothing, release included.
 		h.swallow[action] = true
+
 		return true
 	}
+
 	attrs := append([]any{"key", action}, h.confirmLog...)
 	h.log.Info("button held for a waiting request", attrs...)
 	h.confirmKey = action
@@ -292,6 +368,7 @@ func (h *buttonHandler) confirming(pressed bool, action string) bool {
 			h.log.Info("button confirmed a request", attrs...)
 		}
 	})
+
 	return true
 }
 
@@ -308,28 +385,36 @@ func (h *buttonHandler) armChord() bool {
 	if h.chordArmed != "" {
 		return true // already counting; this press is part of it
 	}
-	for _, c := range h.chords {
-		if !allDown(h.down, c.keys) {
+
+	for _, chordDef := range h.chords {
+		if !allDown(h.down, chordDef.keys) {
 			continue
 		}
-		name, action := c.name, c.action
+
+		name, action := chordDef.name, chordDef.action
 		h.chordArmed, h.chordSince = name, time.Now()
-		h.log.Info("chord held, counting down", "chord", name, "hold", c.hold)
+		h.log.Info("chord held, counting down", "chord", name, "hold", chordDef.hold)
+
 		text := holdForSetup
 		if name == "factory-reset" {
 			text = holdToReset
 		}
+
 		h.show(text)
 		chordCounting.Store(true)
+
 		h.chordStop = make(chan struct{})
-		go h.countDown(text, int(c.hold/time.Second)-1, h.chordStop)
-		h.chordTimer = time.AfterFunc(c.hold, func() {
+		go h.countDown(text, int(chordDef.hold/time.Second)-1, h.chordStop)
+
+		h.chordTimer = time.AfterFunc(chordDef.hold, func() {
 			chordCounting.Store(false)
 			h.log.Warn("chord fired", "chord", name)
 			action()
 		})
+
 		return true
 	}
+
 	return false
 }
 
@@ -352,12 +437,16 @@ func (h *buttonHandler) disarmChord() bool {
 		close(h.chordStop)
 		h.chordStop = nil
 	}
+
 	chordCounting.Store(false)
+
 	canceled := h.chordTimer != nil && h.chordTimer.Stop()
 	if canceled {
 		h.log.Info("chord released early", "chord", h.chordArmed)
 	}
+
 	h.chordTimer, h.chordArmed = nil, ""
+
 	return canceled
 }
 
@@ -366,9 +455,10 @@ func (h *buttonHandler) resumeChordGestures() {
 		if !pressed {
 			continue
 		}
+
 		index := h.downIndex[action]
 		if strings.HasPrefix(action, "PRESET_") {
-			h.preset(index, true, action)
+			h.presetPressed(index, action)
 		} else if isVolumeKey(action) {
 			h.startRepeat(index, action)
 		}
@@ -378,10 +468,12 @@ func (h *buttonHandler) resumeChordGestures() {
 // cancelGestures drops the per-key holds and ramps without touching chord state.
 func (h *buttonHandler) cancelGestures() {
 	frontPanel.PresetUp()
+
 	for index, t := range h.holds {
 		t.Stop()
 		delete(h.holds, index)
 	}
+
 	for index := range h.repeats {
 		h.stopRepeat(index)
 	}
@@ -393,6 +485,7 @@ func allDown(down map[string]bool, keys []string) bool {
 			return false
 		}
 	}
+
 	return len(keys) > 0
 }
 
@@ -402,12 +495,12 @@ func contains(chords []chord, name, action string) bool {
 		if c.name != name {
 			continue
 		}
-		for _, k := range c.keys {
-			if k == action {
-				return true
-			}
+
+		if slices.Contains(c.keys, action) {
+			return true
 		}
 	}
+
 	return false
 }
 
@@ -421,6 +514,7 @@ func (h *buttonHandler) armHold(index int, d time.Duration, fn func()) {
 	if t := h.holds[index]; t != nil {
 		t.Stop()
 	}
+
 	h.holds[index] = time.AfterFunc(d, fn)
 }
 
@@ -430,56 +524,71 @@ func (h *buttonHandler) armHold(index int, d time.Duration, fn func()) {
 func (h *buttonHandler) releaseHold(index int) bool {
 	t := h.holds[index]
 	delete(h.holds, index)
+
 	return t != nil && t.Stop()
 }
 
-func (h *buttonHandler) preset(index int, pressed bool, action string) {
-	n, _ := strconv.Atoi(strings.TrimPrefix(action, "PRESET_"))
-	if pressed {
-		// The panel shows the "storing" bar once the key is held a moment (panelState).
-		frontPanel.PresetDown(n)
-		h.armHold(index, holdToStore, func() {
-			stored, err := h.sp.StoreCurrentAsPreset(action)
-			if err != nil {
-				h.log.Error("button store preset", "key", action, "err", err)
-				frontPanel.PresetUp()
-				h.show("Preset store failed")
-			} else if stored {
-				h.log.Info("button store preset (held)", "key", action)
-				frontPanel.PresetStored()
-				if h.chime != nil {
-					h.chime()
-				}
-			} else {
-				h.log.Info("button store: nothing storable", "key", action)
-				frontPanel.PresetUp()
-				h.show("Nothing to store")
+// presetNumber is the slot a PRESET_n action names.
+func presetNumber(action string) int {
+	preset, _ := strconv.Atoi(strings.TrimPrefix(action, "PRESET_"))
+
+	return preset
+}
+
+// presetPressed arms the store of a preset held for holdToStore.
+func (h *buttonHandler) presetPressed(index int, action string) {
+	// The panel shows the "storing" bar once the key is held a moment (panelState).
+	frontPanel.PresetDown(presetNumber(action))
+	h.armHold(index, holdToStore, func() {
+		stored, err := h.sp.StoreCurrentAsPreset(action)
+
+		switch {
+		case err != nil:
+			h.log.Error("button store preset", "key", action, "err", err)
+			frontPanel.PresetUp()
+			h.show("Preset store failed")
+		case stored:
+			h.log.Info("button store preset (held)", "key", action)
+			frontPanel.PresetStored()
+
+			if h.chime != nil {
+				h.chime()
 			}
-		})
-		return
-	}
+		default:
+			h.log.Info("button store: nothing storable", "key", action)
+			frontPanel.PresetUp()
+			h.show("Nothing to store")
+		}
+	})
+}
+
+// presetReleased plays a preset tapped shorter than holdToStore.
+func (h *buttonHandler) presetReleased(index int, action string) {
 	// A pending timer means the store never fired, so this is a short tap. As stock shows
 	// the preset's number at once: a station can take seconds to start.
 	if h.releaseHold(index) {
 		h.log.Info("button play", "key", action)
-		frontPanel.PresetTapped(n)
+		frontPanel.PresetTapped(presetNumber(action))
 		h.sp.ApplyKey(action)
+
 		return
 	}
+
 	frontPanel.PresetUp()
 }
 
 // sourceToggleHold is stock's source key: a tap toggles the source, a press-and-hold
 // selects Bluetooth (BoseApp: "KEY_VAL_AUX_INPUT pressed in PnH"). Pairings are cleared
 // on the web page only. The hold timer is keyed by device index like preset holds.
-func (h *buttonHandler) sourceToggleHold(index int, pressed bool) {
-	if pressed {
-		h.armHold(index, holdToStore, func() {
-			h.log.Info("source hold: selecting Bluetooth")
-			h.sp.ApplyKey(sourceBluetooth)
-		})
-		return
-	}
+func (h *buttonHandler) sourceTogglePressed(index int) {
+	h.armHold(index, holdToStore, func() {
+		h.log.Info("source hold: selecting Bluetooth")
+		h.sp.ApplyKey(sourceBluetooth)
+	})
+}
+
+// sourceToggleReleased toggles the source after a tap of the source key (sourceTogglePressed).
+func (h *buttonHandler) sourceToggleReleased(index int) {
 	if h.releaseHold(index) {
 		// Timer not yet fired: this was a short tap, do the normal toggle.
 		h.log.Info("button", "key", keySourceToggle)
@@ -490,15 +599,16 @@ func (h *buttonHandler) sourceToggleHold(index int, pressed bool) {
 
 // bluetoothHold is the Bluetooth key: a tap selects Bluetooth, a press-and-hold opens the
 // pairing window, as the stock key does.
-func (h *buttonHandler) bluetoothHold(index int, pressed bool) {
-	if pressed {
-		h.armHold(index, holdToStore, func() {
-			h.log.Info("bluetooth hold: opening the pairing window")
-			h.sp.ApplyKey(sourceBluetooth)
-			h.btPair()
-		})
-		return
-	}
+func (h *buttonHandler) bluetoothPressed(index int) {
+	h.armHold(index, holdToStore, func() {
+		h.log.Info("bluetooth hold: opening the pairing window")
+		h.sp.ApplyKey(sourceBluetooth)
+		h.btPair()
+	})
+}
+
+// bluetoothReleased selects Bluetooth after a tap of the Bluetooth key (bluetoothPressed).
+func (h *buttonHandler) bluetoothReleased(index int) {
 	if h.releaseHold(index) {
 		h.log.Info("button", "key", sourceBluetooth)
 		h.sp.ApplyKey(sourceBluetooth)

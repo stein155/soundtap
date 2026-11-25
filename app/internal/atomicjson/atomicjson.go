@@ -14,6 +14,7 @@ package atomicjson
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -25,8 +26,9 @@ import (
 func Write(path string, v any, mode fs.FileMode) error {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("encode %s: %w", path, err)
 	}
+
 	return WriteFile(path, data, mode)
 }
 
@@ -35,7 +37,11 @@ func Write(path string, v any, mode fs.FileMode) error {
 func WriteFile(path string, data []byte, mode fs.FileMode) error {
 	return WriteStream(path, mode, func(w io.Writer) error {
 		_, err := w.Write(data)
-		return err
+		if err != nil {
+			return fmt.Errorf("write %s: %w", path, err)
+		}
+
+		return nil
 	})
 }
 
@@ -46,38 +52,49 @@ func WriteStream(path string, mode fs.FileMode, write func(io.Writer) error) err
 	// fsync the data before the rename, else power loss (a speaker's normal
 	// off-switch) can journal the rename ahead of the data blocks and leave a
 	// zero-length/truncated target — the very corruption this package prevents.
-	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	file, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
-		return err
+		return fmt.Errorf("create temporary file for %s: %w", path, err)
 	}
-	tmp := f.Name()
-	err = f.Chmod(mode)
+
+	tmp := file.Name()
+
+	err = file.Chmod(mode)
 	if err == nil {
-		err = write(f)
+		err = write(file)
 	}
+
 	if err == nil {
-		err = f.Sync()
+		err = file.Sync()
 	}
-	if cerr := f.Close(); err == nil {
+
+	if cerr := file.Close(); err == nil {
 		err = cerr
 	}
+
 	if err == nil {
 		err = os.Rename(tmp, path)
 	}
+
 	if err != nil {
 		_ = os.Remove(tmp) // best effort: the error that matters is err
-		return err
+
+		return fmt.Errorf("replace %s: %w", path, err)
 	}
 	// fsync the directory so the rename itself survives power loss. Its error is not
 	// returned: the rename is done and the new content is what path holds now, so a
 	// caller told "failed" would keep old state in memory over a file that has the new.
 	syncDir(filepath.Dir(path))
+
 	return nil
 }
 
 func syncDir(dir string) {
-	if d, err := os.Open(dir); err == nil {
-		_ = d.Sync()  // see WriteStream
-		_ = d.Close() // read-only descriptor: nothing to flush
+	dirFile, err := os.Open(dir)
+	if err != nil {
+		return
 	}
+
+	_ = dirFile.Sync()  // see WriteStream
+	_ = dirFile.Close() // read-only descriptor: nothing to flush
 }

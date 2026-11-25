@@ -22,20 +22,32 @@ import (
 	"github.com/stein155/soundtap/app/internal/upnp"
 )
 
+const (
+	// tuneinAnswerLimit bounds a TuneIn answer relayed to the UI.
+	tuneinAnswerLimit = 256 << 10
+	// stationAskTimeout bounds asking whether a station plays.
+	stationAskTimeout = 3 * time.Second
+)
+
 func (s *Server) search(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query().Get("q")
-	if q == "" {
-		writeJSON(w, 200, []tunein.Station{})
+	query := r.URL.Query().Get("q")
+	if query == "" {
+		writeJSON(w, http.StatusOK, []tunein.Station{})
+
 		return
 	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), slowReadDeadline)
 	defer cancel()
-	stations, err := s.tunein.Search(ctx, q)
+
+	stations, err := s.tunein.Search(ctx, query)
 	if err != nil {
 		s.fail(w, "search failed", err)
+
 		return
 	}
-	writeJSON(w, 200, stations)
+
+	writeJSON(w, http.StatusOK, stations)
 }
 
 // tuneinProxy mirrors a request to https://opml.radiotime.com so the browser can
@@ -45,13 +57,16 @@ func (s *Server) tuneinProxy(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/tunein")
 	if path == "" || path == "/" {
 		apiError(w, http.StatusBadRequest, "missing path")
+
 		return
 	}
+
 	target := tuneInBase + path
 	if r.URL.RawQuery != "" {
 		target += "?" + r.URL.RawQuery
 	}
-	s.relay(w, r, target, "application/json", 256*1024, "")
+
+	s.relay(w, r, target, "application/json", tuneinAnswerLimit, "")
 }
 
 // logoProxy fetches a TuneIn/CDN logo image given ?u=<absolute url>. Only http/
@@ -60,22 +75,26 @@ func (s *Server) logoProxy(w http.ResponseWriter, r *http.Request) {
 	raw := r.URL.Query().Get("u")
 	if raw == "" {
 		apiError(w, http.StatusBadRequest, "missing u")
+
 		return
 	}
-	u, err := url.Parse(raw)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+
+	parsed, err := url.Parse(raw)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
 		apiError(w, http.StatusBadRequest, "bad url")
+
 		return
 	}
 	// Logos live on public CDNs. Refuse loopback/LAN targets so the proxy can't
 	// be used to reach the speaker's own loopback-only routes or other LAN hosts.
-	if !publicHost(r.Context(), u.Hostname()) {
+	if !publicHost(r.Context(), parsed.Hostname()) {
 		apiError(w, http.StatusBadRequest, "bad url")
+
 		return
 	}
 	// A logo at a given URL does not change; let the browser keep it instead of asking
 	// the speaker (and the speaker the CDN) on every page load.
-	s.relay(w, r, u.String(), "image/png", logoMaxBytes, "public, max-age=86400")
+	s.relay(w, r, parsed.String(), "image/png", logoMaxBytes, "public, max-age=86400")
 }
 
 // publicHost reports whether host resolves exclusively to globally routable
@@ -88,11 +107,13 @@ func publicHost(ctx context.Context, host string) bool {
 	if err != nil || len(ips) == 0 {
 		return false
 	}
+
 	for _, ip := range ips {
 		if !safehttp.PublicIP(ip.IP) {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -114,20 +135,28 @@ func sandboxForeign(h http.Header) {
 // relay performs a bounded upstream GET and copies the response back. fallbackCT
 // is used only when the upstream omits a Content-Type; cache, when set, is the
 // Cache-Control of a 200 answer.
-func (s *Server) relay(w http.ResponseWriter, r *http.Request, target, fallbackCT string, max int64, cache string) {
+func (s *Server) relay(w http.ResponseWriter, r *http.Request, target, fallbackCT string, limit int64, cache string) {
 	ctx, cancel := context.WithTimeout(r.Context(), slowReadDeadline)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+
+	// G704: callers pass TuneIn's fixed API base or a host publicHost accepted, and
+	// s.proxy dials public addresses only.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody) //nolint:gosec // G704: see above
 	if err != nil {
 		s.fail(w, "proxy build", err)
+
 		return
 	}
+
 	req.Header.Set("User-Agent", "SoundTap/1.0")
+
 	resp, err := safehttp.Do(ctx, s.proxy, req)
 	if err != nil {
 		s.fail(w, "proxy fetch", err)
+
 		return
 	}
+
 	defer func() { _ = resp.Body.Close() }()
 	// Never reflect the upstream Content-Type verbatim: this proxy fetches
 	// attacker-chosen public URLs, and echoing e.g. "text/html" back on the
@@ -135,24 +164,30 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, target, fallbackC
 	// Keep the upstream type only when it stays within the expected family
 	// (e.g. image/jpeg for a logo), otherwise fall back to the safe default,
 	// and forbid MIME sniffing so the declared type is authoritative.
-	ct := fallbackCT
-	up, fam := resp.Header.Get("Content-Type"), fallbackCT[:strings.IndexByte(fallbackCT, '/')+1]
-	if fam == "image/" && !strings.HasPrefix(up, fam) {
+	contentType := fallbackCT
+
+	upstream, fam := resp.Header.Get("Content-Type"), fallbackCT[:strings.IndexByte(fallbackCT, '/')+1]
+	if fam == "image/" && !strings.HasPrefix(upstream, fam) {
 		// The logo proxy takes any public URL: relaying only images keeps it from being
 		// an open relay for pages fetched from the owner's address.
 		apiError(w, http.StatusBadGateway, "not an image")
+
 		return
 	}
-	if up != "" && strings.HasPrefix(up, fam) {
-		ct = up
+
+	if upstream != "" && strings.HasPrefix(upstream, fam) {
+		contentType = upstream
 	}
-	w.Header().Set("Content-Type", ct)
+
+	w.Header().Set("Content-Type", contentType)
 	sandboxForeign(w.Header())
+
 	if cache != "" && resp.StatusCode == http.StatusOK {
 		w.Header().Set("Cache-Control", cache)
 	}
+
 	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, io.LimitReader(resp.Body, max))
+	_, _ = io.Copy(w, io.LimitReader(resp.Body, limit))
 }
 
 func (s *Server) playStation(w http.ResponseWriter, r *http.Request) {
@@ -160,10 +195,14 @@ func (s *Server) playStation(w http.ResponseWriter, r *http.Request) {
 		StationID string `json:"stationId"`
 		Name      string `json:"name"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || !validStation(r.Context(), body.StationID) {
+
+	err := json.NewDecoder(r.Body).Decode(&body)
+	if err != nil || !validStation(r.Context(), body.StationID) {
 		s.badRequest(w, "valid stationId required", err)
+
 		return
 	}
+
 	s.playStationID(w, r, body.StationID, body.Name)
 }
 
@@ -172,19 +211,28 @@ func (s *Server) playStation(w http.ResponseWriter, r *http.Request) {
 func (s *Server) playStationID(w http.ResponseWriter, r *http.Request, stationID, name string) {
 	ctx, cancel := context.WithTimeout(r.Context(), writeDeadline)
 	defer cancel()
+
 	if s.neverPlays(ctx, stationID) {
 		apiError(w, http.StatusBadGateway, "station has no stream")
+
 		return
 	}
+
 	s.snapshotRecent(ctx)
 	s.backend.Wake(ctx)
-	if err := s.backend.Select(ctx, sourceTuneIn, "stationurl", speaker.StationLocation(stationID), name, "", speaker.InternetRadioIcon); err != nil {
+
+	location := speaker.StationLocation(stationID)
+
+	err := s.backend.Select(ctx, sourceTuneIn, "stationurl", location, name, "", speaker.InternetRadioIcon)
+	if err != nil {
 		s.fail(w, "play failed", err)
+
 		return
 	}
+
 	s.log.Info("play", "station", stationID, "name", name)
 	s.hub.nudge() // push the new playback state to browsers at once
-	writeJSON(w, 200, map[string]string{"status": "playing", "station": stationID})
+	writeJSON(w, http.StatusOK, map[string]string{"status": statusPlaying, "station": stationID})
 }
 
 // neverPlays reports TuneIn saying a station has no stream. The speaker would retry it and
@@ -193,9 +241,12 @@ func (s *Server) neverPlays(ctx context.Context, stationID string) bool {
 	if speaker.OwnStream(stationID) {
 		return false
 	}
-	ask, cancel := context.WithTimeout(ctx, 3*time.Second)
+
+	ask, cancel := context.WithTimeout(ctx, stationAskTimeout)
 	defer cancel()
+
 	_, err := s.tunein.Resolve(ask, stationID)
+
 	return errors.Is(err, tunein.ErrNoStreams)
 }
 
@@ -215,15 +266,19 @@ func validOwnStream(id string) bool {
 	if !speaker.OwnStream(id) || len(id) > maxStreamURL || strings.ContainsAny(id, " \t\r\n") {
 		return false
 	}
+
 	u, err := url.Parse(id)
 	if err != nil || u.Hostname() == "" {
 		return false
 	}
+
 	port := u.Port()
 	if port == "" {
 		return true
 	}
+
 	n, err := strconv.ParseUint(port, 10, 16)
+
 	return err == nil && n > 0
 }
 
@@ -232,5 +287,6 @@ func validStation(ctx context.Context, id string) bool {
 	if speaker.OwnStream(id) {
 		return validOwnStream(id) && upnp.MediaURL(ctx, id)
 	}
+
 	return validStationID(id)
 }

@@ -46,7 +46,8 @@ func b64(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) 
 // file the bundle reads seeded with the secrets above. It returns soundtapd's home.
 func seedSpeaker(t *testing.T, root string) string {
 	t.Helper()
-	home := filepath.Join(root, "mnt/nv/soundtap")
+
+	home := filepath.Join(root, "mnt", "nv", "soundtap")
 	// A log line that names every secret outright, in free text where no key= pattern
 	// can find it: only knowing the value catches these.
 	leaks := strings.Join([]string{
@@ -74,16 +75,19 @@ func seedSpeaker(t *testing.T, root string) string {
 
 	files := map[string]string{
 		// A wpa_supplicant configuration with network blocks, and the saved networks.
-		"tmp/wpa_supplicant.conf": "ctrl_interface=/var/run/wpa_supplicant\nnetwork={\n\tssid=\"" + homeSSID + "\"\n\tpsk=" + wpaPMK +
+		"tmp/wpa_supplicant.conf": "ctrl_interface=/var/run/wpa_supplicant\n" +
+			"network={\n\tssid=\"" + homeSSID + "\"\n\tpsk=" + wpaPMK +
 			"\n}\nnetwork={\n\tssid=" + hex.EncodeToString([]byte(cafeSSID)) + "\n\tpsk=" + knownHex + "\n}\n",
 		"mnt/nv/wifi.conf":      "SSID_B64=" + b64(homeSSID) + "\nPSK_B64=" + b64(homeKey) + "\n",
 		"mnt/nv/wifi.conf.good": "SSID_B64=" + b64(homeSSID) + "\nPSK_B64=" + b64(homeKey) + "\n",
 		"mnt/nv/wifi.conf.known": b64(homeSSID) + " " + b64(homeKey) + " -\n" +
 			b64(atticSSID) + " " + b64(atticKey) + " -\n" + b64(cafeSSID) + " - " + knownHex + "\n",
-		"mnt/nv/spotify/system/credentials.json": `{"username":"` + spotifyUser + `","auth_type":1,"auth_data":"` + spotifyBlob + `"}`,
-		"run/soundtap/confirm-token":             confirmTok + "\n",
-		"mnt/nv/soundtap/api-token":              household + "\n",
-		"mnt/nv/soundtap/settings.json": `{"schemaVersion":1,"name":"Kitchen","mqtt":{"enabled":true,"host":"broker.lan",` +
+		"mnt/nv/spotify/system/credentials.json": `{"username":"` + spotifyUser +
+			`","auth_type":1,"auth_data":"` + spotifyBlob + `"}`,
+		"run/soundtap/confirm-token": confirmTok + "\n",
+		"mnt/nv/soundtap/api-token":  household + "\n",
+		"mnt/nv/soundtap/settings.json": `{"schemaVersion":1,"name":"Kitchen",` +
+			`"mqtt":{"enabled":true,"host":"broker.lan",` +
 			`"port":1883,"username":"speaker","password":"` + mqttPass + `"}}`,
 		// Every log the bundle carries, and the previous boot's records.
 		"tmp/soundtap.log":                            log,
@@ -105,51 +109,67 @@ func seedSpeaker(t *testing.T, root string) string {
 	}
 	for name, body := range files {
 		path := filepath.Join(root, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+
+		err := os.MkdirAll(filepath.Dir(path), 0o700)
+		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+
+		err = os.WriteFile(path, []byte(body), 0o600)
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
+
 	return home
 }
 
 // The support archive leaves the speaker for a public issue tracker. Built from a speaker
 // whose every file holds secrets, no secret may appear in any file of it, nor in the
 // plain-text /api/debug, while the rest of the logs survives.
+//
+//nolint:paralleltest // roots the package-level system paths in a fake tree
 func TestSupportBundleCarriesNoSecrets(t *testing.T) {
 	root := t.TempDir()
 	home := seedSpeaker(t, root)
 	t.Cleanup(web.SetSystemRootForTest(root))
 	srv, _, _ := newServerAt(t, home)
-	h := srv.Handler()
+	handler := srv.Handler()
 
-	rec := do(t, h, "GET", "/api/debug?download=1", "")
+	rec := do(t, handler, "GET", "/api/debug?download=1", "")
 	if rec.Code != 200 || rec.Header().Get("Content-Type") != "application/zip" {
 		t.Fatalf("GET /api/debug?download=1 = %d %q", rec.Code, rec.Header().Get("Content-Type"))
 	}
-	if cd := rec.Header().Get("Content-Disposition"); !strings.Contains(cd, `filename="soundtap-support-`) || !strings.HasSuffix(cd, `.zip"`) {
+
+	cd := rec.Header().Get("Content-Disposition")
+	if !strings.Contains(cd, `filename="soundtap-support-`) || !strings.HasSuffix(cd, `.zip"`) {
 		t.Errorf("Content-Disposition = %q", cd)
 	}
-	zr, err := zip.NewReader(bytes.NewReader(rec.Body.Bytes()), int64(rec.Body.Len()))
+
+	archive, err := zip.NewReader(bytes.NewReader(rec.Body.Bytes()), int64(rec.Body.Len()))
 	if err != nil {
 		t.Fatalf("not a zip: %v", err)
 	}
+
 	files := map[string]string{}
-	for _, f := range zr.File {
-		rc, err := f.Open()
+
+	for _, entry := range archive.File {
+		file, err := entry.Open()
 		if err != nil {
 			t.Fatal(err)
 		}
-		b, err := io.ReadAll(rc)
-		_ = rc.Close()
+
+		content, err := io.ReadAll(file)
+		_ = file.Close()
+
 		if err != nil {
 			t.Fatal(err)
 		}
-		files[f.Name] = string(b)
+
+		files[entry.Name] = string(content)
 	}
-	files["GET /api/debug"] = do(t, h, "GET", "/api/debug", "").Body.String()
+
+	files["GET /api/debug"] = do(t, handler, "GET", "/api/debug", "").Body.String()
 
 	for _, want := range []string{
 		"debug.txt", "version.json", "health.json", "kernel.log", "panic.log",
@@ -164,14 +184,18 @@ func TestSupportBundleCarriesNoSecrets(t *testing.T) {
 		}
 	}
 
-	secrets := []string{
+	spelled := []string{homeSSID, homeKey, atticSSID, atticKey, cafeSSID}
+	secrets := make([]string, 0, 18+2*len(spelled))
+
+	secrets = append(secrets,
 		homeSSID, homeKey, atticSSID, atticKey, cafeSSID, wpaPMK, knownHex, neighbour,
 		mqttPass, spotifyUser, spotifyBlob, confirmTok, household, bearer, apiKey, streamPass,
 		publicIPv4, publicIPv6,
+	)
+	for _, plain := range spelled {
+		secrets = append(secrets, b64(plain), hex.EncodeToString([]byte(plain)))
 	}
-	for _, s := range []string{homeSSID, homeKey, atticSSID, atticKey, cafeSSID} {
-		secrets = append(secrets, b64(s), hex.EncodeToString([]byte(s)))
-	}
+
 	for name, body := range files {
 		for _, secret := range secrets {
 			if strings.Contains(body, secret) {
@@ -182,15 +206,19 @@ func TestSupportBundleCarriesNoSecrets(t *testing.T) {
 
 	// Redacted, not dropped: the lines are still there to read, private addresses too.
 	agent := files["logs/tmp/soundtap.log"]
-	for _, want := range []string{"plain line kept", "[net] lease 192.168.1.42 from 192.168.1.1",
+	for _, want := range []string{
+		"plain line kept", "[net] lease 192.168.1.42 from 192.168.1.1",
 		"[wifi] retrying <wifi-ssid-", "<wifi-key>", "<mqtt-password>", "<spotify-user>",
-		"<confirm-token>", "<household-token>", "<public-ip>"} {
+		"<confirm-token>", "<household-token>", "<public-ip>",
+	} {
 		if !strings.Contains(agent, want) {
 			t.Errorf("agent log lost %q:\n%s", want, agent)
 		}
 	}
+
 	if !strings.Contains(files["last-boot/how"], "panic") || !strings.Contains(files["version.json"], `"api"`) ||
-		!strings.Contains(files["health.json"], `"warnings"`) || !strings.Contains(files["debug.txt"], "SoundTap debug bundle") {
+		!strings.Contains(files["health.json"], `"warnings"`) ||
+		!strings.Contains(files["debug.txt"], "SoundTap debug bundle") {
 		t.Error("the archive's summary files are not what /api/debug, /api/version and /api/health say")
 	}
 }

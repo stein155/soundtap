@@ -91,9 +91,11 @@ func Connect(ctx context.Context, opts Options) (*Client, error) {
 	if opts.KeepAlive <= 0 {
 		opts.KeepAlive = 60 * time.Second
 	}
+
 	if opts.DialTimeout <= 0 {
 		opts.DialTimeout = 10 * time.Second
 	}
+
 	hsTimeout := opts.DialTimeout
 	if dl, ok := ctx.Deadline(); ok && time.Until(dl) < hsTimeout {
 		hsTimeout = max(time.Until(dl), time.Millisecond)
@@ -108,8 +110,10 @@ func Connect(ctx context.Context, opts Options) (*Client, error) {
 		connMu sync.Mutex
 		conn   net.Conn
 	)
+
 	dial := func(*url.URL, paho.ClientOptions) (net.Conn, error) {
 		d := net.Dialer{Timeout: opts.DialTimeout}
+
 		var (
 			nc  net.Conn
 			err error
@@ -119,17 +123,21 @@ func Connect(ctx context.Context, opts Options) (*Client, error) {
 		} else {
 			nc, err = d.DialContext(ctx, "tcp", opts.Addr)
 		}
+
 		if err != nil {
 			return nil, fmt.Errorf("dial broker: %w", err)
 		}
+
 		connMu.Lock()
 		conn = nc
 		connMu.Unlock()
+
 		return nc, nil
 	}
 	stopCancel := context.AfterFunc(ctx, func() {
 		connMu.Lock()
 		defer connMu.Unlock()
+
 		if conn != nil {
 			_ = conn.Close()
 		}
@@ -152,15 +160,18 @@ func Connect(ctx context.Context, opts Options) (*Client, error) {
 			if err == nil {
 				err = errors.New("connection lost")
 			}
+
 			c.close(err)
 		})
 	if opts.Username != "" {
 		po.SetUsername(opts.Username)
 		po.SetPassword(opts.Password) // Paho sends it only with a username
 	}
+
 	if opts.Will != nil {
 		po.SetBinaryWill(opts.Will.Topic, opts.Will.Payload, 0, opts.Will.Retain)
 	}
+
 	if h := opts.Handler; h != nil {
 		po.SetDefaultPublishHandler(func(_ paho.Client, m paho.Message) {
 			h(c, Message{Topic: m.Topic(), Payload: m.Payload(), Retain: m.Retained()})
@@ -171,17 +182,22 @@ func Connect(ctx context.Context, opts Options) (*Client, error) {
 	tok := c.pc.Connect()
 	<-tok.Done() // Paho bounds it with the connect timeout; ctx closes the connection
 	err := tok.Error()
+
 	if !stopCancel() {
 		// ctx ended during or right after the handshake: the connection is closed.
 		c.pc.Disconnect(0)
+
 		return nil, ctx.Err()
 	}
+
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
+
 		return nil, err
 	}
+
 	return c, nil
 }
 
@@ -194,6 +210,7 @@ func (c *Client) Done() <-chan struct{} { return c.done }
 func (c *Client) Err() error {
 	c.errMu.Lock()
 	defer c.errMu.Unlock()
+
 	return c.err
 }
 
@@ -212,6 +229,7 @@ func (c *Client) Publish(topic string, payload []byte, retain bool) error {
 	if !tok.WaitTimeout(writeWait) {
 		return errors.New("publish timed out")
 	}
+
 	return tok.Error()
 }
 
@@ -223,36 +241,47 @@ func (c *Client) Subscribe(topics ...string) error {
 	if len(topics) == 0 {
 		return nil
 	}
+
 	filters := make(map[string]byte, len(topics))
 	for _, t := range topics {
 		filters[t] = 0
 	}
+
 	tok := c.pc.SubscribeMultiple(filters, nil)
+
 	t := time.NewTimer(subAckWait)
 	defer t.Stop()
+
 	select {
 	case <-tok.Done():
 	case <-c.done:
-		if err := c.Err(); err != nil {
+		err := c.Err()
+		if err != nil {
 			return err
 		}
+
 		return errors.New("connection closed before SUBACK")
 	case <-t.C:
 		return errors.New("no SUBACK from broker")
 	}
-	if err := tok.Error(); err != nil {
+
+	err := tok.Error()
+	if err != nil {
 		return err
 	}
+
 	st, ok := tok.(*paho.SubscribeToken)
 	if !ok {
 		return errors.New("no SUBACK result from the client")
 	}
+
 	granted := st.Result()
 	for _, topic := range topics {
 		if code, ok := granted[topic]; !ok || code&0x80 != 0 {
 			return fmt.Errorf("broker refused subscription to %q", topic)
 		}
 	}
+
 	return nil
 }
 

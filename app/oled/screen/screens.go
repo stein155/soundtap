@@ -51,28 +51,40 @@ type Bar struct {
 	Charging bool
 }
 
-// batteryBars are stock's battery icon bands: one bar per band reached, up to four.
-var batteryBars = []int{20, 40, 60, 75}
+// battery draws the battery icon with its right edge at right and returns its left edge.
+//
+//nolint:mnd // the design's coordinates, sizes and grey levels (design-screens.js)
+func (f *Frame) battery(right float64, percent int) float64 {
+	width, height, top := 16.0, 8.0, 4.0
+	left := right - width
+	f.Rect(left, top, width, 1, 8)
+	f.Rect(left, top+height-1, width, 1, 8)
+	f.Rect(left, top, 1, height, 8)
+	f.Rect(right-1, top, 1, height, 8)
+	f.Rect(right, top+2, 1.5, height-4, 8) // the terminal
 
-// battery draws the battery icon with its right edge at x and returns its left edge.
-func (f *Frame) battery(x float64, level int, charging bool) float64 {
-	w, h, y := 16.0, 8.0, 4.0
-	left := x - w
-	f.Rect(left, y, w, 1, 8)
-	f.Rect(left, y+h-1, w, 1, 8)
-	f.Rect(left, y, 1, h, 8)
-	f.Rect(x-1, y, 1, h, 8)
-	f.Rect(x, y+2, 1.5, h-4, 8) // the terminal
-	for i, band := range batteryBars {
-		if level > band || i == 0 && level > 0 {
-			f.Rect(left+2+float64(i)*3.25, y+2, 2.5, h-4, 12)
+	// stock's battery icon bands: one bar per band reached, up to four
+	bands := [...]int{20, 40, 60, 75}
+	for i, band := range bands {
+		if percent > band || i == 0 && percent > 0 {
+			f.Rect(left+2+float64(i)*3.25, top+2, 2.5, height-4, 12)
 		}
 	}
-	if charging {
-		left -= 7
-		f.Rect(left+1, y+3.5, 5, 1, 12)
-		f.Rect(left+3, y+1.5, 1, 5, 12)
-	}
+
+	return left
+}
+
+// chargingPlus draws the charging plus left of the battery icon whose left edge is at
+// left, and returns the plus's left edge.
+//
+//nolint:mnd // the design's coordinates, sizes and grey levels (design-screens.js)
+func (f *Frame) chargingPlus(left float64) float64 {
+	const top = 4.0
+
+	left -= 7
+	f.Rect(left+1, top+3.5, 5, 1, 12)
+	f.Rect(left+3, top+1.5, 1, 5, 12)
+
 	return left
 }
 
@@ -88,235 +100,331 @@ const (
 	StateStopped = "stopped"
 )
 
-func (f *Frame) statusBar(b Bar) {
-	x := 4.0
-	switch b.State {
+//nolint:mnd // the design's coordinates, sizes and grey levels (design-screens.js)
+func (f *Frame) statusBar(bar *Bar) {
+	roomX := 4.0
+
+	switch bar.State {
 	case StatePaused:
 		f.Rect(5, 4, 2, 8, 12)
 		f.Rect(9, 4, 2, 8, 12)
-		x = 15
+
+		roomX = 15
 	case StateStopped:
 		f.Rect(5, 4, 7, 7, 12)
-		x = 15
+
+		roomX = 15
 	default:
-		f.sourceLabel(b.Source, &x)
+		f.sourceLabel(bar.Source, &roomX)
 	}
-	if b.Room != "" {
-		f.Text(b.Room, x, 11, Font{Face: j600s8, Level: 8, Max: 80})
+
+	if bar.Room != "" {
+		f.Text(bar.Room, roomX, 11, Font{Face: j600s8, Level: 8, Align: Left, Max: 80})
 	}
-	f.Text(b.Time, 124, 11, Font{Face: j600s8, Level: 8, Align: Right})
-	right := 124 - Width(j600s8, b.Time) - 4
-	if b.Battery > 0 {
-		right = f.battery(right-2, b.Battery, b.Charging) - 4
+
+	f.Text(bar.Time, 124, 11, Font{Face: j600s8, Level: 8, Align: Right, Max: 0})
+
+	right := 124 - Width(j600s8, bar.Time) - 4
+	if bar.Battery > 0 {
+		left := f.battery(right-2, bar.Battery)
+		if bar.Charging {
+			left = f.chargingPlus(left)
+		}
+
+		right = left - 4
 	}
-	if b.Mark != "" {
-		mx := right - 8
-		f.RRect(mx-2, 3, 10, 10, 2, 4)
-		f.TextMid(b.Mark, mx+3, 8, Font{Face: pix7, Level: 15, Align: Center})
+
+	if bar.Mark != "" {
+		markX := right - 8
+		f.RRect(markX-2, 3, 10, 10, 2, 4)
+		f.TextMid(bar.Mark, markX+3, 8, Font{Face: pix7, Level: 15, Align: Center, Max: 0})
 	}
+
 	f.Rect(4, 16, 120, 1, 2)
 }
 
-// sourceLabel draws the source at the bar's left and moves x past it.
-func (f *Frame) sourceLabel(source string, x *float64) {
+// sourceLabel draws the source at the bar's left and moves next past it.
+//
+//nolint:mnd // the design's coordinates, sizes and grey levels (design-screens.js)
+func (f *Frame) sourceLabel(source string, next *float64) {
 	switch source {
 	case "":
 	case SourceBT:
 		f.iconBT(5, 3, 1, 8)
-		*x = 15
+
+		*next = 15
 	case SourceAux:
-		f.Text("AUX", 4, 11, Font{Face: pix8, Level: 8})
-		*x = 24
+		f.Text("AUX", 4, 11, Font{Face: pix8, Level: 8, Align: Left, Max: 0})
+
+		*next = 24
 	default:
-		f.Text(source, 4, 11, Font{Face: j600s8, Level: 8})
+		f.Text(source, 4, 11, Font{Face: j600s8, Level: 8, Align: Left, Max: 0})
 		// The design puts the room at 40, right of "Spotify"; a longer name pushes it on.
-		*x = math.Max(40, math.Ceil(4+Width(j600s8, source)+7))
+		*next = math.Max(40, math.Ceil(4+Width(j600s8, source)+7))
 	}
 }
 
 // iconSpeaker at (x, y) scaled by s.
-func (f *Frame) iconSpeaker(x, y, s float64, l, waves int) {
+//
+//nolint:mnd // the design's coordinates, sizes and grey levels (design-screens.js)
+func (f *Frame) iconSpeaker(x, y, s float64, grey, waves int) {
 	p := func(px, py float64) Pt { return Pt{x + px*s, y + py*s} }
-	f.Poly([]Pt{p(0, 3), p(2.5, 3), p(5.5, 0), p(5.5, 9), p(2.5, 6), p(0, 6)}, l)
+	f.Poly([]Pt{p(0, 3), p(2.5, 3), p(5.5, 0), p(5.5, 9), p(2.5, 6), p(0, 6)}, grey)
+
 	for i := range waves {
-		f.Arc(x+6*s, y+4.5*s, (2.5+float64(i)*2.2)*s, -0.9, 0.9, s, l)
+		f.Arc(x+6*s, y+4.5*s, (2.5+float64(i)*2.2)*s, -0.9, 0.9, s, grey)
 	}
 }
 
-func (f *Frame) iconBT(x, y, s float64, l int) {
+//nolint:mnd // the design's coordinates, sizes and grey levels (design-screens.js)
+func (f *Frame) iconBT(x, y, s float64, grey int) {
 	p := func(px, py float64) Pt { return Pt{x + px*s, y + py*s} }
-	f.Line([]Pt{p(0, 2.5), p(5, 7), p(2.5, 9.5), p(2.5, 0), p(5, 2.5), p(0, 7)}, 1.1*s, false, l)
+	f.Line([]Pt{p(0, 2.5), p(5, 7), p(2.5, 9.5), p(2.5, 0), p(5, 2.5), p(0, 7)}, 1.1*s, ButtCap, grey)
 }
 
 // Boot is a bar alone at progress 0..1, centred on the panel as stock draws it. The
 // design's boot screen also has a wordmark and a word; ours is the bar without text.
+//
+//nolint:mnd // the design's coordinates, sizes and grey levels (design-screens.js)
 func Boot(progress float64) *Frame {
-	f := &Frame{}
-	f.RRect(24, 48, 80, 4, 2, 3)
-	f.RRect(24, 48, math.Max(4, math.Min(1, progress)*80), 4, 2, 15)
-	return f
+	frame := newFrame()
+	frame.RRect(24, 48, 80, 4, 2, 3)
+	frame.RRect(24, 48, math.Max(4, math.Min(1, progress)*80), 4, 2, 15)
+
+	return frame
 }
 
 // Station is radio and buffering: preset 0 leaves the preset badge out, badge is
 // "LIVE" (level 10) or "BUFFEREN" (level 7) in the pixel font.
-func Station(b Bar, name, tagline string, preset int, badge string, badgeLevel int) *Frame {
-	f := &Frame{}
-	f.statusBar(b)
-	f.Text(name, 6, 42, Font{Face: j800s15, Level: 15, Max: 116})
-	f.Text(tagline, 6, 55, Font{Face: j500s8, Level: 8, Max: 116})
+//
+//nolint:mnd // the design's coordinates, sizes and grey levels (design-screens.js)
+func Station(
+	bar Bar, //nolint:gocritic // hugeParam: the exported screens take the bar by value
+	name, tagline string, preset int, badge string, badgeLevel int,
+) *Frame {
+	frame := newFrame()
+	frame.statusBar(&bar)
+	frame.Text(name, 6, 42, Font{Face: j800s15, Level: 15, Align: Left, Max: 116})
+	frame.Text(tagline, 6, 55, Font{Face: j500s8, Level: 8, Align: Left, Max: 116})
+
 	if preset > 0 {
-		f.RRect(6, 75, 14, 14, 7, 3)
-		f.TextMid(strconv.Itoa(preset), 13, 82, Font{Face: j800s8p5, Level: 14, Align: Center})
+		frame.RRect(6, 75, 14, 14, 7, 3)
+		frame.TextMid(strconv.Itoa(preset), 13, 82, Font{Face: j800s8p5, Level: 14, Align: Center, Max: 0})
 	}
+
 	if badge != "" {
-		f.TextMid(badge, 122, 82, Font{Face: pix7, Level: badgeLevel, Align: Right})
+		frame.TextMid(badge, 122, 82, Font{Face: pix7, Level: badgeLevel, Align: Right, Max: 0})
 	}
-	return f
+
+	return frame
 }
 
 // Track is the Spotify screen and every other source that plays tracks. A zero total
 // leaves the bar and times out (streams with no length).
-func Track(b Bar, title, sub string, elapsed float64, total int) *Frame {
-	f := &Frame{}
-	f.statusBar(b)
-	f.Text(title, 6, 40, Font{Face: j800s13, Level: 15, Max: 116})
-	f.Text(sub, 6, 52, Font{Face: j500s8, Level: 8, Max: 116})
+//
+//nolint:mnd // the design's coordinates, sizes and grey levels (design-screens.js)
+func Track(
+	bar Bar, //nolint:gocritic // hugeParam: the exported screens take the bar by value
+	title, sub string, elapsed float64, total int,
+) *Frame {
+	frame := newFrame()
+	frame.statusBar(&bar)
+	frame.Text(title, 6, 40, Font{Face: j800s13, Level: 15, Align: Left, Max: 116})
+	frame.Text(sub, 6, 52, Font{Face: j500s8, Level: 8, Align: Left, Max: 116})
+
 	if total > 0 {
-		p := math.Min(1, elapsed/float64(total))
-		f.RRect(6, 70, 116, 3, 1.5, 3)
-		f.RRect(6, 70, math.Max(3, p*116), 3, 1.5, 13)
-		f.Text(Clock(int(elapsed)), 6, 84, Font{Face: j600s7p5, Level: 8})
-		f.Text(Clock(total), 122, 84, Font{Face: j600s7p5, Level: 8, Align: Right})
+		done := math.Min(1, elapsed/float64(total))
+
+		frame.RRect(6, 70, 116, 3, 1.5, 3)
+		frame.RRect(6, 70, math.Max(3, done*116), 3, 1.5, 13)
+		frame.Text(Clock(int(elapsed)), 6, 84, Font{Face: j600s7p5, Level: 8, Align: Left, Max: 0})
+		frame.Text(Clock(total), 122, 84, Font{Face: j600s7p5, Level: 8, Align: Right, Max: 0})
 	}
-	return f
+
+	return frame
 }
+
+// secondsPerMinute splits Clock's seconds into minutes.
+const secondsPerMinute = 60
 
 // Clock is m:ss.
 func Clock(s int) string {
-	return strconv.Itoa(s/60) + ":" + string(rune('0'+s%60/10)) + string(rune('0'+s%10))
+	tens, ones := s%secondsPerMinute/decimalBase, s%decimalBase
+
+	return strconv.Itoa(s/secondsPerMinute) + ":" + string(rune('0'+tens)) + string(rune('0'+ones))
 }
 
-// Volume is the volume overlay, v 0..100.
-func Volume(v int) *Frame {
-	f := &Frame{}
+// Volume is the volume overlay, percent 0..100.
+//
+//nolint:mnd // the design's coordinates, sizes and grey levels (design-screens.js)
+func Volume(percent int) *Frame {
+	frame := newFrame()
+
 	waves := 2
-	if v == 0 {
+	if percent == 0 {
 		waves = 0
-	} else if v < 40 {
+	} else if percent < 40 {
 		waves = 1
 	}
-	f.iconSpeaker(64-11, 12, 2, 10, waves)
-	n := strconv.Itoa(v)
-	if v == 0 {
-		n = "—"
+
+	frame.iconSpeaker(64-11, 12, 2, 10, waves)
+
+	label := strconv.Itoa(percent)
+	if percent == 0 {
+		label = "—"
 	}
-	f.Text(n, 64, 62, Font{Face: j800s34, Level: 15, Align: Center})
-	on := int(math.Round(float64(v) / 100 * 20))
-	for i := range 20 {
-		l := 3
-		if i < on {
-			l = 15
+
+	frame.Text(label, 64, 62, Font{Face: j800s34, Level: 15, Align: Center, Max: 0})
+
+	lit := int(math.Round(float64(percent) / 100 * 20))
+
+	for segment := range 20 {
+		grey := 3
+		if segment < lit {
+			grey = 15
 		}
-		f.RRect(6+float64(i)*6, 76, 4, 10, 1, l)
+
+		frame.RRect(6+float64(segment)*6, 76, 4, 10, 1, grey)
 	}
-	return f
+
+	return frame
 }
 
 // Mute is the muted overlay.
+//
+//nolint:mnd // the design's coordinates, sizes and grey levels (design-screens.js)
 func Mute(word string) *Frame {
-	f := &Frame{}
-	f.iconSpeaker(57, 26, 1, 15, 0)
-	f.Line([]Pt{{65, 28}, {71, 34}}, 1.4, false, 15)
-	f.Line([]Pt{{71, 28}, {65, 34}}, 1.4, false, 15)
-	f.Text(word, 64, 60, Font{Face: j800s13, Level: 15, Align: Center})
-	return f
+	frame := newFrame()
+	frame.iconSpeaker(57, 26, 1, 15, 0)
+	frame.Line([]Pt{{65, 28}, {71, 34}}, 1.4, ButtCap, 15)
+	frame.Line([]Pt{{71, 28}, {65, 34}}, 1.4, ButtCap, 15)
+	frame.Text(word, 64, 60, Font{Face: j800s13, Level: 15, Align: Center, Max: 0})
+
+	return frame
 }
 
 // Preset is the overlay after a preset press.
+//
+//nolint:mnd // the design's coordinates, sizes and grey levels (design-screens.js)
 func Preset(word string, n int, station string) *Frame {
-	f := &Frame{}
-	f.Text(word, 64, 26, Font{Face: pix8, Level: 7, Align: Center})
-	f.Text(strconv.Itoa(n), 64, 64, Font{Face: j800s40, Level: 15, Align: Center})
-	f.Text(station, 64, 84, Font{Face: j700s10, Level: 12, Align: Center, Max: 116})
-	return f
+	frame := newFrame()
+	frame.Text(word, 64, 26, Font{Face: pix8, Level: 7, Align: Center, Max: 0})
+	frame.Text(strconv.Itoa(n), 64, 64, Font{Face: j800s40, Level: 15, Align: Center, Max: 0})
+	frame.Text(station, 64, 84, Font{Face: j700s10, Level: 12, Align: Center, Max: 116})
+
+	return frame
 }
 
 // Bluetooth is the Bluetooth source with its connected device.
-func Bluetooth(b Bar, title, device string) *Frame {
-	f := &Frame{}
-	f.statusBar(b)
-	f.iconBT(58, 26, 1.4, 15)
-	f.Text(title, 64, 58, Font{Face: j800s13, Level: 15, Align: Center})
-	f.Text(device, 64, 71, Font{Face: j500s8, Level: 8, Align: Center})
-	return f
+//
+//nolint:mnd // the design's coordinates, sizes and grey levels (design-screens.js)
+func Bluetooth(
+	bar Bar, //nolint:gocritic // hugeParam: the exported screens take the bar by value
+	title, device string,
+) *Frame {
+	frame := newFrame()
+	frame.statusBar(&bar)
+	frame.iconBT(58, 26, 1.4, 15)
+	frame.Text(title, 64, 58, Font{Face: j800s13, Level: 15, Align: Center, Max: 0})
+	frame.Text(device, 64, 71, Font{Face: j500s8, Level: 8, Align: Center, Max: 0})
+
+	return frame
 }
 
 // Holding is a preset button held down, progress 0..1 to storing.
+//
+//nolint:mnd // the design's coordinates, sizes and grey levels (design-screens.js)
 func Holding(word string, n int, progress float64) *Frame {
-	f := &Frame{}
-	p := math.Max(0, math.Min(1, progress))
-	f.Text(word, 64, 22, Font{Face: j700s9, Level: 10, Align: Center})
-	f.Text(strconv.Itoa(n), 64, 66, Font{Face: j800s40, Level: 15, Align: Center})
-	f.RRect(10, 80, 108, 6, 3, 3)
-	f.RRect(10, 80, math.Max(6, p*108), 6, 3, 15)
-	return f
+	frame := newFrame()
+	done := math.Max(0, math.Min(1, progress))
+
+	frame.Text(word, 64, 22, Font{Face: j700s9, Level: 10, Align: Center, Max: 0})
+	frame.Text(strconv.Itoa(n), 64, 66, Font{Face: j800s40, Level: 15, Align: Center, Max: 0})
+	frame.RRect(10, 80, 108, 6, 3, 3)
+	frame.RRect(10, 80, math.Max(6, done*108), 6, 3, 15)
+
+	return frame
 }
 
 // Saved confirms a stored preset.
+//
+//nolint:mnd // the design's coordinates, sizes and grey levels (design-screens.js)
 func Saved(word string) *Frame {
-	f := &Frame{}
-	f.Line([]Pt{{51, 40}, {60, 49}, {77, 31}}, 3, true, 15)
-	f.Text(word, 64, 72, Font{Face: j700s9, Level: 15, Align: Center})
-	return f
+	frame := newFrame()
+	frame.Line([]Pt{{51, 40}, {60, 49}, {77, 31}}, 3, RoundCap, 15)
+	frame.Text(word, 64, 72, Font{Face: j700s9, Level: 15, Align: Center, Max: 0})
+
+	return frame
 }
 
 // Aux is the AUX source.
-func Aux(b Bar, sub string) *Frame {
-	f := &Frame{}
-	b.Source = SourceAux
-	f.statusBar(b)
-	f.Text("AUX", 64, 56, Font{Face: j800s26, Level: 15, Align: Center})
-	f.Text(sub, 64, 72, Font{Face: j500s8, Level: 8, Align: Center})
-	return f
+//
+//nolint:mnd // the design's coordinates, sizes and grey levels (design-screens.js)
+func Aux(
+	bar Bar, //nolint:gocritic // hugeParam: the exported screens take the bar by value and set their copy
+	sub string,
+) *Frame {
+	frame := newFrame()
+	bar.Source = SourceAux
+	frame.statusBar(&bar)
+	frame.Text("AUX", 64, 56, Font{Face: j800s26, Level: 15, Align: Center, Max: 0})
+	frame.Text(sub, 64, 72, Font{Face: j500s8, Level: 8, Align: Center, Max: 0})
+
+	return frame
 }
 
 // Pairing is Bluetooth discoverable.
+//
+//nolint:mnd // the design's coordinates, sizes and grey levels (design-screens.js)
 func Pairing(title, sub string) *Frame {
-	f := &Frame{}
-	f.Arc(64, 36, 12, 0, 2*math.Pi, 1, 6)
-	f.iconBT(61, 31, 1, 15)
-	f.Text(title, 64, 70, Font{Face: j800s12, Level: 15, Align: Center})
-	f.Text(sub, 64, 83, Font{Face: j500s7p5, Level: 8, Align: Center, Max: 120})
-	return f
+	frame := newFrame()
+	frame.Arc(64, 36, 12, 0, fullTurn, 1, 6)
+	frame.iconBT(61, 31, 1, 15)
+	frame.Text(title, 64, 70, Font{Face: j800s12, Level: 15, Align: Center, Max: 0})
+	frame.Text(sub, 64, 83, Font{Face: j500s7p5, Level: 8, Align: Center, Max: 120})
+
+	return frame
 }
 
 // Standby is the dimmed clock: the time alone, as stock's, with AM/PM under it on a
 // 12-hour clock (marker; "" for none). minute drives the anti burn-in drift.
+//
+//nolint:mnd // the design's coordinates, sizes and grey levels (design-screens.js)
 func Standby(clock, marker string, minute int) *Frame {
-	f := &Frame{}
+	frame := newFrame()
 	drift := minute % 4
 	dx, dy := float64(drift%2*2-1), float64(drift/2*2)
-	f.Text(clock, 64+dx, 54+dy, Font{Face: j700s32, Level: 10, Align: Center})
+	frame.Text(clock, 64+dx, 54+dy, Font{Face: j700s32, Level: 10, Align: Center, Max: 0})
+
 	if marker != "" {
-		f.Text(marker, 64+dx, 76+dy, Font{Face: j600s9, Level: 8, Align: Center})
+		frame.Text(marker, 64+dx, 76+dy, Font{Face: j600s9, Level: 8, Align: Center, Max: 0})
 	}
-	return f
+
+	return frame
 }
 
 // Offline is no network; step moves the dots (one step per 300 ms).
-func Offline(b Bar, title, sub string, step int) *Frame {
-	f := &Frame{}
-	f.statusBar(b)
-	f.Text(title, 64, 48, Font{Face: j800s11, Level: 15, Align: Center, Max: 124})
-	f.Text(sub, 64, 62, Font{Face: j500s7p5, Level: 8, Align: Center, Max: 124})
-	for i := range 3 {
-		l := 4
-		if step%3 == i {
-			l = 15
+//
+//nolint:mnd // the design's coordinates, sizes and grey levels (design-screens.js)
+func Offline(
+	bar Bar, //nolint:gocritic // hugeParam: the exported screens take the bar by value
+	title, sub string, step int,
+) *Frame {
+	frame := newFrame()
+	frame.statusBar(&bar)
+	frame.Text(title, 64, 48, Font{Face: j800s11, Level: 15, Align: Center, Max: 124})
+	frame.Text(sub, 64, 62, Font{Face: j500s7p5, Level: 8, Align: Center, Max: 124})
+
+	for dot := range 3 {
+		grey := 4
+		if step%3 == dot {
+			grey = 15
 		}
-		f.Rect(57+float64(i)*6, 76, 3, 3, l)
+
+		frame.Rect(57+float64(dot)*6, 76, 3, 3, grey)
 	}
-	return f
+
+	return frame
 }
 
 // The screens below are not in the design; they are its type and spacing applied to the
@@ -324,73 +432,93 @@ func Offline(b Bar, title, sub string, step int) *Frame {
 
 // Message is a short message as the design's Offline title: Plus Jakarta Sans 800 at 11 px, level
 // 15, wrapped to three centred lines.
+//
+//nolint:mnd // the design's coordinates, sizes and grey levels (design-screens.js)
 func Message(text string) *Frame {
-	f := &Frame{}
+	frame := newFrame()
 	lines := Wrap(j800s11, text, 120, 3)
+
 	top := 55 - float64(len(lines)-1)*13/2
-	for i, l := range lines {
-		f.Text(l, 64, top+float64(i)*13, Font{Face: j800s11, Level: 15, Align: Center})
+	for i, line := range lines {
+		frame.Text(line, 64, top+float64(i)*13, Font{Face: j800s11, Level: 15, Align: Center, Max: 0})
 	}
-	return f
+
+	return frame
 }
 
 // Notice is a title with lines of detail under it and, with progress >= 0, the boot bar.
 // The title is Offline's (level 15, up to two lines), the lines are its subline (level 8,
 // 14 px apart); a line that is a value under its label, as the setup screen's network
 // name, is level 15. The block is centred on the panel.
+//
+//nolint:mnd // the design's coordinates, sizes and grey levels (design-screens.js)
 func Notice(title string, lines []string, progress float64) *Frame {
-	f := &Frame{}
-	tl := Wrap(j800s11, title, 120, 2)
-	y := 55 - 7*float64(len(lines)) - 6.5*float64(len(tl)-1)
-	for i, l := range tl {
-		f.Text(l, 64, y+float64(i)*13, Font{Face: j800s11, Level: 15, Align: Center})
+	frame := newFrame()
+	titleLines := Wrap(j800s11, title, 120, 2)
+
+	top := 55 - 7*float64(len(lines)) - 6.5*float64(len(titleLines)-1)
+	for i, line := range titleLines {
+		frame.Text(line, 64, top+float64(i)*13, Font{Face: j800s11, Level: 15, Align: Center, Max: 0})
 	}
-	y += float64(len(tl)-1) * 13
-	for i, l := range lines {
-		lvl := 8
-		if i%2 == 1 {
-			lvl = 15
+
+	top += float64(len(titleLines)-1) * 13
+
+	for row, line := range lines {
+		grey := 8
+		if row%2 == 1 {
+			grey = 15
 		}
-		f.Text(l, 64, y+float64(i+1)*14, Font{Face: j500s7p5, Level: lvl, Align: Center, Max: 124})
+
+		frame.Text(line, 64, top+float64(row+1)*14, Font{Face: j500s7p5, Level: grey, Align: Center, Max: 124})
 	}
+
 	if progress >= 0 {
-		by := y + float64(len(lines))*14 + 10
-		f.RRect(24, by, 80, 4, 2, 3)
-		f.RRect(24, by, math.Max(4, math.Min(1, progress)*80), 4, 2, 15)
+		barY := top + float64(len(lines))*14 + 10
+		frame.RRect(24, barY, 80, 4, 2, 3)
+		frame.RRect(24, barY, math.Max(4, math.Min(1, progress)*80), 4, 2, 15)
 	}
-	return f
+
+	return frame
 }
 
 // breakWord splits a word wider than width between letters: Japanese, Chinese and Thai
 // write without spaces. A combining mark stays with its letter.
-func breakWord(face, w string, width float64) []string {
+func breakWord(face, word string, width float64) []string {
 	var out []string
+
 	line := []rune{}
-	for _, r := range w {
+	for _, r := range word {
 		if len(line) > 0 && !unicode.Is(unicode.Mn, r) && Width(face, string(append(line, r))) > width {
 			out, line = append(out, string(line)), nil
 		}
+
 		line = append(line, r)
 	}
+
 	return append(out, string(line))
 }
 
-// Wrap breaks text into at most n lines no wider than width; the last one is shortened
-// with an ellipsis when the text does not fit.
-func Wrap(face, text string, width float64, n int) []string {
+// Wrap breaks text into at most maxLines lines no wider than width; the last one is
+// shortened with an ellipsis when the text does not fit.
+func Wrap(face, text string, width float64, maxLines int) []string {
 	var lines []string
-	for _, w := range strings.Fields(text) {
-		if len(lines) > 0 && Width(face, lines[len(lines)-1]+" "+w) <= width {
-			lines[len(lines)-1] += " " + w
+	for word := range strings.FieldsSeq(text) {
+		if len(lines) > 0 && Width(face, lines[len(lines)-1]+" "+word) <= width {
+			lines[len(lines)-1] += " " + word
+
 			continue
 		}
-		lines = append(lines, breakWord(face, w, width)...)
+
+		lines = append(lines, breakWord(face, word, width)...)
 	}
-	if len(lines) > n {
-		lines = append(lines[:n-1], strings.Join(lines[n-1:], " "))
+
+	if len(lines) > maxLines {
+		lines = append(lines[:maxLines-1], strings.Join(lines[maxLines-1:], " "))
 	}
+
 	for i := range lines {
 		lines[i] = Fit(face, lines[i], width)
 	}
+
 	return lines
 }

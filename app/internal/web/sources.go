@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"slices"
-	"time"
 )
 
 // What a source can be or report, as the API and the state stream name them.
@@ -27,6 +26,7 @@ func dropBluetooth(list []string, name string) []string {
 	if !slices.Contains(list, name) || bluetoothPresent() {
 		return list
 	}
+
 	return slices.DeleteFunc(slices.Clone(list), func(v string) bool { return v == name })
 }
 
@@ -41,6 +41,7 @@ func validSource(name string) bool {
 	case sourceTuneIn, sourceUPnP, "AIRPLAY", sourceBluetooth, sourceSpotify, sourceAUX, standbySource:
 		return true
 	}
+
 	return false
 }
 
@@ -53,35 +54,50 @@ func (s *Server) setUserSource(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Source string `json:"source"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&body); err != nil {
+
+	err := json.NewDecoder(io.LimitReader(r.Body, tinyBody)).Decode(&body)
+	if err != nil {
 		s.badRequest(w, "bad body", err)
+
 		return
 	}
+
 	allowed := false
 	for _, source := range s.availableSources() {
 		allowed = allowed || source == body.Source
 	}
+
 	if !allowed {
 		apiError(w, http.StatusBadRequest, "source unavailable")
+
 		return
 	}
+
 	s.sourcePick.Lock()
 	defer s.sourcePick.Unlock()
-	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+
+	ctx, cancel := context.WithTimeout(r.Context(), backendCallTimeout)
 	defer cancel()
+
 	if s.sourceChanging != nil {
 		s.sourceChanging(body.Source)
 	}
-	var err error
+
 	if s.pickInput != nil {
 		err = s.pickInput(body.Source)
-	} else if err = s.backend.Key(ctx, "AUX_INPUT"); err == nil && body.Source == sourceBluetooth {
-		err = s.backend.Key(ctx, "SOURCE_TOGGLE")
+	} else {
+		err = s.backend.Key(ctx, "AUX_INPUT")
+		if err == nil && body.Source == sourceBluetooth {
+			err = s.backend.Key(ctx, "SOURCE_TOGGLE")
+		}
 	}
+
 	if err != nil {
 		s.fail(w, "source failed", err)
+
 		return
 	}
+
 	s.hub.nudge()
 	writeJSON(w, http.StatusOK, map[string]string{"source": body.Source})
 }
@@ -91,6 +107,21 @@ func (s *Server) setUserSource(w http.ResponseWriter, r *http.Request) {
 // POST /api/source  {"source":"AIRPLAY"|sourceBluetooth|standbySource}
 // When source is set, the TUNEIN player stops (it only plays when source==TUNEIN).
 // When set to STANDBY the speaker returns to idle.
+// flushedFor waits for source's queued audio to be dropped, when source owns the amp. It
+// reports false when that cannot be done or said.
+func (s *Server) flushedFor(ctx context.Context, source string) bool {
+	playing, err := s.backend.NowPlaying(ctx)
+	if err != nil {
+		return false
+	}
+
+	if playing.Source != source {
+		return true
+	}
+
+	return s.flushAudioWait != nil && s.flushAudioWait(ctx) == nil
+}
+
 func (s *Server) setSource(w http.ResponseWriter, r *http.Request) {
 	// Loopback-only, like the other daemon hooks. Every caller is a local
 	// *-source.sh; exposed to the LAN this endpoint let any host claim the amp under
@@ -99,44 +130,55 @@ func (s *Server) setSource(w http.ResponseWriter, r *http.Request) {
 	if !s.loopbackOnly(w, r) {
 		return
 	}
+
 	var body struct {
 		Source string `json:"source"`
-		Event  string `json:"event"` // "stop" => source released, "flush" => drop queued audio, "pause"/"play" => transport
+		// "stop" => source released, "flush" => drop queued audio, "pause"/"play" => transport
+		Event string `json:"event"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Source == "" {
+
+	err := json.NewDecoder(r.Body).Decode(&body)
+	if err != nil || body.Source == "" {
 		apiError(w, http.StatusBadRequest, "source required")
+
 		return
 	}
+
 	if !validSource(body.Source) {
 		apiError(w, http.StatusBadRequest, "unknown source")
+
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+
+	ctx, cancel := context.WithTimeout(r.Context(), backendCallTimeout)
 	defer cancel()
+
 	if body.Event == "flush_wait" {
-		np, err := s.backend.NowPlaying(ctx)
-		if err != nil {
+		if !s.flushedFor(ctx, body.Source) {
 			apiError(w, http.StatusServiceUnavailable, "audio_flush_failed")
+
 			return
 		}
-		if np.Source == body.Source {
-			if s.flushAudioWait == nil || s.flushAudioWait(ctx) != nil {
-				apiError(w, http.StatusServiceUnavailable, "audio_flush_failed")
-				return
-			}
-		}
-		writeJSON(w, 200, map[string]string{"source": body.Source, "event": body.Event})
+
+		writeJSON(w, http.StatusOK, map[string]string{"source": body.Source, "event": body.Event})
+
 		return
 	}
+
 	if s.sourceEvent(ctx, body.Source, body.Event) {
-		writeJSON(w, 200, map[string]string{"source": body.Source, "event": body.Event})
+		writeJSON(w, http.StatusOK, map[string]string{"source": body.Source, "event": body.Event})
+
 		return
 	}
+
 	if s.claimSource != nil && !s.claimSource(body.Source) {
-		writeJSON(w, 200, map[string]string{"source": body.Source, "event": "ignored"})
+		writeJSON(w, http.StatusOK, map[string]string{"source": body.Source, "event": "ignored"})
+
 		return
 	}
+
 	s.snapshotRecent(ctx)
+
 	if s.sourceChanging != nil {
 		// A restarted Spotify sink reclaims the SAME source before writing PCM.
 		// Its boundary already flushed synchronously. A second, asynchronous flush
@@ -146,13 +188,15 @@ func (s *Server) setSource(w http.ResponseWriter, r *http.Request) {
 			s.sourceChanging(body.Source)
 		}
 	}
+
 	if body.Source == standbySource {
 		_ = s.backend.EnterStandby(ctx)
 	} else {
 		_ = s.backend.SetSource(ctx, body.Source)
 	}
+
 	s.hub.nudge()
-	writeJSON(w, 200, map[string]string{"source": body.Source})
+	writeJSON(w, http.StatusOK, map[string]string{"source": body.Source})
 }
 
 // sourceEvent handles what a running source reports about itself; false means the request
@@ -166,7 +210,8 @@ func (s *Server) sourceEvent(ctx context.Context, source, event string) bool {
 		// SIGKILL of shairport-sync.
 		// Only the source that owns the amp may flush: a paused background daemon (librespot
 		// told to pause after another source took over) must not cut the new source's audio.
-		if np, err := s.backend.NowPlaying(ctx); s.flushAudio != nil && (err != nil || np.Source == source) {
+		np, err := s.backend.NowPlaying(ctx)
+		if s.flushAudio != nil && (err != nil || np.Source == source) {
 			s.flushAudio()
 		}
 	case "pause", "play":
@@ -174,6 +219,7 @@ func (s *Server) sourceEvent(ctx context.Context, source, event string) bool {
 		if pb, ok := s.backend.(PauseRecorder); ok {
 			pb.SetPaused(source, event == "pause")
 		}
+
 		s.hub.nudge()
 	case "stop":
 		// A source ending releases the amp: return to the interrupted source (or standby),
@@ -181,11 +227,13 @@ func (s *Server) sourceEvent(ctx context.Context, source, event string) bool {
 		if s.stopSource != nil && !s.stopSource(source) {
 			return true
 		}
+
 		s.snapshotRecent(ctx)
 		_ = s.backend.ReleaseSource(ctx, source)
 		s.hub.nudge()
 	default:
 		return false
 	}
+
 	return true
 }

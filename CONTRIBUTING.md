@@ -122,10 +122,24 @@ CI runs the same script on GitHub-hosted runners, one job per step; a pull reque
 gets read-only permissions and no secrets. The steps:
 
 - `lint` (`make lint`), including `actionlint` and `zizmor` on the workflows: every action is
-  pinned by full commit SHA, every container image by digest;
+  pinned by full commit SHA, every container image by digest. `make lint-go` holds the whole Go
+  module, not only what changed, to every golangci-lint linter, each configured to the project's
+  contracts in `app/.golangci.yml`. `make lint-shell` holds every shell script to every
+  shellcheck check, the optional ones too, down to style, each by its shebang (`sh` is BusyBox
+  ash on the speaker); `make lint-c` holds our C to every cppcheck check at the exhaustive level.
+  Where the code is right and a check is not, an inline `shellcheck disable` or
+  `cppcheck-suppress` on the line says why;
 - `web`, `e2e`, `go`, `go-race`, `python`, `firewall` and `bco` (together `make test`). The Go steps
   cover both build architectures, vet, the tests and the tests under the race detector; the
-  frontend step covers lint, format, types, tests and build;
+  frontend step covers lint, format, types, tests and build. TypeScript runs with every
+  strictness flag (`app/frontend/tsconfig.json`: `strict`, `noUncheckedIndexedAccess`,
+  `exactOptionalPropertyTypes` and the rest), ESLint with typescript-eslint's strict and
+  stylistic type-checked sets, jsx-a11y strict and React's hooks rules
+  (`app/frontend/eslint.config.mjs`), and Stylelint with every rule of the standard set and
+  stricter limits (`app/frontend/stylelint.config.mjs`). An option that fits a deliberate idiom
+  says why beside it. The one `eslint-disable` is the trust boundary in `src/lib/api/http.ts`,
+  where the server's OpenAPI contract types a response; a `stylelint-disable` says why on its
+  line;
 - `vuln` (`make vuln`: `govulncheck` and `npm audit`).
 
 A pull request that touches `os/`, `bco/`, the build or the installer also builds the image
@@ -285,16 +299,23 @@ and installing SoundTap needs no original Bose STU.
 
 ### Updates and signing
 
-- Every package a running speaker installs is signed: a `.sig` statement with kind, profile,
-  version and SHA-256, checked before anything is written, under the per-route policy of
+- Every package a running speaker fetches and installs without the press is signed: a `.sig` statement with
+  kind, profile, version and SHA-256, checked before anything is written, under the per-route policy of
   [ADR 0048](docs/decisions/0048-signed-updates.md). Signatures guard what can be started
   automatically or from the network; the USB stick, started by holding the keys at power-on,
   needs none ([ADR 0130](docs/decisions/0130-usb-stick-recovery.md)). That table is the contract; do not add a route
   around the signature or the press on the speaker ([ADR 0055](docs/decisions/0055-household-token-and-windows.md)).
-- Unsigned packages install only on an alpha image with `/mnt/nv/soundtap/allow-unsigned`.
-- An owner may set their own key on their speaker and sign their own builds
-  ([signing your own builds](RELEASING.md#signing-your-own-builds)). It is set and cleared only
-  behind the press; a restore never carries it.
+- One rule, alpha or release, alpha or production image alike: a release the speaker fetches
+  itself installs **without a press**, only when its `.sig` verifies against a release key
+  (`POST /api/update` with or without a tag, an older release included, `POST /api/core-update`,
+  Home Assistant, MQTT), so updating is one tap on the Updates page; after a successful
+  `POST /api/core-update` the speaker restarts into the new slot on its own, never after a
+  failure. **Every upload** (`POST /api/firmware?install=1`, `POST /api/soundtapd`,
+  `DELETE /api/soundtapd`) waits for one press on the speaker, signed or not: a release's `.sig`
+  can be replayed with another body, which would wipe the fallback slot. An unsigned package
+  (an own build, Bose's file through the `stock` route) installs only by such an upload or by
+  the USB stick ([installing your own builds](RELEASING.md#installing-your-own-builds)). A
+  `.sig` that does not verify is refused, never taken as unsigned.
 - The way back to Bose: `POST /api/firmware` takes a model-compatible original Bose STU without a
   signature, only with `X-SoundTap-Confirm: stock` and the press. Only Bose's modules reach NAND; a
   `soundtap-` or native module is refused before it is written. It writes the inactive slot and the

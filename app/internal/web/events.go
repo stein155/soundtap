@@ -11,13 +11,20 @@ import (
 	"hash/fnv"
 	"log/slog"
 	"net/http"
-	"sort"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/stein155/soundtap/app/internal/multiroom"
 	"github.com/stein155/soundtap/app/internal/speaker"
+)
+
+const (
+	// subscriberBuffer is how many frames a slow event subscriber may fall behind.
+	subscriberBuffer = 4
+	// statePollTimeout bounds one poll of the backend's state.
+	statePollTimeout = 4 * time.Second
 )
 
 // Live state pushed to browsers over Server-Sent Events (/api/events) so the UI
@@ -49,6 +56,8 @@ const (
 // stops acknowledging without closing TCP, and a write to it would block until TCP
 // gives up, about 15 minutes, holding one of the maxSubscribers slots all that time.
 // A live client takes every write within a heartbeat, so it never comes near this.
+//
+//nolint:gochecknoglobals // a variable so tests can replace it
 var sseWriteTimeout = 15 * time.Second
 
 // sseStream writes one event stream, each write under a fresh write deadline. An error
@@ -63,20 +72,35 @@ func newSSEStream(w http.ResponseWriter) *sseStream {
 }
 
 func (s *sseStream) write(format string, args ...any) error {
-	if err := s.rc.SetWriteDeadline(time.Now().Add(sseWriteTimeout)); err != nil {
-		return err
+	err := s.rc.SetWriteDeadline(time.Now().Add(sseWriteTimeout))
+	if err != nil {
+		return fmt.Errorf("event stream deadline: %w", err)
 	}
-	_, err := fmt.Fprintf(s.w, format, args...)
-	return err
+
+	_, err = fmt.Fprintf(s.w, format, args...)
+	if err != nil {
+		return fmt.Errorf("event stream write: %w", err)
+	}
+
+	return nil
 }
 
-func (s *sseStream) flush() error { return s.rc.Flush() }
+func (s *sseStream) flush() error {
+	err := s.rc.Flush()
+	if err != nil {
+		return fmt.Errorf("event stream flush: %w", err)
+	}
+
+	return nil
+}
 
 // send writes one event and flushes it to the client.
 func (s *sseStream) send(format string, args ...any) error {
-	if err := s.write(format, args...); err != nil {
+	err := s.write(format, args...)
+	if err != nil {
 		return err
 	}
+
 	return s.flush()
 }
 
@@ -115,6 +139,8 @@ func newHub(poll func(context.Context) (snapshot, bool), log *slog.Logger) *hub 
 		log:  log,
 		subs: map[chan []byte]struct{}{},
 		wake: make(chan struct{}, 1),
+		mu:   sync.Mutex{},
+		last: nil,
 	}
 }
 
@@ -131,15 +157,20 @@ func (h *hub) run(ctx context.Context) {
 				continue
 			}
 		}
+
 		interval := eventsIdle
+
 		if snap, ok := h.poll(ctx); ok {
-			if b, err := json.Marshal(snap); err == nil {
+			b, err := json.Marshal(snap)
+			if err == nil {
 				h.broadcast(b)
 			}
+
 			if activeNow(snap.Now) {
 				interval = eventsActive
 			}
 		}
+
 		select {
 		case <-ctx.Done():
 			return
@@ -158,6 +189,7 @@ func activeNow(np *speaker.NowPlaying) bool {
 func (h *hub) subCount() int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+
 	return len(h.subs)
 }
 
@@ -165,23 +197,26 @@ func (h *hub) subCount() int {
 // that connect later. A slow client never stalls the loop: when its queue is full the
 // oldest queued snapshot makes room for this one. Skipping the newest instead left a
 // client on stale state for as long as the state then stayed the same.
-func (h *hub) broadcast(b []byte) {
+func (h *hub) broadcast(frame []byte) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if bytes.Equal(b, h.last) {
+
+	if bytes.Equal(frame, h.last) {
 		return // nothing changed; don't wake idle clients
 	}
-	h.last = b
-	for ch := range h.subs {
+
+	h.last = frame
+	for sub := range h.subs {
 		select {
-		case ch <- b:
+		case sub <- frame:
 		default:
 			select { // full: every queued snapshot is older than this one
-			case <-ch:
+			case <-sub:
 			default:
 			}
+
 			select { // only broadcast sends, under h.mu, so this slot stays free
-			case ch <- b:
+			case sub <- frame:
 			default:
 			}
 		}
@@ -192,25 +227,29 @@ func (h *hub) broadcast(b []byte) {
 // nudges the loop to fetch a fresh reading, then returns an unsubscribe func.
 // The third result is false when maxSubscribers streams are already open.
 func (h *hub) subscribe() (<-chan []byte, func(), bool) {
-	ch := make(chan []byte, 4)
+	frames := make(chan []byte, subscriberBuffer)
+
 	h.mu.Lock()
 	if len(h.subs) >= maxSubscribers {
 		h.mu.Unlock()
+
 		return nil, func() {}, false
 	}
 	// The replay is queued before the lock goes: a broadcast in between would otherwise
 	// queue a newer state ahead of it, and the client would end on the older one.
 	if h.last != nil {
-		ch <- h.last // buffered and empty: cannot block
+		frames <- h.last // buffered and empty: cannot block
 	}
-	h.subs[ch] = struct{}{}
+
+	h.subs[frames] = struct{}{}
 	h.mu.Unlock()
 	h.nudge()
-	return ch, func() {
+
+	return frames, func() {
 		h.mu.Lock()
-		if _, ok := h.subs[ch]; ok {
-			delete(h.subs, ch)
-			close(ch)
+		if _, ok := h.subs[frames]; ok {
+			delete(h.subs, frames)
+			close(frames)
 		}
 		h.mu.Unlock()
 	}, true
@@ -229,22 +268,31 @@ func (h *hub) nudge() {
 // required (its failure means the speaker is unreachable); volume is
 // best-effort so a hiccup reading it doesn't blank the now-playing push.
 func (s *Server) pollState(ctx context.Context) (snapshot, bool) {
-	c, cancel := context.WithTimeout(ctx, 4*time.Second)
+	pollCtx, cancel := context.WithTimeout(ctx, statePollTimeout)
 	defer cancel()
-	np, err := s.backend.NowPlaying(c)
+
+	playing, err := s.backend.NowPlaying(pollCtx)
 	if err != nil {
-		return snapshot{}, false
+		return snapshot{Now: nil, Volume: nil, Muted: false, Presets: "", Followers: nil, Devices: ""}, false
 	}
-	s.enrichNow(np)
-	snap := snapshot{Now: np}
-	if v, err := s.backend.Volume(c); err == nil {
+
+	s.enrichNow(playing) //nolint:contextcheck // the metadata refresh runs on its own, past this poll
+
+	snap := snapshot{Now: playing, Volume: nil, Muted: false, Presets: "", Followers: nil, Devices: ""}
+
+	v, err := s.backend.Volume(pollCtx)
+	if err == nil {
 		snap.Volume = &v
 		snap.Muted = muted(s.backend)
 	}
-	if ps, err := s.backend.Presets(c); err == nil {
+
+	ps, err := s.backend.Presets(pollCtx)
+	if err == nil {
 		snap.Presets = presetsRevision(ps)
 	}
-	s.addHouseholdState(c, &snap)
+
+	s.addHouseholdState(pollCtx, &snap)
+
 	return snap, true
 }
 
@@ -252,8 +300,10 @@ func (s *Server) pollState(ctx context.Context) (snapshot, bool) {
 // GET /api/multiroom reports it, and the device registry's revision.
 func (s *Server) addHouseholdState(ctx context.Context, snap *snapshot) {
 	if s.multiroom != nil {
-		if status, err := s.multiroom.GetStatus(ctx); err == nil {
+		status, err := s.multiroom.GetStatus(ctx)
+		if err == nil {
 			ids := []string{}
+
 			for _, group := range status.Groups {
 				for _, c := range group.Clients {
 					if id := multiroom.DeviceIDFor(c.ID); c.Connected && c.ID != s.snapclientID && id != "" {
@@ -261,44 +311,57 @@ func (s *Server) addHouseholdState(ctx context.Context, snap *snapshot) {
 					}
 				}
 			}
-			sort.Strings(ids) // the order snapserver lists them in is no change
+
+			slices.Sort(ids) // the order snapserver lists them in is no change
 			snap.Followers = &ids
 		}
 	}
-	h := fnv.New64a()
+
+	hash := fnv.New64a()
 	if s.settings != nil {
-		fmt.Fprintf(h, "%s\n", s.settings.Get().Name)
+		fmt.Fprintf(hash, "%s\n", s.settings.Get().Name)
 	}
-	for _, d := range s.knownDevices(Device{}) {
-		fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%s\x00%d\x00%v\n", d.ID, d.Name, d.Model, d.Firmware, d.IP, d.Port, d.Departure)
+
+	for _, d := range s.knownDevices(new(Device)) {
+		fmt.Fprintf(hash, "%s\x00%s\x00%s\x00%s\x00%s\x00%d\x00%v\n",
+			d.ID, d.Name, d.Model, d.Firmware, d.IP, d.Port, d.Departure)
 	}
-	snap.Devices = strconv.FormatUint(h.Sum64(), 36)
+
+	snap.Devices = strconv.FormatUint(hash.Sum64(), 36)
 }
 
 // presetsRevision is a short hash of what the preset slots hold. It hashes the presets
 // as they are served, every field included, so a change only to a logo or to a
 // field added later still tells open pages to re-read them.
 func presetsRevision(ps []speaker.Preset) string {
-	h := fnv.New64a()
-	_ = json.NewEncoder(h).Encode(ps) // a hash.Hash never fails a write
-	return strconv.FormatUint(h.Sum64(), 36)
+	hash := fnv.New64a()
+
+	err := json.NewEncoder(hash).Encode(ps)
+	if err != nil { // a hash.Hash never fails a write, and presets always encode
+		return ""
+	}
+
+	return strconv.FormatUint(hash.Sum64(), 36)
 }
 
 // events streams live speaker state to one browser over Server-Sent Events.
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	if _, ok := w.(http.Flusher); !ok {
 		apiError(w, http.StatusInternalServerError, "streaming unsupported")
+
 		return
 	}
+
 	h := w.Header()
 	h.Set("Content-Type", "text/event-stream")
 	h.Set("Cache-Control", "no-cache")
 	h.Set("Connection", "keep-alive")
 	h.Set("X-Accel-Buffering", "no") // don't let a reverse proxy buffer the stream
 
-	ch, unsubscribe, ok := s.hub.subscribe()
+	frames, unsubscribe, ok := s.hub.subscribe()
 	if !ok {
 		apiError(w, http.StatusServiceUnavailable, "too many event streams")
+
 		return
 	}
 	defer unsubscribe()
@@ -308,21 +371,25 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hb := time.NewTicker(eventsHeartbeat)
-	defer hb.Stop()
+	heartbeat := time.NewTicker(eventsHeartbeat)
+	defer heartbeat.Stop()
+
 	for {
 		var err error
+
 		select {
 		case <-r.Context().Done():
 			return
-		case b, ok := <-ch:
+		case b, ok := <-frames:
 			if !ok {
 				return
 			}
+
 			err = stream.send("event: state\ndata: %s\n\n", b)
-		case <-hb.C:
+		case <-heartbeat.C:
 			err = stream.send("event: ping\ndata:\n\n")
 		}
+
 		if err != nil {
 			return // the client stopped reading: free its slot
 		}

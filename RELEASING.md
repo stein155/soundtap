@@ -291,10 +291,12 @@ What withdrawing does not do:
 
 - **Speakers that installed it stay on it.** Nothing moves a speaker back by itself: the
   latest release is never older than what runs. The way off is the fix release. An owner who
-  wants the previous version back uploads it with its `.sig` and confirms the downgrade with
-  the press on the speaker (ADR 0048).
+  wants the previous version back uploads it with its `.sig`, confirms the downgrade and
+  presses once on the speaker: every upload waits for that press, signed or not (ADR 0048).
 - **Its signature stays valid.** Anyone with the `.stu` or app and its `.sig` can still
-  upload it, with the press on the speaker. Only a key rotation makes the signature invalid
+  upload it, but only with the press on the speaker. Without a press, the speaker installs
+  only what it fetches from the releases itself, and a withdrawn release is no longer among
+  them. Only a key rotation makes the signature invalid
   ([Release keys](#release-keys)), and then for every release signed with the retired key,
   within the limits of [what revocation does](#what-revocation-does-and-does-not-do). Short
   of that, the fix release's higher version is what keeps speakers from being offered it.
@@ -404,9 +406,9 @@ production signature, which is what `sign-release.sh` makes, `sign.sh` refuses a
 opens without one. To put a passphrase on a key: `openssl pkey -in <key> -aes256 -out <new key>`.
 An alpha (bench) signature may use a key without one; openssl asks for a passphrase, or reads
 it as `SOUNDTAP_RELEASE_KEY_PASSIN` says (openssl's `-passin` form, such as `env:VAR`).
-A running speaker installs an STU or app only with its `.sig` picked alongside it. The one exception is an alpha image with
-`/mnt/nv/soundtap/allow-unsigned` (development speakers, for `build.yml` candidates). A
-production image ignores that file.
+A running speaker installs a fetched STU or app only with a release's `.sig`. An upload installs
+with its `.sig`, or without one after the press on the speaker, on any image
+([installing your own builds](#installing-your-own-builds)).
 
 ### The release environment
 
@@ -448,27 +450,24 @@ The maintainer sets it up once, and again with new secrets after a rotation:
 forks. GitHub masks the secrets in logs; `sign.yml` never prints them or turns on shell
 tracing, and a test checks that it does not.
 
-### Signing your own builds
+### Installing your own builds
 
-An owner who builds SoundTap themselves signs it with a key of their own and sets that key's
-public half on their speaker as its owner key (ADR 0048, "The owner's own key"). This is not a
-release: nothing is published, and only the speakers that carry the key take the build.
+An owner who builds SoundTap themselves needs no key. This is not a release: nothing is
+published or signed.
 
-```sh
-openssl genpkey -algorithm ed25519 | openssl pkey -aes256 -out ~/soundtap-owner-key.pem
-SOUNDTAP_OWNER_KEY_FILE=~/soundtap-owner-key.pem SOUNDTAP_SIGN_PROFILE=production \
-	tools/release/sign.sh dist/Update-soundtap-buildroot.stu
-```
+1. Build: `make os stu` gives `dist/Update-soundtap-buildroot.stu`.
+2. Upload: on the speaker's Updates page, *Other ways* → *Upload a file*, pick the `.stu` alone.
+   The speaker checks it and says it is not signed.
+3. Press: choose *Install firmware*, then hold a button on the speaker (not volume) for two
+   seconds. Every upload waits for that press, signed or not, and it is what lets an unsigned
+   package in (ADR 0048); nothing automatic and nothing from the network alone installs one.
+4. Restart: choose *Reboot into the new firmware* and press once more on the speaker. Only a
+   release the speaker fetches itself (*Update* on the Updates page) restarts into the new
+   slot on its own.
 
-`sign.sh` signs with the key in `SOUNDTAP_OWNER_KEY_FILE` instead of the release key, under
-the same rules (a production signature needs a key under a passphrase), and prints
-`owner key <base64>, fingerprint <hex>`. Paste the base64 on the speaker's Updates page under
-*Your own signing key* and hold a button on the speaker; the page then shows the same
-fingerprint. From then on the `.stu` with its `.sig` installs through the Updates page, under
-the version and profile rules of a release. A USB stick at power-on takes the `.stu` renamed
-`Update.stu` without any signature ([ADR 0130](docs/decisions/0130-usb-stick-recovery.md)). `sign-release.sh` clears `SOUNDTAP_OWNER_KEY_FILE` and signs a release
-with the release key only. The key goes with *Remove the key* on the Updates page, or with a
-factory reset; a backup and its restore never carry it.
+This works on alpha and production images alike. A USB stick at power-on takes the same `.stu`
+renamed `Update.stu`, also without a signature ([ADR 0130](docs/decisions/0130-usb-stick-recovery.md)).
+`sign.sh` signs with the release key only.
 
 ## Release keys
 

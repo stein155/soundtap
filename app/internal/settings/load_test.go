@@ -4,6 +4,7 @@
 package settings
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -15,13 +16,19 @@ import (
 
 func TestMissingFileStartsWritableWithoutLoadError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
+
 	s := Open(path)
-	if err := s.LoadErr(); err != nil {
+
+	err := s.LoadErr()
+	if err != nil {
 		t.Fatalf("LoadErr = %v for a missing file, want nil", err)
 	}
-	if err := s.SetLanguage("nl"); err != nil {
+
+	err = s.SetLanguage("nl")
+	if err != nil {
 		t.Fatalf("write to a fresh store: %v", err)
 	}
+
 	if got := Open(path).Get().Language; got != "nl" {
 		t.Fatalf("Language after reopen = %q, want nl", got)
 	}
@@ -31,22 +38,32 @@ func TestMissingFileStartsWritableWithoutLoadError(t *testing.T) {
 // its defaults in memory, refuses every write and reports why.
 func TestUnreadableDirectoryMakesTheStoreReadOnly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
-	if err := os.Mkdir(path, 0o700); err != nil {
+
+	err := os.Mkdir(path, 0o700)
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	s := Open(path)
-	if err := s.LoadErr(); !errors.Is(err, atomicjson.ErrUnreadable) {
+
+	err = s.LoadErr()
+	if !errors.Is(err, atomicjson.ErrUnreadable) {
 		t.Fatalf("LoadErr = %v, want ErrUnreadable", err)
 	}
+
 	if got := s.Get().Language; got != "en" {
 		t.Fatalf("Language = %q, want the default en", got)
 	}
-	if err := s.SetLanguage("nl"); !errors.Is(err, atomicjson.ErrUnreadable) {
+
+	err = s.SetLanguage("nl")
+	if !errors.Is(err, atomicjson.ErrUnreadable) {
 		t.Fatalf("write = %v, want ErrUnreadable", err)
 	}
+
 	if got := s.Get().Language; got != "en" {
 		t.Fatalf("a refused write changed memory to %q", got)
 	}
+
 	if info, err := os.Stat(path); err != nil || !info.IsDir() {
 		t.Fatalf("settings path = %v, %v; want the directory untouched", info, err)
 	}
@@ -58,21 +75,32 @@ func TestUnreadableFileIsNotOverwritten(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root reads a mode-000 file")
 	}
+
 	path := filepath.Join(t.TempDir(), "settings.json")
+
 	owner := []byte(`{"schemaVersion":1,"name":"Kitchen","mqtt":{"password":"SYNTHETIC"}}`)
-	if err := os.WriteFile(path, owner, 0o000); err != nil {
+
+	err := os.WriteFile(path, owner, 0o000)
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	s := Open(path)
-	if err := s.SetAudio(Audio{Volume: 30, HasVolume: true}); !errors.Is(err, atomicjson.ErrUnreadable) {
+
+	err = s.SetAudio(Audio{Volume: 30, HasVolume: true})
+	if !errors.Is(err, atomicjson.ErrUnreadable) {
 		t.Fatalf("write = %v, want ErrUnreadable", err)
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
+
+	err = os.Chmod(path, 0o600)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if data, _ := os.ReadFile(path); string(data) != string(owner) {
+
+	if data, _ := os.ReadFile(path); !bytes.Equal(data, owner) {
 		t.Fatalf("unreadable settings overwritten with %s", data)
 	}
+
 	if got := Open(path).Get().Name; got != "Kitchen" {
 		t.Fatalf("name once readable again = %q, want Kitchen", got)
 	}
@@ -80,14 +108,21 @@ func TestUnreadableFileIsNotOverwritten(t *testing.T) {
 
 func TestCorruptFileReportsWhereItWent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
-	if err := os.WriteFile(path, []byte("{broken"), 0o600); err != nil {
+
+	err := os.WriteFile(path, []byte("{broken"), 0o600)
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	s := Open(path)
-	if err := s.LoadErr(); !errors.Is(err, atomicjson.ErrCorrupt) || !strings.Contains(err.Error(), path+".corrupt") {
+
+	err = s.LoadErr()
+	if !errors.Is(err, atomicjson.ErrCorrupt) || !strings.Contains(err.Error(), path+".corrupt") {
 		t.Fatalf("LoadErr = %v, want ErrCorrupt naming the backup", err)
 	}
-	if err := s.SetLanguage("nl"); err != nil {
+
+	err = s.SetLanguage("nl")
+	if err != nil {
 		t.Fatalf("write after quarantine: %v", err)
 	}
 }
@@ -96,18 +131,26 @@ func TestCorruptFileReportsWhereItWent(t *testing.T) {
 // not write over it.
 func TestCorruptFileThatCannotBeMovedKeepsTheStoreReadOnly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
-	if err := os.WriteFile(path, []byte("{broken"), 0o600); err != nil {
+
+	err := os.WriteFile(path, []byte("{broken"), 0o600)
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	for _, dir := range []string{path + ".corrupt", path + ".corrupt.1"} {
-		if err := os.MkdirAll(filepath.Join(dir, "x"), 0o700); err != nil {
+		err := os.MkdirAll(filepath.Join(dir, "x"), 0o700)
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
+
 	s := Open(path)
-	if err := s.SetLanguage("nl"); !errors.Is(err, atomicjson.ErrUnreadable) {
+
+	err = s.SetLanguage("nl")
+	if !errors.Is(err, atomicjson.ErrUnreadable) {
 		t.Fatalf("write = %v, want ErrUnreadable", err)
 	}
+
 	if data, _ := os.ReadFile(path); string(data) != "{broken" {
 		t.Fatalf("file = %q, want it untouched", data)
 	}

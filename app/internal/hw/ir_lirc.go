@@ -48,22 +48,28 @@ func decodeBoseFrame(d []uint32) (byte, bool) {
 		if end < 32 {
 			continue
 		}
+
 		var bits uint16
+
 		for i := range 16 {
 			mark, space := d[end-32+2*i], d[end-32+2*i+1]
 			if mark == 0 || space == 0 {
 				bits = 0
+
 				break
 			}
+
 			if space > 2*mark {
 				bits |= 1 << i
 			}
 		}
+
 		a, b := byte(bits), byte(bits>>8)
 		if a^b == 0xff {
 			return a, true
 		}
 	}
+
 	return 0, false
 }
 
@@ -85,6 +91,7 @@ func (f *lircFramer) sample(s uint32, now time.Time) {
 		if len(f.durs) == lircMaxDurations {
 			f.durs = f.durs[1:]
 		}
+
 		f.durs = append(f.durs, v)
 	}
 }
@@ -94,10 +101,12 @@ func (f *lircFramer) flush(now time.Time) {
 	if len(f.durs) == 0 {
 		return
 	}
+
 	if c, ok := decodeBoseFrame(f.durs); ok {
 		f.queue = append(f.queue, c)
 		f.down, f.lastFrame = true, now
 	}
+
 	f.durs = f.durs[:0]
 }
 
@@ -105,6 +114,7 @@ func (f *lircFramer) flush(now time.Time) {
 // and, once frames have stopped for long enough, reports the release.
 func (f *lircFramer) idle(now time.Time) {
 	f.flush(now)
+
 	if f.down && now.Sub(f.lastFrame) >= lircReleaseAfter {
 		f.down = false
 		f.queue = append(f.queue, irReleaseCode)
@@ -115,8 +125,10 @@ func (f *lircFramer) pop() (byte, bool) {
 	if len(f.queue) == 0 {
 		return 0, false
 	}
+
 	c := f.queue[0]
 	f.queue = f.queue[1:]
+
 	return c, true
 }
 
@@ -138,5 +150,6 @@ func reverseBits(c byte) byte {
 		r = r<<1 | c&1
 		c >>= 1
 	}
+
 	return r
 }

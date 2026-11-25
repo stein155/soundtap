@@ -17,11 +17,14 @@ import (
 
 // frontPanel is the ST20 panel while the speaker is on: the keys tell it what they do,
 // and it shows the calls to the paired phones bt_follow.go makes.
+//
+//nolint:gochecknoglobals // process-wide state: the keys, the display drivers and Bluetooth share the one panel
 var frontPanel = newFrontPanel()
 
 func newFrontPanel() *panel.Panel {
 	p := panel.New(holdToStore)
 	p.Calling = btReconnecting.Load
+
 	return p
 }
 
@@ -45,6 +48,7 @@ func updatePercent() int {
 	if !firmwareActive.Load() {
 		return -1
 	}
+
 	return int(firmwareProgress.Load())
 }
 
@@ -52,11 +56,14 @@ func displayPath() string {
 	if devMode.Load() {
 		return "" // the host's own framebuffer is not a speaker's panel
 	}
+
 	if board.OLED != "" && oled.Available(board.OLED) {
 		return board.OLED
 	}
+
 	if boardErr != nil {
 		return "" // an unidentified board gets no panel either (refuseUnknownHardware)
 	}
+
 	return "/dev/fb0"
 }

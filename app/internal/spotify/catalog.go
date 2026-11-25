@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"sync"
 
 	"github.com/stein155/soundtap/app/internal/safego"
@@ -37,11 +38,13 @@ func (g *mImageGroup) artwork() string {
 	if g == nil || len(g.Image) == 0 {
 		return ""
 	}
+
 	for _, im := range g.Image {
 		if im.Size == "DEFAULT" {
 			return artworkPath(im.FileID)
 		}
 	}
+
 	return artworkPath(g.Image[0].FileID)
 }
 
@@ -90,6 +93,7 @@ func mRefs(kind string, in []mRef) []Ref {
 	for _, r := range in {
 		out = append(out, Ref{URI: uriOf(kind, r.GID), Name: r.Name})
 	}
+
 	return out
 }
 
@@ -99,14 +103,16 @@ func (t mTrack) norm() Track {
 		out.Album = &Ref{URI: uriOf("album", t.Album.GID), Name: t.Album.Name}
 		out.Artwork = t.Album.Cover.artwork()
 	}
+
 	return out
 }
 
 func (a mAlbum) norm() Album {
 	out := Album{URI: uriOf("album", a.GID), Name: a.Name, Artists: mRefs("artist", a.Artist), Artwork: a.Cover.artwork()}
 	if a.Date != nil && a.Date.Year > 0 {
-		out.ReleaseDate = fmt.Sprint(a.Date.Year)
+		out.ReleaseDate = strconv.Itoa(a.Date.Year)
 	}
+
 	return out
 }
 
@@ -118,9 +124,11 @@ func (c *Client) spclient(ctx context.Context, path string, v any) error {
 	if err != nil {
 		return err
 	}
+
 	if err := json.Unmarshal(body, v); err != nil {
 		return fmt.Errorf("spclient %s: %w", path, err)
 	}
+
 	return nil
 }
 
@@ -142,24 +150,31 @@ const metaCacheEntries = 2000
 func (m *metaCache) get(key string) (any, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	if el, ok := m.byKey[key]; ok {
 		m.order.MoveToFront(el)
+
 		return el.Value.(cacheEntry).val, true
 	}
+
 	return nil, false
 }
 
 func (m *metaCache) put(key string, val any) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	if m.byKey == nil {
 		m.byKey, m.order = map[string]*list.Element{}, list.New()
 	}
+
 	if el, ok := m.byKey[key]; ok {
 		el.Value = cacheEntry{key, val}
 		m.order.MoveToFront(el)
+
 		return
 	}
+
 	m.byKey[key] = m.order.PushFront(cacheEntry{key, val})
 	for m.order.Len() > metaCacheEntries {
 		old := m.order.Back()
@@ -172,12 +187,17 @@ func (c *Client) track(ctx context.Context, id string) (Track, error) {
 	if v, ok := c.cache.get("t:" + id); ok {
 		return v.(Track), nil
 	}
+
 	var m mTrack
-	if err := c.spclient(ctx, "/metadata/4/track/"+hexID(id), &m); err != nil {
+
+	err := c.spclient(ctx, "/metadata/4/track/"+hexID(id), &m)
+	if err != nil {
 		return Track{}, err
 	}
+
 	t := m.norm()
 	c.cache.put("t:"+id, t)
+
 	return t, nil
 }
 
@@ -185,11 +205,16 @@ func (c *Client) albumMeta(ctx context.Context, id string) (mAlbum, error) {
 	if v, ok := c.cache.get("a:" + id); ok {
 		return v.(mAlbum), nil
 	}
+
 	var m mAlbum
-	if err := c.spclient(ctx, "/metadata/4/album/"+hexID(id), &m); err != nil {
+
+	err := c.spclient(ctx, "/metadata/4/album/"+hexID(id), &m)
+	if err != nil {
 		return mAlbum{}, err
 	}
+
 	c.cache.put("a:"+id, m)
+
 	return m, nil
 }
 
@@ -204,17 +229,25 @@ func each[T any](ctx context.Context, ids []string, fn func(context.Context, str
 		v  T
 		ok bool
 	}
+
 	out := make([]res, len(ids))
 	sem := make(chan struct{}, fetchParallel)
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var firstErr error
+
+	var (
+		wg       sync.WaitGroup
+		mu       sync.Mutex
+		firstErr error
+	)
+
 	for i, id := range ids {
 		wg.Add(1)
+
 		sem <- struct{}{}
+
 		safego.Go("spotify.catalogFetch", func() {
 			defer wg.Done()
 			defer func() { <-sem }()
+
 			v, err := fn(ctx, id)
 			if err != nil {
 				mu.Lock()
@@ -222,13 +255,18 @@ func each[T any](ctx context.Context, ids []string, fn func(context.Context, str
 					firstErr = err
 				}
 				mu.Unlock()
+
 				return
 			}
+
 			out[i] = res{v, true}
 		})
 	}
+
 	wg.Wait()
+
 	list := make([]T, 0, len(ids))
+
 	for _, r := range out {
 		if r.ok {
 			list = append(list, r.v)
@@ -238,6 +276,7 @@ func each[T any](ctx context.Context, ids []string, fn func(context.Context, str
 	if len(list) == 0 && firstErr != nil && !errors.Is(firstErr, ErrUnavailable) {
 		return nil, firstErr
 	}
+
 	return list, nil
 }
 
@@ -249,6 +288,7 @@ func trackIDs(uris []string) []string {
 			ids = append(ids, id)
 		}
 	}
+
 	return ids
 }
 
@@ -266,25 +306,32 @@ func (c *Client) Album(ctx context.Context, id string, offset int) (Album, int, 
 	if !ValidID(id) || offset < 0 {
 		return Album{}, 0, ErrInvalid
 	}
+
 	m, err := c.albumMeta(ctx, id)
 	if err != nil {
 		return Album{}, 0, err
 	}
+
 	out := m.norm()
+
 	var uris []string
+
 	for _, d := range m.Disc {
 		for _, t := range d.Track {
 			uris = append(uris, uriOf("track", t.GID))
 		}
 	}
+
 	out.Total = len(uris)
 	// Clamp before adding: offset comes from the query string, and MaxInt+pageSize
 	// wraps to a negative slice bound.
 	offset = min(offset, len(uris))
+
 	page := uris[offset:min(offset+pageSize, len(uris))]
 	if out.Tracks, err = c.tracks(ctx, page); err != nil {
 		return Album{}, 0, err
 	}
+
 	return out, nextOf(offset, len(page), len(uris)), nil
 }
 
@@ -293,17 +340,23 @@ func (c *Client) Artist(ctx context.Context, id string) (ArtistPage, error) {
 	if !ValidID(id) {
 		return ArtistPage{}, ErrInvalid
 	}
+
 	st, _ := c.ctlStatus(ctx)
 	country := st.Country
+
 	var m mArtist
-	if err := c.spclient(ctx, "/metadata/4/artist/"+hexID(id), &m); err != nil {
+
+	err := c.spclient(ctx, "/metadata/4/artist/"+hexID(id), &m)
+	if err != nil {
 		return ArtistPage{}, err
 	}
+
 	page := ArtistPage{
 		Artist:    Artist{URI: uriOf("artist", m.GID), Name: m.Name, Artwork: m.Portrait.artwork()},
 		TopTracks: []Track{},
 		Albums:    []Album{},
 	}
+
 	var top []string
 	for _, tt := range m.TopTrack {
 		if tt.Country == country || (top == nil && len(tt.Track) > 0) {
@@ -311,16 +364,21 @@ func (c *Client) Artist(ctx context.Context, id string) (ArtistPage, error) {
 			for _, t := range tt.Track {
 				top = append(top, uriOf("track", t.GID))
 			}
+
 			if tt.Country == country {
 				break
 			}
 		}
 	}
+
 	if len(top) > 10 {
 		top = top[:10]
 	}
+
 	var albumIDs []string
+
 	group := map[string]string{}
+
 	for _, g := range []struct {
 		name   string
 		limit  int
@@ -343,14 +401,18 @@ func (c *Client) Artist(ctx context.Context, id string) (ArtistPage, error) {
 	if t, err := c.tracks(ctx, top); err == nil {
 		page.TopTracks = t
 	}
+
 	if albums, err := each(ctx, albumIDs, func(ctx context.Context, id string) (Album, error) {
 		m, err := c.albumMeta(ctx, id)
+
 		return m.norm(), err
 	}); err == nil {
 		for i := range albums {
 			albums[i].Group = group[albums[i].URI]
 		}
+
 		page.Albums = albums
 	}
+
 	return page, nil
 }

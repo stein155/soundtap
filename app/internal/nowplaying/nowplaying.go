@@ -76,7 +76,8 @@ type Enricher struct {
 // (safehttp.SafeTransport), since stream and artwork URLs come from third parties.
 func New(sp interface {
 	NowPlaying(ctx context.Context) (*speaker.NowPlaying, error)
-}, tc *tunein.Client) *Enricher {
+}, tc *tunein.Client,
+) *Enricher {
 	return &Enricher{
 		speaker:    sp,
 		tunein:     tc,
@@ -95,7 +96,9 @@ func (e *Enricher) NowPlaying(ctx context.Context) (*speaker.NowPlaying, error) 
 	if err != nil {
 		return nil, err
 	}
+
 	e.Enrich(np)
+
 	return np, nil
 }
 
@@ -109,20 +112,26 @@ func (e *Enricher) Track(id string) (string, bool) {
 	if !strings.HasPrefix(id, "s") {
 		return "", false
 	}
+
 	e.mu.Lock()
+
 	ent, ok := e.cache[id]
 	if (!ok || time.Since(ent.at) >= ttl) && !ent.fetching {
 		ent.fetching = true
 		e.cache[id] = ent
+
 		safego.Go("nowplaying.refresh", func() { e.refresh(id) })
 	}
 	e.mu.Unlock()
+
 	if !ok || ent.song == "" || time.Since(ent.at) >= shownFor {
 		return "", false
 	}
+
 	if artist := strings.TrimSpace(ent.artist); artist != "" && !strings.EqualFold(artist, strings.TrimSpace(ent.song)) {
 		return artist + " - " + ent.song, true
 	}
+
 	return ent.song, true
 }
 
@@ -135,21 +144,28 @@ func (e *Enricher) Enrich(np *speaker.NowPlaying) {
 	if np == nil {
 		return
 	}
+
 	if np.Art == speaker.InternetRadioIcon {
 		np.Art = ""
 	}
+
 	if !strings.HasPrefix(np.StationID, "s") && !speaker.OwnStream(np.StationID) {
 		return
 	}
+
 	if np.PlayStatus != "" && np.PlayStatus != "PLAY_STATE" && np.PlayStatus != "BUFFERING_STATE" {
 		return // nothing is playing — don't show a stale song
 	}
+
 	id := np.StationID
+
 	e.mu.Lock()
+
 	ent, ok := e.cache[id]
 	if (!ok || time.Since(ent.at) >= ttl) && !ent.fetching {
 		ent.fetching = true
 		e.cache[id] = ent
+
 		safego.Go("nowplaying.refresh", func() { e.refresh(id) })
 	}
 	e.mu.Unlock()
@@ -213,6 +229,7 @@ func (e *Enricher) refresh(id string) {
 			ent.artist, ent.song = icy.SplitArtistTitle(title)
 		}
 	}
+
 	cancel()
 	// TuneIn's Describe fills in when the stream carried no track metadata, and
 	// settles the order when it did: "Artist - Title" is only a convention, and
@@ -220,7 +237,9 @@ func (e *Enricher) refresh(id string) {
 	if !speaker.OwnStream(id) {
 		ctx, cancel = step(4 * time.Second)
 		t, err := e.tunein.NowPlaying(ctx, id)
+
 		cancel()
+
 		if err == nil && t.Song != "" {
 			if ent.song == "" {
 				ent.song, ent.artist, ent.art = t.Song, t.Artist, t.Art
@@ -233,12 +252,15 @@ func (e *Enricher) refresh(id string) {
 	// already have one (ICY carries none; TuneIn sometimes does).
 	if ent.song != "" && ent.art == "" {
 		term := strings.TrimSpace(ent.artist + " " + ent.song)
+
 		ctx, cancel := step(4 * time.Second)
 		if art, err := artwork.Search(ctx, e.proxy, term); err == nil {
 			ent.art = art
 		}
+
 		cancel()
 	}
+
 	ent.at = time.Now()
 
 	e.mu.Lock()
@@ -251,6 +273,7 @@ func (e *Enricher) refresh(id string) {
 			}
 		}
 	}
+
 	e.cache[id] = ent
 	e.mu.Unlock()
 }
@@ -261,6 +284,7 @@ func orderLike(artist, song string, t tunein.Track) (string, string) {
 	if strings.EqualFold(artist, t.Song) && strings.EqualFold(song, t.Artist) {
 		return song, artist
 	}
+
 	return artist, song
 }
 
@@ -270,9 +294,11 @@ func (e *Enricher) streamURL(ctx context.Context, id string) string {
 	if speaker.OwnStream(id) {
 		return id
 	}
+
 	e.mu.Lock()
 	if u, ok := e.streamURLs[id]; ok && time.Since(u.at) < streamURLTTL {
 		e.mu.Unlock()
+
 		return u.url
 	}
 	e.mu.Unlock()
@@ -281,14 +307,17 @@ func (e *Enricher) streamURL(ctx context.Context, id string) string {
 	if err != nil {
 		return ""
 	}
+
 	u := tunein.PlayableURL(urls)
 	if u == "" {
 		return ""
 	}
+
 	e.mu.Lock()
 	e.pruneStreamURLsLocked()
 	e.streamURLs[id] = urlEntry{url: u, at: time.Now()}
 	e.mu.Unlock()
+
 	return u
 }
 

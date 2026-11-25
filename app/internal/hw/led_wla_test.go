@@ -22,20 +22,34 @@ func TestWLALEDPattern(t *testing.T) {
 		updating bool
 		want     wlaLEDs
 	}{
-		{"setup AP is solid amber", on, LinkSetupAP, false, false,
-			wlaLEDs{wifiAmber: wlaSolid(wlaOnLevel)}},
-		{"connected is solid white", on, LinkUp, false, false,
-			wlaLEDs{wifiWhite: wlaSolid(wlaOnLevel)}},
-		{"standby dims the same lamp", standby, LinkUp, false, false,
-			wlaLEDs{wifiWhite: wlaSolid(wlaStandbyLevel)}},
-		{"connecting blinks white fast", on, LinkConnecting, false, false,
-			wlaLEDs{wifiWhite: wlaBlink(wlaFastBlinkMS, wlaOnLevel)}},
-		{"booting looks like connecting", on, LinkUp, true, false,
-			wlaLEDs{wifiWhite: wlaBlink(wlaFastBlinkMS, wlaOnLevel)}},
-		{"no network blinks amber slowly", on, LinkDown, false, false,
-			wlaLEDs{wifiAmber: wlaBlink(wlaSlowBlinkMS, wlaOnLevel)}},
-		{"an update outranks the network", on, LinkUp, false, true,
-			wlaLEDs{wifiWhite: []wlaStep{{3000, wlaOnLevel}, {250, 0}, {250, wlaOnLevel}, {250, 0}}}},
+		{
+			"setup AP is solid amber", on, LinkSetupAP, false, false,
+			wlaLEDs{wifiAmber: wlaSolid(wlaOnLevel)},
+		},
+		{
+			"connected is solid white", on, LinkUp, false, false,
+			wlaLEDs{wifiWhite: wlaSolid(wlaOnLevel)},
+		},
+		{
+			"standby dims the same lamp", standby, LinkUp, false, false,
+			wlaLEDs{wifiWhite: wlaSolid(wlaStandbyLevel)},
+		},
+		{
+			"connecting blinks white fast", on, LinkConnecting, false, false,
+			wlaLEDs{wifiWhite: wlaBlink(wlaFastBlinkMS, wlaOnLevel)},
+		},
+		{
+			"booting looks like connecting", on, LinkUp, true, false,
+			wlaLEDs{wifiWhite: wlaBlink(wlaFastBlinkMS, wlaOnLevel)},
+		},
+		{
+			"no network blinks amber slowly", on, LinkDown, false, false,
+			wlaLEDs{wifiAmber: wlaBlink(wlaSlowBlinkMS, wlaOnLevel)},
+		},
+		{
+			"an update outranks the network", on, LinkUp, false, true,
+			wlaLEDs{wifiWhite: []wlaStep{{3000, wlaOnLevel}, {250, 0}, {250, wlaOnLevel}, {250, 0}}},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -51,6 +65,7 @@ func TestWLALEDBluetoothLamp(t *testing.T) {
 	if got := wlaLEDPattern(playing, LinkUp, false, false, false); !sameWLASteps(got.btWhite, wlaSolid(wlaOnLevel)) {
 		t.Fatalf("playing over Bluetooth should light the lamp solid white, got %+v", got)
 	}
+
 	waiting := speakerstate.StatusSnapshot{Source: "BLUETOOTH"}
 	if got := wlaLEDPattern(waiting, LinkUp, false, false, false); len(got.btBlue) == 0 {
 		t.Fatalf("waiting for a phone should show blue, got %+v", got)
@@ -69,10 +84,12 @@ func TestWLATransportAckBlinksTheSourceLamp(t *testing.T) {
 		Source: "BLUETOOTH", PlayStatus: "PLAY_STATE", TransportAck: true,
 	}
 	got := wlaLEDPattern(playing, LinkUp, false, false, false)
+
 	want := []wlaStep{{250, 0}, {250, wlaOnLevel}}
 	if !sameWLASteps(got.btWhite, want) {
 		t.Fatalf("btWhite = %+v, want %+v", got.btWhite, want)
 	}
+
 	if len(got.btBlue) != 0 {
 		t.Fatalf("the blue channel must be dark during the blink, got %+v", got.btBlue)
 	}
@@ -108,6 +125,7 @@ func TestWLALevelAt(t *testing.T) {
 			t.Fatalf("level at %s = %d, want %d", c.at, got, c.want)
 		}
 	}
+
 	if got := wlaLevelAt(nil, time.Second); got != 0 {
 		t.Fatalf("a channel with no animation is dark, got %d", got)
 	}
@@ -115,6 +133,7 @@ func TestWLALevelAt(t *testing.T) {
 
 func TestWLANextStep(t *testing.T) {
 	ms := time.Millisecond
+
 	blink := wlaBlink(350, 100)
 	for _, c := range []struct {
 		steps   []wlaStep

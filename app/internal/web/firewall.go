@@ -19,6 +19,9 @@ import (
 	"github.com/stein155/soundtap/app/internal/childproc"
 )
 
+// firewallWaitDelay is how long a firewall command's output may outlive it.
+const firewallWaitDelay = 500 * time.Millisecond
+
 // What /api/health says about the production input filter (ADR 0066, ADR 0113).
 const (
 	FirewallLoaded  = "loaded"  // the filter's input chain is there with policy drop
@@ -46,8 +49,14 @@ type CommandRunner func(ctx context.Context, name string, args ...string) ([]byt
 func runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	childproc.NetTool(cmd) // nft needs CAP_NET_ADMIN even to list
-	cmd.WaitDelay = 500 * time.Millisecond
-	return cmd.Output()
+	cmd.WaitDelay = firewallWaitDelay
+
+	out, err := cmd.Output()
+	if err != nil {
+		return out, fmt.Errorf("%s: %w", name, err)
+	}
+
+	return out, nil
 }
 
 // FirewallCheck says whether a production image's inbound filter is loaded. The filter
@@ -71,33 +80,46 @@ func NewFirewallCheck(profileFile string, run CommandRunner, log *slog.Logger) *
 	if run == nil {
 		run = runCommand
 	}
+
 	if log == nil {
 		log = slog.Default()
 	}
-	return &FirewallCheck{profileFile: profileFile, run: run, log: log, now: time.Now}
+
+	return &FirewallCheck{
+		profileFile: profileFile, run: run, log: log, now: time.Now,
+		mu: sync.Mutex{}, checked: time.Time{}, state: "", reason: "",
+	}
 }
 
 // Status returns FirewallLoaded, FirewallMissing or FirewallNA, and for a missing filter
 // why. It logs an error each time the filter is found missing after it was not.
-func (f *FirewallCheck) Status(ctx context.Context) (state, reason string) {
+// It returns the state, then the reason.
+func (f *FirewallCheck) Status(ctx context.Context) (string, string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+
 	if f.state != "" && f.now().Sub(f.checked) < firewallRecheck {
 		return f.state, f.reason
 	}
-	state, reason = f.check(ctx)
+
+	state, reason := f.check(ctx)
 	switch {
 	case state == FirewallMissing && f.state != FirewallMissing:
-		f.log.Error("production inbound filter is not loaded: every listening port is open to the network", "reason", reason)
+		f.log.Error("production inbound filter is not loaded: every listening port is open to the network",
+			"reason", reason)
 	case state == FirewallLoaded && f.state == FirewallMissing:
 		f.log.Info("production inbound filter is loaded again")
+	default:
+		// Anything else needs nothing here.
 	}
+
 	f.state, f.reason, f.checked = state, reason, f.now()
+
 	return state, reason
 }
 
 func (f *FirewallCheck) check(ctx context.Context) (string, string) {
-	b, err := os.ReadFile(f.profileFile)
+	profile, err := os.ReadFile(f.profileFile)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		// Not a SoundTap image (a development host): there is no filter to expect.
@@ -105,8 +127,10 @@ func (f *FirewallCheck) check(ctx context.Context) (string, string) {
 	case err != nil:
 		// An image that cannot say it is alpha is held to production, as the update
 		// signature check does.
-	case strings.TrimSpace(string(b)) == "alpha":
+	case strings.TrimSpace(string(profile)) == "alpha":
 		return FirewallNA, ""
+	default:
+		// Anything else needs nothing here.
 	}
 	// A client that hangs up must not turn into a "missing" kept for a minute.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), firewallTimeout)
@@ -116,18 +140,22 @@ func (f *FirewallCheck) check(ctx context.Context) (string, string) {
 	if err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) && len(bytes.TrimSpace(exit.Stderr)) > 0 {
-			return FirewallMissing, fmt.Sprintf("nft: %s", firstLine(exit.Stderr))
+			return FirewallMissing, "nft: " + firstLine(exit.Stderr)
 		}
+
 		return FirewallMissing, fmt.Sprintf("nft: %v", err)
 	}
+
 	if !bytes.Contains(out, []byte("policy drop;")) {
 		return FirewallMissing, "the input chain does not drop by default"
 	}
+
 	return FirewallLoaded, ""
 }
 
 func firstLine(b []byte) string {
 	line, _, _ := bytes.Cut(bytes.TrimSpace(b), []byte("\n"))
+
 	return string(line)
 }
 
@@ -136,5 +164,6 @@ func (s *Server) firewallStatus(ctx context.Context) (string, string) {
 	if s.firewall == nil {
 		return FirewallNA, ""
 	}
+
 	return s.firewall.Status(ctx)
 }

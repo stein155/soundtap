@@ -19,6 +19,9 @@ import (
 	"github.com/stein155/soundtap/app/internal/safego"
 )
 
+// joinRetryDelay is the pause between tries to join the leader's group.
+const joinRetryDelay = time.Second / 2
+
 // followHostOK is what may reach a command line and a tcp:// URL: an IPv4 address or a
 // host name, nothing that could be read as a second argument or a shell word. The wrapper
 // script filters the same set again, because a file on a writable partition is not a trust
@@ -31,27 +34,33 @@ func (s *Server) multiroomServerPath() string {
 	if s.homeDir == "" {
 		return ""
 	}
+
 	return filepath.Join(s.homeDir, "multiroom-server")
 }
 
 // leaderIDOK is what a device id looks like: a serial or a MAC-derived id.
 var leaderIDOK = regexp.MustCompile(`^[0-9A-Za-z._-]{1,64}$`)
 
-// follow is whom this speaker follows: the leader's address and device id, "" when unknown.
-func (s *Server) follow() (host, id string) { return multiroom.ReadFollow(s.multiroomServerPath()) }
+// Follow is whom this speaker follows: the leader's address and device id, "" when
+// unknown, in the form LeaveFollow takes.
+func (s *Server) Follow() (string, string) { return multiroom.ReadFollow(s.multiroomServerPath()) }
 
 // restartFollowing kicks snapclient and asks the leader it is about to connect to to
 // accept this speaker; every way into a follow ends here. The ask runs on the
 // side: an unreachable leader would hold the group lock for its 2 s timeout, and snapclient
 // retries its connection anyway.
 // listenInBackground is listenAsk. A variable so tests can keep the ask from outliving them.
+//
+//nolint:gochecknoglobals // a variable so tests can replace it
 var listenInBackground = listenAsk
 
 func (s *Server) restartFollowing() {
 	if host := s.followedHost(); host != "" {
 		listen := listenInBackground(host)
+
 		safego.Go("multiroom.listen", func() { listen(context.Background()) })
 	}
+
 	if s.restartSnapclient != nil {
 		s.restartSnapclient()
 	}
@@ -66,18 +75,25 @@ func (s *Server) groupEnv() multiroom.Env {
 		PeerLeader: peerLeader, PeerNow: peerNow, LeaderReachable: leaderReachable,
 		FollowerPeers: s.followerPeers, StepPeerVolume: stepPeerVolume, ReleasePeer: releasePeer,
 		PeerTimeout: peerTimeout,
-		Snapcast:    s.multiroom, LocalID: s.snapclientID, Active: s.multiroomActive, ActivePath: s.multiroomActivePath(),
+		Snapcast:    s.multiroom, LocalID: s.snapclientID,
+		Active: s.multiroomActive, ActivePath: s.multiroomActivePath(),
 		Downstream: fetchDownstream, WantAnchor: s.wantAnchor,
+		NowPlaying:      nil,
+		Nudge:           nil,
+		JoinLeaderGroup: nil,
 	}
 	if s.backend != nil {
 		env.NowPlaying = s.backend.NowPlaying
 	}
+
 	if s.hub != nil {
 		env.Nudge = s.hub.nudge
 	}
+
 	if s.snapclientID != "" {
 		env.JoinLeaderGroup = s.joinLeaderGroup
 	}
+
 	return env
 }
 
@@ -89,17 +105,21 @@ const joinLeaderTries = 10
 // its group, as its membership switch does, which also unmutes it.
 func (s *Server) joinLeaderGroup(host string) {
 	base := (&url.URL{Scheme: "http", Host: net.JoinHostPort(host, downstreamPort)}).String()
+
 	path := "/api/multiroom/clients/" + url.PathEscape(s.snapclientID) + "/membership"
 	for try := 1; ; try++ {
-		code, err := sendPeer(context.Background(), http.MethodPut, base, path, map[string]bool{"member": true}, false)
+		code, err := sendPeer(context.Background(), http.MethodPut, base, path, map[string]bool{"member": true}, nil)
 		if err == nil && code == http.StatusOK {
 			return
 		}
+
 		if code != http.StatusNotFound || try == joinLeaderTries {
 			s.log.Info("multiroom: leader's group not joined", "leader", host, "status", code, "err", err)
+
 			return
 		}
-		time.Sleep(time.Second / 2)
+
+		time.Sleep(joinRetryDelay)
 	}
 }
 
@@ -117,44 +137,59 @@ func (s *Server) postMultiroomFollow(w http.ResponseWriter, r *http.Request) {
 		ID string `json:"id"`
 	}
 	// A mistyped key would read as an empty host, which means leave the group.
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, smallBody))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&body); err != nil {
+
+	err := dec.Decode(&body)
+	if err != nil {
 		apiError(w, http.StatusBadRequest, "invalid JSON body")
+
 		return
 	}
-	host, id := strings.TrimSpace(body.Host), strings.TrimSpace(body.ID)
-	if code, msg := s.followRefusal(r.Context(), host, id); code != 0 {
+
+	host, leaderID := strings.TrimSpace(body.Host), strings.TrimSpace(body.ID)
+	if code, msg := s.followRefusal(r.Context(), host, leaderID); code != 0 {
 		apiError(w, code, msg)
+
 		return
 	}
+
 	if host == "" {
-		id = ""
+		leaderID = ""
 	}
-	prevHost, err := s.group.Join(r.Context(), s.groupEnv(), host, id)
+
+	prevHost, err := s.group.Join(r.Context(), s.groupEnv(), host, leaderID)
+
 	var failed *multiroom.JoinError
 	switch {
 	case errors.Is(err, multiroom.ErrChained):
 		apiError(w, http.StatusConflict, multiroom.ErrChained.Error())
+
 		return
 	case errors.As(err, &failed):
 		s.fail(w, failed.Step.Error(), failed.Err)
+
 		return
 	}
+
 	if host != "" && host != prevHost {
 		s.chimeEvent("grouped.wav")
 	}
+
 	writeJSON(w, http.StatusOK, map[string]string{"following": host})
 }
 
 // followRefusal says why this speaker may not follow host: a status and a message, or 0.
-func (s *Server) followRefusal(ctx context.Context, host, id string) (code int, msg string) {
+// It returns the status code, then the message; code 0 means no refusal.
+func (s *Server) followRefusal(ctx context.Context, host, id string) (int, string) {
 	if host != "" && (!followHostOK.MatchString(host) || !followTargetAllowed(host)) {
 		return http.StatusBadRequest, "invalid host"
 	}
+
 	if id != "" && !leaderIDOK.MatchString(id) {
 		return http.StatusBadRequest, "invalid id"
 	}
+
 	if s.multiroomServerPath() == "" {
 		return http.StatusServiceUnavailable, "no settings directory"
 	}
@@ -168,6 +203,7 @@ func (s *Server) followRefusal(ctx context.Context, host, id string) (code int, 
 	if host != "" && peerLeader(ctx, host) != "" {
 		return http.StatusConflict, "that speaker follows another; group with its leader"
 	}
+
 	return 0, ""
 }
 
@@ -179,16 +215,15 @@ func followTargetAllowed(host string) bool {
 	if !inviteTargetAllowed(host) {
 		return false
 	}
+
 	ip := net.ParseIP(host)
+
 	return ip == nil || !ownAddress(ip)
 }
 
 // KeepFollow reports, once, whether the leave from MULTIROOM now happening is the
 // group's own standby; see multiroom.Group.KeepFollow.
 func (s *Server) KeepFollow() bool { return s.group.KeepFollow(s.groupEnv()) }
-
-// Follow is whom this speaker follows now, in the form LeaveFollow takes.
-func (s *Server) Follow() (host, id string) { return s.follow() }
 
 // LeaveFollow ends the follow of host and id after the source left MULTIROOM; see
 // multiroom.Group.LeaveFollow.

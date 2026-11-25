@@ -4,6 +4,7 @@
 package settings
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -21,13 +22,17 @@ func (s *Store) SetLanguage(code string) error {
 	if code != "" && !ValidLanguage(code) {
 		return fmt.Errorf("language %q is not a language code", code)
 	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	if code != "" {
 		next := s.s
 		next.Language = code
+
 		return s.replaceLocked(next)
 	}
+
 	return nil
 }
 
@@ -37,10 +42,13 @@ func (s *Store) SetName(name string) error {
 	if err != nil {
 		return err
 	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	next := s.s
 	next.Name = name
+
 	return s.replaceLocked(next)
 }
 
@@ -50,9 +58,11 @@ func (s *Store) SetName(name string) error {
 func (s *Store) SetAudio(a Audio) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	next := s.s
 	a.AutoOff = next.Audio.AutoOff // owned by SetAutoOff, not by the audio sampler
 	next.Audio = a
+
 	return s.replaceLocked(next)
 }
 
@@ -60,10 +70,13 @@ func (s *Store) SetAudio(a Audio) error {
 // negative disables auto-off entirely (see Audio.AutoOff).
 func (s *Store) SetAutoOff(minutes int) error {
 	minutes = NormalizeAutoOff(minutes) // canonical "disabled" is -1
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	next := s.s
 	next.Audio.AutoOff = minutes
+
 	return s.replaceLocked(next)
 }
 
@@ -71,8 +84,10 @@ func (s *Store) SetAutoOff(minutes int) error {
 func (s *Store) SetChannel(channel string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	next := s.s
 	next.Channel = channel
+
 	return s.replaceLocked(next)
 }
 
@@ -80,28 +95,28 @@ func (s *Store) SetChannel(channel string) error {
 func (s *Store) SetMQTT(cfg MQTT) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	next := s.s
 	next.MQTT = cfg
+
 	return s.replaceLocked(next)
 }
 
 // NormalizeDisplay validates a standby-screen configuration and returns it in the
 // form it is stored in.
 func NormalizeDisplay(d Display) (Display, error) {
-	switch d.Brightness {
-	case 0, 25, 50, 80:
-	default:
-		return d, fmt.Errorf("brightness must be 25, 50 or 80")
-	}
 	if d.Timezone == "" {
 		if !d.ClockOff {
-			return d, fmt.Errorf("the standby clock needs a timezone")
+			return d, errors.New("the standby clock needs a timezone")
 		}
+
 		return d, nil
 	}
+
 	if _, err := time.LoadLocation(d.Timezone); err != nil {
 		return d, fmt.Errorf("unknown timezone %q", d.Timezone)
 	}
+
 	return d, nil
 }
 
@@ -115,6 +130,7 @@ func NormalizeAutoOff(minutes int) int {
 	if minutes < 0 {
 		return -1
 	}
+
 	return min(minutes, MaxAutoOff)
 }
 
@@ -124,22 +140,29 @@ func (s *Store) SetDisplay(d Display) error {
 	if err != nil {
 		return err
 	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	next := s.s
 	next.Display = d
+
 	return s.replaceLocked(next)
 }
 
 // SetAlarm validates and persists the wake-up alarm.
 func (s *Store) SetAlarm(a Alarm) error {
-	if err := a.Validate(); err != nil {
+	err := a.Validate()
+	if err != nil {
 		return err
 	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	next := s.s
 	next.Alarm = a
+
 	return s.replaceLocked(next)
 }
 
@@ -147,8 +170,10 @@ func (s *Store) SetAlarm(a Alarm) error {
 func (s *Store) SetMultiroom(m Multiroom) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	next := s.s
 	next.Multiroom = m
+
 	return s.replaceLocked(next)
 }
 
@@ -160,11 +185,16 @@ func (s *Store) SetMultiroom(m Multiroom) error {
 func (s *Store) Update(fn func(*Settings) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	next := s.s
 	next.SourceNames = append([]SourceName(nil), s.s.SourceNames...)
+
 	next.CrashReports.Handled = slices.Clone(s.s.CrashReports.Handled)
-	if err := fn(&next); err != nil {
+
+	err := fn(&next)
+	if err != nil {
 		return err
 	}
+
 	return s.replaceLocked(next)
 }

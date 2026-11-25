@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/stein155/soundtap/app/internal/modeltable"
-	"github.com/stein155/soundtap/app/internal/release"
 	"github.com/stein155/soundtap/app/internal/ubootenv"
 )
 
@@ -24,58 +23,68 @@ import (
 // an install that puts our bootloader in front of Bose's recipes leaves a board that
 // does not boot. These run under Bose's U-Boot too, which is why they are written before
 // the bootloader is: every moment in between still boots.
-var mainlineTemplates = []string{
-	"nand_boot=setenv slot Ping; setenv rmtd 8; setenv kaddr 0x280000; run slot_boot",
-	"nand_boot2=setenv slot Pong; setenv rmtd 9; setenv kaddr 0x780000; run slot_boot",
-	"slot_boot=if ubi part NAND.File-System-${slot} 2048; then if ubifsmount ubi0:rootfs; " +
-		"then if ubifsload 0x83000000 /boot/%s; then mw.l 0x82000000 0 1; ubifsload " +
-		"0x82000000 /boot/%s; if itest.l *0x82000000 == 0x56190527; then run " +
-		"soundtap_args; bootm 0x82000000 - 0x83000000; fi; run stock_args; if nand read 0x80007fc0 " +
-		"${kaddr} 0x500000; then if fixsig 0x80007fc0; then bootm 0x80007fc0 - 0x83000000; fi; " +
-		"fi; fi; fi; fi; reset",
-	"soundtap_args=setenv bootargs console=ttyGS0,115200n8 root=ubi0:rootfs ro " +
-		"rootfstype=ubifs ubi.mtd=${rmtd},2048 rootwait init=/init mem=128M cma=8M panic=10 " +
-		"omap_wdt.early_enable=1 variant=%s module_type=%s country=GB region=GB " +
-		"soundtap.nandroot=1 ubi.mtd=NAND.Persistent-Storage,2048",
-	"stock_args=setenv bootargs console=ttyO3,115200n8 quiet root=ubi0:rootfs ro " +
-		"ubi.mtd=${rmtd},2048 noinitrd rootfstype=ubifs rootwait=1 ip=off variant=%s " +
-		"variant_raw=${variant_raw} variant_mode=normal oled_type= country=GB region=GB",
-	"mtdids=nand0=nand0",
-	"mtdparts=mtdparts=nand0:0x20000@0x0(NAND.SPL),0x20000@0x20000(NAND.SPL.backup1),0x20000@0x40000(NAND.SPL.backup2),0x20000@0x60000(NAND.SPL.backup3),0x1E0000@0x80000(NAND.U-Boot),0x20000@0x260000(NAND.U-Boot-Env),0x500000@0x280000(NAND.Kernel-Ping),0x500000@0x780000(NAND.Kernel-Pong),0x6000000@0xC80000(NAND.File-System-Ping),0x6000000@0x6C80000(NAND.File-System-Pong),0x2600000@0xCC80000(NAND.Persistent-Storage),0xB80000@0xF280000(NAND.Update-Staging),0x40000@0xFE00000(NAND.Manufacturing-Data)",
+func mainlineTemplates() []string {
+	return []string{
+		"nand_boot=setenv slot Ping; setenv rmtd 8; setenv kaddr 0x280000; run slot_boot",
+		"nand_boot2=setenv slot Pong; setenv rmtd 9; setenv kaddr 0x780000; run slot_boot",
+		"slot_boot=if ubi part NAND.File-System-${slot} 2048; then if ubifsmount ubi0:rootfs; " +
+			"then if ubifsload 0x83000000 /boot/%s; then mw.l 0x82000000 0 1; ubifsload " +
+			"0x82000000 /boot/%s; if itest.l *0x82000000 == 0x56190527; then run " +
+			"soundtap_args; bootm 0x82000000 - 0x83000000; fi; run stock_args; if nand read 0x80007fc0 " +
+			"${kaddr} 0x500000; then if fixsig 0x80007fc0; then bootm 0x80007fc0 - 0x83000000; fi; " +
+			"fi; fi; fi; fi; reset",
+		"soundtap_args=setenv bootargs console=ttyGS0,115200n8 root=ubi0:rootfs ro " +
+			"rootfstype=ubifs ubi.mtd=${rmtd},2048 rootwait init=/init mem=128M cma=8M panic=10 " +
+			"omap_wdt.early_enable=1 variant=%s module_type=%s country=GB region=GB " +
+			"soundtap.nandroot=1 ubi.mtd=NAND.Persistent-Storage,2048",
+		"stock_args=setenv bootargs console=ttyO3,115200n8 quiet root=ubi0:rootfs ro " +
+			"ubi.mtd=${rmtd},2048 noinitrd rootfstype=ubifs rootwait=1 ip=off variant=%s " +
+			"variant_raw=${variant_raw} variant_mode=normal oled_type= country=GB region=GB",
+		"mtdids=nand0=nand0",
+		//nolint:lll // one U-Boot value, kept whole and byte-identical to installer.c and uboot_recipes.py.
+		"mtdparts=mtdparts=nand0:0x20000@0x0(NAND.SPL),0x20000@0x20000(NAND.SPL.backup1),0x20000@0x40000(NAND.SPL.backup2),0x20000@0x60000(NAND.SPL.backup3),0x1E0000@0x80000(NAND.U-Boot),0x20000@0x260000(NAND.U-Boot-Env),0x500000@0x280000(NAND.Kernel-Ping),0x500000@0x780000(NAND.Kernel-Pong),0x6000000@0xC80000(NAND.File-System-Ping),0x6000000@0x6C80000(NAND.File-System-Pong),0x2600000@0xCC80000(NAND.Persistent-Storage),0xB80000@0xF280000(NAND.Update-Staging),0x40000@0xFE00000(NAND.Manufacturing-Data)",
+	}
 }
 
 // recipeModels is the model table's boot files per variant (os/models.json, as installer.c's
 // model_boots carries them): device tree, kernel, module type. A name only stock reports
 // has none.
-var recipeModels = func() map[string][3]string {
+func recipeModels() map[string][3]string {
 	out := map[string][3]string{}
+
 	for _, v := range modeltable.Variants {
 		if !v.StockOnly {
 			out[v.Name] = [3]string{v.DTB, v.Kernel, v.ModuleType}
 		}
 	}
+
 	return out
-}()
+}
 
 // MainlineRecipes fills the templates for one variant, as installer.c does.
 func MainlineRecipes(variant string) ([]string, error) {
-	m, ok := recipeModels[variant]
+	files, ok := recipeModels()[variant]
 	if !ok {
+		//nolint:err113 // recipes.go stays literal-identical to HEAD; this message is one of its literals.
 		return nil, fmt.Errorf("no boot recipes for variant %q", variant)
 	}
-	out := make([]string, len(mainlineTemplates))
-	for i, t := range mainlineTemplates {
-		switch i {
-		case 2:
-			out[i] = fmt.Sprintf(t, m[0], m[1])
-		case 3:
-			out[i] = fmt.Sprintf(t, variant, m[2])
-		case 4:
-			out[i] = fmt.Sprintf(t, variant)
+
+	templates := mainlineTemplates()
+
+	out := make([]string, len(templates))
+	for index, template := range templates {
+		switch index {
+		case 2: //nolint:mnd // template index 2, as the doc comment names it; recipes.go stays literal-identical.
+			out[index] = fmt.Sprintf(template, files[0], files[1])
+		case 3: //nolint:mnd // template index 3, as above.
+			out[index] = fmt.Sprintf(template, variant, files[2])
+		case 4: //nolint:mnd // template index 4, as above.
+			out[index] = fmt.Sprintf(template, variant)
 		default:
-			out[i] = t
+			out[index] = template
 		}
 	}
+
 	return out, nil
 }
 
@@ -94,6 +103,7 @@ func (in *Installer) InstallMainlineRecipes(read Reader, variant string) error {
 	if variant == "ginger" {
 		recipes = append(recipes, "bootdelay=-2")
 	}
+
 	return in.rewriteEnv(read, func(env *ubootenv.Env) (bool, error) {
 		return applyRecipes(env, recipes)
 	})
@@ -102,17 +112,22 @@ func (in *Installer) InstallMainlineRecipes(read Reader, variant string) error {
 func applyRecipes(env *ubootenv.Env, recipes []string) (bool, error) {
 	for _, key := range []string{"nand_boot", "nand_boot2"} {
 		if _, ok := env.Get(key); !ok {
+			//nolint:err113 // recipes.go stays literal-identical to HEAD; this message is one of its literals.
 			return false, fmt.Errorf("the environment has no %s; refusing to install boot recipes", key)
 		}
 	}
+
 	changed := false
+
 	for _, entry := range recipes {
 		key, value, _ := strings.Cut(entry, "=")
 		if v, ok := env.Get(key); !ok || v != value {
 			env.Set(key, value)
+
 			changed = true
 		}
 	}
+
 	return changed, nil
 }
 
@@ -128,28 +143,36 @@ const stockSlotRecipe = "run %[2]s; mtdparts default; ubi part NAND.File-System-
 	"nboot.e ${kloadaddr} 0 ${%[3]s}; fixsig; bootm ${kloadaddr} - ${loadaddr}"
 
 // stockRecipes are the two slot recipes the way back to stock writes.
-var stockRecipes = []string{
-	"nand_boot=" + fmt.Sprintf(stockSlotRecipe, "Ping", "nand_args", "kernel0_nand_address"),
-	"nand_boot2=" + fmt.Sprintf(stockSlotRecipe, "Pong", "nand_args2", "kernel1_nand_address"),
+func stockRecipes() []string {
+	return []string{
+		"nand_boot=" + fmt.Sprintf(stockSlotRecipe, "Ping", "nand_args", "kernel0_nand_address"),
+		"nand_boot2=" + fmt.Sprintf(stockSlotRecipe, "Pong", "nand_args2", "kernel1_nand_address"),
+	}
 }
 
 // EnvKeys are the environment entries this package changes through fw_setenv: the slot
-// selection and its rollback, the boot recipes, the markers' args entries and the owner
-// key. soundtap-root refuses a fw_setenv script that touches any other entry (ADR 0066);
-// a new entry here is a new entry there. Whole-copy writes (RepairEnv, UseLegacyEnv) go
-// through nandwrite and are held to the environment's place in NAND instead.
+// selection and its rollback, the boot recipes, the markers' args entries and the retired
+// owner key, which a selection removes. soundtap-root refuses a fw_setenv script that
+// touches any other entry (ADR 0066); a new entry here is a new entry there. Whole-copy
+// writes (RepairEnv, UseLegacyEnv) go through nandwrite and are held to the environment's
+// place in NAND instead.
 func EnvKeys() []string {
-	keys := []string{bootcmdKey, altKey, limitKey, pendingKey, countKey, "bootdelay", release.OwnerKeyEnv}
+	keys := []string{bootcmdKey, altKey, limitKey, pendingKey, countKey, "bootdelay", retiredOwnerKey}
+
 	for _, slot := range []Slot{ping, pong} {
-		if _, cmdKey, argsKey, err := bootFor(slot); err == nil {
-			keys = append(keys, cmdKey, argsKey) // the markers go into the args entry
+		boot, err := bootFor(slot)
+		if err == nil {
+			keys = append(keys, boot.cmdKey, boot.argsKey) // the markers go into the args entry
 		}
 	}
-	for _, entry := range append(slices.Clone(mainlineTemplates), stockRecipes...) {
+
+	for _, entry := range append(mainlineTemplates(), stockRecipes()...) {
 		key, _, _ := strings.Cut(entry, "=")
 		keys = append(keys, key)
 	}
+
 	slices.Sort(keys)
+
 	return slices.Compact(keys)
 }
 
@@ -159,22 +182,26 @@ func EnvKeys() []string {
 // the stock recipes use nboot.e, which our U-Boot does not have.
 func (in *Installer) InstallStockRecipes(read Reader) error {
 	return in.rewriteEnv(read, func(env *ubootenv.Env) (bool, error) {
-		changed, err := applyRecipes(env, stockRecipes)
+		changed, err := applyRecipes(env, stockRecipes())
 		if err != nil {
 			return false, err
 		}
 		// Ours on the ST300 only (InstallMainlineRecipes); Bose's environment has 1.
 		if v, ok := env.Get("bootdelay"); ok && v == "-2" {
 			env.Set("bootdelay", "1")
+
 			changed = true
 		}
-		for _, entry := range mainlineTemplates[2:] {
+
+		for _, entry := range mainlineTemplates()[2:] {
 			key, _, _ := strings.Cut(entry, "=")
 			if _, ok := env.Get(key); ok {
 				env.Delete(key)
+
 				changed = true
 			}
 		}
+
 		return changed, nil
 	})
 }

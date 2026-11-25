@@ -11,6 +11,8 @@ import (
 )
 
 func TestBootEnd(t *testing.T) {
+	t.Parallel()
+
 	for want, records := range map[string]map[string][]byte{
 		"panic":      {"dmesg-ramoops-0": []byte("Panic#1 Part1\n<0>Kernel panic"), "console-ramoops-0": []byte("x")},
 		"oops":       {"dmesg-ramoops-0": []byte("Oops#1 Part1\n")},
@@ -31,28 +33,40 @@ func TestBootEnd(t *testing.T) {
 }
 
 // The records move once per boot: a soundtapd restart finds pstore empty and keeps them.
+//
+//nolint:paralleltest // swaps package variables other tests read: lastBootDone, pstoreDir
 func TestKeepLastBootMovesOncePerBoot(t *testing.T) {
 	home, run := t.TempDir(), t.TempDir()
+
 	pstoreDir, lastBootDone = t.TempDir(), filepath.Join(run, "moved")
 	defer func() { pstoreDir, lastBootDone = "/sys/fs/pstore", "/run/soundtap/last-boot-moved" }()
+
 	for name, body := range map[string]string{"dmesg-ramoops-0": "Panic#1 Part1\n", "console-ramoops-0": "[1] up\n"} {
-		if err := os.WriteFile(filepath.Join(pstoreDir, name), []byte(body), 0o600); err != nil {
+		err := os.WriteFile(filepath.Join(pstoreDir, name), []byte(body), 0o600)
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
+
 	how, moved, err := keepLastBoot(home)
 	if err != nil || !moved || how != "panic" {
 		t.Fatalf("first = %q %v %v, want panic true nil", how, moved, err)
 	}
-	if _, err := os.Stat(filepath.Join(pstoreDir, "dmesg-ramoops-0")); !os.IsNotExist(err) {
+
+	_, err = os.Stat(filepath.Join(pstoreDir, "dmesg-ramoops-0"))
+	if !os.IsNotExist(err) {
 		t.Errorf("record still in pstore: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(pstoreDir, "console-ramoops-0")); err != nil {
+
+	_, err = os.Stat(filepath.Join(pstoreDir, "console-ramoops-0"))
+	if err != nil {
 		t.Errorf("console record removed: removing it wipes the running boot's console: %v", err)
 	}
+
 	if _, moved, _ := keepLastBoot(home); moved {
 		t.Error("a restart within the boot moved the records again")
 	}
+
 	b, err := os.ReadFile(filepath.Join(home, "last-boot", "dmesg-ramoops-0"))
 	if err != nil || string(b) != "Panic#1 Part1\n" {
 		t.Errorf("kept record = %q %v", b, err)

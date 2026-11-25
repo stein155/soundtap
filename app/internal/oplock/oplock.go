@@ -19,12 +19,19 @@ import (
 
 // Path is set by soundtapd at start-up. Empty (tests, development) leaves only the
 // in-process mutex.
-var Path string
+var Path string //nolint:gochecknoglobals // set once by soundtapd at start-up and swapped by tests
+
+const (
+	// lockDirMode is the mode of the lock file's directory when it has to be created.
+	lockDirMode = 0o755
+	// lockFileMode keeps the lock file to root.
+	lockFileMode = 0o600
+)
 
 // fallback stands in for the file when Path is set but cannot be opened: separate
 // Locks then still exclude each other inside this process, instead of each trusting
 // only its own mutex.
-var fallback sync.Mutex
+var fallback sync.Mutex //nolint:gochecknoglobals // process-wide by design: it stands in for the file lock
 
 // Lock is usable as its zero value. Separate Locks exclude each other through the file.
 type Lock struct {
@@ -40,8 +47,10 @@ func (l *Lock) TryLock() bool {
 	}
 	if !l.acquire(syscall.LOCK_EX | syscall.LOCK_NB) {
 		l.mu.Unlock()
+
 		return false
 	}
+
 	return true
 }
 
@@ -57,6 +66,7 @@ func (l *Lock) Unlock() {
 		_ = l.f.Close()
 		l.f = nil
 	}
+
 	if l.onFallback {
 		l.onFallback = false
 		fallback.Unlock()
@@ -74,8 +84,10 @@ func (l *Lock) acquire(how int) bool {
 	if Path == "" {
 		return true
 	}
-	_ = os.MkdirAll(filepath.Dir(Path), 0o755)
-	f, err := os.OpenFile(Path, os.O_CREATE|os.O_RDWR, 0o600)
+
+	_ = os.MkdirAll(filepath.Dir(Path), lockDirMode)
+
+	file, err := os.OpenFile(Path, os.O_CREATE|os.O_RDWR, lockFileMode)
 	if err != nil {
 		if how&syscall.LOCK_NB != 0 {
 			l.onFallback = fallback.TryLock()
@@ -83,12 +95,18 @@ func (l *Lock) acquire(how int) bool {
 			fallback.Lock()
 			l.onFallback = true
 		}
+
 		return l.onFallback
 	}
-	if err := syscall.Flock(int(f.Fd()), how); err != nil {
-		_ = f.Close()
+
+	err = syscall.Flock(int(file.Fd()), how)
+	if err != nil {
+		_ = file.Close()
+
 		return false
 	}
-	l.f = f
+
+	l.f = file
+
 	return true
 }

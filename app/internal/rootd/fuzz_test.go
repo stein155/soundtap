@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-package rootd
+package rootd_test
 
 import (
 	"bufio"
@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/stein155/soundtap/app/internal/flash"
+	"github.com/stein155/soundtap/app/internal/rootd"
 )
 
 // An accepted script touches only flash.EnvKeys, whatever its bytes, and no input panics.
@@ -21,22 +22,28 @@ func FuzzCheckEnvScript(f *testing.F) {
 	} {
 		f.Add([]byte(seed))
 	}
+
 	allowed := flash.EnvKeys()
+
 	f.Fuzz(func(t *testing.T, script []byte) {
-		if CheckEnvScript(script) != nil {
+		if rootd.CheckEnvScript(script) != nil {
 			return
 		}
+
 		s := bufio.NewScanner(bytes.NewReader(script))
-		s.Buffer(nil, MaxMessage)
+		s.Buffer(nil, rootd.MaxMessage)
+
 		for s.Scan() {
 			line := s.Text()
 			if strings.Trim(line, " \t\r") == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
+
 			key := strings.TrimLeft(line, " \t")
 			if i := strings.IndexAny(key, "= \t"); i >= 0 {
 				key = key[:i]
 			}
+
 			if !slices.Contains(allowed, key) {
 				t.Fatalf("accepted %q, which sets %q", script, key)
 			}
@@ -49,11 +56,13 @@ func FuzzCheckHostname(f *testing.F) {
 	for _, seed := range []string{"kitchen", "-x", "a.b", "Kitchen", "x\n", ""} {
 		f.Add(seed)
 	}
+
 	f.Fuzz(func(t *testing.T, name string) {
-		if CheckHostname(name) != nil {
+		if rootd.CheckHostname(name) != nil {
 			return
 		}
-		if len(name) == 0 || len(name) > 63 || strings.Trim(name, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" ||
+
+		if name == "" || len(name) > 63 || strings.Trim(name, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" ||
 			name[0] == '-' || name[len(name)-1] == '-' {
 			t.Fatalf("accepted %q", name)
 		}

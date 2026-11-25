@@ -29,11 +29,14 @@ func RunAs(cmd *exec.Cmd, name string) error {
 	if !mayRunAs() {
 		return nil
 	}
+
 	uid, gid, err := Lookup(name)
 	if err != nil {
 		return err
 	}
+
 	attr(cmd).Credential = &syscall.Credential{Uid: uid, Gid: gid, Groups: []uint32{}}
+
 	return nil
 }
 
@@ -43,14 +46,17 @@ func Lookup(name string) (uid, gid uint32, err error) {
 	if err != nil {
 		return 0, 0, err
 	}
+
 	id, err := strconv.ParseUint(u.Uid, 10, 32)
 	if err != nil {
 		return 0, 0, err
 	}
+
 	g, err := strconv.ParseUint(u.Gid, 10, 32)
 	if err != nil {
 		return 0, 0, err
 	}
+
 	return uint32(id), uint32(g), nil
 }
 
@@ -60,7 +66,9 @@ func LookupGroup(name string) (uint32, error) {
 	if err != nil {
 		return 0, err
 	}
+
 	n, err := strconv.ParseUint(g.Gid, 10, 32)
+
 	return uint32(n), err
 }
 
@@ -68,6 +76,7 @@ func attr(cmd *exec.Cmd) *syscall.SysProcAttr {
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
+
 	return cmd.SysProcAttr
 }
 

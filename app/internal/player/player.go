@@ -9,10 +9,10 @@ package player
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"os/exec"
+	"strconv"
 	"time"
 
 	"github.com/stein155/soundtap/app/internal/audio"
@@ -90,6 +90,7 @@ func decoderStartupDeadline(decoder string) time.Duration {
 	if decoder == "ffmpeg" {
 		return ffmpegBufferDeadline
 	}
+
 	return bufferDeadline
 }
 
@@ -97,16 +98,21 @@ func decoderStartupDeadline(decoder string) time.Duration {
 // first; wanted is checked again on every change signal. current is false when the
 // selection moved on, and then url and err mean nothing.
 func lookupWhileWanted(ctx context.Context, changed func() <-chan struct{}, wanted func() bool,
-	lookup func(context.Context) (string, error)) (url string, current bool, err error) {
+	lookup func(context.Context) (string, error),
+) (url string, current bool, err error) {
 	lctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
 	safego.Go("lookupWhileWanted", func() {
 		for {
 			ch := changed() // taken before the check, so no change slips between them
+
 			if !wanted() {
 				cancel()
+
 				return
 			}
+
 			select {
 			case <-ch:
 			case <-lctx.Done():
@@ -114,10 +120,13 @@ func lookupWhileWanted(ctx context.Context, changed func() <-chan struct{}, want
 			}
 		}
 	})
+
 	url, err = lookup(lctx)
+
 	if !wanted() {
 		return "", false, nil
 	}
+
 	return url, true, err
 }
 
@@ -181,14 +190,17 @@ func Run(ctx context.Context, sp *speakerstate.Speaker, tc Resolver, cfg Config,
 	if cfg.Mute == nil {
 		cfg.Mute = func(bool) {}
 	}
-	l := &loop{ctx: ctx, sp: sp, tc: tc, cfg: cfg, log: log,
+
+	l := &loop{
+		ctx: ctx, sp: sp, tc: tc, cfg: cfg, log: log,
 		sink: cfg.Sink, rate: "48000", format: defaultFormat,
 		dead: make(chan exit, 4), noAudio: make(chan uint64, 4),
-		cands: streamCandidates{cache: cfg.Streams}}
+		cands: streamCandidates{cache: cfg.Streams},
+	}
 	if cfg.Mixed {
 		// With the arbiter on, ffmpeg feeds the raw-PCM source bus (the Mixer owns the
 		// DAC and does the ducking); the bus stays fixed at S16_LE 48 kHz stereo.
-		l.format, l.rate = defaultFormat, fmt.Sprint(audio.SampleRate)
+		l.format, l.rate = defaultFormat, strconv.Itoa(audio.SampleRate)
 	}
 	defer l.stop()
 	// External receivers must preempt TuneIn before their first PCM reaches the bus:
@@ -198,6 +210,7 @@ func Run(ctx context.Context, sp *speakerstate.Speaker, tc Resolver, cfg Config,
 	// change to be played.
 	start := make(chan struct{})
 	close(start)
+
 	l.changed = start
 	for l.wait() {
 		l.pass()
@@ -226,6 +239,7 @@ func (l *loop) fail(playGen uint64) {
 	if l.troubleAt.IsZero() {
 		l.troubleAt = time.Now()
 	}
+
 	giveUp := time.Since(l.troubleAt) >= outageGiveUp
 	if !l.heard || giveUp || time.Since(l.troubleAt) >= outageBuffering {
 		l.sp.FailPlayback(playGen)
@@ -234,11 +248,14 @@ func (l *loop) fail(playGen uint64) {
 		// one must not show PLAY.
 		l.activePlayGen = g
 	}
+
 	if giveUp {
 		l.log.Warn("stream failed for too long, giving up until the next selection or play")
 		l.retryAt = time.Time{}
+
 		return
 	}
+
 	l.backoff = min(max(l.backoff*2, retryBackoffMin), retryBackoffMax)
 	l.retryAt = time.Now().Add(l.backoff)
 }
@@ -250,6 +267,7 @@ func (l *loop) wait() bool {
 	if !l.retryAt.IsZero() {
 		retry = time.After(time.Until(l.retryAt))
 	}
+
 	select {
 	case <-l.ctx.Done():
 		return false
@@ -263,6 +281,7 @@ func (l *loop) wait() bool {
 			l.fail(failedGen)
 		}
 	}
+
 	return true
 }
 
@@ -271,6 +290,7 @@ func (l *loop) exited(d exit) {
 	if d.gen != l.gen || l.ctx.Err() != nil {
 		return
 	}
+
 	if d.clean && l.cur.src == sourceUPnP {
 		// A UPnP medium is a file: reaching its end is not a drop. Report STOPPED
 		// and keep the source, so the controller moves on to its next track instead
@@ -284,8 +304,10 @@ func (l *loop) exited(d exit) {
 		l.gen++
 		l.tailAt = time.Now()
 		l.sp.EndPlayback(l.activePlayGen)
+
 		return
 	}
+
 	l.log.Warn("decoder exited unexpectedly, trying fallback")
 	l.mute()
 	l.cmd = nil
@@ -297,9 +319,11 @@ func (l *loop) exited(d exit) {
 	if wasPlaying {
 		l.troubleAt, l.heard = time.Time{}, true
 	}
+
 	if wasPlaying || time.Since(l.startedAt) > retryBackoffMax {
 		l.backoff = 0
 	}
+
 	l.fail(l.activePlayGen)
 }
 
@@ -310,23 +334,28 @@ func (l *loop) pass() {
 	// A paused radio stream has nothing to hold: stop it, and tune in again on play.
 	paused := l.sp.StatusSnapshot().PlayStatus == statusPaused
 	next := state{src, loc, vol, selection, paused}
+
 	retryDue := !l.retryAt.IsZero() && !time.Now().Before(l.retryAt)
 	if next == l.cur && !retryDue {
 		return
 	}
+
 	if !retryDue {
 		// A genuine state change starts the backoff ladder and the outage over.
 		l.backoff = 0
 		l.troubleAt = time.Time{}
 		l.heard = false
 	}
+
 	l.retryAt = time.Time{}
 	cur := l.cur
 	ffmpegChanged, fadeIn, continuation := l.compare(cur, next, retryDue)
 	l.cur = next
+
 	if !ffmpegChanged {
 		return // e.g. volume-only change under AUDIO_MIX — the Mixer handles it live
 	}
+
 	l.tailAt = time.Time{}
 	l.handOver(cur.src, src, continuation)
 	// soundtapd streams two source kinds through ffmpeg: TUNEIN (resolve station ->
@@ -334,10 +363,13 @@ func (l *loop) pass() {
 	if (src != sourceTuneIn && src != sourceUPnP) || loc == "" {
 		return
 	}
+
 	if paused {
 		l.stop()
+
 		return
 	}
+
 	l.play(next, retryDue, fadeIn && !continuation)
 }
 
@@ -361,6 +393,7 @@ func (l *loop) compare(cur, next state, retryDue bool) (restart, fadeIn, continu
 	continuation = !l.tailAt.IsZero() && time.Since(l.tailAt) < tailMax && !retryDue &&
 		cur.src == sourceUPnP && next.src == sourceUPnP && next.loc != cur.loc &&
 		next.paused == cur.paused
+
 	return restart, fadeIn, continuation
 }
 
@@ -398,20 +431,25 @@ func (l *loop) play(next state, retryDue, fadeIn bool) {
 	// wanted is false once the selection moved on, or playback stopped or paused.
 	wanted := func() bool {
 		s2, l2, _, _, sel2 := l.sp.PlaybackSelection()
+
 		return s2 == src && l2 == loc && sel2 == next.selection &&
 			l.sp.StatusSnapshot().PlayStatus != statusPaused
 	}
+
 	url, current, err := l.streamURL(src, loc, retryDue, wanted)
 	if !current {
 		return
 	}
+
 	if err != nil {
 		if errors.Is(err, errNotMedia) {
 			l.log.Warn("refusing UPNP location that is not a media URL", "loc", loc)
 		} else {
 			l.log.Warn("no stream url", "src", src, "loc", loc, "err", err, "retry_in", l.backoff)
 		}
+
 		l.fail(playGen)
+
 		return
 	}
 
@@ -419,15 +457,20 @@ func (l *loop) play(next state, retryDue, fadeIn bool) {
 	// stall shorter than the buffer is not heard and a reconnect does not repeat the
 	// server's burst (ADR 0041). UPnP media are files with a length and keep ffmpeg's
 	// own reader, as does anything the reader declines (HLS, playlists, ICY).
-	var feed *readahead.Stream
-	var trace readahead.Timing
+	var (
+		feed  *readahead.Stream
+		trace readahead.Timing
+	)
+
 	resolvedAt := time.Now() // stream URL known; what follows is the connect to the station
+
 	if src == sourceTuneIn {
 		var ok bool
 		if feed, ok = l.readAhead(url, wanted, &trace); !ok {
 			return
 		}
 	}
+
 	decoder, args := l.decoderArgs(src, url, next.vol, fadeIn, feed != nil)
 	l.log.Info("play", "src", src, "decoder", decoder, "url", url, "vol", next.vol, "dev", l.sink,
 		"resolve_ms", resolvedAt.Sub(beganAt).Milliseconds(), "connect_ms", time.Since(resolvedAt).Milliseconds(),
@@ -449,11 +492,13 @@ func (l *loop) streamURL(src, loc string, retryDue bool, wanted func() bool) (ur
 		if !upnp.MediaURL(l.ctx, loc) {
 			return "", true, errNotMedia
 		}
+
 		return lookupWhileWanted(l.ctx, l.sp.Changed, wanted, func(c context.Context) (string, error) {
 			urls, uerr := ownStreamURLs(c, loc)
 			if uerr != nil {
 				return "", uerr
 			}
+
 			return urls[0], nil
 		})
 	}
@@ -469,20 +514,25 @@ func (l *loop) streamURL(src, loc string, retryDue bool, wanted func() bool) (ur
 // false when the selection moved on meanwhile.
 func (l *loop) readAhead(url string, wanted func() bool, trace *readahead.Timing) (*readahead.Stream, bool) {
 	var feed *readahead.Stream
+
 	_, current, _ := lookupWhileWanted(l.ctx, l.sp.Changed, wanted, func(c context.Context) (string, error) {
 		var oerr error
+
 		feed, oerr = readahead.Open(l.ctx, c, readahead.Config{Log: l.log, Trace: trace}, url)
 		if oerr != nil {
 			l.log.Info("radio read-ahead off, ffmpeg opens the stream", "url", url, "err", oerr)
 		}
+
 		return "", nil
 	})
 	if !current {
 		if feed != nil {
 			feed.Close()
 		}
+
 		return nil, false
 	}
+
 	return feed, true
 }
 
@@ -493,8 +543,10 @@ func (l *loop) decoderArgs(src, url string, vol int, fadeIn, piped bool) (string
 	if l.cfg.Mixed {
 		gain = 1.0 // the Mixer applies master volume for all sources; ffmpeg stays full-scale
 	}
+
 	audioFilter := playbackAudioFilter(gain, fadeIn)
 	outputFormat, outputDev := playbackOutput(l.format, l.sink)
+
 	in := url
 	if !piped {
 		in = resolveRedirects(l.ctx, url)
@@ -505,10 +557,12 @@ func (l *loop) decoderArgs(src, url string, vol int, fadeIn, piped bool) (string
 	if src == sourceTuneIn && l.cfg.Mixed {
 		return "/usr/bin/ffmpeg", playbackTuneInArgs(in, audioFilter, l.format, l.rate, l.sink, piped)
 	}
+
 	args := playbackFFmpegArgs(in, audioFilter, outputFormat, l.rate, outputDev, piped)
 	if src == sourceUPnP {
 		args = playbackSeek(args, l.sp.StartAt())
 	}
+
 	return "ffmpeg", args
 }
 
@@ -518,46 +572,58 @@ func (l *loop) spawn(decoder string, args []string, feed *readahead.Stream, play
 	l.cmd = cmd
 	out := supervise.ChildLog(decoder)
 	cmd.Stdout, cmd.Stderr = out, out
+
 	var stdin io.WriteCloser
 	if err == nil && feed != nil {
 		// Not cmd.Stdin = reader: Wait would then wait for a copy goroutine that
 		// can be stuck on a stalled stream after ffmpeg is gone.
 		stdin, err = cmd.StdinPipe()
 	}
+
 	if err == nil {
 		err = cmd.Start()
 	}
+
 	if err != nil {
 		if feed != nil {
 			feed.Close()
 		}
+
 		l.log.Error("ffmpeg start", "err", err, "retry_in", l.backoff)
 		l.cmd = nil
 		l.mute()
 		l.fail(playGen)
+
 		return
 	}
+
 	l.startedAt = time.Now()
 	// Watch this process: report its gen when it exits so the loop can restart a
 	// dropped stream. It also reaps the process (stop only kills).
 	g, dead := l.gen, l.dead
+
 	if feed != nil {
 		safego.Go("playerFeed", func() { // ends when the stream does or ffmpeg stops reading
 			_, _ = feed.WriteTo(stdin)
 			_ = stdin.Close()
 		})
 	}
+
 	safego.Go("playerWait", func() {
 		err := cmd.Wait()
+
 		if feed != nil {
 			feed.Close()
 		}
+
 		select {
 		case dead <- exit{g, err == nil}:
 		default:
 		}
 	})
+
 	health, sp, ctx, noAudio, log := l.cfg.Health, l.sp, l.ctx, l.noAudio, l.log
+
 	safego.Go("confirmPlayback", func() {
 		confirmPlayback(ctx, sp, health, playGen, decoderStartupDeadline(decoder), noAudio, log)
 	})

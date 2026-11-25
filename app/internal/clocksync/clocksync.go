@@ -12,10 +12,11 @@ import "os"
 
 // Path is written by clock.sh after its first good NTP sync. It is on tmpfs, so every
 // boot starts without it. A variable for the tests.
-var Path = "/run/soundtap/clock-synced"
+var Path = "/run/soundtap/clock-synced" //nolint:gochecknoglobals // a test seam: tests point it at a temporary file
 
 // Synced reports whether NTP has set the clock since this boot.
 func Synced() bool {
 	_, err := os.Stat(Path)
+
 	return err == nil
 }

@@ -17,17 +17,24 @@ import (
 // A store that opened read-only is visible in the support bundle, one line per store:
 // a production speaker has no shell to find it with, and its writes are refused.
 func TestDebugBundleReportsEachStore(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	// favorites.json and settings.json as directories: EISDIR, so both are read-only.
 	for _, name := range []string{"favorites.json", "settings.json"} {
-		if err := os.Mkdir(filepath.Join(dir, name), 0o700); err != nil {
+		err := os.Mkdir(filepath.Join(dir, name), 0o700)
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
+
 	recentPath := filepath.Join(dir, "recent.json")
-	if err := os.WriteFile(recentPath, []byte("not json"), 0o600); err != nil {
+
+	err := os.WriteFile(recentPath, []byte("not json"), 0o600)
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	srv, _, _ := newServerAt(t, dir)
 	srv.ReconfigureForTest(func(o *web.Options) { o.Speaker.Recent = recent.Open(recentPath) })
 	srv.ReconfigureForTest(func(o *web.Options) { o.Health.PresetsLoadErr = func() error { return nil } })
@@ -49,7 +56,9 @@ func TestDebugBundleReportsEachStore(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("POST /api/favorites over an unreadable file = %d %s, want 500", rec.Code, rec.Body)
 	}
-	if info, err := os.Stat(filepath.Join(dir, "favorites.json")); err != nil || !info.IsDir() {
+
+	info, err := os.Stat(filepath.Join(dir, "favorites.json"))
+	if err != nil || !info.IsDir() {
 		t.Fatalf("favorites path = %v, %v; want the directory untouched", info, err)
 	}
 }

@@ -14,13 +14,18 @@ import (
 // web UI, so only a plain http(s) URL is kept.
 func didlMeta(didl string) Meta {
 	field := func(re *regexp.Regexp) string { return strings.TrimSpace(unescapeXML(firstGroup(re, didl))) }
-	m := Meta{Title: field(reTitle), Artist: field(reArtist), Album: field(reAlbum), Art: field(reArt)}
-	if m.Artist == "" {
-		m.Artist = field(reCreator)
+
+	duration, _ := parseHMS(firstGroup(reDuration, didl))
+	meta := Meta{
+		Title: field(reTitle), Artist: field(reArtist), Album: field(reAlbum), Art: safeArt(field(reArt)),
+		Duration: duration,
 	}
-	m.Duration, _ = parseHMS(firstGroup(reDuration, didl))
-	m.Art = safeArt(m.Art)
-	return m
+
+	if meta.Artist == "" {
+		meta.Artist = field(reCreator)
+	}
+
+	return meta
 }
 
 // schemeHTTPS is one of the two schemes a media or cover URL may have.
@@ -29,28 +34,35 @@ const schemeHTTPS = "https"
 // didl is the DIDL-Lite a controller reads back, built from what it sent about the track.
 // Empty when nothing is known about it.
 func (m Meta) didl() string {
-	if m == (Meta{}) {
+	var unknown Meta
+	if m == unknown {
 		return ""
 	}
-	var b strings.Builder
-	b.WriteString(`<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" ` +
+
+	var doc strings.Builder
+	doc.WriteString(`<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" ` +
 		`xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">` +
 		`<item id="0" parentID="-1" restricted="1">`)
+
 	for _, f := range []struct{ tag, val string }{
 		{"dc:title", m.Title}, {"upnp:artist", m.Artist}, {"upnp:album", m.Album}, {"upnp:albumArtURI", m.Art},
 	} {
 		if f.val != "" {
-			b.WriteString("<" + f.tag + ">" + xmlEscape(f.val) + "</" + f.tag + ">")
+			doc.WriteString("<" + f.tag + ">" + xmlEscape(f.val) + "</" + f.tag + ">")
 		}
 	}
-	b.WriteString(`<upnp:class>object.item.audioItem.musicTrack</upnp:class></item></DIDL-Lite>`)
-	return b.String()
+
+	doc.WriteString(`<upnp:class>object.item.audioItem.musicTrack</upnp:class></item></DIDL-Lite>`)
+
+	return doc.String()
 }
 
-// safeArt keeps a cover URL only when it is a plain http(s) URL.
+// safeArt keeps a cover URL only when it is a plain http(s) URL of at most urlMax bytes.
 func safeArt(art string) string {
-	if u, err := url.Parse(art); err != nil || (u.Scheme != "http" && u.Scheme != schemeHTTPS) || len(art) > 2048 {
+	parsed, err := url.Parse(art)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != schemeHTTPS) || len(art) > urlMax {
 		return ""
 	}
+
 	return art
 }

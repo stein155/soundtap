@@ -77,17 +77,22 @@ func (a *Agent) Run(ctx context.Context) {
 		if a.registered() {
 			wait = time.Second // it worked: a bluetoothd restart is picked up within a second
 		}
+
 		a.setConn(nil)
+
 		if ctx.Err() != nil {
 			return
 		}
+
 		if err != nil && !errors.Is(err, errBlueZGone) {
 			a.log.Debug("bluetooth agent", "err", err)
 		}
+
 		select {
 		case <-ctx.Done():
 		case <-time.After(wait):
 		}
+
 		wait = min(wait*2, 10*time.Second)
 	}
 }
@@ -101,25 +106,32 @@ func (a *Agent) session(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = c.Close() }()
+
 	if err := c.ExportMethodTable(a.agentMethods(), agentPath, agentIface); err != nil {
 		return err
 	}
+
 	for _, rule := range [][]dbus.MatchOption{
 		{dbus.WithMatchSender("org.freedesktop.DBus"), dbus.WithMatchMember("NameOwnerChanged"), dbus.WithMatchArg(0, service)},
 		{dbus.WithMatchSender(service), dbus.WithMatchInterface(propsIface), dbus.WithMatchMember("PropertiesChanged"), dbus.WithMatchArg(0, deviceIface)},
 		{dbus.WithMatchSender(service), dbus.WithMatchInterface(deviceIface), dbus.WithMatchMember("Disconnected")},
 	} {
-		if err := c.AddMatchSignalContext(ctx, rule...); err != nil {
+		err := c.AddMatchSignalContext(ctx, rule...)
+		if err != nil {
 			return err
 		}
 	}
+
 	if err := a.setup(ctx, c); err != nil {
 		return err
 	}
+
 	a.setConn(c)
 	a.log.Info("bluetooth pairing agent registered", "alias", a.alias)
+
 	tick := time.NewTicker(5 * time.Second)
 	defer tick.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -131,6 +143,7 @@ func (a *Agent) session(ctx context.Context) error {
 			case "org.freedesktop.DBus.NameOwnerChanged":
 				if len(s.Body) == 3 && s.Body[0] == service && s.Body[2] == "" {
 					a.log.Info("bluetoothd left the bus; waiting for it to come back")
+
 					return errBlueZGone
 				}
 			case deviceIface + ".Disconnected":
@@ -138,8 +151,10 @@ func (a *Agent) session(ctx context.Context) error {
 			case propsIface + ".PropertiesChanged":
 				if len(s.Body) > 0 && s.Body[0] == playerIface {
 					a.followTrack(ctx, c)
+
 					continue
 				}
+
 				a.devicePropertiesChanged(ctx, c, s)
 			}
 		case <-tick.C:
@@ -154,13 +169,17 @@ func (a *Agent) setup(ctx context.Context, c *sysbus.Conn) error {
 	if _, err := c.Call(ctx, service, "/org/bluez", "org.bluez.AgentManager1", "RegisterAgent", agentPath, "NoInputNoOutput"); err != nil {
 		return err
 	}
+
 	if _, err := c.Call(ctx, service, "/org/bluez", "org.bluez.AgentManager1", "RequestDefaultAgent", agentPath); err != nil {
 		return err
 	}
+
 	waitAdapter(ctx, c)
+
 	if err := setProp(ctx, c, adapterPath, "org.bluez.Adapter1", "Powered", true); err != nil {
 		a.log.Warn("bluetooth power on", "err", err)
 	}
+
 	a.mu.Lock()
 	a.alias = ""
 	a.mu.Unlock()
@@ -171,23 +190,30 @@ func (a *Agent) setup(ctx context.Context, c *sysbus.Conn) error {
 	if err != nil {
 		return err
 	}
+
 	for _, d := range devs {
 		if d.paired && !d.trusted {
-			if err := setProp(ctx, c, d.path, deviceIface, "Trusted", true); err != nil {
+			err := setProp(ctx, c, d.path, deviceIface, "Trusted", true)
+			if err != nil {
 				a.log.Warn("bluetooth trust", "device", d.path, "err", err)
 			}
 		}
 	}
+
 	a.mu.Lock()
+
 	open := a.windowOpenLocked()
 	if !open {
 		a.closing = true // like stock, a start opens no window
 	}
 	a.mu.Unlock()
+
 	if open {
 		return a.applyOpen(ctx, c)
 	}
+
 	a.tick(ctx, c)
+
 	return nil
 }
 
@@ -200,6 +226,7 @@ func (a *Agent) setConn(c *sysbus.Conn) {
 func (a *Agent) registered() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+
 	return a.conn != nil
 }
 
@@ -209,31 +236,41 @@ func (a *Agent) windowOpenLocked() bool { return !a.until.IsZero() && a.now().Be
 func (a *Agent) Pairing() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+
 	return a.windowOpenLocked()
 }
 
 // Pair opens the pairing window (POST /api/bluetooth/pair, the Bluetooth key's hold).
 func (a *Agent) Pair(ctx context.Context) error {
 	a.mu.Lock()
+
 	c := a.conn
 	if c == nil {
 		a.mu.Unlock()
+
 		return ErrNotRunning
 	}
+
 	a.until = a.now().Add(PairWindow)
 	a.closing = false
 	a.mu.Unlock()
-	if err := a.applyOpen(ctx, c); err != nil {
+
+	err := a.applyOpen(ctx, c)
+	if err != nil {
 		return err
 	}
+
 	a.log.Info("bluetooth pairing window open", "seconds", int(PairWindow.Seconds()))
+
 	return nil
 }
 
 func (a *Agent) applyOpen(ctx context.Context, c *sysbus.Conn) error {
-	if err := setProp(ctx, c, adapterPath, "org.bluez.Adapter1", "Pairable", true); err != nil {
+	err := setProp(ctx, c, adapterPath, "org.bluez.Adapter1", "Pairable", true)
+	if err != nil {
 		return err
 	}
+
 	return setProp(ctx, c, adapterPath, "org.bluez.Adapter1", "Discoverable", true)
 }
 
@@ -249,25 +286,31 @@ func (a *Agent) tick(ctx context.Context, c *sysbus.Conn) {
 		a.until = time.Time{}
 		a.closing = true
 	}
+
 	closing := a.closing
 	a.mu.Unlock()
+
 	if closing {
 		err := setProp(ctx, c, adapterPath, "org.bluez.Adapter1", "Discoverable", false)
 		if err == nil {
 			err = setProp(ctx, c, adapterPath, "org.bluez.Adapter1", "Pairable", false)
 		}
+
 		if err == nil {
 			err = setProp(ctx, c, adapterPath, "org.bluez.Adapter1", "Connectable", true)
 		}
+
 		a.mu.Lock()
 		if err == nil && a.until.IsZero() {
 			a.closing = false
 		}
 		a.mu.Unlock()
+
 		if err == nil {
 			a.log.Info("bluetooth pairing window closed")
 		}
 	}
+
 	a.followName(ctx, c)
 	a.followTrack(ctx, c)
 }
@@ -279,13 +322,18 @@ func (a *Agent) followName(ctx context.Context, c *sysbus.Conn) {
 	a.mu.Lock()
 	same := name == "" || name == a.alias
 	a.mu.Unlock()
+
 	if same {
 		return
 	}
-	if err := setProp(ctx, c, adapterPath, "org.bluez.Adapter1", "Alias", name); err != nil {
+
+	err := setProp(ctx, c, adapterPath, "org.bluez.Adapter1", "Alias", name)
+	if err != nil {
 		a.log.Warn("bluetooth rename", "name", name, "err", err)
+
 		return
 	}
+
 	a.mu.Lock()
 	a.alias = name
 	a.mu.Unlock()
@@ -296,28 +344,37 @@ func (a *Agent) devicePropertiesChanged(ctx context.Context, c *sysbus.Conn, s *
 	if len(s.Body) < 2 || s.Body[0] != deviceIface {
 		return
 	}
+
 	changed, _ := s.Body[1].(map[string]dbus.Variant)
 	paired, bonded := false, false
+
 	for _, key := range []string{"Paired", "Bonded"} {
 		if v, ok := changed[key]; ok && v.Value() == true {
 			paired = true
 			bonded = bonded || key == "Bonded"
 		}
 	}
+
 	if !paired {
 		return
 	}
+
 	a.mu.Lock()
+
 	open := a.windowOpenLocked()
 	if open {
 		a.until = a.now().Add(afterPair)
 	}
 	a.mu.Unlock()
+
 	if !open {
 		return
 	}
-	if err := setProp(ctx, c, s.Path, deviceIface, "Trusted", true); err != nil {
+
+	err := setProp(ctx, c, s.Path, deviceIface, "Trusted", true)
+	if err != nil {
 		a.log.Warn("bluetooth trust", "device", s.Path, "err", err)
+
 		return
 	}
 	// Paired alone means no link key was stored: the device is forgotten on disconnect.
@@ -349,6 +406,7 @@ func (a *Agent) decide(member, uuid string) *dbus.Error {
 	a.mu.Lock()
 	open := a.windowOpenLocked()
 	a.mu.Unlock()
+
 	switch member {
 	case "Release", "Cancel", "DisplayPinCode", "DisplayPasskey":
 		return nil
@@ -361,7 +419,9 @@ func (a *Agent) decide(member, uuid string) *dbus.Error {
 			return nil
 		}
 	}
+
 	a.log.Info("bluetooth agent said no", "request", member)
+
 	return rejected
 }
 
@@ -369,6 +429,7 @@ func (a *Agent) decide(member, uuid string) *dbus.Error {
 // profiles a speaker has a use for.
 func audioProfile(uuid string) bool {
 	u := strings.ToLower(uuid)
+
 	return len(u) == 36 && strings.HasPrefix(u, "0000110") && u[7] >= 'a' && u[7] <= 'e' &&
 		strings.HasSuffix(u, "-0000-1000-8000-00805f9b34fb")
 }
@@ -379,26 +440,36 @@ func (a *Agent) Clear(ctx context.Context) (int, error) {
 	a.mu.Lock()
 	c := a.conn
 	a.mu.Unlock()
+
 	if c == nil {
 		return 0, ErrNotRunning
 	}
+
 	devs, err := devices(ctx, c)
 	if err != nil {
 		return 0, err
 	}
+
 	removed := 0
+
 	var errs []error
+
 	for _, d := range devs {
 		if !d.paired {
 			continue
 		}
+
 		if _, err := c.Call(ctx, service, adapterPath, "org.bluez.Adapter1", "RemoveDevice", d.path); err != nil {
 			errs = append(errs, err)
+
 			continue
 		}
+
 		removed++
 	}
+
 	a.log.Info("bluetooth pairings cleared", "removed", removed, "failed", len(errs))
+
 	return removed, errors.Join(errs...)
 }
 
@@ -413,7 +484,9 @@ type managedObjects = map[dbus.ObjectPath]map[string]map[string]dbus.Variant
 
 func getManagedObjects(ctx context.Context, c *sysbus.Conn) (managedObjects, error) {
 	var objs managedObjects
+
 	err := c.Object(service, "/").CallWithContext(ctx, "org.freedesktop.DBus.ObjectManager.GetManagedObjects", 0).Store(&objs)
+
 	return objs, err
 }
 
@@ -423,10 +496,13 @@ func devices(ctx context.Context, c *sysbus.Conn) ([]device, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	var devs []device
+
 	eachOnAdapter(objs, deviceIface, func(path dbus.ObjectPath, props map[string]dbus.Variant) {
 		devs = append(devs, device{path: path, paired: props["Paired"].Value() == true, trusted: props["Trusted"].Value() == true})
 	})
+
 	return devs, nil
 }
 
@@ -440,10 +516,13 @@ func waitAdapter(ctx context.Context, c *sysbus.Conn) {
 	for end := time.Now().Add(adapterWait); time.Now().Before(end); {
 		cctx, cancel := context.WithTimeout(ctx, time.Second)
 		_, err := c.Call(cctx, service, adapterPath, propsIface, "Get", "org.bluez.Adapter1", "Address")
+
 		cancel()
+
 		if err == nil || ctx.Err() != nil {
 			return
 		}
+
 		select {
 		case <-ctx.Done():
 			return
@@ -455,6 +534,8 @@ func waitAdapter(ctx context.Context, c *sysbus.Conn) {
 func setProp(ctx context.Context, c *sysbus.Conn, path dbus.ObjectPath, iface, name string, v any) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+
 	_, err := c.Call(ctx, service, path, propsIface, "Set", iface, name, dbus.MakeVariant(v))
+
 	return err
 }

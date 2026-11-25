@@ -67,11 +67,13 @@ const (
 )
 
 // Codes is every code, in the order openapi.json lists them.
-var Codes = []Code{
-	InvalidRequest, NotFound, MethodNotAllowed, Forbidden, SignatureInvalid,
-	ConfirmRequired, NotConfirmed, ConfirmSuperseded, Busy, Conflict, Timeout, TooLarge,
-	PackageRejected, PreconditionFailed, Unsupported, Unavailable, ClockNotSet, UpstreamFailed,
-	StorageFull, Internal,
+func Codes() []Code {
+	return []Code{
+		InvalidRequest, NotFound, MethodNotAllowed, Forbidden, SignatureInvalid,
+		ConfirmRequired, NotConfirmed, ConfirmSuperseded, Busy, Conflict, Timeout, TooLarge,
+		PackageRejected, PreconditionFailed, Unsupported, Unavailable, ClockNotSet, UpstreamFailed,
+		StorageFull, Internal,
+	}
 }
 
 // Body is the error shape on the wire.
@@ -80,9 +82,24 @@ type Body struct {
 	Code  Code   `json:"code"`
 }
 
+// The status ranges ForStatus tells apart.
+const (
+	firstClientError = 400
+	firstServerError = 500
+)
+
 // ForStatus is the code an error with this status has unless its call site names a more
 // precise one.
 func ForStatus(status int) Code {
+	if status >= firstClientError && status < firstServerError {
+		return forClientError(status)
+	}
+
+	return forServerError(status)
+}
+
+// forClientError is ForStatus for a 4xx status.
+func forClientError(status int) Code {
 	switch status {
 	case http.StatusNotFound:
 		return NotFound
@@ -94,7 +111,7 @@ func ForStatus(status int) Code {
 		return ConfirmRequired
 	case http.StatusConflict:
 		return Conflict
-	case http.StatusRequestTimeout, http.StatusGatewayTimeout:
+	case http.StatusRequestTimeout:
 		return Timeout
 	case http.StatusRequestEntityTooLarge:
 		return TooLarge
@@ -102,6 +119,16 @@ func ForStatus(status int) Code {
 		return PackageRejected
 	case http.StatusPreconditionFailed:
 		return PreconditionFailed
+	default:
+		return InvalidRequest
+	}
+}
+
+// forServerError is ForStatus for any status outside 4xx.
+func forServerError(status int) Code {
+	switch status {
+	case http.StatusGatewayTimeout:
+		return Timeout
 	case http.StatusNotImplemented:
 		return Unsupported
 	case http.StatusServiceUnavailable:
@@ -110,16 +137,16 @@ func ForStatus(status int) Code {
 		return UpstreamFailed
 	case http.StatusInsufficientStorage:
 		return StorageFull
+	default:
+		return Internal
 	}
-	if status >= 400 && status < 500 {
-		return InvalidRequest
-	}
-	return Internal
 }
 
 // Write answers with the error shape: status, code and a message for a person.
 func Write(w http.ResponseWriter, status int, code Code, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(Body{Error: msg, Code: code}) //nolint:errchkjson // the client may be gone; nothing left to tell it
+
+	body := Body{Error: msg, Code: code}
+	_ = json.NewEncoder(w).Encode(body) //nolint:errchkjson // the client may be gone; nothing left to tell it
 }

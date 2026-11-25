@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -21,6 +22,8 @@ import (
 // rootHelper is soundtap-root (ADR 0066), which init.d/soundtap starts beside soundtapd
 // when soundtapd runs as its own user. nil when soundtapd does the work itself: a
 // development run, a test, or an OS that starts it as root.
+//
+//nolint:gochecknoglobals // process-wide state: set once at start-up, read by every root-only step
 var rootHelper *rootd.Client
 
 // useRootHelper drops the ambient capabilities soundtapd arrived with, so no child inherits
@@ -28,29 +31,49 @@ var rootHelper *rootd.Client
 // before anything is started.
 func useRootHelper(log *slog.Logger) {
 	if os.Geteuid() != 0 {
-		if err := childproc.ClearAmbient(); err != nil {
+		err := childproc.ClearAmbient()
+		if err != nil {
 			log.Warn("ambient capabilities stay", "err", err)
 		}
 	}
-	h := rootd.FromEnv()
-	if h == nil || devMode.Load() {
+
+	helper := rootd.FromEnv()
+	if helper == nil || devMode.Load() {
 		return
 	}
-	rootHelper = h
-	log.Info("root steps go through soundtap-root", "socket", h.Path, "uid", os.Geteuid())
+
+	rootHelper = helper
+	log.Info("root steps go through soundtap-root", "socket", helper.Path, "uid", os.Geteuid())
+
 	flash.VerifyDir = rootd.MountDir
-	hw.ExportGPIO = h.ExportGPIO
-	oled.ExportGPIO = h.ExportGPIO
-	bco.Power = func() (func(on bool) error, func(), error) { return h.BCOPower, func() {}, nil }
-	setHostname = func(b []byte) error { return h.SetHostname(string(b)) }
+	hw.ExportGPIO = helper.ExportGPIO
+	oled.ExportGPIO = helper.ExportGPIO
+	bco.Power = func() (func(on bool) error, func(), error) { return helper.BCOPower, func() {}, nil }
+	setHostname = func(b []byte) error { return helper.SetHostname(string(b)) }
 }
 
 // rebootSystem reboots the speaker: through soundtap-root, or BusyBox's reboot as root.
 func rebootSystem() error {
+	return rebootSystemContext(context.Background())
+}
+
+// rebootSystemContext is rebootSystem with BusyBox's reboot run within ctx.
+func rebootSystemContext(ctx context.Context) error {
 	if rootHelper != nil {
-		return rootHelper.Reboot()
+		err := rootHelper.Reboot()
+		if err != nil {
+			return fmt.Errorf("reboot through soundtap-root: %w", err)
+		}
+
+		return nil
 	}
-	return exec.CommandContext(context.Background(), "reboot").Run()
+
+	err := exec.CommandContext(ctx, "reboot").Run()
+	if err != nil {
+		return fmt.Errorf("reboot: %w", err)
+	}
+
+	return nil
 }
 
 // runBTCtlVerb runs bt-ctl.sh verb within ctx: through soundtap-root, which as root reads
@@ -58,9 +81,20 @@ func rebootSystem() error {
 // that has ExitCode.
 func runBTCtlVerb(ctx context.Context, verb string) error {
 	if rootHelper != nil {
-		return rootHelper.BTCtl(verb)
+		err := rootHelper.BTCtl(verb)
+		if err != nil {
+			return fmt.Errorf("bt-ctl %s through soundtap-root: %w", verb, err)
+		}
+
+		return nil
 	}
-	return exec.CommandContext(ctx, "sh", btCtl, verb).Run()
+
+	err := exec.CommandContext(ctx, "sh", btCtl, verb).Run()
+	if err != nil {
+		return fmt.Errorf("bt-ctl %s: %w", verb, err)
+	}
+
+	return nil
 }
 
 // exitCode is the exit status err carries, or -1.
@@ -69,6 +103,7 @@ func exitCode(err error) int {
 	if errors.As(err, &e) {
 		return e.ExitCode()
 	}
+
 	return -1
 }
 

@@ -22,6 +22,7 @@ func FuzzParseStreamTitle(f *testing.F) {
 	} {
 		f.Add(s)
 	}
+
 	f.Fuzz(func(t *testing.T, meta string) {
 		if title := parseStreamTitle(meta); !utf8.ValidString(title) {
 			t.Fatalf("title %q from %q is not UTF-8", title, meta)

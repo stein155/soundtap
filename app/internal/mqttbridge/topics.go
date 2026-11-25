@@ -25,6 +25,7 @@ func (t topics) commands() []string {
 	for _, tb := range transportButtons {
 		cmds = append(cmds, t.transportSet(tb.key))
 	}
+
 	return cmds
 }
 

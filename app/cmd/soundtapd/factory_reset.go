@@ -5,7 +5,10 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -26,17 +29,16 @@ import (
 // Failures are logged and the rest still runs so one stale file cannot block setup mode.
 // stores are closed before anything is deleted, so no save still in flight (the
 // shutdown's last volume, a preset write) can recreate a file the reset removed.
-func factoryReset(home, wifiConf string, log *slog.Logger, terminate func(), stores ...io.Closer) {
+func factoryReset(ctx context.Context, home, wifiConf string, log *slog.Logger, terminate func(), stores ...io.Closer) {
 	log.Warn("factory reset requested")
 	// Before anything goes: a reset is not the first start after an install from stock.
-	if err := markStockTaken(home); err != nil {
+	err := markStockTaken(home)
+	if err != nil {
 		log.Error("factory reset: record stock takeover", "err", err)
 	}
-	for _, s := range stores {
-		if err := s.Close(); err != nil {
-			log.Warn("factory reset: close store", "err", err) // its file is removed below anyway
-		}
-	}
+
+	closeResetStores(stores, log)
+
 	persistentRoot := filepath.Dir(home)
 	paths := []string{
 		filepath.Join(home, "presets.json"),
@@ -56,48 +58,85 @@ func factoryReset(home, wifiConf string, log *slog.Logger, terminate func(), sto
 		wifiConf + ".good",
 		wifiConf + ".known", // every saved network goes, not just the current one
 	}
+
 	onSpeaker := filepath.Clean(home) == filepath.Join(persistentRoot, "soundtap")
 	if onSpeaker {
-		clearBluetoothPairings(log)
+		clearBluetoothPairings(context.WithoutCancel(ctx), log) // a reset is not cut short
 	}
 	// Spotify's and BlueZ's state belongs to other users: soundtap-root removes and
 	// recreates it when soundtapd runs as its own (ADR 0066).
 	foreign := onSpeaker && rootHelper == nil
 	if foreign {
 		paths = append(paths, filepath.Join(persistentRoot, "spotify"))
-		for _, dir := range bluetoothStateDirs {
+		for _, dir := range bluetoothStateDirs() {
 			paths = append(paths, filepath.Join(persistentRoot, dir))
 		}
 	}
+
 	if onSpeaker && rootHelper != nil {
-		if err := rootHelper.ResetForeignState(); err != nil {
-			log.Error("factory reset: Spotify and Bluetooth state", "err", err)
+		foreignErr := rootHelper.ResetForeignState()
+		if foreignErr != nil {
+			log.Error("factory reset: Spotify and Bluetooth state", "err", foreignErr)
 		}
 	}
+
+	removeResetPaths(paths, log)
+	removeAtomicTemps(append(paths, wifiConf), log)
+	removeResetQuarantine(home, log)
+
+	if foreign {
+		recreateBluetoothStateDirs(persistentRoot, log)
+	}
+
+	err = enterSetupMode(wifiConf)
+	if err != nil {
+		log.Error("factory reset: enter setup mode", "err", err)
+	}
+
+	log.Warn("factory reset complete: restarting into setup mode")
+	terminate()
+}
+
+// closeResetStores closes the stores before their files go.
+func closeResetStores(stores []io.Closer, log *slog.Logger) {
+	for _, store := range stores {
+		err := store.Close()
+		if err != nil {
+			log.Warn("factory reset: close store", "err", err) // its file is removed below anyway
+		}
+	}
+}
+
+// removeResetPaths removes every path a factory reset clears; a failure is logged and the
+// rest still goes.
+func removeResetPaths(paths []string, log *slog.Logger) {
 	for _, path := range paths {
-		if err := os.RemoveAll(path); err != nil {
+		err := os.RemoveAll(path)
+		if err != nil {
 			log.Error("factory reset: remove", "path", path, "err", err)
 		}
 	}
-	removeAtomicTemps(append(paths, wifiConf), log)
-	// The corrupt copies Open moved aside hold the same data as the stores themselves.
+}
+
+// removeResetQuarantine removes the corrupt copies Open moved aside: they hold the same
+// data as the stores themselves.
+func removeResetQuarantine(home string, log *slog.Logger) {
 	for _, name := range []string{"presets.json.settings", "presets.json", "recent.json", "favorites.json"} {
-		if err := atomicjson.RemoveQuarantine(filepath.Join(home, name)); err != nil {
+		err := atomicjson.RemoveQuarantine(filepath.Join(home, name))
+		if err != nil {
 			log.Error("factory reset: remove corrupt copies", "store", name, "err", err)
 		}
 	}
-	if foreign {
-		for _, dir := range bluetoothStateDirs {
-			if err := os.MkdirAll(filepath.Join(persistentRoot, dir), 0o700); err != nil {
-				log.Error("factory reset: recreate Bluetooth state directory", "dir", dir, "err", err)
-			}
+}
+
+// recreateBluetoothStateDirs puts back the emptied directories the /var/lib links point at.
+func recreateBluetoothStateDirs(persistentRoot string, log *slog.Logger) {
+	for _, dir := range bluetoothStateDirs() {
+		err := os.MkdirAll(filepath.Join(persistentRoot, dir), bluetoothStateDirMode)
+		if err != nil {
+			log.Error("factory reset: recreate Bluetooth state directory", "dir", dir, "err", err)
 		}
 	}
-	if err := enterSetupMode(wifiConf); err != nil {
-		log.Error("factory reset: enter setup mode", "err", err)
-	}
-	log.Warn("factory reset complete: restarting into setup mode")
-	terminate()
 }
 
 // removeAtomicTemps deletes what an interrupted atomicjson.WriteFile leaves beside each
@@ -106,34 +145,70 @@ func removeAtomicTemps(paths []string, log *slog.Logger) {
 	for _, path := range paths {
 		orphans, _ := filepath.Glob(filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*"))
 		for _, orphan := range orphans {
-			if err := os.Remove(orphan); err != nil {
+			err := os.Remove(orphan)
+			if err != nil {
 				log.Error("factory reset: remove temp file", "path", orphan, "err", err)
 			}
 		}
 	}
 }
 
+// bluetoothStateDirMode keeps BlueZ's and bluealsa's state to their own users.
+const bluetoothStateDirMode = 0o700
+
+// bluetoothAskTimeout bounds one exchange with BlueZ over D-Bus.
+const bluetoothAskTimeout = 5 * time.Second
+
 // bluetoothStateDirs live under /mnt/nv behind /var/lib links: BlueZ's pairings and
 // bluealsa's per-device volumes. A reset empties both and leaves the links' targets.
-var bluetoothStateDirs = []string{"bluetooth", "bluealsa"}
+func bluetoothStateDirs() []string { return []string{"bluetooth", "bluealsa"} }
 
-func clearBluetoothPairings(log *slog.Logger) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+// clearBluetoothPairings removes every pairing BlueZ holds, within bluetoothAskTimeout of
+// parent.
+func clearBluetoothPairings(parent context.Context, log *slog.Logger) {
+	ctx, cancel := context.WithTimeout(parent, bluetoothAskTimeout)
 	defer cancel()
-	for _, d := range pairedBluetoothDevices(ctx) {
-		if err := btctl.Remove(ctx, bluetoothBus, d); err != nil {
-			log.Warn("factory reset: remove Bluetooth pairing", "address", d.Address, "err", err)
+
+	for _, device := range pairedBluetoothDevices(ctx) {
+		err := btctl.Remove(ctx, bluetoothBus, device)
+		if err != nil {
+			log.Warn("factory reset: remove Bluetooth pairing", "address", device.Address, "err", err)
 		}
 	}
 }
 
 // pairedBluetoothDevices lists BlueZ's paired devices; nil when BlueZ cannot be asked.
 func pairedBluetoothDevices(ctx context.Context) []btctl.Device {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, bluetoothAskTimeout)
 	defer cancel()
+
 	return btctl.Paired(ctx, bluetoothBus)
 }
 
 func removeStalePlugins(home string) error {
-	return os.RemoveAll(filepath.Join(home, "plugins"))
+	err := os.RemoveAll(filepath.Join(home, "plugins"))
+	if err != nil {
+		return fmt.Errorf("plugins: %w", err)
+	}
+
+	return nil
+}
+
+// retiredFiles are names in soundtapd's home that nothing reads any more, removed at every
+// start: allow-unsigned switched on unsigned uploads on an alpha image, before every upload
+// behind the press on the speaker took one, on every profile (ADR 0048).
+func retiredFiles() []string { return []string{"allow-unsigned"} }
+
+// removeRetiredFiles removes retiredFiles from home and leaves everything else alone.
+func removeRetiredFiles(home string) error {
+	var errs []error
+
+	for _, name := range retiredFiles() {
+		err := os.Remove(filepath.Join(home, name))
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			errs = append(errs, err)
+		}
+	}
+
+	return errors.Join(errs...)
 }

@@ -5,7 +5,7 @@
 package speaker
 
 import (
-	"fmt"
+	"errors"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -69,6 +69,7 @@ func StationLocation(station string) string {
 	if OwnStream(station) {
 		return station
 	}
+
 	return "/v1/playback/station/" + station
 }
 
@@ -83,16 +84,17 @@ func CheckPreset(name, logo string) error {
 	name = strings.TrimSpace(name)
 	switch {
 	case name == "":
-		return fmt.Errorf("preset name is empty")
+		return errors.New("preset name is empty")
 	case !utf8.ValidString(name) || !utf8.ValidString(logo):
-		return fmt.Errorf("preset name or logo is not valid UTF-8")
+		return errors.New("preset name or logo is not valid UTF-8")
 	case utf8.RuneCountInString(name) > 64:
-		return fmt.Errorf("preset name must be at most 64 characters")
+		return errors.New("preset name must be at most 64 characters")
 	case len(logo) > 2048:
-		return fmt.Errorf("preset logo must be at most 2048 bytes")
+		return errors.New("preset logo must be at most 2048 bytes")
 	case strings.IndexFunc(name+logo, unicode.IsControl) >= 0:
-		return fmt.Errorf("preset name or logo contains a control character")
+		return errors.New("preset name or logo contains a control character")
 	}
+
 	return nil
 }
 

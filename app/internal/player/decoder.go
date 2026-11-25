@@ -25,6 +25,7 @@ const DecoderNice = "5"
 // so a test can start a stand-in instead of ffmpeg and drive the loop.
 var decoderCommand = func(ctx context.Context, user, name string, args ...string) (*exec.Cmd, error) {
 	cmd := exec.CommandContext(ctx, "nice", decoderArgs(name, args)...)
+
 	return cmd, childproc.RunAs(cmd, user)
 }
 
@@ -50,6 +51,7 @@ func playbackAudioFilter(gain float64, fadeIn bool) string {
 	if fadeIn {
 		filter += fmt.Sprintf(",afade=t=in:d=%g:curve=cub", radioFadeIn.Seconds())
 	}
+
 	return filter
 }
 
@@ -61,6 +63,7 @@ func confirmPlayback(ctx context.Context, sp *speakerstate.Speaker, health func(
 	if playGen == 0 {
 		return // the source already changed hands; nothing to confirm
 	}
+
 	if health == nil {
 		// Legacy direct-to-device path (no Mixer, so no PCM telemetry): fall back to
 		// "ffmpeg survived its first couple of seconds".
@@ -70,13 +73,18 @@ func confirmPlayback(ctx context.Context, sp *speakerstate.Speaker, health func(
 		case <-time.After(2 * time.Second):
 			sp.ConfirmPlaying(playGen)
 		}
+
 		return
 	}
+
 	base := health().SourceNonzeroBlocks
+
 	deadline := time.NewTimer(deadlineAfter)
 	defer deadline.Stop()
+
 	tick := time.NewTicker(250 * time.Millisecond)
 	defer tick.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -86,6 +94,7 @@ func confirmPlayback(ctx context.Context, sp *speakerstate.Speaker, health func(
 			if !sp.StillBuffering(playGen) {
 				return
 			}
+
 			log.Warn("stream produced no audio", "after", deadlineAfter)
 			// The player decides what the UI shows: a dropped station stays buffering.
 			select {
@@ -93,13 +102,16 @@ func confirmPlayback(ctx context.Context, sp *speakerstate.Speaker, health func(
 			default:
 				sp.FailPlayback(playGen)
 			}
+
 			return
 		case <-tick.C:
 			if !sp.StillBuffering(playGen) {
 				return
 			}
+
 			if health().SourceNonzeroBlocks-base >= confirmBlocks {
 				sp.ConfirmPlaying(playGen)
+
 				return
 			}
 		}

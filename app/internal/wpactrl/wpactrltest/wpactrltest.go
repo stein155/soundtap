@@ -7,6 +7,7 @@
 package wpactrltest
 
 import (
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -17,6 +18,9 @@ import (
 	"github.com/stein155/soundtap/app/internal/safego"
 	"github.com/stein155/soundtap/app/internal/wpactrl"
 )
+
+// readBuffer is the largest command read, as wpa_supplicant's own 4 KiB buffer.
+const readBuffer = 4096
 
 // Server is one fake control socket.
 type Server struct {
@@ -34,14 +38,19 @@ type Server struct {
 // wpactrl.ClientDir there for the test.
 func ShortDir(tb testing.TB) string {
 	tb.Helper()
-	dir, err := os.MkdirTemp("", "wpa")
+
+	dir, err := os.MkdirTemp("", "wpa") //nolint:usetesting // t.TempDir's path is too long for a socket
 	if err != nil {
 		tb.Fatal(err)
 	}
+
 	tb.Cleanup(func() { _ = os.RemoveAll(dir) })
+
 	old := wpactrl.ClientDir
 	wpactrl.ClientDir = dir
+
 	tb.Cleanup(func() { wpactrl.ClientDir = old })
+
 	return dir
 }
 
@@ -50,73 +59,49 @@ func ShortDir(tb testing.TB) string {
 // the reply ("" reads as UNKNOWN COMMAND).
 func Listen(tb testing.TB, dir, iface string, handle func(cmd string) string) *Server {
 	tb.Helper()
-	s, err := Open(filepath.Join(dir, iface), handle)
+
+	srv, err := Open(filepath.Join(dir, iface), handle)
 	if err != nil {
 		tb.Fatal(err)
 	}
-	tb.Cleanup(s.Close)
-	return s
+
+	tb.Cleanup(srv.Close)
+
+	return srv
 }
 
 // Open is Listen without a test: the caller closes it. A fake that wpa_supplicant's
 // start creates, the way the real one appears only after it ran, uses this.
 func Open(path string, handle func(cmd string) string) (*Server, error) {
 	_ = os.Remove(path)
+
 	sock, err := net.ListenUnixgram("unixgram", &net.UnixAddr{Name: path, Net: "unixgram"})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("wpactrltest: %w", err)
 	}
-	s := &Server{Path: path, sock: sock, handle: handle, attached: map[string]*net.UnixAddr{}, done: make(chan struct{})}
-	safego.Go("wpactrltest-serve", s.serve)
-	return s, nil
-}
 
-func (s *Server) serve() {
-	defer close(s.done)
-	buf := make([]byte, 4096)
-	for {
-		n, from, err := s.sock.ReadFromUnix(buf)
-		if err != nil {
-			return
-		}
-		cmd := string(buf[:n])
-		s.mu.Lock()
-		s.cmds = append(s.cmds, cmd)
-		s.mu.Unlock()
-		var reply string
-		switch cmd {
-		case "ATTACH":
-			s.mu.Lock()
-			s.attached[from.Name] = from
-			s.mu.Unlock()
-			reply = "OK\n"
-		case "DETACH":
-			s.mu.Lock()
-			delete(s.attached, from.Name)
-			s.mu.Unlock()
-			reply = "OK\n"
-		case "PING":
-			reply = "PONG\n"
-		default:
-			if s.handle != nil {
-				reply = s.handle(cmd)
-			}
-			if reply == "" {
-				reply = "UNKNOWN COMMAND\n"
-			}
-		}
-		if from != nil && from.Name != "" {
-			_, _ = s.sock.WriteToUnix([]byte(reply), from)
-		}
+	srv := &Server{
+		Path:     path,
+		sock:     sock,
+		handle:   handle,
+		mu:       sync.Mutex{},
+		attached: map[string]*net.UnixAddr{},
+		cmds:     nil,
+		done:     make(chan struct{}),
 	}
+	safego.Go("wpactrltest-serve", srv.serve)
+
+	return srv, nil
 }
 
 // Event sends "<3>msg" to every attached client.
 func (s *Server) Event(msg string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	for name, to := range s.attached {
-		if _, err := s.sock.WriteToUnix([]byte("<3>"+msg), to); err != nil {
+		_, err := s.sock.WriteToUnix([]byte("<3>"+msg), to)
+		if err != nil {
 			delete(s.attached, name) // gone, as wpa_supplicant drops a client it cannot reach
 		}
 	}
@@ -126,6 +111,7 @@ func (s *Server) Event(msg string) {
 func (s *Server) Attached() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	return len(s.attached)
 }
 
@@ -133,6 +119,7 @@ func (s *Server) Attached() int {
 func (s *Server) Commands() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	return append([]string(nil), s.cmds...)
 }
 
@@ -143,6 +130,7 @@ func (s *Server) Has(prefix string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -151,4 +139,53 @@ func (s *Server) Close() {
 	_ = s.sock.Close()
 	<-s.done
 	_ = os.Remove(s.Path)
+}
+
+func (s *Server) serve() {
+	defer close(s.done)
+
+	buf := make([]byte, readBuffer)
+	for {
+		n, from, err := s.sock.ReadFromUnix(buf)
+		if err != nil {
+			return
+		}
+
+		cmd := string(buf[:n])
+
+		s.mu.Lock()
+		s.cmds = append(s.cmds, cmd)
+		s.mu.Unlock()
+
+		var reply string
+
+		switch cmd {
+		case "ATTACH":
+			s.mu.Lock()
+			s.attached[from.Name] = from
+			s.mu.Unlock()
+
+			reply = "OK\n"
+		case "DETACH":
+			s.mu.Lock()
+			delete(s.attached, from.Name)
+			s.mu.Unlock()
+
+			reply = "OK\n"
+		case "PING":
+			reply = "PONG\n"
+		default:
+			if s.handle != nil {
+				reply = s.handle(cmd)
+			}
+
+			if reply == "" {
+				reply = "UNKNOWN COMMAND\n"
+			}
+		}
+
+		if from != nil && from.Name != "" {
+			_, _ = s.sock.WriteToUnix([]byte(reply), from)
+		}
+	}
 }

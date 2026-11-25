@@ -5,18 +5,25 @@ package main
 
 import (
 	"errors"
+	"sync"
 	"testing"
 )
 
+//nolint:paralleltest // swaps package variables other tests read: airplayRemote
 func TestAirPlayKeyNeedsASender(t *testing.T) {
-	airplayRemote = dacpRemote{}
-	if err := airplayKey(t.Context(), "next"); !errors.Is(err, errNoAirPlayRemote) {
+	airplayRemote = dacpRemote{mu: sync.Mutex{}, id: "", token: ""}
+
+	err := airplayKey(t.Context(), "next")
+	if !errors.Is(err, errNoAirPlayRemote) {
 		t.Errorf("no sender: %v", err)
 	}
+
 	airplayRemote.note("daid", "ABC")
 	airplayRemote.note("acre", "123")
+
 	if id, token := airplayRemote.get(); id != "ABC" || token != "123" {
 		t.Errorf("kept %q %q", id, token)
 	}
-	airplayRemote = dacpRemote{}
+
+	airplayRemote = dacpRemote{mu: sync.Mutex{}, id: "", token: ""}
 }

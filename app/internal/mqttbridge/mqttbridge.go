@@ -74,6 +74,7 @@ func (c Config) addr() string {
 			port = DefaultPort
 		}
 	}
+
 	return net.JoinHostPort(c.Host, strconv.Itoa(port))
 }
 
@@ -165,11 +166,13 @@ func (b *Bridge) Reload() {
 func (b *Bridge) Status() (connected bool, lastErr string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
 	return b.connected, b.lastErr
 }
 
 func (b *Bridge) setStatus(connected bool, err error) {
 	b.mu.Lock()
+
 	b.connected = connected
 	if err != nil {
 		b.lastErr = err.Error()
@@ -186,9 +189,11 @@ func (b *Bridge) Run(ctx context.Context) {
 		cfg := b.cfgFn()
 		if !cfg.Enabled || cfg.Host == "" {
 			b.setStatus(false, nil)
+
 			if !b.wait(ctx, 0) { // wait for a reload or shutdown
 				return
 			}
+
 			continue
 		}
 
@@ -196,13 +201,17 @@ func (b *Bridge) Run(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
+
 		if errors.Is(err, errReload) {
 			continue // new settings: reconnect now, not after reconnectDelay
 		}
+
 		b.setStatus(false, err)
+
 		if err != nil {
 			b.log.Warn("mqtt connection ended", "err", err)
 		}
+
 		if !b.wait(ctx, reconnectDelay) {
 			return
 		}
@@ -220,8 +229,10 @@ func (b *Bridge) wait(ctx context.Context, delay time.Duration) bool {
 			return true
 		}
 	}
+
 	t := time.NewTimer(delay)
 	defer t.Stop()
+
 	select {
 	case <-ctx.Done():
 		return false
@@ -250,13 +261,17 @@ func (b *Bridge) serve(ctx context.Context, cfg Config) error {
 	// leave the old session's commands running against the speaker.
 	ctx, endSession := context.WithCancel(ctx)
 	defer endSession()
+
 	infoCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	info, err := b.sp.Info(infoCtx)
+
 	cancel()
+
 	if err != nil || info.DeviceID == "" {
 		if err == nil {
-			err = fmt.Errorf("speaker has no device id yet")
+			err = errors.New("speaker has no device id yet")
 		}
+
 		return fmt.Errorf("read speaker identity: %w", err)
 	}
 
@@ -264,10 +279,12 @@ func (b *Bridge) serve(ctx context.Context, cfg Config) error {
 	if base == "" {
 		base = "soundtap/" + info.DeviceID
 	}
+
 	disc := cfg.DiscoveryPrefix
 	if disc == "" {
 		disc = "homeassistant"
 	}
+
 	tp := topics{base: base}
 
 	// One worker runs the commands in the order the broker sent them, so a slow speaker
@@ -280,8 +297,10 @@ func (b *Bridge) serve(ctx context.Context, cfg Config) error {
 		c              *mqtt.Client
 		topic, payload string
 	}
+
 	queue := make(chan command, maxQueuedCommands)
 	cache := newStateCache()
+
 	safego.Go("mqttbridge.commands", func() {
 		for {
 			select {
@@ -308,8 +327,10 @@ func (b *Bridge) serve(ctx context.Context, cfg Config) error {
 			// hub's retained birth message is not needed either: serve announces on connect.
 			if m.Retain {
 				b.log.Debug("mqtt ignoring retained message", "topic", m.Topic)
+
 				return
 			}
+
 			select {
 			case queue <- command{c, m.Topic, string(m.Payload)}:
 			default:
@@ -334,8 +355,10 @@ func (b *Bridge) serve(ctx context.Context, cfg Config) error {
 	if err := client.Subscribe(append(tp.commands(), disc+"/status")...); err != nil {
 		return err
 	}
+
 	b.setStatus(true, nil)
 	b.log.Info("mqtt connected", "broker", cfg.addr(), "base", base)
+
 	_ = client.Publish(tp.availability(), []byte(availabilityOnline), true)
 	// The preset select lists the presets by name; when they change (stored, renamed or
 	// cleared on the speaker, the web UI or a client) its discovery config is sent again, or
@@ -352,9 +375,11 @@ func (b *Bridge) serve(ctx context.Context, cfg Config) error {
 	// after boot the clock may not be set yet and the check is refused; then it runs again
 	// soon, a bounded number of times, rather than six hours later.
 	var clockRetryC <-chan time.Time
+
 	retries := 0
 	checkUpdate := func() {
 		clockRetryC = nil
+
 		if b.publishUpdateState(ctx, client, tp) && retries < clockRetries {
 			retries++
 			clockRetryC = time.After(clockRetry)
@@ -364,8 +389,10 @@ func (b *Bridge) serve(ctx context.Context, cfg Config) error {
 
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
+
 	updateTicker := time.NewTicker(updateCheckInterval)
 	defer updateTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -377,8 +404,10 @@ func (b *Bridge) serve(ctx context.Context, cfg Config) error {
 		case <-ticker.C:
 			if now := strings.Join(b.presetOptions(ctx), "\x00"); now != options {
 				options = now
+
 				b.announce(ctx, client, tp, disc, info)
 			}
+
 			b.refresh(ctx, client, tp, cache)
 		case <-updateTicker.C:
 			checkUpdate()

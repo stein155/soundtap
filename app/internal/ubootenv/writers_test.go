@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-package ubootenv
+package ubootenv_test
 
 import (
 	"bytes"
@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stein155/soundtap/app/internal/ubootenv"
 	"github.com/stein155/soundtap/app/internal/ubootenv/envfixture"
 )
 
@@ -23,34 +24,46 @@ import (
 // must write the same bytes: the CRC window, the flag, the order U-Boot's env_export sorts
 // in, the padding. Each one is run here on an installed environment, for both fresh flags.
 func TestEveryWriterWritesTheSameEnvironment(t *testing.T) {
-	cc, err := exec.LookPath("cc")
+	t.Parallel()
+
+	compiler, err := exec.LookPath("cc")
 	if err != nil {
 		t.Skip("no C compiler")
 	}
+
 	python, err := exec.LookPath("python3")
 	if err != nil {
 		t.Skip("no python3")
 	}
+
 	root, err := filepath.Abs("../../..")
 	if err != nil {
 		t.Fatal(err)
 	}
-	module := filepath.Join(root, "os/installer/module")
+
+	module := filepath.Join(root, "os", "installer", "module")
+	support := filepath.Join(root, "os", "support")
 	// Read here, not only by the compiler, so a change to them reruns a cached test.
-	for _, src := range []string{filepath.Join(module, "installer.c"), filepath.Join(root, "os/support/uboot_env.py")} {
-		if _, err := os.ReadFile(src); err != nil {
-			t.Fatal(err)
+	for _, src := range []string{filepath.Join(module, "installer.c"), filepath.Join(support, "uboot_env.py")} {
+		_, readErr := os.ReadFile(src)
+		if readErr != nil {
+			t.Fatal(readErr)
 		}
 	}
+
 	installer := filepath.Join(t.TempDir(), "installer")
-	build := exec.CommandContext(t.Context(), cc, "-O2", "-DSOUNDTAP_INSTALL_NAND", "-DSOUNDTAP_INSTALL_BOOTLOADERS",
+
+	build := exec.CommandContext(t.Context(), compiler, "-O2",
+		"-DSOUNDTAP_INSTALL_NAND", "-DSOUNDTAP_INSTALL_BOOTLOADERS",
 		"-o", installer, filepath.Join(module, "installer.c"), filepath.Join(module, "swupdate.c"),
 		filepath.Join(module, "mtd.c"))
-	if out, err := build.CombinedOutput(); err != nil {
+
+	out, err := build.CombinedOutput()
+	if err != nil {
 		t.Fatalf("building the installer: %v\n%s", err, out)
 	}
 
-	env, err := ParseLegacy(envfixture.Image())
+	env, err := ubootenv.ParseLegacy(envfixture.Image())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,33 +76,41 @@ func TestEveryWriterWritesTheSameEnvironment(t *testing.T) {
 	env.Set("mtdids", "nand0=nand0")
 	text := env.Text()
 
-	for _, flag := range []byte{FreshRedundantFlag, FreshPrimaryFlag} {
+	for _, flag := range []byte{ubootenv.FreshRedundantFlag, ubootenv.FreshPrimaryFlag} {
 		want, err := env.EncodeCopy(flag)
 		if err != nil {
 			t.Fatal(err)
 		}
+
 		c := exec.CommandContext(t.Context(), installer, "--env-image", strconv.Itoa(int(flag)))
 		c.Stdin = bytes.NewReader(text)
+
 		fromC, err := c.Output()
 		if err != nil {
 			t.Fatalf("installer --env-image: %v", err)
 		}
+
 		script := "import sys; sys.path.insert(0, sys.argv[1]); import uboot_env; " +
 			"entries = [l.encode() for l in sys.stdin.read().splitlines() if l]; " +
 			"sys.stdout.buffer.write(uboot_env.encode_copy(entries, int(sys.argv[2])))"
-		p := exec.CommandContext(t.Context(), python, "-I", "-c", script, filepath.Join(root, "os/support"),
+		p := exec.CommandContext(t.Context(), python, "-I", "-c", script, support,
 			strconv.Itoa(int(flag)))
 		p.Stdin = strings.NewReader(string(text))
+
 		fromPython, err := p.Output()
 		if err != nil {
 			t.Fatalf("uboot_env.encode_copy: %v", err)
 		}
+
 		for name, got := range map[string][]byte{"installer.c": fromC, "uboot_env.py": fromPython} {
 			if !bytes.Equal(got, want) {
-				t.Errorf("flag %d: %s writes %d bytes that differ from this package's %d", flag, name, len(got), len(want))
+				t.Errorf("flag %d: %s writes %d bytes that differ from this package's %d",
+					flag, name, len(got), len(want))
 			}
 		}
-		if back, f, err := ParseCopy(want); err != nil || f != flag || !back.Equal(env) {
+
+		back, backFlag, err := ubootenv.ParseCopy(want)
+		if err != nil || backFlag != flag || !back.Equal(env) {
 			t.Errorf("flag %d: the copy does not read back: %v", flag, err)
 		}
 	}

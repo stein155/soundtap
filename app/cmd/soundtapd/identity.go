@@ -34,80 +34,138 @@ const (
 	serialFieldSize      = 32
 	v1SerialOffset       = 0x119
 	v1SerialFieldSize    = 25
+	// manufacturingMagic opens the manufacturing data, little-endian.
+	manufacturingMagic = 0xb05e
+)
+
+// Why the manufacturing data gave no serial.
+var (
+	errManufacturingMissing  = errors.New("NAND.Manufacturing-Data is missing from /proc/mtd")
+	errManufacturingTooSmall = errors.New("NAND.Manufacturing-Data is too small")
+	errManufacturingMagic    = errors.New("invalid manufacturing-data magic")
+	errManufacturingLayout   = errors.New("unsupported manufacturing-data layout")
+	errSerialInvalid         = errors.New("invalid packaged-product serial")
+	errSerialPadding         = errors.New("invalid packaged-product serial padding")
+	errSerialEmpty           = errors.New("packaged-product serial is empty")
+)
+
+// The sizes of what the speaker's name becomes and of what is read of stock's files.
+const (
+	macSuffixDigits    = 6        // the end of the MAC a default name carries
+	dnsLabelMax        = 63       // the longest DNS label, so the longest DHCP host name
+	stockXMLLimit      = 64 << 10 // stock's SystemConfigurationDB.xml and Presets.xml
+	stockClockXMLLimit = 16 << 10 // stock's ClockDisplay.xml
+	nameDirMode        = 0o755
+	nameFileMode       = 0o644 // bt.sh and init.d read the names
+	stockTakenMode     = 0o600
+	hostnameMode       = 0o600
 )
 
 // currentNamePath is the name the speaker currently answers to, as opposed to
 // setupNamePath. bt.sh reads it for the Bluetooth adapter's alias: without it a phone
 // scanning for speakers finds the hostname, "soundtap", on every one of them. A variable
 // so a development run (-dev) keeps it with its home.
+//
+//nolint:gochecknoglobals // a test seam: a development run and tests keep it in their home
 var currentNamePath = "/run/soundtap/name"
 
 // setupNamePath is the speaker's out-of-box name, for the setup AP. A variable so a test
 // writes it into a temp dir, not into the host's /run.
+//
+//nolint:gochecknoglobals // a test seam: a development run and tests keep it in their home
 var setupNamePath = "/run/soundtap/default-name"
 
+// deviceSerial reads the manufacturing serial once per process.
+//
+//nolint:gochecknoglobals // process-wide state: the serial read once, for every caller
 var deviceSerial = sync.OnceValues(func() (string, error) {
 	return readManufacturingSerial("/proc/mtd", "/dev")
 })
 
 func readManufacturingSerial(procMTD, devDir string) (string, error) {
-	f, err := os.Open(procMTD)
+	table, err := os.Open(procMTD)
 	if err != nil {
 		return "", fmt.Errorf("open partition table: %w", err)
 	}
-	mtd, err := flash.ParseProcMTD(f)
-	_ = f.Close()
+
+	mtd, err := flash.ParseProcMTD(table)
+	_ = table.Close()
+
 	if err != nil {
 		return "", fmt.Errorf("parse partition table: %w", err)
 	}
+
 	part, ok := mtd[manufacturingPartition]
 	if !ok {
-		return "", errors.New("NAND.Manufacturing-Data is missing from /proc/mtd")
-	}
-	if part.Size != 0 && part.Size < packagedSerialOffset+serialFieldSize {
-		return "", fmt.Errorf("NAND.Manufacturing-Data is too small: %d bytes", part.Size)
+		return "", errManufacturingMissing
 	}
 
-	f, err = os.Open(filepath.Join(devDir, fmt.Sprintf("mtd%d", part.Index)))
+	if part.Size != 0 && part.Size < packagedSerialOffset+serialFieldSize {
+		return "", fmt.Errorf("%w: %d bytes", errManufacturingTooSmall, part.Size)
+	}
+
+	dev, err := os.Open(filepath.Join(devDir, fmt.Sprintf("mtd%d", part.Index)))
 	if err != nil {
 		return "", fmt.Errorf("open %s: %w", manufacturingPartition, err)
 	}
-	defer f.Close()
+	defer dev.Close()
+
 	data := make([]byte, packagedSerialOffset+serialFieldSize)
-	if _, err := io.ReadFull(f, data); err != nil {
+
+	_, err = io.ReadFull(dev, data)
+	if err != nil {
 		return "", fmt.Errorf("read %s: %w", manufacturingPartition, err)
 	}
-	if binary.LittleEndian.Uint16(data[0:2]) != 0xb05e {
-		return "", errors.New("invalid manufacturing-data magic")
-	}
-	var field []byte
-	switch version, word := binary.LittleEndian.Uint16(data[2:4]), binary.LittleEndian.Uint16(data[4:6]); {
-	case version == 2 && word == 0x384:
-		field = data[packagedSerialOffset : packagedSerialOffset+serialFieldSize]
-	case version == 1 && word == 4:
-		field = data[v1SerialOffset : v1SerialOffset+v1SerialFieldSize]
-	default:
-		return "", errors.New("unsupported manufacturing-data layout")
+
+	field, err := serialField(data)
+	if err != nil {
+		return "", err
 	}
 
+	return packagedSerial(field)
+}
+
+// serialField is the packaged-product serial's field in the manufacturing data, by layout.
+func serialField(data []byte) ([]byte, error) {
+	if binary.LittleEndian.Uint16(data[0:2]) != manufacturingMagic {
+		return nil, errManufacturingMagic
+	}
+
+	switch version, word := binary.LittleEndian.Uint16(data[2:4]), binary.LittleEndian.Uint16(data[4:6]); {
+	case version == 2 && word == 0x384:
+		return data[packagedSerialOffset : packagedSerialOffset+serialFieldSize], nil
+	case version == 1 && word == 4:
+		return data[v1SerialOffset : v1SerialOffset+v1SerialFieldSize], nil
+	default:
+		return nil, errManufacturingLayout
+	}
+}
+
+// packagedSerial is the printable serial at the start of field, padded with 0x00 or 0xff.
+func packagedSerial(field []byte) (string, error) {
 	end := len(field)
-	for i, b := range field {
-		if b == 0 || b == 0xff {
+	for i, char := range field {
+		if char == 0 || char == 0xff {
 			end = i
+
 			break
 		}
-		if b < 0x21 || b > 0x7e {
-			return "", errors.New("invalid packaged-product serial")
+
+		if char < 0x21 || char > 0x7e {
+			return "", errSerialInvalid
 		}
 	}
-	for _, b := range field[end:] {
-		if b != 0 && b != 0xff {
-			return "", errors.New("invalid packaged-product serial padding")
+
+	for _, pad := range field[end:] {
+		if pad != 0 && pad != 0xff {
+			return "", errSerialPadding
 		}
 	}
+
 	if end == 0 {
-		return "", errors.New("packaged-product serial is empty")
+		return "", errSerialEmpty
 	}
+
 	return string(field[:end]), nil
 }
 
@@ -127,25 +185,30 @@ func readManufacturingSerial(procMTD, devDir string) (string, error) {
 // Falling back to the model type keeps a speaker whose MAC cannot be read from becoming
 // nameless; SOUNDTAP_DEFAULT_NAME still overrides everything, which is how the init script
 // carries a name across a reinstall.
-func identityDefaults(m model.Model, _ string) (string, string) {
+func identityDefaults(speakerModel *model.Model, _ string) (string, string) {
 	deviceID := os.Getenv("SOUNDTAP_DEVICE_ID")
 	if deviceID == "" {
-		deviceID = macDeviceID(m)
+		deviceID = macDeviceID(speakerModel)
 	}
+
 	name := os.Getenv("SOUNDTAP_DEFAULT_NAME")
 	if name == "" {
-		name = "SoundTap " + strings.ToUpper(m.Name)
-		if len(deviceID) >= 6 {
-			name += " " + deviceID[len(deviceID)-6:]
+		name = "SoundTap " + strings.ToUpper(speakerModel.Name)
+		if len(deviceID) >= macSuffixDigits {
+			name += " " + deviceID[len(deviceID)-macSuffixDigits:]
 		}
 	}
+
 	if deviceID == "" {
-		deviceID = "SOUNDTAP" + strings.ToUpper(m.Name)
+		deviceID = "SOUNDTAP" + strings.ToUpper(speakerModel.Name)
 	}
+
 	return name, deviceID
 }
 
 // netSysDir is where interface MACs are read from; a test points it elsewhere.
+//
+//nolint:gochecknoglobals // a test seam: tests point it at a fake /sys/class/net
 var netSysDir = "/sys/class/net"
 
 // macDeviceID is the MAC of this speaker's own interface as upper-case hex without
@@ -158,31 +221,36 @@ var netSysDir = "/sys/class/net"
 // The init script normally exports the AM335x's own MAC (mac_id0) instead, which is
 // stock's deviceID; this order is its fallback when that cannot be read. The ST20 has
 // a wired port that stock itself reports, the others do not.
-func macDeviceID(m model.Model) string {
+func macDeviceID(speakerModel *model.Model) string {
 	order := []string{"wlan0", "eth0"}
-	if m.Name == model.ST20 {
+	if speakerModel.Name == model.ST20 {
 		order = []string{"eth0", "wlan0"}
 	}
+
 	for _, iface := range order {
 		data, err := os.ReadFile(filepath.Join(netSysDir, iface, "address"))
 		if err != nil {
 			continue
 		}
+
 		mac := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(string(data)), ":", ""))
 		// All zeroes is what an interface reports before its firmware has loaded.
 		if len(mac) != 12 || strings.Trim(mac, "0") == "" {
 			continue
 		}
+
 		if strings.Trim(mac, "0123456789ABCDEF") != "" {
 			continue
 		}
+
 		return mac
 	}
+
 	return ""
 }
 
-func shouldInitializeName(m model.Model, stored string, serial string) bool {
-	if stored == "" || stored == "Bose "+m.Type+" (SoundTap)" {
+func shouldInitializeName(speakerModel *model.Model, stored, serial string) bool {
+	if stored == "" || stored == "Bose "+speakerModel.Type+" (SoundTap)" {
 		return true
 	}
 	// The manufacturing serial was the default for a while, so a speaker carrying exactly
@@ -191,18 +259,22 @@ func shouldInitializeName(m model.Model, stored string, serial string) bool {
 	if serial != "" && stored == serial {
 		return true
 	}
-	if m.Name == model.ST20 && stored == "Bose ST10 (SoundTap)" {
+
+	if speakerModel.Name == model.ST20 && stored == "Bose ST10 (SoundTap)" {
 		return true
 	}
-	prefix := "SoundTap-" + strings.ToUpper(m.Name) + "-"
+
+	prefix := "SoundTap-" + strings.ToUpper(speakerModel.Name) + "-"
 	if suffix, ok := strings.CutPrefix(stored, prefix); ok && len(suffix) == 6 {
 		for _, c := range suffix {
 			if !strings.ContainsRune("0123456789abcdefABCDEF", c) {
 				return false
 			}
 		}
+
 		return true
 	}
+
 	return false
 }
 
@@ -222,66 +294,88 @@ func publishHostname(name string) error {
 		// A name with nothing DNS-safe left: drop the old room name, or init.d would
 		// keep giving the router the name from before the rename. soundtap-<mac6> from
 		// the next boot.
-		if err := os.Remove(hostnameFile); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
+		err := os.Remove(hostnameFile)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("drop the old host name: %w", err)
 		}
+
 		return nil
 	}
+
 	_ = setHostname([]byte(host)) // not root (a development run): the router keeps the old name
 	// Every boot publishes the name again: write the flash only when it changed.
-	if old, err := os.ReadFile(hostnameFile); err != nil || string(old) != host+"\n" {
+	old, err := os.ReadFile(hostnameFile)
+	if err != nil || string(old) != host+"\n" {
 		return publishName(hostnameFile, host)
 	}
+
 	return nil
 }
 
 // setHostname sets the kernel's hostname; hostnameFile (home.go) keeps it for init.
-var setHostname = func(b []byte) error { return os.WriteFile("/proc/sys/kernel/hostname", b, 0o600) }
+//
+//nolint:gochecknoglobals // a hook: the root helper and a development run replace it, tests stub it
+var setHostname = func(host []byte) error { return os.WriteFile("/proc/sys/kernel/hostname", host, hostnameMode) }
 
 // dhcpHostname turns a speaker name into a DNS label as stock does for its friendly
 // name: lowercase a-z, 0-9 and single hyphens, at most 63 characters. "" when nothing
 // is left (an all-emoji or all-CJK name); init.d then keeps soundtap-<mac6>.
 // Accented Latin letters lose their accent first, so "Küche" becomes "kuche", not "k-che".
 func dhcpHostname(name string) string {
-	var b strings.Builder
+	var label strings.Builder
+
 	dash := false
-	for _, r := range latinFold.Replace(strings.ToLower(name)) {
+
+	for _, char := range latinFold().Replace(strings.ToLower(name)) {
 		switch {
-		case r >= 'a' && r <= 'z' || r >= '0' && r <= '9':
-			if dash && b.Len() > 0 {
-				b.WriteByte('-')
+		case char >= 'a' && char <= 'z' || char >= '0' && char <= '9':
+			if dash && label.Len() > 0 {
+				label.WriteByte('-')
 			}
+
 			dash = false
-			b.WriteRune(r)
+
+			label.WriteRune(char)
 		default:
 			dash = true
 		}
-		if b.Len() >= 63 {
+
+		if label.Len() >= dnsLabelMax {
 			break
 		}
 	}
-	return strings.TrimRight(b.String()[:min(b.Len(), 63)], "-")
+
+	return strings.TrimRight(label.String()[:min(label.Len(), dnsLabelMax)], "-")
 }
 
 // latinFold maps the accented letters of the stock UI languages to plain ASCII.
 // A fixed table, not Unicode decomposition: golang.org/x/text is not a dependency.
-var latinFold = strings.NewReplacer(
-	"à", "a", "á", "a", "â", "a", "ã", "a", "ä", "a", "å", "a", "ą", "a", "ă", "a", "æ", "ae",
-	"ç", "c", "ć", "c", "č", "c", "ď", "d", "đ", "d",
-	"è", "e", "é", "e", "ê", "e", "ë", "e", "ę", "e", "ě", "e",
-	"ì", "i", "í", "i", "î", "i", "ï", "i", "ł", "l", "ľ", "l",
-	"ñ", "n", "ń", "n", "ň", "n",
-	"ò", "o", "ó", "o", "ô", "o", "õ", "o", "ö", "o", "ø", "o", "ő", "o", "œ", "oe",
-	"ř", "r", "ś", "s", "š", "s", "ș", "s", "ş", "s", "ß", "ss", "ť", "t", "ț", "t", "ţ", "t",
-	"ù", "u", "ú", "u", "û", "u", "ü", "u", "ů", "u", "ű", "u",
-	"ý", "y", "ÿ", "y", "ź", "z", "ż", "z", "ž", "z",
-)
+func latinFold() *strings.Replacer {
+	return strings.NewReplacer(
+		"à", "a", "á", "a", "â", "a", "ã", "a", "ä", "a", "å", "a", "ą", "a", "ă", "a", "æ", "ae",
+		"ç", "c", "ć", "c", "č", "c", "ď", "d", "đ", "d",
+		"è", "e", "é", "e", "ê", "e", "ë", "e", "ę", "e", "ě", "e",
+		"ì", "i", "í", "i", "î", "i", "ï", "i", "ł", "l", "ľ", "l",
+		"ñ", "n", "ń", "n", "ň", "n",
+		"ò", "o", "ó", "o", "ô", "o", "õ", "o", "ö", "o", "ø", "o", "ő", "o", "œ", "oe",
+		"ř", "r", "ś", "s", "š", "s", "ș", "s", "ş", "s", "ß", "ss", "ť", "t", "ț", "t", "ţ", "t",
+		"ù", "u", "ú", "u", "û", "u", "ü", "u", "ů", "u", "ű", "u",
+		"ý", "y", "ÿ", "y", "ź", "z", "ż", "z", "ž", "z",
+	)
+}
 
 func publishName(path, name string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
+	err := os.MkdirAll(filepath.Dir(path), nameDirMode)
+	if err != nil {
+		return fmt.Errorf("publish name: %w", err)
 	}
-	return atomicjson.WriteFile(path, []byte(name+"\n"), 0o644)
+
+	err = atomicjson.WriteFile(path, []byte(name+"\n"), nameFileMode)
+	if err != nil {
+		return fmt.Errorf("publish name: %w", err)
+	}
+
+	return nil
 }
 
 // speakerIdentity is what this speaker is called by anything that has to remember it
@@ -293,23 +387,26 @@ func speakerIdentity(serial, deviceID string) string {
 	if serial != "" {
 		return serial
 	}
+
 	return deviceID
 }
 
 // stockDeviceName is the name stock knew the speaker by, or "" when there is none.
 func stockDeviceName() string {
-	f, err := os.Open(stockConfigPath)
+	file, err := os.Open(stockConfigPath)
 	if err != nil {
 		return ""
 	}
-	defer f.Close()
-	var c struct {
+	defer file.Close()
+
+	var config struct {
 		DeviceName string `xml:"DeviceName"`
 	}
-	if xml.NewDecoder(io.LimitReader(f, 64<<10)).Decode(&c) != nil {
+	if xml.NewDecoder(io.LimitReader(file, stockXMLLimit)).Decode(&config) != nil {
 		return ""
 	}
-	return strings.TrimSpace(c.DeviceName)
+
+	return strings.TrimSpace(config.DeviceName)
 }
 
 // stockTakenName marks a home whose first start after an install from stock is behind it.
@@ -317,143 +414,215 @@ func stockDeviceName() string {
 // not take the reset for that first start and bring stock's name and presets back.
 const stockTakenName = ".stock-imported"
 
+// stockLeftovers reads what stock left behind for this start to take over: its name, its
+// presets and its clock settings. Each is nil when there is nothing to take over.
+type stockLeftovers struct {
+	name    func() string
+	presets func() []store.Preset
+	clock   func() (settings.Display, bool)
+}
+
+// stockTakeover is what this start takes over from stock: everything on the first start
+// after an install from Bose's software (takeStockOnce), nothing otherwise.
+func stockTakeover(home string, log *slog.Logger) stockLeftovers {
+	if !takeStockOnce(home, log) {
+		return stockLeftovers{name: nil, presets: nil, clock: nil}
+	}
+
+	return stockLeftovers{name: stockDeviceName, presets: stockPresets, clock: stockClock}
+}
+
 // takeStockOnce reports whether stock's name and presets may still be taken over, and
 // records that they now have been.
 func takeStockOnce(home string, log *slog.Logger) bool {
-	if _, err := os.Stat(filepath.Join(home, stockTakenName)); !errors.Is(err, fs.ErrNotExist) {
+	_, err := os.Stat(filepath.Join(home, stockTakenName))
+	if !errors.Is(err, fs.ErrNotExist) {
 		return false
 	}
-	if err := markStockTaken(home); err != nil {
+
+	err = markStockTaken(home)
+	if err != nil {
 		log.Warn("record stock takeover", "err", err)
 	}
+
 	return true
 }
 
 func markStockTaken(home string) error {
-	return os.WriteFile(filepath.Join(home, stockTakenName), nil, 0o600)
+	err := os.WriteFile(filepath.Join(home, stockTakenName), nil, stockTakenMode)
+	if err != nil {
+		return fmt.Errorf("mark stock taken over: %w", err)
+	}
+
+	return nil
+}
+
+// stockPresetItem is what a preset in stock's Presets.xml plays.
+type stockPresetItem struct {
+	Source   string `xml:"source,attr"`
+	Location string `xml:"location,attr"`
+	Name     string `xml:"itemName"`
+	Art      string `xml:"containerArt"`
+}
+
+// stockPreset is one preset in stock's Presets.xml.
+type stockPreset struct {
+	Slot int             `xml:"id,attr"`
+	Item stockPresetItem `xml:"ContentItem"`
 }
 
 // stockPresets reads the radio presets stock left behind. Only TuneIn stations:
 // stock's other sources need its accounts or cloud, so those slots stay empty.
 func stockPresets() []store.Preset {
-	f, err := os.Open(stockPresetsPath)
+	file, err := os.Open(stockPresetsPath)
 	if err != nil {
 		return nil
 	}
-	defer f.Close()
+	defer file.Close()
+
 	var doc struct {
-		Presets []struct {
-			Slot int `xml:"id,attr"`
-			Item struct {
-				Source   string `xml:"source,attr"`
-				Location string `xml:"location,attr"`
-				Name     string `xml:"itemName"`
-				Art      string `xml:"containerArt"`
-			} `xml:"ContentItem"`
-		} `xml:"preset"`
+		Presets []stockPreset `xml:"preset"`
 	}
-	if xml.NewDecoder(io.LimitReader(f, 64<<10)).Decode(&doc) != nil {
+	if xml.NewDecoder(io.LimitReader(file, stockXMLLimit)).Decode(&doc) != nil {
 		return nil
 	}
+
 	var out []store.Preset
-	for _, p := range doc.Presets {
-		name, art := strings.TrimSpace(p.Item.Name), strings.TrimSpace(p.Item.Art)
-		station, ok := strings.CutPrefix(p.Item.Location, "/v1/playback/station/")
-		if p.Item.Source != sourceTuneIn || !ok || station == "" || speaker.CheckPreset(name, art) != nil {
+
+	for _, preset := range doc.Presets {
+		name, art := strings.TrimSpace(preset.Item.Name), strings.TrimSpace(preset.Item.Art)
+
+		station, ok := strings.CutPrefix(preset.Item.Location, "/v1/playback/station/")
+		if preset.Item.Source != sourceTuneIn || !ok || station == "" || speaker.CheckPreset(name, art) != nil {
 			continue
 		}
+
 		out = append(out, store.Preset{
-			Slot: p.Slot, StationID: station, Source: sourceTuneIn, Type: "stationurl",
-			Location: p.Item.Location, Name: name, Logo: art,
+			Slot: preset.Slot, StationID: station, Source: sourceTuneIn, Type: "stationurl",
+			Location: preset.Item.Location, Name: name, Logo: art,
 		})
 	}
+
 	return out
 }
 
 // stockClock is the ST20 standby clock as stock left it (ClockDisplay.xml, every field an
 // attribute of clockConfig; the zone also as the /mnt/nv/localtime link), in SoundTap's
 // form; ok is false when stock left nothing to go by. Stock's clock is on by default and
-// off with userEnable false or brightness 0; it does not dim otherwise, so its brightness
-// maps to SoundTap's default. A zone this build does not know is left out, and without a
+// off with userEnable false or brightness 0; it does not dim otherwise, and neither does
+// SoundTap's, so any other brightness changes nothing. A zone this build does not know is left out, and without a
 // zone only an off clock is taken.
-func stockClock() (d settings.Display, ok bool) {
+func stockClock() (settings.Display, bool) {
 	var doc struct {
-		Config struct {
-			Timezone   string `xml:"timezoneInfo,attr"`
-			Enable     string `xml:"userEnable,attr"`
-			Format     string `xml:"timeFormat,attr"`
-			Brightness string `xml:"brightnessLevel,attr"`
-		} `xml:"clockConfig"`
+		Config stockClockConfig `xml:"clockConfig"`
 	}
+
+	var display settings.Display
+
 	found := false
-	if f, err := os.Open(stockClockPath); err == nil {
-		found = xml.NewDecoder(io.LimitReader(f, 16<<10)).Decode(&doc) == nil
-		_ = f.Close()
+
+	file, err := os.Open(stockClockPath)
+	if err == nil {
+		found = xml.NewDecoder(io.LimitReader(file, stockClockXMLLimit)).Decode(&doc) == nil
+		_ = file.Close()
 	}
-	c := doc.Config
+
+	config := doc.Config
 	if found {
-		d.ClockOff = c.Enable == "false" || strings.TrimSpace(c.Brightness) == "0"
-		d.Hour12 = c.Format == "TIME_FORMAT_12HOUR_ID"
+		display.ClockOff = config.Enable == "false" || strings.TrimSpace(config.Brightness) == "0"
+		display.Hour12 = config.Format == "TIME_FORMAT_12HOUR_ID"
 	}
-	zone := strings.TrimSpace(c.Timezone)
+
+	zone := strings.TrimSpace(config.Timezone)
 	if zone == "" {
-		if target, err := os.Readlink(stockLocaltimePath); err == nil {
+		target, linkErr := os.Readlink(stockLocaltimePath)
+		if linkErr == nil {
 			zone, _ = strings.CutPrefix(target, "/usr/share/zoneinfo/")
 			if zone == target {
 				zone = ""
 			}
 		}
 	}
+
 	if zone != "" {
-		if _, err := time.LoadLocation(zone); err == nil {
-			d.Timezone = zone
+		_, zoneErr := time.LoadLocation(zone)
+		if zoneErr == nil {
+			display.Timezone = zone
 		}
 	}
-	if _, err := settings.NormalizeDisplay(d); err != nil {
-		return settings.Display{}, false
+
+	_, err = settings.NormalizeDisplay(display)
+	if err != nil {
+		return settings.Display{ClockOff: false, Hour12: false, Timezone: ""}, false
 	}
-	return d, found || d.Timezone != ""
+
+	return display, found || display.Timezone != ""
+}
+
+// stockClockConfig is the clockConfig element of stock's ClockDisplay.xml.
+type stockClockConfig struct {
+	Timezone   string `xml:"timezoneInfo,attr"`
+	Enable     string `xml:"userEnable,attr"`
+	Format     string `xml:"timeFormat,attr"`
+	Brightness string `xml:"brightnessLevel,attr"`
 }
 
 // takeStockClock gives the standby clock stock's settings on the first start after an
 // install from Bose's software, so an ST20 shows its clock as before without the settings
 // first being opened in a browser. Only on a speaker with a panel, and only while the
-// clock has no settings of its own.
-func takeStockClock(set *settings.Store, fromStock, panel bool, log *slog.Logger) {
-	if !fromStock || !panel || set.Get().Display != (settings.Display{}) {
+// clock has no settings of its own. fromStock reads stock's clock settings; it is nil when
+// this is not that first start or the speaker has no panel.
+func takeStockClock(set *settings.Store, fromStock func() (settings.Display, bool), log *slog.Logger) {
+	if fromStock == nil || set.Get().Display != (settings.Display{ClockOff: false, Hour12: false, Timezone: ""}) {
 		return
 	}
-	d, ok := stockClock()
+
+	display, ok := fromStock()
 	if !ok {
 		return
 	}
-	if err := set.SetDisplay(d); err != nil {
+
+	err := set.SetDisplay(display)
+	if err != nil {
 		log.Warn("clock settings from stock not kept", "err", err)
+
 		return
 	}
-	log.Info("clock settings taken over from stock", "off", d.ClockOff, "hour12", d.Hour12, "zone", d.Timezone)
+
+	log.Info("clock settings taken over from stock",
+		"off", display.ClockOff, "hour12", display.Hour12, "zone", display.Timezone)
 }
 
-// initialName gives a new speaker its name and returns the one it goes by.
-func initialName(set *settings.Store, serial, name string, fromStock bool, log *slog.Logger) string {
-	if shouldInitializeName(board, set.Get().Name, serial) {
+// initialName gives a new speaker its name and returns the one it goes by. stockName reads
+// stock's name on the first start after an install from Bose's software, and is nil otherwise.
+func initialName(set *settings.Store, serial, name string, stockName func() string, log *slog.Logger) string {
+	if shouldInitializeName(&board, set.Get().Name, serial) {
 		// Not fatal: a full or read-only /mnt/nv must not crash-loop soundtapd before
 		// the boot is confirmed. The speaker runs under the default name instead.
 		// The first boot after an install from Bose's software keeps stock's name.
 		first := name
-		if stock := stockDeviceName(); fromStock && stock != "" {
-			first = stock
-			log.Info("speaker name taken over from stock", "name", stock)
+
+		if stockName != nil {
+			if stock := stockName(); stock != "" {
+				first = stock
+				log.Info("speaker name taken over from stock", "name", stock)
+			}
 		}
-		if err := set.SetName(first); err != nil {
+
+		err := set.SetName(first)
+		if err != nil {
 			log.Error("initialize speaker name", "err", err)
 		}
 	}
-	if err := publishSetupName(name); err != nil {
+
+	err := publishSetupName(name)
+	if err != nil {
 		log.Warn("publish setup AP name", "err", err)
 	}
+
 	if identity := set.Get().Name; identity != "" {
 		return identity
 	}
+
 	return name
 }

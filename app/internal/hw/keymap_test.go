@@ -39,10 +39,13 @@ func TestDecodeInputEvent(t *testing.T) {
 	binary.LittleEndian.PutUint16(event[8:10], 1)  // EV_KEY
 	binary.LittleEndian.PutUint16(event[10:12], 2) // KEY_1
 	binary.LittleEndian.PutUint32(event[12:16], 1) // press
+
 	if code, pressed, ok := decodeInputEvent(event); !ok || !pressed || code != 2 {
 		t.Fatalf("press = (%d,%v,%v)", code, pressed, ok)
 	}
+
 	binary.LittleEndian.PutUint32(event[12:16], 2) // autorepeat
+
 	if _, _, ok := decodeInputEvent(event); ok {
 		t.Fatal("autorepeat accepted")
 	}

@@ -5,17 +5,11 @@ package web
 
 import (
 	"context"
+	"fmt"
 	"net/http/httptest"
 
-	"github.com/stein155/soundtap/app/internal/flash"
 	"github.com/stein155/soundtap/app/internal/multiroom"
 )
-
-// SetNANDForTest runs the install lane's NAND commands, the U-Boot environment's among
-// them, over fake NAND.
-func (s *Server) SetNANDForTest(plan func() (flash.Target, error), run flash.Command, read flash.Reader) {
-	s.fw.SetNAND(plan, run, read)
-}
 
 // Test hook. The support bundle tails absolute paths under /tmp, so the redaction test
 // has to redirect them: pointing it at the real /tmp/soundtap.log made it skip whenever
@@ -23,6 +17,7 @@ func (s *Server) SetNANDForTest(plan func() (flash.Target, error), run flash.Com
 func SetLogFilesForTest(name, path string) func() {
 	saved := logFiles
 	logFiles = []struct{ name, path string }{{name, path}}
+
 	return func() { logFiles = saved }
 }
 
@@ -31,6 +26,7 @@ func SetLogFilesForTest(name, path string) func() {
 func SetSystemRootForTest(root string) func() {
 	saved := sysRoot
 	sysRoot = root
+
 	return func() { sysRoot = saved }
 }
 
@@ -38,31 +34,36 @@ func SetSystemRootForTest(root string) func() {
 func SetBluetoothPresentForTest(present bool) func() {
 	saved := bluetoothPresent
 	bluetoothPresent = func() bool { return present }
+
 	return func() { bluetoothPresent = saved }
 }
-
-// Tests run on hosts without an adapter; most of them describe a speaker that has one.
-func init() { bluetoothPresent = func() bool { return true } }
 
 // SetOSVersionFileForTest points /api/version at another os-version file.
 func SetOSVersionFileForTest(path string) func() {
 	saved := osVersionFile
 	osVersionFile = path
+
 	return func() { osVersionFile = saved }
 }
 
 // RoutesForTest lists the patterns the server's Handler registers.
 func (s *Server) RoutesForTest() []string {
 	s.Handler()
+
 	return append([]string(nil), s.routes...)
 }
 
 // LogFilePathsForTest lists the logs the support bundle of a speaker with home tails.
 func LogFilePathsForTest(home string) []string {
-	var paths []string
-	for _, lg := range (&Server{homeDir: home}).logPaths() {
+	srv := new(Server)
+	srv.homeDir = home
+	logs := srv.logPaths()
+	paths := make([]string, 0, len(logs))
+
+	for _, lg := range logs {
 		paths = append(paths, lg.path)
 	}
+
 	return paths
 }
 
@@ -70,6 +71,7 @@ func LogFilePathsForTest(home string) []string {
 func SetWifiFallbackFileForTest(path string) func() {
 	saved := wifiFallbackFile
 	wifiFallbackFile = path
+
 	return func() { wifiFallbackFile = saved }
 }
 
@@ -77,6 +79,7 @@ func SetWifiFallbackFileForTest(path string) func() {
 func SetWifiJoinFailedFileForTest(path string) func() {
 	saved := wifiJoinFailedFile
 	wifiJoinFailedFile = path
+
 	return func() { wifiJoinFailedFile = saved }
 }
 
@@ -95,7 +98,12 @@ const (
 // setFollow writes the follow file the way the multiroom Group does, for tests that
 // start from a speaker already in a group.
 func (s *Server) setFollow(host, id string) error {
-	return multiroom.WriteFollow(s.multiroomServerPath(), host, id)
+	err := multiroom.WriteFollow(s.multiroomServerPath(), host, id)
+	if err != nil {
+		return fmt.Errorf("write follow: %w", err)
+	}
+
+	return nil
 }
 
 // ReconfigureForTest changes the Options the server was built from: fn edits them and the
@@ -104,7 +112,7 @@ func (s *Server) setFollow(host, id string) error {
 func (s *Server) ReconfigureForTest(fn func(*Options)) {
 	o := s.opts
 	fn(&o)
-	s.configure(o)
+	s.configure(&o)
 }
 
 // Attached is every group of hooks handed over after New.

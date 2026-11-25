@@ -40,45 +40,69 @@ type BootStatus struct {
 //   - offline: no network, retrying, with the design's moving dots.
 //   - setup: hostapd is running, so the speaker has no Wi-Fi and is offering its
 //     own. Says which network to join and where to go once joined.
-func RunBootScreen(ctx context.Context, disp *display.Manager, st BootStatus, log *slog.Logger) {
+func RunBootScreen(ctx context.Context, disp *display.Manager, status BootStatus, log *slog.Logger) {
 	if !disp.Available() {
 		return
 	}
+
 	log.Info("oled boot/setup screen up")
+
 	wait := time.NewTimer(0)
 	defer wait.Stop()
+
 	started := time.Now()
 	last := ""
+
 	for {
 		since := time.Since(started)
-		booting := !st.Up() || since < bootScreenMinimum
+		booting := !status.Up() || since < bootScreenMinimum
+
 		state := hw.LinkDown
 		if !booting {
-			state = st.Link()
+			state = status.Link()
 		}
-		at, hour12 := st.Clock()
-		netcard := st.NetCard != nil && st.NetCard()
-		frame, key := bootOverlay(booting, !st.Up(), since, st.Update(), netcard, st.Faulted(), state, clockText(at, hour12))
+
+		now, hour12 := status.Clock()
+		netcard := status.NetCard != nil && status.NetCard()
+
+		frame, key := bootOverlay(&bootState{
+			booting: booting,
+			waiting: !status.Up(),
+			since:   since,
+			update:  status.Update(),
+			netcard: netcard,
+			faulted: status.Faulted(),
+			link:    state,
+			clock:   clockText(now, hour12),
+			uptime:  readUptime,
+		})
 		if frame == nil {
 			if last != "" {
 				disp.ClearOverlay()
+
 				last = ""
 			}
 		} else if key != last {
 			disp.SetOverlay(display.Content{Frame: frame})
+
 			last = key
 		}
 		// The boot bar and the offline dots move. Otherwise this loop just watches the
 		// link, and link() dials and reads pidfiles: once a second is enough for a screen
 		// that changes when Wi-Fi does.
-		sleep := time.Second
+		var sleep time.Duration
+
 		switch {
 		case booting:
 			sleep = panelTick
 		case state == hw.LinkDown || state == hw.LinkConnecting:
 			sleep = offlineDotTick
+		default:
+			sleep = time.Second
 		}
+
 		wait.Reset(sleep)
+
 		select {
 		case <-ctx.Done():
 			return
@@ -95,85 +119,119 @@ const (
 	bootHold          = 0.95
 	bootScreenMinimum = 2800 * time.Millisecond
 	offlineDotTick    = 300 * time.Millisecond
+	// offlineDots is how many dots the offline screen steps through.
+	offlineDots = 3
+	// bootKeySteps is how finely the boot bar's fill is told apart: a new key, and so a
+	// new frame, at most this many times over the whole bar.
+	bootKeySteps = 80
+	// percent turns an install's percentage into the notice bar's 0..1.
+	percent = 100
 )
 
-// uptime is the time since power-on; tests replace it. ok is false where /proc/uptime
-// cannot be read, and the bar then counts from the start of this process.
-var uptime = func() (time.Duration, bool) {
-	b, err := os.ReadFile("/proc/uptime")
+// readUptime is the time since power-on. ok is false where /proc/uptime cannot be read,
+// and the bar then counts from the start of this process.
+func readUptime() (time.Duration, bool) {
+	raw, err := os.ReadFile("/proc/uptime")
 	if err != nil {
 		return 0, false
 	}
-	secs, err := strconv.ParseFloat(strings.Fields(string(b) + " ")[0], 64)
+
+	secs, err := strconv.ParseFloat(strings.Fields(string(raw) + " ")[0], 64)
 	if err != nil {
 		return 0, false
 	}
+
 	return time.Duration(secs * float64(time.Second)), true
+}
+
+// bootState is what the boot screen is drawn from.
+type bootState struct {
+	booting bool          // the speaker does not serve yet, or the screen is up too briefly
+	waiting bool          // the speaker does not serve yet: the bar holds short of full
+	since   time.Duration // since the boot screen came up
+	update  int           // an install's percentage, -1 without one
+	netcard bool          // the BCO app is being written
+	faulted bool          // the amp fault is latched
+	link    hw.Link
+	clock   string // the time for the status bar
+	// uptime is the time since power-on (readUptime; tests give their own).
+	uptime func() (time.Duration, bool)
 }
 
 // bootProgress is the bar's fill 0..1. It follows the uptime, so it never goes back,
 // and stays below full until the speaker serves.
-func bootProgress(waiting bool, since time.Duration) float64 {
-	if !waiting {
+func bootProgress(state *bootState) float64 {
+	if !state.waiting {
 		return 1
 	}
-	up, ok := uptime()
+
+	up, ok := state.uptime()
 	if !ok {
-		up = since
+		up = state.since
 	}
+
 	return min(bootHold, float64(up)/float64(typicalBoot))
 }
 
-// bootOverlay picks the screen and a key that changes whenever the screen does. update
-// is an install's percentage, -1 without one; netcard says the BCO app is being written;
-// faulted says the amp fault is latched.
-func bootOverlay(booting, waiting bool, since time.Duration, update int, netcard, faulted bool, link hw.Link, clock string) ([]byte, string) {
+// bootOverlay picks the screen and a key that changes whenever the screen does.
+func bootOverlay(state *bootState) ([]byte, string) {
 	switch {
-	case booting:
-		p := bootProgress(waiting, since)
-		return bootFrame(p), "boot" + strconv.Itoa(int(p*80))
-	case update >= 0:
+	case state.booting:
+		progress := bootProgress(state)
+
+		return bootFrame(progress), "boot" + strconv.Itoa(int(progress*bootKeySteps))
+	case state.update >= 0:
 		// Outranks the network: an install drops Wi-Fi, and the one thing to say is
 		// to leave the plug in.
-		return screen.Notice(Text("Updating"), []string{strconv.Itoa(update) + "%", Text("Do not unplug")}, float64(update)/100).Pix(15),
-			"update" + strconv.Itoa(update)
-	case netcard:
+		lines := []string{strconv.Itoa(state.update) + "%", Text("Do not unplug")}
+
+		return screen.Notice(Text("Updating"), lines, float64(state.update)/percent).Pix(fullLevel),
+			"update" + strconv.Itoa(state.update)
+	case state.netcard:
 		// Writing the BCO app takes the network down for minutes. Without this the panel
 		// says it is connecting, which reads as a fault, and a power cut would interrupt
 		// the write.
-		return screen.Notice(Text("Updating"), []string{Text("Network card"), Text("Do not unplug")}, -1).Pix(15), "netcard"
-	case faulted:
+		lines := []string{Text("Network card"), Text("Do not unplug")}
+
+		return screen.Notice(Text("Updating"), lines, -1).Pix(fullLevel), "netcard"
+	case state.faulted:
 		// As stock says so on the panel: otherwise a muted speaker looks merely broken.
-		return screen.Notice(Text("Amp fault"), []string{Text("No sound")}, -1).Pix(15), "ampfault"
-	case link == hw.LinkSetupAP:
+		return screen.Notice(Text("Amp fault"), []string{Text("No sound")}, -1).Pix(fullLevel), "ampfault"
+	case state.link == hw.LinkSetupAP:
 		return setupFrame(), "setup"
-	case link == hw.LinkConnecting || link == hw.LinkDown:
+	case state.link == hw.LinkConnecting || state.link == hw.LinkDown:
 		// As stock: joining says so; only a link that is not even trying is "no connection".
 		title, sub := Text("No connection"), Text("Retrying")
-		if link == hw.LinkConnecting {
+		if state.link == hw.LinkConnecting {
 			title, sub = Text("Connecting…"), ""
 		}
-		step := int(since / offlineDotTick)
-		return screen.Offline(screen.Bar{Time: clock}, title, sub, step).Pix(15),
-			"offline" + title + clock + strconv.Itoa(step%3)
+
+		step := int(state.since / offlineDotTick)
+		bar := screen.Bar{Source: "", Room: "", Time: state.clock, State: "", Mark: "", Battery: 0, Charging: false}
+
+		return screen.Offline(bar, title, sub, step).Pix(fullLevel),
+			"offline" + title + state.clock + strconv.Itoa(step%offlineDots)
 	default:
 		return nil, ""
 	}
 }
 
 func bootFrame(progress float64) []byte {
-	return screen.Boot(progress).Pix(15)
+	return screen.Boot(progress).Pix(fullLevel)
 }
 
 func setupFrame() []byte {
-	return screen.Notice(Text("Setup"), []string{Text("Join Wi-Fi"), speakerstate.SetupSSID(), Text("Then open"), speakerstate.SetupAPAddress}, -1).Pix(15)
+	lines := []string{Text("Join Wi-Fi"), speakerstate.SetupSSID(), Text("Then open"), speakerstate.SetupAPAddress}
+
+	return screen.Notice(Text("Setup"), lines, -1).Pix(fullLevel)
 }
 
 // Clock is the time for the panel's status line: in the town's zone, 12- or 24-hour
 // as the clock setting says.
 func Clock(set *settings.Store) func() (time.Time, bool) {
 	return func() (time.Time, bool) {
-		d := set.Get().Display
-		return time.Now().In(clockZone(d.Timezone)), d.Hour12
+		cfg := set.Get().Display
+
+		return time.Now().In(clockZone(cfg.Timezone)), cfg.Hour12
 	}
 }

@@ -28,8 +28,7 @@
   "display": {
     "clockOff": true,
     "hour12": true,
-    "timezone": "Europe/Amsterdam",
-    "brightness": 50
+    "timezone": "Europe/Amsterdam"
   },
   "alarm": {
     "enabled": true,

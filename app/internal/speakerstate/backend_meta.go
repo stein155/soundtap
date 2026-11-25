@@ -5,7 +5,6 @@ package speakerstate
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -18,19 +17,24 @@ import (
 // a source is named and no longer owns the amp, so a late metadata event can't paint
 // over a source that already switched. Empty fields are left untouched.
 func (s *Speaker) SetTrackMeta(ctx context.Context, source, track, artist, art string) error {
-	if err := ctx.Err(); err != nil {
+	err := live(ctx)
+	if err != nil {
 		return err
 	}
+
 	s.lock()
 	defer s.unlock()
+
 	if source == "AIRPLAY" { //nolint:goconst // moved unchanged
 		// Latch even if the source hasn't flipped to AIRPLAY yet, so applySourceLocked
 		// can restore it the moment it does (F25 first-track race).
 		s.pendTrack, s.pendArtist, s.pendArt, s.pendAlbum = track, artist, art, ""
 	}
+
 	if s.source == sourceStandby || (source != "" && s.source != source) {
 		return nil
 	}
+
 	s.track, s.artist, s.album = track, artist, ""
 	if art != "" {
 		s.art = art
@@ -41,6 +45,7 @@ func (s *Speaker) SetTrackMeta(ctx context.Context, source, track, artist, art s
 		s.playStatus = statePlay
 		s.unheard = false
 	}
+
 	return nil
 }
 
@@ -50,6 +55,7 @@ func (s *Speaker) SetTrackMeta(ctx context.Context, source, track, artist, art s
 func (s *Speaker) SetBluetoothTrack(phone, track, artist, album string) {
 	s.lock()
 	defer s.unlock()
+
 	if s.source == sourceBT {
 		s.station, s.track, s.artist, s.album = phone, track, artist, album
 	}
@@ -59,9 +65,11 @@ func (s *Speaker) SetBluetoothTrack(phone, track, artist, album string) {
 func (s *Speaker) SetAlbum(source, album string) {
 	s.lock()
 	defer s.unlock()
+
 	if source == "AIRPLAY" {
 		s.pendAlbum = album
 	}
+
 	if s.source == source {
 		s.album = album
 	}
@@ -75,24 +83,32 @@ func (s *Speaker) SetAlbum(source, album string) {
 // resume only lifts a pause -- it never promotes BUFFERING_STATE to playing.
 func (s *Speaker) SetPaused(source string, paused bool) {
 	s.lock()
+
 	if s.source == sourceStandby || s.source != source {
 		s.unlock()
+
 		return
 	}
+
 	changed := false
+
 	switch {
 	case paused && s.playStatus != statePause:
 		// The position stops where the pause found it, not at the last report.
 		if s.playStatus == statePlay {
 			s.positionMs += int(time.Since(s.positionAt).Milliseconds())
 		}
+
 		s.playStatus, changed = statePause, true
 	case !paused && s.playStatus == statePause:
 		s.playStatus, changed = startStatus(s.source), true
 		s.positionAt = time.Now()
+	default: // already in the state asked for
 	}
+
 	notify := s.onPlayChange
 	s.unlock()
+
 	if changed && notify != nil {
 		notify()
 	}
@@ -106,22 +122,29 @@ func (s *Speaker) SetPaused(source string, paused bool) {
 // AirPlay ended is startling — the speaker starts playing on its own, in a room
 // the user may have left — and it is what docs/hardware/hardware-test.md checks for.
 func (s *Speaker) ReleaseSource(ctx context.Context, src string) error {
-	if err := ctx.Err(); err != nil {
+	err := live(ctx)
+	if err != nil {
 		return err
 	}
+
 	s.lock()
+
 	if s.source != src {
 		s.unlock()
+
 		return nil // stale stop — a newer source owns the amp now
 	}
+
 	was := s.source == sourceStandby // a "stop" for STANDBY itself is not a transition
 	defer func() {
 		standby := s.standbyHookLocked(was)
 		s.unlock()
+
 		if standby != nil {
 			standby()
 		}
 	}()
+
 	s.source = sourceStandby
 	s.releasedAt = time.Now()
 	s.lastSource = "" // interrupted source is gone; wake defaults to TuneIn
@@ -132,6 +155,7 @@ func (s *Speaker) ReleaseSource(ctx context.Context, src string) error {
 	s.location, s.station, s.art = "", "", ""
 	s.track, s.artist, s.album = "", "", ""
 	s.pendTrack, s.pendArtist, s.pendArt, s.pendAlbum = "", "", "", ""
+
 	return nil
 }
 
@@ -143,25 +167,33 @@ func (s *Speaker) replayableLocked() bool {
 }
 
 func (s *Speaker) EnterStandby(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
+	err := live(ctx)
+	if err != nil {
 		return err
 	}
+
 	s.lock()
+
 	var standby func()
+
 	if s.source != sourceStandby {
 		s.powerToggleLocked(false)
 		standby = s.standbyHookLocked(false)
 	}
+
 	s.unlock()
+
 	if standby != nil {
 		standby()
 	}
+
 	return nil
 }
 
 func (s *Speaker) applySource(source, location, name, art string) {
 	s.lock()
 	defer s.unlock()
+
 	s.applySourceLocked(source, location, name, art)
 }
 
@@ -169,18 +201,22 @@ func (s *Speaker) applySourceLocked(source, location, name, art string) {
 	s.playGen++ // supersede any in-flight buffering confirmation from the old source
 	s.selectionGen++
 	s.startAt = 0
+
 	prev := s.source
 	if prev == sourceStandby {
 		s.boundWakeVolumeLocked()
 	}
+
 	s.source = orDefault(source, sourceTuneIn)
 	if fn := s.onBluetoothSelect; fn != nil && s.source == sourceBT && prev != sourceBT {
 		safego.Go("speakerstate.bluetoothSelect", func() { fn() })
 	}
+
 	s.lastSource = s.source
 	s.location = location
 	s.station = name
 	s.art = art
+
 	s.track, s.artist, s.album = "", "", ""
 	if s.source == "AIRPLAY" && (s.pendTrack != "" || s.pendArtist != "") {
 		// Apply metadata that shairport pushed just before this source flip (F25).
@@ -191,38 +227,48 @@ func (s *Speaker) applySourceLocked(source, location, name, art string) {
 	} else {
 		s.pendTrack, s.pendArtist, s.pendArt, s.pendAlbum = "", "", "", "" // drop stale latch off AirPlay
 	}
+
 	s.playStatus = startStatus(s.source)
 	s.unheard = s.playStatus == stateBuffering
 }
 
-func (s *Speaker) PlayNotification(ctx context.Context, n speaker.Notification) error {
-	if err := ctx.Err(); err != nil {
+// notifyWindow is how long a notification holds the speaker's state.
+const notifyWindow = 8 * time.Second
+
+func (s *Speaker) PlayNotification(ctx context.Context, notice speaker.Notification) error {
+	err := live(ctx)
+	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(n.URL) == "" {
-		return fmt.Errorf("notification URL is required")
+
+	if strings.TrimSpace(notice.URL) == "" {
+		return errNoNotifyURL
 	}
+
 	s.lock()
 	// No floor: a chime at the listening volume must follow a listener below 10 too. The
 	// web API sets its own floor for clips from outside.
 	volume := s.volume
-	if n.Volume > 0 {
-		volume = clamp(n.Volume, 1, 100)
+	if notice.Volume > 0 {
+		volume = clamp(notice.Volume, 1, maxVolume)
 	}
+
 	note := &Notification{
-		URL:    n.URL,
+		URL:    notice.URL,
 		Volume: volume,
-		Artist: n.Artist,
-		Album:  n.Album,
-		Track:  n.Track,
+		Artist: notice.Artist,
+		Album:  notice.Album,
+		Track:  notice.Track,
 	}
 	s.lastNotification = note
-	s.notifyUntil = time.Now().Add(8 * time.Second)
+	s.notifyUntil = time.Now().Add(notifyWindow)
 	fn := s.onNotify
 	s.unlock()
+
 	if fn != nil {
 		fn(note) // hand off to the audio arbiter to duck + play the clip
 	}
+
 	return nil
 }
 
@@ -246,6 +292,7 @@ func (s *Speaker) SetIP(ip string) {
 func (s *Speaker) GetIP() string {
 	s.lock()
 	defer s.unlock()
+
 	return s.IP
 }
 
@@ -254,8 +301,10 @@ func stationIDFromLocation(location string) string {
 	if location == "" || speaker.OwnStream(location) {
 		return location
 	}
+
 	if i := strings.LastIndex(location, "/"); i >= 0 {
 		return location[i+1:]
 	}
+
 	return location
 }

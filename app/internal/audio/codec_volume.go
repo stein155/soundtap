@@ -12,14 +12,15 @@ type CodecVolume interface{ SetGain(gain float64) }
 // SetCodecVolume moves the master volume into the codec; nil moves it back into the PCM.
 // delay reports how long a block written now takes to reach the DAC. Only a GainWriter
 // sink plays the PCM at full scale, so another sink keeps the volume in the PCM.
-func (m *Mixer) SetCodecVolume(cv CodecVolume, delay func() time.Duration) {
+func (m *Mixer) SetCodecVolume(codec CodecVolume, delay func() time.Duration) {
 	m.mu.Lock()
-	m.codec, m.codecDelay = cv, delay
+	m.codec, m.codecDelay = codec, delay
 	m.boostSent, m.boostAt = 0, 0
 	master := m.master
 	m.mu.Unlock()
-	if cv != nil {
-		cv.SetGain(master)
+
+	if codec != nil {
+		codec.SetGain(master)
 	}
 }
 
@@ -38,12 +39,14 @@ func (m *Mixer) codecStepLocked(dst, tapDst, src, ann []byte) ([]byte, bool) {
 	if len(ann) > 0 && m.annGain > level {
 		level, boost = m.annGain, m.annGain
 	}
+
 	srcGain, annGain := 0.0, 0.0
 	if level > 0 {
 		srcGain = m.curGain * (1 - m.shut) * m.srcTrim * m.master / level
 		annGain = m.annGain / level
 	}
-	cv, delay := m.codec, m.codecDelay
+
+	codec, delay := m.codec, m.codecDelay
 	changed := boost != m.boostSent
 	m.boostSent = boost
 	m.mu.Unlock()
@@ -53,16 +56,19 @@ func (m *Mixer) codecStepLocked(dst, tapDst, src, ann []byte) ([]byte, bool) {
 		if delay != nil {
 			after = delay()
 		}
+
 		time.AfterFunc(after, func() {
 			m.mu.Lock()
-			if m.codec != cv {
+			if m.codec != codec {
 				m.mu.Unlock()
+
 				return
 			}
+
 			m.boostAt = boost
 			level := m.codecLevel()
 			m.mu.Unlock()
-			cv.SetGain(level)
+			codec.SetGain(level)
 		})
 	}
 
@@ -70,10 +76,12 @@ func (m *Mixer) codecStepLocked(dst, tapDst, src, ann []byte) ([]byte, bool) {
 	if tapped {
 		scaleInto(tapDst, src, 1)
 	}
+
 	if len(ann) == 0 {
 		scaleInto(dst, src, srcGain)
 	} else {
 		mixInto(dst, src, ann, srcGain, annGain)
 	}
+
 	return dst, tapped
 }

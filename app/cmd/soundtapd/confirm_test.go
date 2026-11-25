@@ -6,7 +6,6 @@ package main
 import (
 	"context"
 	"errors"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -23,28 +22,43 @@ import (
 
 func testConfirmer(t *testing.T) *deviceConfirm {
 	t.Helper()
+
 	old := confirmTokenPath
 	confirmTokenPath = filepath.Join(t.TempDir(), "confirm-token")
 	t.Cleanup(func() { confirmTokenPath = old })
-	c := &deviceConfirm{window: time.Minute, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	c.rotate()
-	return c
+
+	conf := &deviceConfirm{
+		mu:     sync.Mutex{},
+		wait:   nil,
+		gen:    0,
+		token:  "",
+		window: time.Minute,
+		show:   nil,
+		prompt: "",
+		log:    slog.New(slog.DiscardHandler),
+	}
+	conf.rotate()
+
+	return conf
 }
 
 // useConfirmer makes c the one the button handlers confirm through.
-func useConfirmer(t *testing.T, c *deviceConfirm) {
+func useConfirmer(t *testing.T, conf *deviceConfirm) {
 	t.Helper()
+
 	old := confirmer
-	confirmer = c
+	confirmer = conf
+
 	t.Cleanup(func() { confirmer = old })
 }
 
 // panelHandler is a handler for the speaker's own keys, as the keypad and gpio-keys
 // readers make it.
 func panelHandler() (*buttonHandler, *fakeActor) {
-	h, a := testHandler()
-	h.confirms = true
-	return h, a
+	handler, actor := testHandler()
+	handler.confirms = true
+
+	return handler, actor
 }
 
 // panelShows records what the confirmation puts on the ST20 panel.
@@ -56,68 +70,86 @@ type panelShows struct {
 func (p *panelShows) show(text string, _ time.Duration) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
 	p.texts = append(p.texts, text)
 }
 
 func (p *panelShows) all() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
 	return append([]string(nil), p.texts...)
 }
 
 // wait starts a request that waits for the hold and returns where its answer lands.
-func wait(c *deviceConfirm, what string) <-chan error {
+func wait(conf *deviceConfirm, what string) <-chan error {
 	done := make(chan error, 1)
-	go func() { done <- c.confirm(context.Background(), what, "") }()
+	go func() { done <- conf.confirm(context.Background(), what, "") }()
+
 	synctest.Wait()
+
 	return done
 }
 
-func answered(done <-chan error) (error, bool) {
+// answered reports whether done has an answer yet, and what it is.
+func answered(done <-chan error) (bool, error) {
 	select {
 	case err := <-done:
-		return err, true
+		return true, err
 	default:
-		return nil, false
+		return false, nil
 	}
 }
 
 // A key held for confirmHold confirms the waiting request, and does nothing else: no
 // preset plays or stores although the hold passes holdToStore, and the release is
 // swallowed.
+//
+//nolint:paralleltest // swaps package variables other tests read: confirmTokenPath, confirmer
 func TestConfirmByHold(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		c := testConfirmer(t)
-		useConfirmer(t, c)
-		h, a := panelHandler()
-		done := wait(c, "POST /api/factory-reset")
+		conf := testConfirmer(t)
+		useConfirmer(t, conf)
+
+		handler, actor := panelHandler()
+		done := wait(conf, "POST /api/factory-reset")
+
 		if !confirmPending.Load() {
 			t.Fatal("no pending confirmation while a request waits")
 		}
-		h.Handle(1, true, "PRESET_1")
+
+		handler.Handle(1, true, "PRESET_1")
 		time.Sleep(confirmHold - time.Millisecond)
 		synctest.Wait()
-		if _, ok := answered(done); ok {
+
+		if ok, _ := answered(done); ok {
 			t.Fatal("confirmed before the hold was long enough")
 		}
+
 		time.Sleep(time.Millisecond)
 		synctest.Wait()
-		if err, ok := answered(done); !ok || err != nil {
+
+		ok, err := answered(done)
+		if !ok || err != nil {
 			t.Fatalf("after the hold: answered=%v err=%v, want confirmed", ok, err)
 		}
+
 		if confirmPending.Load() {
 			t.Fatal("still pending after the hold")
 		}
+
 		time.Sleep(time.Second)
-		h.Handle(1, false, "PRESET_1")
+		handler.Handle(1, false, "PRESET_1")
 		synctest.Wait()
-		if keys, stored := a.snapshot(); len(keys) != 0 || len(stored) != 0 {
+
+		if keys, stored := actor.snapshot(); len(keys) != 0 || len(stored) != 0 {
 			t.Fatalf("keys=%v stored=%v, want nothing from the confirming key", keys, stored)
 		}
 		// The key works as usual again afterwards.
-		h.Handle(1, true, "PRESET_1")
-		h.Handle(1, false, "PRESET_1")
-		if a.count("PRESET_1") != 1 {
+		handler.Handle(1, true, "PRESET_1")
+		handler.Handle(1, false, "PRESET_1")
+
+		if actor.count("PRESET_1") != 1 {
 			t.Fatal("the next press of the key did not play its preset")
 		}
 	})
@@ -125,32 +157,43 @@ func TestConfirmByHold(t *testing.T) {
 
 // A press shorter than confirmHold confirms nothing, does nothing else either, and asks
 // again on the panel.
+//
+//nolint:paralleltest // swaps package variables other tests read: confirmTokenPath, confirmer
 func TestShortPressDoesNotConfirm(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		c := testConfirmer(t)
-		useConfirmer(t, c)
+		conf := testConfirmer(t)
+		useConfirmer(t, conf)
+
 		var shows panelShows
-		c.show = shows.show
-		h, a := panelHandler()
-		done := wait(c, "POST /api/wifi")
-		h.Handle(1, true, "PRESET_1")
+
+		conf.show = shows.show
+		handler, actor := panelHandler()
+		done := wait(conf, "POST /api/wifi")
+
+		handler.Handle(1, true, "PRESET_1")
 		time.Sleep(confirmHold / 2)
-		h.Handle(1, false, "PRESET_1")
+		handler.Handle(1, false, "PRESET_1")
 		time.Sleep(confirmHold)
 		synctest.Wait()
-		if _, ok := answered(done); ok {
+
+		if ok, _ := answered(done); ok {
 			t.Fatal("a short press answered the request")
 		}
+
 		if !confirmPending.Load() {
 			t.Fatal("the request stopped waiting after a short press")
 		}
-		if keys, stored := a.snapshot(); len(keys) != 0 || len(stored) != 0 {
+
+		if keys, stored := actor.snapshot(); len(keys) != 0 || len(stored) != 0 {
 			t.Fatalf("keys=%v stored=%v, want nothing while a request waits", keys, stored)
 		}
+
 		if got := shows.all(); len(got) != 2 || got[0] != "Hold a button for Wi-Fi" || got[1] != got[0] {
 			t.Fatalf("panel = %q, want the prompt and then the prompt again", got)
 		}
-		if err := <-done; !errors.Is(err, web.ErrNotConfirmed) {
+
+		err := <-done
+		if !errors.Is(err, web.ErrNotConfirmed) {
 			t.Fatalf("confirm = %v, want ErrNotConfirmed", err)
 		}
 	})
@@ -158,25 +201,33 @@ func TestShortPressDoesNotConfirm(t *testing.T) {
 
 // Volume keys never confirm, however long they are held, and keep working while a
 // request waits.
+//
+//nolint:paralleltest // swaps package variables other tests read: confirmTokenPath, confirmer
 func TestVolumeDoesNotConfirm(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		c := testConfirmer(t)
-		useConfirmer(t, c)
-		h, a := panelHandler()
-		done := wait(c, "POST /api/reboot")
+		conf := testConfirmer(t)
+		useConfirmer(t, conf)
+
+		handler, actor := panelHandler()
+		done := wait(conf, "POST /api/reboot")
+
 		for _, key := range []string{"VOLUME_DOWN", "VOLUME_UP"} {
-			h.Handle(0, true, key)
+			handler.Handle(0, true, key)
 			time.Sleep(2 * confirmHold)
-			h.Handle(0, false, key)
+			handler.Handle(0, false, key)
 			synctest.Wait()
-			if _, ok := answered(done); ok {
+
+			if ok, _ := answered(done); ok {
 				t.Fatalf("%s held confirmed the request", key)
 			}
-			if a.count(key) < 2 {
+
+			if actor.count(key) < 2 {
 				t.Fatalf("%s did not ramp while a request waited", key)
 			}
 		}
-		if err := <-done; !errors.Is(err, web.ErrNotConfirmed) {
+
+		err := <-done
+		if !errors.Is(err, web.ErrNotConfirmed) {
 			t.Fatalf("confirm = %v, want ErrNotConfirmed", err)
 		}
 	})
@@ -184,24 +235,34 @@ func TestVolumeDoesNotConfirm(t *testing.T) {
 
 // The IR remote of the ST10 and ST20 never confirms: its keys act as they always do while
 // a request waits.
+//
+//nolint:paralleltest // swaps package variables other tests read: confirmTokenPath, confirmer
 func TestRemoteKeysDoNotConfirm(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		c := testConfirmer(t)
-		useConfirmer(t, c)
-		a := &fakeActor{storable: true}
-		remote := newButtonHandler(a, quietLog()) // as runIR builds it: confirms stays false
-		done := wait(c, "POST /api/factory-reset")
+		conf := testConfirmer(t)
+		useConfirmer(t, conf)
+
+		actor := &fakeActor{mu: sync.Mutex{}, keys: nil, stored: nil, storable: true, storeErr: nil}
+		remote := newButtonHandler(actor, quietLog()) // as runIR builds it: confirms stays false
+		done := wait(conf, "POST /api/factory-reset")
+
 		remote.Handle(0x10, true, "POWER")
 		time.Sleep(2 * confirmHold)
 		remote.Handle(0x10, false, "POWER")
 		synctest.Wait()
-		if _, ok := answered(done); ok {
+
+		if ok, _ := answered(done); ok {
 			t.Fatal("a remote key confirmed the request")
 		}
-		if a.count("POWER") != 1 {
+
+		if actor.count("POWER") != 1 {
 			t.Fatal("the remote's key did not act as usual")
 		}
-		<-done
+
+		err := <-done
+		if !errors.Is(err, web.ErrNotConfirmed) {
+			t.Fatalf("the request ended with %v, want it to time out unconfirmed", err)
+		}
 	})
 }
 
@@ -209,48 +270,63 @@ func TestRemoteKeysDoNotConfirm(t *testing.T) {
 // the bar's buttons and its remote's are not told apart yet. The rules of the panel hold, a
 // short press confirms nothing and the confirming key does nothing else, and every hold logs
 // the producer so the bar's value can be read off.
+//
+//nolint:paralleltest // swaps package variables other tests read: confirmTokenPath, confirmer
 func TestSoundbarKeysConfirm(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		c := testConfirmer(t)
-		useConfirmer(t, c)
-		var logged strings.Builder
-		var mu sync.Mutex
-		a := &fakeActor{storable: true}
-		h := newSoundbarKeys(a, slog.New(slog.NewTextHandler(writerFunc(func(b []byte) (int, error) {
+		conf := testConfirmer(t)
+		useConfirmer(t, conf)
+
+		var (
+			logged strings.Builder
+			mu     sync.Mutex
+		)
+
+		actor := &fakeActor{mu: sync.Mutex{}, keys: nil, stored: nil, storable: true, storeErr: nil}
+		handler := newSoundbarKeys(actor, slog.New(slog.NewTextHandler(writerFunc(func(b []byte) (int, error) {
 			mu.Lock()
 			defer mu.Unlock()
+
 			return logged.Write(b)
 		}), nil)))
-		done := wait(c, "POST /api/core-update")
+		done := wait(conf, "POST /api/core-update")
 
-		h.Key(0x41, true, "PRESET_1", 7) // a short press
+		handler.Key(0x41, true, "PRESET_1", 7) // a short press
 		time.Sleep(confirmHold / 2)
-		h.Key(0x41, false, "PRESET_1", 7)
+		handler.Key(0x41, false, "PRESET_1", 7)
 		time.Sleep(confirmHold)
 		synctest.Wait()
-		if _, ok := answered(done); ok {
+
+		if ok, _ := answered(done); ok {
 			t.Fatal("a short press from the processor confirmed the request")
 		}
 
 		for _, producer := range []uint32{7, 9} {
-			h.Key(0x4c, true, "POWER", producer) // held
+			handler.Key(0x4c, true, "POWER", producer) // held
 			time.Sleep(confirmHold)
 			synctest.Wait()
-			h.Key(0x4c, false, "POWER", producer)
-			if err, ok := answered(done); !ok || err != nil {
+			handler.Key(0x4c, false, "POWER", producer)
+
+			ok, err := answered(done)
+			if !ok || err != nil {
 				t.Fatalf("producer %d: answered=%v err=%v, want the hold to confirm", producer, ok, err)
 			}
+
 			mu.Lock()
 			line := logged.String()
 			mu.Unlock()
-			if !strings.Contains(line, "button confirmed a request") || !strings.Contains(line, "producer="+strconv.Itoa(int(producer))) {
+
+			named := strings.Contains(line, "producer="+strconv.Itoa(int(producer)))
+			if !strings.Contains(line, "button confirmed a request") || !named {
 				t.Fatalf("producer %d: log %q does not name the producer of the confirming hold", producer, line)
 			}
+
 			if producer == 7 {
-				done = wait(c, "POST /api/factory-reset")
+				done = wait(conf, "POST /api/factory-reset")
 			}
 		}
-		if keys, stored := a.snapshot(); len(keys) != 0 || len(stored) != 0 {
+
+		if keys, stored := actor.snapshot(); len(keys) != 0 || len(stored) != 0 {
 			t.Fatalf("keys=%v stored=%v, want nothing from the processor's keys while requests waited", keys, stored)
 		}
 	})
@@ -262,28 +338,40 @@ func (f writerFunc) Write(b []byte) (int, error) { return f(b) }
 
 // A newer request replaces the waiting one, which gets ErrConfirmSuperseded; the hold
 // then confirms the newer one. A host that repeats a request cannot keep the owner's out.
+//
+//nolint:paralleltest // swaps package variables other tests read: confirmTokenPath, confirmer
 func TestNewerRequestSupersedes(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		c := testConfirmer(t)
-		useConfirmer(t, c)
+		conf := testConfirmer(t)
+		useConfirmer(t, conf)
+
 		var shows panelShows
-		c.show = shows.show
-		h, _ := panelHandler()
-		first := wait(c, "POST /api/factory-reset")
-		second := wait(c, "POST /api/wifi")
-		if err, ok := answered(first); !ok || !errors.Is(err, web.ErrConfirmSuperseded) {
-			t.Fatalf("first: answered=%v err=%v, want ErrConfirmSuperseded", ok, err)
+
+		conf.show = shows.show
+		handler, _ := panelHandler()
+		first := wait(conf, "POST /api/factory-reset")
+		second := wait(conf, "POST /api/wifi")
+
+		firstAnswered, err := answered(first)
+		if !firstAnswered || !errors.Is(err, web.ErrConfirmSuperseded) {
+			t.Fatalf("first: answered=%v err=%v, want ErrConfirmSuperseded", firstAnswered, err)
 		}
+
 		if !confirmPending.Load() {
 			t.Fatal("the newer request is not pending")
 		}
-		h.Handle(1, true, "PRESET_2")
+
+		handler.Handle(1, true, "PRESET_2")
 		time.Sleep(confirmHold)
 		synctest.Wait()
-		if err, ok := answered(second); !ok || err != nil {
-			t.Fatalf("second: answered=%v err=%v, want confirmed", ok, err)
+
+		secondAnswered, err := answered(second)
+		if !secondAnswered || err != nil {
+			t.Fatalf("second: answered=%v err=%v, want confirmed", secondAnswered, err)
 		}
-		h.Handle(1, false, "PRESET_2")
+
+		handler.Handle(1, false, "PRESET_2")
+
 		want := []string{"Hold a button to reset", "Hold a button for Wi-Fi", "Confirmed"}
 		if got := shows.all(); strings.Join(got, "|") != strings.Join(want, "|") {
 			t.Fatalf("panel = %q, want %q", got, want)
@@ -293,84 +381,121 @@ func TestNewerRequestSupersedes(t *testing.T) {
 
 // A hold confirms only the request that waited when the key went down: a request that
 // replaced it during the hold needs a hold of its own.
+//
+//nolint:paralleltest // swaps package variables other tests read: confirmTokenPath, confirmer
 func TestHoldDoesNotConfirmARequestThatCameDuringIt(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		c := testConfirmer(t)
-		useConfirmer(t, c)
-		h, a := panelHandler()
-		first := wait(c, "POST /api/reboot")
-		h.Handle(1, true, "PRESET_1")
+		conf := testConfirmer(t)
+		useConfirmer(t, conf)
+
+		handler, actor := panelHandler()
+		first := wait(conf, "POST /api/reboot")
+
+		handler.Handle(1, true, "PRESET_1")
 		time.Sleep(confirmHold / 2)
-		second := wait(c, "POST /api/factory-reset")
+
+		second := wait(conf, "POST /api/factory-reset")
+
 		time.Sleep(confirmHold)
 		synctest.Wait()
-		if err := <-first; !errors.Is(err, web.ErrConfirmSuperseded) {
+
+		err := <-first
+		if !errors.Is(err, web.ErrConfirmSuperseded) {
 			t.Fatalf("first = %v, want ErrConfirmSuperseded", err)
 		}
-		if _, ok := answered(second); ok {
+
+		if ok, _ := answered(second); ok {
 			t.Fatal("a hold begun under the first request confirmed the second")
 		}
-		h.Handle(1, false, "PRESET_1")
-		if keys, stored := a.snapshot(); len(keys) != 0 || len(stored) != 0 {
+
+		handler.Handle(1, false, "PRESET_1")
+
+		if keys, stored := actor.snapshot(); len(keys) != 0 || len(stored) != 0 {
 			t.Fatalf("keys=%v stored=%v, want the release swallowed", keys, stored)
 		}
-		h.Handle(1, true, "PRESET_1")
+
+		handler.Handle(1, true, "PRESET_1")
 		time.Sleep(confirmHold)
 		synctest.Wait()
-		if err, ok := answered(second); !ok || err != nil {
-			t.Fatalf("second after its own hold: answered=%v err=%v", ok, err)
+
+		ok, secondErr := answered(second)
+		if !ok || secondErr != nil {
+			t.Fatalf("second after its own hold: answered=%v err=%v", ok, secondErr)
 		}
-		h.Handle(1, false, "PRESET_1")
+
+		handler.Handle(1, false, "PRESET_1")
 	})
 }
 
 // While one key is held to confirm, a second one does nothing, its release included.
+//
+//nolint:paralleltest // swaps package variables other tests read: confirmTokenPath, confirmer
 func TestSecondKeyDuringAHoldDoesNothing(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		c := testConfirmer(t)
-		useConfirmer(t, c)
-		h, a := panelHandler()
-		done := wait(c, "POST /api/reboot")
-		h.Handle(1, true, "PRESET_1")
-		h.Handle(2, true, "PRESET_2")
-		h.Handle(2, false, "PRESET_2")
+		conf := testConfirmer(t)
+		useConfirmer(t, conf)
+
+		handler, actor := panelHandler()
+		done := wait(conf, "POST /api/reboot")
+
+		handler.Handle(1, true, "PRESET_1")
+		handler.Handle(2, true, "PRESET_2")
+		handler.Handle(2, false, "PRESET_2")
 		time.Sleep(confirmHold)
 		synctest.Wait()
-		if err, ok := answered(done); !ok || err != nil {
+
+		ok, err := answered(done)
+		if !ok || err != nil {
 			t.Fatalf("answered=%v err=%v, want the first key's hold to confirm", ok, err)
 		}
-		h.Handle(1, false, "PRESET_1")
-		if keys, stored := a.snapshot(); len(keys) != 0 || len(stored) != 0 {
+
+		handler.Handle(1, false, "PRESET_1")
+
+		if keys, stored := actor.snapshot(); len(keys) != 0 || len(stored) != 0 {
 			t.Fatalf("keys=%v stored=%v, want nothing", keys, stored)
 		}
 	})
 }
 
 // A device that goes away mid-hold takes the hold with it.
+//
+//nolint:paralleltest // swaps package variables other tests read: confirmTokenPath, confirmer
 func TestResetCancelsAConfirmHold(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		c := testConfirmer(t)
-		useConfirmer(t, c)
-		h, _ := panelHandler()
-		done := wait(c, "POST /api/reboot")
-		h.Handle(1, true, "PRESET_1")
-		h.Reset()
+		conf := testConfirmer(t)
+		useConfirmer(t, conf)
+
+		handler, _ := panelHandler()
+		done := wait(conf, "POST /api/reboot")
+
+		handler.Handle(1, true, "PRESET_1")
+		handler.Reset()
 		time.Sleep(confirmHold)
 		synctest.Wait()
-		if _, ok := answered(done); ok {
+
+		if ok, _ := answered(done); ok {
 			t.Fatal("a hold whose device went away confirmed the request")
 		}
-		<-done
+
+		err := <-done
+		if !errors.Is(err, web.ErrNotConfirmed) {
+			t.Fatalf("the request ended with %v, want it to time out unconfirmed", err)
+		}
 	})
 }
 
 // Without a hold the request is refused after the window.
+//
+//nolint:paralleltest // swaps package variables other tests read: confirmTokenPath
 func TestConfirmTimesOut(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		c := testConfirmer(t)
-		if err := c.confirm(context.Background(), "POST /api/factory-reset", ""); !errors.Is(err, web.ErrNotConfirmed) {
+		conf := testConfirmer(t)
+
+		err := conf.confirm(context.Background(), "POST /api/factory-reset", "")
+		if !errors.Is(err, web.ErrNotConfirmed) {
 			t.Fatalf("confirm = %v, want ErrNotConfirmed", err)
 		}
+
 		if confirmPending.Load() {
 			t.Fatal("still pending after the window")
 		}
@@ -378,40 +503,61 @@ func TestConfirmTimesOut(t *testing.T) {
 }
 
 // The token from the root-only file confirms once and is then replaced.
+//
+//nolint:paralleltest // swaps package variables other tests read: confirmTokenPath
 func TestConfirmByToken(t *testing.T) {
-	c := testConfirmer(t)
+	conf := testConfirmer(t)
+
 	b, err := os.ReadFile(confirmTokenPath)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	token := strings.TrimSpace(string(b))
-	if err := c.confirm(context.Background(), "POST /api/firmware", token); err != nil {
+
+	err = conf.confirm(context.Background(), "POST /api/firmware", token)
+	if err != nil {
 		t.Fatalf("confirm with the token = %v", err)
 	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := c.confirm(ctx, "POST /api/firmware", token); err == nil {
+
+	err = conf.confirm(ctx, "POST /api/firmware", token)
+	if err == nil {
 		t.Fatal("a used token confirmed again")
 	}
 }
 
 // The token confirms its own request at once and leaves a waiting one waiting.
+//
+//nolint:paralleltest // swaps package variables other tests read: confirmTokenPath
 func TestTokenLeavesAWaitingRequestAlone(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		c := testConfirmer(t)
-		done := wait(c, "POST /api/reboot")
-		if err := c.confirm(context.Background(), "POST /api/firmware", c.token); err != nil {
+		conf := testConfirmer(t)
+
+		done := wait(conf, "POST /api/reboot")
+
+		err := conf.confirm(context.Background(), "POST /api/firmware", conf.token)
+		if err != nil {
 			t.Fatalf("token confirm while another waits = %v", err)
 		}
-		if _, ok := answered(done); ok || !confirmPending.Load() {
+
+		if ok, _ := answered(done); ok || !confirmPending.Load() {
 			t.Fatal("the token answered the waiting request")
 		}
-		<-done
+
+		err = <-done
+		if !errors.Is(err, web.ErrNotConfirmed) {
+			t.Fatalf("the request ended with %v, want it to time out unconfirmed", err)
+		}
 	})
 }
 
 // The panel names what a hold would confirm.
 func TestConfirmPrompt(t *testing.T) {
+	t.Parallel()
+
 	for what, want := range map[string]string{
 		"POST /api/factory-reset":   "Hold a button to reset",
 		"POST /api/restore":         "Hold a button to restore",
@@ -424,8 +570,6 @@ func TestConfirmPrompt(t *testing.T) {
 		"POST /api/soundtapd":       "Hold a button to install",
 		"DELETE /api/soundtapd":     "Hold a button to install",
 		"POST /api/update":          "Hold a button to install",
-		"PUT /api/owner-key":        "Hold a button for keys",
-		"DELETE /api/owner-key":     "Hold a button for keys",
 		"GET /api/debug":            "Hold a button for logs",
 		"GET /api/debug/pprof/heap": "Hold a button for logs",
 		"POST /api/something-new":   "Hold a button",
@@ -433,6 +577,7 @@ func TestConfirmPrompt(t *testing.T) {
 		if got := confirmPrompt(what); got != want {
 			t.Errorf("%s: %q, want %q", what, got, want)
 		}
+
 		for _, lang := range panel.Untranslated(want) {
 			t.Errorf("%s has no words for %q", lang, want)
 		}

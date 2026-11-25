@@ -14,16 +14,20 @@ import (
 func (m *Mixer) SetVolume(vol int) {
 	if vol < 0 {
 		vol = 0
-	} else if vol > 100 {
-		vol = 100
+	} else if vol > maxVolume {
+		vol = maxVolume
 	}
+
 	m.mu.Lock()
+
 	m.master = stockVolumeGain(vol)
 	if !m.volumeSet {
 		m.curMaster, m.volumeSet = m.master, true
 	}
+
 	cv, level := m.codec, m.codecLevel()
 	m.mu.Unlock()
+
 	if cv != nil {
 		cv.SetGain(level)
 	}
@@ -41,11 +45,39 @@ func glide(cur, target float64) float64 {
 	if math.Abs(target-next) < 1.0/65536 {
 		return target
 	}
+
 	return next
 }
 
 // VolumeGain is the gain of a volume step, for a level that has to match the music's.
 func VolumeGain(vol int) float64 { return stockVolumeGain(vol) }
+
+// stockVolumeGain's fit is three lines in dB over the volume step, with knees between them.
+const (
+	maxVolume = 100
+
+	volumeKneeLow  = 10
+	volumeKneeHigh = 50
+
+	volumeLowOffsetDB = -89.325 // below volumeKneeLow
+	volumeLowSlopeDB  = 2.45
+	volumeMidOffsetDB = -75.24 // from volumeKneeLow to volumeKneeHigh
+	volumeMidSlopeDB  = 0.885
+	volumeTopOffsetDB = -62.5 // from volumeKneeHigh up
+	volumeTopSlopeDB  = 0.625
+)
+
+// Decibels are twenty times the base-ten logarithm of an amplitude ratio.
+const (
+	decibelBase       = 10
+	decibelsPerDecade = 20
+)
+
+// scaleInto's integer gain is Q15: q15One is unity, q15Half rounds.
+const (
+	q15One  = 32768
+	q15Half = 16384
+)
 
 // stockVolumeGain reproduces Bose APServer's 101-entry DSP coefficient table. Volume
 // percentages are perceived-loudness steps, not linear PCM amplitude.
@@ -59,47 +91,61 @@ func stockVolumeGain(vol int) float64 {
 	if vol <= 0 {
 		return 0
 	}
-	if vol > 100 {
-		vol = 100
+
+	if vol > maxVolume {
+		vol = maxVolume
 	}
-	v := float64(vol)
-	db := -62.5 + 0.625*v
-	if vol < 10 {
-		db = -89.325 + 2.45*v
-	} else if vol < 50 {
-		db = -75.24 + 0.885*v
+
+	volume := float64(vol)
+
+	decibels := volumeTopOffsetDB + volumeTopSlopeDB*volume
+	if vol < volumeKneeLow {
+		decibels = volumeLowOffsetDB + volumeLowSlopeDB*volume
+	} else if vol < volumeKneeHigh {
+		decibels = volumeMidOffsetDB + volumeMidSlopeDB*volume
 	}
-	return math.Pow(10, db/20)
+
+	return dbToGain(decibels)
 }
+
+// dbToGain turns decibels into an amplitude gain.
+func dbToGain(db float64) float64 { return math.Pow(decibelBase, db/decibelsPerDecade) }
 
 // scaleInto is the normal playback fast path. Integer scaling avoids two float
 // conversions and math.Round per sample on the ST10's saturated single-core CPU.
 func scaleInto(dst, src []byte, gain float64) {
-	n := min(len(dst), len(src)) &^ 1
+	size := min(len(dst), len(src)) &^ 1
 	if gain == 1 {
-		copy(dst[:n], src[:n])
-		clear(dst[n:])
+		copy(dst[:size], src[:size])
+		clear(dst[size:])
+
 		return
 	}
-	fixed := int32(math.Round(gain * 32768))
+
+	fixed := int32(math.Round(gain * q15One))
 	if gain > 1 {
 		// Only the WLA's AUX trim (1.22) goes above unity: full scale must clip, not wrap
 		// to the opposite sign. Apart so the common path pays nothing for it.
-		for i := 0; i < n; i += 2 {
-			v := int64(int16(binary.LittleEndian.Uint16(src[i:]))) * int64(fixed) / 32768
+		for i := 0; i < size; i += 2 {
+			v := int64(int16(binary.LittleEndian.Uint16(src[i:]))) * int64(fixed) / q15One
 			binary.LittleEndian.PutUint16(dst[i:], uint16(int16(max(math.MinInt16, min(math.MaxInt16, v)))))
 		}
-		clear(dst[n:])
+
+		clear(dst[size:])
+
 		return
 	}
-	for i := 0; i < n; i += 2 {
-		v := int32(int16(binary.LittleEndian.Uint16(src[i:]))) * fixed
-		if v >= 0 {
-			v += 16384
+
+	for offset := 0; offset < size; offset += 2 {
+		scaled := int32(int16(binary.LittleEndian.Uint16(src[offset:]))) * fixed
+		if scaled >= 0 {
+			scaled += q15Half
 		} else {
-			v -= 16384
+			scaled -= q15Half
 		}
-		binary.LittleEndian.PutUint16(dst[i:], uint16(int16(v/32768)))
+
+		binary.LittleEndian.PutUint16(dst[offset:], uint16(int16(scaled/q15One)))
 	}
-	clear(dst[n:])
+
+	clear(dst[size:])
 }

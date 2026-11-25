@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-package speakerstate
+package speakerstate_test
 
 import (
 	"context"
@@ -9,43 +9,65 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stein155/soundtap/app/internal/speakerstate"
 )
 
 // Pause and play pressed in quick succession reach the source in that order: the
 // source must end up playing, as the speaker says it is.
 func TestTransportKeysReachTheSourceInOrder(t *testing.T) {
-	s := New()
-	var mu sync.Mutex
-	var got []string
-	s.OnTransport(func(a string) error {
+	t.Parallel()
+
+	spk := speakerstate.New()
+
+	var (
+		mu  sync.Mutex
+		got []string
+	)
+
+	spk.OnTransport(func(a string) error {
 		mu.Lock()
+
 		got = append(got, a)
 		mu.Unlock()
+
 		return nil
 	})
-	if err := s.SetSource(context.Background(), "SPOTIFY"); err != nil {
+
+	err := spk.SetSource(context.Background(), "SPOTIFY")
+	if err != nil {
 		t.Fatal(err)
 	}
-	var want []string
+
+	want := make([]string, 0, 10)
+
 	for range 5 {
-		s.ApplyKey("PAUSE")
-		s.ApplyKey("PLAY")
+		spk.ApplyKey("PAUSE")
+		spk.ApplyKey("PLAY")
+
 		want = append(want, "PAUSE", "PLAY")
 	}
+
 	deadline := time.Now().Add(2 * time.Second)
+
 	for {
 		mu.Lock()
-		n := len(got)
+		count := len(got)
 		done := slices.Equal(got, want)
 		mu.Unlock()
+
 		if done {
 			return
 		}
-		if n >= len(want) || time.Now().After(deadline) {
+
+		if count >= len(want) || time.Now().After(deadline) {
 			mu.Lock()
-			defer mu.Unlock()
-			t.Fatalf("source got %v, want %v", got, want)
+			seen := slices.Clone(got)
+			mu.Unlock()
+
+			t.Fatalf("source got %v, want %v", seen, want)
 		}
+
 		time.Sleep(5 * time.Millisecond)
 	}
 }

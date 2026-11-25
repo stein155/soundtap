@@ -258,9 +258,9 @@ flowchart LR
   CI --> PRE["SoundTap-Core-X.Y.Z-preview.stu<br/>same payloads, preview installer"]
   STU -->|first install| S17[stock updater :17008] --> INST[soundtap-installer]
   PRE -->|first install, preview models only| S17
-  STU -->|every later update| API["POST /api/firmware"] --> INST
-  STU -->|newer os-v release, key held on the speaker| CORE["POST /api/core-update<br/>downloads and streams"] --> API
-  INST --> SLOT[inactive slot] --> RB[reboot] --> CONF{"alive after 60 s?<br/>ST20: BCO link up"}
+  STU -->|upload, key held on the speaker| API["POST /api/firmware"] --> INST
+  STU -->|newer signed os-v release, one confirmation, no key| CORE["POST /api/core-update<br/>downloads and streams"] --> API
+  INST --> SLOT[inactive slot] --> RB["reboot<br/>core-update: by itself"] --> CONF{"alive after 60 s?<br/>ST20: BCO link up"}
   CONF -->|yes| OK["slot confirmed<br/>boot count reset"]
   CONF -->|no| FB["past bootlimit=4,<br/>U-Boot runs altbootcmd"]
 ```
@@ -424,7 +424,7 @@ flowchart LR
 
 - Every workflow runs on GitHub-hosted runners and calls the repository's own entry points, `tools/ci/run-ci.sh` and `tools/ci/run-build.sh`, which a developer's own build machine runs too ([ADR 0011](../decisions/0011-one-buildroot-pipeline.md)).
 - Only `sign.yml` reads the release key: an encrypted secret of the GitHub Actions environment `release`, whose deployment branches are `main` alone. `release.yml` makes drafts without it and has `sign.yml` sign an alpha's at once; a Core release is signed against its four hardware reports in `releases/os-vX.Y.Z/` ([ADR 0035](../decisions/0035-releases.md)).
-- Speakers trust two compiled release keys, the active one and a reserve, in soundtapd; the USB stick at power-on checks no signature ([ADR 0130](../decisions/0130-usb-stick-recovery.md)). An owner can add a key of their own, set and removed on the Updates page behind a hold and kept in both U-Boot environment copies; builds signed with it install under a release's rules, and a factory reset removes it. The first-install feed `updates/soundtouch` and the preview models' `updates/soundtouch-preview` are held to a signed release by code-owner review and `feed.yml` ([ADR 0048](../decisions/0048-signed-updates.md), [ADR 0133](../decisions/0133-more-soundtouch-models-from-stock.md), [RELEASING.md](../../RELEASING.md#the-first-install-feed)).
+- Speakers trust two compiled release keys, the active one and a reserve, in soundtapd; the USB stick at power-on checks no signature ([ADR 0130](../decisions/0130-usb-stick-recovery.md)). Only a signed release the speaker fetches itself installs without anyone at the speaker, in one tap on the Updates page; every upload, signed or not, waits for the hold on the speaker, and an own build or any other `.stu` installs unsigned that way on any profile. The first-install feed `updates/soundtouch` and the preview models' `updates/soundtouch-preview` are held to a signed release by code-owner review and `feed.yml` ([ADR 0048](../decisions/0048-signed-updates.md), [ADR 0133](../decisions/0133-more-soundtouch-models-from-stock.md), [RELEASING.md](../../RELEASING.md#the-first-install-feed)).
 - One pipeline: Buildroot, one profile `os/configs/soundtap_defconfig` ([ADR 0011](../decisions/0011-one-buildroot-pipeline.md)). `make os` builds it, `make stu` packages it with
   `os/installer/build-universal-stu.sh`. Neither the repository nor the STU holds Bose files
   ([ADR 0049](../decisions/0049-no-stock-bytes.md)).

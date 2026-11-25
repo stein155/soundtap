@@ -50,20 +50,25 @@ func ReadStockProfile(ctx context.Context, device string) (StockProfile, error) 
 	if err := lockSerial(ctx); err != nil {
 		return StockProfile{}, err
 	}
+
 	defer unlockSerial()
+
 	fd, err := openSerial(ctx, device)
 	if err != nil {
 		return StockProfile{}, err
 	}
 	defer syscall.Close(fd)
+
 	reply, err := shellCommand(ctx, fd, fmt.Sprintf("rd 0x%08x %d", stockSettingsAddr, stockSettingsWords))
 	if err != nil {
 		return StockProfile{}, err
 	}
+
 	sector, err := parseMemoryDump(reply)
 	if err != nil {
 		return StockProfile{}, err
 	}
+
 	return parseStockProfile(sector)
 }
 
@@ -71,26 +76,33 @@ func ReadStockProfile(ctx context.Context, device string) (StockProfile, error) 
 // follow each other without a gap; anything else on the console (a log line, the prompt) is skipped.
 func parseMemoryDump(reply string) ([]byte, error) {
 	var out []byte
-	for _, line := range strings.Split(reply, "\n") {
+
+	for line := range strings.SplitSeq(reply, "\n") {
 		addr, words, ok := strings.Cut(strings.TrimSpace(line), ":")
+
 		at, err := strconv.ParseUint(strings.TrimPrefix(addr, "0x"), 16, 32)
 		if !ok || err != nil || !strings.HasPrefix(addr, "0x") {
 			continue
 		}
+
 		if due := uint64(stockSettingsAddr) + uint64(len(out)); at != due {
 			return nil, fmt.Errorf("BCO memory dump: line for 0x%08x where 0x%08x was due", at, due)
 		}
-		for _, w := range strings.Fields(words) {
+
+		for w := range strings.FieldsSeq(words) {
 			v, err := strconv.ParseUint(strings.TrimPrefix(w, "0x"), 16, 32)
 			if err != nil || len(w) != 10 {
 				return nil, fmt.Errorf("BCO memory dump: bad word at 0x%08x", at)
 			}
+
 			out = binary.LittleEndian.AppendUint32(out, uint32(v))
 		}
 	}
+
 	if len(out) == 0 {
 		return nil, errors.New("BCO memory dump: no data in the reply")
 	}
+
 	return out, nil
 }
 
@@ -102,24 +114,31 @@ func parseStockProfile(sector []byte) (StockProfile, error) {
 		key   uint16
 		value string
 	}
+
 	var recs []record
+
 	for o := 2; o+2 < len(sector); {
 		key := binary.LittleEndian.Uint16(sector[o:])
+
 		end := o + 2
 		for end < len(sector) && sector[end] != 0 {
 			end++
 		}
+
 		if end == len(sector) {
 			break // the last string runs past what was read
 		}
+
 		recs = append(recs, record{key, string(sector[o+2 : end])})
 		o = end + 1
 		o += o & 1
 	}
+
 	for i := 0; i+2 < len(recs); i++ {
 		if recs[i].key != stockKeySSID || recs[i+1].key != stockKeySecurity || recs[i+2].key != stockKeyPassphrase {
 			continue
 		}
+
 		ssid, security, pass := recs[i].value, strings.ToUpper(recs[i+1].value), recs[i+2].value
 		if ssid == "" || len(ssid) > 32 {
 			return StockProfile{}, errors.New("BCO stock profile: no usable network name")
@@ -129,7 +148,9 @@ func parseStockProfile(sector []byte) (StockProfile, error) {
 		if strings.Contains(security, "PSK") && (IsHexPSK(pass) || len(pass) >= 8 && len(pass) <= 63) {
 			return StockProfile{SSID: ssid, Passphrase: pass}, nil
 		}
+
 		return StockProfile{}, fmt.Errorf("BCO stock profile: security %q is not taken over", recs[i+1].value)
 	}
+
 	return StockProfile{}, errors.New("BCO stock profile: no saved network found")
 }

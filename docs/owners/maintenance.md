@@ -14,8 +14,9 @@ Earlier observations or a partly completed checklist do not count as release app
 
 There is no fixed schedule. A release is a build from `main` that has passed the install gate and
 the hardware test; [RELEASING.md](https://github.com/stein155/soundtap/blob/main/RELEASING.md)
-has the steps. Published releases are signed, and production images refuse unsigned updates.
-Alpha images accept unsigned builds only after an explicit development opt-in
+has the steps. Published releases are signed. Once a release is out, *Update* on the speaker's
+Updates page asks once and then installs it, and the speaker restarts into it by itself. A file you
+upload, signed or not, such as your own build, installs when you hold a button on the speaker
 ([ADR 0048](../decisions/0048-signed-updates.md)).
 
 ## Security

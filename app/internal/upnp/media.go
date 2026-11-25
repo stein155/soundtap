@@ -29,12 +29,29 @@ func MediaURL(ctx context.Context, raw string) bool {
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != schemeHTTPS) {
 		return false
 	}
+
 	return fetchableHost(ctx, u.Hostname())
 }
 
 // lookupIP is the resolver used to vet a controller-supplied hostname. It is a
 // variable so the test can answer without a network.
-var lookupIP = net.DefaultResolver.LookupIPAddr
+var lookupIP = net.DefaultResolver.LookupIPAddr //nolint:gochecknoglobals // a variable so the test can answer DNS
+
+const (
+	// lookupTimeout bounds the DNS lookup that vets a media host.
+	lookupTimeout = 3 * time.Second
+	// maxRedirects is how many redirects a media fetch follows.
+	maxRedirects = 10
+)
+
+var (
+	// errRefusedAddress is a media fetch that would dial an address fetchableIP refuses.
+	errRefusedAddress = errors.New("refusing to fetch media from")
+	// errTooManyRedirects is a media fetch past maxRedirects.
+	errTooManyRedirects = errors.New("stopped after 10 redirects")
+	// errNonMediaRedirect is a redirect to a URL MediaURL refuses.
+	errNonMediaRedirect = errors.New("redirect to a non-media URL")
+)
 
 // fetchableHost reports whether host is a sensible media origin. A DLNA controller
 // on the LAN is anonymous, and the URI it hands us is fetched by ffmpeg running as
@@ -52,24 +69,30 @@ func fetchableHost(ctx context.Context, host string) bool {
 	if host == "" {
 		return false
 	}
+
 	if ip := net.ParseIP(host); ip != nil {
 		return fetchableIP(ip)
 	}
+
 	h := strings.ToLower(strings.TrimSuffix(host, "."))
 	if h == "localhost" || strings.HasSuffix(h, ".localhost") {
 		return false
 	}
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+
+	ctx, cancel := context.WithTimeout(ctx, lookupTimeout)
 	defer cancel()
+
 	addrs, err := lookupIP(ctx, host)
 	if err != nil || len(addrs) == 0 {
 		return false
 	}
+
 	for _, a := range addrs {
 		if !fetchableIP(a.IP) {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -85,20 +108,24 @@ func MediaClient(timeout time.Duration) *http.Client {
 	dialer := &net.Dialer{Timeout: timeout, Control: func(_, address string, _ syscall.RawConn) error {
 		host, _, err := net.SplitHostPort(address)
 		if ip := net.ParseIP(host); err != nil || ip == nil || !fetchableIP(ip) {
-			return fmt.Errorf("refusing to fetch media from %s", address)
+			return fmt.Errorf("%w %s", errRefusedAddress, address)
 		}
+
 		return nil
 	}}
+
 	return &http.Client{
 		Timeout:   timeout,
 		Transport: &http.Transport{DialContext: dialer.DialContext, TLSHandshakeTimeout: timeout},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 10 {
-				return errors.New("stopped after 10 redirects")
+			if len(via) >= maxRedirects {
+				return errTooManyRedirects
 			}
+
 			if !MediaURL(req.Context(), req.URL.String()) {
-				return fmt.Errorf("redirect to a non-media URL: %s", req.URL.Redacted())
+				return fmt.Errorf("%w: %s", errNonMediaRedirect, req.URL.Redacted())
 			}
+
 			return nil
 		},
 	}

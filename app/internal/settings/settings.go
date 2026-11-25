@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -87,6 +88,7 @@ func (c *CrashReports) Handle(id string) {
 	if c.IsHandled(id) {
 		return
 	}
+
 	c.Handled = append(c.Handled, id)
 	if n := len(c.Handled) - MaxHandledCrashes; n > 0 {
 		c.Handled = append([]string(nil), c.Handled[n:]...)
@@ -112,18 +114,22 @@ var DefaultAlarm = Alarm{Enabled: false, Time: "07:00", Slot: 1}
 // digits each, so "7:00" and "07:00:00" are refused rather than guessed at.
 func ParseAlarmTime(v string) (hour, minute int, err error) {
 	if len(v) != 5 || v[2] != ':' {
-		return 0, 0, fmt.Errorf("alarm time must be HH:MM")
+		return 0, 0, errors.New("alarm time must be HH:MM")
 	}
+
 	for _, i := range []int{0, 1, 3, 4} {
 		if v[i] < '0' || v[i] > '9' {
-			return 0, 0, fmt.Errorf("alarm time must be HH:MM")
+			return 0, 0, errors.New("alarm time must be HH:MM")
 		}
 	}
+
 	hour = int(v[0]-'0')*10 + int(v[1]-'0')
+
 	minute = int(v[3]-'0')*10 + int(v[4]-'0')
 	if hour > 23 || minute > 59 {
-		return 0, 0, fmt.Errorf("alarm time must be between 00:00 and 23:59")
+		return 0, 0, errors.New("alarm time must be between 00:00 and 23:59")
 	}
+
 	return hour, minute, nil
 }
 
@@ -132,14 +138,17 @@ func (a Alarm) Validate() error {
 	if _, _, err := ParseAlarmTime(a.Time); err != nil {
 		return err
 	}
+
 	if a.Slot < 1 || a.Slot > speaker.PresetSlots {
 		return fmt.Errorf("alarm slot must be 1..%d", speaker.PresetSlots)
 	}
+
 	if a.Timezone != "" {
 		if _, err := time.LoadLocation(a.Timezone); err != nil {
 			return fmt.Errorf("unknown alarm timezone %q", a.Timezone)
 		}
 	}
+
 	return nil
 }
 
@@ -150,9 +159,11 @@ func (s Settings) AlarmConfig() Alarm {
 	if a.Time == "" {
 		a.Time = DefaultAlarm.Time
 	}
+
 	if a.Slot == 0 {
 		a.Slot = DefaultAlarm.Slot
 	}
+
 	return a
 }
 
@@ -206,13 +217,13 @@ type SourceName struct {
 // Without a zone the standby screen stays dark. The zero value is that state.
 //
 // Files from before 0.1.0 may still hold city, lat, lon and weatherOn from the weather
-// line that is gone; the loader ignores them.
+// line that is gone, and brightness from a dimming setting that went the way of stock's
+// (stock does not dim its clock; it walks against burn-in, as this one does); the loader
+// ignores them.
 type Display struct {
 	ClockOff bool   `json:"clockOff"`
 	Hour12   bool   `json:"hour12"`
 	Timezone string `json:"timezone"` // IANA zone of the browser that saved the settings
-	// Brightness is the clock's peak in percent: 25, 50 or 80. 0 means the default, 80.
-	Brightness int `json:"brightness,omitempty"`
 }
 
 // ClockOn reports whether the standby screen shows the clock.
@@ -246,27 +257,31 @@ func isBidiControl(r rune) bool {
 // without bidi controls.
 func NormalizeName(name string) (string, error) {
 	if !utf8.ValidString(name) { // before Map, which would turn bad bytes into U+FFFD
-		return "", fmt.Errorf("speaker name is not valid UTF-8")
+		return "", errors.New("speaker name is not valid UTF-8")
 	}
+
 	name = strings.TrimSpace(strings.Map(func(r rune) rune {
 		if isBidiControl(r) {
 			return -1
 		}
+
 		return r
 	}, name))
 	if name == "" {
-		return "", fmt.Errorf("speaker name is empty")
+		return "", errors.New("speaker name is empty")
 	}
 	// Bytes, not characters: the name is advertised as a DNS-SD instance name, one label
 	// of at most 63 bytes, and Avahi refuses a longer one, which crash-looped librespot.
 	if len(name) > 63 {
-		return "", fmt.Errorf("speaker name must be at most 63 bytes")
+		return "", errors.New("speaker name must be at most 63 bytes")
 	}
+
 	for _, r := range name {
 		if unicode.IsControl(r) {
-			return "", fmt.Errorf("speaker name contains a control character")
+			return "", errors.New("speaker name contains a control character")
 		}
 	}
+
 	return name, nil
 }
 
@@ -299,9 +314,11 @@ func (m MQTT) Validate() error {
 	if m.Port < 0 || m.Port > 65535 {
 		return fmt.Errorf("port %d is outside 1..65535", m.Port)
 	}
+
 	if m.Enabled && m.Host == "" {
 		return errors.New("host is required when MQTT is on")
 	}
+
 	switch {
 	case len(m.Host) > maxMQTTHost:
 		return fmt.Errorf("host must be at most %d bytes", maxMQTTHost)
@@ -310,12 +327,17 @@ func (m MQTT) Validate() error {
 	case strings.IndexFunc(m.Host, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0:
 		return errors.New("host contains whitespace or a control character")
 	}
-	if err := validTopicRoot(m.BaseTopic); err != nil {
+
+	err := validTopicRoot(m.BaseTopic)
+	if err != nil {
 		return fmt.Errorf("base topic %w", err)
 	}
-	if err := validTopicRoot(m.DiscoveryPrefix); err != nil {
+
+	err = validTopicRoot(m.DiscoveryPrefix)
+	if err != nil {
 		return fmt.Errorf("discovery prefix %w", err)
 	}
+
 	return nil
 }
 
@@ -337,6 +359,7 @@ func validTopicRoot(t string) error {
 	case strings.HasPrefix(t, "/") || strings.HasSuffix(t, "/"):
 		return errors.New("must not start or end with /")
 	}
+
 	return nil
 }
 
@@ -363,7 +386,9 @@ var ErrClosed = errors.New("settings store closed")
 func (s *Store) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	s.closed = true
+
 	return nil
 }
 
@@ -377,30 +402,40 @@ func Migrate(data []byte) (Settings, error) {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return Settings{}, err
 	}
+
 	if raw == nil {
-		return Settings{}, fmt.Errorf("settings file is not an object")
+		return Settings{}, errors.New("settings file is not an object")
 	}
+
 	v := 0
 	if rv, ok := raw["schemaVersion"]; ok {
-		if err := json.Unmarshal(rv, &v); err != nil || v < 0 {
+		err := json.Unmarshal(rv, &v)
+		if err != nil || v < 0 {
 			return Settings{}, fmt.Errorf("bad schemaVersion %s", rv)
 		}
 	}
+
 	if v > len(migrations) {
 		return Settings{}, fmt.Errorf("%w: schema %d, this build reads up to %d", ErrNewerSchema, v, len(migrations))
 	}
+
 	for ; v < len(migrations); v++ {
-		if err := migrations[v](raw); err != nil {
+		err := migrations[v](raw)
+		if err != nil {
 			return Settings{}, fmt.Errorf("migrating settings %d -> %d: %w", v, v+1, err)
 		}
 	}
-	raw["schemaVersion"] = json.RawMessage(fmt.Sprint(len(migrations)))
+
+	raw["schemaVersion"] = json.RawMessage(strconv.Itoa(len(migrations)))
+
 	data, err := json.Marshal(raw)
 	if err != nil {
 		return Settings{}, fmt.Errorf("re-encoding migrated settings: %w", err)
 	}
+
 	s := Settings{Language: "en"}
 	err = json.Unmarshal(data, &s)
+
 	return s, err
 }
 
@@ -409,15 +444,19 @@ func Migrate(data []byte) (Settings, error) {
 // save cannot replace settings that may still be intact on disk.
 func Open(path string) *Store {
 	st := &Store{path: path, s: Settings{SchemaVersion: SchemaVersion, Language: "en"}}
+
 	data, found, err := atomicjson.Read(path)
 	if err != nil {
 		st.loadErr, st.readOnly = err, err
 		atomicjson.LogLoad(slog.Default(), "settings", path, err)
+
 		return st
 	}
+
 	if !found {
 		return st
 	}
+
 	if st.s, err = Migrate(data); errors.Is(err, ErrNewerSchema) {
 		// A rollback, not corruption: leave the file where the newer build will find
 		// it, use the fields this build knows, and refuse writes.
@@ -432,12 +471,15 @@ func Open(path string) *Store {
 		// credentials and other settings can be recovered. One that cannot be moved
 		// aside makes the store read-only, since the next write would destroy it.
 		st.s = Settings{SchemaVersion: SchemaVersion, Language: "en"}
+
 		st.loadErr = atomicjson.Quarantine(path, err)
 		if errors.Is(st.loadErr, atomicjson.ErrUnreadable) {
 			st.readOnly = st.loadErr
 		}
+
 		atomicjson.LogLoad(slog.Default(), "settings", path, st.loadErr)
 	}
+
 	return st
 }
 
@@ -446,6 +488,7 @@ func Open(path string) *Store {
 func (s *Store) LoadErr() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	return s.loadErr
 }
 
@@ -453,9 +496,11 @@ func (s *Store) LoadErr() error {
 func (s *Store) Get() Settings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	out := s.s
 	out.SourceNames = append([]SourceName(nil), s.s.SourceNames...)
 	out.CrashReports.Handled = slices.Clone(s.s.CrashReports.Handled)
+
 	return out
 }
 
@@ -473,19 +518,26 @@ func (s *Store) Reset() error {
 	// The newer-schema guard lifts only once the reset is on disk: a failed write
 	// leaves the newer file in place, and the next ordinary save must not clobber it.
 	guard := s.readOnly
+
 	s.readOnly = nil
-	if err := s.replaceLocked(Settings{SchemaVersion: SchemaVersion, Language: "en"}); err != nil {
+
+	err := s.replaceLocked(Settings{SchemaVersion: SchemaVersion, Language: "en"})
+	if err != nil {
 		s.readOnly = guard
+
 		return err
 	}
+
 	RemoveQuarantine(s.path)
+
 	return nil
 }
 
 // RemoveQuarantine deletes every corrupt copy Open kept of the settings at path
 // (.corrupt, .corrupt.1): they hold the previous owner's MQTT password.
 func RemoveQuarantine(path string) {
-	if err := atomicjson.RemoveQuarantine(path); err != nil {
+	err := atomicjson.RemoveQuarantine(path)
+	if err != nil {
 		slog.Error("remove settings backup", "path", path, "err", err)
 	}
 }
@@ -497,13 +549,19 @@ func (s *Store) replaceLocked(next Settings) error {
 	if s.closed {
 		return ErrClosed
 	}
+
 	if s.readOnly != nil {
 		return s.readOnly
 	}
+
 	next.SchemaVersion = SchemaVersion
-	if err := atomicjson.Write(s.path, next, 0o600); err != nil {
+
+	err := atomicjson.Write(s.path, next, 0o600)
+	if err != nil {
 		return err
 	}
+
 	s.s = next
+
 	return nil
 }

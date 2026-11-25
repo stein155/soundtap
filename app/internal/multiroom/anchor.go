@@ -32,7 +32,7 @@ type AnchorDemand struct {
 // changed, without the lock held, whenever Wanted may have turned: at a Want that starts
 // the demand, and when the hold runs out.
 func NewAnchorDemand(hold time.Duration, changed func()) *AnchorDemand {
-	return &AnchorDemand{hold: hold, changed: changed}
+	return &AnchorDemand{hold: hold, changed: changed, mu: sync.Mutex{}, until: time.Time{}, timer: nil}
 }
 
 // Want starts the anchor if it is not running and keeps it for the hold from now.
@@ -40,6 +40,7 @@ func (a *AnchorDemand) Want() {
 	a.mu.Lock()
 	now := time.Now()
 	starts := !now.Before(a.until)
+
 	a.until = now.Add(a.hold)
 	if a.timer == nil {
 		a.timer = time.AfterFunc(a.hold, a.expire)
@@ -47,14 +48,8 @@ func (a *AnchorDemand) Want() {
 		a.timer.Reset(a.hold)
 	}
 	a.mu.Unlock()
-	if starts && a.changed != nil {
-		a.changed()
-	}
-}
 
-// expire tells the process gate to look again once the hold may have run out.
-func (a *AnchorDemand) expire() {
-	if a.changed != nil {
+	if starts && a.changed != nil {
 		a.changed()
 	}
 }
@@ -64,7 +59,16 @@ func (a *AnchorDemand) Wanted() bool {
 	if a == nil {
 		return false
 	}
+
 	a.mu.Lock()
 	defer a.mu.Unlock()
+
 	return time.Now().Before(a.until)
+}
+
+// expire tells the process gate to look again once the hold may have run out.
+func (a *AnchorDemand) expire() {
+	if a.changed != nil {
+		a.changed()
+	}
 }

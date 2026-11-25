@@ -12,10 +12,10 @@ import (
 
 // Backend is this speaker's snapserver.
 type Backend interface {
-	GetStatus(context.Context) (snapcast.Status, error)
-	SetVolume(context.Context, string, snapcast.Volume) error
-	SetClients(context.Context, string, []string) error
-	SetLatency(context.Context, string, int) error
+	GetStatus(ctx context.Context) (snapcast.Status, error)
+	SetVolume(ctx context.Context, id string, volume snapcast.Volume) error
+	SetClients(ctx context.Context, groupID string, clients []string) error
+	SetLatency(ctx context.Context, id string, ms int) error
 }
 
 // Client is one speaker in the /api/multiroom list.
@@ -45,12 +45,16 @@ type Client struct {
 // Clients lists every client of status, with this speaker (localID) first when snapserver
 // has not seen its client yet. names is what discovery calls each speaker, by device id;
 // localName is this speaker's own name ("" when not set) and localVolume its volume.
-func Clients(status snapcast.Status, localID string, names map[string]string, localName string, localVolume int) []Client {
+func Clients(
+	status snapcast.Status, localID string, names map[string]string, localName string, localVolume int,
+) []Client {
 	localGroup, _ := FindClient(status, localID)
 	rows := make([]Client, 0)
 	localSeen := false
+
 	for _, group := range status.Groups {
-		for _, client := range group.Clients {
+		for i := range group.Clients {
+			client := &group.Clients[i]
 			localSeen = localSeen || client.ID == localID
 			rows = append(rows, clientRow(client, group.ID, localID, localGroup, names, localName))
 		}
@@ -63,34 +67,42 @@ func Clients(status snapcast.Status, localID string, names map[string]string, lo
 	// connected, under its new name is not: it is one box claiming to be two. Measured on
 	// the board after the upgrade, where soundtap-<mac> and soundtap-<serial> both appeared.
 	rows = dropGhosts(dropForgotten(rows))
+
 	if !localSeen && localID != "" {
 		name := "SoundTap"
 		if localName != "" {
 			name = localName
 		}
+
 		rows = append([]Client{{
 			ID: localID, DeviceID: DeviceIDFor(localID),
-			Name: name, Percent: localVolume,
-			GroupID: localGroup, Current: true, Member: true, Connected: true,
+			Name: name, Host: "", IP: "", Percent: localVolume, Muted: false,
+			GroupID: localGroup, Current: true, Member: true, Connected: true, Latency: 0, LastSeenAgo: 0,
 		}}, rows...)
 	}
+
 	return rows
 }
 
 // clientRow is the row of one snapcast client in group groupID.
-func clientRow(client snapcast.ClientInfo, groupID, localID, localGroup string, names map[string]string, localName string) Client {
+func clientRow(
+	client *snapcast.ClientInfo, groupID, localID, localGroup string, names map[string]string, localName string,
+) Client {
 	// Discovery knows each speaker by the name its owner gave it; snapcast only knows
 	// what snapclient sent at start, which on the ST20 is the hostname "(none)".
 	name := names[DeviceIDFor(client.ID)]
 	if name == "" {
 		name = client.Config.Name
 	}
+
 	if client.ID == localID && localName != "" {
 		name = localName
 	}
+
 	if name == "" && client.Host.Name != "(none)" {
 		name = client.Host.Name
 	}
+
 	if name == "" {
 		name = client.ID
 	}
@@ -99,11 +111,13 @@ func clientRow(client snapcast.ClientInfo, groupID, localID, localGroup string, 
 	// standby dropForgotten would drop the speaker from its own list.
 	connected := client.Connected || client.ID == localID
 	ago := 0
+
 	if !connected && client.LastSeen.Sec > 0 {
 		if d := int(time.Now().Unix() - client.LastSeen.Sec); d > 0 {
 			ago = d
 		}
 	}
+
 	return Client{
 		ID: client.ID, DeviceID: DeviceIDFor(client.ID),
 		Name: name, Host: client.Host.Name, IP: client.Host.IP,
@@ -119,8 +133,10 @@ func clientRow(client snapcast.ClientInfo, groupID, localID, localGroup string, 
 // box; a client with no device id is not ours and is left exactly as it is.
 func dropGhosts(rows []Client) []Client {
 	live := make(map[string]bool, len(rows))
+
 	liveHost := make(map[string]bool, len(rows))
-	for _, row := range rows {
+	for i := range rows {
+		row := &rows[i]
 		if row.DeviceID != "" && row.Connected {
 			live[row.DeviceID] = true
 			// The old MAC-based id and the serial-based one are different device ids for
@@ -130,16 +146,20 @@ func dropGhosts(rows []Client) []Client {
 			}
 		}
 	}
+
 	if len(live) == 0 {
 		return rows
 	}
+
 	kept := rows[:0]
-	for _, row := range rows {
-		if !row.Connected && row.DeviceID != "" && (live[row.DeviceID] || liveHost[row.Host]) {
+	for i := range rows {
+		if !rows[i].Connected && rows[i].DeviceID != "" && (live[rows[i].DeviceID] || liveHost[rows[i].Host]) {
 			continue
 		}
-		kept = append(kept, row)
+
+		kept = append(kept, rows[i])
 	}
+
 	return kept
 }
 
@@ -151,11 +171,13 @@ const forgetAfter = 7 * 24 * time.Hour
 // the list grows with each replaced speaker.
 func dropForgotten(rows []Client) []Client {
 	kept := rows[:0]
-	for _, row := range rows {
-		if !row.Connected && time.Duration(row.LastSeenAgo)*time.Second > forgetAfter {
+	for i := range rows {
+		if !rows[i].Connected && time.Duration(rows[i].LastSeenAgo)*time.Second > forgetAfter {
 			continue
 		}
-		kept = append(kept, row)
+
+		kept = append(kept, rows[i])
 	}
+
 	return kept
 }

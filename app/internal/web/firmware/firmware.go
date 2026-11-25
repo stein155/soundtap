@@ -37,6 +37,26 @@ import (
 // order here is the order it is.
 const firmwareUploadPath = "/api/firmware"
 
+const (
+	// pendingMode is the recovery report's file mode: soundtapd's own, like all of /mnt/nv.
+	pendingMode = 0o600
+	// flashTimeout bounds one mtd-utils command: erasing and rewriting a 96 MiB NAND
+	// partition is minutes of work, and a wedged writer must not hold the speaker forever.
+	flashTimeout = 20 * time.Minute
+	// lockSoonTries and lockSoonInterval are how long lockSoon waits for the lock: two
+	// seconds.
+	lockSoonTries    = 20
+	lockSoonInterval = 100 * time.Millisecond
+	// rebootBodyLimit bounds POST /api/reboot's body, which holds one boolean.
+	rebootBodyLimit = 4 << 10
+	// defaultRestartDelay lets the install's answer reach the browser before the speaker
+	// goes away.
+	defaultRestartDelay = 2 * time.Second
+)
+
+// errNoHome refuses to save the recovery report of a Handler without a home directory.
+var errNoHome = errors.New("firmware recovery state has no home")
+
 // firmwareState serialises uploads. Two 96 MB streams at once on this box is not
 // a race to reason about, it is an out-of-memory — and two installs at once is
 // two writers on one flash partition.
@@ -61,8 +81,11 @@ type Report struct {
 	Models      []string         `json:"models"`
 	Installable bool             `json:"installable"`
 	Installed   bool             `json:"installed,omitempty"`
-	Slot        string           `json:"slot,omitempty"`        // slot written
-	RunningSlot string           `json:"runningSlot,omitempty"` // slot still booting
+	// Restarting says the speaker restarts into the installed slot on its own: a Core
+	// release it fetched itself (POST /api/core-update).
+	Restarting  bool   `json:"restarting,omitempty"`
+	Slot        string `json:"slot,omitempty"`        // slot written
+	RunningSlot string `json:"runningSlot,omitempty"` // slot still booting
 	// Bootloaders names the copies of the boot chain the install rewrote (mtd1,
 	// mtd4+0x100000, ...); absent when the speaker already held the package's.
 	Bootloaders []string `json:"bootloaders,omitempty"`
@@ -73,13 +96,19 @@ type Report struct {
 	Confirm string `json:"confirm,omitempty"`
 }
 
-func (s *Handler) persistFirmwarePending(slot string, rep Report) error {
+func (s *Handler) persistFirmwarePending(slot string, rep *Report) error {
 	if s.homeDir == "" {
-		return errors.New("firmware recovery state has no home")
+		return errNoHome
 	}
-	p := install.Pending{TargetSlot: slot}
-	p.Package.Size, p.Package.Kernel, p.Package.Models = rep.Size, rep.Kernel, rep.Models
-	return atomicjson.Write(filepath.Join(s.homeDir, install.PendingPath), p, 0o600)
+
+	var pending install.Pending
+
+	pending.TargetSlot = slot
+	pending.Package.Size, pending.Package.Kernel, pending.Package.Models = rep.Size, rep.Kernel, rep.Models
+
+	// Its text is the install report's reason why recovery status was not saved.
+	return atomicjson.Write( //nolint:wrapcheck // the text is the API's answer, unchanged
+		filepath.Join(s.homeDir, install.PendingPath), pending, pendingMode)
 }
 
 // flashPlan is what the running speaker can tell us about its own NAND. It is a
@@ -91,18 +120,21 @@ func (s *Handler) flashRun(stdin io.Reader, name string, args ...string) error {
 	if s.rootRun != nil {
 		// soundtapd's own user cannot write NAND: soundtap-root runs the command (ADR 0066),
 		// holding the operations lock as the command here would.
-		if err := s.rootRun(s.firmware.mu.File(), stdin, name, args...); err != nil {
+		err := s.rootRun(s.firmware.mu.File(), stdin, name, args...)
+		if err != nil {
 			return err
 		}
+
 		if s.log != nil {
 			s.log.Info("flash", "cmd", name, "args", args, "via", "soundtap-root")
 		}
+
 		return nil
 	}
-	// Long, but not unbounded: erasing and rewriting a 96 MiB NAND partition is
-	// minutes of work, and a wedged writer must not hold the speaker forever.
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	// Long, but not unbounded (flashTimeout).
+	ctx, cancel := context.WithTimeout(context.Background(), flashTimeout)
 	defer cancel()
+
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Stdin = stdin
 	// The writer carries the operations lock: if soundtapd stops halfway, a restarted one
@@ -110,18 +142,26 @@ func (s *Handler) flashRun(stdin io.Reader, name string, args ...string) error {
 	if f := s.firmware.mu.File(); f != nil {
 		cmd.ExtraFiles = []*os.File{f}
 	}
+
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s: %w: %s", name, err, out)
 	}
+
 	if s.log != nil {
 		s.log.Info("flash", "cmd", name, "args", args, "out", string(out))
 	}
+
 	return nil
 }
 
-func (s *Handler) flashRead(name string, args ...string) ([]byte, error) {
-	return install.ReadNAND(name, args...)
+func (*Handler) flashRead(name string, args ...string) ([]byte, error) {
+	out, err := install.ReadNAND(name, args...)
+	if err != nil {
+		return nil, fmt.Errorf("reading NAND: %w", err)
+	}
+
+	return out, nil
 }
 
 // postFirmware validates an uploaded .stu and, with ?install=1, installs it. The
@@ -133,52 +173,73 @@ func (s *Handler) postFirmware(w http.ResponseWriter, r *http.Request) {
 	default:
 		if r.URL.Query().Get("install") == "1" {
 			apiError(w, http.StatusBadRequest, "firmware install confirmation required")
+
 			return
 		}
 	}
+
 	if r.URL.Query().Get("install") != "1" {
+		// A .sig that does not verify is refused here, at the check: the install would wait
+		// for the press as for an unsigned package and then refuse it (ADR 0048).
+		version, confirm, err := s.packageVersion(r)
+		if err != nil {
+			apiErrorCode(w, http.StatusForbidden, apierror.SignatureInvalid, err.Error())
+
+			return
+		}
+
 		pkg, err := stu.Scan(r.Body, nil)
 		if err != nil {
 			s.rejectPackage(w, err)
+
 			return
 		}
+
 		rep := s.describe(pkg)
-		if version, confirm, err := s.packageVersion(r); err == nil {
-			rep.Version, rep.Confirm = version, confirm
-		}
+		rep.Version, rep.Confirm = version, confirm
 		// Bose's own package without our signature: it installs only as the way back.
 		if r.Header.Get(signatureHeader) == "" && boseFirmware(pkg) {
 			rep.Version, rep.Confirm = stockVersion, confirmStock
 		}
-		writeJSON(w, http.StatusOK, rep)
+
+		s.writeJSON(w, rep)
+
 		return
 	}
+
 	if !s.firmware.mu.TryLock() {
 		apiErrorCode(w, http.StatusConflict, apierror.Busy, "another firmware operation is in progress")
+
 		return
 	}
+
 	defer s.firmware.mu.Unlock()
+
 	s.installFirmware(w, r)
 }
 
 // rejectPackage answers a package that is not one. The reason is the whole value
 // of this endpoint: "rejected" without saying which module failed sends people
 // back to re-downloading at random.
-func (s *Handler) rejectPackage(w http.ResponseWriter, err error) {
+func (*Handler) rejectPackage(w http.ResponseWriter, err error) {
 	code := http.StatusBadRequest
 	if errors.Is(err, stu.ErrNotSTU) {
 		code = http.StatusUnsupportedMediaType
 	}
+
 	apiErrorCode(w, code, apierror.PackageRejected, err.Error())
 }
 
 func (s *Handler) describe(pkg *stu.Package) Report {
 	rep := Report{
-		Size: pkg.Size, Kernel: "stock", Models: make([]string, len(pkg.Targets)),
+		Size: pkg.Size, Modules: nil, Kernel: "stock", Models: make([]string, len(pkg.Targets)),
+		Installable: false, Installed: false, Restarting: false, Slot: "", RunningSlot: "",
+		Bootloaders: nil, Reason: "", Version: "", Confirm: "",
 	}
 	for i, model := range pkg.Targets {
 		rep.Models[i] = strings.ToUpper(model)
 	}
+
 	if pkg.Mainline {
 		rep.Kernel, rep.Models = "mainline", []string{strings.ToUpper(pkg.KernelTarget)}
 		// A universal package's kernels say which speakers it is for by their suffix;
@@ -187,18 +248,22 @@ func (s *Handler) describe(pkg *stu.Package) Report {
 			rep.Models = models
 		}
 	}
+
 	for _, m := range pkg.Modules {
 		rep.Modules = append(rep.Modules, firmwareModule{Name: m.Name, Size: m.Payload()})
 	}
+
 	rep.Installable = s.flashPlan != nil
 	if rep.Installable {
 		model, err := s.hardwareFirmwareModel()
 		if err == nil {
 			err = install.PackageRefusal(model, pkg)
 		}
+
 		if err == nil {
 			err = install.ToolsRefusal(s.missingFlashTools())
 		}
+
 		if err == nil {
 			// Ask the speaker's own NAND the question the install will ask, so a board
 			// that cannot say which slot it is running says so here rather than after
@@ -206,16 +271,19 @@ func (s *Handler) describe(pkg *stu.Package) Report {
 			// command line made every install fail this way.
 			_, err = s.flashPlan()
 		}
+
 		if err != nil {
 			rep.Installable = false
 			rep.Reason = err.Error()
 		}
 	}
+
 	if !rep.Installable {
 		if rep.Reason == "" {
 			rep.Reason = "This build cannot write NAND. Install with a USB stick, as the install guide describes."
 		}
 	}
+
 	return rep
 }
 
@@ -223,18 +291,22 @@ func (s *Handler) hardwareFirmwareModel() (string, error) {
 	if s.firmwareModel != nil {
 		return s.firmwareModel()
 	}
-	return install.LiveModel()
+
+	// The refusal is the answer's reason and the install's 412 as it stands.
+	return install.LiveModel() //nolint:wrapcheck // its text is the API's answer to the owner, unchanged
 }
 
 // lockSoon waits a moment for the lock: an install answers the client before its handler
 // lets go, and the reboot that follows at once was refused.
 func (s *Handler) lockSoon() bool {
-	for range 20 {
+	for range lockSoonTries {
 		if s.firmware.mu.TryLock() {
 			return true
 		}
-		time.Sleep(100 * time.Millisecond)
+
+		time.Sleep(lockSoonInterval)
 	}
+
 	return false
 }
 
@@ -246,42 +318,62 @@ func (s *Handler) lockSoon() bool {
 func (s *Handler) reboot(w http.ResponseWriter, r *http.Request) {
 	if s.rebootFn == nil {
 		apiError(w, http.StatusNotImplemented, "this build cannot reboot the speaker")
+
 		return
 	}
+
 	if !s.lockSoon() {
 		apiErrorCode(w, http.StatusConflict, apierror.Busy, "firmware operation is in progress")
+
 		return
 	}
+
 	unlock := true
 	defer func() {
 		if unlock {
 			s.firmware.mu.Unlock()
 		}
 	}()
+
 	var body struct {
 		Confirm bool `json:"confirm"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
+
+	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, rebootBodyLimit)).Decode(&body)
+	if err != nil {
 		s.badRequest(w, "bad body", err)
+
 		return
 	}
+
 	if !body.Confirm {
 		s.badRequest(w, "confirm must be true", nil)
+
 		return
 	}
 	// A deliberate reboot is not a failed attempt: without this, one before the boot
 	// confirm would count towards the fallback to the other slot. It is no confirmation
 	// either: a slot still on trial stays on trial.
-	if err := s.settleBootGuard(s.bootConfirmed.Load()); err != nil && s.log != nil {
+	settle := (*flash.Installer).ClearPendingBootCount
+	if s.bootConfirmed.Load() {
+		settle = (*flash.Installer).ConfirmPendingBoot
+	}
+
+	err = s.settleBootGuard(settle)
+	if err != nil && s.log != nil {
 		s.log.Warn("boot guard", "err", err)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"rebooting": true})
+
+	s.writeJSON(w, map[string]any{"rebooting": true})
 	// After the response, not before: the browser should hear "yes" rather than
 	// lose the connection and have to guess whether the request arrived.
 	unlock = false
+
 	safego.Go("firmware.reboot", func() {
 		time.Sleep(time.Second)
-		if err := s.rebootFn(); err != nil {
+
+		err := s.rebootFn()
+		if err != nil {
 			if s.log != nil {
 				s.log.Error("reboot", "err", err)
 			}
@@ -295,18 +387,22 @@ func (s *Handler) reboot(w http.ResponseWriter, r *http.Request) {
 // that way: /api/firmware answered "installable" for a board that could not have
 // written a single page, and the first flash_erase would have failed instead.
 // Promising an install the image cannot perform is worse than refusing it.
-var flashToolNames = []string{"flash_erase", "nandwrite", "ubiformat"}
+func flashToolNames() []string { return []string{"flash_erase", "nandwrite", "ubiformat"} }
 
 func (s *Handler) missingFlashTools() []string {
 	if s.flashTools != nil {
 		return s.flashTools()
 	}
+
 	var missing []string
-	for _, tool := range flashToolNames {
-		if _, err := exec.LookPath(tool); err != nil {
+
+	for _, tool := range flashToolNames() {
+		_, err := exec.LookPath(tool)
+		if err != nil {
 			missing = append(missing, tool)
 		}
 	}
+
 	return missing
 }
 
@@ -319,24 +415,36 @@ func (s *Handler) ConfirmBoot() error {
 	// moment would lose one of the two writes, or double-write a block without an erase.
 	s.firmware.mu.Lock()
 	defer s.firmware.mu.Unlock()
+
 	target, err := s.livePlan()
 	if err != nil {
 		return err
 	}
+
 	run, read := s.flashIO()
-	inst := &flash.Installer{Target: target, Run: run}
-	if model, err := s.hardwareFirmwareModel(); err == nil {
-		if wrote, err := inst.RepairEnv(read, install.BootVariant(model)); err != nil {
-			return err
-		} else if wrote && s.log != nil {
+
+	inst := &flash.Installer{Target: target, Run: run, Open: nil}
+
+	model, modelErr := s.hardwareFirmwareModel()
+	if modelErr == nil {
+		wrote, repairErr := inst.RepairEnv(read, install.BootVariant(model))
+		if repairErr != nil {
+			return fmt.Errorf("repairing the U-Boot environment: %w", repairErr)
+		}
+
+		if wrote && s.log != nil {
 			s.log.Warn("rewrote the U-Boot environment", "slot", target.Running.Name,
 				"redundant", target.EnvRedundant)
 		}
 	}
-	if err := s.settleBootGuard(true); err != nil {
+
+	err = s.settleBootGuard((*flash.Installer).ConfirmPendingBoot)
+	if err != nil {
 		return err
 	}
+
 	s.bootConfirmed.Store(true)
+
 	return nil
 }
 
@@ -351,6 +459,7 @@ func (s *Handler) BootChain() install.BootChain {
 		_, read := s.flashIO()
 		s.bootChain = install.ReadBootChain(read)
 	})
+
 	return s.bootChain
 }
 
@@ -360,34 +469,46 @@ func (s *Handler) livePlan() (flash.Target, error) {
 	if s.flashPlan != nil {
 		return s.flashPlan()
 	}
-	return install.LivePlan()
+
+	target, err := install.LivePlan()
+	if err != nil {
+		return flash.Target{}, fmt.Errorf("reading the NAND layout: %w", err)
+	}
+
+	return target, nil
 }
 
 // settleBootGuard resets U-Boot's boot count, in the RTC and, for a selection not yet
 // confirmed, in the environment. When U-Boot had to fall back to the other slot to get
 // here, the slot that failed is still the selected one, so the running slot is selected
-// in its place: it just proved it boots. confirm says whether this boot has proven
-// itself: only then does a selection of the running slot leave its trial, otherwise only
-// the count goes.
-func (s *Handler) settleBootGuard(confirm bool) error {
+// in its place: it just proved it boots. Without a fallback, settle settles the
+// environment's count: ConfirmPendingBoot once this boot has proven itself, which takes a
+// selection of the running slot off its trial, and ClearPendingBootCount otherwise, which
+// clears only the count.
+func (s *Handler) settleBootGuard(settle func(*flash.Installer, flash.Reader) error) error {
 	if s.bootGuardFn == nil {
 		return nil
 	}
+
 	plan := s.flashPlan
 	if plan == nil {
 		plan = install.LivePlan
 	}
+
 	target, planErr := plan()
 	run, read := s.flashIO()
-	inst := &flash.Installer{Target: target, Run: run}
+	inst := &flash.Installer{Target: target, Run: run, Open: nil}
 	// An environment soundtapd cannot read, after RepairEnv, is one U-Boot cannot read
 	// either, so it holds no count to take into account or to clear: the RTC's decides.
 	var envCount uint32
+
 	envErr := planErr
 	if envErr == nil {
 		envCount, envErr = inst.PendingBootCount(read)
 	}
-	if envErr != nil && s.log != nil {
+
+	envReadable := envErr == nil
+	if !envReadable && s.log != nil {
 		s.log.Warn("boot count in the U-Boot environment unreadable", "err", envErr)
 	}
 	// The guard clears its record of the fallback only after this saved the choice.
@@ -395,18 +516,20 @@ func (s *Handler) settleBootGuard(confirm bool) error {
 		if planErr != nil && fallback {
 			return planErr
 		}
+
 		if !fallback {
-			if envErr != nil {
+			// Nothing in the environment to settle when it cannot be read.
+			if !envReadable {
 				return nil
 			}
-			if !confirm {
-				return inst.ClearPendingBootCount(read)
-			}
-			return inst.ConfirmPendingBoot(read)
+
+			return settle(inst, read)
 		}
+
 		if s.log != nil {
 			s.log.Warn("booted by fallback; selecting the running slot", "slot", target.Running.Name)
 		}
+
 		return inst.SettleRunningSlot(read, flash.SoundTapMarkers(target.PersistentName))
 	})
 }
@@ -418,24 +541,80 @@ var ErrInstallBusy = errors.New("another firmware operation is in progress")
 // release the speaker downloads itself (ADR 0048). open runs once the install lock is
 // held and returns the package as a stream, its size (-1 if unknown) and its .sig. The
 // install is the one an upload with ?install=1 gets, with the plain confirmation, so a
-// package signed as older or as Bose's firmware is refused there. An error from open,
+// package signed as older or as Bose's firmware is refused there. An error from open, a
+// package without a signature,
 // or ErrInstallBusy, is returned with nothing written to w; once open succeeded, w
 // carries the install's answer and InstallStream returns nil.
+//
+// Once the new slot is written and selected and the report saved, the speaker restarts
+// into it on its own, after the answer, so one tap in the web interface updates it. It
+// never restarts after a failure; the boot confirmation keeps the way back (ADR 0010).
 func (s *Handler) InstallStream(w http.ResponseWriter, r *http.Request,
-	open func() (body io.ReadCloser, size int64, signature string, err error)) error {
+	open func() (body io.ReadCloser, size int64, signature string, err error),
+) error {
 	if !s.firmware.mu.TryLock() {
 		return ErrInstallBusy
 	}
-	defer s.firmware.mu.Unlock()
+
+	unlock := true
+	defer func() {
+		if unlock {
+			s.firmware.mu.Unlock()
+		}
+	}()
+
 	body, size, signature, err := open()
 	if err != nil {
 		return err
 	}
+
 	defer func() { _ = body.Close() }()
+	// Fetched, not uploaded: only an upload installs without a signature (ADR 0048).
+	if signature == "" {
+		return errUnsigned
+	}
+
 	in := r.Clone(r.Context())
 	in.Header.Set(signatureHeader, signature)
 	in.Header.Set("X-SoundTap-Confirm", confirmInstall)
+
 	in.Body, in.ContentLength = body, size
-	s.installFirmware(w, in)
+	if s.install(w, in, s.rebootFn != nil) {
+		// The lock stays held until the restart: no other install starts in between.
+		unlock = false
+
+		s.restartAfterInstall(w)
+	}
+
 	return nil
+}
+
+// restartAfterInstall restarts the speaker into the slot an install just selected, a moment
+// after the answer has gone out. On a failed restart it lets go of the install lock and
+// the speaker keeps running; the next reboot starts the new slot.
+func (s *Handler) restartAfterInstall(w http.ResponseWriter) {
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+
+	safego.Go("firmware.restart", func() {
+		time.Sleep(s.restartWait())
+
+		err := s.rebootFn()
+		if err != nil {
+			if s.log != nil {
+				s.log.Error("restart after the Core update", "err", err)
+			}
+			s.firmware.mu.Unlock()
+		}
+	})
+}
+
+// restartWait is how long the speaker waits after an install's answer before it restarts.
+func (s *Handler) restartWait() time.Duration {
+	if s.restartDelay > 0 {
+		return s.restartDelay
+	}
+
+	return defaultRestartDelay
 }

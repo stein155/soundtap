@@ -109,6 +109,7 @@ func bootChase(step int) ledState {
 	}
 	st := ledState{}
 	lamps[((step%len(lamps))+len(lamps))%len(lamps)](&st)
+
 	return st
 }
 
@@ -133,6 +134,7 @@ func ledPattern(st speakerstate.StatusSnapshot, link Link, blink bool) ledState 
 	// can feel the button responded; returns early so WiFi state is still visible.
 	if st.EmptyPreset {
 		next.stAmber = blink
+
 		return next
 	}
 
@@ -152,10 +154,13 @@ func ledPattern(st speakerstate.StatusSnapshot, link Link, blink bool) ledState 
 			wifiDim: link == LinkUp,
 		}
 	}
+
 	if st.Notification {
 		next.stAmber, next.stWhite = blink, blink
+
 		return next
 	}
+
 	return sourceLamps(next, st, blink)
 }
 
@@ -165,8 +170,10 @@ func sourceLamps(next ledState, st speakerstate.StatusSnapshot, blink bool) ledS
 	// to be buffering or paused, so it is decided before any play-status branch.
 	if st.Source == sourceAux {
 		next.auxWhite = true
+
 		return next
 	}
+
 	if st.Source == sourceBluetooth {
 		// Blue blinking is "discoverable, waiting for a phone"; white is a device
 		// actually playing. Selecting Bluetooth and seeing nothing at all was
@@ -176,22 +183,29 @@ func sourceLamps(next ledState, st speakerstate.StatusSnapshot, blink bool) ledS
 		} else {
 			next.btBlue = blink
 		}
+
 		return next
 	}
+
 	if st.PlayStatus == "BUFFERING_STATE" {
 		next.stWhite = blink
+
 		return next
 	}
+
 	if st.PlayStatus != playing {
 		next.stAmber = true
+
 		return next
 	}
+
 	switch st.Source {
 	case sourceTuneIn, sourceAirPlay, sourceSpotify, sourceUPnP, sourceMultiroom:
 		next.stWhite = true
 	default:
 		next.stAmber = true
 	}
+
 	return next
 }
 
@@ -202,6 +216,7 @@ func pidAlive(path string) bool {
 	if err != nil {
 		return false
 	}
+
 	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
 	if err != nil || pid <= 0 {
 		return false
@@ -269,6 +284,7 @@ func gpioLEDs(ledDir string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -282,6 +298,7 @@ const ledDimBrightness = "16"
 
 func applyLEDState(ledDir string, st ledState) error {
 	channels := ledChannels(st)
+
 	errs := make([]error, 0, len(channels))
 	if gpioLEDs(ledDir) {
 		for _, channel := range channels {
@@ -297,25 +314,30 @@ func applyLEDState(ledDir string, st ledState) error {
 			if os.IsNotExist(err) {
 				continue
 			}
+
 			errs = append(errs, err)
 		}
 		// wifiDim overwrites the 0 the regular pass just wrote to wifi-white.
 		if st.wifiDim {
 			errs = append(errs, os.WriteFile(filepath.Join(ledDir, "wifi-white", "brightness"), []byte(ledDimBrightness), 0o644)) //nolint:gosec // G703: as above
 		}
+
 		return errors.Join(errs...)
 	}
+
 	for _, channel := range channels {
 		b := []byte{0x00}
 		if channel.on {
 			b = []byte{0xff}
 		}
+
 		errs = append(errs, os.WriteFile(filepath.Join(ledDir, channel.stock), b, 0o644)) //nolint:gosec // G703: as above
 	}
 	// wifiDim overwrites the 0x00 the regular pass just wrote to uledw.
 	if st.wifiDim {
 		errs = append(errs, os.WriteFile(filepath.Join(ledDir, "uledw"), []byte{ledDimByte}, 0o644)) //nolint:gosec // G703: as above
 	}
+
 	return errors.Join(errs...)
 }
 
@@ -336,8 +358,10 @@ func RunLEDs(ctx context.Context, modelDir string, st LampStatus, log *slog.Logg
 			// exists, so on a lampless model it would happily adopt /sys/class/leds and
 			// drive whatever unrelated lamps the kernel exposes there.
 			log.Info("leds", "dir", "", "note", "model has no LEDs")
+
 			return
 		}
+
 		ledDir = modelDir
 		if gpioLEDs("/sys/class/leds") {
 			ledDir = "/sys/class/leds"
@@ -348,24 +372,33 @@ func RunLEDs(ctx context.Context, modelDir string, st LampStatus, log *slog.Logg
 	// this to the stock /dev path, which does not exist there — so say it out loud once
 	// rather than leaving nine silent write failures to be inferred.
 	log.Info("leds", "dir", ledDir)
-	if err := applyLEDState(ledDir, ledState{}); err != nil {
+
+	err := applyLEDState(ledDir, ledState{})
+	if err != nil {
 		log.Warn("led startup clear", "dir", ledDir, "err", err)
 	}
+
 	tick := time.NewTicker(350 * time.Millisecond)
 	defer tick.Stop()
+
 	lamps := lampWriter{dir: ledDir, log: log}
 	blink := false
 	step := 0
+
 	var link Link
+
 	linkRead := false
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
 		}
+
 		blink = !blink
 		step++
+
 		switch {
 		case !st.Up():
 			// Still coming up: run the wave instead of the state pattern, which at this
@@ -386,6 +419,7 @@ func RunLEDs(ctx context.Context, modelDir string, st LampStatus, log *slog.Logg
 			if step%linkEveryTicks == 1 || !linkRead {
 				link, linkRead = ReadLink(st.HaveIP), true
 			}
+
 			if next := ledPattern(st.StatusSnapshot(), link, blink); lamps.show(next) {
 				// Debug, not Info: every blink of every blinking pattern is a change,
 				// so at Info this alone writes a line every 350 ms forever.
@@ -408,9 +442,13 @@ func (w *lampWriter) show(next ledState) bool {
 	if w.have && next == w.last {
 		return false
 	}
-	if err := applyLEDState(w.dir, next); err != nil {
+
+	err := applyLEDState(w.dir, next)
+	if err != nil {
 		w.log.Warn("led write", "dir", w.dir, "err", err)
 	}
+
 	w.last, w.have = next, true
+
 	return true
 }

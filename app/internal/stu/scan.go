@@ -11,7 +11,24 @@ import (
 	"hash"
 	"hash/crc32"
 	"io"
-	"sort"
+	"slices"
+)
+
+// The ways a package is refused. A message with values reads them around its sentinel, as
+// it always has.
+var (
+	errChainTooLong  = errors.New("module chain is longer than a package can be")
+	errNoExactTarget = errors.New("no exact supported target")
+	errHeaderSays    = errors.New("its own header says")
+	errNotInChain    = errors.New("not part of a supported exact chain")
+	errHeaderCRC     = errors.New("header CRC mismatch")
+	errModuleSize    = errors.New("implausible module size")
+	errPackageCRC    = errors.New("package header CRC mismatch")
+	errTrailingData  = errors.New("trailing data after the last module")
+	errImageCRC      = errors.New("image CRC mismatch")
+	errRootfsNAND    = errors.New("ubi.img is larger than the 96 MiB rootfs partition")
+	errRootfsEarly   = errors.New("ubi.img appeared before the package target was established")
+	errRootfsStock   = errors.New("ubi.img is larger than any package Bose's installer has streamed")
 )
 
 type scanner struct {
@@ -31,22 +48,27 @@ type scanner struct {
 func (s *scanner) run() error { //nolint:gocognit,cyclop // moved unchanged
 	s.head = make([]byte, headerSize)
 	s.pkgCRC = crc32.NewIEEE()
-	s.candidates = make(map[string]profile, len(profiles))
+	registry := profiles()
+	s.candidates = make(map[string]profile, len(registry))
 	maxModules := 0
-	for target, candidate := range profiles {
+
+	for target, candidate := range registry {
 		s.candidates[target] = candidate
 		if len(candidate.modules) > maxModules {
 			maxModules = len(candidate.modules)
 		}
 	}
+
 	for i := 0; ; i++ {
 		if i >= maxModules {
-			return errors.New("module chain is longer than a package can be")
+			return errChainTooLong
 		}
+
 		done, err := s.module(i)
 		if err != nil {
 			return err
 		}
+
 		if done {
 			break
 		}
@@ -72,12 +94,15 @@ func (s *scanner) run() error { //nolint:gocognit,cyclop // moved unchanged
 			expected = got
 		}
 	}
+
 	if expected == 0 || len(s.pkg.Modules) != expected {
-		return fmt.Errorf("module chain has %d modules and no exact supported target", len(s.pkg.Modules))
+		return fmt.Errorf("module chain has %d modules and %w", len(s.pkg.Modules), errNoExactTarget)
 	}
+
 	if s.read != s.pkg.Size {
-		return fmt.Errorf("package is %d bytes, its own header says %d", s.read, s.pkg.Size)
+		return fmt.Errorf("package is %d bytes, %w %d", s.read, errHeaderSays, s.pkg.Size)
 	}
+
 	return nil
 }
 
@@ -87,38 +112,112 @@ type counter struct{ n *int64 }
 
 func (c counter) Write(p []byte) (int, error) {
 	*c.n += int64(len(p))
+
 	return len(p), nil
 }
 
 // module reads one header and streams one payload. It reports done once the last
 // module has been consumed and the file ends exactly there.
-func (s *scanner) module(i int) (done bool, err error) { //nolint:gocognit,cyclop // moved unchanged
-	if !s.carried {
-		if _, err := io.ReadFull(s.r, s.head); err != nil {
-			return false, fmt.Errorf("%w: %w", ErrNotSTU, err)
-		}
-		_, _ = s.pkgCRC.Write(s.head[:pkgCRCOff])
-	} else {
-		// The header arrived as the tail of the previous payload; only the bytes
-		// after the overlap still have to be read.
-		if _, err := io.ReadFull(s.r, s.head[overlap:]); err != nil {
-			return false, fmt.Errorf("%w: %w", ErrNotSTU, err)
-		}
+func (s *scanner) module(index int) (bool, error) {
+	err := s.readHeader()
+	if err != nil {
+		return false, err
 	}
-	s.carried = false
 
 	name, err := moduleName(s.head)
 	if err != nil {
 		return false, err
 	}
+
+	err = s.narrow(index, name)
+	if err != nil {
+		return false, err
+	}
+
+	if got := crc32.ChecksumIEEE(s.head[overlap:headerCRCOff]); got != binary.BigEndian.Uint32(s.head[headerCRCOff:]) {
+		return false, fmt.Errorf("%s: %w", name, errHeaderCRC)
+	}
+
+	size := int64(binary.BigEndian.Uint32(s.head[sizeOff:]))
+	if size <= overlap || size > MaxSize {
+		return false, fmt.Errorf("%s: %w %d", name, errModuleSize, size)
+	}
+
+	module := Module{
+		Name: name, Size: size, Target: s.pkg.Target, Targets: s.pkg.Targets,
+		Native: s.pkg.Native,
+	}
+
+	err = checkSize(module)
+	if err != nil {
+		return false, err
+	}
+
+	if index == 0 {
+		s.pkg.Size = int64(binary.BigEndian.Uint32(s.head[pkgSizeOff:]))
+		if s.pkg.Size <= 0 || s.pkg.Size > MaxSize {
+			return false, fmt.Errorf("%w: implausible package size %d", ErrNotSTU, s.pkg.Size)
+		}
+
+		if got := s.pkgCRC.Sum32(); got != binary.BigEndian.Uint32(s.head[pkgCRCOff:]) {
+			return false, errPackageCRC
+		}
+	}
+
+	last := s.isLast(index)
+	if last {
+		err = s.finalPayload(module)
+	} else {
+		err = s.chainedPayload(module)
+	}
+
+	if err != nil {
+		return false, err
+	}
+
+	s.pkg.Modules = append(s.pkg.Modules, module)
+
+	return last, nil
+}
+
+// readHeader reads the next module header, or what is left of it when the previous
+// payload's tail already brought its start.
+func (s *scanner) readHeader() error {
+	if !s.carried {
+		_, err := io.ReadFull(s.r, s.head)
+		if err != nil {
+			return fmt.Errorf("%w: %w", ErrNotSTU, err)
+		}
+
+		_, _ = s.pkgCRC.Write(s.head[:pkgCRCOff])
+	} else {
+		// The header arrived as the tail of the previous payload; only the bytes
+		// after the overlap still have to be read.
+		_, err := io.ReadFull(s.r, s.head[overlap:])
+		if err != nil {
+			return fmt.Errorf("%w: %w", ErrNotSTU, err)
+		}
+	}
+
+	s.carried = false
+
+	return nil
+}
+
+// narrow drops the candidate chains module index does not continue, and records what the
+// ones left say about the package.
+func (s *scanner) narrow(index int, name string) error {
 	for target, candidate := range s.candidates {
-		if (i == 0 && string(s.head[magicOff:magicOff+4]) != candidate.magic) || i >= len(candidate.modules) || name != candidate.modules[i] {
+		wrongMagic := index == 0 && string(s.head[magicOff:magicOff+magicSize]) != candidate.magic
+		if wrongMagic || index >= len(candidate.modules) || name != candidate.modules[index] {
 			delete(s.candidates, target)
 		}
 	}
+
 	if len(s.candidates) == 0 {
-		return false, fmt.Errorf("module %d is %q, not part of a supported exact chain", i+1, name)
+		return fmt.Errorf("module %d is %q, %w", index+1, name, errNotInChain)
 	}
+
 	if len(s.candidates) == 1 {
 		for _, candidate := range s.candidates {
 			s.pkg.Target = candidate.target
@@ -142,107 +241,125 @@ func (s *scanner) module(i int) (done bool, err error) { //nolint:gocognit,cyclo
 			targets = append(targets, candidate.target)
 		}
 	}
-	sort.Strings(targets)
-	s.pkg.Targets = targets
-	if got := crc32.ChecksumIEEE(s.head[overlap:headerCRCOff]); got != binary.BigEndian.Uint32(s.head[headerCRCOff:]) {
-		return false, fmt.Errorf("%s: header CRC mismatch", name)
-	}
-	size := int64(binary.BigEndian.Uint32(s.head[sizeOff:]))
-	if size <= overlap || size > MaxSize {
-		return false, fmt.Errorf("%s: implausible module size %d", name, size)
-	}
-	m := Module{Name: name, Size: size, Target: s.pkg.Target, Targets: s.pkg.Targets,
-		Native: s.pkg.Native}
-	if err := s.checkSize(m); err != nil {
-		return false, err
-	}
-	if i == 0 {
-		s.pkg.Size = int64(binary.BigEndian.Uint32(s.head[pkgSizeOff:]))
-		if s.pkg.Size <= 0 || s.pkg.Size > MaxSize {
-			return false, fmt.Errorf("%w: implausible package size %d", ErrNotSTU, s.pkg.Size)
-		}
-		if got := s.pkgCRC.Sum32(); got != binary.BigEndian.Uint32(s.head[pkgCRCOff:]) {
-			return false, errors.New("package header CRC mismatch")
-		}
-	}
 
-	last := false
-	for _, candidate := range s.candidates {
-		if i == len(candidate.modules)-1 {
-			last = true
-		} else {
-			last = false
-			break
-		}
-	}
-	if err := s.payload(m, last); err != nil {
-		return false, err
-	}
-	s.pkg.Modules = append(s.pkg.Modules, m)
-	return last, nil
+	slices.Sort(targets)
+
+	s.pkg.Targets = targets
+
+	return nil
 }
 
-// payload streams size bytes through the module's CRC and, unless this is the last
-// module, keeps the trailing overlap as the next header.
-func (s *scanner) payload(m Module, last bool) error {
-	want := binary.BigEndian.Uint32(s.head[imageCRCOff:])
-	sum := crc32.NewIEEE()
-	body := m.Size
-	if !last {
-		body -= overlap
+// isLast reports whether module index ends every chain still in the running.
+func (s *scanner) isLast(index int) bool {
+	last := false
+
+	for _, candidate := range s.candidates {
+		if index != len(candidate.modules)-1 {
+			return false
+		}
+
+		last = true
 	}
+
+	return last
+}
+
+// streamPayload streams body bytes of the module through its CRC and into the sink, and
+// returns the CRC and the sink's writer, nil when the sink discards it.
+func (s *scanner) streamPayload(module Module, body int64) (hash.Hash32, io.Writer, error) {
+	sum := crc32.NewIEEE()
+
 	var out io.Writer
-	w := io.Writer(sum)
+
+	dst := io.Writer(sum)
+
 	if s.sink != nil {
-		if out = s.sink(m); out != nil {
-			w = io.MultiWriter(w, sinkWriter{out})
+		if out = s.sink(module); out != nil {
+			dst = io.MultiWriter(dst, sinkWriter{out})
 		}
 	}
-	if err := s.copyN(w, body, m); err != nil {
+
+	return sum, out, s.copyN(dst, body, module)
+}
+
+// chainedPayload streams a module that another follows: its trailing overlap is kept as
+// the next header.
+func (s *scanner) chainedPayload(module Module) error {
+	want := binary.BigEndian.Uint32(s.head[imageCRCOff:])
+
+	sum, out, err := s.streamPayload(module, module.Size-overlap)
+	if err != nil {
 		return err
 	}
-	if !last { //nolint:nestif // moved unchanged
-		if _, err := io.ReadFull(s.r, s.head[:overlap]); err != nil {
-			return fmt.Errorf("%w: %w", ErrNotSTU, err)
+
+	_, err = io.ReadFull(s.r, s.head[:overlap])
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrNotSTU, err)
+	}
+
+	_, _ = sum.Write(s.head[:overlap])
+	s.carried = true
+	// Those 20 bytes are the module's own image, not padding, which is why the
+	// module CRC just above covers them and why a header CRC starts at 0x14: the
+	// chain overlaps, so a module's tail is read a second time as the head of the
+	// next header. Writing a constant over them instead was right only by luck --
+	// our own builder leaves that region zero-filled and past the end of every
+	// image we ship. Bose does not: in the approved Wireless Link package the MLO
+	// and u-boot.img images end exactly at the declared module size, so a
+	// synthesised tail truncates the SPL and the bootloader by 12 and 20 bytes of
+	// real content.
+	//
+	// The rootfs used to be excluded here, on the theory that ubiformat would
+	// reject a 20-byte tail past the last PEB. It is the opposite: a rootfs module
+	// is a whole number of eraseblocks *including* the overlap -- 89,653,248 is
+	// exactly 684 of them in the stock package, 50,724,864 exactly 387 in ours --
+	// and feeding ubiformat the 20-bytes-short payload makes it stop right after
+	// its scan with "error 0 (No error information)". Reproduced on the board with
+	// 262,124 bytes against 262,144.
+	if out != nil {
+		_, err = (sinkWriter{out}).Write(s.head[:overlap])
+		if err != nil {
+			return err
 		}
-		_, _ = sum.Write(s.head[:overlap])
-		s.carried = true
-		// Those 20 bytes are the module's own image, not padding, which is why the
-		// module CRC just above covers them and why a header CRC starts at 0x14: the
-		// chain overlaps, so a module's tail is read a second time as the head of the
-		// next header. Writing a constant over them instead was right only by luck --
-		// our own builder leaves that region zero-filled and past the end of every
-		// image we ship. Bose does not: in the approved Wireless Link package the MLO
-		// and u-boot.img images end exactly at the declared module size, so a
-		// synthesised tail truncates the SPL and the bootloader by 12 and 20 bytes of
-		// real content.
-		//
-		// The rootfs used to be excluded here, on the theory that ubiformat would
-		// reject a 20-byte tail past the last PEB. It is the opposite: a rootfs module
-		// is a whole number of eraseblocks *including* the overlap -- 89,653,248 is
-		// exactly 684 of them in the stock package, 50,724,864 exactly 387 in ours --
-		// and feeding ubiformat the 20-bytes-short payload makes it stop right after
-		// its scan with "error 0 (No error information)". Reproduced on the board with
-		// 262,124 bytes against 262,144.
-		if out != nil {
-			if _, err := (sinkWriter{out}).Write(s.head[:overlap]); err != nil {
-				return err
-			}
-		}
-	} else if n, err := io.Copy(io.Discard, s.r); err != nil {
+	}
+
+	return s.finishPayload(module, sum, want)
+}
+
+// finalPayload streams the last module, after which the file must end.
+func (s *scanner) finalPayload(module Module) error {
+	want := binary.BigEndian.Uint32(s.head[imageCRCOff:])
+
+	sum, _, err := s.streamPayload(module, module.Size)
+	if err != nil {
+		return err
+	}
+
+	trailing, err := io.Copy(io.Discard, s.r)
+	if err != nil {
 		return fmt.Errorf("reading past the last module: %w", err)
-	} else if n != 0 {
-		return errors.New("trailing data after the last module")
 	}
+
+	if trailing != 0 {
+		return errTrailingData
+	}
+
+	return s.finishPayload(module, sum, want)
+}
+
+// finishPayload checks the module's CRC and records the kernel flavour copyN sniffed.
+func (s *scanner) finishPayload(module Module, sum hash.Hash32, want uint32) error {
 	if sum.Sum32() != want {
-		return fmt.Errorf("%s: image CRC mismatch", m.Name)
+		return fmt.Errorf("%s: %w", module.Name, errImageCRC)
 	}
-	if base := BaseModuleName(m.Name); base == modLinux || base == modKernel {
+
+	if base := BaseModuleName(module.Name); base == modLinux || base == modKernel {
 		// Recorded during the copy; see copyN. The base name, because a universal
 		// package names its kernels per model and each of them is still the kernel.
 		s.pkg.Mainline = s.mainline
 		s.pkg.KernelTarget = s.kernelTarget
 	}
+
 	return nil
 }
 
@@ -255,32 +372,46 @@ func (s sinkWriter) Write(p []byte) (int, error) {
 	if err != nil {
 		return n, fmt.Errorf("%w: %w", ErrSink, err)
 	}
+
 	return n, nil
 }
 
-// copyN copies exactly n bytes, and sniffs the uImage header of the kernel module
+// copyN copies exactly size bytes, and sniffs the uImage header of the kernel module
 // on the way past — a package's kernel flavour is the one thing that decides which
 // models it can be installed on, and there is no second pass to go back for it.
-func (s *scanner) copyN(w io.Writer, n int64, m Module) error {
-	base := BaseModuleName(m.Name)
-	if (base != modLinux && base != modKernel) || n < uImageHeader {
-		if got, err := io.CopyN(w, s.r, n); err != nil || got != n {
+func (s *scanner) copyN(dst io.Writer, size int64, module Module) error {
+	base := BaseModuleName(module.Name)
+	if (base != modLinux && base != modKernel) || size < uImageHeader {
+		got, err := io.CopyN(dst, s.r, size)
+		if err != nil || got != size {
 			return readError(err)
 		}
+
 		return nil
 	}
+
 	head := make([]byte, uImageHeader)
-	if _, err := io.ReadFull(s.r, head); err != nil {
+
+	_, err := io.ReadFull(s.r, head)
+	if err != nil {
 		return fmt.Errorf("%w: %w", ErrNotSTU, err)
 	}
+
 	s.kernelTarget = MainlineTarget(head)
 	s.mainline = s.kernelTarget != ""
-	if _, err := w.Write(head); err != nil {
-		return err
-	}
-	if got, err := io.CopyN(w, s.r, n-uImageHeader); err != nil || got != n-uImageHeader {
+
+	// dst is the CRC, which never fails, and the sink, whose failures sinkWriter has
+	// already marked ErrSink: readError hands them back as they are.
+	_, err = dst.Write(head)
+	if err != nil {
 		return readError(err)
 	}
+
+	got, err := io.CopyN(dst, s.r, size-uImageHeader)
+	if err != nil || got != size-uImageHeader {
+		return readError(err)
+	}
+
 	return nil
 }
 
@@ -291,6 +422,7 @@ func readError(err error) error {
 	if errors.Is(err, ErrSink) {
 		return err
 	}
+
 	return fmt.Errorf("%w: %w", ErrNotSTU, err)
 }
 
@@ -300,15 +432,19 @@ func MainlineTarget(head []byte) string {
 	if len(head) < uImageHeader || binary.BigEndian.Uint32(head) != uImageMagic {
 		return ""
 	}
+
 	name := head[uImageNameOff:uImageHeader]
 	if i := bytes.IndexByte(name, 0); i >= 0 {
 		name = name[:i]
 	}
+
 	marker := []byte(" SoundTap ")
+
 	i := bytes.Index(name, marker)
 	if (!bytes.HasPrefix(name, []byte("Linub-")) && !bytes.HasPrefix(name, []byte("Linux-"))) || i < 0 {
 		return ""
 	}
+
 	switch string(name[i+len(marker):]) {
 	case modelST10:
 		return modelST10
@@ -325,28 +461,35 @@ func MainlineTarget(head []byte) string {
 	}
 }
 
-func (s *scanner) checkSize(m Module) error {
-	if m.Name != modUBI && m.Name != modRootfs {
+// checkSize holds a rootfs module to the partition and to what Bose's installer streams.
+func checkSize(module Module) error {
+	if module.Name != modUBI && module.Name != modRootfs {
 		return nil
 	}
-	if m.Size > nandRootfsSize {
-		return errors.New("ubi.img is larger than the 96 MiB rootfs partition")
+
+	if module.Size > nandRootfsSize {
+		return errRootfsNAND
 	}
 	// While more than one model still matches, the loosest of their ceilings is
 	// all this can enforce; the exact one belongs to the hardware and is checked
 	// with RootfsLimit once the model is known.
-	limit := profiles[m.Target].maxRootfs
-	for _, target := range m.Targets {
-		if got := profiles[target].maxRootfs; got > limit {
+	registry := profiles()
+
+	limit := registry[module.Target].maxRootfs
+	for _, target := range module.Targets {
+		if got := registry[target].maxRootfs; got > limit {
 			limit = got
 		}
 	}
+
 	if limit == 0 {
-		return errors.New("ubi.img appeared before the package target was established")
+		return errRootfsEarly
 	}
-	if m.Size > limit {
-		return errors.New("ubi.img is larger than any package Bose's installer has streamed")
+
+	if module.Size > limit {
+		return errRootfsStock
 	}
+
 	return nil
 }
 
@@ -358,6 +501,7 @@ func moduleName(head []byte) (string, error) {
 		if b == 0 {
 			return string(raw[:i]), nil
 		}
+
 		if b < 0x20 || b > 0x7e {
 			return "", fmt.Errorf("%w: module name is not ASCII", ErrNotSTU)
 		}

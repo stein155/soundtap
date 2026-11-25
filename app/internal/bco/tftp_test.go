@@ -19,22 +19,28 @@ func TestTftpAckIgnoresOtherPorts(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+
 		t.Cleanup(func() { c.Close() })
+
 		return c
 	}
 	client, peer, other := listen(), listen(), listen()
 	ack := func(c *net.UDPConn, block uint16) {
 		pkt := []byte{0, 4, 0, 0}
 		binary.BigEndian.PutUint16(pkt[2:], block)
+
 		if _, err := c.WriteToUDP(pkt, client.LocalAddr().(*net.UDPAddr)); err != nil {
 			t.Fatal(err)
 		}
 	}
 	ack(other, 1)
+
 	if _, err := tftpAck(context.Background(), client, peer.LocalAddr().(*net.UDPAddr), 1, 300*time.Millisecond); !isTimeout(err) {
 		t.Fatalf("ACK from another port: err = %v, want a timeout", err)
 	}
+
 	ack(peer, 1)
+
 	from, err := tftpAck(context.Background(), client, peer.LocalAddr().(*net.UDPAddr), 1, time.Second)
 	if err != nil || from.Port != peer.LocalAddr().(*net.UDPAddr).Port {
 		t.Fatalf("ACK from the transfer port: from = %v, err = %v", from, err)

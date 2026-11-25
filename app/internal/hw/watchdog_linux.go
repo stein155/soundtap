@@ -18,5 +18,6 @@ func setWatchdogTimeout(f *os.File, d time.Duration) error {
 	if _, _, e := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), wdiocSetTimeout, uintptr(unsafe.Pointer(&secs))); e != 0 {
 		return e
 	}
+
 	return nil
 }

@@ -12,39 +12,66 @@ import (
 )
 
 func TestBatteryUIMessagesAndIdleOff(t *testing.T) {
-	var u batteryUI
-	now := time.Unix(0, 0)
-	playing := speakerstate.StatusSnapshot{Source: "TUNEIN", PlayStatus: "PLAY_STATE"}
-	paused := speakerstate.StatusSnapshot{Source: "TUNEIN", PlayStatus: "PAUSE_STATE"}
-	dc := battery.Status{Present: true, OnDC: true, Level: 80}
-	bat := battery.Status{Present: true, Level: 79}
+	t.Parallel()
 
-	if a := u.step(now, dc, playing); a.message != "" || a.standby {
+	var state batteryUI
+
+	now := time.Unix(0, 0)
+	playing := tuneinSnapshot("PLAY_STATE")
+	paused := tuneinSnapshot("PAUSE_STATE")
+	charging := batteryReading(80, true, false)
+	bat := batteryReading(79, false, false)
+
+	if a := state.step(now, charging, &playing); a.message != "" || a.standby {
 		t.Fatalf("first reading: %+v", a)
 	}
-	if a := u.step(now, bat, playing); a.message != "On battery 79%" {
+
+	if a := state.step(now, bat, &playing); a.message != "On battery 79%" {
 		t.Fatalf("unplugged: %+v", a)
 	}
-	if a := u.step(now, dc, playing); a.message != "Charging" {
+
+	if a := state.step(now, charging, &playing); a.message != "Charging" {
 		t.Fatalf("plugged in: %+v", a)
 	}
-	low := battery.Status{Present: true, Level: 19, Low: true}
-	if a := u.step(now, low, playing); a.message != "Battery low 19%" {
+
+	low := batteryReading(19, false, true)
+	if a := state.step(now, low, &playing); a.message != "Battery low 19%" {
 		t.Fatalf("low: %+v", a)
 	}
-	if a := u.step(now, low, playing); a.message != "" {
+
+	if a := state.step(now, low, &playing); a.message != "" {
 		t.Fatalf("low repeated: %+v", a)
 	}
 	// Paused on battery: standby after 20 minutes, not before; playing resets the clock.
-	u.step(now, low, paused)
-	if a := u.step(now.Add(19*time.Minute), low, paused); a.standby {
+	state.step(now, low, &paused)
+
+	if a := state.step(now.Add(19*time.Minute), low, &paused); a.standby {
 		t.Fatal("standby before 20 minutes")
 	}
-	if a := u.step(now.Add(20*time.Minute), low, paused); !a.standby {
+
+	if a := state.step(now.Add(20*time.Minute), low, &paused); !a.standby {
 		t.Fatal("no standby after 20 idle minutes on battery")
 	}
-	u.step(now.Add(21*time.Minute), low, playing)
-	if a := u.step(now.Add(45*time.Minute), dc, paused); a.standby {
+
+	state.step(now.Add(21*time.Minute), low, &playing)
+
+	if a := state.step(now.Add(45*time.Minute), charging, &paused); a.standby {
 		t.Fatal("standby on DC")
+	}
+}
+
+// tuneinSnapshot is a speaker on TuneIn in the given play state.
+func tuneinSnapshot(playStatus string) speakerstate.StatusSnapshot {
+	return speakerstate.StatusSnapshot{
+		Source: "TUNEIN", PlayStatus: playStatus, Standby: false, Volume: 0, Muted: false, Bass: 0,
+		Notification: false, EmptyPreset: false, TransportAck: false, IP: "",
+	}
+}
+
+// batteryReading is a pack at level percent, on the charger or not, low or not.
+func batteryReading(level int, onDC, low bool) battery.Status {
+	return battery.Status{
+		Present: true, Maker: "", Level: level, MilliVolts: 0, MilliAmps: 0, Celsius: 0,
+		OnDC: onDC, Charging: false, Full: false, Low: low, Fault: 0,
 	}
 }

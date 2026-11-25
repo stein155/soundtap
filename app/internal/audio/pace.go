@@ -28,7 +28,8 @@ type paceClock struct {
 func newPaceClock(period time.Duration) *paceClock {
 	t := time.NewTimer(time.Hour)
 	t.Stop()
-	return &paceClock{period: period, timer: t, now: time.Now}
+
+	return &paceClock{period: period, next: time.Time{}, timer: t, now: time.Now}
 }
 
 func (p *paceClock) stop() { p.timer.Stop() }
@@ -39,15 +40,20 @@ func (p *paceClock) wait(ctx context.Context) bool {
 	if p.next.IsZero() || now.Sub(p.next) > paceMaxBehind {
 		p.next = now
 	}
+
 	p.next = p.next.Add(p.period)
+
 	d := p.next.Sub(now)
 	if d <= 0 {
 		return ctx.Err() == nil
 	}
+
 	p.timer.Reset(d)
+
 	select {
 	case <-ctx.Done():
 		p.timer.Stop()
+
 		return false
 	case <-p.timer.C:
 		return true

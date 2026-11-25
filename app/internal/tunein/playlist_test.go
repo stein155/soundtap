@@ -17,12 +17,15 @@ func TestPlaylistStreams(t *testing.T) {
 		"/b.M3U": "#EXTM3U\n#EXTINF:-1,One\nhttp://one.example/live\n",
 		"/c.m3u": "#EXTM3U\n#EXT-X-TARGETDURATION:6\nsegment1.ts\n",
 	}
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, ok := bodies[r.URL.Path]
 		if !ok {
 			http.NotFound(w, r)
+
 			return
 		}
+
 		_, _ = w.Write([]byte(body))
 	}))
 	defer srv.Close()
@@ -41,6 +44,7 @@ func TestPlaylistStreams(t *testing.T) {
 			t.Errorf("%s: %v %v, want %v", tc.name, got, err, tc.want)
 		}
 	}
+
 	if _, err := PlaylistStreams(context.Background(), srv.Client(), srv.URL+"/gone.pls"); err == nil {
 		t.Error("a playlist that is gone must be an error")
 	}

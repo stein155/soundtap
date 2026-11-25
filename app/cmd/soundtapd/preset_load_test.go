@@ -4,8 +4,8 @@
 package main
 
 import (
+	"bytes"
 	"context"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -18,29 +18,44 @@ import (
 // an empty store that the next held preset key wrote over the owner's six presets. Now
 // the store is read-only: the key press fails and the file is still there afterwards.
 func TestUnreadablePresetsAreNotOverwritten(t *testing.T) {
+	t.Parallel()
+
 	if os.Geteuid() == 0 {
 		t.Skip("root reads a mode-000 file")
 	}
+
 	path := filepath.Join(t.TempDir(), "presets.json")
+
 	saved := []byte(`[{"slot":1,"stationId":"s1","name":"Radio 1"}]`)
-	if err := os.WriteFile(path, saved, 0o000); err != nil {
+
+	err := os.WriteFile(path, saved, 0o000)
+	if err != nil {
 		t.Fatal(err)
 	}
-	sp := speakerstate.New()
-	st := loadPresets(context.Background(), sp, path, true, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	speaker := speakerstate.New()
+
+	st := loadPresets(context.Background(), speaker, path, stockPresets, slog.New(slog.DiscardHandler))
 	if st.LoadErr() == nil {
 		t.Fatal("LoadErr = nil for an unreadable presets file")
 	}
-	if err := sp.Select(context.Background(), "TUNEIN", "stationurl", "/v1/playback/station/s2", "Two", "", ""); err != nil {
+
+	err = speaker.Select(context.Background(), "TUNEIN", "stationurl", "/v1/playback/station/s2", "Two", "", "")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if stored, err := sp.StoreCurrentAsPreset("PRESET_2"); err == nil || stored {
+
+	stored, err := speaker.StoreCurrentAsPreset("PRESET_2")
+	if err == nil || stored {
 		t.Fatalf("store = %v, %v; want refused", stored, err)
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
+
+	err = os.Chmod(path, 0o600)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if data, _ := os.ReadFile(path); string(data) != string(saved) {
+
+	if data, _ := os.ReadFile(path); !bytes.Equal(data, saved) {
 		t.Fatalf("unreadable presets overwritten with %s", data)
 	}
 }

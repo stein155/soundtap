@@ -6,34 +6,50 @@
 package rootd
 
 import (
+	"fmt"
 	"net"
 	"syscall"
 
 	"github.com/stein155/soundtap/app/internal/childproc"
 )
 
-// peerUID is the uid of the process at the other end of c (SO_PEERCRED).
-func peerUID(c *net.UnixConn) (int, error) {
-	raw, err := c.SyscallConn()
+// peerUID is the uid of the process at the other end of conn (SO_PEERCRED).
+func peerUID(conn *net.UnixConn) (int, error) {
+	raw, err := conn.SyscallConn()
 	if err != nil {
-		return -1, err
+		return -1, fmt.Errorf("SO_PEERCRED: %w", err)
 	}
-	var cred *syscall.Ucred
-	var credErr error
-	if err := raw.Control(func(fd uintptr) {
+
+	var (
+		cred    *syscall.Ucred
+		credErr error
+	)
+
+	err = raw.Control(func(fd uintptr) {
 		cred, credErr = syscall.GetsockoptUcred(int(fd), syscall.SOL_SOCKET, syscall.SO_PEERCRED)
-	}); err != nil {
-		return -1, err
+	})
+	if err != nil {
+		return -1, fmt.Errorf("SO_PEERCRED: %w", err)
 	}
+
 	if credErr != nil {
-		return -1, credErr
+		return -1, fmt.Errorf("SO_PEERCRED: %w", credErr)
 	}
+
 	return int(cred.Uid), nil
 }
 
-func sethostname(name string) error { return syscall.Sethostname([]byte(name)) }
+func sethostname(name string) error {
+	err := syscall.Sethostname([]byte(name))
+	if err != nil {
+		return fmt.Errorf("sethostname: %w", err)
+	}
+
+	return nil
+}
 
 func lookupUser(name string) (int, int, error) {
 	uid, gid, err := childproc.Lookup(name)
+
 	return int(uid), int(gid), err
 }

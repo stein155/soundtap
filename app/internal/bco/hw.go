@@ -20,42 +20,58 @@ import (
 // request replaces it once the DT stops hogging the pin.
 const (
 	gpio0Base    = 0x44E07000
+	gpio0Size    = 0x1000 // the GPIO0 bank's register window
 	gpioOE       = 0x134
 	gpioClearOut = 0x190
 	gpioSetOut   = 0x194
 	bcoPowerBit  = 1 << 14
 )
 
+// errPowerNotOutput means gpio0_14 is configured as an input, so driving it would do nothing.
+var errPowerNotOutput = errors.New("gpio0_14 (BCO power) is not an output")
+
 // Power is how the flash and the LAN watch reach the supply switch: MemPower as root,
 // soundtap-root's bco.power when soundtapd runs as its own user (ADR 0066), which has no
 // /dev/mem.
+//
+//nolint:gochecknoglobals // soundtapd replaces it at startup with soundtap-root's route (ADR 0066)
 var Power = MemPower
 
 // MemPower returns a Power func for Flasher, plus a close func.
 func MemPower() (func(on bool) error, func(), error) {
-	f, err := os.OpenFile("/dev/mem", os.O_RDWR|os.O_SYNC, 0)
+	mem, err := os.OpenFile("/dev/mem", os.O_RDWR|os.O_SYNC, 0)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("open /dev/mem: %w", err)
 	}
-	regs, err := syscall.Mmap(int(f.Fd()), gpio0Base, 0x1000, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED)
-	f.Close()
+
+	regs, err := syscall.Mmap(int(mem.Fd()), gpio0Base, gpio0Size, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED)
+	// The mapping stays valid without the descriptor, and nothing was written through it.
+	_ = mem.Close()
+
 	if err != nil {
 		return nil, nil, fmt.Errorf("map GPIO0: %w", err)
 	}
+
+	unmap := func() { _ = syscall.Munmap(regs) } // nothing to do about a failed unmap
+
 	reg := func(off int) *uint32 { return (*uint32)(unsafe.Pointer(&regs[off])) }
 	if *reg(gpioOE)&bcoPowerBit != 0 {
-		syscall.Munmap(regs)
-		return nil, nil, errors.New("gpio0_14 (BCO power) is not an output")
+		unmap()
+
+		return nil, nil, errPowerNotOutput
 	}
+
 	power := func(on bool) error {
 		if on {
 			*reg(gpioClearOut) = bcoPowerBit
 		} else {
 			*reg(gpioSetOut) = bcoPowerBit
 		}
+
 		return nil
 	}
-	return power, func() { syscall.Munmap(regs) }, nil
+
+	return power, unmap, nil
 }
 
 // SerialPort opens the BCO UART as a non-blocking io.ReadWriter for Flasher.
@@ -64,6 +80,7 @@ func SerialPort(ctx context.Context, device string) (*FDPort, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	return &FDPort{fd: fd}, nil
 }
 
@@ -71,19 +88,40 @@ func SerialPort(ctx context.Context, device string) (*FDPort, error) {
 type FDPort struct{ fd int }
 
 func (p *FDPort) Read(b []byte) (int, error) {
-	n, err := syscall.Read(p.fd, b)
+	count, err := syscall.Read(p.fd, b)
 	if errors.Is(err, syscall.EAGAIN) {
 		return 0, nil
 	}
-	if n < 0 {
-		n = 0
+
+	if count < 0 {
+		count = 0
 	}
-	return n, err
+
+	if err != nil {
+		return count, fmt.Errorf("BCO UART read: %w", err)
+	}
+
+	return count, nil
 }
 
-func (p *FDPort) Write(b []byte) (int, error) { return syscall.Write(p.fd, b) }
+func (p *FDPort) Write(b []byte) (int, error) {
+	count, err := syscall.Write(p.fd, b)
+	if err != nil {
+		return count, fmt.Errorf("BCO UART write: %w", err)
+	}
 
-func (p *FDPort) Close() error { return syscall.Close(p.fd) }
+	return count, nil
+}
+
+// Close closes the UART's file descriptor.
+func (p *FDPort) Close() error {
+	err := syscall.Close(p.fd)
+	if err != nil {
+		return fmt.Errorf("BCO UART close: %w", err)
+	}
+
+	return nil
+}
 
 // UploadTFTP is the Upload func for Flasher on real hardware.
 func UploadTFTP(ctx context.Context, image []byte) error {

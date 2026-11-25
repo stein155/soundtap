@@ -66,7 +66,9 @@ func wlaLEDPattern(st speakerstate.StatusSnapshot, link Link, booting, updating,
 	if st.Standby {
 		level = wlaStandbyLevel
 	}
+
 	var leds wlaLEDs
+
 	switch {
 	case confirming:
 		// A request waits for a key press: fast amber, which no state has.
@@ -110,6 +112,7 @@ func wlaLEDPattern(st speakerstate.StatusSnapshot, link Link, booting, updating,
 			leds.btBlue = wlaBlink(wlaSlowBlinkMS, wlaOnLevel)
 		}
 	}
+
 	return leds
 }
 
@@ -120,16 +123,20 @@ func wlaLevelAt(steps []wlaStep, elapsed time.Duration) int {
 	for _, s := range steps {
 		total += s.ms
 	}
+
 	if total <= 0 {
 		return 0
 	}
+
 	at := int(elapsed.Milliseconds()) % total
 	for _, s := range steps {
 		if at < s.ms {
 			return s.level
 		}
+
 		at -= s.ms
 	}
+
 	return 0
 }
 
@@ -155,12 +162,14 @@ func wlaChannels(leds wlaLEDs) []struct {
 
 func wlaWriteLevel(ledDir, label string, level int, pwm bool) error {
 	value := "0"
+
 	switch {
 	case pwm:
 		value = strconv.Itoa(level)
 	case level > 0:
 		value = "1"
 	}
+
 	return os.WriteFile(filepath.Join(ledDir, label, "brightness"), []byte(value), 0o644) //nolint:gosec // G703: /sys/class/leds, or LEDS
 }
 
@@ -173,23 +182,33 @@ func RunWLALEDs(ctx context.Context, st LampStatus, log *slog.Logger) {
 	if ledDir == "" {
 		ledDir = "/sys/class/leds"
 	}
+
 	if _, err := os.Stat(filepath.Join(ledDir, "wla:white:wifi", "brightness")); err != nil { //nolint:gosec // G703: /sys/class/leds, or LEDS
 		// An older device tree with no LED nodes. Say so once: four silent write
 		// failures per tick is not a diagnosis.
 		log.Info("leds", "dir", ledDir, "note", "no wla lamps in this device tree")
+
 		return
 	}
+
 	log.Info("leds", "dir", ledDir)
 
 	wait := time.NewTimer(0)
 	defer wait.Stop()
+
 	var current wlaLEDs
+
 	started := time.Now()
 	last := map[string]int{}
 	haveLast := false
-	var link Link
-	var linkAt time.Time
+
+	var (
+		link   Link
+		linkAt time.Time
+	)
+
 	changed := st.Changed()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -197,12 +216,14 @@ func RunWLALEDs(ctx context.Context, st LampStatus, log *slog.Logger) {
 		case <-changed:
 		case <-wait.C:
 		}
+
 		changed = st.Changed()
 		// The link probe dials UDP and reads pidfiles; at the 50 ms blink tick that was
 		// real load on the single-core Wireless Link. Once a second is plenty for a lamp.
 		if time.Since(linkAt) >= time.Second {
 			link, linkAt = ReadLink(st.HaveIP), time.Now()
 		}
+
 		next := wlaLEDPattern(st.StatusSnapshot(), link, !st.Up(), st.Updating(), st.Confirming())
 		if !haveLast || !sameWLALEDs(next, current) {
 			// A new pattern starts at its first step, not wherever the old one was:
@@ -210,9 +231,12 @@ func RunWLALEDs(ctx context.Context, st LampStatus, log *slog.Logger) {
 			// most of its first period.
 			current, started, haveLast = next, time.Now(), true
 		}
-		if err := wlaWriteLevels(ledDir, current, time.Since(started), last); err != nil {
+
+		err := wlaWriteLevels(ledDir, current, time.Since(started), last)
+		if err != nil {
 			log.Warn("led write", "dir", ledDir, "err", err)
 		}
+
 		wait.Reset(wlaSleep(current, time.Since(started)))
 	}
 }
@@ -221,14 +245,17 @@ func RunWLALEDs(ctx context.Context, st LampStatus, log *slog.Logger) {
 // from the level last holds for it.
 func wlaWriteLevels(ledDir string, leds wlaLEDs, elapsed time.Duration, last map[string]int) error {
 	errs := []error{}
+
 	for _, channel := range wlaChannels(leds) {
 		level := wlaLevelAt(channel.steps, elapsed)
 		if was, seen := last[channel.label]; seen && was == level {
 			continue
 		}
+
 		errs = append(errs, wlaWriteLevel(ledDir, channel.label, level, channel.pwm))
 		last[channel.label] = level
 	}
+
 	return errors.Join(errs...)
 }
 
@@ -242,6 +269,7 @@ func wlaSleep(leds wlaLEDs, elapsed time.Duration) time.Duration {
 			sleep = d
 		}
 	}
+
 	return sleep
 }
 
@@ -251,20 +279,25 @@ func wlaNextStep(steps []wlaStep, elapsed time.Duration) time.Duration {
 	if len(steps) < 2 {
 		return 0
 	}
+
 	total := 0
 	for _, s := range steps {
 		total += s.ms
 	}
+
 	if total <= 0 {
 		return 0
 	}
+
 	at := int(elapsed.Milliseconds()) % total
 	for _, s := range steps {
 		if at < s.ms {
 			return time.Duration(s.ms-at) * time.Millisecond
 		}
+
 		at -= s.ms
 	}
+
 	return time.Millisecond
 }
 
@@ -277,10 +310,12 @@ func sameWLASteps(a, b []wlaStep) bool {
 	if len(a) != len(b) {
 		return false
 	}
+
 	for i := range a {
 		if a[i] != b[i] {
 			return false
 		}
 	}
+
 	return true
 }

@@ -10,6 +10,7 @@ import (
 func (s *Server) chimeEvent(name string) {
 	if s.eventChime != nil {
 		chime := s.eventChime
+
 		safego.Go("web.eventChime", func() { chime(name) })
 	}
 }

@@ -40,7 +40,7 @@ later boots change nothing. Ownership is no format: no file changes.
 | --- | --- | --- | --- | --- |
 | `presets.json.settings` | User | `app/internal/settings` | JSON object: name, source names, language, MQTT, audio, display, alarm, multiroom, integrations, channel, AUX name, and the crash report opt-in with the last 32 crashes reported or dismissed (`crashReports`, absent while it was never on; [ADR 0126](../decisions/0126-opt-in-crash-reports-without-a-server.md)). A corrupt file goes to `.corrupt` and `.corrupt.1`; a newer schema stays in place and is read-only until a reset; an unreadable file is read-only | `schemaVersion`, with a migrations list |
 | `presets.json` | User | `app/internal/store` | JSON array of presets (slot 1..6, station or source/type/location, name, logo). Malformed JSON goes to `.corrupt` and `.corrupt.1`; an unreadable file stays in place and the store starts empty and read-only | none |
-| `favorites.json` | User | `app/internal/favorites` | JSON array: source, name, location, art; at most 94 added through the API; a longer hand-edited list loads whole. Malformed JSON goes to `.corrupt` and `.corrupt.1`; an unreadable file is read-only | none |
+| `favorites.json` | User | `app/internal/favorites` | JSON array: source, name, location, art. The list offers one favorite, the first; adding one through the API makes the list that one alone, and removing it empties the list. A longer list (saved before, at most 94 through the API or a restored backup, or hand-edited) loads whole and unchanged; the next add, or removal of the first, leaves it at one or none. Malformed JSON goes to `.corrupt` and `.corrupt.1`; an unreadable file is read-only | none |
 | `recent.json` | User | `app/internal/recent` | JSON array, newest first: source, name, location, art, `stoppedAt` (RFC 3339); at most 50. Longer lists are truncated in memory. Malformed JSON goes to `.corrupt` and `.corrupt.1`; an unreadable file is read-only | none |
 | `tunein-streams.json` | Machine | `app/internal/player/streams.go` | JSON object by station location: `urls` (the stream list TuneIn last gave) and `at` (RFC 3339). Written only when a list changes; stations not resolved for 60 days are dropped. Used when TuneIn does not answer. Unreadable files load as empty | none: new in this version, older versions ignore it |
 | `multiroom-server` | User | `app/internal/multiroom` owns the follow state through `Group` (ADR 0122); `snapclientArgs` in `app/cmd/soundtapd` reads line 1 | Two lines: the leader's address, then its device id. Absent: this speaker serves itself | none |
@@ -53,18 +53,19 @@ later boots change nothing. Ownership is no format: no file changes.
 | `codec/` | Machine, must not be lost | The init script copies the speaker's own codec script out of the slot it was installed from ([ADR 0012](../decisions/0012-single-dac-writer.md)) | The speaker's own codec script, kept byte for byte | none |
 | `soundtapd.override` (`.gz`, `.base`, `.trial`) | Machine | `app/internal/web/firmware/soundtapd.go`; the init script | An uploaded soundtapd, gzipped, and the base firmware soundtapd hash it was made for; dropped when that hash no longer matches, a previous trial never passed, or loading fails; three consecutive runtime failures, or a web page or update route that still does not answer after five minutes, also fall back to the built-in app | none |
 | `bco-image` | Machine (ST20) | `app/internal/bco` (`autoinstall.go`) | One line: the BCO image's SHA-256, then ` ok` once installed. A bare hash suppresses retries after an attempted install; ` ok` also checks that our app still runs. Lost: the bundled image is attempted again, which may write BCO flash | none |
-| `allow-unsigned` | Machine, alpha only | `app/internal/web/firmware` (`signature.go`) | Presence ([ADR 0048](../decisions/0048-signed-updates.md)) | none |
 | `snapserver/` | Other | snapserver | snapserver's clients and groups; snapserver writes /run/soundtap/snapserver, soundtapd copies it here when more than lastSeen changes | — |
 | `current-boot.log`, `previous-boot.log`, `previous-boot.1.log`, `previous-boot.2.log` | Log | The init script; the health page reads them | Text, 32 KiB each | — |
 | `panic.log`, `last-boot/` | Log | soundtapd | Text: the last crash, and how the last boot ended | — |
 
-Not on `/mnt/nv`: the owner key ([ADR 0048](../decisions/0048-signed-updates.md#the-owners-own-key))
-is the U-Boot environment variable `soundtap_owner_key`, in both environment copies, so U-Boot
-reads it without UBI. No migration rule of this page applies to it; a factory reset removes it
-and a backup never carries it.
-
 Names nothing writes any more: `api-token`, `.sessions`, `plugins` (a factory reset removes
-them) and `.version`, `.attempts`, `.gaveup` (the diagnostics page shows them if present).
+them), `allow-unsigned` (it switched on unsigned uploads on an alpha image; every start removes
+it, `removeRetiredFiles` in `app/cmd/soundtapd`, tested against the previous release's set in
+`retired_test.go`; [ADR 0048](../decisions/0048-signed-updates.md)) and `.version`, `.attempts`,
+`.gaveup` (the diagnostics page shows them if present).
+
+Not on `/mnt/nv`: builds before 0.1.0 could keep an owner's signing key in the U-Boot
+environment variable `soundtap_owner_key`. Nothing reads it any more; an install's slot
+selection removes it (`flash.Installer.SelectBootSlot`).
 
 The [BCO install marker](../../app/internal/bco/autoinstall.go) is not a disposable cache: it
 also decides whether a flash is attempted, so deleting it can cause another hardware write.
@@ -116,7 +117,7 @@ To add a file: add its row here, its line to `nvFiles`, a fixture written by its
 (add the write to `writeNV` and run `go test ./cmd/soundtapd -run TestNVFormats -update-nv`
 before 0.1.0; write a hand-written file such as `ir.map` yourself) and a check in `loadNV`.
 `multiroom-server` is checked in `app/internal/web/nvstate_test.go` and the Wi-Fi files
-through the Wi-Fi manager in `app/internal/wifi/manager_test.go`.
+through the Wi-Fi manager in `app/internal/wifi/manager_internal_test.go`.
 
 For a release that changes a format: copy the newest set to `nv-<new release>/`, change
 `nvCurrent` to it, regenerate it with `-update-nv`, and leave the older set as it is. Both

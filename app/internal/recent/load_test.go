@@ -4,6 +4,7 @@
 package recent_test
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -15,13 +16,19 @@ import (
 
 func TestMissingFileStartsEmptyAndWritable(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "recent.json")
+
 	s := recent.Open(path)
-	if err := s.LoadErr(); err != nil || len(s.All()) != 0 {
+
+	err := s.LoadErr()
+	if err != nil || len(s.All()) != 0 {
 		t.Fatalf("Open = %v, %v; want empty and no error", s.All(), err)
 	}
-	if err := s.Record(recent.Entry{Source: "TUNEIN", Location: "s1"}); err != nil {
+
+	err = s.Record(recent.Entry{Source: "TUNEIN", Location: "s1"})
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	if got := recent.Open(path).All(); len(got) != 1 {
 		t.Fatalf("after reopen = %v, want one entry", got)
 	}
@@ -31,19 +38,28 @@ func TestMissingFileStartsEmptyAndWritable(t *testing.T) {
 // through, and the reason is on the store for the support bundle.
 func TestUnreadableDirectoryRefusesWrites(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "recent.json")
-	if err := os.Mkdir(path, 0o700); err != nil {
+
+	err := os.Mkdir(path, 0o700)
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	s := recent.Open(path)
-	if err := s.LoadErr(); !errors.Is(err, atomicjson.ErrUnreadable) {
+
+	err = s.LoadErr()
+	if !errors.Is(err, atomicjson.ErrUnreadable) {
 		t.Fatalf("LoadErr = %v, want ErrUnreadable", err)
 	}
-	if err := s.Record(recent.Entry{Source: "TUNEIN", Location: "s1"}); !errors.Is(err, atomicjson.ErrUnreadable) {
+
+	err = s.Record(recent.Entry{Source: "TUNEIN", Location: "s1"})
+	if !errors.Is(err, atomicjson.ErrUnreadable) {
 		t.Fatalf("Record = %v, want ErrUnreadable", err)
 	}
+
 	if got := s.All(); len(got) != 0 {
 		t.Fatalf("a refused Record changed memory: %v", got)
 	}
+
 	if info, err := os.Stat(path); err != nil || !info.IsDir() {
 		t.Fatalf("recent path = %v, %v; want the directory untouched", info, err)
 	}
@@ -55,22 +71,34 @@ func TestUnreadableFileIsNotOverwritten(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root reads a mode-000 file")
 	}
+
 	path := filepath.Join(t.TempDir(), "recent.json")
+
 	history := []byte(`[{"source":"TUNEIN","name":"Radio 1","location":"s1"}]`)
-	if err := os.WriteFile(path, history, 0o000); err != nil {
+
+	err := os.WriteFile(path, history, 0o000)
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	s := recent.Open(path)
-	if err := s.Record(recent.Entry{Source: "TUNEIN", Location: "s2"}); !errors.Is(err, atomicjson.ErrUnreadable) {
+
+	err = s.Record(recent.Entry{Source: "TUNEIN", Location: "s2"})
+	if !errors.Is(err, atomicjson.ErrUnreadable) {
 		t.Fatalf("Record = %v, want ErrUnreadable", err)
 	}
-	if err := s.Remove("TUNEIN", "s1"); err != nil {
+
+	err = s.Remove("TUNEIN", "s1")
+	if err != nil {
 		t.Fatalf("Remove of an entry not in memory = %v, want a no-op", err)
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
+
+	err = os.Chmod(path, 0o600)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if data, _ := os.ReadFile(path); string(data) != string(history) {
+
+	if data, _ := os.ReadFile(path); !bytes.Equal(data, history) {
 		t.Fatalf("unreadable history overwritten with %s", data)
 	}
 }
@@ -79,17 +107,25 @@ func TestUnreadableFileIsNotOverwritten(t *testing.T) {
 // starts empty and writable.
 func TestCorruptFileIsPreserved(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "recent.json")
-	if err := os.WriteFile(path, []byte(`[{"source":"TUNEIN"`), 0o600); err != nil {
+
+	err := os.WriteFile(path, []byte(`[{"source":"TUNEIN"`), 0o600)
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	s := recent.Open(path)
-	if err := s.LoadErr(); !errors.Is(err, atomicjson.ErrCorrupt) {
+
+	err = s.LoadErr()
+	if !errors.Is(err, atomicjson.ErrCorrupt) {
 		t.Fatalf("LoadErr = %v, want ErrCorrupt", err)
 	}
+
 	if got, err := os.ReadFile(path + ".corrupt"); err != nil || string(got) != `[{"source":"TUNEIN"` {
 		t.Fatalf("corrupt copy = %q, %v", got, err)
 	}
-	if err := s.Record(recent.Entry{Source: "TUNEIN", Location: "s1"}); err != nil {
+
+	err = s.Record(recent.Entry{Source: "TUNEIN", Location: "s1"})
+	if err != nil {
 		t.Fatalf("Record after quarantine: %v", err)
 	}
 }

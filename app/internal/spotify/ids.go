@@ -21,6 +21,7 @@ func hexID(id string) string {
 		n.Mul(n, big.NewInt(62))
 		n.Add(n, big.NewInt(int64(strings.IndexRune(b62, c))))
 	}
+
 	return fmt.Sprintf("%032x", n)
 }
 
@@ -30,12 +31,15 @@ func b62ID(gid string) string {
 	if !ok {
 		return ""
 	}
+
 	out := make([]byte, 22)
+
 	base, mod := big.NewInt(62), new(big.Int)
 	for i := 21; i >= 0; i-- {
 		n.DivMod(n, base, mod)
 		out[i] = b62[mod.Int64()]
 	}
+
 	return string(out)
 }
 
@@ -43,6 +47,7 @@ func uriOf(kind, gid string) string {
 	if id := b62ID(gid); id != "" {
 		return "spotify:" + kind + ":" + id
 	}
+
 	return ""
 }
 
@@ -54,6 +59,7 @@ func ImageURL(id string) (string, bool) {
 	if !imageID.MatchString(id) {
 		return "", false
 	}
+
 	return "https://i.scdn.co/image/" + id, true
 }
 
@@ -61,6 +67,7 @@ func artworkPath(id string) string {
 	if !imageID.MatchString(id) {
 		return ""
 	}
+
 	return "/api/spotify/images/" + id
 }
 
@@ -70,5 +77,6 @@ func artworkFromURL(u string) string {
 	if !strings.HasPrefix(u, prefix) {
 		return ""
 	}
+
 	return artworkPath(strings.TrimPrefix(u, prefix))
 }

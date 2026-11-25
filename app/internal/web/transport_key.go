@@ -11,15 +11,18 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"time"
 )
 
 // leaderKeys are what a grouped follower forwards to its leader: the transport.
 // Volume stays per room and a preset leaves the group, as stock's slave does.
-var leaderKeys = map[string]bool{
-	"PLAY": true, "PAUSE": true, "PLAY_PAUSE": true, "STOP": true,
-	"NEXT_TRACK": true, "PREV_TRACK": true,
+func leaderKeys() []string {
+	return []string{"PLAY", "PAUSE", "PLAY_PAUSE", "STOP", "NEXT_TRACK", "PREV_TRACK"}
 }
+
+// errNotFollowing is a key forwarded while this speaker follows no leader.
+var errNotFollowing = errors.New("not following a leader")
 
 // forwardKeyTimeout bounds a forwarded key: the button loop waits for it, and an
 // unreachable leader must fall back to the local key quickly.
@@ -27,9 +30,8 @@ const forwardKeyTimeout = 1500 * time.Millisecond
 
 // pairKeys are forwarded as well when the speaker is half of a stereo pair: the
 // pair is one speaker, so power and presets act on both halves through the leader.
-var pairKeys = map[string]bool{
-	"POWER": true, "PRESET_1": true, "PRESET_2": true, "PRESET_3": true,
-	"PRESET_4": true, "PRESET_5": true, "PRESET_6": true,
+func pairKeys() []string {
+	return []string{"POWER", "PRESET_1", "PRESET_2", "PRESET_3", "PRESET_4", "PRESET_5", "PRESET_6"}
 }
 
 // paired reports whether this speaker plays one channel of a stereo pair. The channel
@@ -38,60 +40,77 @@ func (s *Server) paired() bool {
 	if s.settings == nil {
 		return false
 	}
+
 	c := s.settings.Get().Channel
+
 	return c == "left" || c == "right"
 }
 
 // keyAllowed reports whether key may travel between the halves of this group.
 func (s *Server) keyAllowed(key string) bool {
-	return leaderKeys[key] || pairKeys[key] && s.paired()
+	return slices.Contains(leaderKeys(), key) || slices.Contains(pairKeys(), key) && s.paired()
 }
 
 // ForwardsKey reports whether a follower forwards key to its leader.
 func (s *Server) ForwardsKey(key string) bool { return s.keyAllowed(key) }
 
-// postKey applies a transport key a follower forwarded. POST /api/key {"key":"NEXT_TRACK"}
+// postKey applies a transport key a follower forwarded. POST /api/key {"key":"NEXT_TRACK"}.
 func (s *Server) postKey(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Key string `json:"key"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || !s.keyAllowed(body.Key) {
+
+	err := json.NewDecoder(r.Body).Decode(&body)
+	if err != nil || !s.keyAllowed(body.Key) {
 		apiError(w, http.StatusBadRequest, "transport key required (power and presets only in a stereo pair)")
+
 		return
 	}
-	if err := s.backend.Key(r.Context(), body.Key); err != nil {
+
+	err = s.backend.Key(r.Context(), body.Key)
+	if err != nil {
 		s.fail(w, "key failed", err)
+
 		return
 	}
+
 	writeJSON(w, http.StatusOK, map[string]string{"key": body.Key})
 }
 
 // ForwardKey sends a transport key to the leader this speaker follows. An error means
 // there is no leader or it did not take the key, and the caller acts locally.
 func (s *Server) ForwardKey(ctx context.Context, key string) error {
-	host, _ := s.follow()
+	host, _ := s.Follow()
 	if host == "" {
-		return errors.New("not following a leader")
+		return errNotFollowing
 	}
+
 	ctx, cancel := context.WithTimeout(ctx, forwardKeyTimeout)
 	defer cancel()
-	b, err := json.Marshal(map[string]string{"key": key})
+
+	body, err := json.Marshal(map[string]string{"key": key})
 	if err != nil {
-		return err
+		return fmt.Errorf("key body: %w", err)
 	}
+
 	u := url.URL{Scheme: "http", Host: host, Path: "/api/key"}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(b))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(body))
 	if err != nil {
-		return err
+		return fmt.Errorf("key request: %w", err)
 	}
+
 	req.Header.Set("Content-Type", "application/json")
+
 	resp, err := peerClient.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("forward key: %w", err)
 	}
+
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("leader %s answered %s", host, resp.Status)
+		return &peerAnswerError{request: "leader " + host, status: resp.Status}
 	}
+
 	return nil
 }

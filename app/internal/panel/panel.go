@@ -32,7 +32,13 @@ const (
 	holdShowsAfter = 350 * time.Millisecond // a preset press becomes "storing" after this
 	dimAfter       = 30 * time.Second       // without a key press, the panel dims...
 	dimLevel       = 6                      // ...to at most this grey level
-	panelTick      = 100 * time.Millisecond
+	fullLevel      = 15                     // the panel's brightest grey level: Pix draws it undimmed
+	// overlayHold is how long one look at an overlay keeps it up: two ticks, so it lasts
+	// until the next look renews it.
+	overlayHold = 2 * panelTick
+	// msPerSecond turns the position's milliseconds into the seconds the screen shows.
+	msPerSecond = 1000
+	panelTick   = 100 * time.Millisecond
 	// In standby the panel shows the clock, which changes once a minute: a tick per second
 	// is plenty. A key, an overlay or a state change wakes the loop at once, and it
 	// runs at panelTick again from there.
@@ -86,13 +92,21 @@ type Panel struct {
 // New is the panel of a speaker whose preset keys store after holdToStore.
 func New(holdToStore time.Duration) *Panel {
 	never := func() bool { return false }
-	return &Panel{Pairing: never, Calling: never, holdToStore: holdToStore, wake: make(chan struct{}, 1)}
-}
 
-func (p *Panel) nudge() {
-	select {
-	case p.wake <- struct{}{}:
-	default:
+	return &Panel{
+		Pairing:     never,
+		Calling:     never,
+		Battery:     nil,
+		holdToStore: holdToStore,
+		channel:     atomic.Value{},
+		wake:        make(chan struct{}, 1),
+		mu:          sync.Mutex{},
+		input:       time.Time{},
+		holdN:       0,
+		holdAt:      time.Time{},
+		overlay:     nil,
+		until:       time.Time{},
+		presets:     nil,
 	}
 }
 
@@ -110,6 +124,7 @@ func (p *Panel) Touch() {
 // Show shows f over everything for d.
 func (p *Panel) Show(d time.Duration, f func() *screen.Frame) {
 	f = sync.OnceValue(f) // drawn once, shown every tick
+
 	p.mu.Lock()
 	p.overlay, p.until, p.input = f, time.Now().Add(d), time.Now()
 	p.mu.Unlock()
@@ -117,9 +132,9 @@ func (p *Panel) Show(d time.Duration, f func() *screen.Frame) {
 }
 
 // PresetDown starts the "storing" bar; PresetUp ends it, whatever came of the press.
-func (p *Panel) PresetDown(n int) {
+func (p *Panel) PresetDown(slot int) {
 	p.mu.Lock()
-	p.holdN, p.holdAt, p.input = n, time.Now(), time.Now()
+	p.holdN, p.holdAt, p.input = slot, time.Now(), time.Now()
 	p.mu.Unlock()
 	p.nudge()
 }
@@ -146,24 +161,23 @@ func (p *Panel) PresetStored() {
 	p.Show(savedFor, func() *screen.Frame { return screen.Saved(Text("Saved as preset")) })
 }
 
-func (p *Panel) setPresets(presets []speaker.Preset) {
-	p.mu.Lock()
-	p.presets = presets
-	p.mu.Unlock()
-}
-
 // Current is the overlay to draw now, nil for none, and when the last key was pressed.
 func (p *Panel) Current(now time.Time) (func() *screen.Frame, time.Time) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
 	if p.holdN > 0 && now.Sub(p.holdAt) >= holdShowsAfter {
 		n, progress := p.holdN, float64(now.Sub(p.holdAt)-holdShowsAfter)/float64(p.holdToStore-holdShowsAfter)
+
 		return func() *screen.Frame { return screen.Holding(Text("Save as preset"), n, progress) }, p.input
 	}
+
 	if p.overlay != nil && now.Before(p.until) {
 		return p.overlay, p.input
 	}
+
 	p.overlay = nil
+
 	return nil, p.input
 }
 
@@ -184,89 +198,145 @@ type npInfo struct {
 const subCycle = 4 * time.Second
 
 // cycled is the field the second line shows at step n, skipping empty ones and repeats.
-func cycled(n int, fields ...string) string {
+func cycled(step int, fields ...string) string {
 	var seen []string
 	for _, f := range fields {
 		if f != "" && !slices.Contains(seen, f) {
 			seen = append(seen, f)
 		}
 	}
+
 	if len(seen) == 0 {
 		return ""
 	}
-	return seen[n%len(seen)]
+
+	return seen[step%len(seen)]
 }
 
 // Run drives the ST20 panel while the speaker is on, until ctx ends. In standby it clears,
 // so the display manager falls back to the standby clock. No-op on models without the panel.
-func (p *Panel) Run(ctx context.Context, sp *speakerstate.Speaker, disp *display.Manager, clock func() (time.Time, bool), log *slog.Logger) {
+func (p *Panel) Run(
+	ctx context.Context, spk *speakerstate.Speaker, disp *display.Manager, clock func() (time.Time, bool),
+	log *slog.Logger,
+) {
 	if !disp.Available() {
 		return
 	}
+
 	log.Info("oled now-playing driver up")
+
 	every := panelTick
+
 	tick := time.NewTicker(every)
 	defer tick.Stop()
-	var info npInfo
-	var read time.Time
-	seen := seenStatus{volume: -1}
+
+	var (
+		info npInfo
+		read time.Time
+	)
+
+	seen := seenStatus{volume: -1, muted: false, empty: false}
 	standby, playing := true, ""
-	wired := -1           // the cable as last seen: -1 not yet, 0 out, 1 in
+	wired := -1 // the cable as last seen: -1 not yet, 0 out, 1 in
+
 	var started time.Time // when what plays last changed: the metadata cycle starts there
+
 	var drawn playingMemo
-	for p.wait(ctx, sp, tick, every) {
+
+	for p.wait(ctx, spk, tick, every) {
 		now := time.Now()
-		status := sp.StatusSnapshot()
-		seen.overlays(p, status)
+		status := spk.StatusSnapshot()
+		seen.overlays(p, &status)
 		overlay, input := p.Current(now)
 		retick(tick, &every, panelTickFor(status.Standby && overlay == nil))
+
 		if overlay != nil {
 			// Overlays outrank the standby clock too: a preset press wakes the speaker,
 			// and its number must show before the speaker has left standby.
-			disp.SetTransient(display.Content{Frame: overlay().Pix(15)}, 2*panelTick)
+			disp.SetTransient(display.Content{Frame: overlay().Pix(fullLevel)}, overlayHold)
 		}
+
 		if now.Sub(read) >= time.Second {
-			info, read = p.refresh(ctx, sp, info, &wired), now
+			info, read = p.refresh(ctx, spk, &info, &wired), now
 		}
+
 		if status.Standby || info.np == nil || info.np.Source == sourceStandby {
 			if !standby {
 				disp.ClearNowPlaying()
+
 				standby = true
 			}
+
 			continue
 		}
 		// Waking up or a new track counts as use: the panel lights up for it, then dims.
 		if what := info.np.Source + "\x00" + info.np.Station + "\x00" + info.np.Track; standby || what != playing {
 			p.Touch()
+
 			playing, input, started = what, now, now
 		}
+
 		info.cycle = int(now.Sub(started) / subCycle)
 		standby = false
-		at, hour12 := clock()
-		bar := screen.Bar{Time: clockText(at, hour12)}
-		if p.Battery != nil {
-			if level, charging, ok := p.Battery(); ok {
-				bar.Battery, bar.Charging = max(level, 1), charging
-			}
-		}
-		dim := 15
-		if now.Sub(input) > dimAfter {
-			dim = dimLevel
-		}
-		_, posMs, durMs := sp.Position()
-		disp.SetNowPlaying(display.Content{Frame: drawn.playing(info, bar, posMs, durMs, dim)})
+		bar := p.statusBar(clock)
+		dim := dimFor(now, input)
+
+		_, posMs, durMs := spk.Position()
+		disp.SetNowPlaying(display.Content{Frame: drawn.playing(&info, &bar, posMs, durMs, dim)})
 	}
+}
+
+func (p *Panel) nudge() {
+	select {
+	case p.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (p *Panel) setPresets(presets []speaker.Preset) {
+	p.mu.Lock()
+	p.presets = presets
+	p.mu.Unlock()
+}
+
+// statusBar is the status line over the playing screen: the time and, on a speaker with a
+// pack, its level.
+func (p *Panel) statusBar(clock func() (time.Time, bool)) screen.Bar {
+	at, hour12 := clock()
+	bar := screen.Bar{
+		Source: "", Room: "", Time: clockText(at, hour12), State: "", Mark: "", Battery: 0, Charging: false,
+	}
+
+	if p.Battery != nil {
+		if level, charging, ok := p.Battery(); ok {
+			bar.Battery, bar.Charging = max(level, 1), charging
+		}
+	}
+
+	return bar
+}
+
+// dimFor is the brightest grey level the panel may show: dimmed a while after the last key.
+func dimFor(now, input time.Time) int {
+	if now.Sub(input) > dimAfter {
+		return dimLevel
+	}
+
+	return fullLevel
 }
 
 // wait waits for the next tick, reporting false once ctx ends. At the slow standby rate a
 // key, an overlay or a state change wakes the loop at once; at panelTick the nil channels
 // leave it as it was.
-func (p *Panel) wait(ctx context.Context, sp *speakerstate.Speaker, tick *time.Ticker, every time.Duration) bool {
-	var changed <-chan struct{}
-	var nudged chan struct{}
+func (p *Panel) wait(ctx context.Context, spk *speakerstate.Speaker, tick *time.Ticker, every time.Duration) bool {
+	var (
+		changed <-chan struct{}
+		nudged  chan struct{}
+	)
 	if every == panelStandbyTick {
-		changed, nudged = sp.Changed(), p.wake
+		changed, nudged = spk.Changed(), p.wake
 	}
+
 	select {
 	case <-ctx.Done():
 		return false
@@ -274,28 +344,64 @@ func (p *Panel) wait(ctx context.Context, sp *speakerstate.Speaker, tick *time.T
 	case <-changed:
 	case <-nudged:
 	}
+
 	return true
 }
 
 // refresh reads what plays again, and says on the panel when the cable or the Bluetooth
 // device changed. wired is the cable as last seen: -1 not yet, 0 out, 1 in.
-func (p *Panel) refresh(ctx context.Context, sp *speakerstate.Speaker, info npInfo, wired *int) npInfo {
+func (p *Panel) refresh(ctx context.Context, spk *speakerstate.Speaker, last *npInfo, wired *int) npInfo {
 	if msg := linkSwitch(wired, speakerstate.Wired()); msg != "" {
 		p.Show(NoticeFor, func() *screen.Frame { return MessageScreen(msg) })
 	}
-	prev := info.np
-	info = p.readNowPlaying(ctx, sp, info)
-	if msg := bluetoothChange(prev, info.np); msg != "" {
+
+	info := p.readNowPlaying(ctx, spk, last)
+	if msg := bluetoothChange(last.np, info.np); msg != "" {
 		p.Show(NoticeFor, func() *screen.Frame { return MessageScreen(msg) })
 	}
+
 	p.setPresets(info.presets)
+
 	return info
 }
 
+func (p *Panel) readNowPlaying(ctx context.Context, spk *speakerstate.Speaker, last *npInfo) npInfo {
+	nowPlaying, err := spk.NowPlaying(ctx)
+	if err != nil {
+		nowPlaying = nil
+	}
+
+	out := npInfo{
+		np:      nowPlaying,
+		presets: last.presets,
+		room:    last.room,
+		pairing: p.Pairing(),
+		calling: p.Calling(),
+		cycle:   0,
+		channel: "",
+	}
+
+	out.channel, _ = p.channel.Load().(string)
+
+	presets, err := spk.Presets(ctx)
+	if err == nil {
+		out.presets = presets
+	}
+
+	info, err := spk.Info(ctx)
+	if err == nil && info != nil {
+		out.room = info.Name
+	}
+
+	return out
+}
+
+//nolint:revive // flag-parameter: standby picks the period, the one thing this says
 func panelTickFor(standby bool) time.Duration {
 	if standby {
 		return panelStandbyTick
 	}
+
 	return panelTick
 }
 
@@ -305,18 +411,21 @@ type seenStatus struct {
 	muted, empty bool
 }
 
-func (s *seenStatus) overlays(p *Panel, status speakerstate.StatusSnapshot) {
+func (s *seenStatus) overlays(front *Panel, status *speakerstate.StatusSnapshot) {
 	if !status.Standby && s.volume >= 0 && (status.Volume != s.volume || status.Muted != s.muted) {
 		if status.Muted {
-			p.Show(overlayFor, func() *screen.Frame { return screen.Mute(Text("Muted")) })
+			front.Show(overlayFor, func() *screen.Frame { return screen.Mute(Text("Muted")) })
 		} else {
 			v := status.Volume
-			p.Show(overlayFor, func() *screen.Frame { return screen.Volume(v) })
+
+			front.Show(overlayFor, func() *screen.Frame { return screen.Volume(v) })
 		}
 	}
+
 	if status.EmptyPreset && !s.empty {
-		p.Show(overlayFor, func() *screen.Frame { return MessageScreen(Text("Preset empty")) })
+		front.Show(overlayFor, func() *screen.Frame { return MessageScreen(Text("Preset empty")) })
 	}
+
 	s.volume, s.muted, s.empty = status.Volume, status.Muted, status.EmptyPreset
 }
 
@@ -327,118 +436,130 @@ type playingMemo struct {
 	pix []byte
 }
 
-func (m *playingMemo) playing(info npInfo, bar screen.Bar, posMs, durMs, dim int) []byte {
-	posMs -= posMs % 1000 // the screen shows whole seconds; redraw once a second at most
-	key := fmt.Sprintf("%+v|%+v|%v|%v|%d|%d|%d", *info.np, info.presets, info.pairing, bar, posMs, durMs, dim)
+func (m *playingMemo) playing(info *npInfo, bar *screen.Bar, posMs, durMs, dim int) []byte {
+	posMs -= posMs % msPerSecond // the screen shows whole seconds; redraw once a second at most
+
+	key := fmt.Sprintf("%+v|%+v|%v|%v|%d|%d|%d", *info.np, info.presets, info.pairing, *bar, posMs, durMs, dim)
 	if key != m.key {
 		m.pix, m.key = playingScreen(info, bar, posMs, durMs).Pix(dim), key
 	}
+
 	return m.pix
 }
 
-func (p *Panel) readNowPlaying(ctx context.Context, sp *speakerstate.Speaker, last npInfo) npInfo {
-	np, err := sp.NowPlaying(ctx)
-	if err != nil {
-		np = nil
-	}
-	out := npInfo{np: np, presets: last.presets, room: last.room, pairing: p.Pairing(), calling: p.Calling()}
-	out.channel, _ = p.channel.Load().(string)
-	if presets, err := sp.Presets(ctx); err == nil {
-		out.presets = presets
-	}
-	if i, err := sp.Info(ctx); err == nil && i != nil {
-		out.room = i.Name
-	}
-	return out
-}
-
+//nolint:revive // flag-parameter: hour12 is the owner's clock setting, passed through as data
 func clockText(t time.Time, hour12 bool) string {
 	if hour12 {
 		return t.Format("3:04")
 	}
+
 	return t.Format("15:04")
 }
 
 // playingScreen picks the design's screen for what plays.
-func playingScreen(info npInfo, bar screen.Bar, posMs, durMs int) *screen.Frame {
-	np := info.np
+func playingScreen(info *npInfo, base *screen.Bar, posMs, durMs int) *screen.Frame {
+	bar := *base // marked up for this screen; the caller's stays as it was
+	nowPlaying := info.np
+
 	switch info.channel {
 	case "left":
 		bar.Mark = "L"
 	case "right":
 		bar.Mark = "R"
+	default:
+		// Not half of a stereo pair: no mark.
 	}
-	switch np.PlayStatus {
+
+	switch nowPlaying.PlayStatus {
 	case statusPaused:
 		bar.State = screen.StatePaused
 	case playStopped:
 		bar.State = screen.StateStopped
+	default:
+		// Playing or buffering: the source shows in the icon's place.
 	}
-	switch np.Source {
+
+	switch nowPlaying.Source {
 	case sourceTuneIn:
-		return stationScreen(info, bar)
+		return stationScreen(info, &bar)
 	case sourceBluetooth:
-		return bluetoothScreen(info, bar)
+		return bluetoothScreen(info, &bar)
 	case sourceAux:
 		return screen.Aux(bar, Text("External input"))
 	default:
-		bar.Source = prettySource(np.Source)
-		title, sub := np.Track, cycled(info.cycle, np.Artist, np.Album, np.Station)
+		bar.Source = prettySource(nowPlaying.Source)
+
+		title, sub := nowPlaying.Track, cycled(info.cycle, nowPlaying.Artist, nowPlaying.Album, nowPlaying.Station)
 		if title == "" {
-			title, sub = np.Station, ""
+			title, sub = nowPlaying.Station, ""
 		}
+
 		if title == "" {
-			title = prettySource(np.Source)
+			title = prettySource(nowPlaying.Source)
 		}
-		return screen.Track(bar, title, stateLine(np, sub), float64(posMs)/1000, durMs/1000)
+
+		return screen.Track(bar, title, stateLine(nowPlaying, sub), float64(posMs)/msPerSecond, durMs/msPerSecond)
 	}
 }
 
 // bluetoothScreen is Bluetooth's screen: the device that plays, or what the speaker is
 // doing to get one.
-func bluetoothScreen(info npInfo, bar screen.Bar) *screen.Frame {
-	np := info.np
+func bluetoothScreen(info *npInfo, bar *screen.Bar) *screen.Frame {
+	nowPlaying := info.np
 	bar.Source, bar.Room = screen.SourceBT, info.room
-	device := np.Station
+
+	device := nowPlaying.Station
 	if device == "" && info.pairing {
 		return screen.Pairing(Text("Pairing…"), Text("Look for %s", info.room))
 	}
+
 	if device == "" && info.calling {
 		device = Text("Reconnecting…")
 	}
+
 	if device == "" {
 		device = Text("Waiting for device")
 	}
-	return screen.Bluetooth(bar, prettySource(np.Source), device)
+
+	return screen.Bluetooth(*bar, prettySource(nowPlaying.Source), device)
 }
 
 // stationScreen is the radio's screen: the station, what plays on it, its preset and the
 // live badge.
-func stationScreen(info npInfo, bar screen.Bar) *screen.Frame {
-	np := info.np
+func stationScreen(info *npInfo, bar *screen.Bar) *screen.Frame {
+	nowPlaying := info.np
+
 	badge, level := wordLive, 10
-	if np.PlayStatus == playBuffering || np.Unheard {
+	if nowPlaying.PlayStatus == playBuffering || nowPlaying.Unheard {
 		badge, level = wordBuffering, 7
 	}
+
 	if bar.State != "" {
 		badge = "" // not live while paused or stopped: the bar's icon says so
 	}
-	name := np.Station
+
+	name := nowPlaying.Station
 	if name == "" {
-		name = prettySource(np.Source)
+		name = prettySource(nowPlaying.Source)
 	}
-	return screen.Station(bar, name, stateLine(np, cycled(info.cycle, np.Track, np.Artist, np.Album)), presetOf(info.presets, np),
-		Text(badge), level)
+
+	line := stateLine(nowPlaying, cycled(info.cycle, nowPlaying.Track, nowPlaying.Artist, nowPlaying.Album))
+
+	return screen.Station(*bar, name, line, presetOf(info.presets, nowPlaying), Text(badge), level)
 }
 
 // linkSwitch is what the panel says when the cable goes in or out, as stock says it
 // switches between Wi-Fi and Ethernet; nothing on the first look.
+//
+//nolint:revive // flag-parameter: wired is the cable's state, data to compare, not a mode
 func linkSwitch(last *int, wired bool) string {
 	now := 0
 	if wired {
 		now = 1
 	}
+
 	was := *last
+
 	*last = now
 	switch {
 	case was < 0 || was == now:
@@ -458,8 +579,10 @@ func bluetoothChange(prev, cur *speaker.NowPlaying) string {
 		if np == nil || np.Source != sourceBluetooth {
 			return ""
 		}
+
 		return np.Station
 	}
+
 	was, is := device(prev), device(cur)
 	switch {
 	case is != "" && is != was:
@@ -467,6 +590,7 @@ func bluetoothChange(prev, cur *speaker.NowPlaying) string {
 	case was != "" && is == "" && cur != nil && cur.Source == sourceBluetooth:
 		return Text("Disconnected from %s", was)
 	}
+
 	return ""
 }
 
@@ -476,9 +600,11 @@ func stateLine(np *speaker.NowPlaying, line string) string {
 	if !np.Failed {
 		return line
 	}
+
 	if np.Source == sourceTuneIn {
 		return Text("Station unavailable")
 	}
+
 	return Text("Playback error")
 }
 
@@ -489,6 +615,7 @@ func presetOf(presets []speaker.Preset, np *speaker.NowPlaying) int {
 			return p.Slot
 		}
 	}
+
 	return 0
 }
 
@@ -498,11 +625,12 @@ func presetName(presets []speaker.Preset, slot int) string {
 			return p.Name
 		}
 	}
+
 	return ""
 }
 
-func prettySource(s string) string {
-	switch s {
+func prettySource(source string) string {
+	switch source {
 	case sourceTuneIn:
 		return "Radio"
 	case sourceAirPlay:
@@ -518,7 +646,7 @@ func prettySource(s string) string {
 	case sourceAux:
 		return sourceAux
 	default:
-		return s
+		return source
 	}
 }
 
@@ -529,7 +657,7 @@ func MessageScreen(text string) *screen.Frame {
 }
 
 // Message is MessageScreen as the display manager takes it.
-func Message(text string) []byte { return MessageScreen(text).Pix(15) }
+func Message(text string) []byte { return MessageScreen(text).Pix(fullLevel) }
 
 // retick moves t to want when that differs from the period it runs at; an unchanged
 // period leaves the ticker's phase alone.

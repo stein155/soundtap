@@ -72,19 +72,27 @@ func (c *Config) defaults() {
 	if c.Client == nil {
 		c.Client = sharedClient
 	}
+
 	if c.Log == nil {
 		c.Log = slog.Default().With("comp", "player")
 	}
+
 	for _, d := range []struct {
 		v *time.Duration
 		d time.Duration
-	}{{&c.IdleTimeout, 15 * time.Second}, {&c.MaxOutage, 60 * time.Second},
-		{&c.BackoffMin, 250 * time.Millisecond}, {&c.BackoffMax, 5 * time.Second},
-		{&c.ScanWait, 500 * time.Millisecond}, {&c.ScanMax, 2 * time.Second}} {
+	}{
+		{&c.IdleTimeout, 15 * time.Second},
+		{&c.MaxOutage, 60 * time.Second},
+		{&c.BackoffMin, 250 * time.Millisecond},
+		{&c.BackoffMax, 5 * time.Second},
+		{&c.ScanWait, 500 * time.Millisecond},
+		{&c.ScanMax, 2 * time.Second},
+	} {
 		if *d.v <= 0 {
 			*d.v = d.d
 		}
 	}
+
 	if c.Limit <= 0 {
 		c.Limit = 1 << 20
 	}
@@ -100,6 +108,7 @@ func newClient(tlsCfg *tls.Config) *http.Client {
 	tr := safehttp.SafeTransport()
 	tr.ResponseHeaderTimeout = 10 * time.Second
 	tr.TLSClientConfig = tlsCfg
+
 	return &http.Client{Transport: tr}
 }
 
@@ -114,6 +123,7 @@ func Warm(ctx context.Context, url string) {
 	if !strings.HasPrefix(url, "https://") {
 		return
 	}
+
 	s := &Stream{cfg: Config{Client: sharedClient}, url: url}
 	if resp, err := s.connect(ctx); err == nil {
 		_ = resp.Body.Close()
@@ -125,11 +135,13 @@ type Timing struct{ DNS, TCP, TLS, TTFB int64 }
 
 func (t *Timing) trace() *httptrace.ClientTrace {
 	var start, dnsAt, tcpAt, tlsAt time.Time
+
 	span := func(from time.Time, to *int64) {
 		if !from.IsZero() {
 			*to += time.Since(from).Milliseconds()
 		}
 	}
+
 	return &httptrace.ClientTrace{
 		DNSStart:             func(httptrace.DNSStartInfo) { dnsAt = time.Now() },
 		DNSDone:              func(httptrace.DNSDoneInfo) { span(dnsAt, &t.DNS) },
@@ -159,19 +171,25 @@ type Stream struct {
 // ignored once Open has returned.
 func Open(ctx, dial context.Context, cfg Config, url string) (*Stream, error) {
 	cfg.defaults()
+
 	sctx, cancel := context.WithCancel(ctx)
 	s := &Stream{cfg: cfg, url: url, ctx: sctx, cancel: cancel, q: newQueue(cfg.Limit)}
 	stop := context.AfterFunc(dial, cancel)
+
 	resp, err := s.connect(sctx)
 	if !stop() && err == nil { // dial ended first and took the stream down with it
 		_ = resp.Body.Close()
 		err = dial.Err()
 	}
+
 	if err != nil {
 		cancel()
+
 		return nil, err
 	}
+
 	safego.Go("readahead.run", func() { s.run(resp) })
+
 	return s, nil
 }
 
@@ -179,28 +197,35 @@ func Open(ctx, dial context.Context, cfg Config, url string) (*Stream, error) {
 // is sent, so the body is pure audio; now-playing titles come from their own connection
 // (internal/icy).
 func (s *Stream) connect(ctx context.Context) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.url, http.NoBody)
 	if err != nil {
 		return nil, err
 	}
+
 	req.Header.Set("User-Agent", "SoundTap/1.0")
+
 	if s.cfg.Trace != nil {
 		req = req.WithContext(httptrace.WithClientTrace(ctx, s.cfg.Trace.trace()))
 	}
+
 	resp, err := safehttp.Do(ctx, s.cfg.Client, req)
 	if err != nil {
 		return nil, err
 	}
+
 	if resp.StatusCode != http.StatusOK || resp.ContentLength >= 0 || !directType(resp.Header.Get("Content-Type")) {
 		_ = resp.Body.Close()
+
 		return nil, fmt.Errorf("%w: status %d, type %q, length %d", ErrNotDirect,
 			resp.StatusCode, resp.Header.Get("Content-Type"), resp.ContentLength)
 	}
+
 	return resp, nil
 }
 
 func directType(ct string) bool {
 	mt, _, err := mime.ParseMediaType(ct)
+
 	return err == nil && directTypes[strings.ToLower(mt)]
 }
 
@@ -208,15 +233,19 @@ func directType(ct string) bool {
 // closed, or a write fails. It returns nil at the end of the stream.
 func (s *Stream) WriteTo(w io.Writer) (int64, error) {
 	var total int64
+
 	for {
 		b, err := s.q.get()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				err = nil
 			}
+
 			return total, err
 		}
+
 		n, err := w.Write(b)
+
 		total += int64(n)
 		if err != nil {
 			return total, err
@@ -238,17 +267,22 @@ func (s *Stream) Buffered() int { return s.q.len() }
 // own supervisor starts over (which also resolves the station URL again).
 func (s *Stream) run(resp *http.Response) {
 	defer s.cancel()
+
 	backoff := s.cfg.BackoffMin
 	lastData := time.Now()
+
 	for {
 		if resp != nil {
 			n, err := s.session(resp)
 			_ = resp.Body.Close()
 			resp = nil
+
 			if s.ctx.Err() != nil {
 				s.q.finish(nil)
+
 				return
 			}
+
 			s.cfg.Log.Warn("radio read-ahead: connection lost", "bytes", n, "buffered", s.q.len(), "err", err)
 			// Silent for IdleTimeout with nothing left to play: the listener already
 			// hears silence, while the player still says PLAY_STATE. End the stream now
@@ -256,23 +290,30 @@ func (s *Stream) run(resp *http.Response) {
 			if errors.Is(err, errIdle) && s.q.len() == 0 {
 				s.cfg.Log.Warn("radio read-ahead: stalled with nothing buffered, ending the stream")
 				s.q.finish(io.ErrUnexpectedEOF)
+
 				return
 			}
+
 			if n > 0 {
 				lastData = time.Now()
 				backoff = s.cfg.BackoffMin
 			}
 		}
+
 		for resp == nil {
 			if time.Since(lastData) > s.cfg.MaxOutage {
 				s.cfg.Log.Warn("radio read-ahead: giving up", "outage", s.cfg.MaxOutage)
 				s.q.finish(io.ErrUnexpectedEOF)
+
 				return
 			}
+
 			if !sleep(s.ctx, backoff) {
 				s.q.finish(nil)
+
 				return
 			}
+
 			var err error
 			if resp, err = s.connect(s.ctx); err != nil {
 				s.cfg.Log.Warn("radio read-ahead: reconnect failed", "err", err, "retry_in", backoff)
@@ -285,6 +326,7 @@ func (s *Stream) run(resp *http.Response) {
 func sleep(ctx context.Context, d time.Duration) bool {
 	t := time.NewTimer(d)
 	defer t.Stop()
+
 	select {
 	case <-ctx.Done():
 		return false
@@ -312,11 +354,15 @@ func (s *Stream) session(resp *http.Response) (int, error) {
 		b   []byte
 		err error
 	}
+
 	cctx, cancel := context.WithCancel(s.ctx)
 	defer cancel()
+
 	ch := make(chan frame, 2)
+
 	safego.Go("readahead.read", func() {
 		defer close(ch)
+
 		buf := make([]byte, chunkSize)
 		for {
 			n, err := resp.Body.Read(buf)
@@ -327,11 +373,13 @@ func (s *Stream) session(resp *http.Response) (int, error) {
 					return
 				}
 			}
+
 			if err != nil {
 				select {
 				case ch <- frame{err: err}:
 				case <-cctx.Done():
 				}
+
 				return
 			}
 		}
@@ -344,20 +392,26 @@ func (s *Stream) session(resp *http.Response) (int, error) {
 		if len(b) == 0 {
 			return true
 		}
+
 		queued += len(b)
+
 		s.tail = append(s.tail, b...)
 		if len(s.tail) > tailLen {
 			s.tail = bytes.Clone(s.tail[len(s.tail)-tailLen:])
 		}
+
 		return s.q.put(b)
 	}
 
 	var scan []byte
+
 	scanning := len(s.tail) >= tailLen/4
 	tail := bytes.Clone(s.tail)
 	scanEnd := time.Now().Add(s.cfg.ScanMax)
+
 	timer := time.NewTimer(s.cfg.IdleTimeout)
 	defer timer.Stop()
+
 	for {
 		select {
 		case <-cctx.Done():
@@ -365,28 +419,38 @@ func (s *Stream) session(resp *http.Response) (int, error) {
 		case <-timer.C:
 			if scanning { // burst over without a match: queue it as it is
 				scanning = false
+
 				if !push(scan) {
 					return queued, context.Canceled
 				}
+
 				scan = nil
+
 				timer.Reset(s.cfg.IdleTimeout)
+
 				continue
 			}
+
 			return queued, fmt.Errorf("%w for %s", errIdle, s.cfg.IdleTimeout)
 		case f, ok := <-ch:
 			if !ok {
 				return queued, io.EOF
 			}
+
 			if f.err != nil {
 				if scanning {
 					push(scan)
 				}
+
 				return queued, f.err
 			}
+
 			b := f.b
+
 			if scanning {
 				from := max(len(scan)-len(tail)+1, 0)
 				scan = append(scan, b...)
+
 				i := bytes.Index(scan[from:], tail)
 				switch {
 				case i >= 0:
@@ -399,12 +463,15 @@ func (s *Stream) session(resp *http.Response) (int, error) {
 					scan = nil
 				default:
 					timer.Reset(s.cfg.ScanWait)
+
 					continue
 				}
 			}
+
 			if !push(b) {
 				return queued, context.Canceled
 			}
+
 			timer.Reset(s.cfg.IdleTimeout)
 		}
 	}
@@ -426,44 +493,55 @@ type queue struct {
 func newQueue(limit int) *queue {
 	q := &queue{limit: limit}
 	q.cv = sync.NewCond(&q.mu)
+
 	return q
 }
 
 func (q *queue) put(b []byte) bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+
 	for !q.dead && !q.done && q.size > 0 && q.size+len(b) > q.limit {
 		q.cv.Wait()
 	}
+
 	if q.dead || q.done {
 		return false
 	}
+
 	q.chunks = append(q.chunks, b)
 	q.size += len(b)
 	q.cv.Broadcast()
+
 	return true
 }
 
 func (q *queue) get() ([]byte, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+
 	for !q.dead && !q.done && len(q.chunks) == 0 {
 		q.cv.Wait()
 	}
+
 	if q.dead {
 		return nil, context.Canceled
 	}
+
 	if len(q.chunks) == 0 {
 		if q.err != nil {
 			return nil, q.err
 		}
+
 		return nil, io.EOF
 	}
+
 	b := q.chunks[0]
 	q.chunks[0] = nil
 	q.chunks = q.chunks[1:]
 	q.size -= len(b)
 	q.cv.Broadcast()
+
 	return b, nil
 }
 
@@ -486,5 +564,6 @@ func (q *queue) abort() {
 func (q *queue) len() int {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+
 	return q.size
 }

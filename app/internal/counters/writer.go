@@ -33,15 +33,18 @@ func Matches(w io.Writer, needle string, c *atomic.Uint64) io.Writer {
 
 func (m *matchWriter) Write(p []byte) (int, error) {
 	m.mu.Lock()
+
 	buf := append(append([]byte(nil), m.tail...), p...)
 	if n := bytes.Count(buf, m.needle); n > 0 {
 		m.c.Add(uint64(n))
 		// What follows the last match can still begin the next one, nothing before it.
 		buf = buf[bytes.LastIndex(buf, m.needle)+len(m.needle):]
 	}
+
 	keep := min(len(buf), len(m.needle)-1)
 	m.tail = append([]byte(nil), buf[len(buf)-keep:]...)
 	m.mu.Unlock()
+
 	return m.w.Write(p)
 }
 
@@ -52,9 +55,11 @@ func CountStart(path string) (uint64, error) {
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return 0, err
 	}
+
 	before, _ := strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64) // missing or garbled: the first
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return before, err
 	}
+
 	return before, os.WriteFile(path, []byte(strconv.FormatUint(before+1, 10)+"\n"), 0o644)
 }

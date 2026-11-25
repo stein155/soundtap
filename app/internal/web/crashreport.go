@@ -19,9 +19,17 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stein155/soundtap/app/internal/counters"
 	"github.com/stein155/soundtap/app/internal/settings"
+)
+
+const (
+	// crashLogTail is how much of the end of a log a crash report carries.
+	crashLogTail = 64 << 10
+	// crashInfoTimeout bounds the backend reads a crash report adds.
+	crashInfoTimeout = 2 * time.Second
 )
 
 // Crash reports (ADR 0126). With the owner's opt-in, GET /api/crash-report finds a crash on
@@ -81,13 +89,15 @@ type crashReportAnswer struct {
 
 func (s *Server) getCrashReport(w http.ResponseWriter, r *http.Request) {
 	cr := s.settings.Get().CrashReports
-	out := crashReportAnswer{Enabled: cr.Enabled}
+
+	out := crashReportAnswer{Enabled: cr.Enabled, Crash: nil}
 	if cr.Enabled {
 		if c, ok := firstUnhandled(s.findCrashes(), cr); ok {
-			rep := s.writeCrashReport(r.Context(), c)
+			rep := s.writeCrashReport(r.Context(), &c)
 			out.Crash = &rep
 		}
 	}
+
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -98,11 +108,12 @@ func firstUnhandled(crashes []crash, cr settings.CrashReports) (crash, bool) {
 			return c, true
 		}
 	}
-	return crash{}, false
+
+	return crash{id: "", kind: "", title: "", what: "", trace: ""}, false
 }
 
 // crashOutcomes are what the owner did with an offered crash. Both end the offer.
-var crashOutcomes = []string{"reported", "dismissed"}
+func crashOutcomes() []string { return []string{"reported", "dismissed"} }
 
 // postCrashReport records that the owner reported or dismissed a crash the speaker holds.
 func (s *Server) postCrashReport(w http.ResponseWriter, r *http.Request) {
@@ -110,28 +121,40 @@ func (s *Server) postCrashReport(w http.ResponseWriter, r *http.Request) {
 		ID      string `json:"id"`
 		Outcome string `json:"outcome"`
 	}
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10))
+
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, tinyBody))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&body); err != nil {
+
+	err := dec.Decode(&body)
+	if err != nil {
 		s.badRequest(w, "bad body", err)
+
 		return
 	}
-	if !slices.Contains(crashOutcomes, body.Outcome) {
+
+	if !slices.Contains(crashOutcomes(), body.Outcome) {
 		s.badRequest(w, "outcome must be reported or dismissed", nil)
+
 		return
 	}
 	// Only a crash the speaker holds: a made-up id must not push real ones off the list.
 	if !slices.ContainsFunc(s.findCrashes(), func(c crash) bool { return c.id == body.ID }) {
 		apiError(w, http.StatusNotFound, "no such crash on this speaker")
+
 		return
 	}
-	if err := s.settings.Update(func(next *settings.Settings) error {
+
+	err = s.settings.Update(func(next *settings.Settings) error {
 		next.CrashReports.Handle(body.ID)
+
 		return nil
-	}); err != nil {
+	})
+	if err != nil {
 		s.fail(w, "save settings failed", err)
+
 		return
 	}
+
 	s.log.Info("crash report", "id", body.ID, "outcome", body.Outcome)
 	writeOK(w)
 }
@@ -143,22 +166,26 @@ func (s *Server) findCrashes() []crash {
 	if c, ok := panicCrash(filepath.Join(s.homeDir, PanicLogName)); ok {
 		out = append(out, c)
 	}
+
 	if c, ok := kernelCrash(filepath.Join(s.homeDir, LastBootDir)); ok {
 		out = append(out, c)
 	}
+
 	bootID, _ := os.ReadFile(sysPath(bootIDFile))
+
 	return append(out, daemonCrashes(counters.CrashLoops(), strings.TrimSpace(string(bootID)), s.agentLog())...)
 }
 
 // crashID names a crash by its kind and its content, so the same crash keeps its id
 // across restarts and a new one gets a new id.
 func crashID(kind string, parts ...string) string {
-	h := sha256.New()
+	hash := sha256.New()
 	for _, p := range parts {
-		h.Write([]byte(p))
-		h.Write([]byte{0})
+		hash.Write([]byte(p))
+		hash.Write([]byte{0})
 	}
-	return kind + "-" + hex.EncodeToString(h.Sum(nil))[:12]
+
+	return kind + "-" + hex.EncodeToString(hash.Sum(nil))[:12]
 }
 
 // panicHead is panic.log's first line, as writePanic in soundtapd writes it.
@@ -167,22 +194,29 @@ var panicHead = regexp.MustCompile(`^(\S+) goroutine "([^"]*)": panic: (.*)$`)
 // panicCrash reads soundtapd's last panic.
 func panicCrash(path string) (crash, bool) {
 	raw, err := os.ReadFile(path)
-	if err != nil || len(strings.TrimSpace(string(raw))) == 0 {
-		return crash{}, false
+	if err != nil || strings.TrimSpace(string(raw)) == "" {
+		return crash{id: "", kind: "", title: "", what: "", trace: ""}, false
 	}
+
 	text := strings.TrimRight(string(raw), "\n")
-	c := crash{id: crashID(crashPanic, text), kind: crashPanic, title: "soundtapd panic",
-		what: "soundtapd stopped with a panic.", trace: text}
+	report := crash{
+		id: crashID(crashPanic, text), kind: crashPanic, title: "soundtapd panic",
+		what: "soundtapd stopped with a panic.", trace: text,
+	}
+
 	first, _, _ := strings.Cut(text, "\n")
 	if m := panicHead.FindStringSubmatch(first); m != nil {
-		c.title = "soundtapd panic: " + m[3]
-		c.what = fmt.Sprintf("soundtapd stopped with a panic in goroutine %q at %s.", m[2], m[1])
+		report.title = "soundtapd panic: " + m[3]
+		report.what = fmt.Sprintf("soundtapd stopped with a panic in goroutine %q at %s.", m[2], m[1])
 	}
-	return c, true
+
+	return report, true
 }
 
 // kernelMarkers are the lines that name a kernel crash, the most telling first.
-var kernelMarkers = []string{"Kernel panic - not syncing:", "Unable to handle", "Internal error:", "BUG:"}
+func kernelMarkers() []string {
+	return []string{"Kernel panic - not syncing:", "Unable to handle", "Internal error:", "BUG:"}
+}
 
 // kernelPrefix is a kernel log line's level and timestamp: "<4>[  123.456789] ".
 var kernelPrefix = regexp.MustCompile(`^(<\d+>)?\[\s*\d+\.\d+\]\s*`)
@@ -192,18 +226,23 @@ var kernelPrefix = regexp.MustCompile(`^(<\d+>)?\[\s*\d+\.\d+\]\s*`)
 func kernelCrash(dir string) (crash, bool) {
 	how := readFileLine(filepath.Join(dir, "how"))
 	if how != "panic" && how != "oops" {
-		return crash{}, false
+		return crash{id: "", kind: "", title: "", what: "", trace: ""}, false
 	}
+
 	names, _ := filepath.Glob(filepath.Join(dir, "dmesg-ramoops-*"))
-	sort.Strings(names)
+	slices.Sort(names)
+
 	var records []string
+
 	for _, name := range names {
-		if b, err := os.ReadFile(name); err == nil {
+		b, err := os.ReadFile(name)
+		if err == nil {
 			records = append(records, string(b))
 		}
 	}
+
 	if len(records) == 0 {
-		return crash{}, false
+		return crash{id: "", kind: "", title: "", what: "", trace: ""}, false
 	}
 	// The oops is the cause when there is one: an oops panics (CONFIG_PANIC_ON_OOPS) and
 	// leaves a panic record beside its own.
@@ -211,20 +250,27 @@ func kernelCrash(dir string) (crash, bool) {
 	for _, r := range records {
 		if strings.HasPrefix(r, "Oops") {
 			record = r
+
 			break
 		}
 	}
+
 	lines := strings.Split(strings.TrimRight(record, "\n"), "\n")
-	c := crash{id: crashID(crashKernel, records...), kind: crashKernel, title: "kernel " + how + " in the previous boot",
+
+	report := crash{
+		id: crashID(crashKernel, records...), kind: crashKernel, title: "kernel " + how + " in the previous boot",
 		what:  fmt.Sprintf("The previous boot ended in a kernel %s (kept in ramoops).", how),
-		trace: strings.Join(lines[max(0, len(lines)-crashKernelLines):], "\n")}
-	for _, marker := range kernelMarkers {
+		trace: strings.Join(lines[max(0, len(lines)-crashKernelLines):], "\n"),
+	}
+	for _, marker := range kernelMarkers() {
 		if i := slices.IndexFunc(lines, func(l string) bool { return strings.Contains(l, marker) }); i >= 0 {
-			c.title = "kernel " + how + ": " + kernelPrefix.ReplaceAllString(lines[i], "")
+			report.title = "kernel " + how + ": " + kernelPrefix.ReplaceAllString(lines[i], "")
+
 			break
 		}
 	}
-	return c, true
+
+	return report, true
 }
 
 // daemonCrashes writes up the media daemons that crash-looped in this soundtapd's life. The
@@ -236,27 +282,38 @@ func daemonCrashes(loops map[string]counters.CrashLoop, bootID, log string) []cr
 	for name := range loops {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+
+	slices.Sort(names)
+
 	out := make([]crash, 0, len(names))
 	for _, name := range names {
 		loop := loops[name]
+
 		var about []string
+
 		for line := range strings.SplitSeq(log, "\n") {
 			if strings.Contains(line, name) {
 				about = append(about, line)
 			}
 		}
-		trace := fmt.Sprintf("%s ended soon after its start %d times in a row and was put to rest at %s.\nThe last run ended with: %s",
+
+		trace := fmt.Sprintf("%s ended soon after its start %d times in a row and was put to rest at %s.\n"+
+			"The last run ended with: %s",
 			name, loop.Runs, loop.At.UTC().Format(time.RFC3339), loop.Err)
+
 		if len(about) > 0 {
-			trace += "\n\nThe agent log's last lines about it:\n" + strings.Join(about[max(0, len(about)-crashDaemonLines):], "\n")
+			last := about[max(0, len(about)-crashDaemonLines):]
+			trace += "\n\nThe agent log's last lines about it:\n" + strings.Join(last, "\n")
 		}
+
 		out = append(out, crash{
 			id: crashID(crashDaemon, bootID, name), kind: crashDaemon, title: name + " keeps crashing",
-			what:  fmt.Sprintf("The media daemon %s kept crashing and soundtapd put it to rest (crash loop %d since soundtapd started).", name, loop.Count),
+			what: fmt.Sprintf("The media daemon %s kept crashing and soundtapd put it to rest "+
+				"(crash loop %d since soundtapd started).", name, loop.Count),
 			trace: trace,
 		})
 	}
+
 	return out
 }
 
@@ -264,44 +321,52 @@ func daemonCrashes(loops map[string]counters.CrashLoop, bootID, log string) []cr
 func (s *Server) agentLog() string {
 	for _, lg := range s.logPaths() {
 		if lg.path == "/tmp/soundtap.log" {
-			return tailFile(lg.file, 64<<10)
+			return tailFile(lg.file, crashLogTail)
 		}
 	}
+
 	return ""
 }
 
 // writeCrashReport writes c up as the issue: the title, and a body with what happened, the
 // versions, the model and the uptime, and the trace as far as the link has room. Everything
 // from the crash itself goes through the support bundle's redactor first.
-func (s *Server) writeCrashReport(ctx context.Context, c crash) crashReport {
+func (s *Server) writeCrashReport(ctx context.Context, report *crash) crashReport {
 	red := s.newRedactor(ctx)
 	model := crashUnknown
-	ictx, cancel := context.WithTimeout(ctx, 2*time.Second)
+
+	ictx, cancel := context.WithTimeout(ctx, crashInfoTimeout)
 	defer cancel()
-	if info, err := s.backend.Info(ictx); err == nil && info != nil && info.Type != "" {
+
+	info, err := s.backend.Info(ictx)
+	if err == nil && info != nil && info.Type != "" {
 		model = info.Type
 	}
+
 	osVersion, osCommit := osBuild()
 	facts := crashFacts{
 		app: s.version, core: strings.TrimSpace(osVersion + " " + osCommit), model: model,
-		uptime: fmt.Sprintf("speaker %s, soundtapd %s", systemUptime("/proc"), time.Since(s.startedAt).Round(time.Second)),
+		uptime: fmt.Sprintf("speaker %s, soundtapd %s",
+			systemUptime("/proc"), time.Since(s.startedAt).Round(time.Second)),
 	}
-	title := truncateBytes("Crash: "+red.scrub(c.title), crashMaxTitle)
-	body, link := crashIssue(title, crashHead(red.scrub(c.what), c.id, facts), red.scrub(c.trace))
-	return crashReport{ID: c.id, Kind: c.kind, Title: title, Body: body, URL: link}
+	title := truncateBytes("Crash: "+red.scrub(report.title), crashMaxTitle)
+	body, link := crashIssue(title, crashHead(red.scrub(report.what), report.id, facts), red.scrub(report.trace))
+
+	return crashReport{ID: report.id, Kind: report.kind, Title: title, Body: body, URL: link}
 }
 
 // crashFacts are what the report says about the speaker.
 type crashFacts struct{ app, core, model, uptime string }
 
 // crashHead is the body above the trace.
-func crashHead(what, id string, f crashFacts) string {
-	if f.core == "" {
-		f.core = "not a SoundTap image"
+func crashHead(what, crashID string, facts crashFacts) string {
+	if facts.core == "" {
+		facts.core = "not a SoundTap image"
 	}
+
 	return fmt.Sprintf("**What happened:** %s\n\n"+
 		"- SoundTap app: %s\n- SoundTap Core: %s\n- Model: %s\n- Uptime: %s\n- Crash id: %s\n\n",
-		what, f.app, f.core, f.model, f.uptime, id)
+		what, facts.app, facts.core, facts.model, facts.uptime, crashID)
 }
 
 // crashFoot is the body below the trace: where the rest is.
@@ -315,11 +380,13 @@ const crashCut = "[cut to fit the link: the support bundle has all of it]"
 
 // crashIssue builds the body and the issue link, quoting as much of trace, from its start,
 // as keeps the link within crashMaxURL.
-func crashIssue(title, head, trace string) (body, link string) {
+// It returns the issue body, then the link.
+func crashIssue(title, head, trace string) (string, string) {
 	lines := strings.Split(trace, "\n")
 	for i, l := range lines {
 		lines[i] = truncateBytes(l, crashMaxLine)
 	}
+
 	build := func(n int) (string, string) {
 		quoted := strings.Join(lines[:n], "\n")
 		if n < len(lines) {
@@ -330,35 +397,34 @@ func crashIssue(title, head, trace string) (body, link string) {
 		for strings.Contains(quoted, fence) {
 			fence += "`"
 		}
+
 		b := head + fence + "text\n" + quoted + "\n" + fence + "\n\n" + crashFoot
+
 		return b, crashIssueURL + "?" + url.Values{"title": {title}, "body": {b}}.Encode()
 	}
 	// The link grows with every line, so the most lines that fit is a binary search.
-	lo, hi := 0, len(lines)
-	for lo < hi {
-		mid := (lo + hi + 1) / 2
-		if _, l := build(mid); len(l) <= crashMaxURL {
-			lo = mid
-		} else {
-			hi = mid - 1
-		}
-	}
-	return build(lo)
+	tooLong := sort.Search(len(lines)+1, func(n int) bool {
+		_, link := build(n)
+
+		return len(link) > crashMaxURL
+	})
+
+	return build(max(tooLong-1, 0))
 }
 
 // truncateBytes cuts s to at most n bytes on a rune boundary, marking the cut with "…".
-func truncateBytes(s string, n int) string {
-	if len(s) <= n {
-		return s
+func truncateBytes(text string, n int) string {
+	if len(text) <= n {
+		return text
 	}
+
 	cut := n - len("…")
-	for cut > 0 && !utf8RuneStart(s[cut]) {
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
 		cut--
 	}
-	return s[:cut] + "…"
-}
 
-func utf8RuneStart(b byte) bool { return b&0xC0 != 0x80 }
+	return text[:cut] + "…"
+}
 
 // systemUptime is how long the speaker has been up, from proc's uptime; "unknown" off Linux.
 func systemUptime(proc string) string {
@@ -366,13 +432,16 @@ func systemUptime(proc string) string {
 	if err != nil {
 		return crashUnknown
 	}
+
 	f := strings.Fields(string(b))
 	if len(f) == 0 {
 		return crashUnknown
 	}
+
 	secs, err := strconv.ParseFloat(f[0], 64)
 	if err != nil {
 		return crashUnknown
 	}
+
 	return (time.Duration(secs) * time.Second).String()
 }

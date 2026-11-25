@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -39,17 +40,38 @@ const (
 	countKey   = "bootcount"
 )
 
+// The refusals of an environment write. A message with values reads them around its
+// sentinel, as it always has.
+var (
+	errNoFallbackEntry  = errors.New("entry for the fallback")
+	errNotNANDSlot      = errors.New("is not a NAND slot")
+	errRefuseSelect     = errors.New("entry; refusing to select")
+	errBadEnvBlock      = errors.New("sits on a bad erase block: Bose's U-Boot would find no environment there")
+	errShortRead        = errors.New("short read of")
+	errEnvReadback      = errors.New("environment readback verification failed")
+	errNotErased        = errors.New("does not read back erased")
+	errNoSlotSelectable = errors.New("so no slot can be selected")
+	errTooSmallFor      = errors.New("is too small for a")
+	errReadbackFailed   = errors.New("readback verification failed")
+)
+
 // markUnconfirmed sets upgrade_available and a count starting over for a selection
-// soundtapd has yet to confirm, or clears both. Stock (no markers) gets neither key.
-func markUnconfirmed(env *ubootenv.Env, unconfirmed bool) bool {
+// soundtapd has yet to confirm. It reports a change, as it always is one.
+func markUnconfirmed(env *ubootenv.Env) bool {
+	env.Delete(countKey)
+	env.Set(pendingKey, "1")
+
+	return true
+}
+
+// clearUnconfirmed clears upgrade_available and the count, and reports whether either was
+// there. Stock (no markers) gets neither key.
+func clearUnconfirmed(env *ubootenv.Env) bool {
 	_, hadPending := env.Get(pendingKey)
 	_, hadCount := env.Get(countKey)
 	env.Delete(countKey)
-	if unconfirmed {
-		env.Set(pendingKey, "1")
-		return true
-	}
 	env.Delete(pendingKey)
+
 	return hadPending || hadCount
 }
 
@@ -66,35 +88,46 @@ func armRollback(env *ubootenv.Env, slot Slot, markers []string) error {
 	if len(markers) == 0 {
 		env.Delete(altKey)
 		env.Delete(limitKey)
+
 		return nil
 	}
+
 	other := ping
 	if slot.Name == ping.Name {
 		other = pong
 	}
-	altcmd, cmdKey, _, err := bootFor(other)
+
+	fallback, err := bootFor(other)
 	if err != nil {
 		return err
 	}
-	if _, ok := env.Get(cmdKey); !ok {
-		return fmt.Errorf("the environment has no %s entry for the fallback", cmdKey)
+
+	if _, ok := env.Get(fallback.cmdKey); !ok {
+		return fmt.Errorf("the environment has no %s %w", fallback.cmdKey, errNoFallbackEntry)
 	}
-	env.Set(altKey, altcmd)
-	env.Set(limitKey, fmt.Sprint(BootLimit))
+
+	env.Set(altKey, fallback.bootcmd)
+	env.Set(limitKey, strconv.Itoa(BootLimit))
+
 	return nil
 }
 
-// bootFor returns the environment entries a slot boots through: the command
-// bootcmd must run, the command entry itself, and the bootargs entry that command
-// runs in turn.
-func bootFor(slot Slot) (bootcmd, cmdKey, argsKey string, err error) {
+// slotBoot is the environment entries a slot boots through: the command bootcmd must run,
+// the command entry itself, and the bootargs entry that command runs in turn.
+type slotBoot struct {
+	bootcmd, cmdKey, argsKey string
+}
+
+// bootFor returns the entries slot boots through.
+func bootFor(slot Slot) (slotBoot, error) {
 	switch slot.Name {
 	case ping.Name:
-		return bootcmdPing, "nand_boot", "nand_args", nil
+		return slotBoot{bootcmd: bootcmdPing, cmdKey: "nand_boot", argsKey: "nand_args"}, nil
 	case pong.Name:
-		return bootcmdPong, "nand_boot2", "nand_args2", nil
+		return slotBoot{bootcmd: bootcmdPong, cmdKey: "nand_boot2", argsKey: "nand_args2"}, nil
 	}
-	return "", "", "", fmt.Errorf("%q is not a NAND slot", slot.Name)
+
+	return slotBoot{bootcmd: "", cmdKey: "", argsKey: ""}, fmt.Errorf("%q %w", slot.Name, errNotNANDSlot)
 }
 
 // SoundTapMarkers are the kernel command-line additions a SoundTap install wants on
@@ -114,6 +147,7 @@ func SoundTapMarkers(persistent string) []string {
 	if persistent == "" {
 		persistent = "NAND.Persistent-Storage"
 	}
+
 	return []string{"soundtap.nandroot=1", "ubi.mtd=" + persistent + ",2048"}
 }
 
@@ -132,18 +166,21 @@ func isSoundTapMarker(field string) bool {
 // It changes nothing else. Reinstalling is idempotent, which matters because every
 // rewrite erases a copy of the environment: under Bose's U-Boot the only one.
 func SelectSlot(env *ubootenv.Env, slot Slot, markers []string) error {
-	bootcmd, cmdKey, argsKey, err := bootFor(slot)
+	boot, err := bootFor(slot)
 	if err != nil {
 		return err
 	}
+
+	bootcmd, cmdKey, argsKey := boot.bootcmd, boot.cmdKey, boot.argsKey
 	// Refuse to point bootcmd at an entry that is not there. U-Boot would run an
 	// empty command and drop to its prompt with no console attached, which on this
 	// board is indistinguishable from a brick.
 	for _, key := range []string{cmdKey, argsKey} {
 		if _, ok := env.Get(key); !ok {
-			return fmt.Errorf("the environment has no %s entry; refusing to select %s", key, slot.Name)
+			return fmt.Errorf("the environment has no %s %w %s", key, errRefuseSelect, slot.Name)
 		}
 	}
+
 	env.Set(bootcmdKey, bootcmd)
 	// Both entries, not just the one being selected: markers left on the other slot
 	// would describe a boot that is no longer the one this environment performs.
@@ -152,43 +189,51 @@ func SelectSlot(env *ubootenv.Env, slot Slot, markers []string) error {
 		if !ok {
 			continue
 		}
+
 		want := markers
 		if key != argsKey {
 			want = nil
 		}
+
 		env.Set(key, applyMarkers(value, want))
 	}
+
 	return nil
 }
 
 func applyMarkers(value string, markers []string) string {
 	kept := []string{}
-	for _, field := range strings.Fields(value) {
+
+	for field := range strings.FieldsSeq(value) {
 		if isSoundTapMarker(field) && !slicesHas(markers, field) {
 			continue
 		}
+
 		kept = append(kept, field)
 	}
+
 	for _, marker := range markers {
 		if !slicesHas(kept, marker) {
 			kept = append(kept, marker)
 		}
 	}
+
 	return strings.Join(kept, " ")
 }
 
 func slicesHas(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, want)
 }
 
 // Reader is how the installer reads a partition back. nanddump on the speaker;
 // tests supply their own.
 type Reader func(name string, args ...string) ([]byte, error)
+
+// retiredOwnerKey is where builds before 0.1.0 kept an owner's own signing key (ADR 0048
+// no longer has one). Nothing reads it any more; an install's slot selection, a write that
+// happens anyway, removes it, and the next write (the boot confirmation) leaves it out of
+// the other copy too.
+const retiredOwnerKey = "soundtap_owner_key"
 
 // SelectBootSlot rewrites NAND.U-Boot-Env so the board boots slot.
 //
@@ -198,14 +243,24 @@ type Reader func(name string, args ...string) ([]byte, error)
 // rebuilds it from what a running system knows instead.
 func (in *Installer) SelectBootSlot(read Reader, slot Slot, markers []string) error {
 	return in.rewriteEnv(read, func(env *ubootenv.Env) (bool, error) {
-		if err := SelectSlot(env, slot, markers); err != nil {
+		err := SelectSlot(env, slot, markers)
+		if err != nil {
 			return false, err
 		}
+
+		env.Delete(retiredOwnerKey)
+
 		if in.Target.BootCount {
 			// The fallback and the count that drives it go in the same write as bootcmd.
-			markUnconfirmed(env, len(markers) > 0)
+			if len(markers) > 0 {
+				markUnconfirmed(env)
+			} else {
+				clearUnconfirmed(env)
+			}
+
 			return true, armRollback(env, slot, markers)
 		}
+
 		return true, nil
 	})
 }
@@ -216,21 +271,29 @@ func (in *Installer) SelectBootSlot(read Reader, slot Slot, markers []string) er
 // next install arms the fallback at this slot again when it selects the rewritten one.
 func (in *Installer) SettleRunningSlot(read Reader, markers []string) error {
 	running := in.Target.Running
+
 	return in.rewriteEnv(read, func(env *ubootenv.Env) (bool, error) {
-		if err := SelectSlot(env, running, markers); err != nil {
+		err := SelectSlot(env, running, markers)
+		if err != nil {
 			return false, err
 		}
+
 		if !in.Target.BootCount {
 			return true, nil
 		}
-		markUnconfirmed(env, false) // the running slot just proved it boots
-		if err := armRollback(env, running, markers); err != nil {
+
+		clearUnconfirmed(env) // the running slot just proved it boots
+
+		err = armRollback(env, running, markers)
+		if err != nil {
 			return false, err
 		}
+
 		if len(markers) > 0 {
-			runCmd, _, _, _ := bootFor(running)
-			env.Set(altKey, runCmd)
+			runBoot, _ := bootFor(running)
+			env.Set(altKey, runBoot.bootcmd)
 		}
+
 		return true, nil
 	})
 }
@@ -260,23 +323,31 @@ func (in *Installer) RepairEnv(read Reader, variant string) (bool, error) {
 	if in.Target.EnvMTD < 0 {
 		return false, nil
 	}
+
 	if !in.Target.EnvRedundant {
 		return in.repairLegacyEnv(read, variant)
 	}
+
 	copies, lost, err := in.readCopies(read)
 	if err != nil {
 		return false, err
 	}
+
 	primary := copies[ubootenv.Primary]
-	if _, _, _, err := ubootenv.Current(primary, copies[ubootenv.Redundant]); !errors.Is(err, ubootenv.ErrBadCRC) {
-		return false, err
+
+	err = needsRepair(ubootenv.Current(primary, copies[ubootenv.Redundant]))
+	if err != nil {
+		return false, nilIfHealthy(err)
 	}
+
 	env, err := ubootenv.ParseLegacy(primary)
 	if err != nil {
-		if env, err = in.rebuiltEnv(variant); err != nil {
+		env, err = in.rebuiltEnv(variant)
+		if err != nil {
 			return false, err
 		}
 	}
+
 	return true, in.writeFreshEnv(read, env, lost)
 }
 
@@ -286,21 +357,31 @@ func (in *Installer) repairLegacyEnv(read Reader, variant string) (bool, error) 
 	if err != nil {
 		return wrote, err
 	}
+
 	raw, err := in.dumpEnv(read, in.Target.EnvMTD, 0, ubootenv.LegacySize)
 	if err != nil {
 		return wrote, err
 	}
-	if _, err := ubootenv.ParseLegacy(raw); !errors.Is(err, ubootenv.ErrBadCRC) {
-		return wrote, err
+
+	_, err = ubootenv.ParseLegacy(raw)
+	if !errors.Is(err, ubootenv.ErrBadCRC) {
+		if err != nil {
+			return wrote, fmt.Errorf("reading the single copy: %w", err)
+		}
+
+		return wrote, nil // the copy checks out: nothing to repair
 	}
+
 	env, err := in.rebuiltEnv(variant)
 	if err != nil {
 		return wrote, err
 	}
+
 	image, err := env.EncodeLegacy()
 	if err != nil {
-		return wrote, err
+		return wrote, fmt.Errorf("encoding the single copy: %w", err)
 	}
+
 	return true, in.writeEnvCopy(read, in.Target.EnvMTD, 0, image)
 }
 
@@ -311,17 +392,49 @@ func (in *Installer) dropStaleRedundantEnv(read Reader) (bool, error) {
 	if _, ok := in.Target.BootloaderSizes[ubootMTD]; !ok {
 		return false, nil // no NAND.U-Boot in the table, so no copy there to find
 	}
+
 	redundant, err := in.dumpEnv(read, ubootMTD, ubootenv.RedundantOffset, ubootenv.Size)
 	if errors.Is(err, errBadBlock) {
 		return false, nil // a bad block holds no copy for any U-Boot to boot
 	}
+
 	if err != nil {
 		return false, err
 	}
-	if _, _, err := ubootenv.ParseCopy(redundant); err != nil {
-		return false, nil
+
+	_, _, err = ubootenv.ParseCopy(redundant)
+
+	checksOut := err == nil
+	if !checksOut {
+		return false, nil // a copy that does not check out boots nothing: leave it
 	}
+
 	return true, in.eraseEnvCopy(read, ubootMTD, ubootenv.RedundantOffset)
+}
+
+// errHealthy stands for an environment that checks out, which needs no repair.
+var errHealthy = errors.New("the environment checks out")
+
+// needsRepair turns what ubootenv.Current found into nil when no copy checks out, which is
+// what RepairEnv repairs, errHealthy when one does, and the error otherwise.
+func needsRepair(_ *ubootenv.Env, _ int, _ byte, err error) error {
+	switch {
+	case errors.Is(err, ubootenv.ErrBadCRC):
+		return nil
+	case err == nil:
+		return errHealthy
+	}
+
+	return fmt.Errorf("reading the environment: %w", err)
+}
+
+// nilIfHealthy is the result RepairEnv returns for what needsRepair refused.
+func nilIfHealthy(err error) error {
+	if errors.Is(err, errHealthy) {
+		return nil
+	}
+
+	return err
 }
 
 // rebuiltEnv is the environment RepairEnv writes when nothing on NAND checks out.
@@ -330,11 +443,16 @@ func (in *Installer) rebuiltEnv(variant string) (*ubootenv.Env, error) {
 	if err != nil {
 		return nil, err
 	}
-	runCmd, _, _, err := bootFor(in.Target.Running)
+
+	runBoot, err := bootFor(in.Target.Running)
 	if err != nil {
 		return nil, err
 	}
+
+	runCmd := runBoot.bootcmd
+
 	env := ubootenv.NewEnv()
+
 	for _, r := range recipes {
 		key, value, _ := strings.Cut(r, "=")
 		env.Set(key, value)
@@ -343,6 +461,7 @@ func (in *Installer) rebuiltEnv(variant string) (*ubootenv.Env, error) {
 	env.Set("nand_args", "setenv bootargs ${bootargs} ubi.mtd=8,2048")
 	env.Set("nand_args2", "setenv bootargs ${bootargs} ubi.mtd=9,2048")
 	env.Set(bootcmdKey, runCmd)
+
 	return env, nil
 }
 
@@ -356,20 +475,25 @@ const ubootMTD = 4
 func (in *Installer) writeFreshEnv(read Reader, env *ubootenv.Env, lost int) error {
 	redundant, err := env.EncodeCopy(ubootenv.FreshRedundantFlag)
 	if err != nil {
-		return err
+		return fmt.Errorf("encoding the redundant copy: %w", err)
 	}
+
 	primary, err := env.EncodeCopy(ubootenv.FreshPrimaryFlag)
 	if err != nil {
-		return err
+		return fmt.Errorf("encoding the primary copy: %w", err)
 	}
+
 	if lost != ubootenv.Redundant {
-		if err := in.writeEnvCopy(read, ubootMTD, ubootenv.RedundantOffset, redundant); err != nil {
+		err := in.writeEnvCopy(read, ubootMTD, ubootenv.RedundantOffset, redundant)
+		if err != nil {
 			return err
 		}
 	}
+
 	if lost == ubootenv.Primary {
 		return nil
 	}
+
 	return in.writeEnvCopy(read, in.Target.EnvMTD, 0, primary)
 }
 
@@ -384,96 +508,114 @@ func (in *Installer) UseLegacyEnv(read Reader) error {
 	if !in.Target.EnvRedundant {
 		return nil
 	}
+
 	lost, err := in.lostCopy(read)
 	if err != nil {
 		return err
 	}
+
 	if lost == ubootenv.Primary {
-		return fmt.Errorf("%s sits on a bad erase block: Bose's U-Boot would find no environment there", envPart)
+		return fmt.Errorf("%s %w", envPart, errBadEnvBlock)
 	}
+
 	env, err := in.Env(read)
 	if err != nil {
 		return err
 	}
+
 	image, err := env.EncodeLegacy()
 	if err != nil {
 		return fmt.Errorf("the environment does not fit the 8 KiB Bose's U-Boot reads: %w", err)
 	}
-	if err := in.writeEnvCopy(read, in.Target.EnvMTD, 0, image); err != nil {
+
+	err = in.writeEnvCopy(read, in.Target.EnvMTD, 0, image)
+	if err != nil {
 		return err
 	}
+
 	if lost != ubootenv.Redundant {
-		if err := in.eraseEnvCopy(read, ubootMTD, ubootenv.RedundantOffset); err != nil {
+		err := in.eraseEnvCopy(read, ubootMTD, ubootenv.RedundantOffset)
+		if err != nil {
 			return err
 		}
 	}
+
 	in.Target.EnvRedundant = false
+
 	return nil
 }
 
-// dumpEnv reads n bytes at offset of mtd.
-func (in *Installer) dumpEnv(read Reader, mtd, offset, n int) ([]byte, error) {
-	args := []string{"--omitoob", "--bb=skipbad", "-l", strconv.Itoa(n)}
+// dumpEnv reads size bytes at offset of mtd.
+func (in *Installer) dumpEnv(read Reader, mtd, offset, size int) ([]byte, error) {
+	args := []string{"--omitoob", "--bb=skipbad", "-l", strconv.Itoa(size)}
 	if offset > 0 {
 		args = append(args, "-s", strconv.Itoa(offset))
 	}
+
 	raw, err := read("nanddump", append(args, in.dev(mtd))...)
 	if err == nil && len(raw) == 0 {
 		err = fmt.Errorf("mtd%d+%#x: %w", mtd, offset, errBadBlock)
-	} else if err == nil && len(raw) < n {
-		err = fmt.Errorf("mtd%d+%#x: short read of %d bytes", mtd, offset, len(raw))
+	} else if err == nil && len(raw) < size {
+		err = fmt.Errorf("mtd%d+%#x: %w %d bytes", mtd, offset, errShortRead, len(raw))
 	}
+
 	return raw, err
 }
 
 // writeEnvCopy erases the erase block at offset of mtd, writes image at its start and
 // reads it back.
 func (in *Installer) writeEnvCopy(read Reader, mtd, offset int, image []byte) error {
-	staged, err := os.CreateTemp("", "soundtap-env-")
+	staged, err := stage(image)
 	if err != nil {
 		return err
 	}
-	defer os.Remove(staged.Name())
-	defer staged.Close()
-	if _, err := staged.Write(image); err != nil {
-		return err
-	}
-	if err := staged.Sync(); err != nil {
-		return err
-	}
+	defer os.Remove(staged)
+
 	dev := in.dev(mtd)
-	if err := in.Run(nil, "flash_erase", dev, strconv.Itoa(offset), "1"); err != nil {
+
+	err = in.Run(nil, "flash_erase", dev, strconv.Itoa(offset), "1")
+	if err != nil {
 		return err
 	}
+
 	args := []string{"-p"}
 	if offset > 0 {
 		args = append(args, "-s", strconv.Itoa(offset))
 	}
-	if err := in.Run(nil, "nandwrite", append(args, dev, staged.Name())...); err != nil {
+
+	err = in.Run(nil, "nandwrite", append(args, dev, staged)...)
+	if err != nil {
 		return err
 	}
+
 	back, err := in.dumpEnv(read, mtd, offset, len(image))
 	if err != nil {
 		return fmt.Errorf("reading mtd%d+%#x back: %w", mtd, offset, err)
 	}
+
 	if !bytes.Equal(back[:len(image)], image) {
-		return fmt.Errorf("mtd%d+%#x environment readback verification failed", mtd, offset)
+		return fmt.Errorf("mtd%d+%#x %w", mtd, offset, errEnvReadback)
 	}
+
 	return nil
 }
 
 // eraseEnvCopy erases the erase block at offset of mtd and checks it reads back erased.
 func (in *Installer) eraseEnvCopy(read Reader, mtd, offset int) error {
-	if err := in.Run(nil, "flash_erase", in.dev(mtd), strconv.Itoa(offset), "1"); err != nil {
+	err := in.Run(nil, "flash_erase", in.dev(mtd), strconv.Itoa(offset), "1")
+	if err != nil {
 		return err
 	}
+
 	back, err := in.dumpEnv(read, mtd, offset, ubootenv.Size)
 	if err != nil {
 		return fmt.Errorf("reading mtd%d+%#x back: %w", mtd, offset, err)
 	}
+
 	if !bytes.Equal(back[:ubootenv.Size], bytes.Repeat([]byte{0xff}, ubootenv.Size)) {
-		return fmt.Errorf("mtd%d+%#x does not read back erased", mtd, offset)
+		return fmt.Errorf("mtd%d+%#x %w", mtd, offset, errNotErased)
 	}
+
 	return nil
 }
 
@@ -490,28 +632,38 @@ func (in *Installer) HoldRunningSlot(read Reader) error {
 	if in.Target.EnvMTD < 0 {
 		return nil // no environment: the kernel signature selects, and that is erased first
 	}
+
 	running, alt := in.Target.Running, in.Target.Alternate
-	runCmd, _, _, err := bootFor(running)
+
+	runBoot, err := bootFor(running)
 	if err != nil {
 		return err
 	}
-	altCmd, _, _, err := bootFor(alt)
+
+	altBoot, err := bootFor(alt)
 	if err != nil {
 		return err
 	}
+
+	runCmd, altCmd := runBoot.bootcmd, altBoot.bootcmd
+
 	return in.rewriteEnv(read, func(env *ubootenv.Env) (bool, error) {
 		changed := false
+
 		if v, ok := env.Get(bootcmdKey); ok && sameCommand(v, altCmd) {
 			env.Set(bootcmdKey, runCmd)
 			// The running slot is confirmed: its boots count in the RTC alone again.
-			markUnconfirmed(env, false)
+			clearUnconfirmed(env)
+
 			changed = true
 		}
 		// The fallback must not lead into the slot about to be erased either.
 		if v, ok := env.Get(altKey); ok && sameCommand(v, altCmd) {
 			env.Set(altKey, runCmd)
+
 			changed = true
 		}
+
 		return changed, nil
 	})
 }
@@ -523,15 +675,20 @@ func (in *Installer) PendingBootCount(read Reader) (uint32, error) {
 	if err != nil {
 		return 0, err
 	}
+
 	if v, _ := env.Get(pendingKey); v != "1" {
 		return 0, nil
 	}
-	v, _ := env.Get(countKey)
-	n, err := strconv.ParseUint(v, 10, 16)
-	if err != nil {
+
+	value, _ := env.Get(countKey)
+	count, parseErr := strconv.ParseUint(value, 10, 16)
+
+	counted := parseErr == nil
+	if !counted {
 		return 0, nil // none counted yet
 	}
-	return uint32(n), nil
+
+	return uint32(count), nil
 }
 
 // ConfirmPendingBoot clears upgrade_available and the count with it once this boot has
@@ -549,12 +706,15 @@ func (in *Installer) ConfirmPendingBoot(read Reader) error {
 	return in.rewriteEnv(read, func(env *ubootenv.Env) (bool, error) {
 		changed := false
 		if selected := SelectedSlot(env); selected == "" || selected == in.Target.Running.Name {
-			changed = markUnconfirmed(env, false)
+			changed = clearUnconfirmed(env)
 		}
-		if v, ok := env.Get(limitKey); ok && v != fmt.Sprint(BootLimit) {
-			env.Set(limitKey, fmt.Sprint(BootLimit))
+
+		if v, ok := env.Get(limitKey); ok && v != strconv.Itoa(BootLimit) {
+			env.Set(limitKey, strconv.Itoa(BootLimit))
+
 			changed = true
 		}
+
 		return changed, nil
 	})
 }
@@ -567,7 +727,9 @@ func (in *Installer) ClearPendingBootCount(read Reader) error {
 		if _, ok := env.Get(countKey); !ok {
 			return false, nil
 		}
+
 		env.Delete(countKey)
+
 		return true, nil
 	})
 }
@@ -581,6 +743,7 @@ func SelectedSlot(env *ubootenv.Env) string {
 	case sameCommand(v, bootcmdPong):
 		return pong.Name
 	}
+
 	return ""
 }
 
@@ -592,19 +755,27 @@ func (in *Installer) Env(read Reader) (*ubootenv.Env, error) {
 		return nil, err
 	}
 	defer os.Remove(cfg)
+
 	env, err := in.readEnv(read, cfg)
 	if lost := in.lostBehind(read, err); lost >= 0 {
 		env, _, err = in.remainingEnv(read, lost)
 	}
+
 	return env, err
 }
 
-func (in *Installer) readEnv(read Reader, cfg string) (*ubootenv.Env, error) {
+func (*Installer) readEnv(read Reader, cfg string) (*ubootenv.Env, error) {
 	out, err := read("fw_printenv", "-c", cfg)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", envPart, err)
 	}
-	return ubootenv.ParseText(out)
+
+	env, err := ubootenv.ParseText(out)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", envPart, err)
+	}
+
+	return env, nil
 }
 
 // envConfig writes the fw_env.config that points libubootenv at this board's
@@ -614,35 +785,68 @@ func (in *Installer) readEnv(read Reader, cfg string) (*ubootenv.Env, error) {
 // block. The partition number differs per model, so it is written per call.
 func (in *Installer) envConfig() (string, error) {
 	if in.Target.EnvMTD < 0 {
-		return "", fmt.Errorf("the partition table has no %s, so no slot can be selected", envPart)
+		return "", fmt.Errorf("the partition table has no %s, %w", envPart, errNoSlotSelectable)
 	}
+
 	size := ubootenv.LegacySize
 	if in.Target.EnvRedundant {
 		size = ubootenv.Size
 	}
+
 	if in.Target.EnvSize < int64(size) || in.Target.EnvEraseSize < int64(size) {
-		return "", fmt.Errorf("%s is too small for a %d byte environment", envPart, size)
+		return "", fmt.Errorf("%s %w %d byte environment", envPart, errTooSmallFor, size)
 	}
+
 	lines := fmt.Sprintf("%s 0x0 %#x %#x 1\n", in.dev(in.Target.EnvMTD), size, in.Target.EnvEraseSize)
 	if in.Target.EnvRedundant {
-		lines += fmt.Sprintf("%s %#x %#x %#x 1\n", in.dev(ubootMTD), ubootenv.RedundantOffset, size, in.Target.EnvEraseSize)
+		lines += fmt.Sprintf("%s %#x %#x %#x 1\n",
+			in.dev(ubootMTD), ubootenv.RedundantOffset, size, in.Target.EnvEraseSize)
 	}
-	f, err := os.CreateTemp("", "soundtap-fw-env-")
+
+	config, err := os.CreateTemp("", "soundtap-fw-env-")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("writing fw_env.config: %w", err)
 	}
-	defer f.Close()
-	if _, err := f.WriteString(lines); err != nil {
-		os.Remove(f.Name())
-		return "", err
+	defer config.Close()
+
+	_, err = config.WriteString(lines)
+	if err != nil {
+		_ = os.Remove(config.Name())
+
+		return "", fmt.Errorf("writing fw_env.config: %w", err)
 	}
-	return f.Name(), nil
+
+	return config.Name(), nil
+}
+
+// stage writes data to a temporary file, synced, and returns its path; the caller removes
+// it.
+func stage(data []byte) (string, error) {
+	staged, err := os.CreateTemp("", "soundtap-env-")
+	if err != nil {
+		return "", fmt.Errorf("staging: %w", err)
+	}
+	defer staged.Close()
+
+	_, err = staged.Write(data)
+	if err == nil {
+		err = staged.Sync()
+	}
+
+	if err != nil {
+		_ = os.Remove(staged.Name())
+
+		return "", fmt.Errorf("staging: %w", err)
+	}
+
+	return staged.Name(), nil
 }
 
 // sameCommand compares two bootcmd values the way U-Boot runs them: a trailing ';'
 // and surrounding space change nothing.
 func sameCommand(a, b string) bool {
 	trim := func(s string) string { return strings.TrimSuffix(strings.TrimSpace(s), ";") }
+
 	return trim(a) == trim(b)
 }
 
@@ -654,44 +858,53 @@ func (in *Installer) rewriteEnv(read Reader, edit func(*ubootenv.Env) (bool, err
 		return err
 	}
 	defer os.Remove(cfg)
+
 	current, err := in.readEnv(read, cfg)
 	if lost := in.lostBehind(read, err); lost >= 0 {
 		return in.rewriteRemaining(read, lost, edit)
 	}
+
 	if err != nil {
 		return err
 	}
+
 	env := current.Clone()
-	if changed, err := edit(env); err != nil || !changed {
+
+	changed, err := edit(env)
+	if err != nil || !changed {
 		return err
 	}
+
 	script, err := ubootenv.Script(current, env)
-	if err != nil || len(script) == 0 {
+	if err != nil {
+		return fmt.Errorf("the fw_setenv script: %w", err)
+	}
+
+	if len(script) == 0 {
 		// Nothing changed. Not erasing is the whole point: this is one erase block
 		// and under Bose's U-Boot it is the only copy of the environment.
-		return err
+		return nil
 	}
-	staged, err := os.CreateTemp("", "soundtap-env-")
+
+	staged, err := stage(script)
 	if err != nil {
 		return err
 	}
-	defer os.Remove(staged.Name())
-	defer staged.Close()
-	if _, err := staged.Write(script); err != nil {
+	defer os.Remove(staged)
+
+	err = in.Run(nil, "fw_setenv", "-c", cfg, "-s", staged)
+	if err != nil {
 		return err
 	}
-	if err := staged.Sync(); err != nil {
-		return err
-	}
-	if err := in.Run(nil, "fw_setenv", "-c", cfg, "-s", staged.Name()); err != nil {
-		return err
-	}
+
 	back, err := in.readEnv(read, cfg)
 	if err != nil {
 		return fmt.Errorf("reading %s back: %w", envPart, err)
 	}
+
 	if !back.Equal(env) {
-		return fmt.Errorf("%s readback verification failed", envPart)
+		return fmt.Errorf("%s %w", envPart, errReadbackFailed)
 	}
+
 	return nil
 }

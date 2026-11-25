@@ -5,6 +5,7 @@ package audio
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 )
 
@@ -20,25 +21,33 @@ const (
 )
 
 func (c Channel) String() string {
-	switch c {
-	case ChannelLeft:
+	if c == ChannelLeft {
 		return "left"
-	case ChannelRight:
+	}
+
+	if c == ChannelRight {
 		return "right"
-	case ChannelMono:
+	}
+
+	if c == ChannelMono {
 		return "mono"
 	}
+
 	return "stereo"
 }
 
+// errUnknownChannel is ParseChannel's answer to a name String does not give.
+var errUnknownChannel = errors.New("unknown channel")
+
 // ParseChannel reads the names String gives.
-func ParseChannel(s string) (Channel, error) {
+func ParseChannel(name string) (Channel, error) {
 	for _, c := range []Channel{ChannelStereo, ChannelLeft, ChannelRight, ChannelMono} {
-		if s == c.String() {
+		if name == c.String() {
 			return c, nil
 		}
 	}
-	return ChannelStereo, fmt.Errorf("unknown channel %q", s)
+
+	return ChannelStereo, fmt.Errorf("%w %q", errUnknownChannel, name)
 }
 
 // SetChannel picks the channel the sink gets. The multiroom tap keeps both.
@@ -48,12 +57,17 @@ func (m *Mixer) SetChannel(c Channel) { m.channel.Store(int32(c)) }
 // has the same samples in both and so plays unchanged.
 func (m *Mixer) applyChannel(pcm []byte) {
 	from := 0
-	switch Channel(m.channel.Load()) {
-	case ChannelStereo:
+	channel := Channel(m.channel.Load())
+
+	if channel == ChannelStereo {
 		return
-	case ChannelRight:
+	}
+
+	if channel == ChannelRight {
 		from = bytesPerSamp
-	case ChannelMono:
+	}
+
+	if channel == ChannelMono {
 		// Half of each, so the mix cannot clip.
 		for i := 0; i+frameBytes <= len(pcm); i += frameBytes {
 			l := int16(binary.LittleEndian.Uint16(pcm[i:]))
@@ -62,8 +76,10 @@ func (m *Mixer) applyChannel(pcm []byte) {
 			binary.LittleEndian.PutUint16(pcm[i:], v)
 			binary.LittleEndian.PutUint16(pcm[i+bytesPerSamp:], v)
 		}
+
 		return
 	}
+
 	to := bytesPerSamp - from
 	for i := 0; i+frameBytes <= len(pcm); i += frameBytes {
 		copy(pcm[i+to:i+to+bytesPerSamp], pcm[i+from:i+from+bytesPerSamp])

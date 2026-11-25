@@ -29,7 +29,7 @@ const sleepMaxMinutes = 240
 // sleepMaxBody bounds the small JSON bodies of POST /api/sleep and POST /api/power.
 const sleepMaxBody = 1024
 
-func (s *Server) getSleep(w http.ResponseWriter, r *http.Request) {
+func (s *Server) getSleep(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.sleep.View())
 }
 
@@ -40,31 +40,43 @@ func (s *Server) postSleep(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Minutes *int `json:"minutes"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, sleepMaxBody)).Decode(&body); err != nil || body.Minutes == nil {
+
+	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, sleepMaxBody)).Decode(&body)
+	if err != nil || body.Minutes == nil {
 		s.badRequest(w, "minutes required", err)
+
 		return
 	}
+
 	if *body.Minutes < 0 || *body.Minutes > sleepMaxMinutes {
 		s.badRequest(w, fmt.Sprintf("minutes must be 0..%d", sleepMaxMinutes), nil)
+
 		return
 	}
 	// A timer set in standby would cut off whatever is played next at the old endsAt.
 	if *body.Minutes > 0 && s.inStandby(r.Context()) {
 		apiError(w, http.StatusConflict, "the speaker is in standby")
+
 		return
 	}
+
 	unit := s.sleepUnit
 	if unit <= 0 {
 		unit = time.Minute
 	}
+
 	retry := s.sleepRetry
 	if retry <= 0 {
 		retry = sleeptimer.RetryEvery
 	}
+
+	//nolint:contextcheck // the timer runs on its own, long after this request
 	s.sleep.Set(*body.Minutes, unit, retry, s.sleepExpired)
+
 	if *body.Minutes > 0 {
 		s.log.Info("sleep timer set", "minutes", *body.Minutes)
 	}
+
 	s.hub.nudge()
 	writeJSON(w, http.StatusOK, s.sleep.View())
 }
@@ -76,19 +88,26 @@ func (s *Server) postSleep(w http.ResponseWriter, r *http.Request) {
 func (s *Server) sleepExpired(run context.Context, attempt int) error {
 	ctx, cancel := context.WithTimeout(run, 6*time.Second+s.offSlack)
 	defer cancel()
-	if err := s.enterStandby(ctx); err != nil {
+
+	err := s.enterStandby(ctx)
+	if err != nil {
 		if run.Err() != nil {
 			return err // cancelled or replaced: nothing failed
 		}
+
 		if attempt >= sleeptimer.Attempts {
 			s.log.Warn("sleep timer: standby failed; giving up", "attempt", attempt, "err", err)
 		} else {
 			s.log.Warn("sleep timer: standby failed; will retry", "attempt", attempt, "err", err)
 		}
+
 		s.hub.nudge()
+
 		return err
 	}
+
 	s.log.Info("sleep timer: standby")
+
 	return nil
 }
 
@@ -100,18 +119,24 @@ func (s *Server) sleepExpired(run context.Context, attempt int) error {
 func (s *Server) enterStandby(ctx context.Context) error {
 	s.snapshotRecent(ctx)
 	// The snapshot is I/O; a sleep timer cancelled meanwhile must not still turn off.
-	if err := ctx.Err(); err != nil {
-		return err
+	err := ctx.Err()
+	if err != nil {
+		return fmt.Errorf("before standby: %w", err)
 	}
-	if err := s.backend.EnterStandby(ctx); err != nil {
-		return err
+
+	err = s.backend.EnterStandby(ctx)
+	if err != nil {
+		return fmt.Errorf("enter standby: %w", err)
 	}
+
 	if !s.standbyWatched.Load() {
 		// A backend that does not report standby itself: do it here, for the paths
 		// that come through this function at least.
-		s.standbyEntered()
+		s.standbyHappened(ctx)
 	}
+
 	s.hub.nudge()
+
 	return nil
 }
 
@@ -141,17 +166,26 @@ func (s *Server) WatchStandby(b standbyNotifier) {
 // be turned off, a timer that tries again is still what the person wanted. A timer set
 // while an older one was turning the speaker off is not the one that ran out, and stays.
 func (s *Server) standbyEntered() {
+	s.standbyHappened(context.Background())
+}
+
+// standbyHappened is standbyEntered for a caller that holds a context.
+func (s *Server) standbyHappened(ctx context.Context) {
 	s.sleep.CancelFiring()
-	s.dismissAlarm()
+	s.dismissAlarm(ctx)
+
 	if s.settings != nil && !s.settings.Get().Multiroom.KeepGroups() && !s.paired() {
+		//nolint:contextcheck // the followers are released in the background, past standby
 		s.group.ReleaseFollowers(s.groupEnv())
 	}
+
 	s.hub.nudge()
 }
 
 // inStandby reports whether the speaker is known to be in standby.
 func (s *Server) inStandby(ctx context.Context) bool {
 	np, err := s.backend.NowPlaying(ctx)
+
 	return err == nil && np.Source == standbySource
 }
 
@@ -168,27 +202,39 @@ func (s *Server) power(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		On *bool `json:"on"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, sleepMaxBody)).Decode(&body); err != nil || body.On == nil {
+
+	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, sleepMaxBody)).Decode(&body)
+	if err != nil || body.On == nil {
 		s.badRequest(w, "on required", err)
+
 		return
 	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second+s.offSlack)
 	defer cancel()
+
 	if !*body.On {
-		if err := s.enterStandby(ctx); err != nil {
+		err := s.enterStandby(ctx)
+		if err != nil {
 			s.fail(w, "power off failed", err)
+
 			return
 		}
+
 		writeJSON(w, http.StatusOK, map[string]bool{"on": false})
+
 		return
 	}
 	// On is the power key, not a bare wake: it resumes what played last.
 	if s.inStandby(ctx) {
-		if err := s.backend.Key(ctx, "POWER"); err != nil {
+		err := s.backend.Key(ctx, "POWER")
+		if err != nil {
 			s.fail(w, "power on failed", err)
+
 			return
 		}
 	}
+
 	s.hub.nudge()
 	writeJSON(w, http.StatusOK, map[string]bool{"on": true})
 }

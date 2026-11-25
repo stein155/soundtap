@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -17,10 +18,20 @@ import (
 )
 
 // bootConfirmAfter is how long a boot has to stay up before it can count as good.
+//
+//nolint:gochecknoglobals // a test seam: tests confirm after a millisecond
 var bootConfirmAfter = time.Minute
 
 // bootConfirmPoll is how often a boot that is not good yet is looked at again.
+//
+//nolint:gochecknoglobals // a test seam: tests poll every millisecond
 var bootConfirmPoll = 10 * time.Second
+
+// bootProbeTimeout bounds one look at the API's answer.
+const bootProbeTimeout = 5 * time.Second
+
+// errBootProbeStatus is an API that answered, but not with 200 OK.
+var errBootProbeStatus = errors.New("the API did not answer OK")
 
 // bootCheck is one thing a boot must show before it is confirmed. It returns "" when the
 // boot shows it, or what it still waits for. None of them is the network: a speaker on a
@@ -43,7 +54,13 @@ type bootGate struct {
 }
 
 func newBootGate() *bootGate {
-	return &bootGate{attempted: make(chan struct{}), netDir: "/sys/class/net"}
+	return &bootGate{
+		bco:           nil,
+		bcoOnce:       sync.Once{},
+		attempted:     make(chan struct{}),
+		attemptedOnce: sync.Once{},
+		netDir:        "/sys/class/net",
+	}
 }
 
 // waitForBCO makes the confirmation wait for the BCO install step and its link (the ST20).
@@ -58,25 +75,33 @@ func (g *bootGate) bcoDone() {
 
 // awaitAttempt waits up to d for confirmBoot's attempt, and says whether it came.
 func (g *bootGate) awaitAttempt(ctx context.Context, d time.Duration) bool {
-	t := time.NewTimer(d)
-	defer t.Stop()
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+
 	select {
 	case <-g.attempted:
 		return true
 	case <-ctx.Done():
-	case <-t.C:
+	case <-timer.C:
 	}
+
 	return false
 }
 
 // checks are the conditions confirmBoot waits for, the API's answer on probe first.
 func (g *bootGate) checks(probe string) []bootCheck {
-	checks := []bootCheck{func(ctx context.Context) string {
-		if err := answers(ctx, probe); err != nil {
+	const st20Checks = 3 // the API, the BCO install and its link
+
+	checks := make([]bootCheck, 0, st20Checks)
+
+	checks = append(checks, func(ctx context.Context) string {
+		err := answers(ctx, probe)
+		if err != nil {
 			return "the API to answer on loopback: " + err.Error()
 		}
+
 		return ""
-	}}
+	})
 	if g.bco == nil {
 		return checks
 	}
@@ -94,9 +119,11 @@ func (g *bootGate) checks(probe string) []bootCheck {
 			}
 		},
 		func(context.Context) string {
-			if _, err := os.Stat(filepath.Join(g.netDir, "bcolink0")); err != nil {
+			_, err := os.Stat(filepath.Join(g.netDir, "bcolink0"))
+			if err != nil {
 				return "the BCO link (bcolink0)"
 			}
+
 			return ""
 		})
 }
@@ -107,36 +134,48 @@ func (g *bootGate) checks(probe string) []bootCheck {
 // bootConfirmPoll for as long as soundtapd runs, so a slow start, a busy moment or a BCO
 // flash only delays the confirmation. The confirmation itself, which writes the
 // environment, is tried once.
-func confirmBoot(ctx context.Context, srv interface{ ConfirmBoot() error }, g *bootGate, checks []bootCheck, log *slog.Logger) {
+func confirmBoot(
+	ctx context.Context, srv interface{ ConfirmBoot() error }, gate *bootGate, checks []bootCheck, log *slog.Logger,
+) {
 	select {
 	case <-ctx.Done():
 		return
 	case <-time.After(bootConfirmAfter):
 	}
+
 	waiting := ""
+
 	for {
 		why := pendingCheck(ctx, checks)
 		if why == "" {
 			break
 		}
+
 		counters.BootConfirmRetries.Add(1) // /api/health (ADR 0127)
+
 		if why != waiting {
 			// Once per change, not every poll: a speaker whose BCO never comes up would
 			// otherwise fill the log for its whole uptime.
 			log.Warn("boot not confirmed yet", "waiting for", why)
 			waiting = why
 		}
+
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(bootConfirmPoll):
 		}
 	}
-	defer g.attemptedOnce.Do(func() { close(g.attempted) })
-	if err := srv.ConfirmBoot(); err != nil {
+
+	defer gate.attemptedOnce.Do(func() { close(gate.attempted) })
+
+	err := srv.ConfirmBoot()
+	if err != nil {
 		log.Warn("boot confirm", "err", err)
+
 		return
 	}
+
 	log.Info("boot confirmed")
 }
 
@@ -147,24 +186,29 @@ func pendingCheck(ctx context.Context, checks []bootCheck) string {
 			return why
 		}
 	}
+
 	return ""
 }
 
 func answers(ctx context.Context, url string) error {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, bootProbeTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
-		return err
+		return fmt.Errorf("probe %s: %w", url, err)
 	}
 	// Probes our own loopback listener, which SafeTransport refuses.
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("probe %s: %w", url, err)
 	}
-	resp.Body.Close()
+
+	_ = resp.Body.Close()
+
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s answered %s", url, resp.Status)
+		return fmt.Errorf("%w: %s answered %s", errBootProbeStatus, url, resp.Status)
 	}
+
 	return nil
 }

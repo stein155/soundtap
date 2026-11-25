@@ -18,7 +18,9 @@ import (
 // volume: dividing a 100 by a hard-coded 70 gives 1.43 and clips the chime against full
 // scale, which is the opposite of what a louder setting is for.
 func TestNotificationCarriesTheCeilingItWasClampedTo(t *testing.T) {
-	for _, tc := range []struct {
+	t.Parallel()
+
+	for _, testCase := range []struct {
 		name    string
 		model   string
 		volume  int
@@ -30,14 +32,19 @@ func TestNotificationCarriesTheCeilingItWasClampedTo(t *testing.T) {
 		{"other models stop at 70", "st10", 100, 70, 70},
 		{"floor applies everywhere", "wla", 3, 10, 100},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			s := Server{fw: firmware.New(nil, "")}
-			s.fw.SetModel(func() (string, error) { return tc.model, nil })
-			if got := s.notificationVolume(tc.volume); got != tc.wantVol {
-				t.Fatalf("volume = %d, want %d", got, tc.wantVol)
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			srv := new(Server)
+			srv.fw = firmware.New(nil, "")
+			srv.fw.SetModel(func() (string, error) { return testCase.model, nil })
+
+			if got := srv.notificationVolume(testCase.volume); got != testCase.wantVol {
+				t.Fatalf("volume = %d, want %d", got, testCase.wantVol)
 			}
-			if got := s.notificationVolumeMax(); got != tc.wantMax {
-				t.Fatalf("ceiling = %d, want %d", got, tc.wantMax)
+
+			if got := srv.notificationVolumeMax(); got != testCase.wantMax {
+				t.Fatalf("ceiling = %d, want %d", got, testCase.wantMax)
 			}
 		})
 	}
@@ -46,18 +53,24 @@ func TestNotificationCarriesTheCeilingItWasClampedTo(t *testing.T) {
 // A clip upload is read whole into memory, so a second one while the first is still
 // arriving is turned away rather than read beside it.
 func TestClipUploadsAreReadOneAtATime(t *testing.T) {
-	var s Server
-	s.clipUpload.Lock()
+	t.Parallel()
+
+	var srv Server
+	srv.clipUpload.Lock()
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/speaker/notify", strings.NewReader("ID3"))
+	clip := strings.NewReader("ID3")
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/speaker/notify", clip)
 	req.Header.Set("Content-Type", "audio/mpeg")
-	s.speakerNotify(rec, req)
+	srv.speakerNotify(rec, req)
+
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("upload during an upload = %d, want 503", rec.Code)
 	}
-	s.audioMu.Lock()
-	defer s.audioMu.Unlock()
-	if len(s.audioClips) != 0 {
-		t.Fatalf("refused upload left %d clips", len(s.audioClips))
+
+	srv.audioMu.Lock()
+	defer srv.audioMu.Unlock()
+
+	if len(srv.audioClips) != 0 {
+		t.Fatalf("refused upload left %d clips", len(srv.audioClips))
 	}
 }

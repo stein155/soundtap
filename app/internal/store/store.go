@@ -8,7 +8,8 @@ package store
 import (
 	"errors"
 	"fmt"
-	"sort"
+	"io/fs"
+	"maps"
 	"sync"
 
 	"github.com/stein155/soundtap/app/internal/atomicjson"
@@ -40,12 +41,24 @@ type Store struct {
 // ErrClosed is returned by writes after Close.
 var ErrClosed = errors.New("preset store closed")
 
+// fileMode is presets.json's mode: the web UI's presets are no secret.
+const fileMode fs.FileMode = 0o644
+
+// slotRangeError refuses a slot outside 1..speaker.PresetSlots.
+type slotRangeError struct{}
+
+func (slotRangeError) Error() string {
+	return fmt.Sprintf("slot must be 1..%d", speaker.PresetSlots)
+}
+
 // Close stops all later writes, so a factory reset that deletes the file cannot
 // have it written back by a save still in flight.
 func (s *Store) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	s.closed = true
+
 	return nil
 }
 
@@ -57,15 +70,18 @@ func (s *Store) Close() error {
 // empty and read-only, since a write would replace presets that may still be on disk.
 // Either way the error says what happened (atomicjson.ErrCorrupt or ErrUnreadable).
 func Open(path string) (*Store, error) {
-	s := &Store{path: path, m: map[int]Preset{}}
+	opened := &Store{path: path, mu: sync.Mutex{}, m: map[int]Preset{}, closed: false, loadErr: nil}
+
 	var list []Preset
-	s.loadErr = atomicjson.Load(path, &list)
-	for _, p := range list {
-		if p.Slot >= 1 && p.Slot <= speaker.PresetSlots {
-			s.m[p.Slot] = p
+
+	opened.loadErr = atomicjson.Load(path, &list)
+	for _, preset := range list {
+		if preset.Slot >= 1 && preset.Slot <= speaker.PresetSlots {
+			opened.m[preset.Slot] = preset
 		}
 	}
-	return s, s.loadErr
+
+	return opened, opened.loadErr
 }
 
 // LoadErr is what Open found wrong with the file, nil when it loaded or was absent.
@@ -75,38 +91,41 @@ func (s *Store) LoadErr() error { return s.loadErr }
 func (s *Store) All() []Preset {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make([]Preset, 0, len(s.m))
-	for _, p := range s.m {
-		out = append(out, p)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Slot < out[j].Slot })
-	return out
+
+	return bySlot(s.m)
 }
 
 // Get returns the preset on a slot.
 func (s *Store) Get(slot int) (Preset, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	p, ok := s.m[slot]
+
 	return p, ok
 }
 
 // Set saves a preset and persists.
-func (s *Store) Set(p Preset) error {
-	if p.Slot < 1 || p.Slot > speaker.PresetSlots {
-		return fmt.Errorf("slot must be 1..%d", speaker.PresetSlots)
+func (s *Store) Set(preset Preset) error { //nolint:gocritic // callers pass presets by value
+	if preset.Slot < 1 || preset.Slot > speaker.PresetSlots {
+		return slotRangeError{}
 	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	next := make(map[int]Preset, len(s.m)+1)
-	for slot, current := range s.m {
-		next[slot] = current
-	}
-	next[p.Slot] = p
-	if err := s.persistLocked(next); err != nil {
+	maps.Copy(next, s.m)
+
+	next[preset.Slot] = preset
+
+	err := s.persistLocked(next)
+	if err != nil {
 		return err
 	}
+
 	s.m = next
+
 	return nil
 }
 
@@ -114,43 +133,56 @@ func (s *Store) Set(p Preset) error {
 func (s *Store) Remove(slot int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	next := make(map[int]Preset, len(s.m))
 	for currentSlot, current := range s.m {
 		if currentSlot != slot {
 			next[currentSlot] = current
 		}
 	}
-	if err := s.persistLocked(next); err != nil {
+
+	err := s.persistLocked(next)
+	if err != nil {
 		return err
 	}
+
 	s.m = next
+
 	return nil
 }
 
 // Swap exchanges what two slots hold, in one write: a power cut leaves the old pair or
 // the new one, never a preset on both slots and its neighbour gone. An empty slot
 // swaps too, which moves the other one.
-func (s *Store) Swap(a, b int) error {
-	if a < 1 || a > speaker.PresetSlots || b < 1 || b > speaker.PresetSlots {
-		return fmt.Errorf("slot must be 1..%d", speaker.PresetSlots)
+func (s *Store) Swap(first, second int) error {
+	if first < 1 || first > speaker.PresetSlots || second < 1 || second > speaker.PresetSlots {
+		return slotRangeError{}
 	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	next := make(map[int]Preset, len(s.m))
-	for slot, p := range s.m {
+	for slot, preset := range s.m {
 		switch slot {
-		case a:
-			slot = b
-		case b:
-			slot = a
+		case first:
+			slot = second
+		case second:
+			slot = first
+		default: // every other slot keeps its preset
 		}
-		p.Slot = slot
-		next[slot] = p
+
+		preset.Slot = slot
+		next[slot] = preset
 	}
-	if err := s.persistLocked(next); err != nil {
+
+	err := s.persistLocked(next)
+	if err != nil {
 		return err
 	}
+
 	s.m = next
+
 	return nil
 }
 
@@ -158,13 +190,29 @@ func (s *Store) persistLocked(presets map[int]Preset) error {
 	if s.closed {
 		return ErrClosed
 	}
+
 	if errors.Is(s.loadErr, atomicjson.ErrUnreadable) {
 		return s.loadErr
 	}
-	out := make([]Preset, 0, len(presets))
-	for _, p := range presets {
-		out = append(out, p)
+
+	err := atomicjson.Write(s.path, bySlot(presets), fileMode)
+	if err != nil {
+		return fmt.Errorf("save presets: %w", err)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Slot < out[j].Slot })
-	return atomicjson.Write(s.path, out, 0o644)
+
+	return nil
+}
+
+// bySlot lists the presets in slot order. Every key is a valid slot: Open drops the
+// others and Set and Swap refuse them.
+func bySlot(presets map[int]Preset) []Preset {
+	out := make([]Preset, 0, len(presets))
+
+	for slot := 1; slot <= speaker.PresetSlots; slot++ {
+		if preset, ok := presets[slot]; ok {
+			out = append(out, preset)
+		}
+	}
+
+	return out
 }

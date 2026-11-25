@@ -64,16 +64,19 @@ func icyBody(metaint int, meta string) []byte {
 	audio := strings.Repeat("A", metaint)
 	blocks := (len(meta) + 15) / 16
 	padded := meta + strings.Repeat("\x00", blocks*16-len(meta))
+
 	return append([]byte(audio), append([]byte{byte(blocks)}, []byte(padded)...)...)
 }
 
 func TestStreamTitle(t *testing.T) {
 	const metaint = 32
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Icy-MetaData") != "1" {
+		if r.Header.Get("Icy-Metadata") != "1" {
 			t.Errorf("missing Icy-MetaData header")
 		}
-		w.Header().Set("icy-metaint", strconv.Itoa(metaint))
+
+		w.Header().Set("Icy-Metaint", strconv.Itoa(metaint))
 		_, _ = w.Write(icyBody(metaint, "StreamTitle='A - B';"))
 	}))
 	defer srv.Close()
@@ -82,6 +85,7 @@ func TestStreamTitle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StreamTitle: %v", err)
 	}
+
 	if got != "A - B" {
 		t.Errorf("StreamTitle = %q, want %q", got, "A - B")
 	}
@@ -89,8 +93,9 @@ func TestStreamTitle(t *testing.T) {
 
 func TestStreamTitleSkipsEmptyBlock(t *testing.T) {
 	const metaint = 16
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("icy-metaint", strconv.Itoa(metaint))
+		w.Header().Set("Icy-Metaint", strconv.Itoa(metaint))
 		// First block empty (length 0), second carries the title.
 		body := append([]byte(strings.Repeat("A", metaint)), 0)
 		body = append(body, icyBody(metaint, "StreamTitle='Song';")...)
@@ -102,6 +107,7 @@ func TestStreamTitleSkipsEmptyBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StreamTitle: %v", err)
 	}
+
 	if got != "Song" {
 		t.Errorf("StreamTitle = %q, want %q", got, "Song")
 	}
@@ -121,7 +127,7 @@ func TestStreamTitleNoMetaint(t *testing.T) {
 
 func TestStreamTitleNon200(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(503)
+		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	defer srv.Close()
 
@@ -134,6 +140,7 @@ func TestParseStreamTitleDropsAdMarker(t *testing.T) {
 	if got := parseStreamTitle("StreamTitle='commercial-in';StreamUrl='';"); got != "" {
 		t.Fatalf("ad marker shown as track: %q", got)
 	}
+
 	if got := parseStreamTitle("StreamTitle='Commercials - The Band';"); got != "Commercials - The Band" {
 		t.Fatalf("real track dropped: %q", got)
 	}

@@ -10,6 +10,7 @@ import (
 	"mime"
 	"net/http"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,72 +28,96 @@ type gzipAssets struct {
 	cache map[string][]byte
 }
 
-var gzipTypes = map[string]bool{".js": true, ".css": true, ".svg": true, ".json": true, ".webmanifest": true, ".html": true}
+// gzipTypes are the asset extensions served gzipped.
+func gzipTypes() []string { return []string{".js", ".css", ".svg", ".json", ".webmanifest", ".html"} }
 
 func (g *gzipAssets) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
-	if !strings.HasPrefix(name, "assets/") || !gzipTypes[path.Ext(name)] {
+	if !strings.HasPrefix(name, "assets/") || !slices.Contains(gzipTypes(), path.Ext(name)) {
 		g.next.ServeHTTP(w, r)
+
 		return
 	}
+
 	w.Header().Add("Vary", "Accept-Encoding")
+
 	if (r.Method != http.MethodGet && r.Method != http.MethodHead) || r.Header.Get("Range") != "" ||
 		!acceptsGzip(r.Header.Get("Accept-Encoding")) {
 		g.next.ServeHTTP(w, r)
+
 		return
 	}
+
 	body, ok := g.compressed(name)
 	if !ok {
 		g.next.ServeHTTP(w, r)
+
 		return
 	}
+
 	if ct := mime.TypeByExtension(path.Ext(name)); ct != "" {
 		w.Header().Set("Content-Type", ct)
 	}
+
 	w.Header().Set("Content-Encoding", "gzip")
 	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+
 	if r.Method == http.MethodHead {
 		return
 	}
+
 	_, _ = w.Write(body)
 }
 
 func (g *gzipAssets) compressed(name string) ([]byte, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+
 	if b, ok := g.cache[name]; ok {
 		return b, true
 	}
+
 	raw, err := fs.ReadFile(g.fs, name)
 	if err != nil {
 		return nil, false
 	}
+
 	var buf bytes.Buffer
+
 	zw, _ := gzip.NewWriterLevel(&buf, gzip.BestCompression)
-	if _, err := zw.Write(raw); err != nil || zw.Close() != nil {
+
+	_, err = zw.Write(raw)
+	if err != nil || zw.Close() != nil {
 		return nil, false
 	}
+
 	if g.cache == nil {
 		g.cache = map[string][]byte{}
 	}
+
 	g.cache[name] = buf.Bytes()
+
 	return buf.Bytes(), true
 }
 
 // acceptsGzip reports whether an Accept-Encoding header allows gzip (a "gzip;q=0" refuses it).
 func acceptsGzip(h string) bool {
-	for _, part := range strings.Split(h, ",") {
+	for part := range strings.SplitSeq(h, ",") {
 		token, params, _ := strings.Cut(strings.TrimSpace(part), ";")
 		if !strings.EqualFold(strings.TrimSpace(token), "gzip") && strings.TrimSpace(token) != "*" {
 			continue
 		}
+
 		q := strings.TrimSpace(params)
 		if v, ok := strings.CutPrefix(q, "q="); ok {
-			if f, err := strconv.ParseFloat(v, 64); err == nil && f == 0 {
+			f, err := strconv.ParseFloat(v, 64)
+			if err == nil && f == 0 {
 				return false
 			}
 		}
+
 		return true
 	}
+
 	return false
 }

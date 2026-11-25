@@ -6,6 +6,7 @@ package multiroom
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"slices"
 	"time"
@@ -27,88 +28,119 @@ var (
 )
 
 // readStatus is snapserver's status, failed as ErrStatus.
-func readStatus(ctx context.Context, env Env) (snapcast.Status, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+func readStatus(ctx context.Context, env *Env) (snapcast.Status, error) {
+	ctx, cancel := context.WithTimeout(ctx, localCallTimeout)
 	defer cancel()
+
 	status, err := env.Snapcast.GetStatus(ctx)
 	if err != nil {
 		return snapcast.Status{}, &JoinError{ErrStatus, err}
 	}
+
 	return status, nil
 }
 
-// SetVolume sets client id's volume and returns the volume it set. id may name the
+// SetVolume sets client name's volume and returns the volume it set. name may name the
 // client either way; see ClientIDFor.
-func SetVolume(ctx context.Context, env Env, id string, volume snapcast.Volume) (snapcast.Volume, error) {
-	status, err := readStatus(ctx, env)
+//
+//nolint:gocritic // exported; web passes Env by value
+func SetVolume(
+	ctx context.Context, env Env, name string, volume snapcast.Volume,
+) (snapcast.Volume, error) {
+	status, err := readStatus(ctx, &env)
 	if err != nil {
 		return volume, err
 	}
-	id, found := ClientIDFor(status, id)
+
+	clientID, found := ClientIDFor(status, name)
 	if !found {
 		return volume, &JoinError{ErrNoClient, nil}
 	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+
+	ctx, cancel := context.WithTimeout(ctx, localCallTimeout)
 	defer cancel()
 	// This speaker's own client is the silent anchor: it stays muted (muteAnchor), and
 	// its volume never reached a speaker anyway.
-	if id == env.LocalID {
+	if clientID == env.LocalID {
 		volume.Muted = true
 	}
-	if err := env.Snapcast.SetVolume(ctx, id, volume); err != nil {
+
+	err = env.Snapcast.SetVolume(ctx, clientID, volume)
+	if err != nil {
 		return volume, &JoinError{ErrSetVolume, err}
 	}
+
 	return volume, nil
 }
 
-// SetMember puts client id in this speaker's group or, with member false, takes it out.
-func (g *Group) SetMember(ctx context.Context, env Env, id string, member bool) error {
+// SetMember puts client name (either spelling, see ClientIDFor) in this speaker's group or,
+// with member false, takes it out.
+//
+//nolint:gocritic,revive // exported; web passes Env by value, and member is the membership asked for
+func (g *Group) SetMember(ctx context.Context, env Env, name string, member bool) error {
 	// The read of the group and the write of the new member list are one step: two
 	// overlapping calls would each build their list from the old group, and the later
 	// one would drop the room the earlier one added.
 	g.members.Lock()
 	defer g.members.Unlock()
-	status, groupID, err := localGroup(ctx, env)
+
+	status, groupID, err := g.localGroup(ctx, &env)
 	if err != nil {
 		return err
 	}
 	// Resolved before the comparison below: a caller that named this speaker by its
 	// device id must still be recognised as this speaker, or the guard against removing
 	// the current client is bypassed by spelling it the other way.
-	id, found := ClientIDFor(status, id)
+	clientID, found := ClientIDFor(status, name)
 	if !found {
 		return &JoinError{ErrNoClient, nil}
 	}
-	if id == env.LocalID && !member {
+
+	if clientID == env.LocalID && !member {
 		return &JoinError{ErrRemoveLocal, nil}
 	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+
+	ctx, cancel := context.WithTimeout(ctx, localCallTimeout)
 	defer cancel()
-	if err := env.Snapcast.SetClients(ctx, groupID, groupClients(status, groupID, id, member)); err != nil {
+
+	clients := groupWithout(status, groupID, clientID)
+	if member {
+		clients = groupWith(status, groupID, clientID)
+	}
+
+	err = env.Snapcast.SetClients(ctx, groupID, clients)
+	if err != nil {
 		return &JoinError{ErrSetClients, err}
 	}
-	volume, found := FindClientVolume(status, id)
+
+	volume, found := FindClientVolume(status, clientID)
 	if found {
 		volume.Muted = !member
-		if err := env.Snapcast.SetVolume(ctx, id, volume); err != nil {
+
+		err = env.Snapcast.SetVolume(ctx, clientID, volume)
+		if err != nil {
 			return &JoinError{ErrMemberVolume, err}
 		}
 	}
+
 	if env.Active != nil {
-		active := member || othersConnected(status, groupID, id, env.LocalID)
+		active := member || othersConnected(status, groupID, clientID, env.LocalID)
 		env.Active(active)
-		if err := PersistActive(env.ActivePath, active); err != nil {
+
+		err = PersistActive(env.ActivePath, active)
+		if err != nil {
 			return &JoinError{ErrPersist, err}
 		}
 	}
+
 	return nil
 }
 
 // anchorWait bounds how long SetMember waits for snapserver to know this speaker's own
 // client after starting the anchor: a snapclient start and connect take about a second on
 // these boards. It stays well under a peer call's timeout, so a follower's join is
-// answered rather than timed out. A variable for tests.
-var anchorWait = 5 * time.Second
+// answered rather than timed out. Group.anchorWait overrides it for a test.
+const anchorWait = 5 * time.Second
 
 // anchorPoll is how often snapserver is asked while SetMember waits for the anchor.
 const anchorPoll = 200 * time.Millisecond
@@ -118,22 +150,32 @@ const anchorPoll = 200 * time.Millisecond
 // snapserver knows the group only by it: a snapserver that never saw it, a fresh
 // installation's, has no group to add a member to until it connects. One it saw before
 // keeps its record, connected or not, and is found at once.
-func localGroup(ctx context.Context, env Env) (snapcast.Status, string, error) {
+func (g *Group) localGroup(ctx context.Context, env *Env) (snapcast.Status, string, error) {
 	if env.WantAnchor != nil {
 		env.WantAnchor()
 	}
-	deadline := time.Now().Add(anchorWait)
+
+	wait := g.anchorWait
+	if wait == 0 {
+		wait = anchorWait
+	}
+
+	deadline := time.Now().Add(wait)
+
 	for {
 		status, err := readStatus(ctx, env)
 		if err != nil {
 			return status, "", err
 		}
+
 		if groupID, found := FindClient(status, env.LocalID); found {
 			return status, groupID, nil
 		}
+
 		if env.WantAnchor == nil || !time.Now().Before(deadline) {
 			return status, "", &JoinError{ErrNoLocal, nil}
 		}
+
 		select {
 		case <-ctx.Done():
 			return status, "", &JoinError{ErrNoLocal, ctx.Err()}
@@ -142,50 +184,84 @@ func localGroup(ctx context.Context, env Env) (snapcast.Status, string, error) {
 	}
 }
 
-// groupClients is group groupID's member list with client id in it or, with member false,
-// left out.
-func groupClients(status snapcast.Status, groupID, id string, member bool) []string {
+// groupMembers is group groupID's member list.
+func groupMembers(status snapcast.Status, groupID string) []string {
 	var clients []string
+
 	for _, group := range status.Groups {
 		if group.ID != groupID {
 			continue
 		}
+
 		for _, client := range group.Clients {
-			if client.ID != id || member {
-				clients = append(clients, client.ID)
-			}
+			clients = append(clients, client.ID)
 		}
 	}
-	if member && !slices.Contains(clients, id) {
+
+	return clients
+}
+
+// groupWith is group groupID's member list with client id in it.
+func groupWith(status snapcast.Status, groupID, id string) []string {
+	clients := groupMembers(status, groupID)
+	if !slices.Contains(clients, id) {
 		clients = append(clients, id)
 	}
+
+	return clients
+}
+
+// groupWithout is group groupID's member list with client id left out; nil when that
+// leaves nobody.
+func groupWithout(status snapcast.Status, groupID, id string) []string {
+	var clients []string
+
+	for _, client := range groupMembers(status, groupID) {
+		if client != id {
+			clients = append(clients, client)
+		}
+	}
+
 	return clients
 }
 
 // othersConnected reports whether group groupID still has a connected client other than
 // id and this speaker's own.
-func othersConnected(status snapcast.Status, groupID, id, localID string) bool {
+func othersConnected(status snapcast.Status, groupID, clientID, localID string) bool {
 	active := false
+
 	for _, group := range status.Groups {
 		if group.ID == groupID {
 			for _, client := range group.Clients {
-				active = active || client.Connected && client.ID != id && client.ID != localID
+				active = active || client.Connected && client.ID != clientID && client.ID != localID
 			}
 		}
 	}
+
 	return active
 }
 
 // PersistActive keeps the multiroom marker at path in step with active; "" keeps none.
+//
+//nolint:revive // exported; active is the state to persist, not a mode
 func PersistActive(path string, active bool) error {
 	if path == "" {
 		return nil
 	}
+
 	if !active {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return err
+		err := os.Remove(path)
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove multiroom marker: %w", err)
 		}
+
 		return nil
 	}
-	return atomicjson.WriteFile(path, []byte("enabled\n"), 0o600)
+
+	err := atomicjson.WriteFile(path, []byte("enabled\n"), stateFileMode)
+	if err != nil {
+		return fmt.Errorf("write multiroom marker: %w", err)
+	}
+
+	return nil
 }

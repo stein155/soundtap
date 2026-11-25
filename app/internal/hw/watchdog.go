@@ -29,33 +29,44 @@ var watchdogPaths = []string{"/dev/watchdog", "/dev/watchdog0"}
 
 // RunWatchdog feeds the hardware watchdog while healthy reports nil, until ctx ends.
 func RunWatchdog(ctx context.Context, healthy func(context.Context) error, log *slog.Logger) {
-	var f *os.File
-	var err error
+	var (
+		f   *os.File
+		err error
+	)
 	for _, p := range watchdogPaths {
 		if f, err = os.OpenFile(p, os.O_WRONLY, 0); err == nil {
 			break
 		}
 	}
+
 	if f == nil {
 		log.Info("hardware watchdog unavailable", "err", err)
+
 		return
 	}
 	// Closed without 'V' on purpose: see above.
 	defer f.Close()
+
 	if err := setWatchdogTimeout(f, watchdogTimeout); err != nil {
 		log.Warn("watchdog timeout not set; the driver's default applies", "err", err)
 	}
+
 	log.Info("hardware watchdog fed by soundtapd", "timeout", watchdogTimeout)
+
 	strikes := 0
+
 	t := time.NewTicker(watchdogPet)
 	defer t.Stop()
+
 	for {
-		if err := healthy(ctx); err != nil {
+		err := healthy(ctx)
+		if err != nil {
 			strikes++
 			log.Warn("health check failed", "strike", strikes, "of", watchdogStrikes, "err", err)
 		} else {
 			strikes = 0
 		}
+
 		if strikes < watchdogStrikes {
 			if _, err := f.Write([]byte{0}); err != nil {
 				log.Warn("watchdog write", "err", err)
@@ -63,6 +74,7 @@ func RunWatchdog(ctx context.Context, healthy func(context.Context) error, log *
 		} else if strikes == watchdogStrikes {
 			log.Error("not feeding the watchdog; the speaker resets unless health returns", "within", watchdogTimeout)
 		}
+
 		select {
 		case <-ctx.Done():
 			return

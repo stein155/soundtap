@@ -38,27 +38,33 @@ const maxBlocks = 3
 // not a failure. hc must follow redirects (streamtheworld and friends 302 to a
 // real edge); http.DefaultClient does.
 func StreamTitle(ctx context.Context, hc *http.Client, streamURL string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, streamURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, streamURL, http.NoBody)
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Icy-MetaData", "1")
+
+	req.Header.Set("Icy-Metadata", "1")
 	req.Header.Set("User-Agent", "SoundTap/1.0")
+
 	resp, err := safehttp.Do(ctx, hc, req)
 	if err != nil {
 		return "", err
 	}
+
 	defer func() { _ = resp.Body.Close() }()
+
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("icy: status %d", resp.StatusCode)
 	}
-	metaint, err := strconv.Atoi(strings.TrimSpace(resp.Header.Get("icy-metaint")))
+
+	metaint, err := strconv.Atoi(strings.TrimSpace(resp.Header.Get("Icy-Metaint")))
 	if err != nil || metaint <= 0 || metaint > maxMetaInt {
 		return "", nil // stream does not interleave metadata
 	}
 
 	var lenBuf [1]byte
-	for b := 0; b < maxBlocks; b++ {
+
+	for range maxBlocks {
 		// Skip the audio bytes up to the next metadata block.
 		if _, err := io.CopyN(io.Discard, resp.Body, int64(metaint)); err != nil {
 			return "", err
@@ -67,18 +73,22 @@ func StreamTitle(ctx context.Context, hc *http.Client, streamURL string) (string
 		if _, err := io.ReadFull(resp.Body, lenBuf[:]); err != nil {
 			return "", err
 		}
+
 		n := int(lenBuf[0]) * 16
 		if n == 0 {
 			continue // no metadata in this block; try the next
 		}
+
 		meta := make([]byte, n)
 		if _, err := io.ReadFull(resp.Body, meta); err != nil {
 			return "", err
 		}
+
 		if title := parseStreamTitle(string(meta)); title != "" {
 			return title, nil
 		}
 	}
+
 	return "", nil
 }
 
@@ -86,11 +96,13 @@ func StreamTitle(ctx context.Context, hc *http.Client, streamURL string) (string
 // "StreamTitle='Artist - Title';StreamUrl='...';". Returns "" when absent.
 func parseStreamTitle(meta string) string {
 	const key = "StreamTitle='"
-	i := strings.Index(meta, key)
-	if i < 0 {
+
+	_, after, ok := strings.Cut(meta, key)
+	if !ok {
 		return ""
 	}
-	rest := meta[i+len(key):]
+
+	rest := after
 	// The value ends at the closing "';"; fall back to the last "'" for the last
 	// field, which some servers don't terminate with a semicolon. The last one, not
 	// the first: "Sweet Child O' Mine" has its own.
@@ -98,14 +110,17 @@ func parseStreamTitle(meta string) string {
 	if end < 0 {
 		end = strings.LastIndexByte(strings.TrimRight(rest, "\x00"), '\'')
 	}
+
 	if end < 0 {
 		return ""
 	}
+
 	title := strings.TrimSpace(decodeText(rest[:end]))
 	// Qmusic marks ad breaks with StreamTitle='commercial-in'; that is not a track.
 	if !strings.Contains(title, " - ") && strings.HasPrefix(strings.ToLower(title), "commercial") {
 		return ""
 	}
+
 	return title
 }
 
@@ -118,9 +133,11 @@ func decodeText(s string) string {
 	if utf8.ValidString(s) {
 		return s
 	}
+
 	var b strings.Builder
 	b.Grow(len(s))
-	for i := 0; i < len(s); i++ {
+
+	for i := range len(s) {
 		if r, ok := win1252[s[i]]; ok {
 			b.WriteRune(r)
 		} else {
@@ -129,6 +146,7 @@ func decodeText(s string) string {
 			b.WriteRune(rune(s[i]))
 		}
 	}
+
 	return b.String()
 }
 
@@ -151,13 +169,15 @@ var win1252 = map[byte]rune{
 // a per-station order is the upgrade if that shows up.
 func SplitArtistTitle(streamTitle string) (artist, title string) {
 	s := strings.TrimSpace(streamTitle)
-	if i := strings.Index(s, " - "); i >= 0 {
-		a, t := strings.TrimSpace(s[:i]), strings.TrimSpace(s[i+3:])
+	if before, after, ok := strings.Cut(s, " - "); ok {
+		a, t := strings.TrimSpace(before), strings.TrimSpace(after)
 		if shouting(t) && a != strings.ToUpper(a) {
 			return t, a
 		}
+
 		return a, t
 	}
+
 	return "", s
 }
 
@@ -167,13 +187,17 @@ func shouting(s string) bool {
 	if s != strings.ToUpper(s) {
 		return false
 	}
+
 	prev := false
+
 	for _, r := range s {
 		letter := unicode.IsLetter(r)
 		if letter && prev {
 			return true
 		}
+
 		prev = letter
 	}
+
 	return false
 }

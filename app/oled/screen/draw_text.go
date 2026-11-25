@@ -25,13 +25,15 @@ type Font struct {
 
 // Width is measureText(s).width.
 func Width(faceName, s string) float64 {
-	fc := faceOf(faceName)
-	w, prev := 0.0, rune(0)
-	for _, r := range s {
-		w += fc.kerning(prev, r) + fc.glyphFor(r, 0).adv
-		prev = r
+	fontFace := faceOf(faceName)
+
+	width, prev := 0.0, rune(0)
+	for _, char := range s {
+		width += fontFace.kerning(prev, char) + fontFace.glyphFor(char, 0).adv
+		prev = char
 	}
-	return w
+
+	return width
 }
 
 // kerning is the pair adjustment in pixels between a and b.
@@ -41,74 +43,93 @@ func (fc face) kerning(a, b rune) float64 {
 
 // glyphFor is r at sub-pixel phase 0..phases-1; a rune the face lacks draws as '?'.
 func (fc face) glyphFor(r rune, phase int) glyph {
-	g, ok := fc.glyphs[r]
+	phased, ok := fc.glyphs[r]
 	if !ok {
-		g = fc.glyphs['?']
+		phased = fc.glyphs['?']
 	}
-	if phase >= len(g) {
-		return glyph{}
+
+	if phase >= len(phased) {
+		return glyph{x: 0, y: 0, w: 0, h: 0, left: 0, top: 0, adv: 0}
 	}
-	return g[phase]
+
+	return phased[phase]
 }
+
+// fitDrop is how many runes each step of Fit takes off the end before it adds the
+// ellipsis: the last one (the ellipsis, once there) and the one before it.
+const fitDrop = 2
 
 // Fit shortens s the way the design's text() does until it is at most max wide.
 func Fit(faceName, s string, limit float64) string {
-	r := []rune(s)
-	for Width(faceName, string(r)) > limit && len(r) > 1 {
-		r = append(r[:max0(len(r)-2)], '…')
+	runes := []rune(s)
+	for Width(faceName, string(runes)) > limit && len(runes) > 1 {
+		runes = append(runes[:max0(len(runes)-fitDrop)], '…')
 	}
-	return string(r)
+
+	return string(runes)
 }
 
 func max0(n int) int {
 	if n < 0 {
 		return 0
 	}
+
 	return n
 }
 
 // Text is fillText at baseline y.
-func (f *Frame) Text(s string, x, y float64, ft Font) {
-	if ft.Max > 0 {
-		s = Fit(ft.Face, s, ft.Max)
+func (f *Frame) Text(text string, anchorX, baseline float64, font Font) {
+	if font.Max > 0 {
+		text = Fit(font.Face, text, font.Max)
 	}
-	switch ft.Align {
-	case Center:
-		x -= Width(ft.Face, s) / 2
-	case Right:
-		x -= Width(ft.Face, s)
+
+	// Left leaves anchorX where the text starts.
+	if font.Align == Center {
+		anchorX -= Width(font.Face, text) * half
 	}
-	fc := faceOf(ft.Face)
+
+	if font.Align == Right {
+		anchorX -= Width(font.Face, text)
+	}
+
+	fontFace := faceOf(font.Face)
+
 	pen, prev := 0.0, rune(0)
-	for _, r := range s {
-		pen += fc.kerning(prev, r)
-		prev = r
-		at := x + pen
+	for _, char := range text {
+		pen += fontFace.kerning(prev, char)
+		prev = char
+		at := anchorX + pen
 		whole := math.Floor(at)
-		phase := int(math.Round((at - whole) * float64(fc.phases)))
-		if phase == fc.phases {
+
+		phase := int(math.Round((at - whole) * float64(fontFace.phases)))
+		if phase == fontFace.phases {
 			whole, phase = whole+1, 0
 		}
-		g := fc.glyphFor(r, phase)
-		ox := int(whole) + g.left
-		oy := int(math.Round(y)) - g.top
-		for gy := range g.h {
-			for gx := range g.w {
-				a := atlas.GrayAt(g.x+gx, g.y+gy).Y
-				f.paint(ox+gx, oy+gy, ft.Level, float64(a)/255)
+
+		drawn := fontFace.glyphFor(char, phase)
+		originX := int(whole) + drawn.left
+
+		originY := int(math.Round(baseline)) - drawn.top
+		for row := range drawn.h {
+			for col := range drawn.w {
+				alpha := fontAtlas.img.GrayAt(drawn.x+col, drawn.y+row).Y
+				f.paint(originX+col, originY+row, font.Level, float64(alpha)/fullScale)
 			}
 		}
-		pen += g.adv
+
+		pen += drawn.adv
 	}
 }
 
-// TextMid is the design's textMid: text vertically centred on cy by its ink.
-func (f *Frame) TextMid(s string, x, cy float64, ft Font) {
-	fc := faceOf(ft.Face)
+// TextMid is the design's textMid: text vertically centred on centreY by its ink.
+func (f *Frame) TextMid(text string, anchorX, centreY float64, font Font) {
+	fontFace := faceOf(font.Face)
 	asc, desc := 0, 0
-	for _, r := range s {
-		g := fc.glyphFor(r, 0)
-		asc, desc = max(asc, g.top), max(desc, g.h-g.top)
+
+	for _, char := range text {
+		drawn := fontFace.glyphFor(char, 0)
+		asc, desc = max(asc, drawn.top), max(desc, drawn.h-drawn.top)
 	}
-	f.Text(s, x, math.Floor(cy+float64(asc-desc)/2+0.5), ft)
+
+	f.Text(text, anchorX, math.Floor(centreY+float64(asc-desc)*half+half), font)
 }

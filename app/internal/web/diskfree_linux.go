@@ -5,15 +5,31 @@
 
 package web
 
-import "syscall"
+import (
+	"errors"
+	"fmt"
+	"syscall"
+)
+
+// errBlockSize is a filesystem that reports a block size that is not positive.
+var errBlockSize = errors.New("block size")
 
 // diskFree reports the bytes available to a non-root writer and the filesystem size.
 // Bavail, not Bfree: the reserved blocks are not ours to stage an update in.
-func diskFree(path string) (free, total uint64, err error) {
-	var st syscall.Statfs_t
-	if err := syscall.Statfs(path, &st); err != nil {
-		return 0, 0, err
+// It returns free, then total.
+func diskFree(path string) (uint64, uint64, error) {
+	var stat syscall.Statfs_t
+
+	err := syscall.Statfs(path, &stat)
+	if err != nil {
+		return 0, 0, fmt.Errorf("statfs %s: %w", path, err)
 	}
-	bs := uint64(st.Bsize)
-	return st.Bavail * bs, st.Blocks * bs, nil
+
+	if stat.Bsize <= 0 {
+		return 0, 0, fmt.Errorf("statfs %s: %w %d", path, errBlockSize, stat.Bsize)
+	}
+
+	blockSize := uint64(stat.Bsize)
+
+	return stat.Bavail * blockSize, stat.Blocks * blockSize, nil
 }

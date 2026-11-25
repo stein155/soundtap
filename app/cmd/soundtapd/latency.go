@@ -37,14 +37,18 @@ func (p *pipeMeter) delay() time.Duration {
 	if p == nil || p.bytesPerSecond <= 0 {
 		return 0
 	}
+
 	n, err := pipeQueued(p.fd)
 	if err != nil {
 		return 0
 	}
+
 	return time.Duration(n) * time.Second / time.Duration(p.bytesPerSecond)
 }
 
 // sinkPipe is aplay's stdin while the sink is open.
+//
+//nolint:gochecknoglobals // process-wide state: the sink sets it, the chain meter reads it
 var sinkPipe atomic.Pointer[pipeMeter]
 
 // openPipeMeter opens a FIFO's read end without blocking and without ever reading it, so
@@ -54,10 +58,12 @@ func openPipeMeter(path string, bytesPerSecond int) *pipeMeter {
 	if path == "" {
 		return nil
 	}
+
 	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
 	if err != nil {
 		return nil
 	}
+
 	return &pipeMeter{fd: uintptr(fd), bytesPerSecond: bytesPerSecond}
 }
 
@@ -68,29 +74,35 @@ func alsaDelay(dir string) time.Duration {
 	if err != nil {
 		return 0
 	}
+
 	params, err := os.ReadFile(filepath.Join(dir, "hw_params"))
 	if err != nil {
 		return 0
 	}
+
 	frames, rate := procField(string(status), "delay"), procField(string(params), "rate")
 	if frames <= 0 || rate <= 0 {
 		return 0
 	}
+
 	return time.Duration(frames) * time.Second / time.Duration(rate)
 }
 
 // procField reads "key : 123 ..." from an ALSA proc file.
 func procField(text, key string) int {
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		k, rest, ok := strings.Cut(line, ":")
 		if !ok || strings.TrimSpace(k) != key {
 			continue
 		}
+
 		if f := strings.Fields(rest); len(f) > 0 {
 			n, _ := strconv.Atoi(f[0])
+
 			return n
 		}
 	}
+
 	return 0
 }
 
@@ -110,12 +122,17 @@ func leaderDelayBlocks(s chainSample) int64 {
 	if d <= 0 {
 		return 0
 	}
+
 	return int64((d + blockDuration/2) / blockDuration)
 }
 
 // followerSettled is how little a follower's chain may move between two windows to
 // count as settled: the leader's multiroom.LatencyStep, so it would send no further correction.
 const followerSettled = 10 * time.Millisecond
+
+// followerFirstTrusted is the first window with audio that is compared: the one before it
+// compares against the idle chain.
+const followerFirstTrusted = 2
 
 // followerHoldMax is how many windows (2 s each while held) a follower waits at most.
 const followerHoldMax = 15
@@ -128,16 +145,18 @@ const latencyApplied = 500 * time.Millisecond
 // time of the leader's last read of it.
 type chainReport struct{ value, read, readAt atomic.Int64 }
 
-func (r *chainReport) publish(d time.Duration) (prev time.Duration) {
-	return time.Duration(r.value.Swap(int64(d)))
-}
-
 // Read is what GET /api/multiroom/downstream serves; only the leader asks for it.
 func (r *chainReport) Read() time.Duration {
 	d := r.value.Load()
 	r.read.Store(d)
 	r.readAt.Store(time.Now().UnixNano())
+
 	return time.Duration(d)
+}
+
+// publish sets the downstream and returns the one it replaces.
+func (r *chainReport) publish(d time.Duration) time.Duration {
+	return time.Duration(r.value.Swap(int64(d)))
 }
 
 // applied reports whether the leader has read, latencyApplied ago or longer, a value
@@ -145,6 +164,7 @@ func (r *chainReport) Read() time.Duration {
 func (r *chainReport) applied(now time.Time) bool {
 	at := r.readAt.Load()
 	off := time.Duration(r.read.Load() - r.value.Load())
+
 	return at != 0 && off.Abs() < followerSettled && now.Sub(time.Unix(0, at)) >= latencyApplied
 }
 
@@ -160,7 +180,8 @@ type followerHold struct {
 // first window with audio is never trusted: it compares against the idle chain.
 func (h *followerHold) window(chain, prev time.Duration) bool {
 	h.windows++
-	h.settled = h.windows >= 2 && (chain-prev).Abs() < followerSettled
+	h.settled = h.windows >= followerFirstTrusted && (chain-prev).Abs() < followerSettled
+
 	return h.windows >= followerHoldMax
 }
 
@@ -172,7 +193,9 @@ func meanSample(samples []chainSample) chainSample {
 		sum.upstream += s.upstream
 		sum.backlog += s.backlog
 	}
+
 	n := time.Duration(max(len(samples), 1))
+
 	return chainSample{sink: sum.sink / n, upstream: sum.upstream / n, backlog: sum.backlog / n}
 }
 
@@ -181,6 +204,7 @@ func alsaStatusDir() string {
 	if p := os.Getenv("AUDIO_CLOCK_STATUS"); p != "" {
 		return filepath.Dir(p)
 	}
+
 	return "/proc/asound/card0/pcm0p/sub0"
 }
 
@@ -190,74 +214,121 @@ func afterMixer(delayBlocks int64) time.Duration {
 	return time.Duration(delayBlocks)*blockDuration + sinkPipe.Load().delay() + alsaDelay(alsaStatusDir())
 }
 
+// chainPipes are the FIFOs runChainMeter measures: the source bus into the Mixer and the
+// snapserver tap out of it, with the tap's byte rate.
+type chainPipes struct {
+	bus, tap          string
+	tapBytesPerSecond int
+}
+
 // runChainMeter keeps downstream (what a follower reports to its leader) and, while this
 // speaker leads, the leader's own delay in step with the measured chain. Before, the
 // leader held a fixed 340 ms and followers counted their chain as zero; on the WLA, ST10
 // and ST20 that left them 50 to 400 ms apart (2026-10-09).
-func runChainMeter(ctx context.Context, mix *audio.Mixer, bus, tap string, tapBytesPerSecond int,
-	tapOn *atomic.Bool, delayBlocks *atomic.Int64, downstream *chainReport, log *slog.Logger) {
-	busMeter := openPipeMeter(bus, audio.BytesPerSecond)
-	tapMeter := openPipeMeter(tap, tapBytesPerSecond)
-	for _, m := range []*pipeMeter{busMeter, tapMeter} {
-		if m != nil {
-			defer syscall.Close(int(m.fd))
-		}
-	}
+func runChainMeter(ctx context.Context, mix *audio.Mixer, pipes chainPipes,
+	tapOn *atomic.Bool, delayBlocks *atomic.Int64, downstream *chainReport, log *slog.Logger,
+) {
+	busMeter := openPipeMeter(pipes.bus, audio.BytesPerSecond)
+	tapMeter := openPipeMeter(pipes.tap, pipes.tapBytesPerSecond)
+
+	defer closePipeMeters(busMeter, tapMeter)
+
 	alsaDir := alsaStatusDir()
 	// A held follower samples five times as often, so its windows take 2 s, not 5 s.
-	const every, window = 500 * time.Millisecond, 10
-	const heldEvery, heldWindow = 100 * time.Millisecond, 20
-	t := time.NewTicker(every)
-	defer t.Stop()
-	var samples []chainSample
-	var hold followerHold
+	pace := map[bool]chainPace{
+		false: {every: chainEvery, window: chainWindow},
+		true:  {every: chainHeldEvery, window: chainHeldWindow},
+	}
+
+	ticker := time.NewTicker(pace[false].every)
+	defer ticker.Stop()
+
+	var (
+		samples []chainSample
+		hold    followerHold
+	)
+
 	held := false
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-ticker.C:
 		}
-		if h := mix.Held(); h != held {
-			held, hold, samples = h, followerHold{}, samples[:0]
-			if held {
-				t.Reset(heldEvery)
-			} else {
-				t.Reset(every)
-			}
+
+		if nowHeld := mix.Held(); nowHeld != held {
+			held, hold, samples = nowHeld, followerHold{windows: 0, settled: false}, samples[:0]
+			ticker.Reset(pace[held].every)
 		}
 		// The leader polls every 3 s; once it has read a settled chain there is nothing
 		// left to wait for.
 		if held && hold.settled && downstream.applied(time.Now()) {
 			mix.Unhold()
-			log.Info("multiroom follower in sync", "downstream", time.Duration(downstream.value.Load()), "windows", hold.windows)
+			log.Info("multiroom follower in sync",
+				"downstream", time.Duration(downstream.value.Load()), "windows", hold.windows)
 		}
+
 		samples = append(samples, chainSample{
 			sink:     sinkPipe.Load().delay() + alsaDelay(alsaDir),
 			upstream: busMeter.delay() + time.Duration(mix.Queued())*blockDuration,
 			backlog:  tapMeter.delay(),
 		})
-		if len(samples) < window || held && len(samples) < heldWindow {
+		if len(samples) < pace[held].window {
 			continue
 		}
-		m := meanSample(samples)
+
+		mean := meanSample(samples)
 		samples = samples[:0]
-		prev := downstream.publish(m.upstream + m.sink)
+		prev := downstream.publish(mean.upstream + mean.sink)
 		// A chain that never settles is still played after followerHoldMax: late sound
 		// beats none.
-		if !held || m.sink == 0 {
-			hold = followerHold{}
-		} else if hold.window(m.upstream+m.sink, prev) {
+		if !held || mean.sink == 0 {
+			hold = followerHold{windows: 0, settled: false}
+		} else if hold.window(mean.upstream+mean.sink, prev) {
 			mix.Unhold()
-			log.Info("multiroom follower not settled, playing anyway", "downstream", m.upstream+m.sink)
+			log.Info("multiroom follower not settled, playing anyway", "downstream", mean.upstream+mean.sink)
 		}
-		if !tapOn.Load() || m.sink == 0 {
-			continue
+
+		if tapOn.Load() && mean.sink != 0 {
+			adjustLeaderDelay(mean, delayBlocks, log)
 		}
-		// Moving the delay drops or repeats PCM, so only a real error is worth it.
-		if want, have := leaderDelayBlocks(m), delayBlocks.Load(); want-have >= 2 || have-want >= 2 {
-			delayBlocks.Store(want)
-			log.Info("multiroom leader delay", "blocks", want, "sink", m.sink, "backlog", m.backlog)
+	}
+}
+
+// How often runChainMeter samples and how many samples make a window: a window takes 5 s,
+// and 2 s for a held follower.
+const (
+	chainEvery      = 500 * time.Millisecond
+	chainWindow     = 10
+	chainHeldEvery  = 100 * time.Millisecond
+	chainHeldWindow = 20
+)
+
+// chainPace is how often runChainMeter samples and how many samples make a window.
+type chainPace struct {
+	every  time.Duration
+	window int
+}
+
+// leaderDelayStep is the smallest error in blocks worth moving the leader's delay for.
+const leaderDelayStep = 2
+
+// adjustLeaderDelay moves the leader's delay to what the measured chain asks for. Moving
+// it drops or repeats PCM, so only a real error is worth it.
+func adjustLeaderDelay(mean chainSample, delayBlocks *atomic.Int64, log *slog.Logger) {
+	want, have := leaderDelayBlocks(mean), delayBlocks.Load()
+	if want-have >= leaderDelayStep || have-want >= leaderDelayStep {
+		delayBlocks.Store(want)
+		log.Info("multiroom leader delay", "blocks", want, "sink", mean.sink, "backlog", mean.backlog)
+	}
+}
+
+// closePipeMeters closes the descriptors of the meters that opened.
+func closePipeMeters(meters ...*pipeMeter) {
+	for _, meter := range meters {
+		if meter != nil {
+			_ = syscall.Close(int(meter.fd))
 		}
 	}
 }

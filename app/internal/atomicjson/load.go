@@ -26,8 +26,8 @@ var ErrCorrupt = errors.New("corrupt state file moved aside")
 // Read is the one rule every on-box store opens its file by. Only a missing file
 // means "start from defaults" (found false, err nil). Any other read error comes
 // back wrapping ErrUnreadable, and the caller must then refuse writes.
-func Read(path string) (data []byte, found bool, err error) {
-	data, err = os.ReadFile(path)
+func Read(path string) ([]byte, bool, error) {
+	data, err := os.ReadFile(path)
 	switch {
 	case err == nil:
 		return data, true, nil
@@ -44,10 +44,14 @@ func Read(path string) (data []byte, found bool, err error) {
 // and ErrUnreadable when it was not, since the next write would then destroy it.
 func Quarantine(path string, cause error) error {
 	backup := path + ".corrupt"
+
 	_ = os.Rename(backup, backup+".1") // there may be no earlier copy
-	if err := os.Rename(path, backup); err != nil {
+
+	err := os.Rename(path, backup)
+	if err != nil {
 		return fmt.Errorf("%w: corrupt (%w) and not moved aside: %w", ErrUnreadable, cause, err)
 	}
+
 	return fmt.Errorf("%w to %s: %w", ErrCorrupt, backup, cause)
 }
 
@@ -55,30 +59,39 @@ func Quarantine(path string, cause error) error {
 // reset must not leave the previous owner's data behind in them.
 func RemoveQuarantine(path string) error {
 	backups, _ := filepath.Glob(path + ".corrupt*")
+
 	var errs []error
+
 	for _, b := range backups {
-		if err := os.Remove(b); err != nil {
+		err := os.Remove(b)
+		if err != nil {
 			errs = append(errs, err)
 		}
 	}
+
 	return errors.Join(errs...)
 }
 
-// Load reads the JSON file at path into v by Read's rule. A missing file leaves v
+// Load reads the JSON file at path into value by Read's rule. A missing file leaves value
 // as it is (the caller's defaults) and returns nil. A file that does not decode is
-// quarantined and v keeps what it held before, so a half-decoded value never becomes
+// quarantined and value keeps what it held before, so a half-decoded value never becomes
 // the store. The error says which case applies: ErrUnreadable means the store must
 // refuse writes, ErrCorrupt that it may write over its defaults.
-func Load[T any](path string, v *T) error {
+func Load[T any](path string, value *T) error {
 	data, found, err := Read(path)
 	if err != nil || !found {
 		return err
 	}
-	before := *v
-	if err := json.Unmarshal(data, v); err != nil {
-		*v = before
+
+	before := *value
+
+	err = json.Unmarshal(data, value)
+	if err != nil {
+		*value = before
+
 		return Quarantine(path, err)
 	}
+
 	return nil
 }
 

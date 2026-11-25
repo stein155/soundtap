@@ -5,6 +5,7 @@ package bco
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -36,6 +37,7 @@ func CurrentSSID(ctx context.Context, device string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	return currentSSID(status)
 }
 
@@ -43,10 +45,12 @@ func currentSSID(status Status) (string, error) {
 	if !status.Linked {
 		return "", fmt.Errorf("BCO Wi-Fi is not associated (state %s)", status.State)
 	}
+
 	ssid := strings.TrimSpace(status.SSID)
 	if ssid == "" {
-		return "", fmt.Errorf("BCO associated SSID is empty")
+		return "", errors.New("BCO associated SSID is empty")
 	}
+
 	return ssid, nil
 }
 
@@ -54,12 +58,15 @@ func openSerial(ctx context.Context, device string) (int, error) {
 	if device == "" {
 		device = "/dev/ttyS0"
 	}
+
 	if err := exec.CommandContext(ctx, "busybox", "stty", "-F", device, "115200", "raw", "-echo").Run(); err != nil {
 		return -1, fmt.Errorf("BCO serial setup: %w", err)
 	}
+
 	fd, err := syscall.Open(device, syscall.O_RDWR|syscall.O_NOCTTY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return -1, fmt.Errorf("BCO serial open: %w", err)
 	}
+
 	return fd, nil
 }

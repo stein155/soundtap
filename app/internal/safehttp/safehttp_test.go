@@ -22,19 +22,24 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { re
 
 func TestDoRetriesCertificateErrorAfterClockBecomesSane(t *testing.T) {
 	oldNow, oldPoll, oldLimit := now, clockPollInterval, clockWaitLimit
+
 	t.Cleanup(func() {
 		now, clockPollInterval, clockWaitLimit = oldNow, oldPoll, oldLimit
 	})
+
 	var clockReads atomic.Int32
+
 	now = func() time.Time {
 		if clockReads.Add(1) > 1 {
 			return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 		}
+
 		return time.Unix(0, 0)
 	}
 	clockPollInterval, clockWaitLimit = time.Millisecond, time.Second
 
 	var requests int
+
 	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		requests++
 		if requests == 1 {
@@ -43,17 +48,22 @@ func TestDoRetriesCertificateErrorAfterClockBecomesSane(t *testing.T) {
 				Reason: x509.Expired,
 			}
 		}
+
 		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
 	})}
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.test", nil)
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.test", http.NoBody)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	resp, err := Do(context.Background(), client, req)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	_ = resp.Body.Close()
+
 	if requests != 2 {
 		t.Fatalf("requests = %d, want 2", requests)
 	}
@@ -73,24 +83,56 @@ func TestDownloadAndGetJSON(t *testing.T) {
 	defer ts.Close()
 
 	dst := filepath.Join(t.TempDir(), "out")
-	if err := Download(context.Background(), ts.Client(), "test", ts.URL+"/bin", dst, 0o755); err != nil {
+
+	err := Download(context.Background(), ts.Client(), "test", ts.URL+"/bin", dst, 0o755)
+	if err != nil {
 		t.Fatalf("Download: %v", err)
 	}
+
 	if b, _ := os.ReadFile(dst); string(b) != "BINARY" {
 		t.Fatalf("downloaded %q, want BINARY", b)
 	}
-	if err := Download(context.Background(), ts.Client(), "test", ts.URL+"/nope", dst, 0o755); err == nil {
+
+	err = Download(context.Background(), ts.Client(), "test", ts.URL+"/nope", dst, 0o755)
+	if err == nil {
 		t.Fatal("Download of a 404 should fail")
 	}
 
 	var rel struct {
 		TagName string `json:"tag_name"`
 	}
-	if err := GetJSON(context.Background(), ts.Client(), "test", ts.URL+"/json", &rel); err != nil {
+
+	err = GetJSON(context.Background(), ts.Client(), "test", ts.URL+"/json", &rel)
+	if err != nil {
 		t.Fatalf("GetJSON: %v", err)
 	}
+
 	if rel.TagName != "v9" {
 		t.Fatalf("GetJSON tag = %q, want v9", rel.TagName)
+	}
+}
+
+// DownloadWatched reports what is in the file so far against the announced size: once
+// before the first byte, then after every write, ending at the whole.
+func TestDownloadWatchedReportsBytes(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "6")
+		_, _ = w.Write([]byte("BINARY"))
+	}))
+	defer ts.Close()
+
+	var seen [][2]int64
+
+	dst := filepath.Join(t.TempDir(), "out")
+
+	err := DownloadWatched(context.Background(), ts.Client(), "test", ts.URL, dst, 0o644,
+		func(done, total int64) { seen = append(seen, [2]int64{done, total}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(seen) < 2 || seen[0] != [2]int64{0, 6} || seen[len(seen)-1] != [2]int64{6, 6} {
+		t.Fatalf("seen %v, want from 0 of 6 to 6 of 6", seen)
 	}
 }
 
@@ -104,9 +146,12 @@ func TestDownloadRemovesPartialFile(t *testing.T) {
 	defer ts.Close()
 
 	dst := filepath.Join(t.TempDir(), "out")
-	if err := Download(context.Background(), ts.Client(), "test", ts.URL, dst, 0o755); err == nil {
+
+	err := Download(context.Background(), ts.Client(), "test", ts.URL, dst, 0o755)
+	if err == nil {
 		t.Fatal("Download succeeded, want error")
 	}
+
 	if _, err := os.Stat(dst); !os.IsNotExist(err) {
 		t.Fatalf("partial file exists after failed download: %v", err)
 	}

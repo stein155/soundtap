@@ -18,6 +18,7 @@ package stu
 import (
 	"errors"
 	"io"
+	"slices"
 
 	"github.com/stein155/soundtap/app/internal/modeltable"
 )
@@ -60,6 +61,7 @@ const (
 	uImageMagic   = 0x27051956
 )
 
+// Module is one payload inside a package. Size includes the 0x14 overlap that
 // belongs to the next module's header — Payload is what would be written.
 type Module struct {
 	Name    string
@@ -73,21 +75,15 @@ type Module struct {
 // installed on the given hardware model. A chain shared by two models — the ST10
 // and the Wireless Link ship the same eight — leaves the choice to the hardware.
 func (m Module) Installable(model string) bool {
-	for _, target := range m.Targets {
-		if target == model {
-			return true
-		}
+	if slices.Contains(m.Targets, model) {
+		return true
 	}
+
 	return m.Targets == nil && m.Target == model
 }
 
 func slicesContains(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, want)
 }
 
 // Payload is the part of the module that is the module: the overlap belongs to
@@ -112,7 +108,8 @@ func (p *Package) Module(name string) (Module, bool) {
 			return m, true
 		}
 	}
-	return Module{}, false
+
+	return Module{Name: "", Size: 0, Target: "", Targets: nil, Native: false}, false
 }
 
 // ErrSink means the package was fine but the writer it was being streamed into
@@ -131,26 +128,38 @@ var ErrNotSTU = errors.New("not a Bose .stu package")
 // module it has not finished checking yet — see Scan.
 type Sink func(m Module) io.Writer
 
-// Scan reads a package from r, validating every structural field and every CRC32
+// Overlap is how many bytes of a module's tail are stored once and read twice:
+// as the end of that module's image and as the head of the next module's header.
+// A caller that has to decide how much of a module is really its image needs it.
+const Overlap = overlap
+
+// Scan reads a package from src, validating every structural field and every CRC32
 // as it goes, and offering each payload to sink.
 //
 // The order matters for anything that writes: a module's CRC can only be confirmed
 // after its last byte has gone past, so a sink that flashes must treat its target
 // as unverified until Scan returns without error. That is exactly why an installer
 // writes the inactive slot and confirms it before making it bootable.
-// Overlap is how many bytes of a module's tail are stored once and read twice:
-// as the end of that module's image and as the head of the next module's header.
-// A caller that has to decide how much of a module is really its image needs it.
-const Overlap = overlap
+func Scan(src io.Reader, sink Sink) (*Package, error) {
+	err := validateProfileRegistry(profiles())
+	if err != nil {
+		return nil, err
+	}
 
-func Scan(r io.Reader, sink Sink) (*Package, error) {
-	if err := validateProfileRegistry(profiles); err != nil {
+	state := &scanner{
+		r: nil, sink: sink, head: nil, carried: false, pkgCRC: nil,
+		mainline: false, kernelTarget: "", read: 0, candidates: nil,
+		pkg: Package{
+			Size: 0, Modules: nil, Target: "", Targets: nil, Mainline: false, KernelTarget: "", Native: false,
+		},
+	}
+
+	state.r = io.TeeReader(io.LimitReader(src, MaxSize+1), counter{&state.read})
+
+	err = state.run()
+	if err != nil {
 		return nil, err
 	}
-	s := &scanner{sink: sink}
-	s.r = io.TeeReader(io.LimitReader(r, MaxSize+1), counter{&s.read})
-	if err := s.run(); err != nil {
-		return nil, err
-	}
-	return &s.pkg, nil
+
+	return &state.pkg, nil
 }

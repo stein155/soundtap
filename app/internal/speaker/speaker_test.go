@@ -9,9 +9,11 @@ import (
 )
 
 func TestCheckPreset(t *testing.T) {
-	if err := CheckPreset("Radio 538", "https://cdn-profiles.tunein.com/s6712/images/logoq.png"); err != nil {
+	err := CheckPreset("Radio 538", "https://cdn-profiles.tunein.com/s6712/images/logoq.png")
+	if err != nil {
 		t.Fatalf("ordinary preset refused: %v", err)
 	}
+
 	for _, bad := range []struct{ name, logo string }{
 		{"  ", ""},
 		{strings.Repeat("x", 65), ""},

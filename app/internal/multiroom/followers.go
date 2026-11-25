@@ -45,13 +45,21 @@ type volumeSync struct {
 // volumeDrag is how long after its last step a drag still counts as going on.
 const volumeDrag = 2 * time.Second
 
+// maxVolume is the top of the 0-100 volume scale.
+const maxVolume = 100
+
+// peerRounds is how many peer calls one background job may take: its deadline is this
+// many PeerTimeouts.
+const peerRounds = 2
+
 // LeaderLevel is the leader's level to measure the next step from: the unclamped level
 // last asked in this drag if the speaker still sits at its clamped value, else cur.
 func (g *Group) LeaderLevel(cur int) int {
-	v := &g.volSync
-	if time.Since(v.askedAt) < volumeDrag && min(max(v.asked, 0), 100) == cur {
-		return v.asked
+	state := &g.volSync
+	if time.Since(state.askedAt) < volumeDrag && min(max(state.asked, 0), maxVolume) == cur {
+		return state.asked
 	}
+
 	return cur
 }
 
@@ -61,44 +69,59 @@ func (g *Group) NoteAsked(level int) { g.volSync.asked, g.volSync.askedAt = leve
 // SyncFollowerVolume moves every follower's own volume by delta, in the background. Each
 // follower keeps its own level relative to the leader's -- the kitchen stays quieter
 // than the living room -- which is why this is a step and not an absolute level.
+//
+//nolint:gocritic // exported; web passes Env by value
 func (g *Group) SyncFollowerVolume(env Env, delta int) {
-	v := &g.volSync
-	v.mu.Lock()
-	v.pending += delta
-	if v.running {
-		v.mu.Unlock()
+	state := &g.volSync
+	state.mu.Lock()
+
+	state.pending += delta
+	if state.running {
+		state.mu.Unlock()
+
 		return // the running worker picks it up
 	}
-	v.running = true
-	v.mu.Unlock()
+
+	state.running = true
+	state.mu.Unlock()
 	g.peerJobs.Add(1)
 	safego.Go("multiroom.followerVolume", func() {
 		defer g.peerJobs.Done()
+
 		for {
-			v.mu.Lock()
-			delta := v.pending
-			v.pending = 0
+			state.mu.Lock()
+			delta := state.pending
+
+			state.pending = 0
 			if delta == 0 {
-				v.running = false
-				v.mu.Unlock()
+				state.running = false
+				state.mu.Unlock()
+
 				return
 			}
-			v.mu.Unlock()
-			if v.levels == nil || time.Since(v.levelsAt) >= volumeDrag {
-				v.levels = map[string]int{}
+			state.mu.Unlock()
+
+			if state.levels == nil || time.Since(state.levelsAt) >= volumeDrag {
+				state.levels = map[string]int{}
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 2*env.PeerTimeout)
+
+			ctx, cancel := context.WithTimeout(context.Background(), peerRounds*env.PeerTimeout)
 			for _, base := range env.FollowerPeers(ctx) {
-				from, known := v.levels[base]
+				from, known := state.levels[base]
+
 				level, err := env.StepPeerVolume(ctx, base, delta, from, known)
 				if err != nil {
 					env.Log.Info("follower volume not synced", "peer", base, "err", err)
-					delete(v.levels, base)
+					delete(state.levels, base)
+
 					continue
 				}
-				v.levels[base] = level
+
+				state.levels[base] = level
 			}
-			v.levelsAt = time.Now()
+
+			state.levelsAt = time.Now()
+
 			cancel()
 		}
 	})
@@ -106,14 +129,19 @@ func (g *Group) SyncFollowerVolume(env Env, delta int) {
 
 // ReleaseFollowers tells every follower to stop following, in the background. Each goes
 // back to its own snapserver and to standby.
+//
+//nolint:gocritic // exported; web passes Env by value
 func (g *Group) ReleaseFollowers(env Env) {
 	g.peerJobs.Add(1)
 	safego.Go("multiroom.releaseFollowers", func() {
 		defer g.peerJobs.Done()
-		ctx, cancel := context.WithTimeout(context.Background(), 2*env.PeerTimeout)
+
+		ctx, cancel := context.WithTimeout(context.Background(), peerRounds*env.PeerTimeout)
 		defer cancel()
+
 		for _, base := range env.FollowerPeers(ctx) {
-			if err := env.ReleasePeer(ctx, base); err != nil {
+			err := env.ReleasePeer(ctx, base)
+			if err != nil {
 				env.Log.Info("follower not released", "peer", base, "err", err)
 			}
 		}

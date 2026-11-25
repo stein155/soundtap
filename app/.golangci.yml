@@ -1,46 +1,18 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-# golangci-lint v2. `make lint-go` runs it on what changed since main: code that is
-# touched must pass, code that is not waits for its refactor.
+# golangci-lint v2. `make lint-go` judges the whole module with every linter on: a linter is
+# configured to the project's contracts below rather than turned off. Only the linters
+# golangci-lint itself marks deprecated stay off, because their successors are on.
 version: "2"
 linters:
-  default: standard # errcheck, govet, ineffassign, staticcheck, unused
-  enable:
-    # Bug classes.
-    - bodyclose
-    - copyloopvar
-    - durationcheck
-    - errchkjson
-    - errname
-    - errorlint
-    - forcetypeassert
-    - gosec
-    - makezero
-    - mirror
-    - nilerr
-    - noctx
-    - reassign
-    - thelper
-    - unparam
-    - wastedassign
-    # Readability: small, plain, self-explaining code.
-    - cyclop
-    - dupl
-    - funlen
-    - gocognit
-    - goconst
-    - gocritic
-    - intrange
-    - misspell
-    - nakedret
-    - nestif
-    - nolintlint
-    - predeclared
-    - revive
-    - unconvert
-    - usestdlibvars
+  default: all
+  disable:
+    - exhaustruct # deprecated in v2.15; exhaustruct_v5 is its successor and is on
+    - gomodguard # deprecated in v2.15; gomodguard_v2 is its successor and is on
+    - wsl # deprecated in v2.15; wsl_v5 is its successor and is on
   settings:
+    # Thresholds that keep functions small and plain.
     cyclop: { max-complexity: 15 }
     dupl: { threshold: 120 }
     funlen: { lines: 80, statements: 50 }
@@ -49,6 +21,42 @@ linters:
     goconst:
       # JSON keys and URL schemes read better spelled out.
       ignore-string-values: ["^(name|status|error|event|source|volume|current|updatable|unavailable|http|pause|host)$"]
+    # Every check of gocritic, revive and staticcheck is on too, but for the duplicates and
+    # contradictions named.
+    gocritic:
+      enable-all: true
+      disabled-checks:
+        - unnamedResult # asks for named results, which nonamedreturns forbids
+    revive:
+      enable-all-rules: true
+      rules:
+        # Each of these repeats a linter above that is configured to the project's thresholds.
+        - { name: add-constant, disabled: true } # mnd and goconst
+        - { name: cognitive-complexity, disabled: true } # gocognit
+        - { name: cyclomatic, disabled: true } # cyclop
+        - { name: file-header, disabled: true } # goheader
+        - { name: function-length, disabled: true } # funlen
+        - { name: line-length-limit, disabled: true } # lll
+        - { name: max-control-nesting, disabled: true } # nestif
+        - { name: unhandled-error, disabled: true } # errcheck
+        - { name: imports-blocklist, disabled: true } # depguard
+        - { name: banned-characters, disabled: true } # asciicheck and bidichk
+        - { name: unchecked-type-assertion, disabled: true } # forcetypeassert
+        - { name: redefines-builtin-id, disabled: true } # predeclared
+        - { name: empty-lines, disabled: true } # whitespace
+        # Asks for named results, which nonamedreturns forbids.
+        - { name: confusing-results, disabled: true }
+    staticcheck:
+      checks: [all]
+    dupword:
+      # In literals a repeated word is data: format verbs, C source, expected messages.
+      comments-only: true
+      # "connect to to accept", "out of it it runs": English, not a slip.
+      ignore: [to, it]
+    misspell:
+      # Stock's MTD label "NAND.Persistant-Storage" is matched as spelled, and a test sends
+      # the typo "nmae" on purpose.
+      ignore-rules: [persistant, nmae]
     gosec:
       excludes:
         - G103 # unsafe: the ALSA and evdev ioctls need it
@@ -56,9 +64,494 @@ linters:
         - G301 # directory permissions are set per path on the speaker
         - G304 # file paths from variables: the speaker reads its own files
         - G306 # file permissions are set per file on the speaker
+    depguard:
+      # The module's own packages, the standard library and the dependencies in go.mod; a new
+      # dependency is added here on purpose (ADR 0124).
+      rules:
+        main:
+          list-mode: strict
+          allow:
+            - $gostd
+            - github.com/stein155/soundtap/app
+            - github.com/eclipse/paho.mqtt.golang
+            - github.com/godbus/dbus/v5
+            - github.com/gorilla/websocket
+            - golang.org/x/net/proxy
+            - golang.org/x/sync/semaphore
+            - golang.org/x/sys/unix
+    gomodguard_v2:
+      # The same list as depguard, for go.mod itself.
+      allowed:
+        - module: github.com/eclipse/paho.mqtt.golang
+        - module: github.com/godbus/dbus/v5
+        - module: github.com/gorilla/websocket
+        - module: golang.org/x/net
+        - module: golang.org/x/sync
+        - module: golang.org/x/sys
+    exhaustruct_v5:
+      # Standard-library structs are designed so an unset field means its default.
+      ignore-patterns:
+        - '^(archive|bufio|bytes|compress|container|context|crypto|database|debug|embed|encoding|errors|expvar|flag|fmt|go|hash|html|image|io|log|maps|math|mime|net|os|path|reflect|regexp|runtime|slices|sort|strconv|strings|sync|syscall|testing|text|time|unicode|unique|unsafe)(/[^.]+)?\..+$'
+    goheader:
+      # Every Go file opens with the REUSE header (`make lint-reuse`).
+      template: |-
+        SPDX-License-Identifier: GPL-3.0-only
+        SPDX-FileCopyrightText: {{ YEAR-RANGE }} SoundTap contributors
+      values:
+        regexp:
+          YEAR-RANGE: '\d{4}(-\d{4})?'
+    gosmopolitan:
+      # The daemon is multilingual: translated strings in every script belong in the word
+      # tables, which are excluded below; elsewhere a non-Latin literal is still reported.
+      # Alarms and the clock run in the speaker's own time zone, so time.Local is the point.
+      allow-time-local: true
+      watch-for-scripts: [Han, Hangul, Hiragana, Katakana, Cyrillic, Greek, Arabic, Hebrew, Thai, Devanagari]
+    govet:
+      enable-all: true
+      disable:
+        # Its fix reorders struct fields and drops their comments; the field order documents
+        # the wire and file formats.
+        - fieldalignment
+    lll:
+      # Comments are wrapped at 100 columns and code stays within 120 (tabs as 4), as most of
+      # the gofmt'd tree already is. A long line is split by hand: golines' automatic splits
+      # wrap single arguments and are not stable under gofmt.
+      line-length: 120
+      tab-width: 4
+    tagliatelle:
+      case:
+        # The HTTP API's JSON is camelCase and frozen (ADR 0108): fields are never renamed to
+        # please the linter. XML tags follow the external protocols (UPnP, DIDL, Bose's API)
+        # and are not checked.
+        rules:
+          json: camel
+        # Frozen API fields that spell an initialism in capitals.
+        ignored-fields: [OnDC]
+        overrides:
+          # Third-party JSON these packages read, spelled as the service spells it.
+          - pkg: internal/update
+            rules: { json: snake }
+          - pkg: internal/safehttp
+            rules: { json: snake }
+          # os/models.json, shared with the build's Python, is snake_case.
+          - pkg: internal/modeltable
+            rules: { json: snake }
+          # Spotify's and TuneIn's own JSON mix snake_case and camelCase in one object.
+          - pkg: internal/spotify
+            ignore: true
+          - pkg: internal/tunein
+            ignore: true
+    varnamelen:
+      # Go's conventional one-letter names for the parameter types every handler and test has.
+      ignore-type-assert-ok: true
+      ignore-map-index-ok: true
+      ignore-chan-recv-ok: true
+      ignore-names: [err]
+      ignore-decls:
+        - w http.ResponseWriter
+        - r *http.Request
+        - t *testing.T
+        - b *testing.B
+        - f *testing.F
+        - tb testing.TB
+        - wg sync.WaitGroup
+        - mu sync.Mutex
   exclusions:
     presets: [comments, std-error-handling]
+    paths:
+      # npm packages under the frontend may carry Go files; they are not this module's code.
+      - frontend/
     rules:
+      # Still to be brought up to every linter (phase 2, 2026-11): these packages may
+      # not yet pass the linters listed with them. Each entry goes once its package is
+      # clean; no new entry is ever added.
+      - path: ^internal/artwork/[^/]+\.go$
+        linters:
+          - err113
+          - gochecknoglobals
+          - mnd
+          - noinlineerr
+          - paralleltest
+          - revive
+          - testpackage
+          - varnamelen
+          - wrapcheck
+      - path: ^internal/bco/[^/]+\.go$
+        linters:
+          - contextcheck
+          - cyclop
+          - err113
+          - errcheck
+          - exhaustruct_v5
+          - funcorder
+          - funlen
+          - gochecknoglobals
+          - gocognit
+          - goconst
+          - gocritic
+          - goprintffuncname
+          - gosec
+          - govet
+          - lll
+          - mnd
+          - noctx
+          - noinlineerr
+          - nolintlint
+          - nonamedreturns
+          - paralleltest
+          - prealloc
+          - revive
+          - testpackage
+          - varnamelen
+          - wrapcheck
+      - path: ^internal/bluez/[^/]+\.go$
+        linters:
+          - cyclop
+          - err113
+          - exhaustruct_v5
+          - funcorder
+          - gochecknoglobals
+          - gocognit
+          - lll
+          - mnd
+          - noinlineerr
+          - paralleltest
+          - revive
+          - testpackage
+          - varnamelen
+          - wrapcheck
+      - path: ^internal/btctl/[^/]+\.go$
+        linters:
+          - err113
+          - exhaustruct_v5
+          - gochecknoglobals
+          - govet
+          - lll
+          - noinlineerr
+          - nonamedreturns
+          - paralleltest
+          - revive
+          - testpackage
+          - varnamelen
+          - wrapcheck
+      - path: ^internal/childproc/[^/]+\.go$
+        linters:
+          - err113
+          - exhaustruct_v5
+          - gochecknoglobals
+          - lll
+          - mnd
+          - noctx
+          - noinlineerr
+          - nonamedreturns
+          - paralleltest
+          - testpackage
+          - varnamelen
+          - wrapcheck
+      - path: ^internal/counters/[^/]+\.go$
+        linters:
+          - exhaustruct_v5
+          - gochecknoglobals
+          - mnd
+          - noinlineerr
+          - paralleltest
+          - testpackage
+          - varnamelen
+          - wrapcheck
+      - path: ^internal/dbustest/[^/]+\.go$
+        linters: [exhaustruct_v5, lll, mnd, noinlineerr, revive, usetesting, varnamelen]
+      - path: ^internal/favorites/[^/]+\.go$
+        linters:
+          - errchkjson
+          - exhaustruct_v5
+          - funcorder
+          - govet
+          - noinlineerr
+          - paralleltest
+          - varnamelen
+          - wrapcheck
+      - path: ^internal/hw/[^/]+\.go$
+        linters:
+          - err113
+          - exhaustruct_v5
+          - funcorder
+          - gochecknoglobals
+          - gocritic
+          - godoclint
+          - govet
+          - inamedparam
+          - ireturn
+          - lll
+          - mnd
+          - noinlineerr
+          - nonamedreturns
+          - paralleltest
+          - prealloc
+          - revive
+          - testpackage
+          - varnamelen
+          - wrapcheck
+      - path: ^internal/hw/model/[^/]+\.go$
+        linters:
+          - err113
+          - exhaustruct_v5
+          - gochecknoglobals
+          - goconst
+          - gocritic
+          - lll
+          - mnd
+          - noinlineerr
+          - paralleltest
+          - revive
+          - testpackage
+          - varnamelen
+      - path: ^internal/icy/[^/]+\.go$
+        linters:
+          - err113
+          - gochecknoglobals
+          - lll
+          - mnd
+          - noinlineerr
+          - nonamedreturns
+          - paralleltest
+          - revive
+          - testpackage
+          - varnamelen
+          - wrapcheck
+      - path: ^internal/modeltable/[^/]+\.go$
+        linters: [exhaustruct_v5, lll, noinlineerr, paralleltest, testpackage, varnamelen]
+      - path: ^internal/mqtt/[^/]+\.go$
+        linters:
+          - err113
+          - exhaustruct_v5
+          - funcorder
+          - funlen
+          - gocritic
+          - gocyclo
+          - govet
+          - mnd
+          - noctx
+          - noinlineerr
+          - nonamedreturns
+          - paralleltest
+          - revive
+          - testpackage
+          - varnamelen
+          - wrapcheck
+      - path: ^internal/mqttbridge/[^/]+\.go$
+        linters:
+          - cyclop
+          - err113
+          - exhaustruct_v5
+          - funcorder
+          - funlen
+          - gochecknoglobals
+          - gocognit
+          - gocritic
+          - lll
+          - mnd
+          - noctx
+          - noinlineerr
+          - nonamedreturns
+          - paralleltest
+          - prealloc
+          - revive
+          - testpackage
+          - varnamelen
+          - wrapcheck
+      - path: ^internal/nowplaying/[^/]+\.go$
+        linters:
+          - contextcheck
+          - cyclop
+          - exhaustruct_v5
+          - gocognit
+          - gocritic
+          - lll
+          - mnd
+          - noinlineerr
+          - paralleltest
+          - testpackage
+          - varnamelen
+          - wrapcheck
+      - path: ^internal/osapi/[^/]+\.go$
+        linters: [paralleltest, testpackage, varnamelen]
+      - path: ^internal/player/[^/]+\.go$
+        linters:
+          - containedctx
+          - contextcheck
+          - err113
+          - exhaustruct_v5
+          - gochecknoglobals
+          - gocritic
+          - godoclint
+          - lll
+          - mnd
+          - noinlineerr
+          - nonamedreturns
+          - paralleltest
+          - prealloc
+          - revive
+          - testpackage
+          - varnamelen
+          - wrapcheck
+      - path: ^internal/readahead/[^/]+\.go$
+        linters:
+          - bodyclose
+          - containedctx
+          - contextcheck
+          - cyclop
+          - errcheck
+          - exhaustruct_v5
+          - funcorder
+          - funlen
+          - gochecknoglobals
+          - gocognit
+          - gocritic
+          - mnd
+          - noinlineerr
+          - paralleltest
+          - revive
+          - testpackage
+          - varnamelen
+          - wrapcheck
+      - path: ^internal/recent/[^/]+\.go$
+        linters:
+          - errcheck
+          - exhaustruct_v5
+          - funcorder
+          - gocritic
+          - govet
+          - noinlineerr
+          - paralleltest
+          - varnamelen
+          - wrapcheck
+      - path: ^internal/safego/[^/]+\.go$
+        linters: [gochecknoglobals, lll, paralleltest, revive, testpackage, varnamelen, wrapcheck]
+      - path: ^internal/safehttp/[^/]+\.go$
+        linters:
+          - err113
+          - exhaustruct_v5
+          - gochecknoglobals
+          - gosec
+          - mnd
+          - noinlineerr
+          - paralleltest
+          - revive
+          - testpackage
+          - varnamelen
+          - wrapcheck
+      - path: ^internal/settings/[^/]+\.go$
+        linters:
+          - err113
+          - exhaustruct_v5
+          - gochecknoglobals
+          - gocritic
+          - govet
+          - lll
+          - mnd
+          - noinlineerr
+          - nonamedreturns
+          - paralleltest
+          - recvcheck
+          - revive
+          - testpackage
+          - varnamelen
+          - wrapcheck
+      - path: ^internal/sleeptimer/[^/]+\.go$
+        linters: [err113, funcorder, lll, paralleltest, testpackage, varnamelen]
+      - path: ^internal/speaker/[^/]+\.go$
+        linters: [err113, lll, mnd, paralleltest, revive, testpackage]
+      - path: ^internal/spotify/[^/]+\.go$
+        linters:
+          - cyclop
+          - err113
+          - errcheck
+          - errchkjson
+          - exhaustruct_v5
+          - forcetypeassert
+          - funcorder
+          - gocognit
+          - goconst
+          - gocritic
+          - gosec
+          - govet
+          - lll
+          - mnd
+          - musttag
+          - noinlineerr
+          - nonamedreturns
+          - paralleltest
+          - prealloc
+          - revive
+          - testpackage
+          - varnamelen
+          - wrapcheck
+      - path: ^internal/supervise/[^/]+\.go$
+        linters:
+          - containedctx
+          - err113
+          - exhaustruct_v5
+          - gochecknoglobals
+          - gocritic
+          - lll
+          - mnd
+          - noinlineerr
+          - paralleltest
+          - revive
+          - testpackage
+          - varnamelen
+          - wrapcheck
+      - path: ^internal/sysbus/[^/]+\.go$
+        linters:
+          - contextcheck
+          - err113
+          - gocritic
+          - govet
+          - lll
+          - noinlineerr
+          - paralleltest
+          - testpackage
+          - usetesting
+          - varnamelen
+          - wrapcheck
+      - path: ^internal/tunein/[^/]+\.go$
+        linters:
+          - err113
+          - exhaustruct_v5
+          - gochecknoglobals
+          - gocritic
+          - lll
+          - mnd
+          - nilerr
+          - noinlineerr
+          - nonamedreturns
+          - paralleltest
+          - revive
+          - testpackage
+          - varnamelen
+          - wrapcheck
+      - path: ^internal/update/[^/]+\.go$
+        linters:
+          - bodyclose
+          - contextcheck
+          - err113
+          - exhaustruct_v5
+          - funcorder
+          - gochecknoglobals
+          - govet
+          - lll
+          - mnd
+          - nestif
+          - nilnil
+          - noinlineerr
+          - nonamedreturns
+          - paralleltest
+          - prealloc
+          - revive
+          - testpackage
+          - unparam
+          - varnamelen
+          - wrapcheck
       # Tests may be long and repeat literals; table tests read better that way.
       - path: _test\.go
         linters: [cyclop, dupl, funlen, gocognit, goconst, nestif, gosec, forcetypeassert]
@@ -72,8 +565,39 @@ linters:
         text: G115
       - path: internal/dbus/wire\.go
         linters: [cyclop, funlen, gocognit]
+      # The word tables hold every language's translations, in every script.
+      - path: internal/panel/words\.go
+        linters: [gosmopolitan]
+      # Tests feed non-Latin text on purpose to prove the multilingual paths.
+      - path: _test\.go
+        linters: [gosmopolitan]
+      # Keys of documents we read but do not define: the OpenAPI spec's own names and
+      # librespot's credentials file.
+      - path: internal/web/(openapi|types_contract)_test\.go
+        linters: [tagliatelle]
+      - path: internal/web/redact\.go
+        linters: [tagliatelle]
+        text: auth_data
+      # A command's standard output is what it is run for.
+      - path: cmd/
+        linters: [forbidigo]
+      # The API's own headers are spelled X-SoundTap-* as its documentation spells them
+      # (ADR 0108); http.Header canonicalizes them on use either way.
+      - linters: [canonicalheader]
+        text: X-SoundTap-
       # Host-side tools write where their operator points them; that path is the input.
       - path: cmd/bcoflash/
         text: G703
+issues:
+  # The whole tree is judged: no cap on how many issues one linter or one text may report.
+  max-issues-per-linter: 0
+  max-same-issues: 0
 formatters:
-  enable: [gofmt]
+  # gofumpt is the stricter gofmt; goimports keeps the module's own imports in their own group.
+  enable: [gofmt, gofumpt, goimports]
+  settings:
+    goimports:
+      local-prefixes: [github.com/stein155/soundtap/app]
+  exclusions:
+    paths:
+      - frontend/

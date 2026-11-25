@@ -57,19 +57,25 @@ func (b *fakeBCO) xmodem(k byte) {
 		// the image (2026-10-14: "Application: invalid image").
 		b.out.WriteByte(xACK)
 		b.state = "programming"
+
 		return
 	}
+
 	b.xbuf = append(b.xbuf, k)
 	if len(b.xbuf) < 133 {
 		return
 	}
+
 	p := b.xbuf
+
 	b.xbuf = nil
 	if p[0] != xSOH || p[1] != ^p[2] || p[1] != byte(len(b.xdata)/128+1) ||
 		crc16XMODEM(p[3:131]) != uint16(p[131])<<8|uint16(p[132]) {
 		b.out.WriteByte(xNAK)
+
 		return
 	}
+
 	b.xdata = append(b.xdata, p[3:131]...)
 	b.out.WriteByte(xACK)
 }
@@ -77,25 +83,31 @@ func (b *fakeBCO) xmodem(k byte) {
 func (b *fakeBCO) Read(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
 	if b.state == "programming" && b.out.Len() == 0 {
 		b.out.WriteString("BCD decryption error = Data not encrypted\r\ndownload passed\r\n" + level2Menu)
 		b.uploaded = b.xdata[:StockAppSize]
 		b.state = "done"
 	}
+
 	return b.out.Read(p)
 }
 
 func (b *fakeBCO) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
 	for _, k := range p {
 		if b.state == "xmodem" {
 			b.xmodem(k)
+
 			continue
 		}
+
 		if k != 1 {
 			b.sent = append(b.sent, k)
 		}
+
 		switch {
 		case k == 1 && (b.state == "level1" || b.state == "menu1"):
 			b.state = "menu1"
@@ -112,69 +124,91 @@ func (b *fakeBCO) Write(p []byte) (int, error) {
 			b.out.WriteString("2\r\nstart download with xmodem...\r\nCC")
 		}
 	}
+
 	return len(p), nil
 }
 
 func (b *fakeBCO) power(on bool) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
 	if on == b.on {
 		return nil
 	}
+
 	b.on = on
 	if !on {
 		b.state = "off"
+
 		return nil
 	}
+
 	b.out.WriteString(flb)
+
 	if b.uploaded == nil {
 		b.state = "level1"
+
 		return nil
 	}
+
 	b.state = "app"
 	b.out.WriteString("Starting Application\r\n")
+
 	if b.dead {
 		b.out.WriteString(flb + "Forced start of Bootloader Level 2\r\nStarting Bootloader Level 2\r\n" +
 			"string descriptor index = 4 string = APP=9418.47.9418,<20141020>\r\n")
+
 		return nil
 	}
+
 	if b.own {
 		b.out.WriteString("wild id rf0 00000123\r\nnetcard wifi 00000000\r\nnetcard up\r\n")
+
 		return nil
 	}
+
 	b.out.WriteString("DEVICE ID IS DM8XX : 0x70\r\nstring descriptor index = 4 string = " +
 		"APP=9416.47.9416.rev3372(2014-10-06 11:10:49),<20141020>; BSL=47.9423.rev3372\r\n" +
 		"sdsShell ready for commands. Try \"help\" for help.\r\nsds://>")
+
 	return nil
 }
 
 func (b *fakeBCO) upload(ctx context.Context, image []byte) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
 	if b.state != "upload" {
 		return errors.New("upload before the TFTP menu entry was chosen")
 	}
+
 	if b.tftpFail {
 		return errors.New("TFTP: Wrong BCD version")
 	}
+
 	b.uploaded = image
 	b.out.WriteString("TFTP: file transfer end. error code(0)\r\nFirmwareUpdate::processResourceData() Success\r\n" +
 		"download with TFTP was successful\r\n" + level2Menu)
+
 	return nil
 }
 
 func shellImage(t *testing.T) []byte {
 	t.Helper()
+
 	old := appImages
 	img := bytes.Repeat([]byte{0x5a}, StockAppSize)
 	appImages = map[string]string{sha256hex(img): "test image"}
+
 	t.Cleanup(func() { appImages = old })
+
 	return img
 }
 
 func TestFlashAppOwnAppBoots(t *testing.T) {
 	img := shellImage(t)
 	b := &fakeBCO{own: true}
+
 	f := &Flasher{Serial: b, Power: b.power, Upload: b.upload, Scale: 0.01}
 	if ver, err := f.FlashApp(context.Background(), img); err != nil || ver != "own app" {
 		t.Fatalf("ver=%q err=%v", ver, err)
@@ -185,16 +219,20 @@ func TestFlashAppFollowsStockSequence(t *testing.T) {
 	img := shellImage(t)
 	b := &fakeBCO{}
 	f := &Flasher{Serial: b, Power: b.power, Upload: b.upload, Scale: 0.01}
+
 	ver, err := f.FlashApp(context.Background(), img)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if ver != "APP=9416.47.9416.rev3372(2014-10-06 11:10:49)" {
 		t.Fatalf("version %q", ver)
 	}
+
 	if string(b.sent) != "4h" {
 		t.Fatalf("typed %q, want exactly \"4h\"", b.sent)
 	}
+
 	if !bytes.Equal(b.uploaded, img) || !b.on {
 		t.Fatalf("uploaded %d bytes, BCO on=%v", len(b.uploaded), b.on)
 	}
@@ -203,10 +241,12 @@ func TestFlashAppFollowsStockSequence(t *testing.T) {
 func TestFlashAppReportsDeadApp(t *testing.T) {
 	img := shellImage(t)
 	b := &fakeBCO{dead: true}
+
 	f := &Flasher{Serial: b, Power: b.power, Upload: b.upload, Scale: 0.01}
 	if _, err := f.FlashApp(context.Background(), img); !errors.Is(err, ErrAppDead) {
 		t.Fatalf("err = %v, want ErrAppDead", err)
 	}
+
 	if !b.on {
 		t.Fatal("BCO left powered off")
 	}
@@ -215,6 +255,7 @@ func TestFlashAppReportsDeadApp(t *testing.T) {
 func TestFlashAppTFTPFailureIsErrUpload(t *testing.T) {
 	img := shellImage(t)
 	b := &fakeBCO{tftpFail: true}
+
 	f := &Flasher{Serial: b, Power: b.power, Upload: b.upload, Scale: 0.01}
 	if _, err := f.FlashApp(context.Background(), img); !errors.Is(err, ErrUpload) {
 		t.Fatalf("err = %v, want ErrUpload", err)
@@ -226,17 +267,21 @@ func TestXmodemAppWritesTheImage(t *testing.T) {
 	for i := range img {
 		img[i] = byte(i * 7)
 	}
+
 	appImages = map[string]string{sha256hex(img): "test image"}
 	b := &fakeBCO{}
 	f := &Flasher{Serial: b, Power: b.power, Scale: 0.01}
+
 	ver, err := f.XmodemApp(context.Background(), img)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if !bytes.Equal(b.uploaded, img) || !b.on || ver == "" {
 		t.Fatalf("uploaded %d bytes (equal %v), BCO on=%v, version %q",
 			len(b.uploaded), bytes.Equal(b.uploaded, img), b.on, ver)
 	}
+
 	if string(b.sent) != "42" {
 		t.Fatalf("typed %q before the transfer, want \"42\"", b.sent)
 	}
@@ -244,10 +289,12 @@ func TestXmodemAppWritesTheImage(t *testing.T) {
 
 func TestFlashAppRefusesUnknownImage(t *testing.T) {
 	b := &fakeBCO{}
+
 	f := &Flasher{Serial: b, Power: b.power, Upload: b.upload, Scale: 0.01}
 	if _, err := f.FlashApp(context.Background(), make([]byte, StockAppSize)); err == nil {
 		t.Fatal("accepted an image outside appImages")
 	}
+
 	if b.on || len(b.sent) != 0 {
 		t.Fatal("touched the BCO for a refused image")
 	}
@@ -263,6 +310,7 @@ func TestParseMenuKeyByExactLabel(t *testing.T) {
 			t.Fatalf("%q: got %q, %v; want %q", tc.label, got, err, tc.key)
 		}
 	}
+
 	if _, err := parseMenuKey(level1Menu, "Bootloader Level 2"); err == nil {
 		t.Fatal("a partial label matched")
 	}
@@ -274,48 +322,68 @@ func TestTFTPPutRetransmitsAndEndsWithEmptyBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer srv.Close()
+
 	data := bytes.Repeat([]byte("0123456789abcdef"), 64) // 1024 bytes: two full blocks
+
 	got := make(chan []byte, 1)
 	go func() {
 		buf := make([]byte, 600)
+
 		n, client, err := srv.ReadFromUDP(buf)
 		if err != nil || !strings.HasPrefix(string(buf[2:n]), "smsc_app.bcd\x00octet\x00") {
 			got <- nil
+
 			return
 		}
+
 		tid, _ := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 		defer tid.Close()
+
 		ack := func(b uint16) { tid.WriteToUDP([]byte{0, 4, byte(b >> 8), byte(b)}, client) }
 		ack(0)
+
 		var file []byte
+
 		dropped := false
+
 		for {
 			tid.SetReadDeadline(time.Now().Add(10 * time.Second))
+
 			n, _, err := tid.ReadFromUDP(buf)
 			if err != nil {
 				got <- nil
+
 				return
 			}
+
 			block := binary.BigEndian.Uint16(buf[2:])
 			if block == 2 && !dropped { // lose block 2 once
 				dropped = true
+
 				continue
 			}
+
 			if int(block) == len(file)/512+1 {
 				file = append(file, buf[4:n]...)
 			}
+
 			ack(block)
+
 			if n-4 < 512 {
 				got <- file
+
 				return
 			}
 		}
 	}()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
+
 	if err := tftpPut(ctx, srv.LocalAddr().String(), "smsc_app.bcd", data); err != nil {
 		t.Fatal(err)
 	}
+
 	if file := <-got; !bytes.Equal(file, data) {
 		t.Fatalf("server got %d bytes, want %d", len(file), len(data))
 	}
@@ -323,6 +391,7 @@ func TestTFTPPutRetransmitsAndEndsWithEmptyBlock(t *testing.T) {
 
 func sha256hex(b []byte) string {
 	sum := sha256.Sum256(b)
+
 	return hex.EncodeToString(sum[:])
 }
 
@@ -331,11 +400,15 @@ func sha256hex(b []byte) string {
 func TestFlashAppFailureCyclesBCOBackToItsApp(t *testing.T) {
 	img := shellImage(t)
 	b := &fakeBCO{}
-	f := &Flasher{Serial: b, Power: b.power, Scale: 0.01,
-		Upload: func(context.Context, []byte) error { return errors.New("no level-2 link") }}
+
+	f := &Flasher{
+		Serial: b, Power: b.power, Scale: 0.01,
+		Upload: func(context.Context, []byte) error { return errors.New("no level-2 link") },
+	}
 	if _, err := f.FlashApp(context.Background(), img); err == nil {
 		t.Fatal("upload failure was not reported")
 	}
+
 	if !b.on || b.state != "level1" {
 		t.Fatalf("BCO on=%v state=%q, want powered and back through level 1", b.on, b.state)
 	}
@@ -344,18 +417,25 @@ func TestFlashAppFailureCyclesBCOBackToItsApp(t *testing.T) {
 func TestAllowImageNeedsExactHash(t *testing.T) {
 	old := appImages
 	appImages = map[string]string{}
+
 	t.Cleanup(func() { appImages = old })
+
 	img := make([]byte, StockAppSize)
+
 	img[0] = 1
 	if AllowImage(img, strings.Repeat("0", 64)) == nil {
 		t.Fatal("accepted a wrong hash")
 	}
+
 	if _, err := CheckAppImage(img); err == nil {
 		t.Fatal("image allowed without approval")
 	}
-	if err := AllowImage(img, sha256hex(img)); err != nil {
+
+	err := AllowImage(img, sha256hex(img))
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	if _, err := CheckAppImage(img); err != nil {
 		t.Fatal(err)
 	}
@@ -374,46 +454,62 @@ func TestTFTPPutStopsWhenCancelled(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer srv.Close()
+
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
+
 			blocks := make(chan uint16, 16)
 			go func() {
 				buf := make([]byte, 600)
+
 				_, client, err := srv.ReadFromUDP(buf)
 				if err != nil {
 					return
 				}
+
 				tid, _ := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 				defer tid.Close()
+
 				ack := func(b uint16) { tid.WriteToUDP([]byte{0, 4, byte(b >> 8), byte(b)}, client) }
 				ack(0)
+
 				for {
 					tid.SetReadDeadline(time.Now().Add(time.Second))
+
 					_, _, err := tid.ReadFromUDP(buf)
 					if err != nil {
 						close(blocks)
+
 						return
 					}
+
 					b := binary.BigEndian.Uint16(buf[2:])
 					blocks <- b
+
 					if b == 1 {
 						cancel()
 						time.Sleep(50 * time.Millisecond)
 					}
+
 					if tc.ackData {
 						ack(b)
 					}
 				}
 			}()
+
 			start := time.Now()
+
 			err = tftpPut(ctx, srv.LocalAddr().String(), "smsc_app.bcd", make([]byte, 4096))
 			if !errors.Is(err, context.Canceled) {
 				t.Fatalf("tftpPut = %v, want context.Canceled", err)
 			}
+
 			if d := time.Since(start); d > time.Second {
 				t.Fatalf("tftpPut took %v after cancel", d)
 			}
+
 			srv.Close()
+
 			for b := range blocks {
 				if b > 1 {
 					t.Fatalf("block %d sent after the upload was cancelled", b)
@@ -428,9 +524,11 @@ type noisySerial struct{ reads int }
 
 func (s *noisySerial) Read(b []byte) (int, error) {
 	s.reads++
+
 	for i := range b {
 		b[i] = 'x'
 	}
+
 	return len(b), nil
 }
 
@@ -443,22 +541,28 @@ func TestExpectOnANoisyConsoleKeepsItsBounds(t *testing.T) {
 	c := &console{f: &Flasher{Serial: serial}}
 
 	start := time.Now()
+
 	if _, err := c.expect(context.Background(), 50*time.Millisecond, "never printed"); err == nil {
 		t.Fatal("expect found a marker that was never printed")
 	}
+
 	if d := time.Since(start); d > time.Second {
 		t.Fatalf("expect returned after %v; its timeout was 50ms", d)
 	}
+
 	if len(c.buf) > consoleKeep {
 		t.Fatalf("console kept %d bytes, limit %d", len(c.buf), consoleKeep)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
+
 	serial.reads = 0
+
 	if _, err := c.expect(ctx, time.Minute, "never printed"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("expect on a cancelled context = %v, want context.Canceled", err)
 	}
+
 	if serial.reads != 0 {
 		t.Fatalf("a cancelled expect still read the UART %d times", serial.reads)
 	}
@@ -469,27 +573,37 @@ func TestExpectOnANoisyConsoleKeepsItsBounds(t *testing.T) {
 func TestAllowImageAndCheckAppImageRunConcurrently(t *testing.T) {
 	old := appImages
 	appImages = map[string]string{}
+
 	t.Cleanup(func() { appImages = old })
+
 	img := []byte("synthetic BCO image")
 	want := sha256hex(img)
+
 	var wg sync.WaitGroup
+
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
+
 		for range 1000 {
-			if err := AllowImage(img, want); err != nil {
+			err := AllowImage(img, want)
+			if err != nil {
 				t.Error(err)
+
 				return
 			}
 		}
 	}()
 	go func() {
 		defer wg.Done()
+
 		for range 1000 {
 			_, _ = CheckAppImage(img)
 		}
 	}()
+
 	wg.Wait()
+
 	if _, err := CheckAppImage(img); err != nil {
 		t.Fatal(err)
 	}

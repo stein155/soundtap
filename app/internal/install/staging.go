@@ -4,6 +4,7 @@
 package install
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -22,11 +23,13 @@ func RemoveStaleStaging(dir string) {
 	if dir == "" {
 		dir = os.TempDir()
 	}
+
 	for _, prefix := range []string{"soundtap-kernel-", "soundtap-mlo-", "soundtap-uboot-"} {
 		matches, err := filepath.Glob(filepath.Join(dir, prefix+"*"))
 		if err != nil {
 			continue
 		}
+
 		for _, match := range matches {
 			_ = os.Remove(match)
 		}
@@ -35,14 +38,19 @@ func RemoveStaleStaging(dir string) {
 
 // CheckKernelForTarget validates Bose fixsig behavior and the model suffix in the
 // appended-DTB mainline kernel. This separates ST10 from WLA's shared module chain.
+//
+//nolint:revive // flag-parameter: suffixed is what the package said about this kernel, not a mode.
 func CheckKernelForTarget(path, target string, suffixed bool) error {
 	image, err := os.ReadFile(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("staged kernel: %w", err)
 	}
-	if err := flash.ValidateKernel(image); err != nil {
-		return err
+
+	err = flash.ValidateKernel(image)
+	if err != nil {
+		return fmt.Errorf("staged kernel: %w", err)
 	}
+
 	got := stu.MainlineTarget(image)
 	if got == "" {
 		// A stock Bose kernel names no model, so there is nothing to match: the
@@ -51,11 +59,19 @@ func CheckKernelForTarget(path, target string, suffixed bool) error {
 		// holds, so the signature and the uImage geometry are checked either way.
 		return nil
 	}
+
 	if got != target && !suffixed {
-		return fmt.Errorf("kernel targets %s, not %s", got, target)
+		return fmt.Errorf("%w %s, not %s", errKernelTargets, got, target)
 	}
+
 	return nil
 }
+
+// The refusals of staging, with their values around the sentinel.
+var (
+	errKernelTargets = errors.New("kernel targets")
+	errCannotWrite   = errors.New("this image cannot write NAND")
+)
 
 // UBIBodySize returns how many bytes of a rootfs module are the UBI image: the
 // module as declared, or that minus the overlap it shares with the next header,
@@ -81,22 +97,27 @@ type TruncatingWriter struct {
 	Left int64
 }
 
-func (t *TruncatingWriter) Write(p []byte) (int, error) {
-	n := len(p)
-	if int64(n) > t.Left {
-		p = p[:t.Left]
+// Write passes on what is left of the first Left bytes and reports all of p written.
+func (t *TruncatingWriter) Write(chunk []byte) (int, error) {
+	size := len(chunk)
+	if int64(size) > t.Left {
+		chunk = chunk[:t.Left]
 	}
-	if len(p) > 0 {
-		written, err := t.W.Write(p)
+
+	if len(chunk) > 0 {
+		written, err := t.W.Write(chunk)
+
 		t.Left -= int64(written)
 		if err != nil {
-			return written, err
+			return written, fmt.Errorf("writing the rootfs image: %w", err)
 		}
-		if written < len(p) {
+
+		if written < len(chunk) {
 			return written, io.ErrShortWrite
 		}
 	}
-	return n, nil
+
+	return size, nil
 }
 
 // ToolsRefusal names the NAND tools this image lacks, or returns nil.
@@ -104,6 +125,7 @@ func ToolsRefusal(missing []string) error {
 	if len(missing) == 0 {
 		return nil
 	}
-	return fmt.Errorf("this image cannot write NAND: %s missing. Install with a USB stick, as the install guide describes",
-		strings.Join(missing, ", "))
+
+	return fmt.Errorf("%w: %s missing. Install with a USB stick, as the install guide describes",
+		errCannotWrite, strings.Join(missing, ", "))
 }

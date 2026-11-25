@@ -24,9 +24,12 @@ import (
 // AUX is captured and played through the Mixer like every other source: volume, bass
 // and announcements apply to it, and the Mixer stays the only DAC writer (ADR 0012).
 // A variable for tests.
+//
+//nolint:gochecknoglobals // a test seam: tests capture from a script
 var auxCaptureCmd = func(ctx context.Context) *exec.Cmd {
 	return exec.CommandContext(ctx, "arecord", "-q", "-D", "plughw:0,0", "-f", "S16_LE", "-r", "48000", "-c", "2",
-		fmt.Sprintf("--period-size=%d", auxCapturePeriodFrames), fmt.Sprintf("--buffer-size=%d", auxCaptureBufferFrames),
+		fmt.Sprintf("--period-size=%d", auxCapturePeriodFrames),
+		fmt.Sprintf("--buffer-size=%d", auxCaptureBufferFrames),
 		"-t", "raw", "-")
 }
 
@@ -49,25 +52,39 @@ const (
 	auxSinkBufferMicros = 80_000
 	auxSinkPeriodMicros = 10_000
 	auxSinkPipeBytes    = 4096 // one page, the smallest pipe Linux makes: 10.9 ms of S32
+	// auxSinkFrameBytes is a stereo S32 frame, the format the pipe into aplay carries.
+	auxSinkFrameBytes = 8
+	// A capture that exits is restarted after a backoff that grows by auxCaptureBackoffGrowth
+	// up to auxCaptureMaxBackoff.
+	auxCaptureBackoffGrowth = 2
+	auxCaptureMaxBackoff    = 30 * time.Second
 )
 
 // sinkTiming is how deep the chain after the Mixer runs: aplay's ring and period and the
 // pipe into it.
 type sinkTiming struct{ bufferMicros, periodMicros, pipeBytes int }
 
-var (
-	defaultSinkTiming = sinkTiming{audio.SinkBufferMicros, audio.SinkPeriodMicros, audio.SinkPipeBytes}
-	auxSinkTiming     = sinkTiming{auxSinkBufferMicros, auxSinkPeriodMicros, auxSinkPipeBytes}
-)
+// defaultSinkTiming is the chain every source but AUX plays through.
+func defaultSinkTiming() sinkTiming {
+	return sinkTiming{audio.SinkBufferMicros, audio.SinkPeriodMicros, audio.SinkPipeBytes}
+}
+
+// auxSinkTiming is the shallow chain AUX plays through.
+func auxSinkTiming() sinkTiming {
+	return sinkTiming{auxSinkBufferMicros, auxSinkPeriodMicros, auxSinkPipeBytes}
+}
 
 // auxOwnsSink is set while AUX is the source; the ALSA sink then reopens on auxSinkTiming.
+//
+//nolint:gochecknoglobals // process-wide state: the source router sets it, the DAC pump reads it
 var auxOwnsSink atomic.Bool
 
 func currentSinkTiming() sinkTiming {
 	if auxOwnsSink.Load() {
-		return auxSinkTiming
+		return auxSinkTiming()
 	}
-	return defaultSinkTiming
+
+	return defaultSinkTiming()
 }
 
 // auxBudget is AUX's worst-case delay from the line input to the DAC: a capture period,
@@ -75,7 +92,8 @@ func currentSinkTiming() sinkTiming {
 // it), the pipe into aplay, the period aplay holds and its ring.
 func auxBudget() time.Duration {
 	capture := auxCapturePeriodFrames * time.Second / audio.SampleRate
-	pipe := auxSinkPipeBytes * time.Second / (8 * mcaspCardRate) // S32 stereo
+	pipe := auxSinkPipeBytes * time.Second / (auxSinkFrameBytes * mcaspCardRate)
+
 	return capture + blockDuration + auxLiveBuffer + pipe + (auxSinkPeriodMicros+auxSinkBufferMicros)*time.Microsecond
 }
 
@@ -97,30 +115,60 @@ type timedSink struct {
 }
 
 func openTimedSink(ctx context.Context, dev string, flush func(), log *slog.Logger) (io.Writer, func() error, error) {
-	s := &timedSink{flush: flush, log: log, timing: currentSinkTiming()}
-	s.open = func(t sinkTiming) (io.Writer, func() error, error) {
-		w, _, closeSink, err := openAudioSink(ctx, dev, t, log)
+	sink := &timedSink{
+		open: nil, flush: flush, log: log,
+		mu: sync.Mutex{}, timing: currentSinkTiming(), w: nil, close: nil, closed: false, buf: nil,
+	}
+	sink.open = func(t sinkTiming) (io.Writer, func() error, error) {
+		opened, err := openAudioSink(ctx, dev, t, log)
 		if err != nil {
 			return nil, nil, err
 		}
-		w, closeSink = withSPDIF(ctx, w, closeSink, log)
-		return w, closeSink, nil
+
+		sink, closeSink := opened.w, opened.close
+
+		sink, closeSink = withSPDIF(ctx, sink, closeSink, log)
+
+		return sink, closeSink, nil
 	}
+
 	var err error
-	if s.w, s.close, err = s.open(s.timing); err != nil {
+
+	sink.w, sink.close, err = sink.open(sink.timing)
+	if err != nil {
 		return nil, nil, err
 	}
-	return s, s.Close, nil
+
+	return sink, sink.Close, nil
 }
 
 func (s *timedSink) Write(p []byte) (int, error) { return s.WriteGain(p, 1) }
 
-func (s *timedSink) WriteGain(p []byte, gain float64) (int, error) {
+func (s *timedSink) WriteGain(pcm []byte, gain float64) (int, error) {
 	w, err := s.current()
 	if err != nil {
 		return 0, err
 	}
-	return audio.WriteGain(w, p, gain, &s.buf)
+
+	n, err := audio.WriteGain(w, pcm, gain, &s.buf)
+	if err != nil {
+		return n, fmt.Errorf("write DAC: %w", err)
+	}
+
+	return n, nil
+}
+
+func (s *timedSink) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed {
+		return nil
+	}
+
+	s.closed = true
+
+	return s.close()
 }
 
 // current is the open sink, reopened first if the wanted timing changed. Closing the old
@@ -128,64 +176,70 @@ func (s *timedSink) WriteGain(p []byte, gain float64) (int, error) {
 func (s *timedSink) current() (io.Writer, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	want := currentSinkTiming()
 	if s.closed || want == s.timing {
 		return s.w, nil
 	}
+
 	_ = s.close()
-	w, closeSink, err := s.open(want)
+
+	sink, closeSink, err := s.open(want)
 	if err != nil {
 		s.closed = true
+
 		return nil, fmt.Errorf("reopen DAC: %w", err)
 	}
-	s.w, s.close, s.timing = w, closeSink, want
-	s.log.Info("DAC reopened", "buffer_us", want.bufferMicros, "period_us", want.periodMicros, "pipe_bytes", want.pipeBytes)
-	s.flush()
-	return w, nil
-}
 
-func (s *timedSink) Close() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return nil
-	}
-	s.closed = true
-	return s.close()
+	s.w, s.close, s.timing = sink, closeSink, want
+	s.log.Info("DAC reopened",
+		"buffer_us", want.bufferMicros, "period_us", want.periodMicros, "pipe_bytes", want.pipeBytes)
+	s.flush()
+
+	return sink, nil
 }
 
 // runAuxCapture keeps a capture writing into the bus for as long as AUX is selected.
 // A capture that exits while AUX stays selected is restarted after a backoff that
 // doubles up to 30 s.
-func runAuxCapture(ctx context.Context, sp *speakerstate.Speaker, bus string, log *slog.Logger) {
-	var stop context.CancelFunc
-	var done <-chan struct{}
-	var retry <-chan time.Time
+func runAuxCapture(ctx context.Context, speaker *speakerstate.Speaker, bus string, log *slog.Logger) {
+	var (
+		stop  context.CancelFunc
+		done  <-chan struct{}
+		retry <-chan time.Time
+	)
+
 	backoff := time.Second
+
 	for {
-		changed := sp.Changed()
-		want := sp.StatusSnapshot().Source == sourceAux
+		changed := speaker.Changed()
+
+		want := speaker.StatusSnapshot().Source == sourceAux
 		if want && stop == nil && retry == nil {
 			stop, done = startAuxCapture(ctx, bus, log)
 		}
+
 		if !want && stop != nil {
 			stop()
 			<-done
 			stop, done, backoff = nil, nil, time.Second
 		}
+
 		select {
 		case <-ctx.Done():
 			if stop != nil {
 				stop()
 				<-done
 			}
+
 			return
 		case <-changed:
 		case <-done:
 			stop, done = nil, nil
+
 			log.Warn("aux capture exited; retrying", "after", backoff)
 			retry = time.After(backoff)
-			backoff = min(2*backoff, 30*time.Second)
+			backoff = min(auxCaptureBackoffGrowth*backoff, auxCaptureMaxBackoff)
 		case <-retry:
 			retry = nil
 		}
@@ -201,17 +255,25 @@ func startAuxCapture(ctx context.Context, bus string, log *slog.Logger) (context
 	if err != nil {
 		log.Error("aux capture: open bus", "err", err)
 		close(done)
+
 		return cancel, done
 	}
+
 	cmd := auxCaptureCmd(cctx)
 	cmd.Stdout = out
 	childproc.DieWithParent(cmd)
-	if err := cmd.Start(); err != nil {
-		log.Error("aux capture: start", "err", err)
+
+	startErr := cmd.Start()
+	if startErr != nil {
+		log.Error("aux capture: start", "err", startErr)
+
 		_ = out.Close()
+
 		close(done)
+
 		return cancel, done
 	}
+
 	log.Info("aux capture started", "pid", cmd.Process.Pid,
 		"capture_period_frames", auxCapturePeriodFrames, "capture_buffer_frames", auxCaptureBufferFrames,
 		"live_buffer", auxLiveBuffer, "dac_buffer_us", auxSinkBufferMicros, "dac_period_us", auxSinkPeriodMicros,
@@ -219,8 +281,10 @@ func startAuxCapture(ctx context.Context, bus string, log *slog.Logger) (context
 	go func() {
 		err := cmd.Wait()
 		_ = out.Close()
+
 		log.Info("aux capture stopped", "err", err)
 		close(done)
 	}()
+
 	return cancel, done
 }

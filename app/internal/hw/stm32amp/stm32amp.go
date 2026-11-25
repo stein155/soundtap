@@ -17,6 +17,7 @@ package stm32amp
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -46,15 +47,37 @@ const (
 	thermalPoll    = time.Second
 )
 
-// writable are the registers stock writes; Write refuses all others.
-var writable = map[byte]int{RegI2SClocksValid: 1, RegSourceSelect: 1}
+// Register sizes in bytes (stock snd-burnspa's register table).
+const (
+	versionLen     = 64 // RegVersion: the version string
+	attenuationLen = 4  // RegThermalAttenuation: an IEEE-754 single
+	byteLen        = 1  // every other register
+)
 
-// sizes are the registers this package reads.
-var sizes = map[byte]int{RegVersion: 64, RegAmpState: 1, RegI2SClocksValid: 1,
-	RegThermalAttenuation: 4, RegSourceSelect: 1, RegInterruptStatus: 1}
+// writable reports whether stock writes reg; Write refuses all others.
+func writable(reg byte) bool {
+	return reg == RegI2SClocksValid || reg == RegSourceSelect
+}
+
+// size is the length of a register this package reads, false for any other.
+func size(reg byte) (int, bool) {
+	switch reg {
+	case RegVersion:
+		return versionLen, true
+	case RegThermalAttenuation:
+		return attenuationLen, true
+	case RegAmpState, RegI2SClocksValid, RegSourceSelect, RegInterruptStatus:
+		return byteLen, true
+	default:
+		return 0, false
+	}
+}
 
 // ErrNotWritable is a write to a register stock never writes.
 var ErrNotWritable = errors.New("stm32amp: register not writable")
+
+// errUnknownRegister is a read of a register outside the register table.
+var errUnknownRegister = errors.New("stm32amp: register unknown")
 
 // Bus is the I2C device at Address: one message per call.
 type Bus interface {
@@ -70,82 +93,106 @@ type Amp struct {
 }
 
 // New is the controller on bus.
-func New(bus Bus) *Amp { return &Amp{bus: bus, sleep: time.Sleep} }
+func New(bus Bus) *Amp { return &Amp{bus: bus, mu: sync.Mutex{}, sleep: time.Sleep} }
 
 // Read is register reg, its table size long.
 func (a *Amp) Read(reg byte) ([]byte, error) {
-	n, ok := sizes[reg]
+	length, ok := size(reg)
 	if !ok {
-		return nil, fmt.Errorf("stm32amp: register 0x%02x unknown", reg)
+		return nil, fmt.Errorf("%w: 0x%02x", errUnknownRegister, reg)
 	}
+
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	buf := make([]byte, n)
+
+	buf := make([]byte, length)
+
 	var err error
+
 	for range maxRounds {
 		a.sleep(stepDelay)
-		if err = a.bus.Write([]byte{0x00, reg}); err != nil {
+
+		err = a.bus.Write([]byte{0x00, reg})
+		if err != nil {
 			continue
 		}
+
 		a.sleep(stepDelay)
-		if err = a.bus.Read(buf); err == nil {
+
+		err = a.bus.Read(buf)
+		if err == nil {
 			return buf, nil
 		}
 	}
+
 	return nil, fmt.Errorf("stm32amp: reading 0x%02x: %w", reg, err)
 }
 
 // Write sets one of the registers stock writes.
-func (a *Amp) Write(reg byte, v byte) error {
-	if _, ok := writable[reg]; !ok {
+func (a *Amp) Write(reg, value byte) error {
+	if !writable(reg) {
 		return fmt.Errorf("%w: 0x%02x", ErrNotWritable, reg)
 	}
+
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	err := a.bus.Write([]byte{reg, v})
+
+	err := a.bus.Write([]byte{reg, value})
 	a.sleep(stepDelay)
-	return err
+
+	if err != nil {
+		return fmt.Errorf("stm32amp: writing 0x%02x: %w", reg, err)
+	}
+
+	return nil
 }
 
 // Version is the controller's firmware version string.
 func (a *Amp) Version() (string, error) {
-	b, err := a.Read(RegVersion)
+	raw, err := a.Read(RegVersion)
 	if err != nil {
 		return "", err
 	}
-	for i, c := range b {
+
+	for i, c := range raw {
 		if c == 0 || c == 0xff {
-			b = b[:i]
+			raw = raw[:i]
+
 			break
 		}
 	}
-	return string(b), nil
+
+	return string(raw), nil
 }
 
 // On reports whether the amplifier says it is on (ampState 1).
 func (a *Amp) On() (bool, error) {
-	b, err := a.Read(RegAmpState)
-	return err == nil && b[0] == 1, err
+	raw, err := a.Read(RegAmpState)
+
+	return err == nil && raw[0] == 1, err
 }
 
 // Faulted reports whether the interrupt status has the fault bit.
 func (a *Amp) Faulted() (bool, error) {
-	b, err := a.Read(RegInterruptStatus)
-	return err == nil && b[0]&interruptFault != 0, err
+	raw, err := a.Read(RegInterruptStatus)
+
+	return err == nil && raw[0]&interruptFault != 0, err
 }
 
 // Attenuation is the thermal gain the controller asks for, clamped to 0..1 (1: none).
 func (a *Amp) Attenuation() (float64, error) {
-	b, err := a.Read(RegThermalAttenuation)
+	raw, err := a.Read(RegThermalAttenuation)
 	if err != nil {
 		return 1, err
 	}
-	g := float64(math.Float32frombits(uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24))
-	if math.IsNaN(g) || g > 1 || g == 0 && b[0]|b[1]|b[2]|b[3] == 0 {
+
+	gain := float64(math.Float32frombits(binary.LittleEndian.Uint32(raw)))
+	if math.IsNaN(gain) || gain > 1 || gain == 0 && raw[0]|raw[1]|raw[2]|raw[3] == 0 {
 		// An unset register reads 0: no attenuation rather than silence.
 		return 1, nil
 	}
-	return math.Max(g, 0), nil
+
+	return math.Max(gain, 0), nil
 }
 
 // Supervisor tells the controller the clocks run, then watches its state, fault and thermal
@@ -174,20 +221,16 @@ const unmuteSettle = 100 * time.Millisecond
 func (s *Supervisor) MayUnmute() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	return s.on && !s.fault && s.clock()().Sub(s.onSince) >= unmuteSettle
 }
 
-func (s *Supervisor) clock() func() time.Time {
-	if s.now != nil {
-		return s.now
-	}
-	return time.Now
-}
-
-// State is the controller as last read.
-func (s *Supervisor) State() (on, fault bool, thermal float64) {
+// State is the controller as last read: whether the amplifier is on, whether it faulted and
+// the thermal gain.
+func (s *Supervisor) State() (bool, bool, float64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	return s.on, s.fault, s.thermal
 }
 
@@ -196,30 +239,43 @@ func (s *Supervisor) Run(ctx context.Context) {
 	if s.Log == nil {
 		s.Log = slog.Default()
 	}
-	if v, err := s.Amp.Version(); err == nil {
-		s.Log.Info("SA-5 amplifier controller", "version", v)
+
+	version, err := s.Amp.Version()
+	if err == nil {
+		s.Log.Info("SA-5 amplifier controller", "version", version)
 	} else {
 		s.Log.Warn("SA-5 amplifier controller does not answer", "err", err)
 	}
-	if err := s.Amp.Write(RegI2SClocksValid, 1); err != nil {
+
+	err = s.Amp.Write(RegI2SClocksValid, 1)
+	if err != nil {
 		s.Log.Warn("SA-5: i2sClocksValid", "err", err)
 	}
 	defer func() {
-		if err := s.Amp.Write(RegI2SClocksValid, 0); err != nil {
+		err := s.Amp.Write(RegI2SClocksValid, 0)
+		if err != nil {
 			s.Log.Warn("SA-5: i2sClocksValid off", "err", err)
 		}
 	}()
+
 	s.mu.Lock()
 	s.thermal = 1
 	s.mu.Unlock()
+
 	amp := time.NewTicker(ampPoll)
 	defer amp.Stop()
+
 	lastThermal := time.Time{}
+
 	for {
-		s.Step(time.Since(lastThermal) >= thermalPoll)
+		s.Step()
+
 		if time.Since(lastThermal) >= thermalPoll {
+			s.StepThermal()
+
 			lastThermal = time.Now()
 		}
+
 		select {
 		case <-ctx.Done():
 			return
@@ -228,38 +284,53 @@ func (s *Supervisor) Run(ctx context.Context) {
 	}
 }
 
-// Step reads the state once, and the attenuation when thermal. Exported for tests.
-func (s *Supervisor) Step(thermal bool) {
-	on, _ := s.Amp.On()
+// Step reads the amplifier's state and fault once. Exported for tests.
+func (s *Supervisor) Step() {
+	ampOn, _ := s.Amp.On()
 	fault, err := s.Amp.Faulted()
 	s.mu.Lock()
+
 	newFault := err == nil && fault && !s.fault
-	if on && !s.on {
+	if ampOn && !s.on {
 		s.onSince = s.clock()()
 	}
-	s.on = on
+
+	s.on = ampOn
 	if newFault {
 		s.fault = true
 	}
 	s.mu.Unlock()
+
 	if newFault {
 		s.Log.Error("SA-5 amplifier fault")
+
 		if s.OnFault != nil {
 			s.OnFault()
 		}
 	}
-	if !thermal {
-		return
-	}
-	g, err := s.Amp.Attenuation()
+}
+
+// StepThermal reads the thermal attenuation once. Exported for tests.
+func (s *Supervisor) StepThermal() {
+	gain, err := s.Amp.Attenuation()
 	if err != nil {
 		return
 	}
+
 	s.mu.Lock()
-	changed := g != s.thermal
-	s.thermal = g
+	changed := gain != s.thermal
+	s.thermal = gain
 	s.mu.Unlock()
+
 	if changed && s.OnAttenuation != nil {
-		s.OnAttenuation(g)
+		s.OnAttenuation(gain)
 	}
+}
+
+func (s *Supervisor) clock() func() time.Time {
+	if s.now != nil {
+		return s.now
+	}
+
+	return time.Now
 }

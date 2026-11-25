@@ -18,27 +18,34 @@ func TestAdapterLinkDevice(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+
 		if !m.HostLink || m.HostLinkDev != want {
 			t.Errorf("%s: host link %v on %q, want %q", variant, m.HostLink, m.HostLinkDev, want)
 		}
 	}
+
 	for name, profile := range profiles {
 		if m := profile(); m.HostLink || m.HostLinkDev != "" {
 			t.Errorf("%s has a host link on %q", name, m.HostLinkDev)
 		}
 	}
+
 	const dts = "../../../../os/board/common/dts/ti/omap/"
+
 	scm, err := os.ReadFile(dts + "am335x-soundtap-lisa-scm.dts")
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	st20, err := os.ReadFile(dts + "am335x-soundtap-st20.dts")
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if !strings.Contains(string(st20), "serial0 = &uart5;") {
 		t.Fatal("the ST20 tree no longer names the BCO's UART5 serial0: check the adapter's alias")
 	}
+
 	if !strings.Contains(string(scm), "serial1 = &uart0;") {
 		t.Error("the SCM adapter's tree does not name UART0 serial1: it would take /dev/ttyS0 from the BCO")
 	}

@@ -45,7 +45,9 @@ func (a *Amp) SetMute(muted bool, log *slog.Logger) {
 	if os.Getenv("AUDIO_NOINIT") == "1" || a.mute == "" {
 		return
 	}
+
 	want := int32(2)
+
 	v := "1"
 	if muted {
 		want, v = 1, "0"
@@ -62,11 +64,14 @@ func (a *Amp) SetMute(muted bool, log *slog.Logger) {
 	if a.muteState.Load() == want {
 		return
 	}
-	if err := SysfsWrite(a.MuteLine(), v, log); err != nil {
+
+	err := SysfsWrite(a.MuteLine(), v, log)
+	if err != nil {
 		// Leave the cache alone. It still holds whatever was last written successfully,
 		// which is the truth, and the next call will try again.
 		return
 	}
+
 	a.muteState.Store(want)
 	// One line per edge: the order of mute against source start is what a pop is read from.
 	log.Info("amp mute", "muted", muted)
@@ -81,9 +86,11 @@ func (a *Amp) resolveST20Line(env, fallback string, offset int) string {
 	if os.Getenv(env) != "" || a.modelName != model.ST20 {
 		return fallback
 	}
+
 	if base, err := gpioBankBase(gpioBank1Addr); err == nil {
 		return filepath.Join(gpioRoot, fmt.Sprintf("gpio%d/value", base+offset))
 	}
+
 	return fallback
 }
 
@@ -93,21 +100,29 @@ func (a *Amp) SetPowered(powered bool, log *slog.Logger) bool {
 	if os.Getenv("AUDIO_NOINIT") == "1" || a.power == "" {
 		return a.power == ""
 	}
+
 	want := int32(1)
+
 	v := "0"
 	if powered {
 		want, v = 2, "1"
 	}
+
 	a.powerMu.Lock()
 	defer a.powerMu.Unlock()
+
 	if a.powerState.Load() == want {
 		return true
 	}
-	if err := SysfsWrite(a.PowerLine(), v, log); err == nil {
+
+	err := SysfsWrite(a.PowerLine(), v, log)
+	if err == nil {
 		a.powerState.Store(want)
 		log.Info("amp power", "on", powered)
+
 		return true
 	}
+
 	return false
 }
 
@@ -119,15 +134,20 @@ var unavailableSysfs sync.Map
 // SysfsWrite writes val to a sysfs attribute. A missing attribute is said once per path
 // at Info, any other failure at Warn every time.
 func SysfsWrite(path, val string, log *slog.Logger) error {
-	if err := os.WriteFile(path, []byte(val), 0o644); err != nil {
+	err := os.WriteFile(path, []byte(val), 0o644)
+	if err != nil {
 		if os.IsNotExist(err) {
 			if _, loaded := unavailableSysfs.LoadOrStore(path, struct{}{}); !loaded {
 				log.Info("sysfs unavailable", "path", path)
 			}
+
 			return err
 		}
+
 		log.Warn("sysfs write", "path", path, "val", val, "err", err)
+
 		return err
 	}
+
 	return nil
 }

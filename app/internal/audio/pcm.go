@@ -13,21 +13,24 @@ import (
 // at the int16 limits. src/ann may be shorter than dst (a short final block or an
 // underrun) — missing samples count as silence. dst length must be even.
 func mixInto(dst, src, ann []byte, srcGain, annGain float64) {
-	for i := 0; i+1 < len(dst); i += 2 {
-		var v float64
-		if i+1 < len(src) {
-			v += float64(int16(binary.LittleEndian.Uint16(src[i:]))) * srcGain
+	for offset := 0; offset+1 < len(dst); offset += 2 {
+		var mixed float64
+		if offset+1 < len(src) {
+			mixed += float64(int16(binary.LittleEndian.Uint16(src[offset:]))) * srcGain
 		}
-		if i+1 < len(ann) {
-			v += float64(int16(binary.LittleEndian.Uint16(ann[i:]))) * annGain
+
+		if offset+1 < len(ann) {
+			mixed += float64(int16(binary.LittleEndian.Uint16(ann[offset:]))) * annGain
 		}
-		s := int64(math.Round(v))
-		if s > math.MaxInt16 {
-			s = math.MaxInt16
-		} else if s < math.MinInt16 {
-			s = math.MinInt16
+
+		sample := int64(math.Round(mixed))
+		if sample > math.MaxInt16 {
+			sample = math.MaxInt16
+		} else if sample < math.MinInt16 {
+			sample = math.MinInt16
 		}
-		binary.LittleEndian.PutUint16(dst[i:], uint16(int16(s)))
+
+		binary.LittleEndian.PutUint16(dst[offset:], uint16(int16(sample)))
 	}
 }
 
@@ -38,11 +41,13 @@ func rampToward(cur, target, step float64) float64 {
 		if cur+step > target {
 			return target
 		}
+
 		return cur + step
 	case cur > target:
 		if cur-step < target {
 			return target
 		}
+
 		return cur - step
 	default:
 		return cur
@@ -53,26 +58,41 @@ func rampToward(cur, target, step float64) float64 {
 // a quarter of soundtapd's standby CPU on the ST10. allZero reads eight at once.
 func nonzeroPCM(b []byte) bool { return !AllZero(b) }
 
-// fadePCM ramps a block from silence to its samples, or from the previous stereo
-// sample to silence. It turns a source underrun into a clean short dropout instead
-// of a discontinuity that the amplifier reproduces as a crack.
-func fadePCM(b []byte, in bool, fromL, fromR int16) {
-	frames := len(b) / frameBytes
+// fadeIn ramps a block from silence to its samples, so a source resuming after an
+// underrun starts cleanly instead of with a discontinuity the amplifier reproduces as a
+// crack.
+func fadeIn(block []byte) {
+	frames := len(block) / frameBytes
 	for frame := range frames {
 		gain := float64(frame+1) / float64(frames)
 		for channel := range Channels {
-			i := frame*frameBytes + channel*bytesPerSamp
-			v := int16(binary.LittleEndian.Uint16(b[i:]))
-			if in {
-				v = int16(math.Round(float64(v) * gain))
-			} else {
-				from := fromL
-				if channel == 1 {
-					from = fromR
-				}
-				v = int16(math.Round(float64(from) * (1 - gain)))
+			offset := frame*frameBytes + channel*bytesPerSamp
+
+			sample := int16(binary.LittleEndian.Uint16(block[offset:]))
+			sample = int16(math.Round(float64(sample) * gain))
+
+			binary.LittleEndian.PutUint16(block[offset:], uint16(sample))
+		}
+	}
+}
+
+// fadeOut fills a block with a ramp from the previous stereo sample to silence. It turns
+// a source underrun into a clean short dropout instead of a crack.
+func fadeOut(block []byte, fromL, fromR int16) {
+	frames := len(block) / frameBytes
+	for frame := range frames {
+		gain := float64(frame+1) / float64(frames)
+		for channel := range Channels {
+			offset := frame*frameBytes + channel*bytesPerSamp
+
+			from := fromL
+			if channel == 1 {
+				from = fromR
 			}
-			binary.LittleEndian.PutUint16(b[i:], uint16(v))
+
+			sample := int16(math.Round(float64(from) * (1 - gain)))
+
+			binary.LittleEndian.PutUint16(block[offset:], uint16(sample))
 		}
 	}
 }
@@ -80,27 +100,32 @@ func fadePCM(b []byte, in bool, fromL, fromR int16) {
 // fadedOut is a copy of b ramped from its own samples down to silence.
 func fadedOut(b []byte) []byte {
 	out := slices.Clone(b)
+
 	frames := len(out) / frameBytes
 	for i := 0; i+bytesPerSamp <= frames*frameBytes; i += bytesPerSamp {
 		gain := 1 - float64(i/frameBytes+1)/float64(frames)
 		v := float64(int16(binary.LittleEndian.Uint16(out[i:])))
 		binary.LittleEndian.PutUint16(out[i:], uint16(int16(math.Round(v*gain))))
 	}
+
 	return out
 }
 
 // AllZero reports whether a PCM block is digital silence.
-func AllZero(b []byte) bool {
-	for len(b) >= 8 {
-		if binary.LittleEndian.Uint64(b) != 0 {
+func AllZero(block []byte) bool {
+	for len(block) >= 8 {
+		if binary.LittleEndian.Uint64(block) != 0 {
 			return false
 		}
-		b = b[8:]
+
+		block = block[8:]
 	}
-	for _, c := range b {
+
+	for _, c := range block {
 		if c != 0 {
 			return false
 		}
 	}
+
 	return true
 }

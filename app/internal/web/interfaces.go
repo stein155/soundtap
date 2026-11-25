@@ -12,25 +12,44 @@ import (
 // Backend is the speaker control interface, implemented by the in-process
 // *speakerstate.Speaker.
 type Backend interface {
+	BackendStatus
+	BackendSettings
+	BackendSources
+	BackendPresets
+}
+
+// BackendStatus is what Backend reports about the speaker.
+type BackendStatus interface {
 	Info(ctx context.Context) (*speaker.Info, error)
 	NowPlaying(ctx context.Context) (*speaker.NowPlaying, error)
 	Presets(ctx context.Context) ([]speaker.Preset, error)
 	Volume(ctx context.Context) (int, error)
-	SetVolume(ctx context.Context, level int) error
 	Bass(ctx context.Context) (*speaker.Bass, error)
-	SetBass(ctx context.Context, level int) error
 	NetworkInfo(ctx context.Context) (*speaker.Network, error)
 	ScanWifi(ctx context.Context) ([]speaker.WifiNetwork, error)
+}
+
+// BackendSettings is how Backend changes the speaker's settings and presses its keys.
+type BackendSettings interface {
+	SetVolume(ctx context.Context, level int) error
+	SetBass(ctx context.Context, level int) error
 	SetWifi(ctx context.Context, ssid, security, password string) error
 	SetName(ctx context.Context, name string) error
 	Key(ctx context.Context, key string) error
 	Wake(ctx context.Context)
+}
+
+// BackendSources is the source lifecycle.
+type BackendSources interface {
 	Select(ctx context.Context, source, itemType, location, name, account, art string) error
-	// Source lifecycle.
 	SetSource(ctx context.Context, source string) error
 	ReleaseSource(ctx context.Context, src string) error
 	EnterStandby(ctx context.Context) error
 	SetTrackMeta(ctx context.Context, source, track, artist, art string) error
+}
+
+// BackendPresets keeps and plays the presets and plays notifications.
+type BackendPresets interface {
 	StorePreset(ctx context.Context, slot int, source, itemType, location, name, art string) error
 	RemovePreset(ctx context.Context, slot int) error
 	SwapPresets(ctx context.Context, a, b int) error
@@ -60,6 +79,7 @@ type MuteReporter interface {
 // muted is whether the backend is muted; one without the flag never is.
 func muted(b Backend) bool {
 	m, ok := b.(MuteReporter)
+
 	return ok && m.Muted()
 }
 

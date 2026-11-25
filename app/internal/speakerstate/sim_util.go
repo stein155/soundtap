@@ -4,7 +4,7 @@
 package speakerstate
 
 import (
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -13,23 +13,28 @@ func sortedSlots(m map[int]Preset) []int {
 	for k := range m {
 		slots = append(slots, k)
 	}
-	sort.Ints(slots)
+
+	slices.Sort(slots)
+
 	return slots
 }
 
-func clamp(v, lo, hi int) int {
-	if v < lo {
-		return lo
+func clamp(value, low, high int) int {
+	if value < low {
+		return low
 	}
-	if v > hi {
-		return hi
+
+	if value > high {
+		return high
 	}
-	return v
+
+	return value
 }
 
 func orDefault(v, def string) string {
 	if strings.TrimSpace(v) == "" {
 		return def
 	}
+
 	return v
 }

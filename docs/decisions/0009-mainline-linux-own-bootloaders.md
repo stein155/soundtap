@@ -133,5 +133,5 @@ cycle, and on the ST20 a busy-pad hold, per range); a generic RAM U-Boot that so
 - `os/installer/module/installer.c`: the module's boot-chain order.
 - `tools/recovery/rom-usb-restore.py` and `tools/recovery/nand-backup-ssh.sh`: the ROM-USB repair.
 - `os/tests/boot/test_spl_second_uboot.py` (the SPL's choice on the host),
-  `app/internal/install/bootloaders_test.go` (every cut during soundtapd's order) and
+  `app/internal/install/bootloaders_internal_test.go` (every cut during soundtapd's order) and
   `os/tests/installer/test_wla_installer_offline.py` (every cut in the module's order).

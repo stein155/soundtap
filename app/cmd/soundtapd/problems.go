@@ -17,31 +17,40 @@ type daemonProblems struct {
 	m  map[string]string
 }
 
+// problems is the daemon's own list, read by /api/health.
+//
+//nolint:gochecknoglobals // process-wide state: every component reports into the one list
 var problems daemonProblems
 
 func (p *daemonProblems) set(subject, text string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
 	if p.m == nil {
 		p.m = map[string]string{}
 	}
+
 	p.m[subject] = text
 }
 
 func (p *daemonProblems) clear(subject string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
 	delete(p.m, subject)
 }
 
 func (p *daemonProblems) list() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
 	out := make([]string, 0, len(p.m))
 	for _, text := range p.m {
 		out = append(out, text)
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -53,7 +62,9 @@ func refuseUnknownHardware(modelErr error, opt *options, log *slog.Logger) {
 	if modelErr == nil {
 		return
 	}
+
 	log.Error("refusing to drive hardware: speaker model not identified; serving the API only", "err", modelErr)
 	problems.set("model", "hardware model not identified, audio and controls are off: "+modelErr.Error())
+
 	opt.noAudio = true
 }

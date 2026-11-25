@@ -49,7 +49,19 @@ const codecGainMarker = "/run/soundtap/codec-gain-ready"
 // single read. See applyCodecGain.
 const codecBlindMarker = "/run/soundtap/codec-blind"
 
+// codecGainReady is set once the gain pass has run.
+//
+//nolint:gochecknoglobals // process-wide state: the gain pass sets it, the amp and the pump read it
 var codecGainReady atomic.Bool
+
+// codecGainMarkerMode keeps the marker to soundtapd's user.
+const codecGainMarkerMode = 0o600
+
+// dacClockPoll is how often waitForDACClock looks at the counter.
+const dacClockPoll = 250 * time.Millisecond
+
+// codecWriteTimeout bounds one codec write.
+const codecWriteTimeout = 5 * time.Second
 
 func codecOutputReady() bool { return codecGainReady.Load() }
 
@@ -70,6 +82,7 @@ const (
 func applyCodecGain(ctx context.Context, health audioHealth, log *slog.Logger, onReady func(command []string)) {
 	if board.AICConfig == "" {
 		codecGainReady.Store(true)
+
 		return
 	}
 	// The boot script may have run the full-scale pass already (the ST10 does). The volume
@@ -79,14 +92,20 @@ func applyCodecGain(ctx context.Context, health audioHealth, log *slog.Logger, o
 	if passDone {
 		codecGainReady.Store(true)
 	}
+
 	if health == nil || os.Getenv("AUDIO_NOINIT") == "1" {
 		codecGainReady.Store(true)
+
 		return
 	}
-	if _, err := os.Stat(aicLoader); err != nil {
+
+	_, err := os.Stat(aicLoader)
+	if err != nil {
 		codecGainReady.Store(true)
+
 		return // stock-kernel image: the codec is configured through sysfs instead
 	}
+
 	if !waitForDACClock(ctx, health, log) {
 		return
 	}
@@ -96,32 +115,41 @@ func applyCodecGain(ctx context.Context, health audioHealth, log *slog.Logger, o
 	// rather than walking the doomed one again per attempt.
 	blind := fileExists(codecBlindMarker)
 	if passDone {
-		onReady(gainPassArgs(codecOverSPI(), fileExists(aicBitbang), blind))
+		onReady(gainPassArgs(codecTools{spi: codecOverSPI(), bitbang: fileExists(aicBitbang), blind: blind}))
+
 		return
 	}
+
 	for attempt := 1; attempt <= codecGainAttempts; attempt++ {
-		args := gainPassArgs(codecOverSPI(), fileExists(aicBitbang), blind)
+		args := gainPassArgs(codecTools{spi: codecOverSPI(), bitbang: fileExists(aicBitbang), blind: blind})
+
 		out, err := exec.CommandContext(ctx, args[0], args[1:]...).CombinedOutput()
 		if err != nil && !blind && args[0] == aicLoader {
 			blind = true
 			args = []string{aicLoader, "--volume-blind"}
 			out, err = exec.CommandContext(ctx, args[0], args[1:]...).CombinedOutput()
 		}
+
 		if err == nil {
-			_ = os.WriteFile(codecGainMarker, []byte("ready\n"), 0o600)
+			_ = os.WriteFile(codecGainMarker, []byte("ready\n"), codecGainMarkerMode)
+
 			codecGainReady.Store(true)
 			log.Info("codec DSP full scale applied", "attempt", attempt)
 			onReady(args)
+
 			return
 		}
+
 		log.Warn("codec DSP gain pass failed", "attempt", attempt, "err", err,
 			"out", strings.TrimSpace(string(out)))
+
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(codecGainRetry):
 		}
 	}
+
 	log.Error("codec stays at default gain: the speaker will play silently")
 }
 
@@ -131,14 +159,19 @@ func applyCodecGain(ctx context.Context, health audioHealth, log *slog.Logger, o
 func waitForDACClock(ctx context.Context, health audioHealth, log *slog.Logger) bool {
 	deadline := time.NewTimer(codecClockWait)
 	defer deadline.Stop()
-	tick := time.NewTicker(250 * time.Millisecond)
+
+	tick := time.NewTicker(dacClockPoll)
 	defer tick.Stop()
+
 	base := health().SinkBytes
+
 	statusPath := os.Getenv("AUDIO_CLOCK_STATUS")
 	if statusPath == "" {
 		statusPath = "/proc/asound/card0/pcm0p/sub0/status"
 	}
+
 	alsa := strings.HasPrefix(os.Getenv("AUDIO_DEV"), "alsa:")
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -151,6 +184,7 @@ func waitForDACClock(ctx context.Context, health audioHealth, log *slog.Logger) 
 			if alsa && pcmRunning(statusPath) {
 				return true
 			}
+
 			if !alsa && health().SinkBytes > base {
 				return true
 			}
@@ -159,24 +193,34 @@ func waitForDACClock(ctx context.Context, health audioHealth, log *slog.Logger) 
 }
 
 func pcmRunning(path string) bool {
-	status, err := os.ReadFile(path)
+	status, err := os.ReadFile(path) //nolint:gosec // AUDIO_CLOCK_STATUS comes from the init script
+
 	return err == nil && strings.Contains(string(status), "state: RUNNING")
+}
+
+// codecTools is what the board offers the gain pass: the SPI device, the GPIO tool, and
+// whether the codec answers reads (blind: it does not).
+type codecTools struct {
+	spi, bitbang, blind bool
 }
 
 // gainPassArgs is the command for the full-scale pass: the loader over SPI when the board
 // has the device (or there is no GPIO tool to fall back on), aic3256-bitbang otherwise.
-func gainPassArgs(spi, bitbang, blind bool) []string {
-	if !spi && bitbang {
+func gainPassArgs(tools codecTools) []string {
+	if !tools.spi && tools.bitbang {
 		return []string{aicBitbang, "--volume"}
 	}
-	if blind {
+
+	if tools.blind {
 		return []string{aicLoader, "--volume-blind"}
 	}
+
 	return []string{aicLoader, "--volume"}
 }
 
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
+
 	return err == nil
 }
 
@@ -193,8 +237,11 @@ type codecVolume struct{ want chan float64 }
 
 const codecVolumeGap = 250 * time.Millisecond
 
-func newCodecVolume(ctx context.Context, command []string, health audioHealth, failed func(), log *slog.Logger) *codecVolume {
-	c := &codecVolume{want: make(chan float64, 1)}
+func newCodecVolume(
+	ctx context.Context, command []string, health audioHealth, failed func(), log *slog.Logger,
+) *codecVolume {
+	volume := &codecVolume{want: make(chan float64, 1)}
+
 	go func() {
 		// The volume is reconciled every 50 ms; only a change costs a codec write.
 		last := -1.0
@@ -202,14 +249,16 @@ func newCodecVolume(ctx context.Context, command []string, health audioHealth, f
 		// gain pass already waited for the clock of this run, and a nil health (tests) has
 		// no clock to wait for.
 		_, ranUnder, _ := pumpRest.state()
+
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case gain := <-c.want:
+			case gain := <-volume.want:
 				if gain == last {
 					continue
 				}
+
 				last = gain
 				if !clockFor(ctx, &ranUnder, health, log) || !writeAndRest(ctx, command, gain, health, failed, log) {
 					return
@@ -217,18 +266,25 @@ func newCodecVolume(ctx context.Context, command []string, health audioHealth, f
 			}
 		}
 	}()
-	return c
+
+	return volume
 }
 
 // writeAndRest writes gain, then holds off codecVolumeGap. False ends the writer: ctx is
 // done, or the write failed codecWriteTries times and the volume went back to the PCM.
-func writeAndRest(ctx context.Context, command []string, gain float64, health audioHealth, failed func(), log *slog.Logger) bool {
-	if err := writeCodecGainTries(ctx, command, gain, codecWriteTries, health, log); err != nil {
+func writeAndRest(
+	ctx context.Context, command []string, gain float64, health audioHealth, failed func(), log *slog.Logger,
+) bool {
+	err := writeCodecGainTries(ctx, command, gain, codecWriteTries, health, log)
+	if err != nil {
 		log.Error("codec volume write failed; volume back in the PCM", "err", err)
 		failed()
+
 		return false
 	}
+
 	log.Debug("codec volume", "gain", gain)
+
 	select {
 	case <-ctx.Done():
 		return false
@@ -245,10 +301,13 @@ func clockFor(ctx context.Context, ranUnder *uint64, health audioHealth, log *sl
 	if !ok {
 		return false
 	}
+
 	if gen != *ranUnder && !waitForDACClock(ctx, health, log) {
 		return false
 	}
+
 	*ranUnder = gen
+
 	return true
 }
 
@@ -261,24 +320,32 @@ func clockFor(ctx context.Context, ranUnder *uint64, health audioHealth, log *sl
 const codecWriteTries = 3
 
 // codecWriteRetry is the pause before a failed write is tried again; tests shorten it.
+//
+//nolint:gochecknoglobals // a test seam: tests shorten it to a millisecond
 var codecWriteRetry = 2 * time.Second
 
 // writeCodecGainTries writes gain, up to tries times, waiting for the DAC clock between
 // tries. It returns the last error.
-func writeCodecGainTries(ctx context.Context, command []string, gain float64, tries int, health audioHealth, log *slog.Logger) error {
+func writeCodecGainTries(
+	ctx context.Context, command []string, gain float64, tries int, health audioHealth, log *slog.Logger,
+) error {
 	var err error
 	for try := 1; ; try++ {
-		if err = writeCodecGain(ctx, command, gain); err == nil || try >= tries {
+		err = writeCodecGain(ctx, command, gain)
+		if err == nil || try >= tries {
 			return err
 		}
+
 		log.Warn("codec volume write failed; trying again once the DAC is clocked", "try", try, "err", err)
+
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("codec write retry: %w", ctx.Err())
 		case <-time.After(codecWriteRetry):
 		}
+
 		if health != nil && !waitForDACClock(ctx, health, log) {
-			return ctx.Err()
+			return fmt.Errorf("codec write retry: %w", ctx.Err())
 		}
 	}
 }
@@ -290,20 +357,28 @@ func writeCodecGainTries(ctx context.Context, command []string, gain float64, tr
 const codecWriteNice = 10
 
 func writeCodecGain(ctx context.Context, command []string, gain float64) error {
-	wctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	wctx, cancel := context.WithTimeout(ctx, codecWriteTimeout)
 	defer cancel()
+
 	args := append(slices.Clone(command[1:]), codecGainHex(gain))
 	cmd := exec.CommandContext(wctx, command[0], args...)
+
 	var out bytes.Buffer
+
 	cmd.Stdout, cmd.Stderr = &out, &out
-	if err := cmd.Start(); err != nil {
-		return err
+
+	err := cmd.Start()
+	if err != nil {
+		return fmt.Errorf("start codec write: %w", err)
 	}
 	// Lowering a child's priority needs no privilege; a failure only leaves it as it was.
 	_ = syscall.Setpriority(syscall.PRIO_PROCESS, cmd.Process.Pid, codecWriteNice)
-	if err := cmd.Wait(); err != nil {
+
+	err = cmd.Wait()
+	if err != nil {
 		return fmt.Errorf("%w: %s", err, strings.TrimSpace(out.String()))
 	}
+
 	return nil
 }
 
@@ -329,13 +404,26 @@ func (c *codecVolume) SetGain(gain float64) {
 // the gain: noise that jumped with every step, and the codec script's volume-dependent bass
 // with it (heard on an ST20, 2026-11-23).
 func codecGainHex(gain float64) string {
-	g := min(max(gain, 0), 1)
-	db := uint64(0x800000)
-	if g > 0 {
-		v := int64(math.Round(max(20*math.Log10(g), -128) * 65536))
-		db = uint64(v & 0xffffff)
+	linear := min(max(gain, 0), 1)
+	level := uint64(dspSilenceDB)
+
+	if linear > 0 {
+		decibels := int64(math.Round(max(dbPerDecade*math.Log10(linear), dspFloorDB) * dspDBScale))
+		level = uint64(decibels & dspWordMask)
 	}
 	// Word 0 as before: the top of the gain rounded at 2^46, which lands on stock's 0x01c0a9
 	// at volume 50 where rounding at 2^22 would give 0x01c0aa.
-	return fmt.Sprintf("%06x%06x", uint64(math.Round(g*(1<<46)))>>24, db)
+	return fmt.Sprintf("%06x%06x", uint64(math.Round(linear*(1<<dspGainRoundBits)))>>dspWordBits, level)
 }
+
+// The DSP volume block's numbers (the codec's, as stock's tables hold them).
+const (
+	dspSilenceDB = 0x800000 // word 1 for silence: -128 dB
+	dspFloorDB   = -128     // the lowest level word 1 holds, in dB
+	dspDBScale   = 65536    // word 1 is dB times 65536
+	dspWordMask  = 0xffffff // one 24-bit word
+	dspWordBits  = 24       // bits in one word
+	// dspGainRoundBits is where word 0's gain is rounded: 2^46, the top 24 bits of Q46.
+	dspGainRoundBits = 46
+	dbPerDecade      = 20 // an amplitude ratio of ten in dB
+)

@@ -4,17 +4,27 @@
 package web
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"net"
 	"net/http"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/stein155/soundtap/app/internal/safego"
+)
+
+const (
+	// probeDialTimeout bounds the TCP probe of a discovered device.
+	probeDialTimeout = 2 * time.Second
+	// httpPort is the port a device's HTTP API answers on when it names none.
+	httpPort = 80
+	// devicesTimeout bounds the reads behind GET /api/devices.
+	devicesTimeout = 5 * time.Second
 )
 
 // A house has more than one speaker, and until now each one only knew about itself.
@@ -80,6 +90,7 @@ func (d *deviceRegistry) clock() time.Time {
 	if d.now != nil {
 		return d.now()
 	}
+
 	return time.Now()
 }
 
@@ -88,43 +99,43 @@ func (d *deviceRegistry) clock() time.Time {
 // the proxy forwards the browser's requests to it, so a public address would make this
 // speaker a relay to any host on the internet. A variable so that tests, whose fake
 // peers listen on loopback, can widen it.
-var peerIPAllowed = func(ip net.IP) bool {
-	return ip != nil && ip.IsPrivate()
-}
+//
+//nolint:gochecknoglobals // a variable so tests can replace it
+var peerIPAllowed = privatePeerIP
+
+// privatePeerIP is peerIPAllowed as the speaker runs it.
+func privatePeerIP(ip net.IP) bool { return ip != nil && ip.IsPrivate() }
 
 // SetDevice records a speaker the discovery layer saw. A speaker with no identity is
 // ignored: without one there is nothing a group or a proxy route could refer to later,
 // and two such speakers would collide on the empty key.
-func (s *Server) SetDevice(dev Device) {
-	id := strings.TrimSpace(dev.ID)
-	if id == "" {
+func (s *Server) SetDevice(dev Device) { //nolint:gocritic // hugeParam: cmd/soundtapd passes the Device by value
+	deviceID := strings.TrimSpace(dev.ID)
+	if deviceID == "" {
 		return
 	}
-	dev.ID = id
+
+	dev.ID = deviceID
 	// The proxy forwards to this address, and a request it makes to loopback passes every
 	// loopbackOnly check on this speaker. Only a private LAN address is a peer.
 	if dev.IP != "" && !peerIPAllowed(net.ParseIP(dev.IP)) {
 		return
 	}
+
 	s.devices.mu.Lock()
 	defer s.devices.mu.Unlock()
+
 	if s.devices.by == nil {
 		s.devices.by = map[string]*deviceRecord{}
 	}
+
 	now := s.devices.clock()
 	// An id is held by the address that announced it until that entry goes stale or says
 	// goodbye. Otherwise any LAN host could announce a real speaker's id and receive the
 	// Wi-Fi and MQTT passwords the UI sends "to that speaker".
-	if old := s.devices.by[id]; old != nil && !dev.Departure && !old.device.Departure &&
-		old.device.IP != "" && dev.IP != "" && old.device.IP != dev.IP && now.Sub(old.seen) <= deviceStale {
-		// A renumbered speaker (new DHCP lease) would otherwise stay unreachable until the
-		// old entry went stale. The new address takes over only when the model matches and
-		// the old address no longer answers.
-		if !old.probing && old.device.Model == dev.Model {
-			old.probing = true
-			prev := old.device
-			safego.Go("devices.takeOver", func() { s.takeOverIfGone(prev, dev) })
-		}
+	if old := s.devices.by[deviceID]; old != nil && heldElsewhere(old, &dev, now) {
+		s.takeOverLaterLocked(old, &dev)
+
 		return
 	}
 	// A departure updates the flag and the timestamp and keeps everything else: the
@@ -134,23 +145,47 @@ func (s *Server) SetDevice(dev Device) {
 	// Only the address that holds the id may say goodbye for it. Another mDNS instance
 	// can carry the same TXT id; its goodbye marked the real speaker departed, and the
 	// claimant's next announcement then took the id without the liveness check.
-	if old := s.devices.by[id]; old != nil && dev.Departure {
-		if old.device.IP != "" && dev.IP != old.device.IP {
-			return
+	if old := s.devices.by[deviceID]; old != nil && dev.Departure {
+		if old.device.IP == "" || dev.IP == old.device.IP {
+			old.device.Departure = true
+			old.seen = now
 		}
-		old.device.Departure = true
-		old.seen = now
+
 		return
 	}
-	rec := &deviceRecord{device: dev, seen: now}
+
+	rec := &deviceRecord{device: dev, seen: now, probing: false, misses: 0, verified: ""}
 	// The browser re-reports a peer whether it is there or not, so a report clears nothing.
-	if old := s.devices.by[id]; old != nil && old.device.IP == dev.IP {
+	if old := s.devices.by[deviceID]; old != nil && old.device.IP == dev.IP {
 		rec.misses = old.misses
 	}
-	if s.devices.by[id] == nil && len(s.devices.by) >= maxDevices {
+
+	if s.devices.by[deviceID] == nil && len(s.devices.by) >= maxDevices {
 		s.devices.evictOldestLocked()
 	}
-	s.devices.by[id] = rec
+
+	s.devices.by[deviceID] = rec
+}
+
+// heldElsewhere reports whether old still holds dev's id at another, live address.
+func heldElsewhere(old *deviceRecord, dev *Device, now time.Time) bool {
+	return !dev.Departure && !old.device.Departure && old.device.IP != "" && dev.IP != "" &&
+		old.device.IP != dev.IP && now.Sub(old.seen) <= deviceStale
+}
+
+// takeOverLaterLocked lets a renumbered speaker (new DHCP lease) take its id over, which
+// would otherwise stay unreachable until the old entry went stale. The new address takes
+// over only when the model matches and the old address no longer answers. s.devices.mu
+// is held.
+func (s *Server) takeOverLaterLocked(old *deviceRecord, dev *Device) {
+	if old.probing || old.device.Model != dev.Model {
+		return
+	}
+
+	old.probing = true
+	prev, next := old.device, *dev
+
+	safego.Go("devices.takeOver", func() { s.takeOverIfGone(&prev, &next) })
 }
 
 // evictOldestLocked drops the entry heard from longest ago. d.mu is held.
@@ -161,42 +196,50 @@ func (d *deviceRegistry) evictOldestLocked() {
 			oldest = id
 		}
 	}
+
 	delete(d.by, oldest)
 }
 
 // peerGone asks a speaker's old address whether it is still there. A variable for tests.
+//
+//nolint:gochecknoglobals // a variable so tests can replace it
 var peerGone = func(dev Device) bool {
 	port := dev.Port
 	if port == 0 {
 		port = 80
 	}
-	c, err := net.DialTimeout("tcp", net.JoinHostPort(dev.IP, strconv.Itoa(int(port))), 2*time.Second)
+
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(dev.IP, strconv.Itoa(int(port))), probeDialTimeout)
 	if err != nil {
 		return true
 	}
-	c.Close()
+
+	_ = conn.Close()
+
 	return false
 }
 
 // isGone probes a peer through the hook tests set, or peerGone.
-func (s *Server) isGone(dev Device) bool {
+func (s *Server) isGone(dev *Device) bool {
 	if s.peerGone != nil {
-		return s.peerGone(dev)
+		return s.peerGone(*dev)
 	}
-	return peerGone(dev)
+
+	return peerGone(*dev)
 }
 
 // WatchPeers probes each peer every interval. An unplugged speaker sends no goodbye, and
 // avahi holds its records for their 75 minute TTL while the browser keeps re-reporting
 // them, so discovery alone shows it online all that time. Call once in a goroutine.
 func (s *Server) WatchPeers(ctx context.Context, every time.Duration) {
-	t := time.NewTicker(every)
-	defer t.Stop()
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-ticker.C:
 			s.probePeers()
 		}
 	}
@@ -205,11 +248,12 @@ func (s *Server) WatchPeers(ctx context.Context, every time.Duration) {
 // probePeers probes one peer at a time.
 // a dead peer costs 2 s, so many dead peers skip ticks; go parallel if that shows.
 func (s *Server) probePeers() {
-	for _, dev := range s.knownDevices(Device{}) {
+	for _, dev := range s.knownDevices(new(Device)) {
 		if dev.IP == "" {
 			continue
 		}
-		gone := s.isGone(dev)
+
+		gone := s.isGone(&dev)
 		s.devices.mu.Lock()
 		if rec := s.devices.by[dev.ID]; rec != nil && rec.device.IP == dev.IP {
 			if gone {
@@ -223,78 +267,93 @@ func (s *Server) probePeers() {
 }
 
 // takeOverIfGone moves id to next's address when old's address no longer answers.
-func (s *Server) takeOverIfGone(old, next Device) {
+func (s *Server) takeOverIfGone(old, next *Device) {
 	gone := s.isGone(old)
 	s.devices.mu.Lock()
 	defer s.devices.mu.Unlock()
+
 	rec := s.devices.by[old.ID]
 	if rec == nil {
 		return
 	}
+
 	rec.probing = false
 	if gone && rec.device.IP == old.IP {
-		s.devices.by[old.ID] = &deviceRecord{device: next, seen: s.devices.clock()}
+		s.devices.by[old.ID] = &deviceRecord{
+			device: *next, seen: s.devices.clock(), probing: false, misses: 0, verified: "",
+		}
 	}
 }
 
 // writeDiscoveryDebug is the device registry and what discovery last saw, for a speaker
 // with no shell to run avahi-browse on.
-func (s *Server) writeDiscoveryDebug(b *strings.Builder) {
+func (s *Server) writeDiscoveryDebug(out *strings.Builder) {
 	now := s.devices.clock()
 	s.devices.mu.Lock()
+
 	ids := make([]string, 0, len(s.devices.by))
 	for id := range s.devices.by {
 		ids = append(ids, id)
 	}
-	sort.Strings(ids)
+
+	slices.Sort(ids)
+
 	for _, id := range ids {
 		rec := s.devices.by[id]
 		d := rec.device
-		fmt.Fprintf(b, "peer       : %s %q %s:%d model=%q fw=%q seen %s ago departed=%v misses=%d\n",
-			d.ID, d.Name, d.IP, d.Port, d.Model, d.Firmware, now.Sub(rec.seen).Round(time.Second), d.Departure, rec.misses)
+		fmt.Fprintf(out, "peer       : %s %q %s:%d model=%q fw=%q seen %s ago departed=%v misses=%d\n",
+			d.ID, d.Name, d.IP, d.Port, d.Model, d.Firmware,
+			now.Sub(rec.seen).Round(time.Second), d.Departure, rec.misses)
 	}
 	s.devices.mu.Unlock()
+
 	if len(ids) == 0 {
-		b.WriteString("peer       : none known\n")
+		out.WriteString("peer       : none known\n")
 	}
+
 	s.mdnsMu.Lock()
 	browser, _ := s.mdns.(interface{ Recent() []string })
 	s.mdnsMu.Unlock()
+
 	if browser != nil {
 		for _, line := range browser.Recent() {
-			fmt.Fprintf(b, "browse     : %s\n", line)
+			fmt.Fprintf(out, "browse     : %s\n", line)
 		}
 	}
 }
 
 // devices returns every speaker currently known, this one included, oldest entries
 // swept. Sorted by name so a device list does not reshuffle between requests.
-func (s *Server) knownDevices(self Device) []Device {
+func (s *Server) knownDevices(self *Device) []Device {
 	now := s.devices.clock()
 	s.devices.mu.Lock()
+
 	out := make([]Device, 0, len(s.devices.by)+1)
 	for id, rec := range s.devices.by {
 		if now.Sub(rec.seen) > deviceStale {
 			delete(s.devices.by, id)
+
 			continue
 		}
+
 		if self.ID != "" && rec.device.ID == self.ID {
 			continue // we answer for ourselves below, with live state
 		}
+
 		dev := rec.device
 		dev.Departure = dev.Departure || rec.misses >= peerMissLimit
 		out = append(out, dev)
 	}
 	s.devices.mu.Unlock()
+
 	if self.ID != "" {
-		out = append(out, self)
+		out = append(out, *self)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Name != out[j].Name {
-			return out[i].Name < out[j].Name
-		}
-		return out[i].ID < out[j].ID
+
+	slices.SortFunc(out, func(a, b Device) int {
+		return cmp.Or(cmp.Compare(a.Name, b.Name), cmp.Compare(a.ID, b.ID))
 	})
+
 	return out
 }
 
@@ -303,43 +362,53 @@ func (s *Server) deviceIP(id string) string {
 	now := s.devices.clock()
 	s.devices.mu.Lock()
 	defer s.devices.mu.Unlock()
+
 	if rec := s.devices.by[id]; rec != nil && !rec.device.Departure && now.Sub(rec.seen) <= deviceStale {
 		return rec.device.IP
 	}
+
 	return ""
 }
 
 func (s *Server) selfPort() uint16 {
 	if s.port == 0 {
-		return 80
+		return httpPort
 	}
+
 	return s.port
 }
 
 // devicesHandler answers GET /api/devices: every SoundTap speaker this one can see,
 // itself first in the sense that it is always present even with no network.
 func (s *Server) devicesHandler(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), devicesTimeout)
 	defer cancel()
+
 	var self Device
-	if info, err := s.backend.Info(ctx); err == nil {
+
+	info, err := s.backend.Info(ctx)
+	if err == nil {
 		self = Device{
-			ID:           s.identity(info.DeviceID),
+			ID:           s.Identity(info.DeviceID),
 			Name:         info.Name,
 			Model:        info.Type,
 			IP:           info.IP,
 			Port:         s.selfPort(),
 			Firmware:     s.version,
 			Capabilities: dropBluetooth(s.capabilities, "bluetooth"),
+			Departure:    false,
 		}
 	}
-	list := s.knownDevices(self)
+
+	list := s.knownDevices(&self)
+
 	out := make([]map[string]any, 0, len(list))
 	for _, dev := range list {
 		caps := dev.Capabilities
 		if caps == nil {
 			caps = []string{}
 		}
+
 		out = append(out, map[string]any{
 			"capabilities": caps,
 			"id":           dev.ID,
@@ -352,5 +421,6 @@ func (s *Server) devicesHandler(w http.ResponseWriter, r *http.Request) {
 			"online":       !dev.Departure,
 		})
 	}
-	writeJSON(w, 200, map[string]any{"devices": out})
+
+	writeJSON(w, http.StatusOK, map[string]any{"devices": out})
 }

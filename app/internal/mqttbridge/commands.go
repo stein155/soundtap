@@ -31,10 +31,13 @@ func newStateCache() *stateCache { return &stateCache{last: map[string]string{}}
 func (s *stateCache) publish(client *mqtt.Client, topic, value string, always bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	if last, ok := s.last[topic]; ok && last == value && !always {
 		return
 	}
-	if err := client.Publish(topic, []byte(value), true); err == nil {
+
+	err := client.Publish(topic, []byte(value), true)
+	if err == nil {
 		s.last[topic] = value
 	}
 }
@@ -43,6 +46,7 @@ func (s *stateCache) publish(client *mqtt.Client, topic, value string, always bo
 func (s *stateCache) forget() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	clear(s.last)
 }
 
@@ -66,6 +70,7 @@ func (b *Bridge) refresh(ctx context.Context, client *mqtt.Client, tp topics, ca
 	if err != nil {
 		return
 	}
+
 	send(tp.powerState(), powerState(np.Source))
 	send(tp.station(), np.Station)
 	send(tp.track(), np.Track)
@@ -82,6 +87,7 @@ func (b *Bridge) readNowPlaying(ctx context.Context) (*speaker.NowPlaying, error
 	if b.nowPlaying != nil {
 		return b.nowPlaying(ctx)
 	}
+
 	return b.sp.NowPlaying(ctx)
 }
 
@@ -96,12 +102,16 @@ func (b *Bridge) handle(ctx context.Context, client *mqtt.Client, cache *stateCa
 		level, err := strconv.Atoi(strings.TrimSpace(payload))
 		if err != nil {
 			b.log.Warn("mqtt bad volume", "payload", payload)
+
 			return
 		}
+
 		if err := b.sp.SetVolume(c, level); err != nil {
 			b.log.Warn("mqtt set volume", "err", err)
+
 			return
 		}
+
 		cache.publish(client, tp.volumeState(), itoa(clampVol(level)), true)
 
 	case topic == tp.powerSet():
@@ -124,7 +134,9 @@ func (b *Bridge) handle(ctx context.Context, client *mqtt.Client, cache *stateCa
 		if b.updater == nil {
 			return
 		}
-		if err := b.updater.UpdateToLatest(ctx); err != nil {
+
+		err := b.updater.UpdateToLatest(ctx)
+		if err != nil {
 			b.log.Warn("mqtt update install", "err", err)
 		}
 
@@ -142,9 +154,11 @@ func (b *Bridge) handle(ctx context.Context, client *mqtt.Client, cache *stateCa
 		// Transport buttons: <base>/transport/<key>/set.
 		for _, tb := range transportButtons {
 			if topic == tp.transportSet(tb.key) {
-				if err := b.sp.Key(c, tb.speakerKey); err != nil {
+				err := b.sp.Key(c, tb.speakerKey)
+				if err != nil {
 					b.log.Warn("mqtt transport", "key", tb.speakerKey, "err", err)
 				}
+
 				return
 			}
 		}
@@ -158,25 +172,33 @@ func (b *Bridge) handle(ctx context.Context, client *mqtt.Client, cache *stateCa
 func (b *Bridge) setPower(ctx context.Context, client *mqtt.Client, cache *stateCache, tp topics, on bool) {
 	b.power.Lock()
 	defer b.power.Unlock()
+
 	np, err := b.sp.NowPlaying(ctx)
 	if err != nil {
 		b.log.Warn("mqtt power: read state", "err", err)
+
 		return
 	}
+
 	standby := isStandby(np.Source)
 	switch {
 	case on && standby:
 		// The power key, not a bare wake: it resumes what played last.
-		if err := b.sp.Key(ctx, "POWER"); err != nil {
+		err := b.sp.Key(ctx, "POWER")
+		if err != nil {
 			b.log.Warn("mqtt power on", "err", err)
+
 			return
 		}
 	case !on && !standby:
-		if err := b.sp.Key(ctx, "POWER"); err != nil {
+		err := b.sp.Key(ctx, "POWER")
+		if err != nil {
 			b.log.Warn("mqtt power off", "err", err)
+
 			return
 		}
 	}
+
 	cache.publish(client, tp.powerState(), boolOnOff(on), true)
 }
 
@@ -185,21 +207,29 @@ func (b *Bridge) selectPreset(ctx context.Context, client *mqtt.Client, cache *s
 	if name == "" || name == presetPlaceholder {
 		return
 	}
+
 	presets, err := b.sp.Presets(ctx)
 	if err != nil {
 		b.log.Warn("mqtt preset: read presets", "err", err)
+
 		return
 	}
+
 	for _, p := range presets {
 		if p.Name == name {
-			if err := b.sp.PlayPreset(ctx, p.Slot); err != nil {
+			err := b.sp.PlayPreset(ctx, p.Slot)
+			if err != nil {
 				b.log.Warn("mqtt preset play", "slot", p.Slot, "err", err)
+
 				return
 			}
+
 			cache.publish(client, tp.presetState(), name, true)
+
 			return
 		}
 	}
+
 	b.log.Warn("mqtt preset: no match", "name", name)
 }
 
@@ -209,6 +239,7 @@ func isStandby(source string) bool {
 	case "", "STANDBY", "INVALID_SOURCE":
 		return true
 	}
+
 	return false
 }
 
@@ -216,6 +247,7 @@ func powerState(source string) string {
 	if isStandby(source) {
 		return powerOff
 	}
+
 	return powerOn
 }
 
@@ -223,6 +255,7 @@ func boolOnOff(on bool) string {
 	if on {
 		return powerOn
 	}
+
 	return powerOff
 }
 
@@ -230,9 +263,11 @@ func clampVol(v int) int {
 	if v < 0 {
 		return 0
 	}
+
 	if v > 100 {
 		return 100
 	}
+
 	return v
 }
 
@@ -240,6 +275,7 @@ func clampVol(v int) int {
 // short lower-case word for the sensor.
 func prettyStatus(s string) string {
 	s = strings.TrimSpace(s)
+
 	s = strings.TrimSuffix(strings.ToUpper(s), "_STATE")
 	switch s {
 	case "PLAY":
@@ -263,15 +299,20 @@ func (b *Bridge) setMute(ctx context.Context, client *mqtt.Client, cache *stateC
 	m, ok := b.sp.(muter)
 	if !ok || (payload != powerOn && payload != powerOff) {
 		b.log.Warn("mqtt bad mute", "payload", payload)
+
 		return
 	}
+
 	want := payload == powerOn
 	if m.Muted() != want {
-		if err := b.sp.Key(ctx, "MUTE"); err != nil {
+		err := b.sp.Key(ctx, "MUTE")
+		if err != nil {
 			b.log.Warn("mqtt mute", "err", err)
+
 			return
 		}
 	}
+
 	cache.publish(client, tp.muteState(), onOff(want), false)
 }
 
@@ -279,5 +320,6 @@ func onOff(on bool) string {
 	if on {
 		return powerOn
 	}
+
 	return powerOff
 }

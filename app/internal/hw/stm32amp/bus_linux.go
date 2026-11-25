@@ -19,15 +19,19 @@ type Dev struct{ f *os.File }
 
 // Open opens dev (/dev/i2c-1 on the SA-5) for Address.
 func Open(dev string) (*Dev, error) {
-	f, err := os.OpenFile(dev, os.O_RDWR, 0)
+	file, err := os.OpenFile(dev, os.O_RDWR, 0)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("stm32amp: opening %s: %w", dev, err)
 	}
-	if _, _, e := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), ioctlI2CSlave, Address); e != 0 {
-		_ = f.Close()
-		return nil, fmt.Errorf("stm32amp: I2C_SLAVE 0x%02x on %s: %w", Address, dev, e)
+
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, file.Fd(), ioctlI2CSlave, Address)
+	if errno != 0 {
+		_ = file.Close()
+
+		return nil, fmt.Errorf("stm32amp: I2C_SLAVE 0x%02x on %s: %w", Address, dev, errno)
 	}
-	return &Dev{f: f}, nil
+
+	return &Dev{f: file}, nil
 }
 
 // Write sends one message.
@@ -36,6 +40,7 @@ func (d *Dev) Write(p []byte) error {
 	if err == nil && n != len(p) {
 		err = io.ErrShortWrite
 	}
+
 	return err
 }
 
@@ -45,8 +50,16 @@ func (d *Dev) Read(p []byte) error {
 	if err == nil && n != len(p) {
 		err = io.ErrUnexpectedEOF
 	}
+
 	return err
 }
 
 // Close releases the node.
-func (d *Dev) Close() error { return d.f.Close() }
+func (d *Dev) Close() error {
+	err := d.f.Close()
+	if err != nil {
+		return fmt.Errorf("stm32amp: closing the bus: %w", err)
+	}
+
+	return nil
+}

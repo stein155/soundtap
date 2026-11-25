@@ -153,6 +153,7 @@ func st20() Model {
 	m.Prebuffer = 6 * time.Second
 	m.ChimeVolume = 40 // APConfig-spotty.xml
 	m.DefaultVolume = 30
+
 	return m
 }
 
@@ -205,6 +206,7 @@ func wla() Model {
 	// Stock binky's chimeVolume has not been read off a rootfs yet; 40 is what every
 	// model used before the per-model value.
 	m.ChimeVolume = 40
+
 	return m
 }
 
@@ -217,6 +219,7 @@ func st30() Model {
 	m.AICConfig = "mojo_scm_normal.cfg"
 	m.ChimeVolume = 28 // APConfig-mojo.xml
 	m.DefaultVolume = 30
+
 	return m
 }
 
@@ -229,12 +232,14 @@ func seriesIII(variant string) Model {
 	m := st10()
 	m.DefaultVolume = 30
 	m.LEDDir = "/sys/class/leds"
+
 	m.OLED = "spidev:/dev/spidev1.0?ce=gpio0_12&reset=gpio2_9&dc=gpio2_12"
 	if variant == "mojo3" {
 		m.Type, m.AICConfig, m.ChimeVolume = "SoundTouch 30", "mojo_sm2_normal.cfg", 28 // APConfig-mojo.xml
 	} else {
 		m.Type, m.AICConfig, m.ChimeVolume = "SoundTouch 20", "spotty_sm2_normal.cfg", 40 // APConfig-spotty.xml
 	}
+
 	return m
 }
 
@@ -251,6 +256,7 @@ func sa5() Model {
 	m.LEDDir = "/sys/class/leds"
 	m.STM32Amp = true
 	m.ChimeVolume = 25 // APConfig-burns.xml
+
 	return m
 }
 
@@ -271,6 +277,7 @@ func adapter() Model {
 	m.IRDev = ""
 	m.LEDDir = "/sys/class/leds"
 	m.HostLink, m.HostLinkDev = true, "/dev/ttyS0"
+
 	return m
 }
 
@@ -289,6 +296,7 @@ func adapterSCM() Model {
 	// ttyS0 is the BCO's UART on every SCM tree (the ST20's serial0 alias); the adapter's
 	// tree names UART0 serial1.
 	m.HostLink, m.HostLinkDev = true, "/dev/ttyS1"
+
 	return m
 }
 
@@ -305,6 +313,7 @@ func portable() Model {
 	m.Battery = true
 	m.ChimeVolume = 50 // APConfig-taigan.xml
 	m.DefaultVolume = 50
+
 	return m
 }
 
@@ -321,6 +330,7 @@ func st300() Model {
 	m.WakeVolumeMax = 70                                            // BoseApp-ginger.xml thresholdHigh
 	m.DefaultVolume = 30
 	m.WifiAttenuation, m.AuxAttenuation = 1, 1 // APConfig-ginger.xml
+
 	return m
 }
 
@@ -332,6 +342,7 @@ func st300() Model {
 func lifestyle650() Model {
 	m := st300()
 	m.Type = "Lifestyle 650"
+
 	return m
 }
 
@@ -348,6 +359,7 @@ func Named(name string) Model {
 	if p, ok := profiles[name]; ok {
 		return p()
 	}
+
 	return Unknown()
 }
 
@@ -358,9 +370,11 @@ func (m Model) SourceGain(source string) float64 {
 	if source == sourceAux {
 		g = m.AuxAttenuation
 	}
+
 	if g == 0 {
 		return 1
 	}
+
 	return g
 }
 
@@ -376,13 +390,16 @@ func currentModel() (Model, error) {
 	if variants := install.LiveVariants(); len(variants) > 0 {
 		return forVariants(variants)
 	}
+
 	name := strings.ToLower(strings.TrimSpace(os.Getenv("MODEL")))
 	if p, ok := profiles[name]; ok {
 		return p(), nil
 	}
+
 	if name == "" {
 		return Unknown(), errors.New("hardware model unknown: no kernel variant and MODEL is not set")
 	}
+
 	return Unknown(), fmt.Errorf("hardware model unknown: MODEL=%q is not a supported model", name)
 }
 
@@ -397,29 +414,37 @@ func forVariants(variants []string) (Model, error) {
 	if err != nil {
 		return Unknown(), err
 	}
+
 	if slices.Contains(variants, "mojo") {
 		return st30(), nil
 	}
+
 	if slices.Contains(variants, "lisa2") {
 		return adapter(), nil
 	}
+
 	if slices.Contains(variants, "lisa") {
 		return adapterSCM(), nil
 	}
+
 	if slices.Contains(variants, "burns") {
 		return sa5(), nil
 	}
+
 	if slices.Contains(variants, "taigan") {
 		return portable(), nil
 	}
+
 	if slices.Contains(variants, "bardeen") {
 		return lifestyle650(), nil
 	}
+
 	for _, v := range []string{"spotty3", "mojo3"} {
 		if slices.Contains(variants, v) {
 			return seriesIII(v), nil
 		}
 	}
+
 	return Named(name), nil
 }
 
@@ -427,6 +452,7 @@ func forVariants(variants []string) (Model, error) {
 // the model could not be identified, and then the profile is Unknown.
 func Current() (Model, error) {
 	m, err := currentModel()
+
 	return withoutUnroutedAux(m), err
 }
 
@@ -437,6 +463,7 @@ func withoutUnroutedAux(m Model) Model {
 	if !exists(m.ShelbySource) && !exists(m.AuxCapture) {
 		m.UserSources = slices.DeleteFunc(slices.Clone(m.UserSources), func(s string) bool { return s == sourceAux })
 	}
+
 	return m
 }
 
@@ -444,7 +471,9 @@ func exists(path string) bool {
 	if path == "" {
 		return false
 	}
+
 	_, err := os.Stat(path)
+
 	return err == nil
 }
 
@@ -465,23 +494,26 @@ func (m Model) Capabilities() []string {
 		// ST20s ship with and without Bluetooth.
 		caps = append(caps, "bluetooth")
 	}
+
 	if m.IRDev != "" {
 		caps = append(caps, "ir")
 	}
+
 	if m.KeypadDev != "" {
 		caps = append(caps, "keypad")
 	}
-	for _, source := range m.UserSources {
-		if source == sourceAux {
-			caps = append(caps, "aux")
-			break
-		}
+
+	if slices.Contains(m.UserSources, sourceAux) {
+		caps = append(caps, "aux")
 	}
+
 	if m.OLED != "" {
 		caps = append(caps, "display")
 	}
+
 	if m.Battery {
 		caps = append(caps, "battery")
 	}
+
 	return caps
 }

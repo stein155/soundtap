@@ -34,21 +34,28 @@ func TestFFmpegFollowsNoRedirectsItself(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
+
 	saved := playlistClient
+
 	t.Cleanup(func() { playlistClient = saved })
 
 	// The test server is on loopback, so dial it with a plain transport but keep
 	// MediaClient's redirect rule.
 	rules := upnp.MediaClient(2 * time.Second)
 	playlistClient = &http.Client{Timeout: time.Second}
+
 	if got := FFmpegURL(t.Context(), srv.URL+"/moved"); got != srv.URL+"/stream" {
 		t.Errorf("ffmpegURL followed to %q, want %q", got, srv.URL+"/stream")
 	}
+
 	playlistClient = &http.Client{Timeout: time.Second, CheckRedirect: rules.CheckRedirect}
+
 	if got := FFmpegURL(t.Context(), srv.URL+"/to-loopback"); got != srv.URL+"/to-loopback" {
 		t.Errorf("redirect to loopback gave %q, want the URL unchanged", got)
 	}
+
 	playlistClient = saved
+
 	if got := FFmpegURL(t.Context(), srv.URL+"/moved"); got != srv.URL+"/moved" {
 		t.Errorf("production client reached loopback: %q", got)
 	}
@@ -76,12 +83,14 @@ func TestPlaybackFFmpegOverwritesFIFO(t *testing.T) {
 
 func TestPlaybackTuneInWritesRaw48K(t *testing.T) {
 	args := playbackTuneInArgs("https://example.test/live", "volume=1", "s16le", "48000", "/run/soundtap/source.pcm", false)
+
 	want := []string{"-f", "s16le", "-ar", "48000", "-ac", "2"}
 	for i := 0; i+len(want) <= len(args); i++ {
 		if slices.Equal(args[i:i+len(want)], want) {
 			return
 		}
 	}
+
 	t.Fatalf("TuneIn args = %q, want sequence %q", args, want)
 }
 
@@ -103,6 +112,7 @@ func TestDecoderStartupDeadline(t *testing.T) {
 	if got := decoderStartupDeadline("ffmpeg"); got < 40*time.Second {
 		t.Fatalf("ffmpeg startup deadline = %v, want at least 40s", got)
 	}
+
 	if got := decoderStartupDeadline("/usr/bin/ffmpeg"); got != bufferDeadline {
 		t.Fatalf("TuneIn startup deadline = %v, want %v", got, bufferDeadline)
 	}
@@ -129,10 +139,12 @@ func TestSourcePreemptionTransitions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var got []string
+
 			p := supervise.NewProcesses()
 			p.Register("AIRPLAY", func() { got = append(got, "AIRPLAY") }, nil)
 			p.Register("SPOTIFY", func() { got = append(got, "SPOTIFY") }, nil)
 			preemptSource(tt.previous, tt.next, func() { got = append(got, "decoder") }, p)
+
 			if !slices.Equal(got, tt.want) {
 				t.Fatalf("transition order = %v, want %v", got, tt.want)
 			}
@@ -147,12 +159,15 @@ func TestPlaybackAudioFilterOnlyUsesBuiltFilters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	m := regexp.MustCompile(`(?m)^SOUNDTAP_FFMPEG_FILTERS = (.*)$`).FindSubmatch(recipe)
 	if m == nil {
 		t.Fatal("no SOUNDTAP_FFMPEG_FILTERS in soundtap-ffmpeg.mk")
 	}
+
 	built := strings.Fields(string(m[1]))
-	for _, f := range strings.Split(playbackAudioFilter(1, true), ",") {
+
+	for f := range strings.SplitSeq(playbackAudioFilter(1, true), ",") {
 		name, _, _ := strings.Cut(f, "=")
 		if !slices.Contains(built, name) {
 			t.Errorf("filter %q is used but not built into ffmpeg (%s)", name, m[1])
@@ -167,14 +182,17 @@ func TestPlaybackInputOnlyUsesBuiltProtocols(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	m := regexp.MustCompile(`(?m)^SOUNDTAP_FFMPEG_PROTOCOLS = (.*)$`).FindSubmatch(recipe)
 	if m == nil {
 		t.Fatal("no SOUNDTAP_FFMPEG_PROTOCOLS in soundtap-ffmpeg.mk")
 	}
+
 	built := strings.Fields(string(m[1]))
 	// crypto is whitelisted for AES HLS but need not be built: without it only that fails.
 	need := []string{"http", "https", "tcp", "tls"}
 	piped := playbackInput("", true)
+
 	need = append(need, strings.Split(piped[slices.Index(piped, "-protocol_whitelist")+1], ",")...)
 	for _, p := range need {
 		if !slices.Contains(built, p) {
@@ -187,19 +205,25 @@ func TestPlaybackInputOnlyUsesBuiltProtocols(t *testing.T) {
 // an HLS manifest or playlist keeps its URL, the http whitelist and ffmpeg's reconnect.
 func TestPlaybackInputPipedForDirectStreamsURLForHLS(t *testing.T) {
 	const hls = "https://example.test/live/master.m3u8"
+
 	piped := playbackTuneInArgs("https://example.test/live.mp3", "volume=1", "s16le", "48000", "x", true)
+
 	i := slices.Index(piped, "-i")
 	if i < 2 || piped[i+1] != "pipe:0" || piped[i-2] != "-protocol_whitelist" || piped[i-1] != "pipe" {
 		t.Errorf("piped args = %q, want -protocol_whitelist pipe -i pipe:0", piped)
 	}
+
 	if slices.Contains(piped, "-reconnect") || slices.Contains(piped, "-rw_timeout") || slices.Contains(piped, "https://example.test/live.mp3") {
 		t.Errorf("piped args = %q, must carry no URL and no http options", piped)
 	}
+
 	direct := playbackTuneInArgs(hls, "volume=1", "s16le", "48000", "x", false)
+
 	i = slices.Index(direct, "-i")
 	if i < 0 || direct[i+1] != hls || direct[i-1] != FFmpegProtocols || !slices.Contains(direct, "-reconnect") || !slices.Contains(direct, "-rw_timeout") {
 		t.Errorf("direct args = %q, want the URL with the http whitelist and reconnect", direct)
 	}
+
 	if slices.Contains(direct, "-reconnect_streamed") {
 		t.Errorf("direct args = %q: on a body without a length this reconnects without delay", direct)
 	}
@@ -216,6 +240,7 @@ func TestPlaybackSeek(t *testing.T) {
 	if got := playbackSeek(args, 0); !slices.Equal(got, args) {
 		t.Fatalf("at 0: %v", got)
 	}
+
 	got := strings.Join(playbackSeek(args, 90500*time.Millisecond), " ")
 	if !strings.Contains(got, "-ss 90.500 -i http://192.168.1.9/a.flac") {
 		t.Fatalf("args = %s", got)

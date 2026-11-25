@@ -18,29 +18,37 @@ func (f *Flasher) XmodemApp(ctx context.Context, image []byte) (ver string, err 
 	if _, err := CheckAppImage(image); err != nil {
 		return "", err
 	}
+
 	c := &console{f: f}
 	defer func() {
-		if perr := f.Power(true); perr != nil {
+		perr := f.Power(true)
+		if perr != nil {
 			c.note("power on after XMODEM: %v", perr)
 		}
 	}()
+
 	if err := c.powerCycle(ctx); err != nil {
 		return "", err
 	}
+
 	if err := c.enterLevel1(ctx); err != nil {
 		return "", err
 	}
+
 	key, err := c.menuKey(ctx, "Bootloader Level 1  Menu", "Start Bootloader Level 2", "6) Erase Flash")
 	if err != nil {
 		return "", err
 	}
+
 	if err := c.send(ctx, key); err != nil {
 		return "", err
 	}
+
 	key, err = c.menuKey(ctx, "Bootloader Level 2 Menu", "Download Image Only", "Erase Application")
 	if err != nil {
 		return "", err
 	}
+
 	if err := c.send(ctx, key); err != nil {
 		return "", err
 	}
@@ -49,7 +57,9 @@ func (f *Flasher) XmodemApp(ctx context.Context, image []byte) (ver string, err 
 	if _, err := c.expect(ctx, c.d(30*time.Second), "CC"); err != nil {
 		return "", fmt.Errorf("BCO XMODEM did not start: %w", err)
 	}
+
 	c.note("XMODEM download of %d bytes", len(image))
+
 	if err := c.xmodemSend(ctx, image); err != nil {
 		return "", err
 	}
@@ -58,7 +68,9 @@ func (f *Flasher) XmodemApp(ctx context.Context, image []byte) (ver string, err 
 	if _, err := c.expect(ctx, c.d(3*time.Minute), "download passed"); err != nil {
 		return "", fmt.Errorf("BCO did not confirm the XMODEM download: %w", err)
 	}
+
 	c.note("XMODEM download done, rebooting the BCO")
+
 	return c.boot(ctx)
 }
 
@@ -82,42 +94,55 @@ func crc16XMODEM(p []byte) uint16 {
 			}
 		}
 	}
+
 	return c
 }
 
 func (c *console) xmodemSend(ctx context.Context, image []byte) error {
 	blk := byte(1)
+
 	for off := 0; off < len(image); off += 128 {
 		var pkt [3 + 128 + 2]byte
+
 		pkt[0], pkt[1], pkt[2] = xSOH, blk, ^blk
+
 		d := pkt[3 : 3+128]
 		for i := range d {
 			d[i] = 0x1a
 		}
+
 		copy(d, image[off:])
 		crc := crc16XMODEM(d)
+
 		pkt[131], pkt[132] = byte(crc>>8), byte(crc)
 		for try := 0; ; try++ {
 			if _, err := c.f.Serial.Write(pkt[:]); err != nil {
 				return fmt.Errorf("BCO XMODEM write: %w", err)
 			}
+
 			a, err := c.xmodemReply(ctx, c.d(5*time.Second))
 			if err != nil {
 				return err
 			}
+
 			if a == xACK {
 				break
 			}
+
 			if a == xCAN || try >= 10 {
 				return fmt.Errorf("BCO XMODEM aborted at byte %d (reply %#x)", off, a)
 			}
 		}
+
 		blk++
 	}
+
 	if _, err := c.f.Serial.Write([]byte{xEOT}); err != nil {
 		return fmt.Errorf("BCO XMODEM write: %w", err)
 	}
+
 	_, err := c.xmodemReply(ctx, c.d(5*time.Second))
+
 	return err
 }
 
@@ -125,21 +150,26 @@ func (c *console) xmodemSend(ctx context.Context, image []byte) error {
 // The bytes are read straight off the UART: they are protocol, not console text.
 func (c *console) xmodemReply(ctx context.Context, timeout time.Duration) (byte, error) {
 	var b [64]byte
+
 	for end := time.Now().Add(timeout); time.Now().Before(end); {
 		if err := ctx.Err(); err != nil {
 			return 0, err
 		}
+
 		n, err := c.f.Serial.Read(b[:])
 		for _, x := range b[:n] {
 			if x == xACK || x == xNAK || x == xCAN {
 				return x, nil
 			}
 		}
+
 		if err != nil || n == 0 {
-			if err := c.sleep(ctx, time.Millisecond); err != nil {
+			err := c.sleep(ctx, time.Millisecond)
+			if err != nil {
 				return 0, err
 			}
 		}
 	}
+
 	return 0, nil
 }

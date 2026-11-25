@@ -39,16 +39,20 @@ func ReadLinkStats(netDir string) (LinkStats, bool) {
 	if err != nil {
 		return LinkStats{}, false
 	}
+
 	for _, e := range ents {
 		if !strings.HasPrefix(e.Name(), "bcolink") {
 			continue
 		}
+
 		dir := filepath.Join(netDir, e.Name(), "bco")
 		if _, err := os.Stat(dir); err != nil {
 			continue
 		}
+
 		return readLinkStats(dir)
 	}
+
 	return LinkStats{}, false
 }
 
@@ -58,12 +62,15 @@ func readLinkStats(dir string) (LinkStats, bool) {
 		b, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
 			ok = false
+
 			return 0
 		}
+
 		v, err := strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64)
 		if err != nil {
 			ok = false
 		}
+
 		return v
 	}
 	s := LinkStats{
@@ -75,5 +82,6 @@ func readLinkStats(dir string) (LinkStats, bool) {
 		FlowControl: num("flow") == 1,
 		FlowStops:   num("flow_stops"),
 	}
+
 	return s, ok
 }

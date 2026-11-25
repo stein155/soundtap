@@ -31,8 +31,10 @@ type Processes struct {
 
 // NewProcesses is an empty set of hooks.
 func NewProcesses() *Processes {
-	return &Processes{stops: make(map[string]func()), wakes: make(map[string]func()),
-		yields: make(map[string]func() bool)}
+	return &Processes{
+		stops: make(map[string]func()), wakes: make(map[string]func()),
+		yields: make(map[string]func() bool),
+	}
 }
 
 // Preempt synchronously stops the process that owned the amp before keep took over.
@@ -45,12 +47,15 @@ func (p *Processes) Preempt(previous, keep string) {
 	if previous == keep {
 		return
 	}
+
 	p.mu.Lock()
 	stop, yield := p.stops[previous], p.yields[previous]
 	p.mu.Unlock()
+
 	if stop == nil || (yield != nil && yield()) {
 		return
 	}
+
 	stop()
 }
 
@@ -66,6 +71,7 @@ func (p *Processes) Restart(source string) {
 	p.mu.Lock()
 	stop := p.stops[source]
 	p.mu.Unlock()
+
 	if stop != nil {
 		stop()
 	}
@@ -77,6 +83,7 @@ func (p *Processes) Wake(source string) {
 	p.mu.Lock()
 	wake := p.wakes[source]
 	p.mu.Unlock()
+
 	if wake != nil {
 		wake()
 	}
@@ -87,6 +94,7 @@ func (p *Processes) Register(source string, stop, wake func()) func() {
 	p.mu.Lock()
 	p.stops[source], p.wakes[source] = stop, wake
 	p.mu.Unlock()
+
 	return func() {
 		p.mu.Lock()
 		delete(p.stops, source)
@@ -113,15 +121,23 @@ type Spec struct {
 func Run(ctx context.Context, log *slog.Logger, processes *Processes, source string, spec Spec) {
 	if _, err := exec.LookPath(spec.Bin); err != nil {
 		log.Warn("not installed, skipping", "bin", spec.Bin)
+
 		return
 	}
-	if err := childproc.RunAs(exec.CommandContext(ctx, spec.Bin), spec.User); spec.User != "" && err != nil {
+
+	err := childproc.RunAs(exec.CommandContext(ctx, spec.Bin), spec.User)
+	if spec.User != "" && err != nil {
 		log.Error("no system user, not starting", "bin", spec.Name, "user", spec.User, "err", err)
+
 		return
 	}
-	s := &supervisor{ctx: ctx, log: log, spec: spec, out: ChildLog(spec.Name),
-		stop: make(chan chan struct{}), wake: make(chan struct{}), restarts: restartPolicy{wait: supervisorBackoff}}
+
+	s := &supervisor{
+		ctx: ctx, log: log, spec: spec, out: ChildLog(spec.Name),
+		stop: make(chan chan struct{}), wake: make(chan struct{}), restarts: restartPolicy{wait: supervisorBackoff},
+	}
 	stopped := make(chan struct{})
+
 	unregister := processes.Register(source, func() {
 		done := make(chan struct{})
 		select {
@@ -144,6 +160,7 @@ func Run(ctx context.Context, log *slog.Logger, processes *Processes, source str
 		if !ok {
 			return
 		}
+
 		if wait >= 0 && !s.rest(wait) {
 			return
 		}
@@ -169,53 +186,70 @@ func (s *supervisor) runOnce() (time.Duration, bool) {
 	cmd := exec.CommandContext(s.ctx, s.spec.Bin, s.spec.Args()...)
 	cmd.Env = append(os.Environ(), s.spec.Env...)
 	childproc.DieWithParent(cmd)
+
 	if s.spec.User != "" {
 		_ = childproc.RunAs(cmd, s.spec.User) // checked before the loop
 		childproc.KeepCaps(cmd, s.spec.Caps)
 	}
+
 	cmd.Stdout, cmd.Stderr = s.out, s.out
 	s.log.Info("start", "bin", name)
-	if err := cmd.Start(); err != nil {
+
+	err := cmd.Start()
+	if err != nil {
 		// Retry rather than return: returning ran the deferred unregister, so one
 		// transient fork failure under memory pressure silently lost the receiver
 		// for the rest of the daemon's life — and left preempt unaware of it.
 		// A start that keeps failing counts like a crash, or it was retried forever.
 		wait, again := s.restarts.next(0)
 		s.counted(again, err)
+
 		if again {
 			s.log.Warn("start failed, retrying", "bin", name, "err", err, "in", wait)
 		} else {
 			s.log.Error("start failed too often in a row, resting", "bin", name, "err", err, "in", wait)
 		}
+
 		return wait, true
 	}
+
 	started := time.Now()
 	exited := make(chan error, 1)
+
 	safego.Go(name+" wait", func() { exited <- cmd.Wait() })
+
 	select {
 	case err := <-exited:
 		wait, again := s.restarts.next(time.Since(started))
 		if s.ctx.Err() != nil {
 			return 0, false
 		}
+
 		s.counted(again, err)
+
 		if !again {
 			s.log.Error("exited too often in a row, resting", "bin", name, "err", err, "short runs", supervisorMaxRapid, "in", wait)
 		} else if err != nil {
 			s.log.Warn("exited, restarting", "bin", name, "err", err, "in", wait)
 		}
+
 		return wait, true
 	case done := <-s.stop:
 		// A deliberate stop (a follow change, a preempt) starts the next run at once
 		// and forgets earlier crashes: only an unexpected exit waits out the backoff.
 		_ = cmd.Process.Kill()
+
 		s.log.Debug("stopped", "bin", name, "err", <-exited)
 		close(done)
+
 		s.restarts = restartPolicy{wait: supervisorBackoff}
+
 		return -1, true
 	case <-s.ctx.Done():
 		_ = cmd.Process.Kill()
+
 		s.log.Debug("stopped", "bin", name, "err", <-exited)
+
 		return 0, false
 	}
 }
@@ -224,11 +258,13 @@ func (s *supervisor) runOnce() (time.Duration, bool) {
 // 0127), and a crash loop when the process is put to rest (again false).
 func (s *supervisor) counted(again bool, err error) {
 	counters.DaemonRestarted(s.spec.Name)
+
 	if !again {
 		why := "exited"
 		if err != nil {
 			why = err.Error()
 		}
+
 		counters.DaemonCrashLooped(s.spec.Name, supervisorMaxRapid, why, time.Now())
 	}
 }
@@ -243,11 +279,13 @@ func (s *supervisor) rest(wait time.Duration) bool {
 		// Nothing runs to stop: the process exited, or its start failed. A preempt must
 		// not end the supervisor either.
 		close(done)
+
 		s.restarts = restartPolicy{wait: supervisorBackoff}
 	case <-s.wake:
 		s.restarts = restartPolicy{wait: supervisorBackoff}
 	case <-time.After(wait):
 	}
+
 	return true
 }
 
@@ -278,14 +316,19 @@ type restartPolicy struct {
 func (r *restartPolicy) next(ran time.Duration) (time.Duration, bool) {
 	if ran >= supervisorStableRun {
 		r.wait, r.rapid = supervisorBackoff, 0
+
 		return r.wait, true
 	}
+
 	r.wait = min(r.wait*2, supervisorBackoffMax)
+
 	r.rapid++
 	if r.rapid >= supervisorMaxRapid {
 		r.wait, r.rapid = supervisorBackoff, 0
+
 		return supervisorRest, false
 	}
+
 	return r.wait, true
 }
 
@@ -302,9 +345,11 @@ func RunWhileWanted(ctx context.Context, wanted func() bool, poke <-chan struct{
 			case <-poke:
 			}
 		}
+
 		if !runWhile(ctx, wanted, poke, run) {
 			return
 		}
+
 		if parked != nil {
 			parked()
 		}
@@ -316,11 +361,15 @@ func RunWhileWanted(ctx context.Context, wanted func() bool, poke <-chan struct{
 func runWhile(ctx context.Context, wanted func() bool, poke <-chan struct{}, run func(context.Context)) bool {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
 	done := make(chan struct{})
+
 	safego.Go("runWhileWanted", func() {
 		defer close(done)
+
 		run(runCtx)
 	})
+
 	for {
 		select {
 		case <-done:
@@ -329,12 +378,15 @@ func runWhile(ctx context.Context, wanted func() bool, poke <-chan struct{}, run
 			if wanted() {
 				continue
 			}
+
 			cancel()
 			<-done
+
 			return ctx.Err() == nil
 		case <-ctx.Done():
 			cancel()
 			<-done
+
 			return false
 		}
 	}

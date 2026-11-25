@@ -14,9 +14,11 @@ func TestParseStatusReadsTheAssociation(t *testing.T) {
 	if !status.Linked {
 		t.Error("COMPLETED means linked")
 	}
+
 	if status.SSID != "HomeNet" || status.BSSID != "00:11:22:33:44:55" || status.IP != "192.168.1.42" {
 		t.Errorf("unexpected status: %+v", status)
 	}
+
 	if status.Freq != "2437" {
 		t.Errorf("freq not read: %+v", status)
 	}
@@ -44,11 +46,13 @@ func TestCurrentSSIDRequiresLiveAssociation(t *testing.T) {
 	if err != nil || ssid != "HomeNet" {
 		t.Fatalf("linked SSID = %q, %v", ssid, err)
 	}
+
 	for _, state := range []string{"SCANNING", "ASSOCIATING", "DISCONNECTED"} {
 		if ssid, err := currentSSID(Status{State: state, SSID: "stale-profile"}); err == nil || ssid != "" {
 			t.Errorf("%s returned stale SSID %q, %v", state, ssid, err)
 		}
 	}
+
 	if _, err := currentSSID(Status{State: "COMPLETED", Linked: true}); err == nil {
 		t.Error("linked status without SSID was accepted")
 	}
@@ -57,6 +61,7 @@ func TestCurrentSSIDRequiresLiveAssociation(t *testing.T) {
 func TestCleanShellOutputDropsEchoAndRedraws(t *testing.T) {
 	// The sdsShell repaints the input line after every byte, so \b lines are echo.
 	raw := "wpa STATUS\r\nwpa\bwpa \bwpa S\r\nwpa_state=COMPLETED\r\n"
+
 	got := cleanShellOutput(raw, "wpa STATUS")
 	if got != "wpa_state=COMPLETED" {
 		t.Errorf("want only the payload line, got %q", got)
@@ -68,9 +73,11 @@ func TestNetworkIDReadsTheBareNumber(t *testing.T) {
 	if err != nil || id != 3 {
 		t.Fatalf("want id 3, got %d (%v)", id, err)
 	}
+
 	if _, err := networkID("FAIL"); err == nil {
 		t.Error("a refusal must not be read as a network id")
 	}
+
 	if _, err := networkID(""); err == nil {
 		t.Error("an empty reply must not be read as a network id")
 	}
@@ -80,28 +87,36 @@ func TestValidSSIDRejectsUnquotableNames(t *testing.T) {
 	// Connect wraps the SSID in quotes, so anything that could break out of the
 	// quoting has to be refused before it reaches the shell.
 	for _, bad := range []string{"", strings.Repeat("x", 33), `boks"net`, `boks\net`, "boks\nnet", "boks\x01net"} {
-		if err := validSSID(bad); err == nil {
+		err := validSSID(bad)
+		if err == nil {
 			t.Errorf("ssid %q must be rejected", bad)
 		}
 	}
+
 	for _, good := range []string{"HomeNet", "Bose ST 20", "café-net", strings.Repeat("x", 32)} {
-		if err := validSSID(good); err != nil {
+		err := validSSID(good)
+		if err != nil {
 			t.Errorf("ssid %q must be accepted: %v", good, err)
 		}
 	}
 }
 
 func TestValidPSKAcceptsOpenAndBoundedPassphrases(t *testing.T) {
-	if err := validPSK(""); err != nil {
+	err := validPSK("")
+	if err != nil {
 		t.Errorf("an empty passphrase means an open network: %v", err)
 	}
+
 	for _, bad := range []string{"kort", strings.Repeat("x", 64), "geheim\n123", `geheim"123`} {
-		if err := validPSK(bad); err == nil {
+		err := validPSK(bad)
+		if err == nil {
 			t.Errorf("passphrase %q must be rejected", bad)
 		}
 	}
+
 	for _, good := range []string{"geheim123", strings.Repeat("x", 63)} {
-		if err := validPSK(good); err != nil {
+		err := validPSK(good)
+		if err != nil {
 			t.Errorf("passphrase %q must be accepted: %v", good, err)
 		}
 	}
@@ -118,7 +133,8 @@ func TestConnectValidatesBeforeTouchingTheRadio(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			// The device does not exist: reaching it would be a failure of ordering,
 			// because validation has to happen before the port is opened.
-			if err := Connect(context.Background(), "/nonexistent-tty", c.ssid, c.psk); err == nil {
+			err := Connect(context.Background(), "/nonexistent-tty", c.ssid, c.psk)
+			if err == nil {
 				t.Fatal("want a validation error")
 			}
 		})
@@ -129,6 +145,7 @@ func TestFirstLineBoundsErrorText(t *testing.T) {
 	if got := firstLine("  FAIL-BUSY\nnoise\n"); got != "FAIL-BUSY" {
 		t.Errorf("want the first meaningful line, got %q", got)
 	}
+
 	if got := firstLine(strings.Repeat("x", 300)); len(got) != 120 {
 		t.Errorf("a long line must be truncated to 120, got %d", len(got))
 	}
@@ -160,12 +177,16 @@ func TestRefusedReadsFail(t *testing.T) {
 
 func TestRawKeyGoesThroughAsIs(t *testing.T) {
 	key := strings.Repeat("aB", 32)
-	if err := validPSK(key); err != nil {
+
+	err := validPSK(key)
+	if err != nil {
 		t.Errorf("raw key refused: %v", err)
 	}
+
 	if got := wpaPSK(key, "Home"); got != key {
 		t.Errorf("raw key derived again: %q", got)
 	}
+
 	for _, s := range []string{strings.Repeat("a", 63), strings.Repeat("g", 64), strings.Repeat("a", 65)} {
 		if IsHexPSK(s) {
 			t.Errorf("%q counted as a raw key", s)

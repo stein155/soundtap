@@ -32,6 +32,7 @@ func (c *Client) username(ctx context.Context) (string, error) {
 	if err != nil || st.Username == "" {
 		return "", ErrNotConnected
 	}
+
 	return url.PathEscape(st.Username), nil
 }
 
@@ -41,6 +42,7 @@ func (c *Client) FollowedArtists(ctx context.Context) ([]Artist, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	var w struct {
 		Profiles []struct {
 			URI      string `json:"uri"`
@@ -51,12 +53,14 @@ func (c *Client) FollowedArtists(ctx context.Context) ([]Artist, error) {
 	if err := c.spclient(ctx, "/user-profile-view/v3/profile/"+user+"/following?market=from_token", &w); err != nil {
 		return nil, err
 	}
+
 	out := make([]Artist, 0, len(w.Profiles))
 	for _, p := range w.Profiles {
 		if kind, _, ok := ParseURI(p.URI); ok && kind == kindArtist {
 			out = append(out, Artist{URI: p.URI, Name: p.Name, Artwork: artworkFromURL(p.ImageURL)})
 		}
 	}
+
 	return out, nil
 }
 
@@ -67,24 +71,29 @@ func (c *Client) RecentlyPlayed(ctx context.Context) ([]Recent, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	var w struct {
 		PlayContexts []struct {
 			URI string `json:"uri"`
 		} `json:"playContexts"`
 	}
+
 	path := fmt.Sprintf("/recently-played/v3/user/%s/recently-played?format=json&offset=0&limit=%d&filter=default", user, recentSize)
 	if err := c.spclient(ctx, path, &w); err != nil {
 		return nil, err
 	}
+
 	uris := make([]string, 0, len(w.PlayContexts))
 	for _, p := range w.PlayContexts {
 		uris = append(uris, p.URI)
 	}
+
 	return each(ctx, uris, c.recent)
 }
 
 func (c *Client) recent(ctx context.Context, uri string) (Recent, error) {
 	kind, id, _ := ParseURI(uri)
+
 	out := Recent{Kind: kind, URI: uri}
 	switch kind {
 	case kindAlbum:
@@ -92,21 +101,28 @@ func (c *Client) recent(ctx context.Context, uri string) (Recent, error) {
 		if err != nil {
 			return Recent{}, err
 		}
+
 		a := m.norm()
 		out.Name, out.Artwork = a.Name, a.Artwork
 	case kindArtist:
 		var m mArtist
-		if err := c.spclient(ctx, "/metadata/4/artist/"+hexID(id), &m); err != nil {
+
+		err := c.spclient(ctx, "/metadata/4/artist/"+hexID(id), &m)
+		if err != nil {
 			return Recent{}, err
 		}
+
 		out.Name, out.Artwork = m.Name, m.Portrait.artwork()
 	case kindPlaylist:
 		var m plMeta
 		// One track is the smallest answer that still carries the name and picture.
-		if err := c.spclient(ctx, "/playlist/v2/playlist/"+id+"?decorate=attributes,length,owner&from=0&length=1", &m); err != nil {
+		err := c.spclient(ctx, "/playlist/v2/playlist/"+id+"?decorate=attributes,length,owner&from=0&length=1", &m)
+		if err != nil {
 			return Recent{}, err
 		}
+
 		p := m.norm(uri)
+
 		out.Name, out.Artwork = p.Name, p.Artwork
 		if out.Artwork == "" {
 			out.Artwork = c.firstCover(ctx, id)
@@ -114,5 +130,6 @@ func (c *Client) recent(ctx context.Context, uri string) (Recent, error) {
 	default:
 		return Recent{}, ErrUnavailable
 	}
+
 	return out, nil
 }

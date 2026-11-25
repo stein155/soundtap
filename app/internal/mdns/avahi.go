@@ -6,6 +6,7 @@ package mdns
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"strconv"
 	"strings"
@@ -50,27 +51,36 @@ const (
 // errAvahiGone ends a session when avahi-daemon leaves the bus.
 var errAvahiGone = errors.New("avahi-daemon left the bus")
 
+// errNoIPv4 is a resolved service that has no IPv4 address.
+var errNoIPv4 = errors.New("has no IPv4 address")
+
 // call calls one method of avahi's on path with a bounded wait.
-func call(ctx context.Context, c *sysbus.Conn, path dbus.ObjectPath, iface, member string, args ...any) *dbus.Call {
+func call(ctx context.Context, conn *sysbus.Conn, path dbus.ObjectPath, iface, member string, args ...any) *dbus.Call {
 	ctx, cancel := context.WithTimeout(ctx, callWait)
 	defer cancel()
-	return c.Object(avahiName, path).CallWithContext(ctx, iface+"."+member, 0, args...)
+
+	return conn.Object(avahiName, path).CallWithContext(ctx, iface+"."+member, 0, args...)
 }
 
 // watchAvahi asks the bus for avahi-daemon leaving and for the signals of iface.
-func watchAvahi(ctx context.Context, c *sysbus.Conn, ifaces ...string) error {
-	rules := [][]dbus.MatchOption{{
+func watchAvahi(ctx context.Context, conn *sysbus.Conn, ifaces ...string) error {
+	rules := make([][]dbus.MatchOption, 0, 1+len(ifaces))
+	rules = append(rules, []dbus.MatchOption{
 		dbus.WithMatchSender("org.freedesktop.DBus"), dbus.WithMatchMember("NameOwnerChanged"),
 		dbus.WithMatchArg(0, avahiName),
-	}}
+	})
+
 	for _, iface := range ifaces {
 		rules = append(rules, []dbus.MatchOption{dbus.WithMatchSender(avahiName), dbus.WithMatchInterface(iface)})
 	}
+
 	for _, rule := range rules {
-		if err := c.AddMatchSignalContext(ctx, rule...); err != nil {
-			return err
+		err := conn.AddMatchSignalContext(ctx, rule...)
+		if err != nil {
+			return fmt.Errorf("mdns: add match: %w", err)
 		}
 	}
+
 	return nil
 }
 
@@ -91,11 +101,13 @@ func txtRecord(name string, svc Service) [][]byte {
 // parseTXT reads a TXT record's key=value strings; a string without "=" is skipped.
 func parseTXT(txt [][]byte) map[string]string {
 	out := map[string]string{}
+
 	for _, item := range txt {
 		if k, v, ok := strings.Cut(string(item), "="); ok {
 			out[k] = v
 		}
 	}
+
 	return out
 }
 
@@ -107,10 +119,13 @@ type resolved struct {
 	txt  map[string]string
 }
 
-// resolveService asks avahi for the IPv4 address, port and TXT of one service instance.
-func resolveService(ctx context.Context, c *sysbus.Conn, iface int32, instance, serviceType string) (resolved, error) {
+// resolveInstance asks avahi for the IPv4 address, port and TXT of one service instance.
+func resolveInstance(
+	ctx context.Context, conn *sysbus.Conn, iface int32, instance, serviceType string,
+) (resolved, error) {
 	ctx, cancel := context.WithTimeout(ctx, resolveCap)
 	defer cancel()
+
 	var (
 		gotIface, gotProto, gotAProto int32
 		name, typ, domain, host, addr string
@@ -118,12 +133,14 @@ func resolveService(ctx context.Context, c *sysbus.Conn, iface int32, instance, 
 		txt                           [][]byte
 		flags                         uint32
 	)
-	err := c.Object(avahiName, "/").CallWithContext(ctx, avahiServer+".ResolveService", 0,
+
+	err := conn.Object(avahiName, "/").CallWithContext(ctx, avahiServer+".ResolveService", 0,
 		iface, protoIPv4, instance, serviceType, anyDomain, protoIPv4, noFlags).
 		Store(&gotIface, &gotProto, &name, &typ, &domain, &host, &gotAProto, &addr, &port, &txt, &flags)
 	if err != nil {
-		return resolved{}, err
+		return resolved{}, fmt.Errorf("mdns: resolve %s: %w", instance, err)
 	}
+
 	return resolved{host: host, ip: net.ParseIP(addr).To4(), port: port, txt: parseTXT(txt)}, nil
 }
 
@@ -131,25 +148,30 @@ func resolveService(ctx context.Context, c *sysbus.Conn, iface int32, instance, 
 // the bus at addr (sysbus.Address on a speaker), for example an AirPlay sender's
 // iTunes_Ctrl_<id> in _dacp._tcp.
 func ResolveService(ctx context.Context, addr, instance, serviceType string) (string, error) {
-	c, err := sysbus.Dial(ctx, addr, callWait)
+	conn, err := sysbus.Dial(ctx, addr, callWait)
+	if err != nil {
+		return "", fmt.Errorf("mdns: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	res, err := resolveInstance(ctx, conn, ifaceAny, instance, serviceType)
 	if err != nil {
 		return "", err
 	}
-	defer func() { _ = c.Close() }()
-	res, err := resolveService(ctx, c, ifaceAny, instance, serviceType)
-	if err != nil {
-		return "", err
-	}
+
 	if res.ip == nil {
-		return "", errors.New("mdns: " + instance + " has no IPv4 address")
+		return "", fmt.Errorf("mdns: %s %w", instance, errNoIPv4)
 	}
+
 	return net.JoinHostPort(res.ip.String(), strconv.Itoa(int(res.port))), nil
 }
 
 // interfaceName names an avahi interface index for the table and Recent.
 func interfaceName(index int32) string {
-	if i, err := net.InterfaceByIndex(int(index)); err == nil {
-		return i.Name
+	netIface, err := net.InterfaceByIndex(int(index))
+	if err == nil {
+		return netIface.Name
 	}
+
 	return "if" + strconv.Itoa(int(index))
 }

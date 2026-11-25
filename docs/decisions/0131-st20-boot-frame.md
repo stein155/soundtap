@@ -40,6 +40,6 @@ kernel and rootfs, seconds rather than one).
 
 - `os/bootloader/uboot/uboot-2026.07-st20-splash.patch`: VDD3, the panel init and the frame.
 - `os/bootloader/uboot/soundtap-splash.h`: the generated frame.
-- `app/internal/panel/boot.go:bootFrame` and `app/internal/panel/splash_test.go`: the frame and the
+- `app/internal/panel/boot.go:bootFrame` and `app/internal/panel/splash_internal_test.go`: the frame and the
   test that regenerates and checks the header.
 - `app/oled/spidev_linux.go`: soundtapd's panel init sequence that U-Boot repeats.

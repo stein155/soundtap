@@ -22,6 +22,17 @@ import (
 	"github.com/stein155/soundtap/app/internal/web/apierror"
 )
 
+const (
+	// notificationTimeout bounds playing a notification.
+	notificationTimeout = 10 * time.Second
+	// notificationCeiling is the loudest notification on a model that clips above it.
+	notificationCeiling = 70
+	// defaultNotificationVolume is used when the request names none.
+	defaultNotificationVolume = 50
+	// minNotificationVolume keeps a notification audible.
+	minNotificationVolume = 10
+)
+
 // notifyAudioMax caps an uploaded notification clip. Clips are short chimes that
 // SoundTap holds in RAM on the memory-constrained speaker, so this is deliberately
 // tight — a few seconds of MP3/AAC is well under a megabyte; 4 MiB covers a generous
@@ -70,8 +81,10 @@ type speakerNotifyBody struct {
 func (s *Server) speakerNotify(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 		s.speakerNotifyURL(w, r)
+
 		return
 	}
+
 	s.speakerNotifyUpload(w, r)
 }
 
@@ -82,18 +95,26 @@ const notifyJSONMax = 4 << 10
 
 func (s *Server) speakerNotifyURL(w http.ResponseWriter, r *http.Request) {
 	var body speakerNotifyBody
-	if err := json.NewDecoder(io.LimitReader(r.Body, notifyJSONMax)).Decode(&body); err != nil {
+
+	err := json.NewDecoder(io.LimitReader(r.Body, notifyJSONMax)).Decode(&body)
+	if err != nil {
 		s.badRequest(w, "bad body", err)
+
 		return
 	}
+
 	if body.URL == "" {
 		apiError(w, http.StatusBadRequest, "url required")
+
 		return
 	}
+
 	if !upnp.MediaURL(r.Context(), body.URL) {
 		apiError(w, http.StatusBadRequest, "url must be http(s) and not loopback or link-local")
+
 		return
 	}
+
 	s.playNotification(w, r, speaker.Notification{
 		URL: body.URL, Volume: body.Volume,
 		Artist: body.Artist, Album: body.Album, Track: body.Track,
@@ -105,45 +126,56 @@ func (s *Server) speakerNotifyUpload(w http.ResponseWriter, r *http.Request) {
 	// side by side could take the speaker's RAM. A doorbell sends one at a time.
 	if !s.clipUpload.TryLock() {
 		apiErrorCode(w, http.StatusServiceUnavailable, apierror.Busy, "another clip is uploading")
+
 		return
 	}
 	data, err := io.ReadAll(r.Body)
 	s.clipUpload.Unlock()
+
 	if err != nil {
 		// The guard caps the body at notifyAudioMax; a MaxBytesError means too large.
-		var maxErr *http.MaxBytesError
-		if errors.As(err, &maxErr) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			apiError(w, http.StatusRequestEntityTooLarge, "audio too large")
+
 			return
 		}
+
 		s.badRequest(w, "read audio", err)
+
 		return
 	}
+
 	if len(data) == 0 {
 		apiError(w, http.StatusBadRequest, "empty audio body")
+
 		return
 	}
+
 	if s.notifyBase == "" {
 		// Nothing told us where the player can fetch a clip back from.
 		apiError(w, http.StatusServiceUnavailable, "notifications unavailable")
+
 		return
 	}
+
 	ct := r.Header.Get("Content-Type")
 	if ct == "" {
 		ct = "audio/mpeg"
 	}
+
 	name := s.storeClip(data, ct)
 
-	q := r.URL.Query()
-	volume, _ := strconv.Atoi(q.Get("volume"))
-	n := speaker.Notification{
+	query := r.URL.Query()
+	volume, _ := strconv.Atoi(query.Get("volume"))
+
+	note := speaker.Notification{
 		URL:    s.audioURL(name),
 		Volume: volume,
-		Artist: q.Get("artist"),
-		Album:  q.Get("album"),
-		Track:  q.Get("track"),
+		Artist: query.Get("artist"),
+		Album:  query.Get("album"),
+		Track:  query.Get("track"),
 	}
-	if !s.playNotification(w, r, n) {
+	if !s.playNotification(w, r, note) {
 		// The player never got a URL it could fetch, so drop the clip now instead
 		// of holding the bytes for the full TTL.
 		s.dropClip(name)
@@ -152,40 +184,51 @@ func (s *Server) speakerNotifyUpload(w http.ResponseWriter, r *http.Request) {
 
 // playNotification runs the /speaker call and writes the HTTP response. It reports
 // whether the request succeeded so callers can clean up on failure.
-func (s *Server) playNotification(w http.ResponseWriter, r *http.Request, n speaker.Notification) bool {
-	n.Volume = s.notificationVolume(n.Volume)
+func (s *Server) playNotification(w http.ResponseWriter, r *http.Request, note speaker.Notification) bool {
+	note.Volume = s.notificationVolume(note.Volume)
 	// Notifications interrupt playback and can wake the speaker, so allow more room
 	// than the default 4s speaker timeout.
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), notificationTimeout)
 	defer cancel()
-	if err := s.backend.PlayNotification(ctx, n); err != nil {
+
+	err := s.backend.PlayNotification(ctx, note)
+	if err != nil {
 		s.fail(w, "notification failed", err)
+
 		return false
 	}
-	writeJSON(w, 200, map[string]any{"ok": true})
+
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+
 	return true
 }
 
 // notificationVolumeMax is the ceiling for this model. The Wireless Link drives its own
 // amplifier and is quiet at 70, so it gets the full range; the others clip above it.
 func (s *Server) notificationVolumeMax() int {
-	if model, err := s.fw.Model(); err == nil && model == "wla" {
-		return 100
+	model, err := s.fw.Model()
+	if err == nil && model == "wla" {
+		return maxVolume
 	}
-	return 70
+
+	return notificationCeiling
 }
 
 func (s *Server) notificationVolume(volume int) int {
 	if volume == 0 {
-		return 50
+		return defaultNotificationVolume
 	}
-	max := s.notificationVolumeMax()
-	if volume < 10 {
-		return 10
+
+	ceiling := s.notificationVolumeMax()
+
+	if volume < minNotificationVolume {
+		return minNotificationVolume
 	}
-	if volume > max {
-		return max
+
+	if volume > ceiling {
+		return ceiling
 	}
+
 	return volume
 }
 
@@ -195,8 +238,11 @@ func (s *Server) serveAudio(w http.ResponseWriter, r *http.Request) {
 	if !s.loopbackOnly(w, r) {
 		return
 	}
+
 	name := r.PathValue("name")
+
 	s.audioMu.Lock()
+
 	clip := s.builtinClips[name] // permanent clips first
 	if clip == nil {
 		clip = s.audioClips[name]
@@ -205,23 +251,28 @@ func (s *Server) serveAudio(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.audioMu.Unlock()
+
 	if clip == nil {
 		http.NotFound(w, r)
+
 		return
 	}
+
 	w.Header().Set("Content-Type", clip.contentType)
 	// ServeContent handles range requests, which the player's fetcher may use.
 	http.ServeContent(w, r, name, clip.created, bytes.NewReader(clip.data))
 }
 
-func (s *Server) loopbackOnly(w http.ResponseWriter, r *http.Request) bool {
+func (*Server) loopbackOnly(w http.ResponseWriter, r *http.Request) bool {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err == nil {
 		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
 			return true
 		}
 	}
+
 	apiError(w, http.StatusForbidden, "loopback only")
+
 	return false
 }
 
@@ -230,16 +281,20 @@ func (s *Server) loopbackOnly(w http.ResponseWriter, r *http.Request) bool {
 func (s *Server) storeClip(data []byte, contentType string) string {
 	now := time.Now()
 	name := clipID() + extForContentType(contentType)
+
 	s.audioMu.Lock()
 	defer s.audioMu.Unlock()
+
 	if s.audioClips == nil {
 		s.audioClips = make(map[string]*audioClip)
 	}
+
 	for k, c := range s.audioClips {
 		if now.After(c.expires) {
 			delete(s.audioClips, k)
 		}
 	}
+
 	for len(s.audioClips) >= maxAudioClips {
 		oldest := ""
 		for k, c := range s.audioClips {
@@ -247,9 +302,12 @@ func (s *Server) storeClip(data []byte, contentType string) string {
 				oldest = k
 			}
 		}
+
 		delete(s.audioClips, oldest)
 	}
+
 	s.audioClips[name] = &audioClip{data: data, contentType: contentType, created: now, expires: now.Add(notifyClipTTL)}
+
 	return name
 }
 
@@ -266,10 +324,12 @@ func (s *Server) dropClip(name string) {
 func (s *Server) SetBuiltinClip(name string, data []byte, contentType string) {
 	s.audioMu.Lock()
 	defer s.audioMu.Unlock()
+
 	if s.builtinClips == nil {
 		s.builtinClips = make(map[string]*audioClip)
 	}
-	s.builtinClips[name] = &audioClip{data: data, contentType: contentType, created: time.Now()}
+
+	s.builtinClips[name] = &audioClip{data: data, contentType: contentType, created: time.Now(), expires: time.Time{}}
 }
 
 // audioURL builds the URL the player fetches an uploaded clip from: SoundTap's own
@@ -280,23 +340,25 @@ func (s *Server) audioURL(name string) string {
 
 func clipID() string {
 	var b [16]byte
+
 	_, _ = rand.Read(b[:])
+
 	return hex.EncodeToString(b[:])
 }
 
 // extForContentType maps the common audio types to a file extension, so the fetched
 // URL carries one for the player to go by.
-func extForContentType(ct string) string {
+func extForContentType(contentType string) string {
 	switch {
-	case strings.Contains(ct, "mpeg"), strings.Contains(ct, "mp3"):
+	case strings.Contains(contentType, "mpeg"), strings.Contains(contentType, "mp3"):
 		return ".mp3"
-	case strings.Contains(ct, "aac"), strings.Contains(ct, "mp4"):
+	case strings.Contains(contentType, "aac"), strings.Contains(contentType, "mp4"):
 		return ".aac"
-	case strings.Contains(ct, "wav"):
+	case strings.Contains(contentType, "wav"):
 		return ".wav"
-	case strings.Contains(ct, "flac"):
+	case strings.Contains(contentType, "flac"):
 		return ".flac"
-	case strings.Contains(ct, "ogg"), strings.Contains(ct, "vorbis"):
+	case strings.Contains(contentType, "ogg"), strings.Contains(contentType, "vorbis"):
 		return ".ogg"
 	default:
 		return ".mp3"

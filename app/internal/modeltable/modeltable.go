@@ -48,6 +48,7 @@ func ModelNamed(name string) (Model, bool) {
 			return m, true
 		}
 	}
+
 	return Model{}, false
 }
 
@@ -58,6 +59,7 @@ func VariantNamed(name string) (Variant, bool) {
 			return v, true
 		}
 	}
+
 	return Variant{}, false
 }
 
@@ -69,5 +71,6 @@ func IsModuleSuffix(suffix string) bool {
 			return true
 		}
 	}
+
 	return false
 }

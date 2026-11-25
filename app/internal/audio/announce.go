@@ -9,6 +9,9 @@ import (
 	"github.com/stein155/soundtap/app/internal/safego"
 )
 
+// announceQueueBlocks is how many clip blocks the reader may have ready ahead of the mixer.
+const announceQueueBlocks = 4
+
 // Announce starts ducking the source bus and mixing clip over the top at annGain
 // (1.0 = clip at full scale). When clip returns EOF the source ramps back to full.
 // A second Announce replaces the first.
@@ -21,12 +24,15 @@ func (m *Mixer) Announce(clip io.Reader, annGain float64) {
 	// the network feels like it; doing that from stepInto stopped everything -- no PCM
 	// and no silence reached the DAC, and SetVolume, Announce and Announcing all queued
 	// behind the same mutex. A stalled notification took the whole device down with it.
-	blocks := make(chan []byte, 4)
+	blocks := make(chan []byte, announceQueueBlocks)
 	stop := make(chan struct{})
+
 	safego.Go("announce.read", func() {
 		defer close(blocks)
+
 		for {
 			buf := make([]byte, blockBytes)
+
 			n, err := io.ReadFull(clip, buf)
 			if n > 0 {
 				select {
@@ -35,6 +41,7 @@ func (m *Mixer) Announce(clip io.Reader, annGain float64) {
 					return
 				}
 			}
+
 			if err != nil {
 				return
 			}
@@ -47,6 +54,7 @@ func (m *Mixer) Announce(clip io.Reader, annGain float64) {
 	m.annGain = annGain
 	m.target = duckLevel
 	m.mu.Unlock()
+
 	if prev != nil { // a second Announce replaces the first: retire its reader
 		close(prev)
 	}
@@ -56,5 +64,6 @@ func (m *Mixer) Announce(clip io.Reader, annGain float64) {
 func (m *Mixer) Announcing() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	return m.ann != nil
 }

@@ -13,34 +13,50 @@ import (
 func (s *Server) getTone(w http.ResponseWriter, _ *http.Request) {
 	if s.tone == nil {
 		apiError(w, http.StatusNotFound, "this speaker has no tone controls")
+
 		return
 	}
-	t := s.tone()
-	if t == nil {
+
+	tone := s.tone()
+	if tone == nil {
 		apiError(w, http.StatusServiceUnavailable, "the soundbar has not answered yet")
+
 		return
 	}
-	writeJSON(w, http.StatusOK, t)
+
+	writeJSON(w, http.StatusOK, tone)
 }
 
 // putTone sets all four levels at once, as the processor takes them.
 func (s *Server) putTone(w http.ResponseWriter, r *http.Request) {
 	if s.setTone == nil {
 		apiError(w, http.StatusNotFound, "this speaker has no tone controls")
+
 		return
 	}
+
 	var body struct {
-		Bass, Treble, Centre, Rear *int
+		Bass   *int `json:"bass"`
+		Treble *int `json:"treble"`
+		Centre *int `json:"centre"`
+		Rear   *int `json:"rear"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&body); err != nil ||
+
+	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, tinyBody)).Decode(&body)
+	if err != nil ||
 		body.Bass == nil || body.Treble == nil || body.Centre == nil || body.Rear == nil {
 		apiError(w, http.StatusBadRequest, "bass, treble, centre and rear are required")
+
 		return
 	}
-	if err := s.setTone(*body.Bass, *body.Treble, *body.Centre, *body.Rear); err != nil {
+
+	err = s.setTone(*body.Bass, *body.Treble, *body.Centre, *body.Rear)
+	if err != nil {
 		apiError(w, http.StatusBadRequest, err.Error())
+
 		return
 	}
+
 	s.getTone(w, nil)
 }
 
@@ -49,19 +65,28 @@ func (s *Server) putTone(w http.ResponseWriter, r *http.Request) {
 func (s *Server) startADAPTiQ(w http.ResponseWriter, r *http.Request) {
 	if s.startCalibration == nil {
 		apiError(w, http.StatusNotFound, "this speaker has no ADAPTiQ")
+
 		return
 	}
+
 	var body struct {
 		Confirm bool `json:"confirm"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&body); err != nil || !body.Confirm {
+
+	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, tinyBody)).Decode(&body)
+	if err != nil || !body.Confirm {
 		apiError(w, http.StatusBadRequest, "confirm must be true")
+
 		return
 	}
-	if err := s.startCalibration(); err != nil {
+
+	err = s.startCalibration()
+	if err != nil {
 		apiError(w, http.StatusServiceUnavailable, err.Error())
+
 		return
 	}
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -73,10 +98,12 @@ type soundbarChoice struct {
 // soundbarChoiceValues are a soundbar's one-of-a-few settings and their values, in the
 // order the app offers them: stock's audio mode, CEC mode and the remote's
 // HDMI input button.
-var soundbarChoiceValues = map[string][]string{
-	"audio-mode": {"normal", "dialog", "night", "direct"},
-	"cec-mode":   {"on", "alternate", "fine", "off"},
-	"hdmi-input": {"none", "1", "2", "3"},
+func soundbarChoiceValues() map[string][]string {
+	return map[string][]string{
+		"audio-mode": {"normal", "dialog", "night", "direct"},
+		"cec-mode":   {"on", "alternate", "fine", "off"},
+		"hdmi-input": {"none", "1", "2", "3"},
+	}
 }
 
 // getChoice answers {mode, modes} for one of soundbarChoiceValues. mode is "" while
@@ -84,33 +111,44 @@ var soundbarChoiceValues = map[string][]string{
 // app must be able to offer the choice before it knows the current one.
 func (s *Server) getChoice(name string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
-		c, ok := s.choices[name]
+		choice, ok := s.choices[name]
 		if !ok {
 			apiError(w, http.StatusNotFound, "this speaker has no "+name)
+
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"mode": c.get(), "modes": soundbarChoiceValues[name]})
+
+		writeJSON(w, http.StatusOK, map[string]any{"mode": choice.get(), "modes": soundbarChoiceValues()[name]})
 	}
 }
 
 func (s *Server) putChoice(name string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		c, ok := s.choices[name]
+		choice, ok := s.choices[name]
 		if !ok {
 			apiError(w, http.StatusNotFound, "this speaker has no "+name)
+
 			return
 		}
+
 		var body struct {
 			Mode string `json:"mode"`
 		}
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&body); err != nil || body.Mode == "" {
+
+		err := json.NewDecoder(http.MaxBytesReader(w, r.Body, tinyBody)).Decode(&body)
+		if err != nil || body.Mode == "" {
 			apiError(w, http.StatusBadRequest, "mode is required")
+
 			return
 		}
-		if err := c.set(body.Mode); err != nil {
+
+		err = choice.set(body.Mode)
+		if err != nil {
 			apiError(w, http.StatusBadRequest, err.Error())
+
 			return
 		}
+
 		s.getChoice(name)(w, r)
 	}
 }
@@ -119,30 +157,42 @@ func (s *Server) putChoice(name string) http.HandlerFunc {
 func (s *Server) getLipSync(w http.ResponseWriter, _ *http.Request) {
 	if s.lipSync == nil {
 		apiError(w, http.StatusNotFound, "this speaker has no lip-sync delay")
+
 		return
 	}
+
 	var ms *int
 	if v, ok := s.lipSync(); ok {
 		ms = &v
 	}
+
 	writeJSON(w, http.StatusOK, map[string]any{"ms": ms, "max": s.lipSyncMax})
 }
 
 func (s *Server) putLipSync(w http.ResponseWriter, r *http.Request) {
 	if s.setLipSync == nil {
 		apiError(w, http.StatusNotFound, "this speaker has no lip-sync delay")
+
 		return
 	}
+
 	var body struct {
 		MS *int `json:"ms"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&body); err != nil || body.MS == nil {
+
+	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, tinyBody)).Decode(&body)
+	if err != nil || body.MS == nil {
 		apiError(w, http.StatusBadRequest, "ms is required")
+
 		return
 	}
-	if err := s.setLipSync(*body.MS); err != nil {
+
+	err = s.setLipSync(*body.MS)
+	if err != nil {
 		apiError(w, http.StatusBadRequest, err.Error())
+
 		return
 	}
+
 	s.getLipSync(w, r)
 }

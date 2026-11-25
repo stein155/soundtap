@@ -12,6 +12,17 @@ import (
 	"github.com/stein155/soundtap/app/internal/speaker"
 )
 
+const (
+	// firstPlausibleYear is a year before which the clock has not been set since boot.
+	firstPlausibleYear = 2020
+	// alarmStartTimeout bounds starting the alarm's source, a radio stream included.
+	alarmStartTimeout = 12 * time.Second
+	// alarmRestoreTimeout bounds giving back the volume the alarm raised.
+	alarmRestoreTimeout = 5 * time.Second
+	// alarmFallbackTimeout bounds playing the fallback sound when the source stays silent.
+	alarmFallbackTimeout = 10 * time.Second
+)
+
 // The wake-up alarm. Like the sleep timer it runs on the speaker: an alarm that lives in
 // a browser tab only goes off if somebody left a phone awake on the night stand with the
 // page open, which is not an alarm.
@@ -31,14 +42,17 @@ func (s *Server) runAlarm(ctx context.Context, every time.Duration) {
 	if s.settings == nil {
 		return
 	}
-	t := time.NewTicker(every)
-	defer t.Stop()
+
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-ticker.C:
 		}
+
 		s.checkAlarm(ctx, s.wallClock())
 	}
 }
@@ -47,6 +61,7 @@ func (s *Server) wallClock() time.Time {
 	if s.clock != nil {
 		return s.clock()
 	}
+
 	return time.Now()
 }
 
@@ -57,21 +72,29 @@ func (s *Server) wallClock() time.Time {
 // this runs on every tick.
 func (s *Server) alarmZone() *time.Location {
 	current := s.settings.Get()
-	tz := current.Display.Timezone
-	if tz == "" {
-		tz = current.Alarm.Timezone
+
+	zone := current.Display.Timezone
+	if zone == "" {
+		zone = current.Alarm.Timezone
 	}
-	if tz == "" {
+
+	if zone == "" {
 		return time.Local
 	}
-	if loc, ok := s.alarmZones.Load(tz); ok {
-		return loc.(*time.Location)
+
+	if cached, ok := s.alarmZones.Load(zone); ok {
+		if loc, isLoc := cached.(*time.Location); isLoc {
+			return loc
+		}
 	}
-	loc, err := time.LoadLocation(tz)
+
+	loc, err := time.LoadLocation(zone)
 	if err != nil {
 		return time.Local
 	}
-	s.alarmZones.Store(tz, loc)
+
+	s.alarmZones.Store(zone, loc)
+
 	return loc
 }
 
@@ -87,8 +110,10 @@ func alarmDue(local time.Time, hhmm string) bool {
 	if local.Format("15:04") == hhmm {
 		return true
 	}
+
 	at := local.Format("2006-01-02") + " " + hhmm
 	prev := local.Add(-time.Minute).Format("2006-01-02 15:04")
+
 	return prev < at && at < local.Format("2006-01-02 15:04")
 }
 
@@ -96,14 +121,17 @@ func alarmDue(local time.Time, hhmm string) bool {
 // the first one stored. The settings page offers the same one.
 func alarmSlot(slot int, presets []speaker.Preset) (int, bool) {
 	first := 0
-	for _, p := range presets {
-		if p.Slot == slot {
+
+	for _, preset := range presets {
+		if preset.Slot == slot {
 			return slot, true
 		}
-		if first == 0 || p.Slot < first {
-			first = p.Slot
+
+		if first == 0 || preset.Slot < first {
+			first = preset.Slot
 		}
 	}
+
 	return first, first != 0
 }
 
@@ -122,11 +150,14 @@ func (s *Server) checkAlarm(ctx context.Context, now time.Time) bool {
 	}
 	// A clock that never synced reads 1970 or the build date's day: its 07:00 is not the
 	// owner's, so it goes off at a random hour. Better silent and logged.
-	if now.Year() < 2020 {
+	if now.Year() < firstPlausibleYear {
 		s.log.Warn("alarm: the clock is not set; skipped", "now", now)
+
 		return false
 	}
+
 	run := ctx
+
 	local := now.In(s.alarmZone())
 	if !alarmDue(local, alarm.Time) {
 		return false
@@ -135,56 +166,88 @@ func (s *Server) checkAlarm(ctx context.Context, now time.Time) bool {
 	// its clock only after the first NTP sync, and so does the alarm.
 	if !clocksync.Synced() {
 		s.log.Warn("alarm: the clock has not synced since boot; skipped", "now", now)
+
 		return false
 	}
 	// The key carries the alarm time as well as the date: moving the alarm to later the
 	// same morning is a new alarm, not one that already went off.
 	key := local.Format("2006-01-02") + " " + alarm.Time
-	s.alarmMu.Lock()
-	if s.alarmFired == key {
-		s.alarmMu.Unlock()
+
+	previous, claimed := s.claimAlarm(key)
+	if !claimed {
 		return false
 	}
-	previous := s.alarmFired
-	s.alarmFired = key
-	s.alarmMu.Unlock()
-	unclaim := func() {
-		s.alarmMu.Lock()
-		if s.alarmFired == key {
-			s.alarmFired = previous
-		}
-		s.alarmMu.Unlock()
-	}
 
-	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	unclaim := func() { s.unclaimAlarm(key, previous) }
+
+	ctx, cancel := context.WithTimeout(ctx, alarmStartTimeout)
 	defer cancel()
+
 	presets, err := s.backend.Presets(ctx)
 	if err != nil {
 		unclaim()
 		s.log.Warn("alarm: presets unavailable", "err", err)
+
 		return false
 	}
+
 	s.alarmVolume(ctx)
+
 	slot, ok := alarmSlot(alarm.Slot, presets)
 	if !ok {
 		s.log.Warn("alarm: no presets left; the fallback tone wakes instead", "slot", alarm.Slot)
 		actx := s.newAlarmRun(run)
+
 		safego.Go("alarm.fallback", func() { s.alarmFallback(actx, 0) })
+
 		return false
 	}
+
 	s.snapshotRecent(ctx)
-	if err := s.backend.PlayPreset(ctx, slot); err != nil {
+
+	err = s.backend.PlayPreset(ctx, slot)
+	if err != nil {
 		unclaim()
 		s.log.Warn("alarm: play failed", "slot", slot, "err", err)
+
 		return false
 	}
+
 	s.log.Info("alarm", "time", alarm.Time, "slot", slot)
 	s.hub.nudge()
 	// The preset started, which is not the same as the stream playing: without internet
 	// it buffers and stays silent. The fallback tone checks after a while.
 	actx, wait := s.newAlarmRun(run), alarmFallbackAfter
+
 	safego.Go("alarm.fallback", func() { s.alarmFallback(actx, wait) })
+
 	return true
+}
+
+// claimAlarm marks the alarm at key as gone off. It returns the key it replaced and false
+// when key already went off.
+func (s *Server) claimAlarm(key string) (string, bool) {
+	s.alarmMu.Lock()
+	defer s.alarmMu.Unlock()
+
+	if s.alarmFired == key {
+		return "", false
+	}
+
+	previous := s.alarmFired
+	s.alarmFired = key
+
+	return previous, true
+}
+
+// unclaimAlarm gives the claim on key back to previous, for an alarm that did not start.
+func (s *Server) unclaimAlarm(key, previous string) {
+	s.alarmMu.Lock()
+	defer s.alarmMu.Unlock()
+
+	if s.alarmFired == key {
+		s.alarmFired = previous
+	}
 }
 
 // alarmToneVolume is the fallback tone's level: the tone has one job, which is to wake
@@ -196,23 +259,28 @@ const alarmMinVolume = 20
 
 // The raise lasts as long as the alarm: dismissing it puts the owner's level back.
 func (s *Server) alarmVolume(ctx context.Context) {
-	v, err := s.backend.Volume(ctx)
-	if err != nil || (v >= alarmMinVolume && !muted(s.backend)) {
+	volume, err := s.backend.Volume(ctx)
+	if err != nil || (volume >= alarmMinVolume && !muted(s.backend)) {
 		return
 	}
 	// Setting a level unmutes, and Volume() keeps reporting the level a muted speaker
 	// returns to, so a muted speaker above the floor is set to that same level.
-	target := max(v, alarmMinVolume)
-	if err := s.backend.SetVolume(ctx, target); err != nil {
+	target := max(volume, alarmMinVolume)
+
+	err = s.backend.SetVolume(ctx, target)
+	if err != nil {
 		s.log.Warn("alarm: could not raise the volume", "err", err)
+
 		return
 	}
-	if target == v {
+
+	if target == volume {
 		return
 	}
+
 	s.alarmMu.Lock()
 	if !s.alarmRaised {
-		s.alarmRaised, s.alarmRaisedFrom = true, v
+		s.alarmRaised, s.alarmRaisedFrom = true, volume
 	}
 	s.alarmMu.Unlock()
 }
@@ -220,13 +288,17 @@ func (s *Server) alarmVolume(ctx context.Context) {
 // restoreAlarmVolume puts back the volume the alarm raised from, unless someone turned
 // the speaker up or down while it rang: then their level is the one they want. It runs
 // on its own goroutine, because standby reaches dismissAlarm on the backend's.
-func (s *Server) restoreAlarmVolume(from int) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (s *Server) restoreAlarmVolume(ctx context.Context, from int) {
+	ctx, cancel := context.WithTimeout(ctx, alarmRestoreTimeout)
 	defer cancel()
-	if v, err := s.backend.Volume(ctx); err != nil || v != alarmMinVolume {
+
+	v, err := s.backend.Volume(ctx)
+	if err != nil || v != alarmMinVolume {
 		return
 	}
-	if err := s.backend.SetVolume(ctx, from); err != nil {
+
+	err = s.backend.SetVolume(ctx, from)
+	if err != nil {
 		s.log.Warn("alarm: could not restore the volume", "volume", from, "err", err)
 	}
 }
@@ -234,10 +306,9 @@ func (s *Server) restoreAlarmVolume(from int) {
 // alarmFallbackAfter is how long a started preset gets to reach PLAY_STATE. alarmBeeps
 // beeps, alarmBeepEvery apart, then stop: an alarm that never ends is worse than one
 // that gives up after a minute.
-var (
-	alarmFallbackAfter = 45 * time.Second
-	alarmBeepEvery     = 3 * time.Second
-)
+var alarmFallbackAfter = 45 * time.Second //nolint:gochecknoglobals // tests shorten it
+
+const alarmBeepEvery = 3 * time.Second
 
 const (
 	alarmBeeps = 20
@@ -251,29 +322,59 @@ const (
 // already turned off. A newer alarm replaces an older run.
 func (s *Server) newAlarmRun(parent context.Context) context.Context {
 	ctx, cancel := context.WithCancel(parent)
+
 	s.alarmMu.Lock()
 	if s.alarmStop != nil {
 		s.alarmStop()
 	}
+
 	s.alarmStop = cancel
 	s.alarmMu.Unlock()
+
 	return ctx
 }
 
 // dismissAlarm ends the running alarm's fallback, if any, and gives back the volume
 // it raised.
-func (s *Server) dismissAlarm() {
+func (s *Server) dismissAlarm(ctx context.Context) {
 	s.alarmMu.Lock()
 	if s.alarmStop != nil {
 		s.alarmStop()
 		s.alarmStop = nil
 	}
+
 	raised, from := s.alarmRaised, s.alarmRaisedFrom
 	s.alarmRaised = false
 	s.alarmMu.Unlock()
+
 	if raised {
-		safego.Go("alarm.restoreVolume", func() { s.restoreAlarmVolume(from) })
+		// The restore outlives the request or hook that dismissed the alarm.
+		restoreCtx := context.WithoutCancel(ctx)
+
+		safego.Go("alarm.restoreVolume", func() { s.restoreAlarmVolume(restoreCtx, from) })
 	}
+}
+
+// silentAfter reports whether, after wait, the speaker is still not playing and the alarm
+// still runs.
+func (s *Server) silentAfter(ctx context.Context, wait time.Duration) bool {
+	if wait > 0 {
+		timer := time.NewTimer(wait)
+		defer timer.Stop()
+
+		select {
+		case <-ctx.Done():
+			return false
+		case <-timer.C:
+		}
+	}
+
+	playing, err := s.backend.NowPlaying(ctx)
+	if err == nil && playing.PlayStatus == "PLAY_STATE" {
+		return false
+	}
+
+	return ctx.Err() == nil
 }
 
 // alarmFallback beeps when, after wait, the speaker is not playing. Pressing power
@@ -282,27 +383,15 @@ func (s *Server) alarmFallback(ctx context.Context, wait time.Duration) {
 	s.audioMu.Lock()
 	_, ok := s.builtinClips[AlarmClip]
 	s.audioMu.Unlock()
-	if !ok || s.notifyBase == "" {
+
+	if !ok || s.notifyBase == "" || !s.silentAfter(ctx, wait) {
 		return
 	}
-	if wait > 0 {
-		t := time.NewTimer(wait)
-		defer t.Stop()
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-		}
-	}
-	if np, err := s.backend.NowPlaying(ctx); err == nil && np.PlayStatus == "PLAY_STATE" {
-		return
-	}
-	if ctx.Err() != nil {
-		return
-	}
+
 	s.log.Warn("alarm: nothing is playing; fallback tone")
 	// Out of standby first, so that standby during the beeps means somebody pressed power.
 	s.backend.Wake(ctx)
+
 	for i := range alarmBeeps {
 		if i > 0 {
 			select {
@@ -311,14 +400,24 @@ func (s *Server) alarmFallback(ctx context.Context, wait time.Duration) {
 			case <-time.After(alarmBeepEvery):
 			}
 		}
-		if np, err := s.backend.NowPlaying(ctx); err == nil && np.Source == "STANDBY" {
+
+		np, err := s.backend.NowPlaying(ctx)
+		if err == nil && np.Source == "STANDBY" {
 			return
 		}
-		bctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		err := s.backend.PlayNotification(bctx, speaker.Notification{URL: s.notifyBase + "/api/speaker/audio/" + AlarmClip, Volume: alarmToneVolume})
+
+		bctx, cancel := context.WithTimeout(ctx, alarmFallbackTimeout)
+		tone := speaker.Notification{
+			URL:    s.notifyBase + "/api/speaker/audio/" + AlarmClip,
+			Volume: alarmToneVolume, Artist: "", Album: "", Track: "",
+		}
+		err = s.backend.PlayNotification(bctx, tone)
+
 		cancel()
+
 		if err != nil {
 			s.log.Warn("alarm: fallback tone failed", "err", err)
+
 			return
 		}
 	}

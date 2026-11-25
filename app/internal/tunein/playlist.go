@@ -26,29 +26,36 @@ func PlaylistStreams(ctx context.Context, client *http.Client, raw string) ([]st
 	if err != nil {
 		return nil, err
 	}
+
 	ext := strings.ToLower(path.Ext(u.Path))
 	if ext != ".pls" && ext != ".m3u" {
 		return []string{raw}, nil
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, http.NoBody)
 	if err != nil {
 		return nil, err
 	}
+
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("playlist %s: HTTP %d", raw, resp.StatusCode)
 	}
+
 	listed, err := playlistEntries(io.LimitReader(resp.Body, maxPlaylist))
 	if err != nil {
 		return nil, err
 	}
+
 	if len(listed) == 0 {
 		return []string{raw}, nil
 	}
+
 	return listed, nil
 }
 
@@ -56,15 +63,18 @@ func PlaylistStreams(ctx context.Context, client *http.Client, raw string) ([]st
 // bare line in an .m3u.
 func playlistEntries(r io.Reader) ([]string, error) {
 	var urls []string
+
 	sc := bufio.NewScanner(r)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if key, value, ok := strings.Cut(line, "="); ok && strings.HasPrefix(strings.ToLower(key), "file") {
 			line = strings.TrimSpace(value)
 		}
+
 		if strings.HasPrefix(line, "http://") || strings.HasPrefix(line, "https://") {
 			urls = append(urls, line)
 		}
 	}
+
 	return urls, sc.Err()
 }

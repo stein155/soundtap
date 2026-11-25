@@ -10,6 +10,69 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
 
 ## [Unreleased]
 
+- **Forget one Bluetooth device at a time**: each paired phone or tablet on the Bluetooth page
+  has its own Forget, after a button press on the speaker (`POST /api/bluetooth/forget`).
+  Forget all devices is gone from the page. The speaker checks that the device is still paired
+  before it asks for the press, so a list that went stale no longer sends you to the speaker
+  for nothing.
+- **The favorite is one favorite**: saving a favorite keeps that one alone, and removing it
+  leaves the list empty. Favorites an earlier build saved behind the first, which could not be
+  seen or removed, go with the next change.
+- **An update says how far it is**: the update page shows the percentage while the speaker
+  downloads and writes the update, whenever the speaker can tell (`updateProgress` on
+  `GET /api/version`), and no number when it cannot.
+- **One card on the Updates page**: a newer SoundTap Core is the card when one is out, since it
+  carries the app; otherwise the app's card.
+- **Media servers show what is on them**: under each server, the names of its top-level
+  folders, such as Music and Audiobooks.
+- **Wi-Fi settings in three steps**: what the speaker is connected to and the networks it
+  remembers, a page that finds the networks nearby (search again from the top bar), and a
+  sheet for the chosen network's password. A hidden network is typed in under Other network.
+- **First setup in two steps**: name the speaker, then pick your Wi-Fi from a list of the
+  networks nearby; the language can be changed at the top. **An update follows through on a
+  page of its own**, step by step, until the speaker is back on the new version. Settings marks
+  a speaker with an update waiting, and a stereo pair shows which side each speaker plays.
+- **The speaker page's settings as designed**: Connection and maintenance in one group, the
+  alarm picks a preset (a Spotify playlist too, named with its service), the support bundle
+  has its own section, and the red row reads Clear presets and settings.
+- **No brightness setting for the standby clock** (SoundTouch 20): like stock's, the clock
+  does not dim, and walks against burn-in instead. A brightness an older page sends is
+  ignored.
+- **Your own builds without a key**: upload any `.stu` on the Updates page under *Upload a
+  file*, signed or not, and press a button on the speaker to install it; this works on every
+  speaker. A signature now only lets an update install without you. *Your own signing key*
+  is gone from *For developers*: a key set earlier is no longer used, and the next install
+  removes it.
+- **Updating starts after one confirmation**: a release the speaker fetches itself installs
+  without a button press on the speaker, alpha or release, an older version too: *Update now*,
+  *Update* on a newer app or SoundTap Core and choosing a release.
+  *Update* first asks once, as the Bose app does (it takes a few
+  minutes and the speaker restarts), then start. After a SoundTap Core update the speaker
+  restarts into it by itself, never after a failed install; the update page follows it away
+  and back, and on the SoundTouch 300 says the last step can take a while.
+- **Every upload needs a press**: a file you upload on the Updates page (your own build, Bose's
+  update file, or a release with its `.sig`) waits for one button press on the speaker. A `.sig`
+  is still checked, and one that does not match is refused. Before, anyone on the network could
+  send a release's `.sig` with another file and wipe the speaker's fallback slot.
+  Development builds signed for the bench install on production speakers too, after the press.
+
+- **One favorite**: the presets page shows the six presets and one favorite. Press and hold a
+  station to keep it as your favorite; a new one takes its place. Favorites saved earlier stay
+  on the speaker and in a backup; the page shows the first.
+- **Play from a link** is in the TuneIn search: under the results, for a station TuneIn does
+  not list. Its page folds away what to check when a stream does not play. The TuneIn page
+  itself no longer has a row for it.
+- **The search as designed**: its own bar with the title and a way back, the field under it.
+- **Recently played**: the ⋯ of an entry, or a long press, opens a sheet to play it, put it on
+  a preset or remove it from the list. The tiles on the start page show their service.
+- **Media servers step by step**: a list of the servers on your network; a server opens on its
+  own page, and each folder opens deeper, with Back to go up. Starting a track no longer shows
+  a message.
+- **Spotify**: more room around a playlist's cover, and its play button is black with a white
+  glyph.
+- **TuneIn in its own colours**: its logo in soft teal on navy. The speaker bar at the bottom
+  stands off the page with a line and a soft shadow.
+
 ## [app-v0.1.0-alpha.4] - 2026-11-25
 
 - The SoundTap app that SoundTap Core 0.1.0-alpha.4 carries; what it changes is listed under

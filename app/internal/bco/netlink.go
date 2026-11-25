@@ -28,15 +28,19 @@ func Flash(ctx context.Context, tty string, image []byte, log io.Writer) (string
 	if _, err := CheckAppImage(image); err != nil {
 		return "", err
 	}
+
 	if err := lockSerial(ctx); err != nil {
 		return "", err
 	}
+
 	defer unlockSerial()
+
 	port, err := SerialPort(ctx, tty)
 	if err != nil {
 		return "", err
 	}
 	defer port.Close()
+
 	power, unmap, err := Power()
 	if err != nil {
 		return "", err
@@ -49,6 +53,7 @@ func Flash(ctx context.Context, tty string, image []byte, log io.Writer) (string
 	} else {
 		defer release()
 	}
+
 	lan := lanLink()
 	fmt.Fprintf(log, "[bcoflash] LAN link before: %+v\n", lan)
 	f := &Flasher{
@@ -56,18 +61,23 @@ func Flash(ctx context.Context, tty string, image []byte, log io.Writer) (string
 		Power:  power,
 		Log:    log,
 		Upload: func(ctx context.Context, image []byte) error {
-			if err := addressLevel2(ctx, log); err != nil {
+			err := addressLevel2(ctx, log)
+			if err != nil {
 				return err
 			}
+
 			return UploadTFTP(ctx, image)
 		},
 	}
+
 	ver, err := f.FlashApp(ctx, image)
 	if errors.Is(err, ErrUpload) && ctx.Err() == nil {
 		fmt.Fprintf(log, "\n[bcoflash] %v; writing the image over XMODEM instead\n", err)
 		ver, err = f.XmodemApp(ctx, image)
 	}
+
 	restoreLAN(lan, log)
+
 	return ver, err
 }
 
@@ -77,17 +87,21 @@ func usbID(iface string) string {
 	if err != nil {
 		return ""
 	}
+
 	v, _ := os.ReadFile(filepath.Join(dev, "..", "idVendor"))
 	p, _ := os.ReadFile(filepath.Join(dev, "..", "idProduct"))
+
 	return strings.TrimSpace(string(v)) + ":" + strings.TrimSpace(string(p))
 }
 
 func netdevs() []string {
 	ents, _ := os.ReadDir("/sys/class/net")
+
 	var out []string
 	for _, e := range ents {
 		out = append(out, e.Name())
 	}
+
 	return out
 }
 
@@ -95,6 +109,7 @@ func ip(args ...string) (string, error) {
 	cmd := exec.CommandContext(context.Background(), "ip", args...)
 	childproc.NetTool(cmd)
 	out, err := cmd.CombinedOutput()
+
 	return string(out), err
 }
 
@@ -105,11 +120,14 @@ func addressLevel2(ctx context.Context, log io.Writer) error {
 			if usbID(n) != "5432:1235" {
 				continue
 			}
+
 			ip("link", "set", n, "up")
 			ip("addr", "add", "192.168.1.101/24", "dev", n) // "exists" is fine
 			fmt.Fprintf(log, "\n[bcoflash] level-2 link %s = 192.168.1.101/24\n", n)
+
 			return nil
 		}
+
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("bootloader level 2 never showed its USB link: %w", ctx.Err())
@@ -130,10 +148,12 @@ func lanLink() link {
 		if id := usbID(n); id == ":" || id == "" || id == "5432:1235" {
 			continue
 		}
+
 		mac, _ := os.ReadFile("/sys/class/net/" + n + "/address")
 		l := link{MAC: strings.TrimSpace(string(mac))}
+
 		out, _ := ip("-4", "-o", "addr", "show", "dev", n)
-		for _, f := range strings.Split(out, "\n") {
+		for f := range strings.SplitSeq(out, "\n") {
 			fs := strings.Fields(f)
 			for i := range fs {
 				if fs[i] == "inet" && i+1 < len(fs) {
@@ -141,13 +161,16 @@ func lanLink() link {
 				}
 			}
 		}
+
 		if out, _ := ip("route", "show", "default", "dev", n); strings.HasPrefix(out, "default via ") {
 			l.GW = strings.Fields(out)[2]
 		}
+
 		if len(l.Addrs) > 0 {
 			return l
 		}
 	}
+
 	return link{}
 }
 
@@ -156,6 +179,7 @@ func restoreLAN(l link, log io.Writer) {
 	if l.MAC == "" {
 		return
 	}
+
 	deadline := time.Now().Add(2 * time.Minute)
 	for time.Now().Before(deadline) {
 		for _, n := range netdevs() {
@@ -163,17 +187,24 @@ func restoreLAN(l link, log io.Writer) {
 			if strings.TrimSpace(string(mac)) != l.MAC {
 				continue
 			}
+
 			ip("link", "set", n, "up")
+
 			for _, a := range l.Addrs {
 				ip("addr", "add", a, "dev", n)
 			}
+
 			if l.GW != "" {
 				ip("route", "replace", "default", "via", l.GW, "dev", n)
 			}
+
 			fmt.Fprintf(log, "\n[bcoflash] LAN link %s restored: %v via %s\n", n, l.Addrs, l.GW)
+
 			return
 		}
+
 		time.Sleep(time.Second)
 	}
+
 	fmt.Fprintf(log, "\n[bcoflash] LAN link %s did not come back within 2 minutes\n", l.MAC)
 }

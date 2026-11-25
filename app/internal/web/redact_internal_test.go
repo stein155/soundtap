@@ -8,6 +8,8 @@ import "testing"
 // What the redactor must leave alone: addresses that say nothing about where the owner
 // lives, and text that only looks like an address or a name.
 func TestScrubKeepsWhatIsNotASecret(t *testing.T) {
+	t.Parallel()
+
 	red := newRedactorFrom([]secretLiteral{{value: "home", label: "<wifi-ssid-1>", word: true}})
 	for _, line := range []string{
 		"lease 192.168.1.42 gw 10.0.0.1 dns 172.16.0.1",
@@ -20,6 +22,7 @@ func TestScrubKeepsWhatIsNotASecret(t *testing.T) {
 			t.Errorf("scrub(%q) = %q, want it unchanged", line, got)
 		}
 	}
+
 	for line, want := range map[string]string{
 		"joined home at 8.8.4.4":           "joined <wifi-ssid-1> at <public-ip>",
 		"v6 2001:4860:4860::8888 up":       "v6 <public-ip> up",

@@ -25,12 +25,15 @@ func TestDialGivesUpOnASilentBus(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(dir)
+
 	sock := filepath.Join(dir, "bus")
+
 	ln, err := new(net.ListenConfig).Listen(context.Background(), "unix", sock)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer ln.Close()
+
 	go func() {
 		for {
 			c, err := ln.Accept()
@@ -40,11 +43,14 @@ func TestDialGivesUpOnASilentBus(t *testing.T) {
 			defer c.Close() // held open, never answered
 		}
 	}()
+
 	start := time.Now()
+
 	_, err = Dial(context.Background(), "unix:path="+sock, 200*time.Millisecond)
 	if !errors.Is(err, ErrTimeout) {
 		t.Fatalf("Dial = %v, want ErrTimeout", err)
 	}
+
 	if took := time.Since(start); took > 3*time.Second {
 		t.Fatalf("Dial took %s", took)
 	}
@@ -60,19 +66,23 @@ func TestDialFailsWithoutABus(t *testing.T) {
 // get their replies.
 func TestSignalsInOrderAndBounded(t *testing.T) {
 	bus := dbustest.New(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+
+	ctx := t.Context()
+
 	c, err := Dial(ctx, bus.Addr, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer c.Close()
+
 	if err := c.AddMatchSignalContext(ctx, dbus.WithMatchInterface("org.example.T")); err != nil {
 		t.Fatal(err)
 	}
+
 	emitter := bus.Connect(t)
 	for i := range signalBuffer + 10 {
-		if err := emitter.Emit("/t", "org.example.T.Tick", int32(i)); err != nil {
+		err := emitter.Emit("/t", "org.example.T.Tick", int32(i))
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -81,12 +91,15 @@ func TestSignalsInOrderAndBounded(t *testing.T) {
 	// on the socket, and must not wait for the signals' reader.
 	cctx, ccancel := context.WithTimeout(ctx, 5*time.Second)
 	defer ccancel()
+
 	if err := emitter.BusObject().CallWithContext(cctx, "org.freedesktop.DBus.NameHasOwner", 0, "x").Err; err != nil {
 		t.Fatal(err)
 	}
+
 	if !c.HasName(cctx, c.Names()[0]) {
 		t.Fatal("the bus does not know this connection")
 	}
+
 	for i := range signalBuffer {
 		select {
 		case s := <-c.Signals():
@@ -97,6 +110,7 @@ func TestSignalsInOrderAndBounded(t *testing.T) {
 			t.Fatalf("signal %d never came", i)
 		}
 	}
+
 	select {
 	case s := <-c.Signals():
 		t.Fatalf("a signal beyond the buffer was kept: %v", s.Body)
@@ -107,10 +121,12 @@ func TestSignalsInOrderAndBounded(t *testing.T) {
 // Closing the connection closes Done.
 func TestDoneOnClose(t *testing.T) {
 	bus := dbustest.New(t)
+
 	c, err := Dial(context.Background(), bus.Addr, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	_ = c.Close()
 	select {
 	case <-c.Done():
@@ -121,15 +137,18 @@ func TestDoneOnClose(t *testing.T) {
 
 func TestErrorName(t *testing.T) {
 	bus := dbustest.New(t)
+
 	c, err := Dial(context.Background(), bus.Addr, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer c.Close()
+
 	_, err = c.Call(context.Background(), "org.example.Nobody", "/", "org.example.X", "Y")
 	if got := ErrorName(err); got != "org.freedesktop.DBus.Error.ServiceUnknown" {
 		t.Fatalf("ErrorName = %q (%v)", got, err)
 	}
+
 	if ErrorName(errors.New("plain")) != "" || ErrorName(nil) != "" {
 		t.Fatal("a plain error has a D-Bus name")
 	}

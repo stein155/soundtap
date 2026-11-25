@@ -169,7 +169,7 @@ Alternatives that lost:
   passphrase in the same place as everyday work. A protected environment keeps the key encrypted
   at rest, out of every other job, and leaves a logged run for each signature.
 - **Alphas from the alpha profile, or signed with a bench key**: the alpha profile has root SSH,
-  and a bench signature installs only on alpha images; an owner's speaker would take neither.
+  and a bench signature is not a release: no route that fetches a release takes it.
 - **A prerelease switch in `release.yml` or on the speaker**: the version decides, so the tag,
   the draft, the signed statement and what a speaker is offered cannot disagree.
 
@@ -196,8 +196,9 @@ Alternatives that lost:
   [RELEASING.md](../../RELEASING.md#release-keys). The job's code runs with the key in reach: its
   actions are pinned by commit and it checks out the repository without a token.
 - The hardware reports of every Core release are public, in `releases/`, as tested.
-- Bench builds are signed with the release key under profile `alpha`, so only alpha images install
-  them ([ADR 0048](0048-signed-updates.md)).
+- Bench builds are signed with the release key under profile `alpha`. An upload takes such a
+  statement as a signature on any image; no route that fetches a release takes it
+  ([ADR 0048](0048-signed-updates.md)).
 - An alpha has no hardware approval: an owner who installs one runs software whose hardware
   checklist has not passed on every model. Its notes say so, and no speaker on a release moves
   onto one by itself.

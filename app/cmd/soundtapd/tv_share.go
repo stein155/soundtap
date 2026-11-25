@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -28,6 +29,8 @@ import (
 // Mixer's silence. The bar keeps playing the TV through the processor.
 
 // tvSharing tells tapWriter.Tap to leave the tap to shareTV.
+//
+//nolint:gochecknoglobals // process-wide state: shareTV sets it, the audio tap writer reads it
 var tvSharing atomic.Bool
 
 // The processor sends 44100 Hz S32_LE (measured 2026-11-08); the card declares
@@ -36,38 +39,56 @@ const (
 	tvCaptureDev = "plughw:0,0"
 	// tvRetry bounds the restarts of a capture that keeps failing.
 	tvRetry = 5 * time.Second
+	// tvCopyBuf is how much capture shareTV moves into the tap at a time.
+	tvCopyBuf = 4 * 1024
+	// tvFrameBytes is one S16_LE stereo frame: the tap takes whole frames only.
+	tvFrameBytes = 4
 )
 
 // runTVShare starts and stops the capture as the bar's source and group change.
-func runTVShare(ctx context.Context, sp *speakerstate.Speaker, tapPath string, tapOn *atomic.Bool, log *slog.Logger) {
+func runTVShare(
+	ctx context.Context, speaker *speakerstate.Speaker, tapPath string, tapOn *atomic.Bool, log *slog.Logger,
+) {
 	if board.Name != model.ST300 || tapPath == "" {
 		return
 	}
+
 	wanted := func() bool {
-		st := sp.StatusSnapshot()
+		st := speaker.StatusSnapshot()
+
 		return tapOn.Load() && !st.Standby && st.Source == sourceProduct
 	}
 	for ctx.Err() == nil {
 		if !wanted() {
 			sleepCtx(ctx, time.Second)
+
 			continue
 		}
+
 		shareCtx, cancel := context.WithCancel(ctx)
+
 		go func() {
 			stillWanted := true
 			for stillWanted {
 				stillWanted = sleepCtx(shareCtx, time.Second) && wanted()
 			}
+
 			cancel()
 		}()
+
 		log.Info("sharing the TV input with the group")
+
 		err := shareTV(shareCtx, tapPath)
 		failed := shareCtx.Err() == nil
+
 		cancel()
+
 		if !failed {
 			log.Info("TV share off")
+
 			continue
 		}
+
 		log.Warn("TV share stopped", "err", err)
 		sleepCtx(ctx, tvRetry)
 	}
@@ -75,40 +96,58 @@ func runTVShare(ctx context.Context, sp *speakerstate.Speaker, tapPath string, t
 
 // shareTV copies the capture into the tap until ctx ends or the capture fails.
 func shareTV(ctx context.Context, tapPath string) error {
-	tap, err := os.OpenFile(tapPath, os.O_WRONLY|syscall.O_NONBLOCK, 0) //nolint:gosec // AUDIO_TAP comes from the init script
+	//nolint:gosec // AUDIO_TAP comes from the init script
+	tap, err := os.OpenFile(tapPath, os.O_WRONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return err
+		return fmt.Errorf("open the tap: %w", err)
 	}
 	defer tap.Close()
+
 	cmd := exec.CommandContext(ctx, "arecord", "-q", "-D", tvCaptureDev, "-t", "raw",
 		"-f", "S16_LE", "-c", "2", "-r", strconv.Itoa(audio.SampleRate))
 	cmd.Stderr = supervise.ChildLog("arecord")
+
 	out, err := cmd.StdoutPipe()
 	if err != nil {
-		return err
+		return fmt.Errorf("TV capture: %w", err)
 	}
-	if err := cmd.Start(); err != nil {
-		return err
+
+	err = cmd.Start()
+	if err != nil {
+		return fmt.Errorf("TV capture: %w", err)
 	}
+
 	tvSharing.Store(true)
 	defer tvSharing.Store(false)
-	in := make([]byte, 4*1024)
+
+	chunk := make([]byte, tvCopyBuf)
+
 	var copyErr error
+
 	for {
-		n, err := io.ReadFull(out, in)
+		n, err := io.ReadFull(out, chunk)
 		if n > 0 {
-			writeTap(int(tap.Fd()), in[:n-n%4])
+			writeTap(int(tap.Fd()), chunk[:n-n%tvFrameBytes])
 		}
+
 		if err != nil {
 			if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 				copyErr = err
 			}
+
 			break
 		}
 	}
+
 	waitErr := cmd.Wait()
+
 	if copyErr != nil {
-		return copyErr
+		return fmt.Errorf("TV capture: %w", copyErr)
 	}
-	return waitErr
+
+	if waitErr != nil {
+		return fmt.Errorf("TV capture: %w", waitErr)
+	}
+
+	return nil
 }

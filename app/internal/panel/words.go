@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-//nolint:dupl,goconst,misspell // a table of translations: one shape per language, no repeated constants, and not English
+//nolint:dupl,goconst,misspell // translations: one shape per language, repeated words, not English
 package panel
 
 import (
@@ -15,9 +15,12 @@ type st20Lang struct {
 	words map[string]string
 }
 
-var st20English = st20Lang{}
+// st20English is the English table: no words, so every text stays as it is written.
+func st20English() st20Lang { return st20Lang{words: nil} }
 
 // st20Words is keyed by language, then by the English text.
+//
+//nolint:gochecknoglobals // the word table: built once, only read
 var st20Words = map[string]st20Lang{
 	"af": {
 		words: map[string]string{
@@ -30,8 +33,10 @@ var st20Words = map[string]st20Lang{
 			"Update failed":         "Opdatering het misluk",
 			"Switching to Ethernet": "Skakel oor na Ethernet", "Switching to Wi-Fi": "Skakel oor na Wi-Fi",
 			"Reconnecting…": "Herkoppel…", "Can't connect": "Kan nie koppel nie",
-			"Connecting…":     "Koppel tans…",
-			"Connected to %s": "Gekoppel aan %s", "Disconnected from %s": "Ontkoppel van %s", "Pairing list cleared": "Koppellys skoongemaak",
+			"Connecting…":              "Koppel tans…",
+			"Connected to %s":          "Gekoppel aan %s",
+			"Disconnected from %s":     "Ontkoppel van %s",
+			"Pairing list cleared":     "Koppellys skoongemaak",
 			"Do not unplug":            "Moenie ontkoppel nie",
 			"Network card":             "Netwerkkaart",
 			"Amp fault":                "Versterkerfout",
@@ -53,7 +58,6 @@ var st20Words = map[string]st20Lang{
 			"Hold a button for setup":  "Hou 'n knoppie in vir opstelling",
 			"Hold a button to unpair":  "Hou 'n knoppie in om te ontkoppel",
 			"Hold a button to install": "Hou 'n knoppie in om te installeer",
-			"Hold a button for keys":   "Hou 'n knoppie in vir die sleutel",
 			"Hold a button for logs":   "Hou 'n knoppie in vir logs",
 			"Confirmed":                "Bevestig",
 			"Not confirmed":            "Nie bevestig nie",
@@ -73,8 +77,10 @@ var st20Words = map[string]st20Lang{
 			"Update failed":         "Aktualizace selhala",
 			"Switching to Ethernet": "Přepínání na Ethernet", "Switching to Wi-Fi": "Přepínání na Wi-Fi",
 			"Reconnecting…": "Opětovné připojování…", "Can't connect": "Nelze se připojit",
-			"Connecting…":     "Připojování…",
-			"Connected to %s": "Připojeno k %s", "Disconnected from %s": "Odpojeno od %s", "Pairing list cleared": "Seznam párování vymazán",
+			"Connecting…":              "Připojování…",
+			"Connected to %s":          "Připojeno k %s",
+			"Disconnected from %s":     "Odpojeno od %s",
+			"Pairing list cleared":     "Seznam párování vymazán",
 			"Do not unplug":            "Neodpojujte",
 			"Network card":             "Síťová karta",
 			"Amp fault":                "Chyba zesilovače",
@@ -96,7 +102,6 @@ var st20Words = map[string]st20Lang{
 			"Hold a button for setup":  "Podržte tlačítko pro nastavení",
 			"Hold a button to unpair":  "Podržte tlačítko pro zrušení párování",
 			"Hold a button to install": "Podržte tlačítko pro instalaci",
-			"Hold a button for keys":   "Podržte tlačítko pro klíč",
 			"Hold a button for logs":   "Podržte tlačítko pro logy",
 			"Confirmed":                "Potvrzeno",
 			"Not confirmed":            "Nepotvrzeno",
@@ -116,8 +121,10 @@ var st20Words = map[string]st20Lang{
 			"Update failed":         "Opdatering mislykkedes",
 			"Switching to Ethernet": "Skifter til Ethernet", "Switching to Wi-Fi": "Skifter til Wi-Fi",
 			"Reconnecting…": "Genopretter forbindelse…", "Can't connect": "Kan ikke oprette forbindelse",
-			"Connecting…":     "Forbinder…",
-			"Connected to %s": "Forbundet til %s", "Disconnected from %s": "Afbrudt fra %s", "Pairing list cleared": "Parringslisten er ryddet",
+			"Connecting…":              "Forbinder…",
+			"Connected to %s":          "Forbundet til %s",
+			"Disconnected from %s":     "Afbrudt fra %s",
+			"Pairing list cleared":     "Parringslisten er ryddet",
 			"Do not unplug":            "Tag ikke stikket ud",
 			"Network card":             "Netværkskort",
 			"Amp fault":                "Forstærkerfejl",
@@ -139,7 +146,6 @@ var st20Words = map[string]st20Lang{
 			"Hold a button for setup":  "Hold en knap inde for opsætning",
 			"Hold a button to unpair":  "Hold en knap inde for at fjerne parring",
 			"Hold a button to install": "Hold en knap inde for at installere",
-			"Hold a button for keys":   "Hold en knap inde for nøglen",
 			"Hold a button for logs":   "Hold en knap inde for logfiler",
 			"Confirmed":                "Bekræftet",
 			"Not confirmed":            "Ikke bekræftet",
@@ -159,8 +165,10 @@ var st20Words = map[string]st20Lang{
 			"Update failed":         "Update fehlgeschlagen",
 			"Switching to Ethernet": "Wechsel zu Ethernet", "Switching to Wi-Fi": "Wechsel zu WLAN",
 			"Reconnecting…": "Neu verbinden…", "Can't connect": "Verbindung nicht möglich",
-			"Connecting…":     "Verbinde…",
-			"Connected to %s": "Verbunden mit %s", "Disconnected from %s": "Getrennt von %s", "Pairing list cleared": "Kopplungsliste gelöscht",
+			"Connecting…":              "Verbinde…",
+			"Connected to %s":          "Verbunden mit %s",
+			"Disconnected from %s":     "Getrennt von %s",
+			"Pairing list cleared":     "Kopplungsliste gelöscht",
 			"Do not unplug":            "Nicht trennen",
 			"Network card":             "Netzwerkkarte",
 			"Amp fault":                "Verstärkerfehler",
@@ -182,7 +190,6 @@ var st20Words = map[string]st20Lang{
 			"Hold a button for setup":  "Taste halten: Einrichtung",
 			"Hold a button to unpair":  "Taste halten: Kopplungen löschen",
 			"Hold a button to install": "Taste halten: Installieren",
-			"Hold a button for keys":   "Taste halten: Schlüssel",
 			"Hold a button for logs":   "Taste halten: Protokolle",
 			"Confirmed":                "Bestätigt",
 			"Not confirmed":            "Nicht bestätigt",
@@ -202,8 +209,10 @@ var st20Words = map[string]st20Lang{
 			"Update failed":         "Η ενημέρωση απέτυχε",
 			"Switching to Ethernet": "Μετάβαση σε Ethernet", "Switching to Wi-Fi": "Μετάβαση σε Wi-Fi",
 			"Reconnecting…": "Επανασύνδεση…", "Can't connect": "Αδυναμία σύνδεσης",
-			"Connecting…":     "Σύνδεση…",
-			"Connected to %s": "Συνδέθηκε με %s", "Disconnected from %s": "Αποσυνδέθηκε από %s", "Pairing list cleared": "Η λίστα σύζευξης διαγράφηκε",
+			"Connecting…":              "Σύνδεση…",
+			"Connected to %s":          "Συνδέθηκε με %s",
+			"Disconnected from %s":     "Αποσυνδέθηκε από %s",
+			"Pairing list cleared":     "Η λίστα σύζευξης διαγράφηκε",
 			"Do not unplug":            "Μην αποσυνδέετε",
 			"Network card":             "Κάρτα δικτύου",
 			"Amp fault":                "Βλάβη ενισχυτή",
@@ -225,7 +234,6 @@ var st20Words = map[string]st20Lang{
 			"Hold a button for setup":  "Κρατήστε ένα κουμπί για ρύθμιση",
 			"Hold a button to unpair":  "Κρατήστε ένα κουμπί για αποσύζευξη",
 			"Hold a button to install": "Κρατήστε ένα κουμπί για εγκατάσταση",
-			"Hold a button for keys":   "Κρατήστε ένα κουμπί για το κλειδί",
 			"Hold a button for logs":   "Κρατήστε ένα κουμπί για καταγραφές",
 			"Confirmed":                "Επιβεβαιώθηκε",
 			"Not confirmed":            "Δεν επιβεβαιώθηκε",
@@ -245,8 +253,10 @@ var st20Words = map[string]st20Lang{
 			"Update failed":         "Error de actualización",
 			"Switching to Ethernet": "Cambiando a Ethernet", "Switching to Wi-Fi": "Cambiando a Wi-Fi",
 			"Reconnecting…": "Reconectando…", "Can't connect": "No se puede conectar",
-			"Connecting…":     "Conectando…",
-			"Connected to %s": "Conectado a %s", "Disconnected from %s": "Desconectado de %s", "Pairing list cleared": "Lista de emparejamiento borrada",
+			"Connecting…":              "Conectando…",
+			"Connected to %s":          "Conectado a %s",
+			"Disconnected from %s":     "Desconectado de %s",
+			"Pairing list cleared":     "Lista de emparejamiento borrada",
 			"Do not unplug":            "No desenchufar",
 			"Network card":             "Tarjeta de red",
 			"Amp fault":                "Fallo ampli",
@@ -268,7 +278,6 @@ var st20Words = map[string]st20Lang{
 			"Hold a button for setup":  "Mantén un botón para configurar",
 			"Hold a button to unpair":  "Mantén un botón para desvincular",
 			"Hold a button to install": "Mantén un botón para instalar",
-			"Hold a button for keys":   "Mantén un botón para la clave",
 			"Hold a button for logs":   "Mantén un botón para los registros",
 			"Confirmed":                "Confirmado",
 			"Not confirmed":            "No confirmado",
@@ -288,8 +297,10 @@ var st20Words = map[string]st20Lang{
 			"Update failed":         "Päivitys epäonnistui",
 			"Switching to Ethernet": "Vaihdetaan Ethernetiin", "Switching to Wi-Fi": "Vaihdetaan Wi-Fi-yhteyteen",
 			"Reconnecting…": "Yhdistetään uudelleen…", "Can't connect": "Yhteyttä ei voi muodostaa",
-			"Connecting…":     "Yhdistetään…",
-			"Connected to %s": "Yhdistetty: %s", "Disconnected from %s": "Yhteys katkaistu: %s", "Pairing list cleared": "Pariliitoslista tyhjennetty",
+			"Connecting…":              "Yhdistetään…",
+			"Connected to %s":          "Yhdistetty: %s",
+			"Disconnected from %s":     "Yhteys katkaistu: %s",
+			"Pairing list cleared":     "Pariliitoslista tyhjennetty",
 			"Do not unplug":            "Älä irrota",
 			"Network card":             "Verkkokortti",
 			"Amp fault":                "Vahvistinvika",
@@ -311,7 +322,6 @@ var st20Words = map[string]st20Lang{
 			"Hold a button for setup":  "Pidä painiketta: asetus",
 			"Hold a button to unpair":  "Pidä painiketta: poista laiteparit",
 			"Hold a button to install": "Pidä painiketta: asennus",
-			"Hold a button for keys":   "Pidä painiketta: avain",
 			"Hold a button for logs":   "Pidä painiketta: lokit",
 			"Confirmed":                "Vahvistettu",
 			"Not confirmed":            "Ei vahvistettu",
@@ -331,8 +341,10 @@ var st20Words = map[string]st20Lang{
 			"Update failed":         "Échec de la mise à jour",
 			"Switching to Ethernet": "Passage en Ethernet", "Switching to Wi-Fi": "Passage en Wi-Fi",
 			"Reconnecting…": "Reconnexion…", "Can't connect": "Connexion impossible",
-			"Connecting…":     "Connexion…",
-			"Connected to %s": "Connecté à %s", "Disconnected from %s": "Déconnecté de %s", "Pairing list cleared": "Liste d'appairage effacée",
+			"Connecting…":              "Connexion…",
+			"Connected to %s":          "Connecté à %s",
+			"Disconnected from %s":     "Déconnecté de %s",
+			"Pairing list cleared":     "Liste d'appairage effacée",
 			"Do not unplug":            "Ne pas débrancher",
 			"Network card":             "Carte réseau",
 			"Amp fault":                "Défaut ampli",
@@ -354,7 +366,6 @@ var st20Words = map[string]st20Lang{
 			"Hold a button for setup":  "Maintenez un bouton pour configurer",
 			"Hold a button to unpair":  "Maintenez un bouton pour dissocier",
 			"Hold a button to install": "Maintenez un bouton pour installer",
-			"Hold a button for keys":   "Maintenez un bouton pour la clé",
 			"Hold a button for logs":   "Maintenez un bouton pour les journaux",
 			"Confirmed":                "Confirmé",
 			"Not confirmed":            "Non confirmé",
@@ -374,8 +385,10 @@ var st20Words = map[string]st20Lang{
 			"Update failed":         "A frissítés sikertelen",
 			"Switching to Ethernet": "Váltás Ethernetre", "Switching to Wi-Fi": "Váltás Wi-Fi-re",
 			"Reconnecting…": "Újracsatlakozás…", "Can't connect": "Nem sikerül csatlakozni",
-			"Connecting…":     "Csatlakozás…",
-			"Connected to %s": "Csatlakozva: %s", "Disconnected from %s": "Leválasztva: %s", "Pairing list cleared": "Párosítási lista törölve",
+			"Connecting…":              "Csatlakozás…",
+			"Connected to %s":          "Csatlakozva: %s",
+			"Disconnected from %s":     "Leválasztva: %s",
+			"Pairing list cleared":     "Párosítási lista törölve",
 			"Do not unplug":            "Ne húzza ki",
 			"Network card":             "Hálózati kártya",
 			"Amp fault":                "Erősítőhiba",
@@ -397,7 +410,6 @@ var st20Words = map[string]st20Lang{
 			"Hold a button for setup":  "Tartson nyomva egy gombot: beállítás",
 			"Hold a button to unpair":  "Tartson nyomva egy gombot: párosítások törlése",
 			"Hold a button to install": "Tartson nyomva egy gombot: telepítés",
-			"Hold a button for keys":   "Tartson nyomva egy gombot: kulcs",
 			"Hold a button for logs":   "Tartson nyomva egy gombot: naplók",
 			"Confirmed":                "Megerősítve",
 			"Not confirmed":            "Nincs megerősítve",
@@ -417,8 +429,10 @@ var st20Words = map[string]st20Lang{
 			"Update failed":         "Aggiornamento non riuscito",
 			"Switching to Ethernet": "Passaggio a Ethernet", "Switching to Wi-Fi": "Passaggio a Wi-Fi",
 			"Reconnecting…": "Riconnessione…", "Can't connect": "Impossibile connettersi",
-			"Connecting…":     "Connessione…",
-			"Connected to %s": "Connesso a %s", "Disconnected from %s": "Disconnesso da %s", "Pairing list cleared": "Elenco abbinamenti cancellato",
+			"Connecting…":              "Connessione…",
+			"Connected to %s":          "Connesso a %s",
+			"Disconnected from %s":     "Disconnesso da %s",
+			"Pairing list cleared":     "Elenco abbinamenti cancellato",
 			"Do not unplug":            "Non scollegare",
 			"Network card":             "Scheda di rete",
 			"Amp fault":                "Guasto ampli",
@@ -440,7 +454,6 @@ var st20Words = map[string]st20Lang{
 			"Hold a button for setup":  "Tieni premuto un tasto: configura",
 			"Hold a button to unpair":  "Tieni premuto un tasto: rimuovi abbinamenti",
 			"Hold a button to install": "Tieni premuto un tasto: installa",
-			"Hold a button for keys":   "Tieni premuto un tasto: chiave",
 			"Hold a button for logs":   "Tieni premuto un tasto: log",
 			"Confirmed":                "Confermato",
 			"Not confirmed":            "Non confermato",
@@ -460,8 +473,10 @@ var st20Words = map[string]st20Lang{
 			"Update failed":         "Oppdatering mislyktes",
 			"Switching to Ethernet": "Bytter til Ethernet", "Switching to Wi-Fi": "Bytter til Wi-Fi",
 			"Reconnecting…": "Kobler til på nytt…", "Can't connect": "Kan ikke koble til",
-			"Connecting…":     "Kobler til…",
-			"Connected to %s": "Koblet til %s", "Disconnected from %s": "Koblet fra %s", "Pairing list cleared": "Paringslisten er tømt",
+			"Connecting…":              "Kobler til…",
+			"Connected to %s":          "Koblet til %s",
+			"Disconnected from %s":     "Koblet fra %s",
+			"Pairing list cleared":     "Paringslisten er tømt",
 			"Do not unplug":            "Ikke koble fra",
 			"Network card":             "Nettverkskort",
 			"Amp fault":                "Forsterkerfeil",
@@ -483,7 +498,6 @@ var st20Words = map[string]st20Lang{
 			"Hold a button for setup":  "Hold inne en knapp for oppsett",
 			"Hold a button to unpair":  "Hold inne en knapp for å fjerne paring",
 			"Hold a button to install": "Hold inne en knapp for å installere",
-			"Hold a button for keys":   "Hold inne en knapp for nøkkelen",
 			"Hold a button for logs":   "Hold inne en knapp for logger",
 			"Confirmed":                "Bekreftet",
 			"Not confirmed":            "Ikke bekreftet",
@@ -503,8 +517,10 @@ var st20Words = map[string]st20Lang{
 			"Update failed":         "Bijwerken mislukt",
 			"Switching to Ethernet": "Overschakelen naar ethernet", "Switching to Wi-Fi": "Overschakelen naar wifi",
 			"Reconnecting…": "Opnieuw verbinden…", "Can't connect": "Kan niet verbinden",
-			"Connecting…":     "Verbinden…",
-			"Connected to %s": "Verbonden met %s", "Disconnected from %s": "Verbinding met %s verbroken", "Pairing list cleared": "Koppellijst gewist",
+			"Connecting…":              "Verbinden…",
+			"Connected to %s":          "Verbonden met %s",
+			"Disconnected from %s":     "Verbinding met %s verbroken",
+			"Pairing list cleared":     "Koppellijst gewist",
 			"Do not unplug":            "Niet uittrekken",
 			"Network card":             "Netwerkkaart",
 			"Amp fault":                "Versterkerfout",
@@ -526,7 +542,6 @@ var st20Words = map[string]st20Lang{
 			"Hold a button for setup":  "Houd een knop vast voor instellen",
 			"Hold a button to unpair":  "Houd een knop vast om te ontkoppelen",
 			"Hold a button to install": "Houd een knop vast om te installeren",
-			"Hold a button for keys":   "Houd een knop vast voor de sleutel",
 			"Hold a button for logs":   "Houd een knop vast voor logs",
 			"Confirmed":                "Bevestigd",
 			"Not confirmed":            "Niet bevestigd",
@@ -546,8 +561,10 @@ var st20Words = map[string]st20Lang{
 			"Update failed":         "Aktualizacja nieudana",
 			"Switching to Ethernet": "Przełączanie na Ethernet", "Switching to Wi-Fi": "Przełączanie na Wi-Fi",
 			"Reconnecting…": "Ponowne łączenie…", "Can't connect": "Nie można połączyć",
-			"Connecting…":     "Łączenie…",
-			"Connected to %s": "Połączono z %s", "Disconnected from %s": "Rozłączono z %s", "Pairing list cleared": "Lista parowania wyczyszczona",
+			"Connecting…":              "Łączenie…",
+			"Connected to %s":          "Połączono z %s",
+			"Disconnected from %s":     "Rozłączono z %s",
+			"Pairing list cleared":     "Lista parowania wyczyszczona",
 			"Do not unplug":            "Nie odłączaj",
 			"Network card":             "Karta sieciowa",
 			"Amp fault":                "Błąd wzmacniacza",
@@ -569,7 +586,6 @@ var st20Words = map[string]st20Lang{
 			"Hold a button for setup":  "Przytrzymaj przycisk: konfiguracja",
 			"Hold a button to unpair":  "Przytrzymaj przycisk: usuń parowania",
 			"Hold a button to install": "Przytrzymaj przycisk: instalacja",
-			"Hold a button for keys":   "Przytrzymaj przycisk: klucz",
 			"Hold a button for logs":   "Przytrzymaj przycisk: logi",
 			"Confirmed":                "Potwierdzono",
 			"Not confirmed":            "Nie potwierdzono",
@@ -589,8 +605,10 @@ var st20Words = map[string]st20Lang{
 			"Update failed":         "Falha na atualização",
 			"Switching to Ethernet": "A mudar para Ethernet", "Switching to Wi-Fi": "A mudar para Wi-Fi",
 			"Reconnecting…": "A religar…", "Can't connect": "Não é possível ligar",
-			"Connecting…":     "A ligar…",
-			"Connected to %s": "Ligado a %s", "Disconnected from %s": "Desligado de %s", "Pairing list cleared": "Lista de emparelhamento limpa",
+			"Connecting…":              "A ligar…",
+			"Connected to %s":          "Ligado a %s",
+			"Disconnected from %s":     "Desligado de %s",
+			"Pairing list cleared":     "Lista de emparelhamento limpa",
 			"Do not unplug":            "Não desligar",
 			"Network card":             "Placa de rede",
 			"Amp fault":                "Falha ampli",
@@ -612,7 +630,6 @@ var st20Words = map[string]st20Lang{
 			"Hold a button for setup":  "Mantenha um botão: configurar",
 			"Hold a button to unpair":  "Mantenha um botão: desemparelhar",
 			"Hold a button to install": "Mantenha um botão: instalar",
-			"Hold a button for keys":   "Mantenha um botão: chave",
 			"Hold a button for logs":   "Mantenha um botão: registos",
 			"Confirmed":                "Confirmado",
 			"Not confirmed":            "Não confirmado",
@@ -632,8 +649,10 @@ var st20Words = map[string]st20Lang{
 			"Update failed":         "Actualizare eșuată",
 			"Switching to Ethernet": "Comutare la Ethernet", "Switching to Wi-Fi": "Comutare la Wi-Fi",
 			"Reconnecting…": "Reconectare…", "Can't connect": "Nu se poate conecta",
-			"Connecting…":     "Conectare…",
-			"Connected to %s": "Conectat la %s", "Disconnected from %s": "Deconectat de la %s", "Pairing list cleared": "Lista de asociere ștearsă",
+			"Connecting…":              "Conectare…",
+			"Connected to %s":          "Conectat la %s",
+			"Disconnected from %s":     "Deconectat de la %s",
+			"Pairing list cleared":     "Lista de asociere ștearsă",
 			"Do not unplug":            "Nu deconecta",
 			"Network card":             "Placă de rețea",
 			"Amp fault":                "Defect amplificator",
@@ -655,7 +674,6 @@ var st20Words = map[string]st20Lang{
 			"Hold a button for setup":  "Ține apăsat un buton: configurare",
 			"Hold a button to unpair":  "Ține apăsat un buton: anulare asociere",
 			"Hold a button to install": "Ține apăsat un buton: instalare",
-			"Hold a button for keys":   "Ține apăsat un buton: cheie",
 			"Hold a button for logs":   "Ține apăsat un buton: jurnale",
 			"Confirmed":                "Confirmat",
 			"Not confirmed":            "Neconfirmat",
@@ -675,8 +693,10 @@ var st20Words = map[string]st20Lang{
 			"Update failed":         "Ошибка обновления",
 			"Switching to Ethernet": "Переключение на Ethernet", "Switching to Wi-Fi": "Переключение на Wi-Fi",
 			"Reconnecting…": "Переподключение…", "Can't connect": "Не удаётся подключиться",
-			"Connecting…":     "Подключение…",
-			"Connected to %s": "Подключено к %s", "Disconnected from %s": "Отключено от %s", "Pairing list cleared": "Список сопряжений очищен",
+			"Connecting…":              "Подключение…",
+			"Connected to %s":          "Подключено к %s",
+			"Disconnected from %s":     "Отключено от %s",
+			"Pairing list cleared":     "Список сопряжений очищен",
 			"Do not unplug":            "Не отключайте",
 			"Network card":             "Сетевая карта",
 			"Amp fault":                "Сбой усилителя",
@@ -698,7 +718,6 @@ var st20Words = map[string]st20Lang{
 			"Hold a button for setup":  "Удерживайте кнопку для настройки",
 			"Hold a button to unpair":  "Удерживайте кнопку для отвязки",
 			"Hold a button to install": "Удерживайте кнопку для установки",
-			"Hold a button for keys":   "Удерживайте кнопку для ключа",
 			"Hold a button for logs":   "Удерживайте кнопку для журналов",
 			"Confirmed":                "Подтверждено",
 			"Not confirmed":            "Не подтверждено",
@@ -718,8 +737,10 @@ var st20Words = map[string]st20Lang{
 			"Update failed":         "Posodobitev ni uspela",
 			"Switching to Ethernet": "Preklop na Ethernet", "Switching to Wi-Fi": "Preklop na Wi-Fi",
 			"Reconnecting…": "Ponovno povezovanje…", "Can't connect": "Povezava ni mogoča",
-			"Connecting…":     "Povezovanje…",
-			"Connected to %s": "Povezano z %s", "Disconnected from %s": "Prekinjeno z %s", "Pairing list cleared": "Seznam seznanitev počiščen",
+			"Connecting…":              "Povezovanje…",
+			"Connected to %s":          "Povezano z %s",
+			"Disconnected from %s":     "Prekinjeno z %s",
+			"Pairing list cleared":     "Seznam seznanitev počiščen",
 			"Do not unplug":            "Ne izključujte",
 			"Network card":             "Omrežna kartica",
 			"Amp fault":                "Napaka ojačevalnika",
@@ -741,7 +762,6 @@ var st20Words = map[string]st20Lang{
 			"Hold a button for setup":  "Držite gumb za nastavitev",
 			"Hold a button to unpair":  "Držite gumb za odstranitev seznanitev",
 			"Hold a button to install": "Držite gumb za namestitev",
-			"Hold a button for keys":   "Držite gumb za ključ",
 			"Hold a button for logs":   "Držite gumb za dnevnike",
 			"Confirmed":                "Potrjeno",
 			"Not confirmed":            "Ni potrjeno",
@@ -761,8 +781,10 @@ var st20Words = map[string]st20Lang{
 			"Update failed":         "Uppdateringen misslyckades",
 			"Switching to Ethernet": "Byter till Ethernet", "Switching to Wi-Fi": "Byter till Wi-Fi",
 			"Reconnecting…": "Återansluter…", "Can't connect": "Kan inte ansluta",
-			"Connecting…":     "Ansluter…",
-			"Connected to %s": "Ansluten till %s", "Disconnected from %s": "Frånkopplad från %s", "Pairing list cleared": "Parkopplingslistan rensad",
+			"Connecting…":              "Ansluter…",
+			"Connected to %s":          "Ansluten till %s",
+			"Disconnected from %s":     "Frånkopplad från %s",
+			"Pairing list cleared":     "Parkopplingslistan rensad",
 			"Do not unplug":            "Dra inte ur",
 			"Network card":             "Nätverkskort",
 			"Amp fault":                "Förstärkarfel",
@@ -784,7 +806,6 @@ var st20Words = map[string]st20Lang{
 			"Hold a button for setup":  "Håll in en knapp: inställning",
 			"Hold a button to unpair":  "Håll in en knapp: ta bort parkopplingar",
 			"Hold a button to install": "Håll in en knapp: installera",
-			"Hold a button for keys":   "Håll in en knapp: nyckel",
 			"Hold a button for logs":   "Håll in en knapp: loggar",
 			"Confirmed":                "Bekräftad",
 			"Not confirmed":            "Ej bekräftad",
@@ -804,8 +825,10 @@ var st20Words = map[string]st20Lang{
 			"Update failed":         "Güncelleme başarısız",
 			"Switching to Ethernet": "Ethernet'e geçiliyor", "Switching to Wi-Fi": "Wi-Fi'ye geçiliyor",
 			"Reconnecting…": "Yeniden bağlanıyor…", "Can't connect": "Bağlanılamıyor",
-			"Connecting…":     "Bağlanıyor…",
-			"Connected to %s": "%s cihazına bağlandı", "Disconnected from %s": "%s bağlantısı kesildi", "Pairing list cleared": "Eşleştirme listesi temizlendi",
+			"Connecting…":              "Bağlanıyor…",
+			"Connected to %s":          "%s cihazına bağlandı",
+			"Disconnected from %s":     "%s bağlantısı kesildi",
+			"Pairing list cleared":     "Eşleştirme listesi temizlendi",
 			"Do not unplug":            "Fişi çekmeyin",
 			"Network card":             "Ağ kartı",
 			"Amp fault":                "Amfi arızası",
@@ -827,7 +850,6 @@ var st20Words = map[string]st20Lang{
 			"Hold a button for setup":  "Kurulum için bir düğmeyi basılı tutun",
 			"Hold a button to unpair":  "Eşleşmeleri silmek için bir düğmeyi basılı tutun",
 			"Hold a button to install": "Yüklemek için bir düğmeyi basılı tutun",
-			"Hold a button for keys":   "Anahtar için bir düğmeyi basılı tutun",
 			"Hold a button for logs":   "Günlükler için bir düğmeyi basılı tutun",
 			"Confirmed":                "Onaylandı",
 			"Not confirmed":            "Onaylanmadı",
@@ -847,8 +869,10 @@ var st20Words = map[string]st20Lang{
 			"Update failed":         "アップデート失敗",
 			"Switching to Ethernet": "イーサネットに切り替え中", "Switching to Wi-Fi": "Wi-Fiに切り替え中",
 			"Reconnecting…": "再接続中…", "Can't connect": "接続できません",
-			"Connecting…":     "接続中…",
-			"Connected to %s": "%s に接続しました", "Disconnected from %s": "%s から切断しました", "Pairing list cleared": "ペアリングリストを消去しました",
+			"Connecting…":              "接続中…",
+			"Connected to %s":          "%s に接続しました",
+			"Disconnected from %s":     "%s から切断しました",
+			"Pairing list cleared":     "ペアリングリストを消去しました",
 			"Do not unplug":            "電源を抜かないで",
 			"Network card":             "ネットワークカード",
 			"Amp fault":                "アンプ異常",
@@ -870,7 +894,6 @@ var st20Words = map[string]st20Lang{
 			"Hold a button for setup":  "ボタン長押しでセットアップ",
 			"Hold a button to unpair":  "ボタン長押しでペア解除",
 			"Hold a button to install": "ボタン長押しでインストール",
-			"Hold a button for keys":   "ボタン長押しで鍵",
 			"Hold a button for logs":   "ボタン長押しでログ",
 			"Confirmed":                "確認済み",
 			"Not confirmed":            "未確認",
@@ -913,7 +936,6 @@ var st20Words = map[string]st20Lang{
 			"Hold a button for setup":  "버튼을 길게 눌러 설정",
 			"Hold a button to unpair":  "버튼을 길게 눌러 페어링 해제",
 			"Hold a button to install": "버튼을 길게 눌러 설치",
-			"Hold a button for keys":   "버튼을 길게 눌러 키",
 			"Hold a button for logs":   "버튼을 길게 눌러 로그",
 			"Confirmed":                "확인됨",
 			"Not confirmed":            "확인 안 됨",
@@ -933,8 +955,10 @@ var st20Words = map[string]st20Lang{
 			"Update failed":         "อัปเดตล้มเหลว",
 			"Switching to Ethernet": "กำลังสลับไปใช้อีเทอร์เน็ต", "Switching to Wi-Fi": "กำลังสลับไปใช้ Wi-Fi",
 			"Reconnecting…": "กำลังเชื่อมต่อใหม่…", "Can't connect": "เชื่อมต่อไม่ได้",
-			"Connecting…":     "กำลังเชื่อมต่อ…",
-			"Connected to %s": "เชื่อมต่อกับ %s แล้ว", "Disconnected from %s": "ตัดการเชื่อมต่อจาก %s แล้ว", "Pairing list cleared": "ล้างรายการจับคู่แล้ว",
+			"Connecting…":              "กำลังเชื่อมต่อ…",
+			"Connected to %s":          "เชื่อมต่อกับ %s แล้ว",
+			"Disconnected from %s":     "ตัดการเชื่อมต่อจาก %s แล้ว",
+			"Pairing list cleared":     "ล้างรายการจับคู่แล้ว",
 			"Do not unplug":            "ห้ามถอดปลั๊ก",
 			"Network card":             "การ์ดเครือข่าย",
 			"Amp fault":                "แอมป์ขัดข้อง",
@@ -956,7 +980,6 @@ var st20Words = map[string]st20Lang{
 			"Hold a button for setup":  "กดปุ่มค้างไว้เพื่อตั้งค่า",
 			"Hold a button to unpair":  "กดปุ่มค้างไว้เพื่อเลิกจับคู่",
 			"Hold a button to install": "กดปุ่มค้างไว้เพื่อติดตั้ง",
-			"Hold a button for keys":   "กดปุ่มค้างไว้เพื่อกุญแจ",
 			"Hold a button for logs":   "กดปุ่มค้างไว้เพื่อดูบันทึก",
 			"Confirmed":                "ยืนยันแล้ว",
 			"Not confirmed":            "ไม่ได้ยืนยัน",
@@ -999,7 +1022,6 @@ var st20Words = map[string]st20Lang{
 			"Hold a button for setup":  "长按按钮以设置",
 			"Hold a button to unpair":  "长按按钮以取消配对",
 			"Hold a button to install": "长按按钮以安装",
-			"Hold a button for keys":   "长按按钮以设置密钥",
 			"Hold a button for logs":   "长按按钮以查看日志",
 			"Confirmed":                "已确认",
 			"Not confirmed":            "未确认",
@@ -1042,7 +1064,6 @@ var st20Words = map[string]st20Lang{
 			"Hold a button for setup":  "長按按鈕以設定",
 			"Hold a button to unpair":  "長按按鈕以取消配對",
 			"Hold a button to install": "長按按鈕以安裝",
-			"Hold a button for keys":   "長按按鈕以設定金鑰",
 			"Hold a button for logs":   "長按按鈕以查看記錄",
 			"Confirmed":                "已確認",
 			"Not confirmed":            "未確認",
@@ -1055,7 +1076,7 @@ var st20Words = map[string]st20Lang{
 
 // language says which language the panel speaks (SetLanguage); until it is set the panel
 // speaks English.
-var language = func() string { return "" }
+var language = func() string { return "" } //nolint:gochecknoglobals // set once by SetLanguage
 
 // SetLanguage points the panel at the speaker's language setting. Call it before anything
 // writes to the panel.
@@ -1065,32 +1086,38 @@ func st20LangOf(language string) st20Lang {
 	if l, ok := st20Words[strings.ToLower(language)]; ok {
 		return l
 	}
-	return st20English
+
+	return st20English()
 }
 
-// Text is en in the panel's language. "%s" in en is filled with arg.
-func Text(en string, arg ...string) string {
-	s, ok := st20LangOf(language()).words[en]
+// Text is english in the panel's language. "%s" in english is filled with arg.
+func Text(english string, arg ...string) string {
+	word, ok := st20LangOf(language()).words[english]
 	if !ok {
-		s = en
+		word = english
 	}
+
 	if len(arg) > 0 {
-		s = strings.Replace(s, "%s", arg[0], 1)
+		word = strings.Replace(word, "%s", arg[0], 1)
 	}
-	return s
+
+	return word
 }
 
 // Untranslated lists the languages that have no words for en, a text the panel shows;
 // none when en is one of the English table's own words (the design's capitals).
-func Untranslated(en string) []string {
-	if _, ok := st20English.words[en]; ok {
+func Untranslated(english string) []string {
+	if _, ok := st20English().words[english]; ok {
 		return nil
 	}
+
 	var missing []string
+
 	for lang, l := range st20Words {
-		if _, ok := l.words[en]; !ok {
+		if _, ok := l.words[english]; !ok {
 			missing = append(missing, lang)
 		}
 	}
+
 	return missing
 }

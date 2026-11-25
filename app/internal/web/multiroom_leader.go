@@ -15,28 +15,42 @@ import (
 	"github.com/stein155/soundtap/app/internal/speaker"
 )
 
+const (
+	// peerAskTimeout bounds one question to a peer speaker.
+	peerAskTimeout = 2 * time.Second
+	// nowPlayingLimit bounds a peer's now-playing answer.
+	nowPlayingLimit = 64 << 10
+)
+
 // peerLeader asks the speaker at host whom it follows. A speaker that does not answer, or
 // is too old to know the question, is taken to follow nobody. A variable for tests.
+//
+//nolint:gochecknoglobals // a variable so tests can replace it
 var peerLeader = func(ctx context.Context, host string) string {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, peerAskTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		"http://"+net.JoinHostPort(host, downstreamPort)+"/api/multiroom/leader", nil)
+
+	target := "http://" + net.JoinHostPort(host, downstreamPort) + "/api/multiroom/leader"
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
 	if err != nil {
 		return ""
 	}
+
 	resp, err := inviteClient.Do(req)
 	if err != nil {
 		return ""
 	}
 	defer resp.Body.Close()
+
 	var body struct {
 		Host string `json:"host"`
 	}
 	if resp.StatusCode != http.StatusOK ||
-		json.NewDecoder(io.LimitReader(resp.Body, 1024)).Decode(&body) != nil {
+		json.NewDecoder(io.LimitReader(resp.Body, tinyBody)).Decode(&body) != nil {
 		return ""
 	}
+
 	return body.Host
 }
 
@@ -50,15 +64,18 @@ func (s *Server) getMultiroomLeader(w http.ResponseWriter, _ *http.Request) {
 // that stays gone for leaderGiveUp ticks is let go: this speaker goes to STANDBY instead
 // of sitting on MULTIROOM, silent, retrying forever.
 func (s *Server) WatchLeader(ctx context.Context, every time.Duration) {
-	t := time.NewTicker(every)
-	defer t.Stop()
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+
 	fails := 0
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-ticker.C:
 		}
+
 		fails = s.checkLeader(ctx, fails)
 	}
 }
@@ -69,14 +86,16 @@ func (s *Server) WatchLeader(ctx context.Context, every time.Duration) {
 // stream. A follower in standby whose leader plays joins in again, which is also how a
 // follower that rebooted, and so came up in standby, finds its way back.
 func (s *Server) WatchLeaderPower(ctx context.Context, every time.Duration) {
-	t := time.NewTicker(every)
-	defer t.Stop()
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-ticker.C:
 		}
+
 		s.syncLeaderPower(ctx)
 	}
 }
@@ -86,52 +105,74 @@ func (s *Server) syncLeaderPower(ctx context.Context) { s.group.SyncLeaderPower(
 
 // peerNow asks the speaker at host what it plays; STANDBY means it is off. ok is false
 // when it does not answer. A variable for tests.
-var peerNow = func(ctx context.Context, host string) (np speaker.NowPlaying, ok bool) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		"http://"+net.JoinHostPort(host, downstreamPort)+"/api/now", nil)
+//
+//nolint:gochecknoglobals // a variable so tests can replace it
+var peerNow = func(ctx context.Context, host string) (speaker.NowPlaying, bool) {
+	var none, playing speaker.NowPlaying
+
+	target := "http://" + net.JoinHostPort(host, downstreamPort) + "/api/now"
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
 	if err != nil {
-		return speaker.NowPlaying{}, false
+		return none, false
 	}
+
 	resp, err := inviteClient.Do(req)
 	if err != nil {
-		return speaker.NowPlaying{}, false
+		return none, false
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK ||
-		json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(&np) != nil || np.Source == "" {
-		return speaker.NowPlaying{}, false
+
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return none, false
 	}
-	return np, true
+
+	err = json.NewDecoder(io.LimitReader(resp.Body, nowPlayingLimit)).Decode(&playing)
+	if err != nil || playing.Source == "" {
+		return none, false
+	}
+
+	return playing, true
 }
 
 // leaderReachable is multiroom.LeaderReachable, after asking the leader to let this speaker
 // reach its stream port: after a leader reboot its follower set is empty. A
 // variable for tests.
+//
+//nolint:gochecknoglobals // a variable so tests can replace it
 var leaderReachable = func(ctx context.Context, host string) bool {
 	askListen(ctx, host)
+
 	return multiroom.LeaderReachable(ctx, host)
 }
 
 // allowFollower is multiroom.AllowFollower. A variable for tests.
+//
+//nolint:gochecknoglobals // a variable so tests can replace it
 var allowFollower = multiroom.AllowFollower
 
 // askListen asks the leader at host to accept this speaker on its stream port, best effort.
-// A variable for tests.
-var askListen = func(ctx context.Context, host string) { listenAsk(host)(ctx) }
+func askListen(ctx context.Context, host string) { listenAsk(host)(ctx) }
 
 // listenAsk reads the leader's address now and returns the request to make, so a caller
 // can run it on the side without touching package state later.
 func listenAsk(host string) func(context.Context) {
 	url := "http://" + net.JoinHostPort(host, downstreamPort) + "/api/multiroom/listen"
 	client := inviteClient
+
 	return func(ctx context.Context) {
-		ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, peerAskTimeout)
 		defer cancel()
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil) //nolint:gosec // G704: the leader this speaker follows; inviteClient refuses loopback
+
+		// G704: the leader this speaker follows; inviteClient refuses loopback.
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, http.NoBody) //nolint:gosec // G704: see above
 		if err != nil {
 			return
 		}
-		if resp, err := client.Do(req); err == nil { //nolint:gosec // G704: as above
+
+		resp, err := client.Do(req) //nolint:gosec // G704: as above
+		if err == nil {
 			_ = resp.Body.Close()
 		}
 	}
@@ -140,10 +181,12 @@ func listenAsk(host string) func(context.Context) {
 // postMultiroomListen lets the caller reach the stream port: a follower that comes back on
 // its own (leader reboot, restart) asks before it dials. It is as open as the rest of the
 // LAN API, so what it keeps out is passive listeners.
-func (s *Server) postMultiroomListen(w http.ResponseWriter, r *http.Request) {
-	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+func (*Server) postMultiroomListen(w http.ResponseWriter, r *http.Request) {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
 		allowFollower(r.Context(), host)
 	}
+
 	w.WriteHeader(http.StatusNoContent)
 }
 

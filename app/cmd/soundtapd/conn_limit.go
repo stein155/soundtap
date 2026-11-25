@@ -4,6 +4,7 @@
 package main
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 	"sync"
@@ -25,6 +26,7 @@ const (
 // itself (the receivers' hooks) and is never counted.
 type connLimit struct {
 	net.Listener
+
 	mu     sync.Mutex
 	total  int
 	byAddr map[string]int
@@ -32,40 +34,58 @@ type connLimit struct {
 	seq    uint64
 }
 
-func limitConns(ln net.Listener) *connLimit {
-	return &connLimit{Listener: ln, byAddr: map[string]int{}, idle: map[*limitedConn]uint64{}}
+func limitConns(listener net.Listener) *connLimit {
+	return &connLimit{
+		Listener: listener,
+		mu:       sync.Mutex{},
+		total:    0,
+		byAddr:   map[string]int{},
+		idle:     map[*limitedConn]uint64{},
+		seq:      0,
+	}
 }
 
 func (l *connLimit) Accept() (net.Conn, error) {
 	for {
-		c, err := l.Listener.Accept()
+		conn, err := l.Listener.Accept()
 		if err != nil {
-			return nil, err
+			// Unwrapped: http.Server retries an Accept error only when the error itself is a
+			// temporary net.Error, which it checks by type assertion.
+			return nil, err //nolint:wrapcheck // http.Server type-asserts net.Error on it
 		}
-		host, _, _ := net.SplitHostPort(c.RemoteAddr().String())
+
+		host, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
 		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
-			return c, nil
+			return conn, nil
 		}
+
 		l.mu.Lock()
 		victim := l.oldestIdleAtCap(host)
 		l.mu.Unlock()
+
 		if victim != nil {
 			_ = victim.Close()
 		}
+
 		l.mu.Lock()
-		ok := l.total < maxConns && l.byAddr[host] < maxConnsPerAddr
-		if ok {
+
+		admitted := l.total < maxConns && l.byAddr[host] < maxConnsPerAddr
+		if admitted {
 			l.total++
 			l.byAddr[host]++
 		}
 		l.mu.Unlock()
-		if !ok {
-			_ = c.Close()
+
+		if !admitted {
+			_ = conn.Close()
+
 			continue
 		}
-		lc := &limitedConn{Conn: c, host: host}
-		lc.release = sync.OnceFunc(func() { l.release(host, lc) })
-		return lc, nil
+
+		limited := &limitedConn{Conn: conn, host: host, release: nil}
+		limited.release = sync.OnceFunc(func() { l.release(host, limited) })
+
+		return limited, nil
 	}
 }
 
@@ -76,38 +96,46 @@ func (l *connLimit) oldestIdleAtCap(host string) *limitedConn {
 	if !all && l.byAddr[host] < maxConnsPerAddr {
 		return nil
 	}
+
 	var oldest *limitedConn
 	for c, at := range l.idle {
 		if (all || c.host == host) && (oldest == nil || at < l.idle[oldest]) {
 			oldest = c
 		}
 	}
+
 	return oldest
 }
 
 // connState is the http.Server.ConnState hook that tells the limiter which connections
 // are idle between requests.
-func (l *connLimit) connState(c net.Conn, st http.ConnState) {
-	lc, ok := c.(*limitedConn)
+func (l *connLimit) connState(conn net.Conn, state http.ConnState) {
+	limited, ok := conn.(*limitedConn)
 	if !ok {
 		return
 	}
+
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if st == http.StateIdle {
+
+	if state == http.StateIdle {
 		l.seq++
-		l.idle[lc] = l.seq
+		l.idle[limited] = l.seq
 	} else {
-		delete(l.idle, lc)
+		delete(l.idle, limited)
 	}
 }
 
 func (l *connLimit) release(host string, c *limitedConn) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+
 	delete(l.idle, c)
+
 	l.total--
-	if l.byAddr[host]--; l.byAddr[host] <= 0 {
+
+	l.byAddr[host]--
+	if l.byAddr[host] <= 0 {
 		delete(l.byAddr, host)
 	}
 }
@@ -115,6 +143,7 @@ func (l *connLimit) release(host string, c *limitedConn) {
 // limitedConn gives its slot back on the first Close.
 type limitedConn struct {
 	net.Conn
+
 	host    string
 	release func()
 }
@@ -122,13 +151,22 @@ type limitedConn struct {
 func (c *limitedConn) Close() error {
 	err := c.Conn.Close()
 	c.release()
-	return err
+
+	if err != nil {
+		return fmt.Errorf("close: %w", err)
+	}
+
+	return nil
 }
 
 // CloseWrite keeps net/http's half-close before it drops a bad request's connection.
 func (c *limitedConn) CloseWrite() error {
-	if cw, ok := c.Conn.(interface{ CloseWrite() error }); ok {
-		return cw.CloseWrite()
+	if halfCloser, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		err := halfCloser.CloseWrite()
+		if err != nil {
+			return fmt.Errorf("close write: %w", err)
+		}
 	}
+
 	return nil
 }

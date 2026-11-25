@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -43,7 +44,7 @@ const (
 )
 
 // ShipPayload is the four bytes stock writes with ShipCommand.
-var ShipPayload = []byte("BOSE")
+const ShipPayload = "BOSE"
 
 // BatteryStatus bits stock acts on.
 const (
@@ -64,8 +65,14 @@ const (
 	makerRetry       = 5 * time.Second
 )
 
+// The pack reports its temperature in tenths of a kelvin.
+const (
+	deciKelvinPerKelvin = 10
+	kelvinAtZeroCelsius = 273.15
+)
+
 // Personalities are the pack makers stock knows; with any other name it does not monitor.
-var Personalities = []string{"BOSE_ICC", "BOSE_SANYO"}
+func Personalities() []string { return []string{"BOSE_ICC", "BOSE_SANYO"} }
 
 // ErrUnknownPack says the pack's manufacturer name is none of Personalities.
 var ErrUnknownPack = errors.New("battery: unknown pack")
@@ -123,24 +130,33 @@ type Monitor struct {
 	shipped   bool
 }
 
-// New is a Monitor for cfg.
-func New(cfg Config) *Monitor {
+// New is a Monitor for cfg. It takes cfg by value so that filling in the defaults never
+// changes the caller's copy.
+func New(cfg Config) *Monitor { //nolint:gocritic // hugeParam: a copy on purpose, and cmd/soundtapd uses New(cfg)
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
 	}
+
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
+
 	if cfg.Sleep == nil {
 		cfg.Sleep = time.Sleep
 	}
-	return &Monitor{cfg: cfg}
+
+	// The rest starts at its zero value: no reading yet, nothing shipped.
+	monitor := new(Monitor)
+	monitor.cfg = cfg
+
+	return monitor
 }
 
 // Status is the last reading.
 func (m *Monitor) Status() Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	return m.status
 }
 
@@ -152,43 +168,36 @@ func (m *Monitor) Run(ctx context.Context) error {
 	for err != nil && !errors.Is(err, ErrUnknownPack) {
 		m.charge(false)
 		m.cfg.Log.Warn("battery: no answer from the pack yet", "err", err)
+
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-time.After(makerRetry):
 		}
+
 		maker, err = m.maker()
 	}
+
 	if err != nil {
 		m.charge(false)
+
 		return err
 	}
+
 	m.cfg.Log.Info("battery pack", "maker", maker, "ship", m.cfg.AllowShip)
-	t := time.NewTicker(pollInterval)
-	defer t.Stop()
+
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
 	for {
 		m.Step(maker)
+
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-t.C:
+		case <-ticker.C:
 		}
 	}
-}
-
-func (m *Monitor) maker() (string, error) {
-	var raw []byte
-	err := m.retry(func() (e error) { raw, e = m.cfg.Bus.ReadBlock(RegMfgName); return })
-	if err != nil {
-		return "", fmt.Errorf("battery: reading the maker: %w", err)
-	}
-	name := strings.TrimRight(string(raw), "\x00 ")
-	for _, p := range Personalities {
-		if name == p {
-			return name, nil
-		}
-	}
-	return name, fmt.Errorf("%w %q", ErrUnknownPack, name)
 }
 
 // blockPayload is the data of an SMBus block read taken as plain bytes off the wire: the
@@ -197,18 +206,28 @@ func blockPayload(raw []byte) []byte {
 	if len(raw) == 0 {
 		return nil
 	}
+
 	n := min(int(raw[0]), len(raw)-1)
+
 	return append([]byte(nil), raw[1:1+n]...)
 }
 
 // Step reads the pack once and applies the rules. Exported for tests.
 func (m *Monitor) Step(maker string) {
-	s := Status{Maker: maker}
-	dcKnown := false
-	if v, err := m.cfg.DCPresent.Read(); err == nil {
-		s.OnDC, dcKnown = v == 0, true
+	reading := Status{
+		Present: false, Maker: maker, Level: 0, MilliVolts: 0, MilliAmps: 0, Celsius: 0,
+		OnDC: false, Charging: false, Full: false, Low: false, Fault: 0,
 	}
+
+	dcKnown := false
+
+	dcLevel, dcErr := m.cfg.DCPresent.Read()
+	if dcErr == nil {
+		reading.OnDC, dcKnown = dcLevel == 0, true
+	}
+
 	var temp, volt, cur, rsoc, status, fault uint16
+
 	err := errors.Join(
 		m.word(RegTemperature, &temp), m.word(RegVoltage, &volt), m.word(RegCurrent, &cur),
 		m.word(RegRSOC, &rsoc), m.word(RegStatus, &status))
@@ -217,58 +236,89 @@ func (m *Monitor) Step(maker string) {
 	if m.word(RegFault, &fault) != nil {
 		fault = 0
 	}
+
 	if err != nil {
 		// Stock turns the charger off when the pack cannot be read; it never charges blind.
 		m.cfg.Log.Warn("battery: pack unreadable, charger off", "err", err)
-		s.Charging = m.charge(false)
+		reading.Charging = m.charge(false)
 		m.overSince = time.Time{}
-		m.set(s)
+		m.set(reading)
+
 		return
 	}
-	s.Present = true
-	s.Celsius = float64(temp)/10 - 273.15
-	s.MilliVolts = int(volt)
-	s.MilliAmps = int(int16(cur))
-	s.Level = int(rsoc)
-	s.Full = status&statusFullyCharged != 0
-	s.Fault = fault
-	if status&statusErrorMask != 0 && s.Fault == 0 {
-		s.Fault = status & statusErrorMask
+
+	reading.Present = true
+	reading.Celsius = float64(temp)/deciKelvinPerKelvin - kelvinAtZeroCelsius
+	reading.MilliVolts = int(volt)
+	reading.MilliAmps = int(int16(cur))
+	reading.Level = int(rsoc)
+	reading.Full = status&statusFullyCharged != 0
+
+	reading.Fault = fault
+	if status&statusErrorMask != 0 && reading.Fault == 0 {
+		reading.Fault = status & statusErrorMask
 	}
-	s.Low = !s.OnDC && s.Level <= lowRSOC
-	m.apply(&s, fault != 0, dcKnown)
-	m.set(s)
+
+	reading.Low = !reading.OnDC && reading.Level <= lowRSOC
+	m.apply(&reading, fault != 0, dcKnown)
+	m.set(reading)
+}
+
+func (m *Monitor) maker() (string, error) {
+	var raw []byte
+
+	err := m.retry(func() error {
+		var readErr error
+
+		raw, readErr = m.cfg.Bus.ReadBlock(RegMfgName)
+		if readErr != nil {
+			return fmt.Errorf("battery: reading the maker: %w", readErr)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+
+	name := strings.TrimRight(string(raw), "\x00 ")
+	if slices.Contains(Personalities(), name) {
+		return name, nil
+	}
+
+	return name, fmt.Errorf("%w %q", ErrUnknownPack, name)
 }
 
 // apply is stock's charge and SHIP rules for one reading. Only Bose's own fault code
 // (packFault) ships the pack; an error bit in the status word alone stops charging, since a
 // transient one would otherwise cut the power until DC returns. A reading whose DC line could
 // not be read never ships for low charge: the speaker may well be on DC.
-func (m *Monitor) apply(s *Status, packFault, dcKnown bool) {
+func (m *Monitor) apply(reading *Status, packFault, dcKnown bool) {
 	now := m.cfg.Now()
-	if !s.OnDC || s.MilliVolts <= overVoltageMV {
+	if !reading.OnDC || reading.MilliVolts <= overVoltageMV {
 		// The one second is of over-voltage without a break: a reading from minutes ago
 		// must not make the next single high reading ship the pack.
 		m.overSince = time.Time{}
 	}
+
 	switch {
 	case packFault:
-		s.Charging = m.charge(false)
-		m.ship(fmt.Sprintf("pack fault 0x%04x", s.Fault))
-	case s.Fault != 0:
-		s.Charging = m.charge(false) // the status word's error bits: no charging, no SHIP
-	case s.OnDC && s.MilliVolts > overVoltageMV:
-		s.Charging = m.charge(false)
+		reading.Charging = m.charge(false)
+		m.ship(fmt.Sprintf("pack fault 0x%04x", reading.Fault))
+	case reading.Fault != 0:
+		reading.Charging = m.charge(false) // the status word's error bits: no charging, no SHIP
+	case reading.OnDC && reading.MilliVolts > overVoltageMV:
+		reading.Charging = m.charge(false)
 		if m.overSince.IsZero() {
 			m.overSince = now
 		} else if now.Sub(m.overSince) >= overVoltageHold {
-			m.ship(fmt.Sprintf("%d mV with DC present", s.MilliVolts))
+			m.ship(fmt.Sprintf("%d mV with DC present", reading.MilliVolts))
 		}
-	case dcKnown && !s.OnDC && s.Level <= criticalRSOC:
-		s.Charging = m.charge(false)
-		m.ship(fmt.Sprintf("critically discharged at %d %%", s.Level))
+	case dcKnown && !reading.OnDC && reading.Level <= criticalRSOC:
+		reading.Charging = m.charge(false)
+		m.ship(fmt.Sprintf("critically discharged at %d %%", reading.Level))
 	default:
-		s.Charging = m.charge(s.OnDC && !s.Full)
+		reading.Charging = m.charge(reading.OnDC && !reading.Full)
 	}
 }
 
@@ -279,35 +329,54 @@ func (m *Monitor) set(s Status) {
 }
 
 func (m *Monitor) word(cmd byte, out *uint16) error {
-	return m.retry(func() (e error) { *out, e = m.cfg.Bus.ReadWord(cmd); return })
+	return m.retry(func() error {
+		var readErr error
+
+		*out, readErr = m.cfg.Bus.ReadWord(cmd)
+		if readErr != nil {
+			return fmt.Errorf("battery: reading 0x%02x: %w", cmd, readErr)
+		}
+
+		return nil
+	})
 }
 
 // retry is stock's: up to four tries, 5 ms apart.
 func (m *Monitor) retry(f func() error) error {
 	var err error
 	for range readTries {
-		if err = f(); err == nil {
+		err = f()
+		if err == nil {
 			return nil
 		}
+
 		m.cfg.Sleep(readRetryBackoff)
 	}
+
 	return err
 }
 
 // charge drives the charge enable and reports whether charging is on.
-func (m *Monitor) charge(on bool) bool {
+func (m *Monitor) charge(enable bool) bool {
 	if m.cfg.ChargeEn == nil {
 		return false
 	}
-	v := 0
-	if on == m.cfg.ChargeActiveHigh {
-		v = 1
+
+	level := 0
+
+	lineHigh := enable == m.cfg.ChargeActiveHigh
+	if lineHigh {
+		level = 1
 	}
-	if err := m.cfg.ChargeEn.Write(v); err != nil {
+
+	err := m.cfg.ChargeEn.Write(level)
+	if err != nil {
 		m.cfg.Log.Warn("battery: charge enable", "err", err)
+
 		return false
 	}
-	return on
+
+	return enable
 }
 
 // ship sends the pack to SHIP mode once, with the charger off, when the owner allowed it.
@@ -316,14 +385,21 @@ func (m *Monitor) ship(why string) {
 	if m.shipped {
 		return
 	}
+
 	if !m.cfg.AllowShip {
 		m.cfg.Log.Warn("battery: stock would ship the pack now; SHIP is not allowed", "why", why)
+
 		return
 	}
+
 	m.cfg.Log.Warn("battery: shipping the pack", "why", why)
-	if err := m.cfg.Bus.WriteBlock(ShipCommand, ShipPayload); err != nil {
+
+	err := m.cfg.Bus.WriteBlock(ShipCommand, []byte(ShipPayload))
+	if err != nil {
 		m.cfg.Log.Error("battery: SHIP write", "err", err)
+
 		return
 	}
+
 	m.shipped = true
 }

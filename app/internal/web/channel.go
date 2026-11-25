@@ -11,13 +11,15 @@ import (
 
 // channels are what a speaker can play of a stereo source (audio.Channel): both, one of
 // them as half of a stereo pair, or both mixed to mono.
-var channels = []string{"stereo", "left", "right", "mono"}
+// channels are the values the channel setting takes; the first is the default.
+func channels() []string { return []string{"stereo", "left", "right", "mono"} }
 
 func (s *Server) getChannel(w http.ResponseWriter, _ *http.Request) {
 	c := s.settings.Get().Channel
 	if c == "" {
-		c = channels[0]
+		c = channels()[0]
 	}
+
 	writeJSON(w, http.StatusOK, map[string]string{"channel": c})
 }
 
@@ -25,16 +27,24 @@ func (s *Server) putChannel(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Channel string `json:"channel"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&body); err != nil || !slices.Contains(channels, body.Channel) {
+
+	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, tinyBody)).Decode(&body)
+	if err != nil || !slices.Contains(channels(), body.Channel) {
 		apiError(w, http.StatusBadRequest, "channel must be stereo, left, right or mono")
+
 		return
 	}
-	if err := s.settings.SetChannel(body.Channel); err != nil {
+
+	err = s.settings.SetChannel(body.Channel)
+	if err != nil {
 		s.fail(w, "save channel failed", err)
+
 		return
 	}
+
 	if s.channel != nil {
 		s.channel(body.Channel)
 	}
+
 	writeJSON(w, http.StatusOK, map[string]string{"channel": body.Channel})
 }

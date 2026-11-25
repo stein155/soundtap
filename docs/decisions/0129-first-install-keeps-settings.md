@@ -21,8 +21,8 @@ On its first boot after an install from stock, soundtapd takes the name stock kn
 by and stock's TuneIn presets (stock's other sources need its accounts or cloud, so those slots
 stay empty), once. On a speaker with a panel (the ST20) whose clock has no settings yet it also
 takes stock's clock: off when stock had it off or at brightness 0, 12 or 24 hours, and the zone
-(`timezoneInfo`, else the `localtime` link) when this build knows it; stock's brightness, which
-it never used to dim, becomes SoundTap's default
+(`timezoneInfo`, else the `localtime` link) when this build knows it; stock's other brightness
+levels, which it never used to dim, change nothing
 ([standby clock](../hardware/st20/standby-clock.md#where-stock-keeps-the-clocks-settings)).
 
 For the Wi-Fi, the installer runs under stock, so it reads the key and IV from the NetManager

@@ -24,6 +24,7 @@ func tftpPut(ctx context.Context, server, name string, data []byte) error {
 	if err != nil {
 		return err
 	}
+
 	conn, err := net.ListenUDP("udp4", nil)
 	if err != nil {
 		return err
@@ -41,17 +42,21 @@ func tftpPut(ctx context.Context, server, name string, data []byte) error {
 	// Request, retried until the server answers or ctx ends.
 	var peer *net.UDPAddr
 	for peer == nil {
-		if err := ctx.Err(); err != nil {
+		err := ctx.Err()
+		if err != nil {
 			return fmt.Errorf("TFTP server %s never answered: %w", server, err)
 		}
+
 		if _, err := conn.WriteToUDP(wrq, raddr); err != nil {
 			// The link may not have the address yet; keep trying until ctx ends.
 			select {
 			case <-ctx.Done():
 			case <-time.After(time.Second):
 			}
+
 			continue
 		}
+
 		peer, err = tftpAck(ctx, conn, &net.UDPAddr{IP: raddr.IP}, 0, 2*time.Second)
 		if err != nil && !isTimeout(err) {
 			return err
@@ -66,17 +71,22 @@ func tftpPut(ctx context.Context, server, name string, data []byte) error {
 		binary.BigEndian.PutUint16(pkt[0:], 3)
 		binary.BigEndian.PutUint16(pkt[2:], uint16(b))
 		pkt = append(pkt, data[lo:hi]...)
+
 		for try := 0; ; try++ {
 			// A cancelled upload stops sending firmware, between blocks and between retries.
-			if err := ctx.Err(); err != nil {
+			err := ctx.Err()
+			if err != nil {
 				return fmt.Errorf("TFTP block %d: %w", b, err)
 			}
+
 			if try == 8 {
 				return fmt.Errorf("TFTP block %d: no ACK after %d tries", b, try)
 			}
+
 			if _, err := conn.WriteToUDP(pkt, peer); err != nil {
 				return err
 			}
+
 			if _, err := tftpAck(ctx, conn, peer, uint16(b), 2*time.Second); err == nil {
 				break
 			} else if !isTimeout(err) {
@@ -84,6 +94,7 @@ func tftpPut(ctx context.Context, server, name string, data []byte) error {
 			}
 		}
 	}
+
 	return nil
 }
 
@@ -95,12 +106,15 @@ func tftpAck(ctx context.Context, conn *net.UDPConn, peer *net.UDPAddr, block ui
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 		deadline = d
 	}
+
 	conn.SetReadDeadline(deadline)
 	// A cancel that landed before the line above had its "now" deadline overwritten:
 	// check again, or this read waits out the full retry.
-	if err := ctx.Err(); err != nil {
+	err := ctx.Err()
+	if err != nil {
 		return nil, err
 	}
+
 	buf := make([]byte, 516)
 	for {
 		n, from, err := conn.ReadFromUDP(buf)
@@ -108,11 +122,14 @@ func tftpAck(ctx context.Context, conn *net.UDPConn, peer *net.UDPAddr, block ui
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
+
 			return nil, err
 		}
+
 		if !from.IP.Equal(peer.IP) || peer.Port != 0 && from.Port != peer.Port || n < 4 {
 			continue
 		}
+
 		switch binary.BigEndian.Uint16(buf) {
 		case 4:
 			if binary.BigEndian.Uint16(buf[2:]) == block {
@@ -131,10 +148,12 @@ func cstr(b []byte) string {
 			return string(b[:i])
 		}
 	}
+
 	return string(b)
 }
 
 func isTimeout(err error) bool {
 	var ne net.Error
+
 	return errors.As(err, &ne) && ne.Timeout()
 }

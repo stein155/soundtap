@@ -28,6 +28,7 @@ func newHousehold(s *Server, log *slog.Logger) *household.Household {
 // speaker, at most limit of them.
 func (s *Server) peerAddresses(limit int) map[string]string {
 	s.devices.mu.Lock()
+
 	ids := make([]string, 0, len(s.devices.by))
 	for id, rec := range s.devices.by {
 		if !rec.device.Departure && rec.misses < peerMissLimit && id != s.serial {
@@ -35,15 +36,18 @@ func (s *Server) peerAddresses(limit int) map[string]string {
 		}
 	}
 	s.devices.mu.Unlock()
+
 	out := map[string]string{}
-	for _, id := range ids {
+	for _, deviceID := range ids {
 		if len(out) == limit {
 			break
 		}
-		if base := s.peerAddress(id); base != "" {
-			out[id] = base
+
+		if base := s.peerAddress(deviceID); base != "" {
+			out[deviceID] = base
 		}
 	}
+
 	return out
 }
 
@@ -51,11 +55,14 @@ func (s *Server) peerAddresses(limit int) map[string]string {
 func (s *Server) householdEvents(w http.ResponseWriter, r *http.Request) {
 	if _, ok := w.(http.Flusher); !ok {
 		apiError(w, http.StatusInternalServerError, "streaming unsupported")
+
 		return
 	}
+
 	sub, ok := s.household.Subscribe()
 	if !ok {
 		apiError(w, http.StatusServiceUnavailable, "too many event streams")
+
 		return
 	}
 	defer s.household.Unsubscribe(sub)
@@ -65,30 +72,36 @@ func (s *Server) householdEvents(w http.ResponseWriter, r *http.Request) {
 	h.Set("Cache-Control", "no-cache")
 	h.Set("Connection", "keep-alive")
 	h.Set("X-Accel-Buffering", "no")
+
 	stream := newSSEStream(w)
 	if stream.send("retry: 3000\n\n") != nil {
 		return
 	}
 
-	hb := time.NewTicker(eventsHeartbeat)
-	defer hb.Stop()
+	heartbeat := time.NewTicker(eventsHeartbeat)
+	defer heartbeat.Stop()
+
 	for {
 		var err error
+
 		select {
 		case <-r.Context().Done():
 			return
 		case <-sub.Ready():
 			for _, b := range s.household.Take(sub) {
-				if err = stream.write("event: state\ndata: %s\n\n", b); err != nil {
+				err = stream.write("event: state\ndata: %s\n\n", b)
+				if err != nil {
 					break
 				}
 			}
+
 			if err == nil {
 				err = stream.flush()
 			}
-		case <-hb.C:
+		case <-heartbeat.C:
 			err = stream.send("event: ping\ndata:\n\n")
 		}
+
 		if err != nil {
 			return // the client stopped reading: free its slot
 		}

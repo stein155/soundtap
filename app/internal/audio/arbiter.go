@@ -23,7 +23,7 @@ type Arbiter struct {
 // whenever ownership changes hands, so hardware can stop the old daemon writing the
 // bus. In tests/QEMU pass nil.
 func NewArbiter(mix *Mixer, preempt func(old string)) *Arbiter {
-	return &Arbiter{mix: mix, preempt: preempt}
+	return &Arbiter{mix: mix, mu: sync.Mutex{}, owner: "", preempt: preempt}
 }
 
 // Acquire makes src the exclusive owner of the audio bus. If a different source held
@@ -34,6 +34,7 @@ func (a *Arbiter) Acquire(src string) {
 	a.owner = src
 	pre := a.preempt
 	a.mu.Unlock()
+
 	if old != "" && old != src && pre != nil {
 		pre(old)
 	}
@@ -52,6 +53,7 @@ func (a *Arbiter) Release(src string) {
 func (a *Arbiter) Owner() string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+
 	return a.owner
 }
 

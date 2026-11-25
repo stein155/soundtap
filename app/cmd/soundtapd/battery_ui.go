@@ -19,6 +19,13 @@ import (
 // this long goes to standby, so a forgotten speaker does not drain its pack.
 const onBatteryIdleOff = 20 * time.Minute
 
+const (
+	// batteryUIPoll is how often runBatteryUI reads the pack.
+	batteryUIPoll = 5 * time.Second
+	// batteryMessageShown is how long a battery message stays on the panel.
+	batteryMessageShown = 4 * time.Second
+)
+
 // batteryUI turns battery readings into what the owner sees and the idle switch-off.
 type batteryUI struct {
 	seen      bool
@@ -33,59 +40,74 @@ type batteryAction struct {
 }
 
 // step takes one reading and the speaker's state at now.
-func (u *batteryUI) step(now time.Time, b battery.Status, st speakerstate.StatusSnapshot) batteryAction {
-	var a batteryAction
-	if !b.Present {
-		return a
+func (u *batteryUI) step(now time.Time, reading battery.Status, status *speakerstate.StatusSnapshot) batteryAction {
+	var action batteryAction
+	if !reading.Present {
+		return action
 	}
-	if u.seen && b.OnDC != u.onDC {
-		if b.OnDC {
-			a.message = "Charging"
+
+	if u.seen && reading.OnDC != u.onDC {
+		if reading.OnDC {
+			action.message = "Charging"
 		} else {
-			a.message = fmt.Sprintf("On battery %d%%", b.Level)
+			action.message = fmt.Sprintf("On battery %d%%", reading.Level)
 		}
 	}
-	if b.Low && (!u.low || !u.seen) {
-		a.message = fmt.Sprintf("Battery low %d%%", b.Level)
+
+	if reading.Low && (!u.low || !u.seen) {
+		action.message = fmt.Sprintf("Battery low %d%%", reading.Level)
 	}
-	u.seen, u.onDC, u.low = true, b.OnDC, b.Low
-	idle := !st.Standby && st.PlayStatus != "PLAY_STATE" && st.PlayStatus != "BUFFERING_STATE"
+
+	u.seen, u.onDC, u.low = true, reading.OnDC, reading.Low
+
+	idle := !status.Standby && status.PlayStatus != "PLAY_STATE" && status.PlayStatus != "BUFFERING_STATE"
 	switch {
-	case b.OnDC || !idle:
+	case reading.OnDC || !idle:
 		u.idleSince = time.Time{}
 	case u.idleSince.IsZero():
 		u.idleSince = now
 	case now.Sub(u.idleSince) >= onBatteryIdleOff:
 		u.idleSince = time.Time{}
-		a.standby = true
+		action.standby = true
+	default: // idle on battery, not yet for long
 	}
-	return a
+
+	return action
 }
 
 // runBatteryUI shows the Portable's charger changes and a low battery on the panel, and puts
 // an idle speaker on battery in standby after stock's 20 minutes.
-func runBatteryUI(ctx context.Context, sp *speakerstate.Speaker, log *slog.Logger) {
-	var u batteryUI
-	t := time.NewTicker(5 * time.Second)
-	defer t.Stop()
+func runBatteryUI(ctx context.Context, speaker *speakerstate.Speaker, log *slog.Logger) {
+	var state batteryUI
+
+	ticker := time.NewTicker(batteryUIPoll)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-ticker.C:
 		}
-		b, ok := batteryStatus()
+
+		reading, ok := batteryStatus()
 		if !ok {
 			continue
 		}
-		a := u.step(time.Now(), b, sp.StatusSnapshot())
-		if a.message != "" {
-			msg := a.message
-			frontPanel.Show(4*time.Second, func() *screen.Frame { return panel.MessageScreen(msg) })
+
+		snapshot := speaker.StatusSnapshot()
+
+		action := state.step(time.Now(), reading, &snapshot)
+		if action.message != "" {
+			msg := action.message
+
+			frontPanel.Show(batteryMessageShown, func() *screen.Frame { return panel.MessageScreen(msg) })
 		}
-		if a.standby {
+
+		if action.standby {
 			log.Info("battery: idle on battery, standby", "after", onBatteryIdleOff)
-			_ = sp.EnterStandby(ctx)
+
+			_ = speaker.EnterStandby(ctx)
 		}
 	}
 }

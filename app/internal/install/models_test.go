@@ -1,12 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-package install
+package install_test
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stein155/soundtap/app/internal/install"
+)
 
 func TestModelFromVariants(t *testing.T) {
-	for _, tc := range []struct {
+	t.Parallel()
+
+	for _, test := range []struct {
 		variants []string
 		want     string
 	}{
@@ -17,13 +23,16 @@ func TestModelFromVariants(t *testing.T) {
 		{[]string{"ginger"}, "st300"},
 		{[]string{"mojo"}, "st20"}, // SoundTouch 30 Series I: the ST20's board
 	} {
-		if got, err := ModelFromVariants(tc.variants...); err != nil || got != tc.want {
-			t.Errorf("ModelFromVariants(%q) = %q, %v; want %q", tc.variants, got, err, tc.want)
+		got, err := install.ModelFromVariants(test.variants...)
+		if err != nil || got != test.want {
+			t.Errorf("install.ModelFromVariants(%q) = %q, %v; want %q", test.variants, got, err, test.want)
 		}
 	}
+
 	for _, bad := range [][]string{{"rhino", "lisa"}, {"bardeen", "rhino"}, {"lisax"}, {}} {
-		if got, err := ModelFromVariants(bad...); err == nil {
-			t.Errorf("ModelFromVariants(%q) = %q, want an error", bad, got)
+		got, err := install.ModelFromVariants(bad...)
+		if err == nil {
+			t.Errorf("install.ModelFromVariants(%q) = %q, want an error", bad, got)
 		}
 	}
 }

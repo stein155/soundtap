@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"time"
@@ -40,77 +41,96 @@ const (
 //
 // Errors are logged and skipped rather than fatal: a speaker that comes up at the
 // default volume is a nuisance, one that refuses to come up is not usable.
-func restoreAudioPrefs(ctx context.Context, sp *speakerstate.Speaker, set *settings.Store, log *slog.Logger) {
-	a := set.Get().Audio
-	if !a.HasVolume {
+func restoreAudioPrefs(ctx context.Context, state *speakerstate.Speaker, set *settings.Store, log *slog.Logger) {
+	saved := set.Get().Audio
+	if !saved.HasVolume {
 		return // nothing saved yet: keep the built-in defaults
 	}
-	if err := sp.SetVolume(ctx, a.Volume); err != nil {
+
+	err := state.SetVolume(ctx, saved.Volume)
+	if err != nil {
 		log.Warn("restore volume", "err", err)
 	}
-	if err := sp.SetBass(ctx, a.Bass); err != nil {
+
+	err = state.SetBass(ctx, saved.Bass)
+	if err != nil {
 		log.Warn("restore bass", "err", err)
 	}
-	log.Info("restored audio prefs", "volume", a.Volume, "bass", a.Bass)
+
+	log.Info("restored audio prefs", "volume", saved.Volume, "bass", saved.Bass)
 }
 
 // runPrefsSaver persists volume and bass whenever they settle on a new value.
-func runPrefsSaver(ctx context.Context, sp *speakerstate.Speaker, set *settings.Store, log *slog.Logger) {
-	t := time.NewTicker(prefsSaveInterval)
-	defer t.Stop()
+func runPrefsSaver(ctx context.Context, state *speakerstate.Speaker, set *settings.Store, log *slog.Logger) {
+	ticker := time.NewTicker(prefsSaveInterval)
+	defer ticker.Stop()
+
 	last := set.Get().Audio
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-ticker.C:
 		}
-		next, err := currentAudioPrefs(ctx, sp)
+
+		next, err := currentAudioPrefs(ctx, state)
 		if err != nil {
 			continue // shutting down
 		}
+
 		if next.Volume == last.Volume && next.Bass == last.Bass && last.HasVolume {
 			continue
 		}
-		if err := set.SetAudio(next); err != nil {
+
+		err = set.SetAudio(next)
+		if err != nil {
 			if errors.Is(err, settings.ErrNewerSchema) || errors.Is(err, atomicjson.ErrUnreadable) {
 				last = next // read-only (a rollback, an unreadable file): retrying only repeats the warning
 			}
+
 			log.Warn("save audio prefs", "err", err)
+
 			continue
 		}
+
 		last = next
 	}
 }
 
 // saveAudioPrefs is the saver's last pass, run on shutdown with its own deadline
 // because the daemon's context is about to be cancelled.
-func saveAudioPrefs(sp *speakerstate.Speaker, set *settings.Store, log *slog.Logger) {
+func saveAudioPrefs(state *speakerstate.Speaker, set *settings.Store, log *slog.Logger) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	next, err := currentAudioPrefs(ctx, sp)
+
+	next, err := currentAudioPrefs(ctx, state)
 	if err != nil {
 		return
 	}
+
 	last := set.Get().Audio
 	if next.Volume == last.Volume && next.Bass == last.Bass && last.HasVolume {
 		return
 	}
 	// ErrClosed: a factory reset is under way and the prefs must stay gone.
-	if err := set.SetAudio(next); err != nil && !errors.Is(err, settings.ErrClosed) {
+	err = set.SetAudio(next)
+	if err != nil && !errors.Is(err, settings.ErrClosed) {
 		log.Warn("save audio prefs on shutdown", "err", err)
 	}
 }
 
-func currentAudioPrefs(ctx context.Context, sp *speakerstate.Speaker) (settings.Audio, error) {
-	bass, err := sp.Bass(ctx)
+func currentAudioPrefs(ctx context.Context, state *speakerstate.Speaker) (settings.Audio, error) {
+	bass, err := state.Bass(ctx)
 	if err != nil {
-		return settings.Audio{}, err
+		return settings.Audio{}, fmt.Errorf("read the bass: %w", err)
 	}
+
 	return settings.Audio{
-		Volume:    sp.StatusSnapshot().Volume,
+		Volume:    state.StatusSnapshot().Volume,
 		Bass:      bass.Target,
 		HasVolume: true,
+		AutoOff:   0, // SetAudio keeps the stored one: SetAutoOff owns it
 	}, nil
 }
 
@@ -123,47 +143,61 @@ func currentAudioPrefs(ctx context.Context, sp *speakerstate.Speaker) (settings.
 // nonzero-block counter only advances when real audio is coming out of the speaker.
 // AUX is analog passthrough and therefore counts as active while selected, as does an
 // input the ST300's processor plays (PRODUCT): its audio never reaches our sink.
-func runAutoOff(ctx context.Context, sp *speakerstate.Speaker, set *settings.Store, health audioHealth, log *slog.Logger) {
+func runAutoOff(
+	ctx context.Context, state *speakerstate.Speaker, set *settings.Store, health audioHealth, log *slog.Logger,
+) {
 	if health == nil {
 		return // no arbiter (AUDIO_MIX off): no trustworthy idleness signal
 	}
-	t := time.NewTicker(autoOffPoll)
-	defer t.Stop()
+
+	ticker := time.NewTicker(autoOffPoll)
+	defer ticker.Stop()
+
 	lastBlocks := health().SinkNonzeroBlocks
-	lastUser := userFacing(sp.StatusSnapshot())
+	first := state.StatusSnapshot()
+	lastUser := userFacing(&first)
 	quietSince := time.Now()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-ticker.C:
 		}
+
 		timeout := autoOffTimeout(set)
 		blocks := health().SinkNonzeroBlocks
-		st := sp.StatusSnapshot()
+		snap := state.StatusSnapshot()
 		// Someone at the keys or the web page re-arms the timer, as stock's user-present
 		// event does: a volume change while paused must not be followed by a power-off.
-		user := userFacing(st)
+		user := userFacing(&snap)
 		// BlueZ is asked only while Bluetooth is paused, the one case where it decides.
-		phone := st.Source == sourceBluetooth && st.PlayStatus == statusPaused && bluetoothPhoneConnected(ctx)
-		if autoOffHasActivity(st, phone, blocks, lastBlocks) || user != lastUser {
+		phone := snap.Source == sourceBluetooth && snap.PlayStatus == statusPaused && bluetoothPhoneConnected(ctx)
+		if autoOffHasActivity(&snap, phone, blocks, lastBlocks) || user != lastUser {
 			lastBlocks, lastUser = blocks, user
 			quietSince = time.Now()
+
 			continue
 		}
 		// Standby resets the clock too, so waking the speaker gives a full timeout
 		// rather than powering off again moments later.
-		if sp.IsStandby() {
+		if state.IsStandby() {
 			quietSince = time.Now()
+
 			continue
 		}
+
 		if timeout <= 0 || time.Since(quietSince) < timeout {
 			continue
 		}
+
 		log.Info("auto-off: idle, entering standby", "after", timeout)
-		if err := sp.EnterStandby(ctx); err != nil {
+
+		err := state.EnterStandby(ctx)
+		if err != nil {
 			log.Warn("auto-off standby", "err", err)
 		}
+
 		quietSince = time.Now()
 	}
 }
@@ -171,9 +205,11 @@ func runAutoOff(ctx context.Context, sp *speakerstate.Speaker, set *settings.Sto
 // autoOffHasActivity: AUX or a processor input while selected; Bluetooth while a phone plays,
 // even silence, or is paused but still connected; otherwise PCM reaching the DAC.
 // A lost phone also leaves Bluetooth paused, and auto-off is what ends that wait.
-func autoOffHasActivity(st speakerstate.StatusSnapshot, phoneConnected bool, blocks, lastBlocks uint64) bool {
-	bt := st.Source == sourceBluetooth && (st.PlayStatus == playPlaying || st.PlayStatus == statusPaused && phoneConnected)
-	return st.Source == sourceAux || st.Source == sourceProduct || bt || blocks != lastBlocks
+func autoOffHasActivity(snap *speakerstate.StatusSnapshot, phoneConnected bool, blocks, lastBlocks uint64) bool {
+	bluetooth := snap.Source == sourceBluetooth &&
+		(snap.PlayStatus == playPlaying || snap.PlayStatus == statusPaused && phoneConnected)
+
+	return snap.Source == sourceAux || snap.Source == sourceProduct || bluetooth || blocks != lastBlocks
 }
 
 // bluetoothPhoneConnected reports whether a paired phone is connected; false when BlueZ cannot be asked.
@@ -190,12 +226,13 @@ type autoOffUser struct {
 
 // A player retrying a dead stream flips between buffering and stopped on its own, and
 // counting that as a person kept the speaker on for good; the two count as one state.
-func userFacing(st speakerstate.StatusSnapshot) autoOffUser {
-	playStatus := st.PlayStatus
+func userFacing(snap *speakerstate.StatusSnapshot) autoOffUser {
+	playStatus := snap.PlayStatus
 	if playStatus == playBuffering {
 		playStatus = playStopped
 	}
-	return autoOffUser{st.Source, playStatus, st.Volume, st.Bass, st.Muted}
+
+	return autoOffUser{snap.Source, playStatus, snap.Volume, snap.Bass, snap.Muted}
 }
 
 // autoOffTimeout is read every tick so a settings change takes effect without a

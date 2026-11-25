@@ -63,9 +63,11 @@ func HoldLANWatch() (release func(), err error) {
 	if err := os.MkdirAll("/run/soundtap", 0o755); err != nil {
 		return nil, err
 	}
+
 	if err := os.WriteFile(FlashHold, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o644); err != nil {
 		return nil, err
 	}
+
 	return func() { os.Remove(FlashHold) }, nil
 }
 
@@ -75,6 +77,7 @@ func Flashing() bool { return flashHeld(FlashHold, time.Now()) }
 // flashHeld reports whether path is a hold younger than flashHoldMax.
 func flashHeld(path string, now time.Time) bool {
 	fi, err := os.Stat(path)
+
 	return err == nil && now.Sub(fi.ModTime()) < flashHoldMax
 }
 
@@ -84,8 +87,10 @@ func (w LANWatch) holdOff(ctx context.Context) {
 	for w.Held != nil && w.Held() && ctx.Err() == nil {
 		if !logged {
 			w.Log.Info("BCO flash in progress; not power-cycling the BCO")
+
 			logged = true
 		}
+
 		w.sleep(ctx)
 	}
 }
@@ -101,14 +106,17 @@ func (w LANWatch) Run(ctx context.Context) {
 			for ctx.Err() == nil && w.Link() == "" {
 				w.sleep(ctx)
 			}
+
 			if n := w.Link(); n != "" {
 				err := w.Apply(n)
 				w.Log.Info("BCO LAN link back by itself", "netdev", n, "err", err)
 			}
 		}
+
 		if w.watchRadio(ctx, &miss) {
 			continue
 		}
+
 		if ctx.Err() == nil {
 			w.Log.Warn("BCO LAN link lost")
 		}
@@ -120,28 +128,40 @@ func (w LANWatch) Run(ctx context.Context) {
 // router, not the BCO) doubles *miss each time, so it is not cycled every minute.
 func (w LANWatch) watchRadio(ctx context.Context, miss *int) bool {
 	failed := 0
+
 	for polls := 1; ctx.Err() == nil && w.Link() != ""; polls++ {
 		w.sleepFor(ctx, cmp.Or(w.UpPoll, w.Poll))
+
 		if w.Radio == nil || polls%max(w.RadioPolls, 1) != 0 {
 			continue
 		}
+
 		if w.Radio() {
 			failed, *miss = 0, max(w.RadioMiss, 1)
+
 			continue
 		}
+
 		if failed++; failed < *miss || w.Held != nil && w.Held() {
 			continue
 		}
+
 		if w.Evidence != nil {
 			w.Log.Warn("BCO wedge evidence", "evidence", w.Evidence(ctx))
 		}
+
 		w.Log.Warn("BCO link up but the LAN does not answer, power-cycling the BCO", "checks", failed)
-		if err := w.Cycle(); err != nil {
+
+		err := w.Cycle()
+		if err != nil {
 			w.Log.Error("BCO power cycle failed", "err", err)
 		}
+
 		*miss = min(*miss*2, 32)
+
 		return true
 	}
+
 	return false
 }
 
@@ -153,31 +173,45 @@ func (w LANWatch) up(ctx context.Context) bool {
 	if n := w.wait(ctx); n != "" {
 		err := w.Apply(n)
 		w.Log.Info("BCO LAN link present", "netdev", n, "err", err)
+
 		return true
 	}
+
 	for try := 1; try <= w.Tries && ctx.Err() == nil; try++ {
 		if w.Held != nil && w.Held() {
 			w.holdOff(ctx)
+
 			try = 0 // the flash restarted the BCO: start over with a fresh wait
+
 			if n := w.wait(ctx); n != "" {
 				err := w.Apply(n)
 				w.Log.Info("BCO LAN link back after the flash", "netdev", n, "err", err)
+
 				return true
 			}
+
 			continue
 		}
+
 		w.Log.Warn("BCO LAN link missing, power-cycling the BCO", "try", try)
-		if err := w.Cycle(); err != nil {
+
+		err := w.Cycle()
+		if err != nil {
 			w.Log.Error("BCO power cycle failed", "err", err)
+
 			return false
 		}
+
 		if n := w.wait(ctx); n != "" {
 			err := w.Apply(n)
 			w.Log.Info("BCO LAN link back", "netdev", n, "err", err)
+
 			return true
 		}
 	}
+
 	w.Log.Error("BCO LAN link still missing", "cycles", w.Tries)
+
 	return false
 }
 
@@ -186,9 +220,11 @@ func (w LANWatch) wait(ctx context.Context) string {
 		if n := w.Link(); n != "" {
 			return n
 		}
+
 		if time.Now().After(end) || ctx.Err() != nil {
 			return ""
 		}
+
 		w.sleep(ctx)
 	}
 }
@@ -233,12 +269,16 @@ func NewLANWatch(home string, log *slog.Logger) LANWatch {
 // answered; a wedged radio receives no frames at all. rx reports false when there is
 // no counter to read, which counts as no evidence either way.
 func radioCheck(ping func() bool, rx func() (uint64, bool)) func() bool {
-	var last uint64
-	var seen bool
+	var (
+		last uint64
+		seen bool
+	)
+
 	return func() bool {
 		n, ok := rx()
 		grew := ok && seen && n != last
 		last, seen = n, ok
+
 		if ping() {
 			return true
 		}
@@ -246,6 +286,7 @@ func radioCheck(ping func() bool, rx func() (uint64, bool)) func() bool {
 		if n2, ok2 := rx(); ok2 && ok && n2 != n {
 			last, grew = n2, true
 		}
+
 		return grew
 	}
 }
@@ -256,11 +297,14 @@ func lanRxPackets() (uint64, bool) {
 	if n == "" {
 		return 0, false
 	}
+
 	b, err := os.ReadFile("/sys/class/net/" + n + "/statistics/rx_packets")
 	if err != nil {
 		return 0, false
 	}
+
 	v, err := strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64)
+
 	return v, err == nil
 }
 
@@ -271,14 +315,18 @@ func lanAnswers() bool {
 	if n == "" || usbID(n) != ownLink {
 		return true
 	}
+
 	gw := defaultGateway("/proc/net/route")
 	if gw == "" {
 		return true
 	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
 	cmd := exec.CommandContext(ctx, "ping", "-c1", "-W3", gw)
 	childproc.NetTool(cmd) // a raw ICMP socket
+
 	return cmd.Run() == nil
 }
 
@@ -291,11 +339,15 @@ func wedgeEvidence(ctx context.Context) string {
 	uart := "uart busy"
 	lctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	err := lockSerial(lctx)
+
 	cancel()
+
 	if err == nil {
 		uart = readUART(ctx, 7*time.Second)
+
 		unlockSerial()
 	}
+
 	return fmt.Sprintf("netdev %s before [%s] after [%s]; uart: %s", n, before, netdevCounters(n), uart)
 }
 
@@ -303,11 +355,14 @@ func netdevCounters(n string) string {
 	if n == "" {
 		return "none"
 	}
+
 	var out []string
+
 	for _, c := range []string{"rx_packets", "tx_packets", "rx_errors", "tx_errors", "tx_dropped"} {
 		b, _ := os.ReadFile("/sys/class/net/" + n + "/statistics/" + c)
 		out = append(out, c+"="+strings.TrimSpace(string(b)))
 	}
+
 	return strings.Join(out, " ")
 }
 
@@ -318,46 +373,57 @@ func readUART(ctx context.Context, d time.Duration) string {
 		return err.Error()
 	}
 	defer port.Close()
+
 	var raw []byte
+
 	buf := make([]byte, 256)
 	for end := time.Now().Add(d); time.Now().Before(end) && ctx.Err() == nil && len(raw) < 2048; {
 		k, err := port.Read(buf)
 		if err != nil {
 			break
 		}
+
 		if k == 0 {
 			time.Sleep(50 * time.Millisecond)
+
 			continue
 		}
+
 		raw = append(raw, buf[:k]...)
 	}
+
 	return uartLines(raw)
 }
 
 func uartLines(raw []byte) string {
 	var lines []string
-	for _, l := range strings.Split(string(raw), "\n") {
+
+	for l := range strings.SplitSeq(string(raw), "\n") {
 		if l = strings.TrimSpace(l); l != "" {
 			lines = append(lines, l)
 		}
 	}
+
 	return strings.Join(lines, " | ")
 }
 
 // defaultGateway is the IPv4 gateway of the first default route in a /proc/net/route file.
 func defaultGateway(path string) string {
 	b, _ := os.ReadFile(path)
-	for _, l := range strings.Split(string(b), "\n") {
+	for l := range strings.SplitSeq(string(b), "\n") {
 		f := strings.Fields(l)
 		if len(f) < 3 || f[1] != "00000000" {
 			continue
 		}
+
 		v, err := strconv.ParseUint(f[2], 16, 32)
 		if err != nil || v == 0 {
 			continue
 		}
+
 		return fmt.Sprintf("%d.%d.%d.%d", v&0xff, v>>8&0xff, v>>16&0xff, v>>24)
 	}
+
 	return ""
 }
 
@@ -367,6 +433,7 @@ func lanNetdev() string {
 			return n
 		}
 	}
+
 	return ""
 }
 
@@ -376,10 +443,13 @@ func cyclePower() error {
 		return err
 	}
 	defer unmap()
+
 	if err := power(false); err != nil {
 		return err
 	}
+
 	time.Sleep(time.Second)
+
 	return power(true)
 }
 
@@ -399,27 +469,35 @@ func applyStatic(n string, files ...string) error {
 		// dhcpPid is wlan0's, so a redhcp("eth0") here killed wlan0's lease keeper.
 		return redhcp("wlan0")
 	}
+
 	addr, gw, dns := "192.168.1.101/24", "192.168.1.100", "192.168.1.100"
+
 	for _, f := range files {
 		b, err := os.ReadFile(f)
 		if err != nil {
 			continue
 		}
+
 		if fs := strings.Fields(string(b)); len(fs) >= 2 && strings.Contains(fs[0], "/") {
 			addr, gw, dns = fs[0], fs[1], fs[1]
 			if len(fs) >= 3 {
 				dns = fs[2]
 			}
+
 			break
 		}
 	}
+
 	if out, err := ip("link", "set", n, "up"); err != nil {
 		return fmt.Errorf("link up: %s", strings.TrimSpace(out))
 	}
+
 	ip("addr", "add", addr, "dev", n) // "exists" is fine; a real failure fails the route below
+
 	if out, err := ip("route", "replace", "default", "via", gw, "dev", n); err != nil {
 		return fmt.Errorf("default route: %s", strings.TrimSpace(out))
 	}
+
 	return os.WriteFile("/etc/resolv.conf", []byte("nameserver "+dns+"\n"), 0o644)
 }
 
@@ -433,6 +511,7 @@ func redhcp(n string) error {
 	if strings.Contains(addr, "inet ") {
 		return nil
 	}
+
 	if pid := udhcpcPid(dhcpPid); pid > 0 {
 		_ = syscall.Kill(pid, syscall.SIGTERM)
 	}
@@ -445,9 +524,11 @@ func redhcp(n string) error {
 	// the watcher. Killing it then leaves any forked child alone.
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
+
 	host, _ := os.Hostname()
 	cmd := exec.CommandContext(ctx, "udhcpc", "-i", n, "-p", dhcpPid, "-b", "-A", "3", "-O", "ntpsrv", "-x", "hostname:"+host)
 	childproc.NetTool(cmd)
+
 	return cmd.Run()
 }
 
@@ -455,13 +536,16 @@ func redhcp(n string) error {
 // pidfile can name an unrelated process by now.
 func udhcpcPid(pidfile string) int {
 	b, _ := os.ReadFile(pidfile)
+
 	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
 	if err != nil || pid <= 1 {
 		return 0
 	}
+
 	comm, _ := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/comm")
 	if strings.TrimSpace(string(comm)) != "udhcpc" {
 		return 0
 	}
+
 	return pid
 }

@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -29,12 +30,16 @@ func bluetoothAgent(ctx context.Context, log *slog.Logger) *bluez.Agent {
 		if !onFirmware() || !slices.Contains(board.UserSources, sourceBluetooth) {
 			return
 		}
+
 		btAgent = bluez.New(log.With("comp", "bt-agent"), speakerNameForBluetooth)
+
 		goSafe("bt-agent", func() { btAgent.Run(ctx) })
 	})
+
 	return btAgent
 }
 
+//nolint:gochecknoglobals // process-wide state: one BlueZ agent for the daemon, started once
 var (
 	btAgentOnce sync.Once
 	btAgent     *bluez.Agent
@@ -44,14 +49,25 @@ var (
 // serial-derived setup name before there is one, and "" (BlueZ's hostname) without either.
 func speakerNameForBluetooth() string {
 	for _, p := range []string{currentNamePath, setupNamePath} {
-		if b, err := os.ReadFile(p); err == nil {
+		b, err := os.ReadFile(p)
+		if err == nil {
 			if name := strings.TrimSpace(string(b)); name != "" {
 				return name
 			}
 		}
 	}
+
 	return ""
 }
+
+// errNoBluetoothController is a speaker whose Bluetooth controller is absent or not up yet.
+var errNoBluetoothController = errors.New("no Bluetooth controller")
+
+// Bounds on the BlueZ calls: connecting to the system bus, and one pairing window request.
+const (
+	bluetoothBusTimeout  = 5 * time.Second
+	bluetoothPairTimeout = 10 * time.Second
+)
 
 // bluetoothBus connects to the system bus for one BlueZ call of the Bluetooth endpoints.
 func bluetoothBus(ctx context.Context) (*sysbus.Conn, error) {
@@ -59,26 +75,37 @@ func bluetoothBus(ctx context.Context) (*sysbus.Conn, error) {
 	// the context runs out, which held every settings page on the ST20 (gen 1,
 	// no radio) for ten seconds. Checked per call, because hci_uart loads late.
 	if hci, _ := os.ReadDir("/sys/class/bluetooth"); len(hci) == 0 {
-		return nil, errors.New("no Bluetooth controller")
+		return nil, errNoBluetoothController
 	}
-	return sysbus.Dial(ctx, sysbus.Address, 5*time.Second)
+
+	conn, err := sysbus.Dial(ctx, sysbus.Address, bluetoothBusTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("system bus: %w", err)
+	}
+
+	return conn, nil
 }
 
 // wireBluetoothPair returns the pairing action for the Bluetooth key (nil without
 // Bluetooth) and hooks selecting Bluetooth up to it.
-func wireBluetoothPair(ctx context.Context, sp *speakerstate.Speaker, log *slog.Logger) func() {
+func wireBluetoothPair(ctx context.Context, speaker *speakerstate.Speaker, log *slog.Logger) func() {
 	// The Bluetooth key's press-and-hold opens the pairing window (ADR 0055).
 	var btPair func()
-	if a := bluetoothAgent(ctx, log); a != nil {
-		frontPanel.Pairing = a.Pairing
-		a.OnTrack(func() bool { return sp.StatusSnapshot().Source == sourceBluetooth }, func(phone string, t bluez.Track) {
-			sp.SetBluetoothTrack(phone, t.Title, t.Artist, t.Album)
+
+	if agent := bluetoothAgent(ctx, log); agent != nil {
+		frontPanel.Pairing = agent.Pairing
+		playingBluetooth := func() bool { return speaker.StatusSnapshot().Source == sourceBluetooth }
+		agent.OnTrack(playingBluetooth, func(phone string, track bluez.Track) {
+			speaker.SetBluetoothTrack(phone, track.Title, track.Artist, track.Album)
 		})
-		a.OnLinkLost(func() { recallLostPhone(ctx, sp, log) })
+		agent.OnLinkLost(func() { recallLostPhone(ctx, speaker, log) })
+
 		btPair = func() {
-			cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			cctx, cancel := context.WithTimeout(ctx, bluetoothPairTimeout)
 			defer cancel()
-			if err := a.Pair(cctx); err != nil {
+
+			err := agent.Pair(cctx)
+			if err != nil {
 				log.Warn("bluetooth pairing window", "comp", "bt-pair", "err", err)
 			}
 		}
@@ -88,24 +115,27 @@ func wireBluetoothPair(ctx context.Context, sp *speakerstate.Speaker, log *slog.
 	// "it will go to pairing mode if the pairing list is empty" (BoseApp 27.0.6).
 	if btPair != nil {
 		goSafe("bluetoothFollow", func() {
-			followBluetooth(ctx, sp, btSelectedMarker, func() { wakeBluetooth(btWakeFIFO) },
+			followBluetooth(ctx, speaker, btSelectedMarker, func() { wakeBluetooth(btWakeFIFO) },
 				func() error { return runBTCtl("pause") }, func() error { return runBTCtl("disconnect") },
 				btIdleLink, log.With("comp", "bt-follow"))
 		})
-		sp.OnBluetoothSelect(func() {
+		speaker.OnBluetoothSelect(func() {
 			if len(pairedBluetoothDevices(ctx)) == 0 {
 				log.Info("bluetooth selected with nothing paired: opening the pairing window", "comp", "bt-pair")
 				btPair()
+
 				return
 			}
 			// Paired phones: call them rather than wait to be found.
 			btReconnect(ctx, log)
 		})
 		// BlueZ keeps a directory per paired device; reading them is quick enough for the lock.
-		sp.OnBluetoothPaired(func() bool {
+		speaker.OnBluetoothPaired(func() bool {
 			m, _ := filepath.Glob(btPairedInfo) // the pattern is fixed and valid
+
 			return len(m) > 0
 		})
 	}
+
 	return btPair
 }

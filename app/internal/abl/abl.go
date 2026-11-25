@@ -11,8 +11,9 @@
 //
 // Master (bus.go) drives the bus as stock's master does, and Session (session.go) keeps the
 // host's state on top of it. The master's timing from userspace (1.4 ms sync gaps, 0.4 ms
-// reply slots) is worked out from stock and not proven on hardware. Nothing here builds a repository (port 16) message, a staging command, an
-// ETAP test-mode (0x0f) or pedestal (0x21) command: those update or reconfigure the host.
+// reply slots) is worked out from stock and not proven on hardware. Nothing here builds a
+// repository (port 16) message, a staging command, an ETAP test-mode (0x0f) or pedestal
+// (0x21) command: those update or reconfigure the host.
 package abl
 
 import (
@@ -44,11 +45,54 @@ const (
 	UnmuteUser       = 0xfe
 )
 
-// forbidden are master commands that update or reconfigure the host.
-var forbidden = map[byte]string{0x0f: "ETAP test mode", 0x21: "pedestal comms"}
+// Master commands that update or reconfigure the host: never sent.
+const (
+	cmdETAPTestMode = 0x0f
+	cmdPedestal     = 0x21
+)
+
+// Frame layout: the first byte's top bit marks a client frame; the second byte holds the
+// zone (or the poll marker) above the room.
+const (
+	clientBit    = 0x80
+	roomMask     = 0x0f
+	nibbleBits   = 4
+	pollRoomBits = 0xf0
+	// maxRoom is the highest room a master command addresses.
+	maxRoom = 0x0e
+	// masterFrameLen is a master command's frame: [cmd][room][arg][xor].
+	masterFrameLen = 4
+	// pollReplyLen is a poll reply's frame: [80][zone<<4|room][mute<<7|vol][xor].
+	pollReplyLen = 4
+	muteBit      = 0x80
+	volumeMask   = 0x7f
+	byteBits     = 8
+	byteMask     = 0xff
+)
 
 // ErrChecksum is a frame whose bytes do not XOR to zero.
 var ErrChecksum = errors.New("abl: bad checksum")
+
+// Errors of the frame builders and parsers; each message goes on with the frame's details.
+var (
+	errNotMaster    = errors.New("is not a master command")
+	errNeverSent    = errors.New("is never sent")
+	errRoomRange    = errors.New("out of range")
+	errNotPollReply = errors.New("abl: not a poll reply")
+)
+
+// forbiddenReason says why a master command that updates or reconfigures the host is never
+// sent, and whether cmd is one.
+func forbiddenReason(cmd byte) (string, bool) {
+	switch cmd {
+	case cmdETAPTestMode:
+		return "ETAP test mode", true
+	case cmdPedestal:
+		return "pedestal comms", true
+	default:
+		return "", false
+	}
+}
 
 // Checksum is the byte that makes the XOR of p and it zero.
 func Checksum(p []byte) byte {
@@ -56,28 +100,36 @@ func Checksum(p []byte) byte {
 	for _, b := range p {
 		x ^= b
 	}
+
 	return x
 }
 
 // MasterFrame is [cmd][room][arg][xor]. It refuses the commands that reconfigure the host.
 func MasterFrame(cmd, room, arg byte) ([]byte, error) {
-	if cmd&0x80 != 0 {
-		return nil, fmt.Errorf("abl: 0x%02x is not a master command", cmd)
+	if cmd&clientBit != 0 {
+		return nil, fmt.Errorf("abl: 0x%02x %w", cmd, errNotMaster)
 	}
-	if why, ok := forbidden[cmd]; ok {
-		return nil, fmt.Errorf("abl: command 0x%02x (%s) is never sent", cmd, why)
+
+	if why, ok := forbiddenReason(cmd); ok {
+		return nil, fmt.Errorf("abl: command 0x%02x (%s) %w", cmd, why, errNeverSent)
 	}
-	if room > 0x0e {
-		return nil, fmt.Errorf("abl: room %d out of range", room)
+
+	if room > maxRoom {
+		return nil, fmt.Errorf("abl: room %d %w", room, errRoomRange)
 	}
-	f := []byte{cmd, room, arg}
-	return append(f, Checksum(f)), nil
+
+	frame := []byte{cmd, room, arg, 0}
+	frame[masterFrameLen-1] = Checksum(frame[:masterFrameLen-1])
+
+	return frame, nil
 }
 
 // PollFrame is the poll of room: [00][F0|room][xor].
 func PollFrame(room byte) []byte {
-	f := []byte{CmdPoll, 0xf0 | room&0x0f}
-	return append(f, Checksum(f))
+	frame := []byte{CmdPoll, pollRoomBits | room&roomMask, 0}
+	frame[2] = Checksum(frame[:2])
+
+	return frame
 }
 
 // PollReply is a client's answer to a poll: [80][zone<<4|room][mute<<7|vol][xor].
@@ -96,14 +148,21 @@ const (
 )
 
 // ParsePollReply checks and decodes a poll reply.
-func ParsePollReply(f []byte) (PollReply, error) {
-	if len(f) != 4 || f[0] != 0x80 {
-		return PollReply{}, fmt.Errorf("abl: not a poll reply: % x", f)
+func ParsePollReply(frame []byte) (PollReply, error) {
+	if len(frame) != pollReplyLen || frame[0] != clientPollReply {
+		return PollReply{Zone: 0, Room: 0, Muted: false, Volume: 0}, fmt.Errorf("%w: % x", errNotPollReply, frame)
 	}
-	if Checksum(f) != 0 {
-		return PollReply{}, ErrChecksum
+
+	if Checksum(frame) != 0 {
+		return PollReply{Zone: 0, Room: 0, Muted: false, Volume: 0}, ErrChecksum
 	}
-	return PollReply{Zone: f[1] >> 4, Room: f[1] & 0x0f, Muted: f[2]&0x80 != 0, Volume: int(f[2] & 0x7f)}, nil
+
+	return PollReply{
+		Zone:   frame[1] >> nibbleBits,
+		Room:   frame[1] & roomMask,
+		Muted:  frame[2]&muteBit != 0,
+		Volume: int(frame[2] & volumeMask),
+	}, nil
 }
 
 // AdapterSelected reports whether the host's zone nibble says it plays the adapter.
@@ -111,23 +170,31 @@ func (r PollReply) AdapterSelected() bool { return r.Zone == ZoneAdapter || r.Zo
 
 // InternetChecksum is the datagram layer's 16-bit one's-complement sum over big-endian words,
 // an odd byte padded with zero.
-func InternetChecksum(p []byte) uint16 {
+func InternetChecksum(data []byte) uint16 {
+	const wordBits, wordMask = 16, 0xffff
+
 	var sum uint32
-	for i := 0; i+1 < len(p); i += 2 {
-		sum += uint32(p[i])<<8 | uint32(p[i+1])
+	for i := 0; i+1 < len(data); i += 2 {
+		sum += uint32(data[i])<<byteBits | uint32(data[i+1])
 	}
-	if len(p)%2 == 1 {
-		sum += uint32(p[len(p)-1]) << 8
+
+	if len(data)%2 == 1 {
+		sum += uint32(data[len(data)-1]) << byteBits
 	}
-	for sum>>16 != 0 {
-		sum = sum&0xffff + sum>>16
+
+	for sum>>wordBits != 0 {
+		sum = sum&wordMask + sum>>wordBits
 	}
+
 	return ^uint16(sum)
 }
 
-// P2P frames must not be a multiple of 14 bytes long: stock's ABLServer pads around a host
-// firmware that crashes on them.
-func P2PLengthOK(n int) bool { return n%14 != 0 }
+// p2pBadMultiple is the length a P2P frame must not be a multiple of.
+const p2pBadMultiple = 14
+
+// P2PLengthOK reports whether a P2P frame may be n bytes long: not a multiple of 14 bytes,
+// as stock's ABLServer pads around a host firmware that crashes on them.
+func P2PLengthOK(n int) bool { return n%p2pBadMultiple != 0 }
 
 // Host is the product the adapter hangs on.
 type Host int
@@ -148,48 +215,77 @@ func (h Host) String() string {
 
 // Product is the host's product name, as the adapter takes it.
 func (h Host) Product() string {
-	return [...]string{"", "Lifestyle / VideoWave", "Wave SoundTouch", "SoundTouch SA-4",
-		"SoundTouch Stereo JC", "CineMate"}[h]
+	return [...]string{
+		"", "Lifestyle / VideoWave", "Wave SoundTouch", "SoundTouch SA-4",
+		"SoundTouch Stereo JC", "CineMate",
+	}[h]
 }
+
+// The device ids hosts announce themselves with.
+const (
+	idMarconi  = 0x1401
+	idMarconi2 = 0x1801
+	idNelson   = 0x30c0
+	idNelson2  = 0x30a0
+	idTriode   = 0x1c00
+)
+
+// The speaker types old hosts answer QuerySpeakerType with.
+const (
+	speakerTypeColin = 0x03
+	speakerTypeLuke  = 0x11
+)
 
 // HostFromDiscovery is the host a discovery announcement's device id names.
 func HostFromDiscovery(id uint16) Host {
 	switch id {
-	case 0x1401, 0x1801:
+	case idMarconi, idMarconi2:
 		return HostMarconi
-	case 0x30c0, 0x30a0:
+	case idNelson, idNelson2:
 		return HostNelson
-	case 0x1c00:
+	case idTriode:
 		return HostTriode
+	default:
+		return HostUnknown
 	}
-	return HostUnknown
 }
 
 // HostFromSpeakerType is an old host that does not announce itself, by its answer to
 // CmdQueryInfo QuerySpeakerType.
-func HostFromSpeakerType(t byte) Host {
-	switch t {
-	case 0x03:
+func HostFromSpeakerType(speakerType byte) Host {
+	switch speakerType {
+	case speakerTypeColin:
 		return HostColin
-	case 0x11:
+	case speakerTypeLuke:
 		return HostLuke
+	default:
+		return HostUnknown
 	}
-	return HostUnknown
 }
+
+// The volume scale: SoundTap's 0..100, the most the newer hosts are sent, and the SA-4's
+// floor.
+const (
+	volumeMax        = 100
+	newerVolumeMax   = 99
+	colinVolumeFloor = 6
+)
 
 // AttenuationArg is CmdAttenuate's argument for volume 0..100 on host h, as stock maps it:
 // the newer hosts take the volume (100 is sent as 99), the SA-4 an attenuation with a floor
 // at volume 6, the Stereo JC a plain attenuation.
-func AttenuationArg(h Host, volume int) byte {
-	v := min(max(volume, 0), 100)
-	switch h {
-	case HostColin:
-		return byte(100 - max(v, 6))
-	case HostLuke:
-		return byte(100 - v)
-	default:
-		return byte(min(v, 99))
+func AttenuationArg(host Host, volume int) byte {
+	level := min(max(volume, 0), volumeMax)
+
+	if host == HostColin {
+		return byte(volumeMax - max(level, colinVolumeFloor))
 	}
+
+	if host == HostLuke {
+		return byte(volumeMax - level)
+	}
+
+	return byte(min(level, newerVolumeMax))
 }
 
 // OwnsInitialVolume reports whether the host keeps its own volume at power-on (stock
@@ -199,11 +295,17 @@ func OwnsInitialVolume(h Host) bool { return h != HostColin }
 // BaudFor is the link speed stock switches to for a host's capability flags: 460800 with bit
 // 0x400, 230400 with 0x800, else the 19200 every host starts at (old hosts have no flags).
 func BaudFor(capabilities uint16) int {
+	const (
+		capFast, capMedium              = 0x400, 0x800
+		baudFast, baudMedium, baudStart = 460800, 230400, 19200
+	)
+
 	switch {
-	case capabilities&0x400 != 0:
-		return 460800
-	case capabilities&0x800 != 0:
-		return 230400
+	case capabilities&capFast != 0:
+		return baudFast
+	case capabilities&capMedium != 0:
+		return baudMedium
+	default:
+		return baudStart
 	}
-	return 19200
 }

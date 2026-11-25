@@ -11,6 +11,7 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -69,47 +70,51 @@ type Server struct {
 	startCalibration func() error
 	// peerGone, when set, replaces the package probe for this server only: a test's
 	// stub must not be visible to a takeOverIfGone left running by another test.
-	peerGone         func(Device) bool
-	tunein           *tunein.Client
-	backend          Backend
-	scan             wifiScanCache
-	settings         *settings.Store
-	mdns             Hostnamer
-	mdnsMu           sync.Mutex // guards mdns (set after serving starts, once the IP is known)
-	mqtt             MQTTBridge
-	update           *update.Manager        // self-update: release lookup, install, restart
-	np               *nowplaying.Enricher   // live track/artist/cover for playing stations
-	spotifyTrack     atomic.Pointer[string] // the URI of what Spotify plays, from librespot's hook
-	log              *slog.Logger
-	version          string
-	homeDir          string
-	startedAt        time.Time
-	ui               http.Handler                  // serves the embedded dist bundle
-	proxy            *http.Client                  // for the same-origin TuneIn / logo proxies
-	hub              *hub                          // pushes live state to browsers over SSE (/api/events)
-	household        *household.Household          // every speaker's live state on one stream (/api/household/events)
-	setupMode        func() error                  // optional on-speaker callback: drop into provisioning / setup AP
-	wifiProfiles     func() ([]WifiProfile, error) // optional: Wi-Fi networks the speaker remembers
-	forgetWifi       func(id string) error         // optional: drop one of them
-	hardwareReset    func() error                  // optional on-speaker callback: run the full reset and restart into setup
-	port             uint16                        // this speaker's advertised API port; 0 means 80
-	nameChanged      func(string)                  // optional callback: restart name-advertising receivers
-	receiversChanged func()                        // optional callback: an integration was switched
-	sourceChanging   func(string)                  // optional callback: mute/preempt before source ownership changes
-	sourcePick       sync.Mutex                    // one user source change at a time, so key sequences never interleave
-	flushAudioWait   func(context.Context) error   // optional: acknowledge a stopped producer boundary
-	flushAudio       func()                        // optional callback: drop audio queued for the DAC (track change)
-	claimSource      func(string) bool             // optional: may a daemon's /api/source claim take the amp?
-	stopSource       func(string) bool             // optional: may a daemon's stop release the amp?
-	btBus            btctl.Bus                     // optional on-speaker callback: reach BlueZ on the system bus
-	btPair, btClear  func(context.Context) error   // soundtapd's BlueZ agent
-	btMu             sync.Mutex                    // one Bluetooth command sequence at a time
-	multiroom        multiroom.Backend
-	snapclientID     string
-	muteLine         func() string
-	multiroomActive  func(bool)
-	channel          func(string)
-	downstream       func() time.Duration
+	peerGone     func(Device) bool
+	tunein       *tunein.Client
+	backend      Backend
+	scan         wifiScanCache
+	settings     *settings.Store
+	mdns         Hostnamer
+	mdnsMu       sync.Mutex // guards mdns (set after serving starts, once the IP is known)
+	mqtt         MQTTBridge
+	update       *update.Manager        // self-update: release lookup, install, restart
+	np           *nowplaying.Enricher   // live track/artist/cover for playing stations
+	spotifyTrack atomic.Pointer[string] // the URI of what Spotify plays, from librespot's hook
+	log          *slog.Logger
+	version      string
+	homeDir      string
+	startedAt    time.Time
+	ui           http.Handler                  // serves the embedded dist bundle
+	proxy        *http.Client                  // for the same-origin TuneIn / logo proxies
+	hub          *hub                          // pushes live state to browsers over SSE (/api/events)
+	household    *household.Household          // every speaker's live state on one stream (/api/household/events)
+	setupMode    func() error                  // optional on-speaker callback: drop into provisioning / setup AP
+	wifiProfiles func() ([]WifiProfile, error) // optional: Wi-Fi networks the speaker remembers
+	forgetWifi   func(id string) error         // optional: drop one of them
+	// optional on-speaker callback: run the full reset and restart into setup
+	hardwareReset    func() error
+	port             uint16       // this speaker's advertised API port; 0 means 80
+	nameChanged      func(string) // optional callback: restart name-advertising receivers
+	receiversChanged func()       // optional callback: an integration was switched
+	sourceChanging   func(string) // optional callback: mute/preempt before source ownership changes
+	// one user source change at a time, so key sequences never interleave
+	sourcePick      sync.Mutex
+	flushAudioWait  func(context.Context) error // optional: acknowledge a stopped producer boundary
+	flushAudio      func()                      // optional callback: drop audio queued for the DAC (track change)
+	claimSource     func(string) bool           // optional: may a daemon's /api/source claim take the amp?
+	stopSource      func(string) bool           // optional: may a daemon's stop release the amp?
+	btBus           btctl.Bus                   // optional on-speaker callback: reach BlueZ on the system bus
+	btPair, btClear func(context.Context) error // soundtapd's BlueZ agent
+	btForget        func(ctx context.Context, address string) (bool, error)
+	btPaired        func(ctx context.Context, address string) (bool, error)
+	btMu            sync.Mutex // one Bluetooth command sequence at a time
+	multiroom       multiroom.Backend
+	snapclientID    string
+	muteLine        func() string
+	multiroomActive func(bool)
+	channel         func(string)
+	downstream      func() time.Duration
 	// restartSnapclient kicks the supervised snapclient so it re-reads which server it
 	// follows. nil off-device, where nothing supervises anything.
 	restartSnapclient func()
@@ -123,10 +128,11 @@ type Server struct {
 	// selectSource picks the source the arbiter grants the card to, for the one case the
 	// speaker changes its own source: joining or leaving another speaker's stream.
 	selectSource func(context.Context, string) error
-	pickInput    func(string) error                         // optional: picks a user source another processor owns (ST300 TV)
-	upnpSeek     func(context.Context, time.Duration) error // optional: moves a renderer track
-	leaderLive   func(bool)
-	leaderNow    func(speaker.NowPlaying)
+	// optional: picks a user source another processor owns (ST300 TV)
+	pickInput  func(string) error
+	upnpSeek   func(context.Context, time.Duration) error // optional: moves a renderer track
+	leaderLive func(bool)
+	leaderNow  func(speaker.NowPlaying)
 	// selfAddress is this speaker's own address on the network, for the one case it has to
 	// tell another speaker where to find it. nil off-device.
 	selfAddress func(context.Context) string
@@ -248,6 +254,33 @@ func (s *Server) SetMDNS(h Hostnamer) {
 	s.mdnsMu.Unlock()
 }
 
+// Nudge pushes current state to SSE subscribers now. Used by the daemon when state
+// changes outside an HTTP request (a buffering station reaching PLAY_STATE).
+func (s *Server) Nudge() { s.hub.nudge() }
+
+// StagingPath is where a downloaded app update waits for InstallApp.
+func (s *Server) StagingPath() string { return s.fw.StagingPath() }
+
+// InstallApp installs the app binary at path as the next soundtapd.
+func (s *Server) InstallApp(path string) error {
+	err := s.fw.InstallApp(path)
+	if err != nil {
+		return fmt.Errorf("install app: %w", err)
+	}
+
+	return nil
+}
+
+// ConfirmBoot tells the boot guard this boot worked.
+func (s *Server) ConfirmBoot() error {
+	err := s.fw.ConfirmBoot()
+	if err != nil {
+		return fmt.Errorf("confirm boot: %w", err)
+	}
+
+	return nil
+}
+
 // localNames returns the names that are this speaker: its own .local name and the shared
 // one, and the names a home router gives it from the hostname it sends in DHCP.
 // Empty until mDNS is up, so no name passes before then.
@@ -255,15 +288,18 @@ func (s *Server) localNames() []string {
 	s.mdnsMu.Lock()
 	if s.mdns == nil {
 		s.mdnsMu.Unlock()
+
 		return nil
 	}
+
 	own, shared := s.mdns.Hostname(), s.mdns.SharedName()
 	s.mdnsMu.Unlock()
+
 	return append([]string{own, shared}, routerNames(own, resolvConf)...)
 }
 
 // resolvConf is where udhcpc writes the lease's domain (option 15) as search/domain.
-var resolvConf = "/etc/resolv.conf"
+const resolvConf = "/etc/resolv.conf"
 
 // routerNames are the speaker's bare name and that name in each domain the DHCP lease
 // handed out. A rebinding page cannot pick those: they come from the home network.
@@ -273,19 +309,23 @@ func routerNames(own, resolv string) []string {
 	if !ok || base == "" || strings.Contains(base, ".") {
 		return nil
 	}
+
 	names := []string{base}
+
 	b, _ := os.ReadFile(resolv)
-	for _, line := range strings.Split(string(b), "\n") {
+	for line := range strings.SplitSeq(string(b), "\n") {
 		f := strings.Fields(line)
 		if len(f) < 2 || (f[0] != "search" && f[0] != "domain") {
 			continue
 		}
+
 		for _, d := range f[1:] {
 			if d = strings.Trim(d, "."); d != "" && d != "local" {
 				names = append(names, base+"."+d)
 			}
 		}
 	}
+
 	return names
 }
 
@@ -293,9 +333,11 @@ func routerNames(own, resolv string) []string {
 func (s *Server) mdnsHost() string {
 	s.mdnsMu.Lock()
 	defer s.mdnsMu.Unlock()
+
 	if s.mdns == nil {
 		return ""
 	}
+
 	return s.mdns.Hostname()
 }
 
@@ -303,19 +345,11 @@ func (s *Server) mdnsHost() string {
 func (s *Server) mdnsSetName(name string) {
 	s.mdnsMu.Lock()
 	defer s.mdnsMu.Unlock()
+
 	if s.mdns != nil {
 		s.mdns.SetName(name)
 	}
 }
-
-// Nudge pushes current state to SSE subscribers now. Used by the daemon when state
-// changes outside an HTTP request (a buffering station reaching PLAY_STATE).
-func (s *Server) Nudge() { s.hub.nudge() }
-
-// Guard puts the API's Host, CSRF and body checks in front of a handler served beside
-// it on the same port: the UPnP renderer's routes, which a rebound page could otherwise
-// drive.
-func (s *Server) Guard(h http.Handler) http.Handler { return s.guard(h) }
 
 // PanicLogName is the last crash's trace under the home directory.
 const PanicLogName = "panic.log"
@@ -329,16 +363,20 @@ func (s *Server) serveUI(w http.ResponseWriter, r *http.Request) {
 		if marker == "" {
 			marker = "/run/soundtap/setup-ap"
 		}
+
 		if fileExists(marker) && !reachedOverLAN(r) {
 			http.Redirect(w, r, "/?setup=wifi", http.StatusFound)
+
 			return
 		}
 	}
+
 	if strings.HasPrefix(r.URL.Path, "/assets/") {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	} else {
 		w.Header().Set("Cache-Control", "no-store")
 	}
+
 	s.ui.ServeHTTP(w, r)
 }
 
@@ -351,42 +389,51 @@ func reachedOverLAN(r *http.Request) bool {
 	if !ok || addr == nil {
 		return false
 	}
+
 	host, _, err := net.SplitHostPort(addr.String())
 	if err != nil {
 		return false
 	}
+
 	ip := net.ParseIP(host)
+
 	return ip != nil && !ip.IsLoopback() && host != speakerstate.SetupAPAddress
 }
 
 // updateApp maps POST /api/update onto the update manager: an optional
 // {"tag": "..."} body targets a specific release; an empty body
-// means "latest stable", the default Update button. Only a picked tag waits for a
-// press on the speaker: it could be an older release (ADR 0118).
+// means "latest stable", the default Update button. Neither waits for a press: a picked
+// tag may be older, but it installs only with a .sig that verifies (ADR 0048, ADR 0118).
 func (s *Server) updateApp(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Tag     string `json:"tag"`
 		Confirm bool   `json:"confirm"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+
+	err := json.NewDecoder(r.Body).Decode(&body)
+	if err != nil {
 		s.badRequest(w, "bad body", err)
+
 		return
 	}
+
 	if !body.Confirm {
 		s.badRequest(w, "confirm must be true", nil)
+
 		return
 	}
-	if strings.TrimSpace(body.Tag) != "" && !s.pressed(w, r) {
-		return
-	}
+	// No press, a picked older release included: the speaker installs only a release whose
+	// .sig verifies (ADR 0048, ADR 0118).
 	target, current, err := s.update.Start(r.Context(), body.Tag)
+
 	var unknown update.UnknownTagError
 	switch {
 	case errors.Is(err, update.ErrNotUpdatable):
 		apiError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, update.ErrBusy):
 		// The error shape, plus the status the UI already reads.
-		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error(), "code": string(apierror.Busy), "status": "updating"})
+		writeJSON(w, http.StatusConflict,
+			map[string]string{"error": err.Error(), "code": string(apierror.Busy), "status": "updating"})
 	case errors.As(err, &unknown):
 		apiError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, update.ErrClockNotSet):
@@ -396,20 +443,24 @@ func (s *Server) updateApp(w http.ResponseWriter, r *http.Request) {
 		s.log.Warn("release check failed", "err", err)
 		apiError(w, http.StatusBadGateway, "release check failed")
 	case current:
-		writeJSON(w, 200, map[string]string{"status": "current", "version": s.version})
+		writeJSON(w, http.StatusOK, map[string]string{"status": "current", keyVersion: s.version})
 	default:
-		writeJSON(w, 202, map[string]string{"status": "updating", "from": s.version, "to": target})
+		writeJSON(w, http.StatusAccepted, map[string]string{"status": "updating", "from": s.version, "to": target})
 	}
 }
 
 func (s *Server) stop(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second+s.offSlack)
 	defer cancel()
-	if err := s.enterStandby(ctx); err != nil {
+
+	err := s.enterStandby(ctx)
+	if err != nil {
 		s.fail(w, "stop failed", err)
+
 		return
 	}
-	writeJSON(w, 200, map[string]string{"status": "stopped"})
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "stopped"})
 }
 
 // The install lane's paths, for the body limits and the proxy rules.
@@ -417,60 +468,50 @@ const (
 	firmwareUploadPath  = firmware.UploadPath
 	soundtapdUpdatePath = firmware.AppUpdatePath
 	soundtapdMaxSize    = firmware.AppMaxSize
-	ownerKeyPath        = firmware.OwnerKeyPath
 )
 
 // The install lane's exported calls, kept on Server for soundtapd.
-
-// StagingPath is where a downloaded app update waits for InstallApp.
-func (s *Server) StagingPath() string { return s.fw.StagingPath() }
-
-// InstallApp installs the app binary at path as the next soundtapd.
-func (s *Server) InstallApp(path string) error { return s.fw.InstallApp(path) }
-
-// ConfirmBoot tells the boot guard this boot worked.
-func (s *Server) ConfirmBoot() error { return s.fw.ConfirmBoot() }
-
-// ClearOwnerKey removes the owner key from the U-Boot environment (ADR 0048): the factory
-// reset's part. The caller holds the operations lock. A speaker without an environment
-// (off a speaker) has no key to remove.
-func (s *Server) ClearOwnerKey() error {
-	if err := s.fw.ClearOwnerKey(); !errors.Is(err, firmware.ErrNoEnvironment) {
-		return err
-	}
-	return nil
-}
 
 // coreUpdatePath installs the newest SoundTap Core release the speaker finds.
 const coreUpdatePath = "/api/core-update"
 
 // updateCore maps POST /api/core-update onto the update manager and the install lane:
 // the speaker downloads the newest Core release that is newer than the one running and
-// streams it into the same install an upload gets (ADR 0048). It waits for a press on the
-// speaker first, as an install from an upload does (ADR 0055), because it rewrites the
-// spare slot and the boot chain. The answer is the install's report; a reboot starts it.
+// streams it into the same install an upload gets (ADR 0048). It needs no press: the speaker
+// fetches the release itself and installs it only when its .sig verifies (ADR 0048). The
+// answer is the install's report; after a successful install the speaker restarts into the
+// new slot on its own ("restarting": true), never after a failure.
 func (s *Server) updateCore(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Confirm bool `json:"confirm"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+
+	err := json.NewDecoder(r.Body).Decode(&body)
+	if err != nil {
 		s.badRequest(w, "bad body", err)
+
 		return
 	}
+
 	if !body.Confirm {
 		s.badRequest(w, "confirm must be true", nil)
+
 		return
 	}
+
 	running, _ := osBuild()
 	// The download is the speaker's own: a browser closed halfway must not cut off a
 	// package that is already streaming into the spare slot.
 	ctx := context.WithoutCancel(r.Context())
-	err := s.fw.InstallStream(w, r.WithContext(ctx), func() (io.ReadCloser, int64, string, error) {
-		pkg, err := s.update.OpenCore(ctx, running)
-		if err != nil {
-			return nil, 0, "", err
+
+	err = s.fw.InstallStream(w, r.WithContext(ctx), func() (io.ReadCloser, int64, string, error) {
+		pkg, openErr := s.update.OpenCore(ctx, running)
+		if openErr != nil {
+			return nil, 0, "", openErr //nolint:wrapcheck // its text is the 409's message
 		}
+
 		s.log.Info("core update", "from", running, "to", pkg.Tag)
+
 		return pkg.Body, pkg.Size, pkg.Signature, nil
 	})
 	switch {
@@ -480,7 +521,7 @@ func (s *Server) updateCore(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, update.ErrNotUpdatable):
 		apiError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, update.ErrCoreCurrent):
-		writeJSON(w, 200, map[string]string{"status": "current", "version": running})
+		writeJSON(w, http.StatusOK, map[string]string{"status": "current", keyVersion: running})
 	case errors.Is(err, update.ErrClockNotSet):
 		apiErrorCode(w, http.StatusServiceUnavailable, apierror.ClockNotSet, update.ErrClockNotSet.Error())
 	default:

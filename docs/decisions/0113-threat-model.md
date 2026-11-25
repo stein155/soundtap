@@ -47,10 +47,21 @@ For each stranger: what they can do, what stops the rest, and what we accept.
   passwords an owner sends in: a new Wi-Fi password and the MQTT broker password. We accept this:
   such a host can already ask the speaker for everything else, there is no certificate a browser
   would trust for a `.local` name, and no route sends a password back out.
-- **What stops the rest.** Reboot, factory reset, restore, Wi-Fi changes, setup mode, every update
-  but the latest one the speaker is offered ([ADR 0118](0118-update-button-without-press.md)), the owner key and
-  the debug bundle wait for a key held on the speaker. Firmware and daemon updates must also carry
-  a signature from a release key or from the owner key set on that speaker. The player,
+- **What stops the rest.** Reboot, factory reset, restore, Wi-Fi changes, setup mode, every
+  upload (`POST /api/firmware?install=1`, `POST /api/soundtapd`, signed or not) and the debug
+  bundle wait for a key held on the speaker. Only a release the speaker fetches itself from the
+  project's releases installs **without a press**, and only when its `.sig` verifies against a
+  release key ([ADR 0048](0048-signed-updates.md),
+  [ADR 0118](0118-update-button-without-press.md)).
+- **Anyone on the LAN can have the speaker install an older published release.**
+  `POST /api/update` with a tag fetches that app release and installs it with nobody at the
+  speaker, an alpha included. Someone on the LAN can so put back a release with a bug a newer
+  one fixed, a security fix among them. The owner accepted this (2026-11-25): a release is the
+  project's word that a package is SoundTap, and updating needs no press. A withdrawn release is not
+  fetched by its tag any more, and a key rotation stops every release signed with the retired
+  key ([RELEASING.md](../../RELEASING.md#release-keys)). An upload, even with a release's valid
+  `.sig`, waits for the press: the `.sig` can be replayed with another body, and the STU route
+  would write that body into the fallback slot before the digest is compared. The player,
   receiver and Bluetooth hooks answer only 127.0.0.1. No route returns a password: the backup
   leaves them out, and saved Wi-Fi lists names only.
 
@@ -91,14 +102,17 @@ closes; outside it new authorization requests are refused (ADR 0055).
 
 ### A malicious update file
 
-Over the network, `POST /api/firmware` and `POST /api/soundtapd` verify the ed25519 signature
-before selecting a candidate, and they need a hold. The STU handler authenticates the expected
+Over the network, `POST /api/firmware?install=1` and `POST /api/soundtapd` wait for the hold
+for every upload, signed or not, and verify the ed25519 signature of a signed one before
+selecting a candidate. The STU handler authenticates the expected
 digest before streaming and compares the received digest at the end, so replayed authentic
 metadata with different bytes can still overwrite the inactive slot before that final mismatch is
-caught. Two routes accept an unsigned package, and both need hands on the speaker: the stock
-installer on :17008, which runs only on stock firmware, and the power-on USB stick, whose key chord
-is the authorization and which also takes Bose's own file back to stock
-([ADR 0130](0130-usb-stick-recovery.md)).
+caught; the hold is what keeps someone on the LAN from doing that again and again. Every route
+that accepts an unsigned package needs hands on the speaker: an upload to
+those two routes, after the hold; the stock installer on :17008, which runs only on stock
+firmware; and the power-on USB stick, whose key chord is the authorization and which also takes
+Bose's own file back to stock ([ADR 0130](0130-usb-stick-recovery.md)). Someone on the network
+who gets a household member to hold a button for their request installs what they sent.
 
 ### A stranger with the speaker in hand
 

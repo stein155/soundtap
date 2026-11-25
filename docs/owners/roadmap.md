@@ -35,7 +35,7 @@ preview becomes a supported model once an owner has run its hardware checklist.
       kept as one checklist per model with the tested artifact's version, SHA-256 and date of each row.
       The ST20 part runs without audio. The signing gate requires all four reports, `hardware-st300.json`
       since 2026-11-15.
-- [x] **Signed updates.** Published Core STUs and app binaries are signed; production speakers refuse unsigned updates
+- [x] **Signed updates.** Published Core STUs and app binaries are signed; a release the speaker fetches updates after one confirmation in the app, and every upload waits for the press on the speaker
       ([ADR 0048](../decisions/0048-signed-updates.md)). `release.yml` publishes a draft
       without the key; `sign.yml`, the one job with the release key, in a GitHub environment
       limited to `main`, signs it, and after the maintainer's bench speakers took it publishes it
@@ -72,8 +72,8 @@ preview becomes a supported model once an owner has run its hardware checklist.
       history. `main` was rebuilt without stock paths on 2026-11-15 and published as
       [stein155/soundtap](https://github.com/stein155/soundtap) on 2026-11-23.
 - [x] **Authenticated changes.** The speaker trusts its home network; factory reset, restore,
-      reboot, Wi-Fi changes, manual firmware installs and debug routes wait for a key held on
-      the speaker (on a SoundTouch 300, which has no buttons, on its remote); the latest stable update is press-free ([ADR 0118](../decisions/0118-update-button-without-press.md))
+      reboot, Wi-Fi changes, every firmware or app upload and debug routes wait for a key held on
+      the speaker (on a SoundTouch 300, which has no buttons, on its remote); every signed release the speaker fetches itself is press-free ([ADR 0118](../decisions/0118-update-button-without-press.md))
       ([ADR 0055](../decisions/0055-household-token-and-windows.md)).
 - [x] **Dependency audit in CI** for Go and npm: `make vuln` runs `govulncheck` on soundtapd and
       `npm audit --omit=dev --audit-level=high` (only what ships in the web UI; build tools such as

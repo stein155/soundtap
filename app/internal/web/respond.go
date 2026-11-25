@@ -10,9 +10,35 @@ import (
 	"net/http"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/stein155/soundtap/app/internal/web/apierror"
 )
+
+// JSON keys and values several answers share.
+const (
+	keyVersion    = "version"
+	keyActive     = "active"
+	statusPlaying = "playing"
+)
+
+// unreadable stands in the debug text for a file that could not be read.
+const unreadable = "<unreadable>\n"
+
+// Body size limits. A route takes the smallest that holds its largest valid body, and an
+// answer read from a peer is bounded the same way.
+const (
+	tinyBody   = 1 << 10 // a few short fields
+	smallBody  = 4 << 10 // a short object
+	mediumBody = 8 << 10 // an object with free text, such as a track's title
+)
+
+// backendCallTimeout bounds one quick call into the speaker backend (now playing, volume,
+// source).
+const backendCallTimeout = 4 * time.Second
+
+// maxVolume is the top of the speaker's 0-100 volume scale.
+const maxVolume = 100
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -21,7 +47,7 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 }
 
 // writeOK answers a request that needs nothing back but its success.
-func writeOK(w http.ResponseWriter) { writeJSON(w, 200, map[string]string{"status": "ok"}) }
+func writeOK(w http.ResponseWriter) { writeJSON(w, http.StatusOK, map[string]string{"status": "ok"}) }
 
 // apiError is the API's one error shape (ADR 0091): {"error": "<message>", "code": "<code>"}
 // as JSON, with a status that says whose fault it was -- 4xx the caller's, 5xx the
@@ -40,8 +66,10 @@ func apiErrorCode(w http.ResponseWriter, status int, code apierror.Code, msg str
 // upstream that failed says 502 itself at the call site.
 func (s *Server) fail(w http.ResponseWriter, msg string, err error) {
 	code := http.StatusInternalServerError
+
 	if err != nil {
 		s.log.Warn(msg, "err", err.Error())
+
 		if errors.Is(err, context.DeadlineExceeded) {
 			code = http.StatusGatewayTimeout
 		}
@@ -51,6 +79,7 @@ func (s *Server) fail(w http.ResponseWriter, msg string, err error) {
 			msg += ": the speaker's storage is full"
 		}
 	}
+
 	apiError(w, code, msg)
 }
 
@@ -60,18 +89,21 @@ func (s *Server) badRequest(w http.ResponseWriter, msg string, err error) {
 	if err != nil {
 		s.log.Warn(msg, "err", err.Error())
 	}
+
 	apiError(w, http.StatusBadRequest, msg)
 }
 
 // routePath is the route a request is for: its own path, or for /api/devices/{id}/<rest>
 // the /<rest> it is proxied to.
-func routePath(p string) string {
-	rest, ok := strings.CutPrefix(p, "/api/devices/")
+func routePath(path string) string {
+	rest, ok := strings.CutPrefix(path, "/api/devices/")
 	if !ok {
-		return p
+		return path
 	}
+
 	if i := strings.IndexByte(rest, '/'); i >= 0 {
 		return rest[i:]
 	}
-	return p
+
+	return path
 }

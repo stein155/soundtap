@@ -70,6 +70,7 @@ func (s *Speaker) outputLocked() int {
 	if s.muted {
 		return 0
 	}
+
 	return s.volume
 }
 
@@ -77,6 +78,7 @@ func (s *Speaker) outputLocked() int {
 func (s *Speaker) Muted() bool {
 	s.lock()
 	defer s.unlock()
+
 	return s.muted
 }
 
@@ -89,6 +91,7 @@ func (s *Speaker) MarkMuted() {
 	s.muted = true
 	notify := s.onPlayChange
 	s.unlock()
+
 	if changed && notify != nil {
 		notify()
 	}
@@ -101,15 +104,20 @@ func (s *Speaker) volumeHookLocked(before int) func() {
 	if s.outputLocked() == before || len(s.onVolume) == 0 {
 		return nil
 	}
+
 	s.volumeSeq++
 	hooks, level, seq := s.onVolume, s.outputLocked(), s.volumeSeq
+
 	return func() {
 		s.volumeHookMu.Lock()
 		defer s.volumeHookMu.Unlock()
+
 		if seq < s.volumeDelivered {
 			return
 		}
+
 		s.volumeDelivered = seq
+
 		for _, fn := range hooks {
 			fn(level)
 		}
@@ -127,11 +135,15 @@ func (s *Speaker) OnStandby(fn func()) {
 // standbyHookLocked returns the notification to fire once the lock is dropped, or nil
 // when the speaker did not just enter standby. Call with s.mu held, invoke the result
 // after unlocking, like volumeHookLocked.
+//
+//nolint:revive // flag-parameter: wasStandby is the state before the change, not a mode.
 func (s *Speaker) standbyHookLocked(wasStandby bool) func() {
 	if wasStandby || s.source != sourceStandby || len(s.onStandby) == 0 {
 		return nil
 	}
+
 	hooks := s.onStandby
+
 	return func() {
 		for _, fn := range hooks {
 			fn()

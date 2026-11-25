@@ -5,6 +5,7 @@ package web
 
 import (
 	"bytes"
+	"maps"
 	"net/http"
 	"strings"
 	"sync"
@@ -55,60 +56,90 @@ type replayCache struct {
 // replay answers a repeated write from the first one's recorded response. The key holds
 // method and path too: a proxied write reaches this speaker's own routes a second time
 // under another path, and must not wait on itself.
+// claim finds the entry for key or makes one. It reports whether the entry was seen
+// before, and false for tracked when the cache is full of writes still running.
+func (c *replayCache) claim(key string, now time.Time) (*replayed, bool, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.m == nil {
+		c.m = map[string]*replayed{}
+	}
+
+	for k, e := range c.m {
+		if e.expired(now) {
+			delete(c.m, k)
+		}
+	}
+
+	entry, seen := c.m[key]
+	if seen {
+		return entry, true, true
+	}
+
+	if !c.makeRoom() {
+		return nil, false, false
+	}
+
+	entry = &replayed{done: make(chan struct{}), at: now, status: 0, header: nil, body: nil, whole: false}
+	c.m[key] = entry
+
+	return entry, false, true
+}
+
+// serve answers a repeat with the first answer, once that is done.
+func (e *replayed) serve(w http.ResponseWriter, r *http.Request) {
+	select {
+	case <-e.done:
+	case <-r.Context().Done():
+		return
+	}
+
+	if !e.whole {
+		apiError(w, http.StatusConflict, "request already handled")
+
+		return
+	}
+
+	maps.Copy(w.Header(), e.header)
+
+	w.WriteHeader(e.status)
+	_, _ = w.Write(e.body)
+}
+
 func (c *replayCache) replay(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id := r.Header.Get(RequestHeader)
-		if id == "" || r.Method == http.MethodGet || r.Method == http.MethodHead || len(id) > 64 {
+		requestID := r.Header.Get(RequestHeader)
+		if requestID == "" || r.Method == http.MethodGet || r.Method == http.MethodHead || len(requestID) > 64 {
 			next.ServeHTTP(w, r)
+
 			return
 		}
-		key := r.Method + " " + r.URL.Path + " " + id
+
+		key := r.Method + " " + r.URL.Path + " " + requestID
 		now := time.Now()
-		c.mu.Lock()
-		if c.m == nil {
-			c.m = map[string]*replayed{}
-		}
-		for k, e := range c.m {
-			if e.expired(now) {
-				delete(c.m, k)
-			}
-		}
-		e, seen := c.m[key]
-		if !seen && !c.makeRoom() {
+
+		entry, seen, tracked := c.claim(key, now)
+		if !tracked {
 			// Full of writes still running: serve this one without a replay entry.
-			c.mu.Unlock()
 			next.ServeHTTP(w, r)
+
 			return
 		}
-		if !seen {
-			e = &replayed{done: make(chan struct{}), at: now}
-			c.m[key] = e
-		}
-		c.mu.Unlock()
 
 		if seen {
-			select {
-			case <-e.done:
-			case <-r.Context().Done():
-				return
-			}
-			if !e.whole {
-				apiError(w, http.StatusConflict, "request already handled")
-				return
-			}
-			for k, v := range e.header {
-				w.Header()[k] = v
-			}
-			w.WriteHeader(e.status)
-			_, _ = w.Write(e.body)
+			entry.serve(w, r)
+
 			return
 		}
 
-		rec := &recorder{ResponseWriter: w, status: http.StatusOK}
+		rec := &recorder{ResponseWriter: w, status: http.StatusOK, buf: bytes.Buffer{}, over: false}
 		returned := false
+
 		defer func() {
-			e.status, e.header, e.body = rec.status, w.Header().Clone(), rec.buf.Bytes()
-			e.whole = !rec.over && returned
+			entry.status, entry.header, entry.body = rec.status, w.Header().Clone(), rec.buf.Bytes()
+
+			entry.whole = !rec.over && returned
 			if rec.status == http.StatusUnauthorized || !returned || proxyFailed(r, rec.status) {
 				// A handler that panicked answered nothing; a repeat must run it again.
 				// A refusal did nothing to repeat, and pairing may have fixed it: the
@@ -117,12 +148,15 @@ func (c *replayCache) replay(next http.Handler) http.Handler {
 				delete(c.m, key)
 				c.mu.Unlock()
 			}
+
 			c.mu.Lock()
-			e.at = time.Now() // kept for a minute from its answer
+			entry.at = time.Now() // kept for a minute from its answer
 			c.mu.Unlock()
-			close(e.done)
+			close(entry.done)
 		}()
+
 		next.ServeHTTP(rec, r)
+
 		returned = true
 	})
 }
@@ -132,6 +166,7 @@ func (c *replayCache) replay(next http.Handler) http.Handler {
 func (c *replayCache) makeRoom() bool {
 	for len(c.m) >= replayMaxEntries {
 		oldest := ""
+
 		for k, e := range c.m {
 			select {
 			case <-e.done:
@@ -141,11 +176,14 @@ func (c *replayCache) makeRoom() bool {
 			default:
 			}
 		}
+
 		if oldest == "" {
 			return false
 		}
+
 		delete(c.m, oldest)
 	}
+
 	return true
 }
 
@@ -159,6 +197,7 @@ func proxyFailed(r *http.Request, status int) bool {
 // recorder passes a response through and keeps a copy of it, up to replayMaxBody.
 type recorder struct {
 	http.ResponseWriter
+
 	status int
 	buf    bytes.Buffer
 	over   bool
@@ -169,15 +208,16 @@ func (r *recorder) WriteHeader(code int) {
 	r.ResponseWriter.WriteHeader(code)
 }
 
-func (r *recorder) Write(p []byte) (int, error) {
+func (r *recorder) Write(data []byte) (int, error) {
 	if !r.over {
-		if r.buf.Len()+len(p) > replayMaxBody {
+		if r.buf.Len()+len(data) > replayMaxBody {
 			r.over, r.buf = true, bytes.Buffer{}
 		} else {
-			r.buf.Write(p)
+			r.buf.Write(data)
 		}
 	}
-	return r.ResponseWriter.Write(p)
+
+	return r.ResponseWriter.Write(data) //nolint:wrapcheck // a ResponseWriter wrapper is transparent
 }
 
 // Unwrap lets http.ResponseController reach Flush and deadlines on the real writer.

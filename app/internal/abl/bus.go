@@ -22,6 +22,58 @@ const (
 	OwnRoom = 0
 	// Broadcast is the datagram destination every room takes.
 	Broadcast = 0x0f
+
+	// roomCount is the rooms a master polls, A to O.
+	roomCount = 15
+	// probeEvery is how long each silent room is the one a round looks at.
+	probeEvery = 150 * time.Millisecond
+	// ownSlot is the wait before our own client frame after our room's poll: the 0.4 ms
+	// reply slot.
+	ownSlot = 400 * time.Microsecond
+	// echoWait is how long a byte of a frame may take after the one before.
+	echoWait = 4 * byteTime
+)
+
+// Client frame types, by their first byte.
+const (
+	clientPollReply   = 0x80
+	clientLengthAt3   = 0x8a // its length in byte 3
+	clientQueryReply  = 0x8b
+	clientQueryReply2 = 0x8c
+	clientLengthAt2   = 0xa0 // and up: its length in byte 2
+	clientDatagram    = 0xe0
+	// minClientFrame is the shortest client frame: [type][room][arg][xor].
+	minClientFrame = 4
+	// lengthAt3Head and lengthAt2Head are what is read of those frames to find the length.
+	lengthAt3Head = 4
+	lengthAt2Head = 3
+)
+
+// The lengths of the query replies, by what was asked.
+const (
+	shortQueryReplyLen   = 4
+	versionQueryReplyLen = 9
+	serialQueryReplyLen  = 20
+)
+
+// The P2P datagram frame: [0xE0][src room][length][dst room][header 6][data][xor].
+const (
+	p2pHeadLen        = 4
+	datagramHeaderLen = 6
+	p2pOverhead       = p2pHeadLen + datagramHeaderLen + 1
+	// maxDatagramData is the most data one segment carries.
+	maxDatagramData = 244
+	// segmentFirst marks the first segment of a datagram.
+	segmentFirst = 0x08
+)
+
+// Errors of the bus; each message goes on with the details where it has any.
+var (
+	errRepositoryPort   = errors.New("abl: the repository port is never used")
+	errBadLength        = errors.New("abl: bad length")
+	errNeedsSegments    = errors.New("needs segments")
+	errNotDatagram      = errors.New("abl: not a datagram frame")
+	errDatagramChecksum = errors.New("abl: datagram checksum")
 )
 
 // Port is the serial line: frames out, bytes in with a timeout.
@@ -71,7 +123,7 @@ type Master struct {
 	mu      sync.Mutex
 	queue   [][]byte // master frames waiting
 	own     [][]byte // client frames of our own room waiting for its poll
-	rooms   [15]roomState
+	rooms   [roomCount]roomState
 	nextIdx int
 
 	sleep func(time.Duration)
@@ -80,21 +132,35 @@ type Master struct {
 
 // NewMaster is a master on port.
 func NewMaster(port Port, events func(Event)) *Master {
-	return &Master{port: port, Events: events, sleep: time.Sleep, now: time.Now}
+	return &Master{
+		port:    port,
+		Events:  events,
+		mu:      sync.Mutex{},
+		queue:   nil,
+		own:     nil,
+		rooms:   [roomCount]roomState{},
+		nextIdx: 0,
+		sleep:   time.Sleep,
+		now:     time.Now,
+	}
 }
 
 // Command queues a master command for room; it refuses what MasterFrame refuses.
 func (m *Master) Command(cmd, room, arg byte) error {
-	f, err := MasterFrame(cmd, room, arg)
+	frame, err := MasterFrame(cmd, room, arg)
 	if err != nil {
 		return err
 	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if cmd == CmdQueryInfo && room < 15 {
+
+	if cmd == CmdQueryInfo && room < roomCount {
 		m.rooms[room].lastQuery = arg
 	}
-	m.queue = append(m.queue, f)
+
+	m.queue = append(m.queue, frame)
+
 	return nil
 }
 
@@ -102,15 +168,18 @@ func (m *Master) Command(cmd, room, arg byte) error {
 // Port 16 (the repository: host firmware updates) is refused.
 func (m *Master) SendDatagram(dstRoom, dstPort, srcPort byte, data []byte) error {
 	if dstPort == PortRepository || srcPort == PortRepository {
-		return errors.New("abl: the repository port is never used")
+		return errRepositoryPort
 	}
-	f, err := P2PDatagram(OwnRoom, dstRoom, dstPort, srcPort, data)
+
+	frame, err := P2PDatagram(OwnRoom, dstRoom, dstPort, srcPort, data)
 	if err != nil {
 		return err
 	}
+
 	m.mu.Lock()
-	m.own = append(m.own, f)
+	m.own = append(m.own, frame)
 	m.mu.Unlock()
+
 	return nil
 }
 
@@ -118,12 +187,15 @@ func (m *Master) SendDatagram(dstRoom, dstPort, srcPort byte, data []byte) error
 func (m *Master) Active() []byte {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	var out []byte
+
 	for i, r := range m.rooms {
 		if r.active && i != OwnRoom {
 			out = append(out, byte(i))
 		}
 	}
+
 	return out
 }
 
@@ -131,7 +203,8 @@ func (m *Master) Active() []byte {
 // master slot.
 func (m *Master) Sync() {
 	for range 200 {
-		if _, err := m.port.ReadByteWithin(syncGap); errors.Is(err, ErrTimeout) {
+		_, err := m.port.ReadByteWithin(syncGap)
+		if errors.Is(err, ErrTimeout) {
 			return
 		}
 	}
@@ -145,9 +218,13 @@ func (m *Master) Cycle() error {
 			m.sleep(d)
 		}
 	}()
+
 	m.mu.Lock()
-	var frame []byte
-	var own []byte
+
+	var (
+		frame []byte
+		own   []byte
+	)
 	switch {
 	case len(m.queue) > 0:
 		frame, m.queue = m.queue[0], m.queue[1:]
@@ -157,135 +234,174 @@ func (m *Master) Cycle() error {
 		frame = PollFrame(m.nextRoomLocked())
 	}
 	m.mu.Unlock()
-	room := frame[1] & 0x0f
-	if err := m.send(frame); err != nil {
+
+	room := frame[1] & roomMask
+
+	err := m.send(frame)
+	if err != nil {
 		return err
 	}
+
 	if room == OwnRoom {
 		if own == nil {
 			return nil
 		}
-		m.sleep(400 * time.Microsecond)
+
+		m.sleep(ownSlot)
+
 		return m.send(own)
 	}
+
 	reply, err := m.readClient(room)
 	if err != nil {
 		m.miss(room)
+
 		if errors.Is(err, ErrTimeout) {
 			return nil
 		}
+
 		return err
 	}
+
 	m.seen(room)
 	m.dispatch(room, reply)
+
 	return nil
 }
 
 // nextRoomLocked is the next room to poll: every active room, and one silent room in turn,
 // so a host that comes up is found.
 func (m *Master) nextRoomLocked() byte {
-	for range 15 {
-		m.nextIdx = (m.nextIdx + 1) % 15
+	for range roomCount {
+		m.nextIdx = (m.nextIdx + 1) % roomCount
 		if m.nextIdx == OwnRoom {
 			continue
 		}
+
 		r := &m.rooms[m.nextIdx]
 		if r.active || m.nextIdx == m.probeRoom() {
 			return byte(m.nextIdx) //nolint:gosec // 1..14
 		}
 	}
+
 	return 1
 }
 
 // probeRoom is the silent room this round looks at: it turns with the clock, a room per
 // 150 ms.
 func (m *Master) probeRoom() int {
-	return 1 + int(m.now().UnixMilli()/150)%14
+	return 1 + int(m.now().UnixMilli()/probeEvery.Milliseconds())%(roomCount-1)
 }
 
 func (m *Master) send(frame []byte) error {
-	if _, err := m.port.Write(frame); err != nil {
-		return err
+	_, err := m.port.Write(frame)
+	if err != nil {
+		return fmt.Errorf("abl: write: %w", err)
 	}
 	// The bus echoes every byte: read ours back, and a difference is someone else talking.
 	for i, want := range frame {
-		got, err := m.port.ReadByteWithin(4 * byteTime)
+		got, err := m.port.ReadByteWithin(echoWait)
 		if err != nil {
 			return fmt.Errorf("abl: echo byte %d: %w", i, err)
 		}
+
 		if got != want {
 			m.Sync()
+
 			return ErrCollision
 		}
 	}
+
 	return nil
 }
 
 // readClient reads the addressed client's frame, its length by its first byte.
 func (m *Master) readClient(room byte) ([]byte, error) {
-	b0, err := m.port.ReadByteWithin(clientFirst)
+	first, err := m.port.ReadByteWithin(clientFirst)
+	if err != nil {
+		return nil, fmt.Errorf("abl: client frame from room %d: %w", room, err)
+	}
+
+	frame := []byte{first}
+	read := func(n int) error {
+		for len(frame) < n {
+			next, readErr := m.port.ReadByteWithin(echoWait)
+			if readErr != nil {
+				return fmt.Errorf("abl: client frame from room %d after %d bytes: %w", room, len(frame), readErr)
+			}
+
+			frame = append(frame, next)
+		}
+
+		return nil
+	}
+
+	m.mu.Lock()
+	query, dev := m.rooms[room].lastQuery, m.rooms[room].devType
+	m.mu.Unlock()
+
+	need := minClientFrame
+
+	switch {
+	case first == clientQueryReply || first == clientQueryReply2:
+		need = queryReplyLen(query, dev)
+	case first == clientLengthAt3:
+		err = read(lengthAt3Head)
+		if err != nil {
+			return nil, err
+		}
+
+		need = int(frame[3])
+	case first >= clientLengthAt2:
+		err = read(lengthAt2Head)
+		if err != nil {
+			return nil, err
+		}
+
+		need = int(frame[2])
+	default:
+		// A poll reply and the rest: the shortest frame.
+	}
+
+	if need < minClientFrame {
+		return nil, fmt.Errorf("%w %d from room %d", errBadLength, need, room)
+	}
+
+	err = read(need)
 	if err != nil {
 		return nil, err
 	}
-	frame := []byte{b0}
-	read := func(n int) error {
-		for len(frame) < n {
-			b, err := m.port.ReadByteWithin(4 * byteTime)
-			if err != nil {
-				return fmt.Errorf("abl: client frame from room %d after %d bytes: %w", room, len(frame), err)
-			}
-			frame = append(frame, b)
-		}
-		return nil
-	}
-	m.mu.Lock()
-	q, dev := m.rooms[room].lastQuery, m.rooms[room].devType
-	m.mu.Unlock()
-	need := 4
-	switch {
-	case b0 == 0x8b || b0 == 0x8c:
-		need = queryReplyLen(q, dev)
-	case b0 == 0x8a:
-		if err := read(4); err != nil {
-			return nil, err
-		}
-		need = int(frame[3])
-	case b0 >= 0xa0:
-		if err := read(3); err != nil {
-			return nil, err
-		}
-		need = int(frame[2])
-	}
-	if need < 4 {
-		return nil, fmt.Errorf("abl: bad length %d from room %d", need, room)
-	}
-	if err := read(need); err != nil {
-		return nil, err
-	}
+
 	if Checksum(frame) != 0 {
 		return nil, ErrChecksum
 	}
+
 	return frame, nil
 }
 
 func queryReplyLen(query, devType byte) int {
 	switch query {
 	case QueryVersion:
-		if devType == 3 {
-			return 4
+		if devType == speakerTypeColin {
+			return shortQueryReplyLen
 		}
-		return 9
+
+		return versionQueryReplyLen
 	case QuerySerial:
-		return 20
+		return serialQueryReplyLen
+	default:
+		return shortQueryReplyLen
 	}
-	return 4
 }
 
 func (m *Master) miss(room byte) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	r := &m.rooms[room]
-	if r.misses++; r.misses > inactiveAfter {
+
+	r.misses++
+	if r.misses > inactiveAfter {
 		r.active = false
 	}
 }
@@ -293,35 +409,43 @@ func (m *Master) miss(room byte) {
 func (m *Master) seen(room byte) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.rooms[room].active, m.rooms[room].misses = true, 0
 }
 
-func (m *Master) dispatch(room byte, f []byte) {
+func (m *Master) dispatch(room byte, frame []byte) {
 	if m.Events == nil {
 		return
 	}
-	switch f[0] {
-	case 0x80:
-		if r, err := ParsePollReply(f); err == nil {
-			m.Events(Event{Room: room, Poll: &r})
+
+	switch frame[0] {
+	case clientPollReply:
+		reply, err := ParsePollReply(frame)
+		if err == nil {
+			m.Events(Event{Room: room, Poll: &reply, Query: nil, QueryOf: 0, Datagram: nil})
 		}
-	case 0x8b, 0x8c:
-		if len(f) >= 3 && m.lastQuery(room) == QuerySpeakerType {
+	case clientQueryReply, clientQueryReply2:
+		if len(frame) >= 3 && m.lastQuery(room) == QuerySpeakerType {
 			m.mu.Lock()
-			m.rooms[room].devType = f[2]
+			m.rooms[room].devType = frame[2]
 			m.mu.Unlock()
 		}
-		m.Events(Event{Room: room, Query: f, QueryOf: m.lastQuery(room)})
-	case 0xe0:
-		if d, err := ParseP2PDatagram(f); err == nil {
-			m.Events(Event{Room: room, Datagram: d})
+
+		m.Events(Event{Room: room, Poll: nil, Query: frame, QueryOf: m.lastQuery(room), Datagram: nil})
+	case clientDatagram:
+		datagram, err := ParseP2PDatagram(frame)
+		if err == nil {
+			m.Events(Event{Room: room, Poll: nil, Query: nil, QueryOf: 0, Datagram: datagram})
 		}
+	default:
+		// Nothing the session takes.
 	}
 }
 
 func (m *Master) lastQuery(room byte) byte {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	return m.rooms[room].lastQuery
 }
 
@@ -337,35 +461,45 @@ const (
 // [0xE0][src room][length][dst room][header 6][data][xor], the header
 // [first segment][dst port][src port][segments left][checksum hi][checksum lo].
 func P2PDatagram(src, dst, dstPort, srcPort byte, data []byte) ([]byte, error) {
-	if len(data) > 244 {
-		return nil, fmt.Errorf("abl: datagram of %d bytes needs segments", len(data))
+	if len(data) > maxDatagramData {
+		return nil, fmt.Errorf("abl: datagram of %d bytes %w", len(data), errNeedsSegments)
 	}
-	if !P2PLengthOK(len(data) + 11) {
+
+	if !P2PLengthOK(len(data) + p2pOverhead) {
 		// A P2P frame never has a multiple of 14 bytes (stock pads around a host firmware
 		// that crashes on them): one more byte of data.
 		data = append(append([]byte(nil), data...), 0)
 	}
-	payload := make([]byte, 0, 6+len(data))
-	payload = append(payload, 0x08, dstPort, srcPort, 0, 0, 0)
+
+	payload := make([]byte, 0, datagramHeaderLen+len(data))
+	payload = append(payload, segmentFirst, dstPort, srcPort, 0, 0, 0)
 	payload = append(payload, data...)
 	sum := InternetChecksum(payload)
-	payload[4], payload[5] = byte(sum>>8), byte(sum&0xff)
-	f := append([]byte{0xe0, src & 0x0f, byte(len(payload) + 5), dst & 0x0f}, payload...) //nolint:gosec // at most 250: data is capped at 244 above
-	return append(f, Checksum(f)), nil
+	payload[4], payload[5] = byte(sum>>byteBits), byte(sum&byteMask)
+	// At most 250 bytes: data is capped at maxDatagramData above.
+	length := byte(len(payload) + p2pHeadLen + 1) //nolint:gosec // capped above
+	frame := append([]byte{clientDatagram, src & roomMask, length, dst & roomMask}, payload...)
+
+	return append(frame, Checksum(frame)), nil
 }
 
 // ParseP2PDatagram checks a P2P 0xE0 frame and its datagram checksum.
-func ParseP2PDatagram(f []byte) (*Datagram, error) {
-	if len(f) < 11 || f[0] != 0xe0 || int(f[2]) != len(f) {
-		return nil, fmt.Errorf("abl: not a datagram frame: % x", f)
+func ParseP2PDatagram(frame []byte) (*Datagram, error) {
+	if len(frame) < p2pOverhead || frame[0] != clientDatagram || int(frame[2]) != len(frame) {
+		return nil, fmt.Errorf("%w: % x", errNotDatagram, frame)
 	}
-	if Checksum(f) != 0 {
+
+	if Checksum(frame) != 0 {
 		return nil, ErrChecksum
 	}
-	payload := f[4 : len(f)-1]
+
+	payload := frame[p2pHeadLen : len(frame)-1]
 	if InternetChecksum(payload) != 0 {
-		return nil, errors.New("abl: datagram checksum")
+		return nil, errDatagramChecksum
 	}
-	return &Datagram{SrcRoom: f[1] & 0x0f, DstRoom: f[3] & 0x0f, DstPort: payload[1], SrcPort: payload[2],
-		Data: append([]byte(nil), payload[6:]...)}, nil
+
+	return &Datagram{
+		SrcRoom: frame[1] & roomMask, DstRoom: frame[3] & roomMask, DstPort: payload[1], SrcPort: payload[2],
+		Data: append([]byte(nil), payload[datagramHeaderLen:]...),
+	}, nil
 }

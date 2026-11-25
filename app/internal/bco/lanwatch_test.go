@@ -5,7 +5,6 @@ package bco
 
 import (
 	"context"
-	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -28,26 +27,41 @@ func TestLANWatchCyclesOnlyWhenTheLinkIsMissing(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cycles, applied := 0, ""
+
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
+
 			w := LANWatch{
 				Link: func() string {
 					if tc.upAfter >= 0 && cycles >= tc.upAfter {
 						return "eth0"
 					}
+
 					if !tc.wantApplied && cycles == tc.wantCycles {
 						cancel() // out of cycles: stop deterministically, no wall-clock timer
 					}
+
 					return ""
 				},
-				Cycle: func() error { cycles++; return nil },
-				Apply: func(n string) error { applied = n; cancel(); return nil },
+				Cycle: func() error {
+					cycles++
+
+					return nil
+				},
+				Apply: func(n string) error {
+					applied = n
+
+					cancel()
+
+					return nil
+				},
 				Wait:  time.Millisecond,
 				Tries: 2,
 				Poll:  time.Millisecond,
-				Log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+				Log:   slog.New(slog.DiscardHandler),
 			}
 			w.Run(ctx)
+
 			if cycles != tc.wantCycles || (applied == "eth0") != tc.wantApplied {
 				t.Fatalf("cycles=%d applied=%q, want %d cycles, applied=%v", cycles, applied, tc.wantCycles, tc.wantApplied)
 			}
@@ -59,6 +73,7 @@ func TestLANWatchCyclesOnlyWhenTheLinkIsMissing(t *testing.T) {
 func TestLANWatchCyclesWhenTheLinkIsLostLater(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
 	polls, cycles, applies := 0, 0, 0
 	w := LANWatch{
 		Link: func() string {
@@ -66,21 +81,28 @@ func TestLANWatchCyclesWhenTheLinkIsLostLater(t *testing.T) {
 			if polls > 3 && cycles == 0 {
 				return "" // lost after a few looks
 			}
+
 			return "eth0"
 		},
-		Cycle: func() error { cycles++; return nil },
+		Cycle: func() error {
+			cycles++
+
+			return nil
+		},
 		Apply: func(string) error {
 			if applies++; applies == 2 {
 				cancel()
 			}
+
 			return nil
 		},
 		Wait:  time.Millisecond,
 		Tries: 2,
 		Poll:  time.Millisecond,
-		Log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Log:   slog.New(slog.DiscardHandler),
 	}
 	w.Run(ctx)
+
 	if cycles != 1 || applies != 2 {
 		t.Fatalf("cycles=%d applies=%d, want 1 cycle and 2 applies", cycles, applies)
 	}
@@ -90,6 +112,7 @@ func TestUdhcpcPidOnlyNamesARunningUdhcpc(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("udhcpcPid reads /proc")
 	}
+
 	dir := t.TempDir()
 	// A sleep renamed to udhcpc stands in for the real one: /proc/<pid>/comm is the file name.
 	bin := dir + "/udhcpc"
@@ -98,13 +121,18 @@ func TestUdhcpcPidOnlyNamesARunningUdhcpc(t *testing.T) {
 	} else if err := os.WriteFile(bin, b, 0o755); err != nil {
 		t.Fatal(err)
 	}
+
 	cmd := exec.Command(bin, "30")
-	if err := cmd.Start(); err != nil {
+
+	err := cmd.Start()
+	if err != nil {
 		t.Fatal(err)
 	}
 	defer cmd.Process.Kill()
+
 	write := func(name, body string) string {
 		os.WriteFile(dir+"/"+name, []byte(body), 0o644)
+
 		return dir + "/" + name
 	}
 	for _, tc := range []struct {
@@ -133,26 +161,31 @@ func TestLANWatchDoesNotCycleDuringAFlash(t *testing.T) {
 		Link: func() string { return link },
 		Cycle: func() error {
 			cycles++
+
 			return nil
 		},
 		Apply: func(string) error { return nil },
 		Wait:  5 * time.Millisecond,
 		Tries: 2,
 		Poll:  time.Millisecond,
-		Log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Log:   slog.New(slog.DiscardHandler),
 		Held: func() bool {
 			held--
 			if held <= 0 {
 				link = "eth0"
 			}
+
 			return held > 0
 		},
 	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
 	if !w.up(ctx) {
 		t.Fatal("link not taken after the flash ended")
 	}
+
 	if cycles != 0 {
 		t.Fatalf("BCO power-cycled %d times during a flash", cycles)
 	}
@@ -160,16 +193,21 @@ func TestLANWatchDoesNotCycleDuringAFlash(t *testing.T) {
 
 func TestFlashHoldExpires(t *testing.T) {
 	path := t.TempDir() + "/bco-flash"
+
 	now := time.Now()
 	if flashHeld(path, now) {
 		t.Fatal("held without a hold file")
 	}
-	if err := os.WriteFile(path, nil, 0o644); err != nil {
+
+	err := os.WriteFile(path, nil, 0o644)
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	if !flashHeld(path, now) {
 		t.Fatal("fresh hold not seen")
 	}
+
 	if flashHeld(path, now.Add(flashHoldMax+time.Minute)) {
 		t.Fatal("a hold left by a dead flash never expires")
 	}
@@ -180,30 +218,50 @@ func TestFlashHoldExpires(t *testing.T) {
 func TestLANWatchCyclesAWedgedRadio(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
 	checks, cycles, evidence := 0, 0, 0
+
 	var at []int
+
 	w := LANWatch{
-		Link:     func() string { return "wlan0" },
-		Cycle:    func() error { cycles++; at = append(at, checks); return nil },
-		Evidence: func(context.Context) string { evidence = cycles + 1; return "" },
+		Link: func() string { return "wlan0" },
+		Cycle: func() error {
+			cycles++
+
+			at = append(at, checks)
+
+			return nil
+		},
+		Evidence: func(context.Context) string {
+			evidence = cycles + 1
+
+			return ""
+		},
 		Apply: func(string) error {
 			if cycles == 2 {
 				cancel()
 			}
+
 			return nil
 		},
-		Radio:      func() bool { checks++; return false },
+		Radio: func() bool {
+			checks++
+
+			return false
+		},
 		RadioPolls: 2,
 		RadioMiss:  3,
 		Wait:       time.Millisecond,
 		Tries:      2,
 		Poll:       time.Millisecond,
-		Log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Log:        slog.New(slog.DiscardHandler),
 	}
 	w.Run(ctx)
+
 	if len(at) != 2 || at[0] != 3 || at[1] != 9 {
 		t.Fatalf("cycled after checks %v, want [3 9]", at)
 	}
+
 	if evidence != 2 {
 		t.Fatalf("evidence taken before cycle %d, want it before each cycle", evidence)
 	}
@@ -211,15 +269,20 @@ func TestLANWatchCyclesAWedgedRadio(t *testing.T) {
 
 func TestDefaultGateway(t *testing.T) {
 	p := t.TempDir() + "/route"
+
 	route := "Iface\tDestination\tGateway \tFlags\n" +
 		"usb0\t0007A8C0\t00000000\t0001\n" +
 		"wlan0\t00000000\t010200C0\t0003\n"
-	if err := os.WriteFile(p, []byte(route), 0o644); err != nil {
+
+	err := os.WriteFile(p, []byte(route), 0o644)
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	if got := defaultGateway(p); got != "192.0.2.1" {
 		t.Fatalf("gateway = %q", got)
 	}
+
 	if got := defaultGateway(p + ".missing"); got != "" {
 		t.Fatalf("missing file gateway = %q", got)
 	}
@@ -237,11 +300,16 @@ func TestUARTLinesDropsBlanksAndJoins(t *testing.T) {
 // nothing, and its failed pings are what count.
 func TestRadioCheckJudgesTheRadioNotTheGateway(t *testing.T) {
 	var rx uint64
+
 	rxOK := true
 	counter := func() (uint64, bool) { return rx, rxOK }
 	noPing := func() bool { return false }
 
-	icmpFiltered := radioCheck(noPing, func() (uint64, bool) { rx += 7; return rx, true })
+	icmpFiltered := radioCheck(noPing, func() (uint64, bool) {
+		rx += 7
+
+		return rx, true
+	})
 	for i := range 5 {
 		if !icmpFiltered() && i > 0 {
 			t.Fatalf("check %d: a receiving radio behind an ICMP-dropping gateway failed", i)
@@ -249,6 +317,7 @@ func TestRadioCheckJudgesTheRadioNotTheGateway(t *testing.T) {
 	}
 
 	rx = 100
+
 	wedged := radioCheck(noPing, counter)
 	for i := range 5 {
 		if wedged() {
@@ -256,15 +325,21 @@ func TestRadioCheckJudgesTheRadioNotTheGateway(t *testing.T) {
 		}
 	}
 
-	pingSendsARP := radioCheck(func() bool { rx++; return false }, counter)
+	pingSendsARP := radioCheck(func() bool {
+		rx++
+
+		return false
+	}, counter)
 	if !pingSendsARP() {
 		t.Fatal("the failed ping's answered ARP is evidence of a working radio")
 	}
 
 	rxOK = false
+
 	if radioCheck(func() bool { return true }, counter)() != true {
 		t.Fatal("a ping that answers passes without counters")
 	}
+
 	if radioCheck(noPing, counter)() {
 		t.Fatal("no counter and no ping is no evidence of a working radio")
 	}

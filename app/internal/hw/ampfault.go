@@ -26,6 +26,7 @@ func NewAmpFault(gpio int) *AmpFault {
 	if n, err := strconv.Atoi(os.Getenv("AMP_FAULT_GPIO")); err == nil {
 		gpio = n
 	}
+
 	return &AmpFault{gpio: gpio, every: 500 * time.Millisecond}
 }
 
@@ -46,13 +47,16 @@ func ampFaultLatch(was, fault bool, healthy int) (bool, int) {
 	if fault {
 		return true, 0
 	}
+
 	if !was {
 		return false, 0
 	}
+
 	healthy++
 	if healthy >= ampFaultClearReads {
 		return false, 0
 	}
+
 	return true, healthy
 }
 
@@ -67,11 +71,14 @@ func (f *AmpFault) Active() bool { return f.active.Load() }
 func (f *AmpFault) Run(ctx context.Context, modelName string, mute func(), log *slog.Logger) {
 	if f.gpio <= 0 {
 		log.Info("ampfault: no fault GPIO for this model; monitor disabled", "model", modelName)
+
 		return
 	}
+
 	gpioDir, err := exportGPIO(f.gpio)
 	if err != nil {
 		log.Warn("ampfault: export gpio", "gpio", f.gpio, "err", err)
+
 		return
 	}
 	// Allow udev a moment to create the attributes of a line exported just now.
@@ -80,33 +87,45 @@ func (f *AmpFault) Run(ctx context.Context, modelName string, mute func(), log *
 		return
 	case <-time.After(50 * time.Millisecond):
 	}
+
 	valuePath := filepath.Join(gpioDir, "value")
+
 	t := time.NewTicker(f.every)
 	defer t.Stop()
+
 	fails, healthy := 0, 0
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
 		}
+
 		raw, err := os.ReadFile(valuePath)
 		if err != nil {
 			fails++
 			if fails >= ampFaultReadFailLimit {
 				log.Warn("ampfault: giving up after repeated read failures",
 					"path", valuePath, "attempts", fails, "err", err)
+
 				return
 			}
+
 			log.Warn("ampfault: read gpio", "path", valuePath, "err", err)
+
 			continue
 		}
+
 		fails = 0
 		// Active low: a healthy amplifier holds the line high, as stock's idle ST20 shows.
 		was := f.active.Load()
+
 		var fault bool
+
 		fault, healthy = ampFaultLatch(was, len(raw) > 0 && raw[0] == '0', healthy)
 		f.active.Store(fault)
+
 		switch {
 		case fault && !was:
 			// Mute now for latency; trackOwnership keeps it muted while the latch is set.

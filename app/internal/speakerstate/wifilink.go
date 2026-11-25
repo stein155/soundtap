@@ -33,8 +33,9 @@ const (
 )
 
 type wifiLink struct {
-	ssid string // "" when not associated
 	wifiSignal
+
+	ssid string // "" when not associated
 }
 
 // wifiSignal is what SIGNAL_POLL says about the link; zero values are unknown.
@@ -50,69 +51,86 @@ type wifiSignal struct {
 // fine, not associated", which is ok with an empty ssid.
 func (s *Speaker) liveWifiLink(ctx context.Context) (wifiLink, bool) {
 	s.lock()
+
 	if !s.wifiLinkAt.IsZero() && time.Since(s.wifiLinkAt) < wifiLinkTTL {
 		l, ok := s.wifiLinkCache, s.wifiLinkOK
 		s.unlock()
+
 		return l, ok
 	}
+
 	s.unlock()
 
-	l, ok := readWifiLink(ctx)
+	link, found := readWifiLink(ctx)
 
 	s.lock()
-	s.wifiLinkCache, s.wifiLinkOK, s.wifiLinkAt = l, ok, time.Now()
+	s.wifiLinkCache, s.wifiLinkOK, s.wifiLinkAt = link, found, time.Now()
 	s.unlock()
-	return l, ok
+
+	return link, found
 }
 
 func readWifiLink(ctx context.Context) (wifiLink, bool) {
 	if os.Getenv("SOUNDTAP_WIFI_MODE") == wifiModeBCO {
 		ssid, err := bco.CurrentSSID(ctx, os.Getenv("SOUNDTAP_BCO_TTY"))
-		return wifiLink{ssid: ssid}, err == nil
+
+		return wifiLink{ssid: ssid, wifiSignal: wifiSignal{dbm: 0, mbps: 0, mhz: 0, signal: ""}}, err == nil
 	}
-	cctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+
+	cctx, cancel := context.WithTimeout(ctx, wpaTimeout)
 	defer cancel()
-	c, err := wpactrl.Dial(wpaCtrlPath)
+
+	client, err := wpactrl.Dial(wpaCtrlPath)
 	if err != nil {
-		return wifiLink{}, false
+		return wifiLink{ssid: "", wifiSignal: wifiSignal{dbm: 0, mbps: 0, mhz: 0, signal: ""}}, false
 	}
-	defer c.Close()
-	out, err := c.Request(cctx, "STATUS")
+	defer client.Close()
+
+	out, err := client.Request(cctx, "STATUS")
 	if err != nil {
-		return wifiLink{}, false
+		return wifiLink{ssid: "", wifiSignal: wifiSignal{dbm: 0, mbps: 0, mhz: 0, signal: ""}}, false
 	}
+
 	ssid, associated := parseWpaStatus(out)
 	if !associated {
-		return wifiLink{}, true
+		return wifiLink{ssid: "", wifiSignal: wifiSignal{dbm: 0, mbps: 0, mhz: 0, signal: ""}}, true
 	}
-	return wifiLink{ssid: ssid, wifiSignal: readWifiSignal(cctx, c)}, true
+
+	return wifiLink{ssid: ssid, wifiSignal: readWifiSignal(cctx, client)}, true
 }
 
 // wpaCtrlPath is wpa_supplicant's control socket for the station; a test points it at a
 // fake.
+//
+//nolint:gochecknoglobals // see above.
 var wpaCtrlPath = filepath.Join(wpactrl.Dir, stationIface)
 
 // parseWpaStatus pulls the associated SSID out of a station's STATUS.
 // Anything short of wpa_state=COMPLETED is reported as not associated.
 func parseWpaStatus(out string) (string, bool) {
 	var ssid, mode, state string
-	for _, line := range strings.Split(out, "\n") {
-		k, v, found := strings.Cut(strings.TrimLeft(strings.TrimRight(line, "\r"), " \t"), "=") // keep SSID spaces
+
+	for line := range strings.SplitSeq(out, "\n") {
+		k, value, found := strings.Cut(strings.TrimLeft(strings.TrimRight(line, "\r"), " \t"), "=") // keep SSID spaces
 		if !found {
 			continue
 		}
+
 		switch k {
 		case "ssid":
-			ssid = v
+			ssid = value
 		case "mode":
-			mode = v
+			mode = value
 		case "wpa_state":
-			state = v
+			state = value
+		default: // the other STATUS lines say nothing this reads
 		}
 	}
+
 	if mode != "station" || state != "COMPLETED" || ssid == "" {
 		return "", false
 	}
+
 	return ssid, true
 }
 
@@ -121,8 +139,9 @@ func parseWpaStatus(out string) (string, bool) {
 func readWifiSignal(ctx context.Context, c *wpactrl.Conn) wifiSignal {
 	out, err := c.Request(ctx, "SIGNAL_POLL")
 	if err != nil {
-		return wifiSignal{}
+		return wifiSignal{signal: "", dbm: 0, mbps: 0, mhz: 0}
 	}
+
 	return parseWifiSignal(out)
 }
 
@@ -130,25 +149,31 @@ func readWifiSignal(ctx context.Context, c *wpactrl.Conn) wifiSignal {
 // whole signal unknown; speed and frequency only count when positive.
 func parseWifiSignal(out string) wifiSignal {
 	var sig wifiSignal
-	for _, line := range strings.Split(out, "\n") {
-		k, v, _ := strings.Cut(strings.TrimSpace(line), "=")
-		n, err := strconv.Atoi(strings.TrimSpace(v))
+
+	for line := range strings.SplitSeq(out, "\n") {
+		key, v, _ := strings.Cut(strings.TrimSpace(line), "=")
+
+		count, err := strconv.Atoi(strings.TrimSpace(v))
 		if err != nil {
 			continue
 		}
-		switch k {
+
+		switch key {
 		case "RSSI":
-			if sig.signal = dbmToken(n); sig.signal != "" {
-				sig.dbm = n
+			if sig.signal = dbmToken(count); sig.signal != "" {
+				sig.dbm = count
 			}
 		case "LINKSPEED":
-			sig.mbps = max(n, 0)
+			sig.mbps = max(count, 0)
 		case "FREQUENCY":
-			sig.mhz = max(n, 0)
+			sig.mhz = max(count, 0)
+		default: // the other SIGNAL_POLL lines say nothing this reads
 		}
 	}
+
 	if sig.signal == "" {
-		return wifiSignal{}
+		return wifiSignal{signal: "", dbm: 0, mbps: 0, mhz: 0}
 	}
+
 	return sig
 }

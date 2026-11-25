@@ -20,6 +20,16 @@ const (
 	Height = 100
 )
 
+// framePerm is the mode a framebuffer path gets when a frame write creates it.
+const framePerm = 0o600
+
+// frameSizeError is a frame of the wrong size handed to Draw.
+type frameSizeError struct{ got int }
+
+func (e frameSizeError) Error() string {
+	return fmt.Sprintf("oled: frame is %d bytes, want %d", e.got, Width*Height)
+}
+
 // Framebuffer writes frames to the panel and can restore what was on it.
 // The first Draw snapshots the current contents; Restore puts them back.
 // Safe for concurrent use.
@@ -35,7 +45,7 @@ type Framebuffer struct {
 // NewFramebuffer targets /dev/fb0 or spidev:/dev/spidev1.0. SPI is not opened
 // until the first Draw.
 func NewFramebuffer(path string) *Framebuffer {
-	return &Framebuffer{path: path}
+	return &Framebuffer{path: path, mu: sync.Mutex{}, backup: nil, drawing: false, spi: nil}
 }
 
 // Available reports whether path is a readable framebuffer with the panel's
@@ -45,9 +55,12 @@ func NewFramebuffer(path string) *Framebuffer {
 func Available(path string) bool {
 	if spiPath, ok := parseSPIPath(path); ok {
 		_, err := os.Stat(spiPath)
+
 		return err == nil
 	}
+
 	b, err := os.ReadFile(path)
+
 	return err == nil && len(b) == Width*Height
 }
 
@@ -55,31 +68,46 @@ func Available(path string) bool {
 // the previous contents on the first call since the last Restore.
 func (f *Framebuffer) Draw(pix []byte) error {
 	if len(pix) != Width*Height {
-		return fmt.Errorf("oled: frame is %d bytes, want %d", len(pix), Width*Height)
+		return frameSizeError{got: len(pix)}
 	}
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
+
 	if spiPath, ok := parseSPIPath(f.path); ok {
 		if f.spi == nil {
 			spi, err := openSPIOLED(spiPath, f.path)
 			if err != nil {
 				return err
 			}
+
 			f.spi = spi
 		}
+
 		if !f.drawing && len(f.spi.latest) == Width*Height {
 			f.backup = append([]byte(nil), f.spi.latest...)
 		}
+
 		f.drawing = true
+
 		return f.spi.draw(pix)
 	}
+
 	if !f.drawing {
-		if b, err := os.ReadFile(f.path); err == nil && len(b) == Width*Height {
-			f.backup = append([]byte(nil), b...)
+		shown, err := os.ReadFile(f.path)
+		if err == nil && len(shown) == Width*Height {
+			f.backup = append([]byte(nil), shown...)
 		}
+
 		f.drawing = true
 	}
-	return os.WriteFile(f.path, pix, 0o600)
+
+	err := os.WriteFile(f.path, pix, framePerm)
+	if err != nil {
+		return fmt.Errorf("oled: draw: %w", err)
+	}
+
+	return nil
 }
 
 // Restore writes the snapshot taken by the first Draw back to the panel.
@@ -87,15 +115,22 @@ func (f *Framebuffer) Draw(pix []byte) error {
 func (f *Framebuffer) Restore() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	b := f.backup
+
+	saved := f.backup
 	wasDrawing := f.drawing
 	f.drawing = false
+
 	f.backup = nil
-	if wasDrawing && len(b) == Width*Height {
+	if wasDrawing && len(saved) == Width*Height {
 		if f.spi != nil {
-			return f.spi.draw(b)
+			return f.spi.draw(saved)
 		}
-		return os.WriteFile(f.path, b, 0o600)
+
+		err := os.WriteFile(f.path, saved, framePerm)
+		if err != nil {
+			return fmt.Errorf("oled: restore: %w", err)
+		}
 	}
+
 	return nil
 }

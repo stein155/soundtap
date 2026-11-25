@@ -20,41 +20,58 @@ import (
 // so the spec has to say what the handlers really write. This runs the handlers the test
 // speaker can answer and checks each body against its 200 schema: an undeclared field, a
 // missing required one or a wrong type fails here, not as an undefined on a real speaker.
-// The struct-backed schemas are also checked field by field in types_contract_test.go,
+// The struct-backed schemas are also checked field by field in types_contract_internal_test.go,
 // which covers the ones this speaker cannot answer (Wi-Fi scan, firmware check, UPnP).
 func TestResponsesMatchOpenAPI(t *testing.T) {
+	t.Parallel()
+
 	spec := loadSpec(t)
-	h, sp := newServer(t)
-	if err := sp.StorePreset(context.Background(), 1, "TUNEIN", "stationurl", "/v1/playback/station/s12345", "Radio 2", "https://example.org/logo.png"); err != nil {
+
+	handler, spk := newServer(t)
+
+	err := spk.StorePreset(context.Background(), 1, "TUNEIN", "stationurl", "/v1/playback/station/s12345",
+		"Radio 2", "https://example.org/logo.png")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if rec := do(t, h, "POST", "/api/favorites", `{"source":"TUNEIN","name":"Radio 2","location":"s12345","art":""}`); rec.Code != 204 {
+
+	const favorite = `{"source":"TUNEIN","name":"Radio 2","location":"s12345","art":""}`
+	if rec := do(t, handler, "POST", "/api/favorites", favorite); rec.Code != 204 {
 		t.Fatalf("add favorite: %d %s", rec.Code, rec.Body)
 	}
+
 	for _, path := range []string{
 		"/api/info", "/api/version", "/api/settings", "/api/now", "/api/presets", "/api/recent",
 		"/api/favorites", "/api/volume", "/api/sleep", "/api/devices", "/api/channel", "/api/position", "/api/health",
 	} {
-		checkResponse(t, spec, path, do(t, h, "GET", path, ""))
+		checkResponse(t, spec, path, do(t, handler, "GET", path, ""))
 	}
 	// The release list cannot be fetched without the network; this is its unreachable answer.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
+
 	req := httptest.NewRequestWithContext(ctx, "GET", "/api/releases", nil)
 	req.Host = "127.0.0.1:8000"
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
+	handler.ServeHTTP(rec, req)
 	checkResponse(t, spec, "/api/releases", rec)
 }
 
 // The checker itself: a renamed field must fail it.
 func TestSchemaCheckCatchesRename(t *testing.T) {
+	t.Parallel()
+
 	spec := loadSpec(t)
-	var v any
-	if err := json.Unmarshal([]byte(`{"minutes":0,"endAt":""}`), &v); err != nil {
+
+	var doc any
+
+	err := json.Unmarshal([]byte(`{"minutes":0,"endAt":""}`), &doc)
+	if err != nil {
 		t.Fatal(err)
 	}
-	got := checkSchema(spec, map[string]any{"$ref": "#/components/schemas/Sleep"}, v, "Sleep")
+
+	got := checkSchema(spec, map[string]any{"$ref": "#/components/schemas/Sleep"}, doc, "Sleep")
+
 	want := []string{"Sleep: endsAt is required", "Sleep.endAt is not in the schema"}
 	if !slices.Equal(got, want) {
 		t.Errorf("got %q, want %q", got, want)
@@ -63,119 +80,157 @@ func TestSchemaCheckCatchesRename(t *testing.T) {
 
 func loadSpec(t *testing.T) map[string]any {
 	t.Helper()
-	b, err := os.ReadFile("openapi.json")
+
+	raw, err := os.ReadFile("openapi.json")
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	var spec map[string]any
-	if err := json.Unmarshal(b, &spec); err != nil {
+
+	err = json.Unmarshal(raw, &spec)
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	return spec
 }
 
 func checkResponse(t *testing.T, spec map[string]any, path string, rec *httptest.ResponseRecorder) {
 	t.Helper()
+
 	if rec.Code != 200 {
 		t.Errorf("GET %s: %d %s", path, rec.Code, rec.Body)
+
 		return
 	}
-	schema, ok := dig(spec, "paths", path, "get", "responses", "200", "content", "application/json", "schema").(map[string]any)
+
+	node := dig(spec, "paths", path, "get", "responses", "200", "content", "application/json", "schema")
+
+	schema, ok := node.(map[string]any)
 	if !ok {
 		t.Errorf("openapi.json has no 200 schema for GET %s", path)
+
 		return
 	}
-	var v any
-	if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
+
+	var doc any
+
+	err := json.Unmarshal(rec.Body.Bytes(), &doc)
+	if err != nil {
 		t.Fatalf("GET %s: %v", path, err)
 	}
-	for _, p := range checkSchema(spec, schema, v, path) {
+
+	for _, p := range checkSchema(spec, schema, doc, path) {
 		t.Error(p)
 	}
 }
 
-func dig(v any, keys ...string) any {
+func dig(node any, keys ...string) any {
 	for _, k := range keys {
-		m, _ := v.(map[string]any)
-		v = m[k]
+		m, _ := node.(map[string]any)
+		node = m[k]
 	}
-	return v
+
+	return node
 }
 
 // checkSchema checks v against the subset of OpenAPI 3.0 the spec uses: $ref, type,
 // properties, required, items, enum, nullable, and allOf with one $ref (how 3.0 makes a
 // $ref nullable). An object with properties is closed: a field the schema does not name
 // is a problem, so a rename shows on both ends.
-func checkSchema(spec, s map[string]any, v any, at string) []string {
-	if v == nil {
-		if s["nullable"] == true {
+func checkSchema(spec, schema map[string]any, value any, where string) []string {
+	if value == nil {
+		if nullable, _ := schema["nullable"].(bool); nullable {
 			return nil
 		}
-		return []string{at + " is null"}
+
+		return []string{where + " is null"}
 	}
-	if all, ok := s["allOf"].([]any); ok && len(all) == 1 {
-		s, _ = all[0].(map[string]any)
+
+	if all, ok := schema["allOf"].([]any); ok && len(all) == 1 {
+		schema, _ = all[0].(map[string]any)
 	}
-	if ref, ok := s["$ref"].(string); ok {
+
+	if ref, ok := schema["$ref"].(string); ok {
 		target, _ := dig(spec, strings.Split(strings.TrimPrefix(ref, "#/"), "/")...).(map[string]any)
 		if target == nil {
-			return []string{at + ": unresolved " + ref}
+			return []string{where + ": unresolved " + ref}
 		}
-		return checkSchema(spec, target, v, at)
+
+		return checkSchema(spec, target, value, where)
 	}
-	if enum, ok := s["enum"].([]any); ok && !slices.Contains(enum, v) {
-		return []string{fmt.Sprintf("%s = %v, not one of %v", at, v, enum)}
+
+	if enum, ok := schema["enum"].([]any); ok && !slices.Contains(enum, value) {
+		return []string{fmt.Sprintf("%s = %v, not one of %v", where, value, enum)}
 	}
+
 	var out []string
-	switch s["type"] {
+
+	switch schema["type"] {
 	case "object":
-		m, ok := v.(map[string]any)
-		props, _ := s["properties"].(map[string]any)
-		if !ok || props == nil {
-			return typeProblem(at, "an object", ok)
+		obj, ok := value.(map[string]any)
+
+		if !ok {
+			return typeProblem(where, "an object")
 		}
-		required, _ := s["required"].([]any)
+
+		props, _ := schema["properties"].(map[string]any)
+		if props == nil {
+			return nil
+		}
+
+		required, _ := schema["required"].([]any)
 		for _, r := range required {
-			if _, ok := m[r.(string)]; !ok {
-				out = append(out, fmt.Sprintf("%s: %s is required", at, r))
+			if _, ok := obj[r.(string)]; !ok {
+				out = append(out, fmt.Sprintf("%s: %s is required", where, r))
 			}
 		}
-		for _, k := range slices.Sorted(maps.Keys(m)) {
-			ps, ok := props[k].(map[string]any)
+
+		for _, key := range slices.Sorted(maps.Keys(obj)) {
+			propSchema, ok := props[key].(map[string]any)
 			if !ok {
-				out = append(out, at+"."+k+" is not in the schema")
+				out = append(out, where+"."+key+" is not in the schema")
+
 				continue
 			}
-			out = append(out, checkSchema(spec, ps, m[k], at+"."+k)...)
+
+			out = append(out, checkSchema(spec, propSchema, obj[key], where+"."+key)...)
 		}
 	case "array":
-		a, ok := v.([]any)
+		elems, ok := value.([]any)
 		if !ok {
-			return typeProblem(at, "an array", false)
+			return typeProblem(where, "an array")
 		}
-		items, _ := s["items"].(map[string]any)
-		for i, e := range a {
-			out = append(out, checkSchema(spec, items, e, fmt.Sprintf("%s[%d]", at, i))...)
+
+		items, _ := schema["items"].(map[string]any)
+		for i, e := range elems {
+			out = append(out, checkSchema(spec, items, e, fmt.Sprintf("%s[%d]", where, i))...)
 		}
 	case "string":
-		_, ok := v.(string)
-		return typeProblem(at, "a string", ok)
+		if _, ok := value.(string); !ok {
+			return typeProblem(where, "a string")
+		}
 	case "boolean":
-		_, ok := v.(bool)
-		return typeProblem(at, "a boolean", ok)
+		if _, ok := value.(bool); !ok {
+			return typeProblem(where, "a boolean")
+		}
 	case "number":
-		_, ok := v.(float64)
-		return typeProblem(at, "a number", ok)
+		if _, ok := value.(float64); !ok {
+			return typeProblem(where, "a number")
+		}
 	case "integer":
-		f, ok := v.(float64)
-		return typeProblem(at, "an integer", ok && f == math.Trunc(f))
+		if f, ok := value.(float64); !ok || f != math.Trunc(f) {
+			return typeProblem(where, "an integer")
+		}
+	default:
+		// A schema without a type takes any value.
 	}
+
 	return out
 }
 
-func typeProblem(at, want string, ok bool) []string {
-	if ok {
-		return nil
-	}
+// typeProblem says the value at the given place is not of the wanted type.
+func typeProblem(at, want string) []string {
 	return []string{at + " is not " + want}
 }

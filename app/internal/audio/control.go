@@ -5,6 +5,7 @@ package audio
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -40,6 +41,7 @@ func (m *Mixer) Queued() int {
 	if ch := m.queue.Load(); ch != nil {
 		return len(*ch)
 	}
+
 	return 0
 }
 
@@ -82,9 +84,11 @@ func (m *Mixer) refillTarget() int {
 	if n := m.live.Load(); n > 0 {
 		return int(n)
 	}
+
 	if n := m.prebuffer.Load(); n > 0 {
 		return int(n)
 	}
+
 	return prebufferBlocks
 }
 
@@ -129,8 +133,15 @@ func (m *Mixer) SetPrebuffer(d time.Duration) {
 func (m *Mixer) Flush() {
 	m.flushWakeMu.Lock()
 	defer m.flushWakeMu.Unlock()
+
 	m.flushGen.Add(1)
 }
+
+// errBusNotRunning is FlushWait's answer while no feeder reads the source bus.
+var errBusNotRunning = errors.New("audio bus is not running")
+
+// flushPollInterval is how often FlushWait looks whether the feeder acknowledged.
+const flushPollInterval = 5 * time.Millisecond
 
 // FlushWait is a producer barrier: the caller must stop writing old PCM before
 // calling it and may write the new stream only after it returns successfully.
@@ -139,25 +150,31 @@ func (m *Mixer) Flush() {
 func (m *Mixer) FlushWait(ctx context.Context) error {
 	m.flushWaitMu.Lock()
 	defer m.flushWaitMu.Unlock()
+
 	bus := m.bus.Load()
 	if bus == nil {
-		return fmt.Errorf("audio bus is not running")
+		return errBusNotRunning
 	}
+
 	m.flushWakeMu.Lock()
 	gen := m.flushGen.Add(1)
 	err := bus.SetReadDeadline(time.Now())
 	m.flushWakeMu.Unlock()
+
 	if err != nil {
 		return fmt.Errorf("wake audio bus: %w", err)
 	}
-	tick := time.NewTicker(5 * time.Millisecond)
+
+	tick := time.NewTicker(flushPollInterval)
 	defer tick.Stop()
+
 	for m.flushAck.Load() < gen {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("wait for the audio bus flush: %w", ctx.Err())
 		case <-tick.C:
 		}
 	}
+
 	return nil
 }

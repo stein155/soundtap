@@ -10,7 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -26,41 +26,69 @@ const (
 	apPrefix     = 24
 )
 
+// The 2.4 GHz channels the setup AP picks from, by their centre frequency in MHz, and the
+// spacing that numbers them: channel n is at channelZeroMHz + n*channelStepMHz.
+const (
+	channel1MHz    = 2412
+	channel6MHz    = 2437
+	channel11MHz   = 2462
+	channelZeroMHz = 2407
+	channelStepMHz = 5
+	defaultChannel = 6
+	scanAttempts   = 3
+)
+
+// freqLine finds the frequencies in iw's scan output.
 var freqLine = regexp.MustCompile(`(?m)^\s*freq:\s*([0-9.]+)`)
+
+// errNoPhy and errPortalNotReady are setup AP failures the owner sees as the Wi-Fi problem.
+var (
+	errNoPhy          = errors.New("no wireless phy; setup AP unavailable")
+	errPortalNotReady = errors.New("soundtapd does not answer; captive portal unavailable")
+)
 
 // apChannel is the setup AP's channel: of 1, 6 and 11 the one with the fewest networks in
 // scan (iw scan output), 6 on a tie or without a scan, as stock picks it.
 func apChannel(scan string) int {
-	n := map[int]int{}
-	for _, m := range freqLine.FindAllStringSubmatch(scan, -1) {
-		f, err := strconv.ParseFloat(m[1], 64)
+	counts := map[int]int{}
+
+	for _, match := range freqLine.FindAllStringSubmatch(scan, -1) {
+		mhz, err := strconv.ParseFloat(match[1], 64)
 		if err != nil {
 			continue
 		}
-		switch int(f) {
-		case 2412, 2437, 2462:
-			n[int(f)]++
+
+		switch int(mhz) {
+		case channel1MHz, channel6MHz, channel11MHz:
+			counts[int(mhz)]++
+		default:
+			// Another channel: not one the AP picks from.
 		}
 	}
-	best := 2437
-	if n[2412] < n[best] {
-		best = 2412
+
+	best := channel6MHz
+	if counts[channel1MHz] < counts[best] {
+		best = channel1MHz
 	}
-	if n[2462] < n[best] {
-		best = 2462
+
+	if counts[channel11MHz] < counts[best] {
+		best = channel11MHz
 	}
-	return (best - 2407) / 5
+
+	return (best - channelZeroMHz) / channelStepMHz
 }
 
 // hostapdConf is the setup AP's hostapd configuration: open, 802.11g, no WMM, and the
 // country in the beacon (802.11d) when one is known. The ST20's AP is the BCO's radio
 // (soundtap_bco, ADR 0031), proven on channel 6 without a country element, and stays so.
 func hostapdConf(iface, ssid string, channel int, country string) string {
-	c := fmt.Sprintf("interface=%s\ndriver=nl80211\nssid=%s\nhw_mode=g\nchannel=%d\nwmm_enabled=0\n", iface, ssid, channel)
+	conf := fmt.Sprintf("interface=%s\ndriver=nl80211\nssid=%s\nhw_mode=g\nchannel=%d\nwmm_enabled=0\n",
+		iface, ssid, channel)
 	if country != "" && country != "00" {
-		c += fmt.Sprintf("country_code=%s\nieee80211d=1\n", country)
+		conf += fmt.Sprintf("country_code=%s\nieee80211d=1\n", country)
 	}
-	return c
+
+	return conf
 }
 
 // udhcpdConf hands phones on the setup AP an address, the speaker as router and DNS, and
@@ -79,10 +107,13 @@ func (m *Manager) setupSSID() string {
 	if m.cfg.SetupSSID != nil {
 		ssid = m.cfg.SetupSSID()
 	}
+
 	if ssid == "" || len(ssid) > MaxSSIDBytes || strings.ContainsAny(ssid, "\n\x00") {
 		m.log.Info("speaker name does not fit an SSID; using the fallback", "ssid", APFallback)
+
 		return APFallback
 	}
+
 	return ssid
 }
 
@@ -92,14 +123,17 @@ func (m *Manager) setupSSID() string {
 func (m *Manager) openAP(ctx context.Context, reason string) error {
 	ssid := m.setupSSID()
 	m.log.Info("starting the setup AP", "reason", reason, "iface", m.cfg.AP, "ssid", ssid, "ip", APAddress)
+
 	scan, err := m.stationForAP(ctx)
 	if err != nil {
 		return err
 	}
+
 	stopAP, err := m.startHostapd(ctx, ssid, scan)
 	if err != nil {
 		return err
 	}
+
 	return m.startPortal(ctx, stopAP)
 }
 
@@ -110,66 +144,94 @@ func (m *Manager) stationForAP(ctx context.Context) (string, error) {
 	m.stopPidfile(m.pid("udhcpc"))
 	m.runLogged(ctx, "ip", "addr", "flush", "dev", m.cfg.STA)
 	m.lanAllow(ctx, "del", m.cfg.STA)
-	if _, err := m.run(ctx, "iw", "dev", m.cfg.STA, "set", "type", "managed"); err != nil {
+
+	_, err := m.runCmd(ctx, "iw", "dev", m.cfg.STA, "set", "type", "managed")
+	if err != nil {
 		return "", fmt.Errorf("could not set %s to managed; setup AP unavailable: %w", m.cfg.STA, err)
 	}
-	if err := m.linkUp(ctx, m.cfg.STA); err != nil {
+
+	err = m.linkUp(ctx, m.cfg.STA)
+	if err != nil {
 		return "", fmt.Errorf("could not bring up %s; setup AP unavailable: %w", m.cfg.STA, err)
 	}
+
 	return m.scanForAP(ctx), nil
 }
 
 // startHostapd adds wlan1 and starts hostapd on it with its address. stopAP undoes it.
-func (m *Manager) startHostapd(ctx context.Context, ssid, scan string) (stopAP func(), err error) {
+func (m *Manager) startHostapd(ctx context.Context, ssid, scan string) (func(), error) {
 	phy := m.firstPhy()
 	if phy == "" {
-		return nil, errors.New("no wireless phy; setup AP unavailable")
+		return nil, errNoPhy
 	}
-	if _, err := m.run(ctx, "iw", "phy", phy, "interface", "add", m.cfg.AP, "type", "__ap"); err != nil {
+
+	_, err := m.runCmd(ctx, "iw", "phy", phy, "interface", "add", m.cfg.AP, "type", "__ap")
+	if err != nil {
 		return nil, fmt.Errorf("could not create %s; setup AP unavailable: %w", m.cfg.AP, err)
 	}
+
 	delAP := func() { m.runLogged(context.WithoutCancel(ctx), "iw", "dev", m.cfg.AP, "del") }
 
-	channel, country := 6, m.reg.Country
+	channel, country := defaultChannel, m.reg.Country
 	if m.variant == "spotty" {
 		country = ""
 	} else {
 		channel = apChannel(scan)
 	}
+
 	conf := filepath.Join(m.cfg.Paths.Tmp, "hostapd.conf")
-	if err := os.WriteFile(conf, []byte(hostapdConf(m.cfg.AP, ssid, channel, country)), 0o600); err != nil {
+
+	err = os.WriteFile(conf, []byte(hostapdConf(m.cfg.AP, ssid, channel, country)), privateFileMode)
+	if err != nil {
 		delAP()
+
 		return nil, fmt.Errorf("hostapd.conf: %w", err)
 	}
-	if _, err := m.run(ctx, "hostapd", "-B", "-P", m.pid("hostapd"), conf); err != nil {
+
+	_, err = m.runCmd(ctx, "hostapd", "-B", "-P", m.pid("hostapd"), conf)
+	if err != nil {
 		delAP()
+
 		return nil, fmt.Errorf("hostapd failed; setup AP unavailable: %w", err)
 	}
+
 	m.log.Info("hostapd up", "ssid", ssid, "channel", channel)
-	stopAP = func() {
+
+	stopAP := func() {
 		m.stopPidfile(m.pid("hostapd"))
 		delAP()
 	}
-	if _, err := m.run(ctx, "ip", "addr", "add", fmt.Sprintf("%s/%d", APAddress, apPrefix), "dev", m.cfg.AP); err != nil {
+
+	_, err = m.runCmd(ctx, "ip", "addr", "add", fmt.Sprintf("%s/%d", APAddress, apPrefix), "dev", m.cfg.AP)
+	if err != nil {
 		stopAP()
+
 		return nil, fmt.Errorf("could not assign the setup AP's address: %w", err)
 	}
+
 	m.lanAllow(ctx, "add", m.cfg.AP, APAddress, strconv.Itoa(apPrefix))
+
 	return stopAP, nil
 }
 
 // startPortal starts the catch-all DNS and, once soundtapd answers, the DHCP server.
 func (m *Manager) startPortal(ctx context.Context, stopAP func()) error {
-
 	dnsConf := filepath.Join(m.cfg.Paths.Tmp, "dnsd.conf")
-	if err := os.WriteFile(dnsConf, []byte("* "+APAddress+"\n"), 0o600); err != nil {
+
+	err := os.WriteFile(dnsConf, []byte("* "+APAddress+"\n"), privateFileMode)
+	if err != nil {
 		stopAP()
+
 		return fmt.Errorf("dnsd.conf: %w", err)
 	}
-	if err := m.startDaemon(ctx, "dnsd", "dnsd", "-i", APAddress, "-c", dnsConf); err != nil {
+
+	err = m.startDaemon(ctx, "dnsd", "dnsd", "-i", APAddress, "-c", dnsConf)
+	if err != nil {
 		stopAP()
+
 		return fmt.Errorf("dnsd failed; captive portal unavailable: %w", err)
 	}
+
 	stopHostapd := stopAP
 	stopAP = func() {
 		m.stopPidfile(m.pid("dnsd"))
@@ -180,24 +242,35 @@ func (m *Manager) startPortal(ctx context.Context, stopAP func()) error {
 	// listens: phones probe for a captive portal as soon as they have a lease, and when that
 	// first request is refused iOS may not open the setup sheet at all.
 	touch(m.state("setup-ap"))
+
 	if !m.waitReady(ctx) {
 		remove(m.state("setup-ap"), m.state("network-ready"))
 		stopAP()
-		return errors.New("soundtapd does not answer; captive portal unavailable")
+
+		return errPortalNotReady
 	}
+
 	dhcpConf := filepath.Join(m.cfg.Paths.Tmp, "udhcpd.conf")
-	if err := os.WriteFile(dhcpConf, []byte(udhcpdConf(m.cfg.AP)), 0o600); err != nil {
+
+	err = os.WriteFile(dhcpConf, []byte(udhcpdConf(m.cfg.AP)), privateFileMode)
+	if err != nil {
 		remove(m.state("setup-ap"))
 		stopAP()
+
 		return fmt.Errorf("udhcpd.conf: %w", err)
 	}
-	if err := m.startDaemon(ctx, "udhcpd", "udhcpd", "-f", dhcpConf); err != nil {
+
+	err = m.startDaemon(ctx, "udhcpd", "udhcpd", "-f", dhcpConf)
+	if err != nil {
 		remove(m.state("setup-ap"), m.state("network-ready"))
 		stopAP()
+
 		return fmt.Errorf("udhcpd failed; setup AP unavailable: %w", err)
 	}
+
 	touch(m.state("network-ready"))
 	m.log.Info("udhcpd up", "net", fmt.Sprintf("%s/%d", APAddress, apPrefix))
+
 	return nil
 }
 
@@ -207,18 +280,25 @@ func (m *Manager) startPortal(ctx context.Context, stopAP func()) error {
 func (m *Manager) scanForAP(ctx context.Context) string {
 	cache := m.cfg.Paths.ScanCache
 	remove(cache)
-	for attempt := 1; attempt <= 3; attempt++ {
-		if out, ok := m.scanOnce(ctx); ok && os.WriteFile(cache, out, 0o644) == nil {
+
+	for attempt := 1; attempt <= scanAttempts; attempt++ {
+		if out, ok := m.scanOnce(ctx); ok && os.WriteFile(cache, out, publicFileMode) == nil {
 			m.log.Info("setup scan cached", "attempt", attempt)
+
 			return string(out)
 		}
+
 		m.log.Info("setup scan failed", "attempt", attempt)
+
 		if !sleep(ctx, m.cfg.Timing.ScanRetry) {
 			break
 		}
 	}
-	_ = os.WriteFile(cache, nil, 0o644)
+
+	_ = os.WriteFile(cache, nil, publicFileMode)
+
 	m.log.Info("setup scan found no networks; the setup page offers manual entry")
+
 	return ""
 }
 
@@ -227,12 +307,17 @@ func (m *Manager) scanOnce(ctx context.Context) ([]byte, bool) {
 	if !exists(filepath.Join(m.cfg.Paths.SysNet, m.cfg.STA)) {
 		return nil, false
 	}
-	if _, err := m.run(ctx, "iw", "dev", m.cfg.STA, "info"); err != nil {
+
+	_, err := m.runCmd(ctx, "iw", "dev", m.cfg.STA, "info")
+	if err != nil {
 		return nil, false
 	}
+
 	sctx, cancel := context.WithTimeout(ctx, m.cfg.Timing.Scan)
 	defer cancel()
-	out, err := m.run(sctx, "iw", "dev", m.cfg.STA, "scan")
+
+	out, err := m.runCmd(sctx, "iw", "dev", m.cfg.STA, "scan")
+
 	return out, err == nil
 }
 
@@ -242,11 +327,14 @@ func (m *Manager) firstPhy() string {
 	if err != nil || len(entries) == 0 {
 		return ""
 	}
+
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
 		names = append(names, e.Name())
 	}
-	sort.Strings(names)
+
+	slices.Sort(names)
+
 	return names[0]
 }
 
@@ -258,6 +346,7 @@ func (m *Manager) waitReady(ctx context.Context) bool {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -268,23 +357,29 @@ func (m *Manager) waitReady(ctx context.Context) bool {
 // network, holds it off for Timing.Hold at most. It reports true when it is time to try.
 func (m *Manager) holdAP(ctx context.Context, pause time.Duration) bool {
 	var held time.Duration
+
 	for sleep(ctx, pause) {
 		if !exists(m.state("setup-ap")) {
 			return false
 		}
-		out, _ := m.run(ctx, "iw", "dev", m.cfg.AP, "station", "dump") // no AP interface reads as no stations
+
+		out, _ := m.runCmd(ctx, "iw", "dev", m.cfg.AP, "station", "dump") // no AP interface reads as no stations
 		if strings.TrimSpace(string(out)) != "" {
 			held += pause
 			if held < m.cfg.Timing.Hold {
 				continue
 			}
+
 			m.log.Info("a device has stayed on the setup AP; trying the saved network anyway", "held", held)
 		} else {
 			m.log.Info("setup AP idle; trying the saved network again")
 		}
+
 		m.tries++
+
 		return true
 	}
+
 	return false
 }
 
@@ -295,5 +390,6 @@ func (m *Manager) retryPause(reason string) time.Duration {
 	if (reason == "not_found" || reason == "no_address") && m.tries < 10 {
 		return m.cfg.Timing.ShortPause
 	}
+
 	return m.cfg.Timing.LongPause
 }

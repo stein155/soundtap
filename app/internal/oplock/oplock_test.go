@@ -1,75 +1,92 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-package oplock
+package oplock_test
 
 import (
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/stein155/soundtap/app/internal/oplock"
 )
 
-func TestLocksExcludeEachOtherThroughTheFile(t *testing.T) {
-	Path = filepath.Join(t.TempDir(), "run", "operation.lock")
-	defer func() { Path = "" }()
-	var a, b Lock
-	if !a.TryLock() {
+func TestLocksExcludeEachOtherThroughTheFile(t *testing.T) { //nolint:paralleltest // swaps oplock.Path
+	oplock.Path = filepath.Join(t.TempDir(), "run", "operation.lock")
+	defer func() { oplock.Path = "" }()
+
+	var first, second oplock.Lock
+	if !first.TryLock() {
 		t.Fatal("first TryLock failed")
 	}
-	if b.TryLock() {
+	if second.TryLock() {
 		t.Fatal("second Lock got the file while the first held it")
 	}
-	a.Unlock()
-	if !b.TryLock() {
+	first.Unlock()
+
+	if !second.TryLock() {
 		t.Fatal("TryLock failed after Unlock")
 	}
-	b.Unlock()
+	second.Unlock()
 }
 
-func TestChildKeepsTheLockAfterUnlock(t *testing.T) {
-	Path = filepath.Join(t.TempDir(), "operation.lock")
-	defer func() { Path = "" }()
-	var a, b Lock
-	if !a.TryLock() {
+func TestChildKeepsTheLockAfterUnlock(t *testing.T) { //nolint:paralleltest // swaps oplock.Path
+	oplock.Path = filepath.Join(t.TempDir(), "operation.lock")
+	defer func() { oplock.Path = "" }()
+
+	var first, second oplock.Lock
+	if !first.TryLock() {
 		t.Fatal("TryLock failed")
 	}
 	// A child holding the inherited descriptor stands in for a nandwrite that outlives soundtapd.
-	cmd := exec.Command("sleep", "1")
-	cmd.ExtraFiles = append(cmd.ExtraFiles, a.File())
-	if err := cmd.Start(); err != nil {
+	cmd := exec.CommandContext(t.Context(), "sleep", "1")
+
+	cmd.ExtraFiles = append(cmd.ExtraFiles, first.File())
+
+	err := cmd.Start()
+	if err != nil {
 		t.Fatal(err)
 	}
-	a.Unlock()
-	if b.TryLock() {
+	first.Unlock()
+
+	if second.TryLock() {
 		t.Fatal("lock free while the child still holds it")
 	}
 	_ = cmd.Wait()
-	if !b.TryLock() {
+
+	if !second.TryLock() {
 		t.Fatal("lock still taken after the child exited")
 	}
-	b.Unlock()
+	second.Unlock()
 }
 
 // A lock file that cannot be opened must not drop the exclusion: separate Locks share
 // the process-wide fallback instead.
+//
+//nolint:paralleltest // swaps oplock.Path
 func TestLocksExcludeEachOtherWhenTheFileCannotBeOpened(t *testing.T) {
 	notADir := filepath.Join(t.TempDir(), "file")
-	if err := os.WriteFile(notADir, nil, 0o600); err != nil {
+
+	err := os.WriteFile(notADir, nil, 0o600)
+	if err != nil {
 		t.Fatal(err)
 	}
-	Path = filepath.Join(notADir, "operation.lock")
-	defer func() { Path = "" }()
-	var a, b Lock
-	if !a.TryLock() {
+
+	oplock.Path = filepath.Join(notADir, "operation.lock")
+	defer func() { oplock.Path = "" }()
+
+	var first, second oplock.Lock
+	if !first.TryLock() {
 		t.Fatal("first TryLock failed")
 	}
-	if b.TryLock() {
+	if second.TryLock() {
 		t.Fatal("second Lock got in while the first held the fallback")
 	}
-	a.Unlock()
-	if !b.TryLock() {
+	first.Unlock()
+
+	if !second.TryLock() {
 		t.Fatal("TryLock failed after Unlock")
 	}
-	b.Unlock()
+	second.Unlock()
 }

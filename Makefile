@@ -384,8 +384,6 @@ vuln: go-dist
 SHELLCHECK_IMAGE := koalaman/shellcheck:v0.11.0@sha256:bb596a0d169b85ddd81d8b6d3a2ff6d5baf5fca10b97f575ebc647c3dff62b3d
 PYTHON_IMAGE := python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
 GOLANGCI_IMAGE := golangci/golangci-lint:v2.15.0@sha256:fbfcfd12a6f8d7f1b97b3362ca80fc2a244d46863148c73cb88e7793af96c481
-# lint-go judges what changed since this revision; the rest waits for its refactor.
-GO_LINT_BASE ?= origin/main
 GIT_COMMON = $(shell git -C "$(ROOT)" rev-parse --path-format=absolute --git-common-dir)
 RUFF_VERSION := 0.13.3
 ZIZMOR_VERSION := 1.32.0
@@ -405,33 +403,51 @@ SHELL_SCRIPTS = python3 "$(ROOT)/tools/ci/shell_scripts.py" "$(ROOT)"
 lint-shell:
 	@$(SHELL_SCRIPTS) | docker run --rm -i -v "$(ROOT):/w:ro" -w /w $(GO_IMAGE) xargs -0 -n1 bash -n
 	@# The speaker runs these under BusyBox ash, so shellcheck reads each by its shebang
-	@# (sh = POSIX, which catches bashisms bash -n lets through). SC1007 is the
-	@# deliberate `CDPATH= cd` idiom.
+	@# (sh = POSIX, which catches bashisms bash -n lets through). Every check is on, the
+	@# optional ones too, down to style; it follows sourced files (-x) next to the script.
+	@# SC1007 is the deliberate `CDPATH= cd` idiom; any other exception is an inline
+	@# directive with its reason. gcc format: the image has no locale to print the
+	@# scripts' non-ASCII comments in.
 	@$(SHELL_SCRIPTS) | xargs -0 docker run --rm -v "$(ROOT):/mnt" -w /mnt \
-		$(SHELLCHECK_IMAGE) -S warning -e SC1007
+		$(SHELLCHECK_IMAGE) -S style --enable=all -x -P SCRIPTDIR -e SC1007 -f gcc
 
+# lint-go judges the whole Go module with every linter of app/.golangci.yml, not only what
+# changed. The repository sits at its own path so the config's paths resolve as on the host.
 lint-go:
 	@mkdir -p "$(ROOT)/app/internal/web/dist" && touch "$(ROOT)/app/internal/web/dist/.lint"
-	@# The repository and its git directory sit at their own paths, so a worktree's .git
-	@# link still resolves inside the container.
-	@docker run --rm -v "$(ROOT):$(ROOT)" -v "$(GIT_COMMON):$(GIT_COMMON):ro" -w "$(ROOT)/app" \
+	@status=0; docker run --rm -v "$(ROOT):$(ROOT)" -w "$(ROOT)/app" \
 		-v soundtap-gomod:/go/pkg/mod -v soundtap-golangci-cache:/root/.cache \
-		-e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
-		$(GOLANGCI_IMAGE) golangci-lint run --new-from-merge-base=$(GO_LINT_BASE) ./...
-	@rm -f "$(ROOT)/app/internal/web/dist/.lint"
+		$(GOLANGCI_IMAGE) golangci-lint run ./... || status=$$?; \
+		rm -f "$(ROOT)/app/internal/web/dist/.lint"; exit $$status
 
 lint-python:
 	@docker run --rm -v "$(ROOT):/w" -w /w $(PYTHON_IMAGE) \
 		sh -c 'pip install -q --disable-pip-version-check --root-user-action=ignore ruff==$(RUFF_VERSION) && ruff check -q --no-cache .'
 
-# Firmware and host tools. Suppressed on purpose: asserts with side effects (the tests never
-# build with NDEBUG), and subtractPointers on the linker's start and end symbols of a blob.
+# Firmware and host tools, every check on: style, performance, portability, information and
+# unusedFunction, inconclusive ones too, at the exhaustive check level, and the BCO headers on
+# the include path. A finding the code is right about carries an inline cppcheck-suppress with
+# its reason. Suppressed here on purpose: asserts with side effects (the tests never build with
+# NDEBUG); subtractPointers on the linker's start and end symbols of a blob; system headers,
+# which the container does not have; the active-checker count, which is no finding; in the
+# U-Boot sources, TweetNaCl as fetched (variable scope) and soundtap-sig.c, whose functions
+# U-Boot's patched code calls and whose bytes are the bootloader an update writes to mtd0-mtd4;
+# and four style notes in the codec loader, whose sources os/package/soundtap-aic3256-loader
+# pins by hash.
 lint-c:
 	@git -C "$(ROOT)" ls-files -z '*.c' ':(exclude)app/vendor/**' | xargs -0 docker run --rm -v "$(ROOT):/w" -w /w $(ALPINE_IMAGE) \
 		sh -c 'apk add -q --no-progress cppcheck=$(CPPCHECK_VERSION) >/dev/null && \
-		cppcheck -q --enable=warning,portability,performance --error-exitcode=1 \
+		cppcheck -q --enable=all --inconclusive --check-level=exhaustive --inline-suppr --error-exitcode=1 \
+		-I bco/app/src -I bco/wild/fw/src \
 		--suppress=assertWithSideEffect --suppress=subtractPointers \
-		--suppress=normalCheckLevelMaxBranches --suppress=missingIncludeSystem "$$@"' cppcheck
+		--suppress=missingIncludeSystem --suppress=checkersReport \
+		--suppress=variableScope:os/bootloader/uboot/tweetnacl.c \
+		--suppress=variableScope:os/bootloader/uboot/soundtap-sig.c \
+		--suppress=unusedFunction:os/bootloader/uboot/soundtap-sig.c \
+		--suppress=constVariablePointer:os/drivers/aic3256-bitbang.c:22 \
+		--suppress=constParameterPointer:os/drivers/aic3256-bitbang.c:98 \
+		--suppress=variableScope:os/drivers/aic3256-loader.c:40 \
+		--suppress=variableScope:os/drivers/aic3256-loader.c:61 "$$@"' cppcheck
 
 # actionlint checks the workflows' syntax, expressions and run scripts (SC2086 and SC2016
 # fire on deliberately empty arguments and on sed patterns); zizmor their security: pinned

@@ -21,10 +21,12 @@ func TestMQTTValidate(t *testing.T) {
 		"longest base topic": {Enabled: true, Host: "b", BaseTopic: strings.Repeat("t", 128)},
 	}
 	for name, m := range ok {
-		if err := m.Validate(); err != nil {
+		err := m.Validate()
+		if err != nil {
 			t.Errorf("%s: %v, want valid", name, err)
 		}
 	}
+
 	bad := map[string]MQTT{
 		"negative port":          {Port: -1},
 		"port too high":          {Enabled: true, Host: "broker.lan", Port: 65536},
@@ -48,7 +50,8 @@ func TestMQTTValidate(t *testing.T) {
 		"single slash as prefix": {DiscoveryPrefix: "/"},
 	}
 	for name, m := range bad {
-		if err := m.Validate(); err == nil {
+		err := m.Validate()
+		if err == nil {
 			t.Errorf("%s: %+v accepted, want an error", name, m)
 		}
 	}

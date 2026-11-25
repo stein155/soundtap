@@ -18,13 +18,16 @@ import (
 // restoring it afterward. The handler receives every request the client makes.
 func withServer(t *testing.T, handler http.HandlerFunc) (*Client, func()) {
 	t.Helper()
+
 	srv := httptest.NewServer(handler)
 	old := base
 	base = srv.URL
 	c := New()
 	c.http = &http.Client{} // the test server is on loopback, which SafeTransport refuses
+
 	return c, func() {
 		base = old
+
 		srv.Close()
 	}
 }
@@ -41,6 +44,7 @@ func TestSearch(t *testing.T) {
 	}`
 
 	var gotPath, gotRawQuery string
+
 	c, done := withServer(t, func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		gotRawQuery = r.URL.RawQuery
@@ -73,12 +77,15 @@ func TestSearch(t *testing.T) {
 	if q := mustParseQuery(t, gotRawQuery).Get("query"); q != "radio & jazz?" {
 		t.Errorf("decoded query = %q, want %q", q, "radio & jazz?")
 	}
+
 	if f := mustParseQuery(t, gotRawQuery).Get("formats"); f != formats {
 		t.Errorf("formats = %q, want %q", f, formats)
 	}
+
 	if ty := mustParseQuery(t, gotRawQuery).Get("types"); ty != "station" {
 		t.Errorf("types = %q, want station", ty)
 	}
+
 	if rn := mustParseQuery(t, gotRawQuery).Get("render"); rn != "json" {
 		t.Errorf("render = %q, want json", rn)
 	}
@@ -110,11 +117,14 @@ func TestSearchErrors(t *testing.T) {
 				if err == nil {
 					t.Fatalf("expected error, got nil (result=%#v)", got)
 				}
+
 				return
 			}
+
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
+
 			if len(got) != tt.wantLen {
 				t.Errorf("len = %d, want %d", len(got), tt.wantLen)
 			}
@@ -124,7 +134,9 @@ func TestSearchErrors(t *testing.T) {
 
 func TestDescribe(t *testing.T) {
 	const body = `{"body":[{"name":"BBC Radio 1","logo":"http://img/r1.png"}]}`
+
 	var gotPath, gotQuery string
+
 	c, done := withServer(t, func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		gotQuery = r.URL.RawQuery
@@ -136,9 +148,11 @@ func TestDescribe(t *testing.T) {
 	if name != "BBC Radio 1" || logo != "http://img/r1.png" {
 		t.Errorf("Describe = (%q, %q), want (BBC Radio 1, http://img/r1.png)", name, logo)
 	}
+
 	if gotPath != "/Describe.ashx" {
 		t.Errorf("path = %q, want /Describe.ashx", gotPath)
 	}
+
 	if id := mustParseQuery(t, gotQuery).Get("id"); id != "s24939" {
 		t.Errorf("id = %q, want s24939", id)
 	}
@@ -184,8 +198,10 @@ func TestNowPlaying(t *testing.T) {
 			        "current_song":" Song ","current_artist":" Artist ","current_album":" Album ",
 			        "current_album_art":"http://img/album.png","current_artist_art":"http://img/artist.png"}]}`,
 			status: 200,
-			want: Track{Song: "Song", Artist: "Artist", Album: "Album",
-				Art: "http://img/album.png", Logo: "http://img/l.png", IsLive: true},
+			want: Track{
+				Song: "Song", Artist: "Artist", Album: "Album",
+				Art: "http://img/album.png", Logo: "http://img/l.png", IsLive: true,
+			},
 		},
 		{
 			name: "falls back to artist art, has_song quoted true",
@@ -193,8 +209,10 @@ func TestNowPlaying(t *testing.T) {
 			        "current_song":"S","current_artist":"A","current_album":"",
 			        "current_album_art":"","current_artist_art":"http://img/artist.png"}]}`,
 			status: 200,
-			want: Track{Song: "S", Artist: "A", Album: "",
-				Art: "http://img/artist.png", Logo: "http://img/l.png", IsLive: true},
+			want: Track{
+				Song: "S", Artist: "A", Album: "",
+				Art: "http://img/artist.png", Logo: "http://img/l.png", IsLive: true,
+			},
 		},
 		{
 			name:   "not live: both flags false",
@@ -215,6 +233,7 @@ func TestNowPlaying(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NowPlaying: %v", err)
 			}
+
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("NowPlaying = %#v, want %#v", got, tt.want)
 			}
@@ -229,6 +248,7 @@ func TestNowPlayingBestEffort(t *testing.T) {
 			_, _ = w.Write([]byte(`}{`))
 		})
 		defer done()
+
 		got, err := c.NowPlaying(context.Background(), "s1")
 		if err != nil || !reflect.DeepEqual(got, Track{}) {
 			t.Errorf("got (%#v, %v), want (zero, nil)", got, err)
@@ -236,9 +256,10 @@ func TestNowPlayingBestEffort(t *testing.T) {
 	})
 	t.Run("non-200 returns error", func(t *testing.T) {
 		c, done := withServer(t, func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(503)
+			w.WriteHeader(http.StatusServiceUnavailable)
 		})
 		defer done()
+
 		if _, err := c.NowPlaying(context.Background(), "s1"); err == nil {
 			t.Error("expected error on non-200")
 		}
@@ -251,7 +272,9 @@ func TestResolve(t *testing.T) {
 		"  https://stream.example/2.aac  \n" +
 		"ftp://ignored\n" +
 		"\n"
+
 	var gotPath, gotQuery string
+
 	c, done := withServer(t, func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		gotQuery = r.URL.RawQuery
@@ -263,17 +286,21 @@ func TestResolve(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
+
 	want := []string{"http://stream.example/1.mp3", "https://stream.example/2.aac"}
 	if !reflect.DeepEqual(urls, want) {
 		t.Errorf("Resolve = %#v, want %#v", urls, want)
 	}
+
 	if gotPath != "/Tune.ashx" {
 		t.Errorf("path = %q, want /Tune.ashx", gotPath)
 	}
+
 	q := mustParseQuery(t, gotQuery)
 	if q.Get("id") != "s6712" {
 		t.Errorf("id = %q, want s6712", q.Get("id"))
 	}
+
 	if q.Get("formats") != formats {
 		t.Errorf("formats = %q, want %q", q.Get("formats"), formats)
 	}
@@ -296,6 +323,7 @@ func TestResolveErrors(t *testing.T) {
 				_, _ = w.Write([]byte(tt.body))
 			})
 			defer done()
+
 			if _, err := c.Resolve(context.Background(), "s1"); err == nil {
 				t.Error("expected error")
 			}
@@ -329,6 +357,7 @@ func TestGetRejectsNonTuneInHost(t *testing.T) {
 		_, _ = w.Write([]byte(`{}`))
 	})
 	defer done()
+
 	_, err := c.get(context.Background(), "http://evil.example/Search.ashx")
 	if err == nil || !strings.Contains(err.Error(), "refusing non-TuneIn host") {
 		t.Errorf("get(evil host) err = %v, want refusing non-TuneIn host", err)
@@ -337,10 +366,12 @@ func TestGetRejectsNonTuneInHost(t *testing.T) {
 
 func mustParseQuery(t *testing.T, raw string) url.Values {
 	t.Helper()
+
 	v, err := url.ParseQuery(raw)
 	if err != nil {
 		t.Fatalf("ParseQuery(%q): %v", raw, err)
 	}
+
 	return v
 }
 
@@ -355,6 +386,7 @@ func TestPlayableURLsKeepsEveryCandidateMP3First(t *testing.T) {
 		"http://backup.example/live.aac",
 	}
 	got := PlayableURLs(in)
+
 	want := []string{
 		"http://primary.example/live.mp3",
 		"https://secure.example/live.mp3",
@@ -364,6 +396,7 @@ func TestPlayableURLsKeepsEveryCandidateMP3First(t *testing.T) {
 	if len(got) != len(want) {
 		t.Fatalf("PlayableURLs(%v) = %v, want %v", in, got, want)
 	}
+
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("PlayableURLs(%v) = %v, want %v", in, got, want)
@@ -382,6 +415,7 @@ func TestResolveSaysWhenAStationHasNoStream(t *testing.T) {
 		_, _ = w.Write([]byte("#STATUS: 400\n"))
 	})
 	defer done()
+
 	if _, err := c.Resolve(context.Background(), "s7910"); !errors.Is(err, ErrNoStreams) {
 		t.Fatalf("err = %v, want ErrNoStreams", err)
 	}

@@ -59,8 +59,11 @@ func managed(ctx context.Context, bus Bus) (objects, error) {
 		return nil, err
 	}
 	defer func() { _ = c.Close() }()
+
 	var objs objects
+
 	err = c.Object(service, "/").CallWithContext(ctx, "org.freedesktop.DBus.ObjectManager.GetManagedObjects", 0).Store(&objs)
+
 	return objs, err
 }
 
@@ -75,11 +78,13 @@ func each(objs objects, iface string, f func(path dbus.ObjectPath, props map[str
 
 func str(props map[string]dbus.Variant, key string) string {
 	s, _ := props[key].Value().(string)
+
 	return s
 }
 
 func flag(props map[string]dbus.Variant, key string) bool {
 	b, _ := props[key].Value().(bool)
+
 	return b
 }
 
@@ -90,10 +95,12 @@ func flag(props map[string]dbus.Variant, key string) bool {
 // out are all Adapter false.
 func Read(ctx context.Context, bus Bus) Status {
 	var st Status
+
 	objs, err := managed(ctx, bus)
 	if err != nil {
 		return st
 	}
+
 	each(objs, adapterIface, func(_ dbus.ObjectPath, props map[string]dbus.Variant) {
 		if !st.Adapter {
 			st.Adapter = true
@@ -102,9 +109,11 @@ func Read(ctx context.Context, bus Bus) Status {
 			st.Discoverable = flag(props, "Discoverable")
 		}
 	})
+
 	if st.Adapter {
 		st.Devices = pairedOf(objs)
 	}
+
 	return st
 }
 
@@ -114,25 +123,31 @@ func Paired(ctx context.Context, bus Bus) []Device {
 	if err != nil {
 		return nil
 	}
+
 	return pairedOf(objs)
 }
 
 func pairedOf(objs objects) []Device {
 	var devs []Device
+
 	each(objs, deviceIface, func(p dbus.ObjectPath, props map[string]dbus.Variant) {
 		if !flag(props, "Paired") {
 			return
 		}
+
 		addr := str(props, "Address")
 		if _, err := net.ParseMAC(addr); err != nil {
 			return
 		}
+
 		name := str(props, "Alias")
 		if name == "" {
 			name = str(props, "Name")
 		}
+
 		devs = append(devs, Device{Address: addr, Name: name, Connected: flag(props, "Connected"), Path: string(p)})
 	})
+
 	return devs
 }
 
@@ -141,11 +156,53 @@ func Remove(ctx context.Context, bus Bus, d Device) error {
 	if !strings.HasPrefix(d.Path, "/org/bluez/") || !dbus.ObjectPath(d.Path).IsValid() {
 		return errors.New("not a BlueZ object path: " + d.Path)
 	}
+
 	c, err := bus(ctx)
 	if err != nil {
 		return err
 	}
+
 	defer func() { _ = c.Close() }()
+
 	_, err = c.Call(ctx, service, dbus.ObjectPath(path.Dir(d.Path)), adapterIface, "RemoveDevice", dbus.ObjectPath(d.Path))
+
 	return err
+}
+
+// ErrNotPaired is Forget's answer for an address BlueZ holds no pairing for.
+var ErrNotPaired = errors.New("no paired device with that address")
+
+// IsPaired says whether BlueZ holds a pairing for address, without changing anything:
+// POST /api/bluetooth/forget asks it before it waits for the press on the speaker.
+func IsPaired(ctx context.Context, bus Bus, address string) (bool, error) {
+	objs, err := managed(ctx, bus)
+	if err != nil {
+		return false, err
+	}
+
+	for _, d := range pairedOf(objs) {
+		if strings.EqualFold(d.Address, address) {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+// Forget forgets the one paired device with this address (POST /api/bluetooth/forget), as
+// stock's app forgot a single phone. It reports whether that device was connected, so the
+// caller can end a stream that just lost its source.
+func Forget(ctx context.Context, bus Bus, address string) (connected bool, err error) {
+	objs, err := managed(ctx, bus)
+	if err != nil {
+		return false, err
+	}
+
+	for _, d := range pairedOf(objs) {
+		if strings.EqualFold(d.Address, address) {
+			return d.Connected, Remove(ctx, bus, d)
+		}
+	}
+
+	return false, ErrNotPaired
 }

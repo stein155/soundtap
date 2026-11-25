@@ -17,11 +17,15 @@ func TestNeedIsTheEmbeddedLevel(t *testing.T) {
 
 func TestHave(t *testing.T) {
 	dir := t.TempDir()
+
 	write := func(name, body string) string {
 		p := filepath.Join(dir, name)
-		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+
+		err := os.WriteFile(p, []byte(body), 0o644)
+		if err != nil {
 			t.Fatal(err)
 		}
+
 		return p
 	}
 	for _, tc := range []struct {

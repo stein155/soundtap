@@ -26,21 +26,24 @@ func DeviceIDFor(clientID string) string {
 	if !ok || rest == "" {
 		return ""
 	}
+
 	return rest
 }
 
 // ClientIDFor resolves what a caller named -- a snapcast client id or a SoundTap device
 // id -- to the snapcast client id, and reports whether the server knows it. Accepting
 // both is what lets a controller work from /api/devices without learning the prefix.
-func ClientIDFor(status snapcast.Status, id string) (string, bool) {
-	if _, ok := FindClient(status, id); ok {
-		return id, true
+func ClientIDFor(status snapcast.Status, name string) (string, bool) {
+	if _, ok := FindClient(status, name); ok {
+		return name, true
 	}
-	prefixed := snapcastHostPrefix + id
+
+	prefixed := snapcastHostPrefix + name
 	if _, ok := FindClient(status, prefixed); ok {
 		return prefixed, true
 	}
-	return id, false
+
+	return name, false
 }
 
 // FindClient returns the id of the group that client id is in.
@@ -52,6 +55,7 @@ func FindClient(status snapcast.Status, id string) (string, bool) {
 			}
 		}
 	}
+
 	return "", false
 }
 
@@ -64,7 +68,8 @@ func FindClientVolume(status snapcast.Status, id string) (snapcast.Volume, bool)
 			}
 		}
 	}
-	return snapcast.Volume{}, false
+
+	return snapcast.Volume{Percent: 0, Muted: false}, false
 }
 
 // HasListener reports whether any other connected client listens to this speaker's
@@ -80,5 +85,6 @@ func HasListener(status snapcast.Status, localID string) bool {
 			}
 		}
 	}
+
 	return false
 }

@@ -14,6 +14,10 @@ import (
 	"time"
 )
 
+// shutdownMuteSettle is the wait between the mute and the amplifier's power-off, so the
+// amplifier goes off silent.
+const shutdownMuteSettle = 100 * time.Millisecond
+
 // lifecycle is how soundtapd shuts down: once, whether a signal, a factory reset or
 // the audio side asks.
 type lifecycle struct {
@@ -33,10 +37,12 @@ type lifecycle struct {
 func (l *lifecycle) audioOff() {
 	if f := l.fadeOut.Load(); f != nil {
 		(*f)()
+
 		return
 	}
+
 	amplifier.SetMute(true, l.log.With("comp", "shutdown"))
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(shutdownMuteSettle)
 	amplifier.SetPowered(false, l.log.With("comp", "shutdown"))
 }
 
@@ -45,14 +51,16 @@ func (l *lifecycle) shutdown() {
 		if f := l.savePrefs.Load(); f != nil {
 			(*f)()
 		}
+
 		orderedShutdown(l.audioOff, l.cancel)
 	})
 }
 
 // shutdownOnSignal shuts down on SIGINT or SIGTERM. The returned func stops listening.
-func (l *lifecycle) shutdownOnSignal(ctx context.Context) (stop func()) {
+func (l *lifecycle) shutdownOnSignal(ctx context.Context) func() {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+
 	go func() {
 		select {
 		case <-signals:
@@ -60,6 +68,7 @@ func (l *lifecycle) shutdownOnSignal(ctx context.Context) (stop func()) {
 		case <-ctx.Done():
 		}
 	}()
+
 	return func() { signal.Stop(signals) }
 }
 

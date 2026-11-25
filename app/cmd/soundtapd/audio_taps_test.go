@@ -17,61 +17,77 @@ func fullScale(n int, tail ...byte) []byte {
 		pcm = binary.LittleEndian.AppendUint16(pcm, 0x7fff)
 		pcm = binary.LittleEndian.AppendUint16(pcm, 0x8000)
 	}
+
 	return append(pcm, tail...)
 }
 
 func sample(pcm []byte, frame, channel int) int16 {
-	var s int16
-	if _, err := binary.Decode(pcm[frame*4+channel*2:], binary.LittleEndian, &s); err != nil {
+	var value int16
+
+	_, err := binary.Decode(pcm[frame*4+channel*2:], binary.LittleEndian, &value)
+	if err != nil {
 		panic(err)
 	}
-	return s
+
+	return value
 }
 
 func TestFadeRampsEachChannelFromOrToSilence(t *testing.T) {
+	t.Parallel()
+
 	const frames = 5
-	for _, in := range []bool{true, false} {
+	for _, direction := range []fadeDirection{fadeFromSilence, fadeToSilence} {
 		pcm := fullScale(frames, 0xab, 0xcd)
-		fade(pcm, in, nil)
-		for i := range frames {
-			g := float64(i) / (frames - 1)
-			if !in {
-				g = 1 - g
+		fade(pcm, direction, nil)
+
+		for frame := range frames {
+			gain := float64(frame) / (frames - 1)
+			if direction == fadeToSilence {
+				gain = 1 - gain
 			}
-			want := [2]int16{int16(math.Round(32767 * g)), int16(math.Round(-32768 * g))}
-			if got := [2]int16{sample(pcm, i, 0), sample(pcm, i, 1)}; got != want {
-				t.Errorf("in=%v frame %d: got %v, want %v", in, i, got, want)
+
+			want := [2]int16{int16(math.Round(32767 * gain)), int16(math.Round(-32768 * gain))}
+			if got := [2]int16{sample(pcm, frame, 0), sample(pcm, frame, 1)}; got != want {
+				t.Errorf("direction %v frame %d: got %v, want %v", direction, frame, got, want)
 			}
 		}
+
 		if pcm[len(pcm)-2] != 0xab || pcm[len(pcm)-1] != 0xcd {
-			t.Errorf("in=%v: the half frame at the end changed: % x", in, pcm[len(pcm)-2:])
+			t.Errorf("direction %v: the half frame at the end changed: % x", direction, pcm[len(pcm)-2:])
 		}
 	}
 	// The ends: fade in starts at zero and ends untouched, fade out the other way round.
-	in, out := fullScale(frames), fullScale(frames)
-	fade(in, true, nil)
-	fade(out, false, nil)
-	if sample(in, 0, 1) != 0 || sample(in, frames-1, 1) != -32768 ||
-		sample(out, 0, 0) != 32767 || sample(out, frames-1, 0) != 0 {
-		t.Errorf("ends: in % x, out % x", in, out)
+	fadedIn, fadedOut := fullScale(frames), fullScale(frames)
+	fade(fadedIn, fadeFromSilence, nil)
+	fade(fadedOut, fadeToSilence, nil)
+
+	if sample(fadedIn, 0, 1) != 0 || sample(fadedIn, frames-1, 1) != -32768 ||
+		sample(fadedOut, 0, 0) != 32767 || sample(fadedOut, frames-1, 0) != 0 {
+		t.Errorf("ends: in % x, out % x", fadedIn, fadedOut)
 	}
 }
 
 func TestFadeOfOneFrameAndOfNothing(t *testing.T) {
+	t.Parallel()
+
 	one := fullScale(1)
-	fade(one, true, nil)
+	fade(one, fadeFromSilence, nil)
+
 	if sample(one, 0, 0) != 0 || sample(one, 0, 1) != 0 {
 		t.Errorf("one frame faded in: % x, want silence", one)
 	}
-	if got := fade([]byte{1, 2, 3}, true, nil); len(got) != 0 {
+
+	if got := fade([]byte{1, 2, 3}, fadeFromSilence, nil); len(got) != 0 {
 		t.Errorf("no whole frame: %d samples", len(got))
 	}
 }
 
+//nolint:paralleltest // testing.AllocsPerRun panics in a parallel test
 func TestFadeReusesItsScratchSpace(t *testing.T) {
 	pcm := fullScale(938)
-	samples := fade(pcm, false, nil)
-	if allocs := testing.AllocsPerRun(10, func() { samples = fade(pcm, false, samples) }); allocs != 0 {
+	samples := fade(pcm, fadeToSilence, nil)
+
+	if allocs := testing.AllocsPerRun(10, func() { samples = fade(pcm, fadeToSilence, samples) }); allocs != 0 {
 		t.Errorf("fade allocated %v times with scratch space given", allocs)
 	}
 }

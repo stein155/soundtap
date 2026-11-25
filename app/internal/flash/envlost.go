@@ -15,6 +15,9 @@ import (
 // nothing.
 var errBadBlock = errors.New("the erase block is bad")
 
+// errBothBad means neither environment copy has a good erase block to be written to.
+var errBothBad = errors.New("sit on bad erase blocks")
+
 // envCopy is where one copy of the redundant environment lives.
 type envCopy struct{ mtd, offset int }
 
@@ -22,6 +25,7 @@ func (in *Installer) envCopy(which int) envCopy {
 	if which == ubootenv.Primary {
 		return envCopy{in.Target.EnvMTD, 0}
 	}
+
 	return envCopy{ubootMTD, ubootenv.RedundantOffset}
 }
 
@@ -35,7 +39,9 @@ func (in *Installer) lostCopy(read Reader) (int, error) {
 	if !in.Target.EnvRedundant || in.Target.EnvMTD < 0 {
 		return -1, nil
 	}
+
 	_, lost, err := in.readCopies(read)
+
 	return lost, err
 }
 
@@ -44,20 +50,26 @@ func (in *Installer) lostCopy(read Reader) (int, error) {
 // empty and so checks out as no copy.
 func (in *Installer) readCopies(read Reader) ([2][]byte, int, error) {
 	var copies [2][]byte
+
 	lost := -1
+
 	for which := range copies {
 		c := in.envCopy(which)
+
 		raw, err := in.dumpEnv(read, c.mtd, c.offset, ubootenv.Size)
 		switch {
 		case errors.Is(err, errBadBlock) && lost >= 0:
-			return copies, -1, fmt.Errorf("both copies of %s sit on bad erase blocks", envPart)
+			return copies, -1, fmt.Errorf("both copies of %s %w", envPart, errBothBad)
 		case errors.Is(err, errBadBlock):
 			lost = which
 		case err != nil:
 			return copies, -1, err
+		default: // the copy was read
 		}
+
 		copies[which] = raw
 	}
+
 	return copies, lost, nil
 }
 
@@ -68,10 +80,12 @@ func (in *Installer) lostBehind(read Reader, readErr error) int {
 	if readErr == nil {
 		return -1
 	}
+
 	lost, err := in.lostCopy(read)
 	if err != nil {
 		return -1
 	}
+
 	return lost
 }
 
@@ -81,19 +95,24 @@ func (in *Installer) lostBehind(read Reader, readErr error) int {
 func (in *Installer) remainingEnv(read Reader, lost int) (*ubootenv.Env, byte, error) {
 	left := 1 - lost // Primary and Redundant are 0 and 1
 	c := in.envCopy(left)
+
 	raw, err := in.dumpEnv(read, c.mtd, c.offset, ubootenv.Size)
 	if err != nil {
 		return nil, 0, err
 	}
+
 	env, flag, err := ubootenv.ParseCopy(raw)
 	if err == nil {
 		return env, flag, nil
 	}
+
 	if left == ubootenv.Primary {
-		if single, singleErr := ubootenv.ParseLegacy(raw); singleErr == nil {
+		single, singleErr := ubootenv.ParseLegacy(raw)
+		if singleErr == nil {
 			return single, 0, nil
 		}
 	}
+
 	return nil, 0, fmt.Errorf("reading %s, one copy lost to a bad block: %w", envPart, err)
 }
 
@@ -107,14 +126,20 @@ func (in *Installer) rewriteRemaining(read Reader, lost int, edit func(*ubootenv
 	if err != nil {
 		return err
 	}
+
 	env := current.Clone()
-	if changed, err := edit(env); err != nil || !changed || env.Equal(current) {
+
+	changed, err := edit(env)
+	if err != nil || !changed || env.Equal(current) {
 		return err
 	}
+
 	image, err := env.EncodeCopy(flag + 1)
 	if err != nil {
-		return err
+		return fmt.Errorf("encoding the copy left: %w", err)
 	}
+
 	left := in.envCopy(1 - lost)
+
 	return in.writeEnvCopy(read, left.mtd, left.offset, image)
 }

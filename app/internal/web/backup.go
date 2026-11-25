@@ -31,7 +31,7 @@ const (
 	// favorites, each as large as addFavorite takes and doubled for the JSON escaping of
 	// quotes and backslashes, plus an ordinary request's worth for presets and settings.
 	// The guard uses the same number (bodyLimit), so the two cannot disagree.
-	backupMaxBytes = maxRequestBody + 2*favorites.Limit*favoriteMaxBytes
+	backupMaxBytes = maxRequestBody + 2*favorites.MaxStored*favoriteMaxBytes
 )
 
 // backup is the export format. Credentials are deliberately absent: the Wi-Fi PSK
@@ -94,12 +94,13 @@ type backupMQTT struct {
 }
 
 // stored is the stored form of the backup's MQTT settings, without a password.
-func (m backupMQTT) stored() settings.MQTT {
+func (m *backupMQTT) stored() settings.MQTT {
 	return settings.MQTT{
 		Enabled: m.Enabled, Host: m.Host, Port: m.Port,
 		Username:  m.Username,
 		BaseTopic: m.BaseTopic, DiscoveryPrefix: m.DiscoveryPrefix,
-		TLS: m.TLS,
+		TLS:      m.TLS,
+		Password: "",
 	}
 }
 
@@ -108,11 +109,12 @@ func (m backupMQTT) stored() settings.MQTT {
 func (s *Server) exportBackup(w http.ResponseWriter, r *http.Request) {
 	set := s.settings.Get()
 	alarm := set.AlarmConfig()
-	b := backup{
+
+	doc := backup{
 		Kind:       backupKind,
 		Version:    backupVersion,
 		ExportedAt: time.Now().UTC().Format(time.RFC3339),
-		Speaker:    backupSpeaker{Name: set.Name, Version: s.version},
+		Speaker:    backupSpeaker{Name: set.Name, Version: s.version, Model: "", DeviceID: ""},
 		Settings: backupSettings{
 			Name:     set.Name,
 			Language: set.Language,
@@ -131,19 +133,28 @@ func (s *Server) exportBackup(w http.ResponseWriter, r *http.Request) {
 			AuxName:      &set.AuxName,
 			CrashReports: &set.CrashReports.Enabled,
 		},
-		Note: "No passwords are included. Restoring keeps the MQTT password already on the speaker.",
+		Note:        "No passwords are included. Restoring keeps the MQTT password already on the speaker.",
+		Presets:     nil,
+		Favorites:   nil,
+		CodecScript: nil,
 	}
-	if info, err := s.backend.Info(r.Context()); err == nil && info != nil {
-		b.Speaker.Model, b.Speaker.DeviceID = info.Type, info.DeviceID
+
+	info, err := s.backend.Info(r.Context())
+	if err == nil && info != nil {
+		doc.Speaker.Model, doc.Speaker.DeviceID = info.Type, info.DeviceID
 	}
+
 	presets, err := s.presetList(r.Context())
 	if err != nil {
 		s.fail(w, "read presets", err)
+
 		return
 	}
-	b.Presets = presets
-	b.Favorites = s.favoritesStore.All()
-	b.CodecScript = exportCodec(s.codecDir())
+
+	doc.Presets = presets
+	doc.Favorites = s.favoritesStore.All()
+	doc.CodecScript = exportCodec(s.codecDir())
+
 	w.Header().Set("Content-Disposition", `attachment; filename="soundtap-backup.json"`)
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
@@ -151,7 +162,7 @@ func (s *Server) exportBackup(w http.ResponseWriter, r *http.Request) {
 	// which keeps the export inside backupMaxBytes.
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
-	_ = enc.Encode(b) //nolint:errchkjson // the client may be gone; nothing left to tell it
+	_ = enc.Encode(doc) //nolint:errchkjson // the client may be gone; nothing left to tell it
 }
 
 // importBackup validates a whole file, then applies it. Presets are written for every
@@ -161,17 +172,26 @@ func (s *Server) importBackup(w http.ResponseWriter, r *http.Request) {
 	// A restore or reset rewrites what an install or update is reading (ADR 0052).
 	if !s.fw.TryLock() {
 		apiErrorCode(w, http.StatusConflict, apierror.Busy, "another speaker operation is in progress")
+
 		return
 	}
 	defer s.fw.Unlock()
-	var b backup
+
+	var parsed backup
+
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, backupMaxBytes))
-	if err := dec.Decode(&b); err != nil {
+
+	err := dec.Decode(&parsed)
+	if err != nil {
 		s.badRequest(w, "not readable as a backup file", err)
+
 		return
 	}
-	if err := b.validate(); err != nil {
+
+	err = parsed.validate()
+	if err != nil {
 		s.badRequest(w, err.Error(), err)
+
 		return
 	}
 
@@ -185,6 +205,7 @@ func (s *Server) importBackup(w http.ResponseWriter, r *http.Request) {
 	// and report exactly which steps failed: half-restored is unavoidable, but
 	// half-restored-and-unreported is not.
 	var failed []string
+
 	try := func(step string, err error) {
 		if err != nil {
 			failed = append(failed, step)
@@ -194,26 +215,29 @@ func (s *Server) importBackup(w http.ResponseWriter, r *http.Request) {
 
 	// Every stored setting lands in one atomic write: a power cut mid-restore leaves the
 	// old settings or the new ones, never a mix. Live side effects follow it.
-	name, _ := settings.NormalizeName(b.Settings.Name)
+	name, _ := settings.NormalizeName(parsed.Settings.Name)
 	stored := s.settings.Update(func(next *settings.Settings) error {
-		b.Settings.applyTo(next, name)
+		parsed.Settings.applyTo(next, name)
+
 		return nil
 	})
 	try("settings", stored)
+
 	if stored == nil {
-		s.applyRestoredLive(ctx, &b.Settings, name, try)
+		s.applyRestoredLive(ctx, &parsed.Settings, name, try)
 	}
 
 	// Absent from a file exported before favorites: the speaker's own list stays.
-	if b.Favorites != nil {
-		try("favorites", s.favoritesStore.Replace(b.Favorites))
+	if parsed.Favorites != nil {
+		try("favorites", s.favoritesStore.Replace(parsed.Favorites))
 	}
 
-	restored := s.restorePresets(ctx, b.Presets, try)
-	codec, err := restoreCodec(s.codecDir(), b.CodecScript, wantedCodec)
+	restored := s.restorePresets(ctx, parsed.Presets, try)
+	codec, err := restoreCodec(s.codecDir(), parsed.CodecScript, wantedCodec)
 	try("codec script", err)
+
 	if codec {
-		s.log.Info("restored the codec script; sound returns at the next restart", "name", b.CodecScript.Name)
+		s.log.Info("restored the codec script; sound returns at the next restart", "name", parsed.CodecScript.Name)
 	}
 
 	if len(failed) > 0 {
@@ -224,10 +248,11 @@ func (s *Server) importBackup(w http.ResponseWriter, r *http.Request) {
 			"error": "some settings could not be restored: " + strings.Join(failed, ", "),
 			"code":  apierror.Internal,
 		})
+
 		return
 	}
 
-	s.log.Info("restored backup", "presets", restored, "exportedAt", b.ExportedAt)
+	s.log.Info("restored backup", "presets", restored, "exportedAt", parsed.ExportedAt)
 	s.hub.nudge()
 	writeJSON(w, http.StatusOK, map[string]any{"status": "restored", "presets": restored, "codecScript": codec})
 }
@@ -238,35 +263,45 @@ func (bs *backupSettings) applyTo(next *settings.Settings, name string) {
 	if name != "" {
 		next.Name = name
 	}
+
 	if bs.Language != "" {
 		next.Language = bs.Language
 	}
+
 	next.Audio = bs.Audio
+
 	next.Audio.AutoOff = settings.NormalizeAutoOff(bs.Audio.AutoOff)
 	if d := bs.Display; d != nil {
 		next.Display = *d
-		if *d != (settings.Display{}) {
+		if *d != (settings.Display{ClockOff: false, Hour12: false, Timezone: ""}) {
 			next.Display, _ = settings.NormalizeDisplay(*d) // validated above
 		}
 	}
+
 	if bs.Alarm != nil {
 		next.Alarm = *bs.Alarm
 	}
+
 	if bs.Multiroom != nil {
 		next.Multiroom = *bs.Multiroom
 	}
+
 	if bs.Integrations != nil {
 		next.Integrations = *bs.Integrations
 	}
+
 	if bs.SourceNames != nil {
 		next.SourceNames = bs.SourceNames
 	}
+
 	if bs.Channel != nil {
 		next.Channel = *bs.Channel
 	}
+
 	if bs.CrashReports != nil {
 		next.CrashReports.Enabled = *bs.CrashReports
 	}
+
 	if bs.AuxName != nil {
 		next.AuxName = strings.TrimSpace(*bs.AuxName)
 		if next.AuxName != "" {
@@ -277,35 +312,42 @@ func (bs *backupSettings) applyTo(next *settings.Settings, name string) {
 	// never carries one, and blanking it would silently disconnect a working bridge. A
 	// backup naming another broker gets no password, or a crafted one could collect it.
 	mq := bs.MQTT.stored()
-	if sameBroker(next.MQTT, mq) {
+	if sameBroker(&next.MQTT, &mq) {
 		mq.Password = next.MQTT.Password
 	}
+
 	next.MQTT = mq
 }
 
 // applyRestoredLive applies what a stored setting alone does not change on a running
 // speaker. try records a failed step.
-func (s *Server) applyRestoredLive(ctx context.Context, bs *backupSettings, name string, try func(string, error)) {
+func (s *Server) applyRestoredLive(
+	ctx context.Context, restored *backupSettings, name string, try func(string, error),
+) {
 	if name != "" {
 		try("name", s.applyName(ctx, name))
 	}
-	if a := bs.Audio; a.HasVolume {
+
+	if a := restored.Audio; a.HasVolume {
 		// Live as well as stored: the prefs saver persists whatever the speaker plays at,
 		// so a value only in the settings file would be overwritten ten seconds later.
 		try("volume", s.backend.SetVolume(ctx, a.Volume))
 		try("bass", s.backend.SetBass(ctx, a.Bass))
 	}
 	// As PUT /api/settings does: an alarm restored as off must not still ring.
-	if bs.Alarm != nil && !s.settings.Get().AlarmConfig().Enabled {
-		s.dismissAlarm()
+	if restored.Alarm != nil && !s.settings.Get().AlarmConfig().Enabled {
+		s.dismissAlarm(ctx)
 	}
-	if bs.Channel != nil && s.channel != nil {
+
+	if restored.Channel != nil && s.channel != nil {
 		s.channel(s.settings.Get().Channel) // the running mixer, as PUT /api/channel does
 	}
+
 	if s.mqtt != nil {
 		s.mqtt.Reload()
 	}
-	if bs.Integrations != nil && s.receiversChanged != nil {
+
+	if restored.Integrations != nil && s.receiversChanged != nil {
 		s.receiversChanged() // start or stop Spotify Connect and AirPlay
 	}
 }
@@ -317,20 +359,29 @@ func (s *Server) restorePresets(ctx context.Context, presets []store.Preset, try
 	for _, p := range presets {
 		want[p.Slot] = p
 	}
+
 	restored := 0
+
 	for slot := 1; slot <= speaker.PresetSlots; slot++ {
-		p, ok := want[slot]
+		preset, ok := want[slot]
 		if !ok {
 			try(fmt.Sprintf("clear preset %d", slot), s.backend.RemovePreset(ctx, slot))
+
 			continue
 		}
-		source, itemType, loc := presetContent(p)
-		if err := s.backend.StorePreset(ctx, slot, source, itemType, loc, p.Name, p.Logo); err != nil {
+
+		source, itemType, loc := presetContent(&preset)
+
+		err := s.backend.StorePreset(ctx, slot, source, itemType, loc, preset.Name, preset.Logo)
+		if err != nil {
 			try(fmt.Sprintf("preset %d", slot), err)
+
 			continue
 		}
+
 		restored++
 	}
+
 	return restored
 }
 
@@ -348,47 +399,60 @@ func (s *Server) factoryReset(w http.ResponseWriter, r *http.Request) {
 	// A restore or reset rewrites what an install or update is reading (ADR 0052).
 	if !s.fw.TryLock() {
 		apiErrorCode(w, http.StatusConflict, apierror.Busy, "another speaker operation is in progress")
+
 		return
 	}
 	defer s.fw.Unlock()
+
 	var body struct {
 		Confirm bool `json:"confirm"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
+
+	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, smallBody)).Decode(&body)
+	if err != nil {
 		s.badRequest(w, "bad body", err)
+
 		return
 	}
+
 	if !body.Confirm {
 		s.badRequest(w, "confirm must be true", nil)
+
 		return
 	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), restoreDeadline)
 	defer cancel()
+
 	for slot := 1; slot <= speaker.PresetSlots; slot++ {
-		if err := s.backend.RemovePreset(ctx, slot); err != nil {
-			s.fail(w, "clear preset failed", err)
+		removeErr := s.backend.RemovePreset(ctx, slot)
+		if removeErr != nil {
+			s.fail(w, "clear preset failed", removeErr)
+
 			return
 		}
 	}
-	if err := s.settings.Reset(); err != nil {
+
+	err = s.settings.Reset()
+	if err != nil {
 		s.fail(w, "clear settings failed", err)
+
 		return
 	}
+
 	if s.mqtt != nil {
 		s.mqtt.Reload() // the bridge was just switched off with everything else
 	}
-	// The owner key goes with the rest (ADR 0048): a speaker that changes hands trusts
-	// only the release keys again. Like the other steps of a reset, a failure is logged
-	// and the reset goes on, so one unwritable partition cannot block setup mode.
-	if err := s.ClearOwnerKey(); err != nil {
-		s.log.Error("factory reset: remove the owner key", "err", err)
-	}
+
 	if s.hardwareReset != nil {
-		if err := s.hardwareReset(); err != nil {
+		err := s.hardwareReset()
+		if err != nil {
 			s.fail(w, "factory reset failed", err)
+
 			return
 		}
 	}
+
 	s.log.Warn("factory reset")
 	s.hub.nudge()
 	writeJSON(w, http.StatusOK, map[string]any{"status": "reset"})
@@ -404,43 +468,59 @@ func (s *Server) movePreset(w http.ResponseWriter, r *http.Request) {
 		From int `json:"from"`
 		To   int `json:"to"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+
+	err := json.NewDecoder(r.Body).Decode(&body)
+	if err != nil {
 		s.badRequest(w, "bad body", err)
+
 		return
 	}
+
 	if body.From < 1 || body.From > speaker.PresetSlots || body.To < 1 || body.To > speaker.PresetSlots {
 		s.badRequest(w, fmt.Sprintf("slots must be 1..%d", speaker.PresetSlots), nil)
+
 		return
 	}
+
 	if body.From == body.To {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+
 		return
 	}
+
 	presets, err := s.presetList(r.Context())
 	if err != nil {
 		s.fail(w, "read presets", err)
+
 		return
 	}
+
 	occupied := func(p store.Preset) bool { return p.Slot == body.From || p.Slot == body.To }
 	if !slices.ContainsFunc(presets, occupied) {
 		s.badRequest(w, "both slots are empty", nil)
+
 		return
 	}
 	// One backend call: both slots change under one lock and in one write.
-	if err := s.backend.SwapPresets(r.Context(), body.From, body.To); err != nil {
+	err = s.backend.SwapPresets(r.Context(), body.From, body.To)
+	if err != nil {
 		s.fail(w, "move failed", err)
+
 		return
 	}
+
 	s.hub.nudge()
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
-func presetContent(p store.Preset) (source, itemType, location string) {
-	switch p.Source {
+// It returns the source, the item type and the location, in that order.
+func presetContent(preset *store.Preset) (string, string, string) {
+	switch preset.Source {
 	case sourceUPnP:
-		return p.Source, p.Type, p.Location
+		return preset.Source, preset.Type, preset.Location
 	case sourceSpotify:
-		return p.Source, "uri", p.Location
+		return preset.Source, "uri", preset.Location
 	}
-	return sourceTuneIn, "stationurl", speaker.StationLocation(p.StationID)
+
+	return sourceTuneIn, "stationurl", speaker.StationLocation(preset.StationID)
 }

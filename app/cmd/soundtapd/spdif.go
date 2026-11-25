@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"strconv"
 	"syscall"
 
 	"github.com/stein155/soundtap/app/internal/audio"
@@ -41,7 +42,13 @@ func (t *spdifTee) Write(p []byte) (int, error) { return t.WriteGain(p, 1) }
 
 func (t *spdifTee) WriteGain(p []byte, gain float64) (int, error) {
 	_, _ = t.spdif.WriteGain(p, gain) // the optical side drops what it cannot take
-	return audio.WriteGain(t.primary, p, gain, &t.buf)
+
+	written, err := audio.WriteGain(t.primary, p, gain, &t.buf)
+	if err != nil {
+		return written, fmt.Errorf("analog sink: %w", err)
+	}
+
+	return written, nil
 }
 
 // dropWriter writes whole blocks to a non-blocking pipe and drops a block that does not
@@ -54,62 +61,86 @@ type dropWriter struct {
 	size int
 }
 
-func (w *dropWriter) fits(n int) bool {
-	q, err := pipeQueued(uintptr(w.fd))
-	return err == nil && q+n <= w.size
+func (w *dropWriter) Write(block []byte) (int, error) {
+	if !w.fits(len(block)) {
+		return len(block), nil
+	}
+
+	_, _ = syscall.Write(w.fd, block)
+
+	return len(block), nil
 }
 
-func (w *dropWriter) Write(p []byte) (int, error) {
-	if !w.fits(len(p)) {
-		return len(p), nil
-	}
-	_, _ = syscall.Write(w.fd, p)
-	return len(p), nil
+// fits reports whether a block of size bytes fits in the pipe now.
+func (w *dropWriter) fits(size int) bool {
+	queued, err := pipeQueued(uintptr(w.fd))
+
+	return err == nil && queued+size <= w.size
 }
 
 // withSPDIF tees sink to the optical output when this box has one. It returns sink and
 // closeSink unchanged when it has none or aplay does not start.
-func withSPDIF(ctx context.Context, sink io.Writer, closeSink func() error, log *slog.Logger) (io.Writer, func() error) {
+func withSPDIF(
+	ctx context.Context, sink io.Writer, closeSink func() error, log *slog.Logger,
+) (io.Writer, func() error) {
 	if board.Name != model.WLA {
 		return sink, closeSink
 	}
-	if _, err := os.Stat(spdifCard); err != nil {
+
+	_, err := os.Stat(spdifCard)
+	if err != nil {
 		return sink, closeSink
 	}
+
 	cmd := exec.CommandContext(ctx, "aplay", "-q", "-D", spdifDev, "-t", "raw",
-		"-f", "S32_LE", "-r", fmt.Sprint(spdifRate), "-c", "2",
+		"-f", "S32_LE", "-r", strconv.Itoa(spdifRate), "-c", "2",
 		fmt.Sprintf("--buffer-time=%d", audio.SinkBufferMicros),
 		fmt.Sprintf("--period-time=%d", audio.SinkPeriodMicros))
 	cmd.Stderr = supervise.ChildLog("aplay-spdif")
+
 	stdin, err := cmd.StdinPipe()
 	if err == nil {
 		err = cmd.Start()
 	}
+
 	if err != nil {
 		log.Warn("optical output off", "err", err)
+
 		return sink, closeSink
 	}
+
 	stop := func() error {
 		_ = stdin.Close()
 		_ = cmd.Wait()
+
 		return closeSink()
 	}
 	// StdinPipe wraps the *os.File; Fd puts it in blocking mode, so switch it back after.
-	f, ok := stdin.(interface{ Fd() uintptr })
+	pipe, ok := stdin.(interface{ Fd() uintptr })
 	if !ok {
 		log.Warn("optical output off", "err", "no pipe descriptor")
+
 		_ = stdin.Close()
 		_ = cmd.Wait()
+
 		return sink, closeSink
 	}
-	fd := int(f.Fd())
-	if err := syscall.SetNonblock(fd, true); err != nil {
+
+	pipeFD := int(pipe.Fd())
+
+	err = syscall.SetNonblock(pipeFD, true)
+	if err != nil {
 		log.Warn("optical output off", "err", err)
+
 		_ = stdin.Close()
 		_ = cmd.Wait()
+
 		return sink, closeSink
 	}
+
 	log.Info("optical output on", "dev", spdifDev, "rate", spdifRate)
-	tee := &spdifTee{primary: sink, spdif: audio.NewS32Writer(&dropWriter{fd: fd, size: spdifPipeBytes}, spdifRate)}
+	optical := audio.NewS32Writer(&dropWriter{fd: pipeFD, size: spdifPipeBytes}, spdifRate)
+	tee := &spdifTee{primary: sink, spdif: optical, buf: nil}
+
 	return tee, stop
 }

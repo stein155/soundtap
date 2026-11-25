@@ -54,9 +54,11 @@ var daemons struct {
 func DaemonRestarted(name string) {
 	daemons.mu.Lock()
 	defer daemons.mu.Unlock()
+
 	if daemons.restarts == nil {
 		daemons.restarts = map[string]uint64{}
 	}
+
 	daemons.restarts[name]++
 }
 
@@ -64,8 +66,10 @@ func DaemonRestarted(name string) {
 func DaemonRestarts() map[string]uint64 {
 	daemons.mu.Lock()
 	defer daemons.mu.Unlock()
+
 	out := make(map[string]uint64, len(daemons.restarts))
 	maps.Copy(out, daemons.restarts)
+
 	return out
 }
 
@@ -74,9 +78,11 @@ func DaemonRestarts() map[string]uint64 {
 func DaemonCrashLooped(name string, runs int, err string, at time.Time) {
 	daemons.mu.Lock()
 	defer daemons.mu.Unlock()
+
 	if daemons.loops == nil {
 		daemons.loops = map[string]CrashLoop{}
 	}
+
 	n := daemons.loops[name].Count + 1
 	daemons.loops[name] = CrashLoop{Daemon: name, Runs: runs, Err: err, At: at, Count: n}
 }
@@ -85,8 +91,10 @@ func DaemonCrashLooped(name string, runs int, err string, at time.Time) {
 func CrashLoops() map[string]CrashLoop {
 	daemons.mu.Lock()
 	defer daemons.mu.Unlock()
+
 	out := make(map[string]CrashLoop, len(daemons.loops))
 	maps.Copy(out, daemons.loops)
+
 	return out
 }
 
@@ -116,10 +124,13 @@ func Take() Snapshot {
 
 // Reset sets every count to zero, for a test.
 func Reset() {
-	for _, c := range []*atomic.Uint64{&SoundtapdRestarts, &BufferUnderruns, &ALSAUnderruns,
-		&InstallFailures, &BCOFlashFailures, &BootConfirmRetries} {
+	for _, c := range []*atomic.Uint64{
+		&SoundtapdRestarts, &BufferUnderruns, &ALSAUnderruns,
+		&InstallFailures, &BCOFlashFailures, &BootConfirmRetries,
+	} {
 		c.Store(0)
 	}
+
 	daemons.mu.Lock()
 	daemons.restarts, daemons.loops = nil, nil
 	daemons.mu.Unlock()

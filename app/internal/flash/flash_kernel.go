@@ -10,13 +10,32 @@ import (
 	"hash/crc32"
 )
 
+// The uImage signature: five bytes at offset 32, the start of the image name.
+const (
+	kernelSigOff = 32
+	kernelSigEnd = kernelSigOff + 5
+)
+
+// The refusals of a kernel image. A message with values reads them around its sentinel.
+var (
+	errKernelHeader   = errors.New("invalid uImage magic or truncated header")
+	errKernelSig      = errors.New("kernel signature is")
+	errKernelEmpty    = errors.New("uImage payload is empty")
+	errKernelType     = errors.New("uImage type is")
+	errKernelLoad     = errors.New("uImage load/entry is")
+	errKernelTooLong  = errors.New("uImage payload exceeds the kernel module")
+	errKernelDataCRC  = errors.New("uImage data CRC is")
+	errKernelFixedCRC = errors.New("uImage header CRC after fixsig is")
+)
+
 // KernelSignature returns the five bytes at offset 32 of a uImage — the field
 // the whole A/B scheme turns on.
 func KernelSignature(head []byte) string {
-	if len(head) < 37 {
+	if len(head) < kernelSigEnd {
 		return ""
 	}
-	return string(head[32:37])
+
+	return string(head[kernelSigOff:kernelSigEnd])
 }
 
 // Bootable reports whether U-Boot would accept this kernel image. "Linux" is a
@@ -31,38 +50,49 @@ func Bootable(sig string) bool { return sig == "Linux" || sig == "Linub" }
 func ValidateKernel(image []byte) error {
 	const headerSize = 64
 	if len(image) < headerSize || binary.BigEndian.Uint32(image) != 0x27051956 {
-		return errors.New("invalid uImage magic or truncated header")
+		return errKernelHeader
 	}
+
 	sig := KernelSignature(image)
 	if !Bootable(sig) {
-		return fmt.Errorf("kernel signature is %q, not bootable", sig)
+		return fmt.Errorf("%w %q, not bootable", errKernelSig, sig)
 	}
+
 	size := binary.BigEndian.Uint32(image[12:])
 	if size == 0 {
-		return errors.New("uImage payload is empty")
+		return errKernelEmpty
 	}
+
 	if image[28] != 5 || image[29] != 2 || image[30] != 2 || image[31] != 0 {
-		return fmt.Errorf("uImage type is os=%d arch=%d type=%d comp=%d, want Linux/ARM/kernel/none",
-			image[28], image[29], image[30], image[31])
+		return fmt.Errorf("%w os=%d arch=%d type=%d comp=%d, want Linux/ARM/kernel/none",
+			errKernelType, image[28], image[29], image[30], image[31])
 	}
-	if load, entry := binary.BigEndian.Uint32(image[16:]), binary.BigEndian.Uint32(image[20:]); load != 0x80008000 || entry != 0x80008000 {
-		return fmt.Errorf("uImage load/entry is %08x/%08x, want 80008000/80008000", load, entry)
+
+	load, entry := binary.BigEndian.Uint32(image[16:]), binary.BigEndian.Uint32(image[20:])
+	if load != 0x80008000 || entry != 0x80008000 {
+		return fmt.Errorf("%w %08x/%08x, want 80008000/80008000", errKernelLoad, load, entry)
 	}
+
 	end := uint64(headerSize) + uint64(size)
 	if end > uint64(len(image)) {
-		return errors.New("uImage payload exceeds the kernel module")
+		return errKernelTooLong
 	}
+
 	if got, want := crc32.ChecksumIEEE(image[headerSize:end]), binary.BigEndian.Uint32(image[24:]); got != want {
-		return fmt.Errorf("uImage data CRC is %08x, want %08x", got, want)
+		return fmt.Errorf("%w %08x, want %08x", errKernelDataCRC, got, want)
 	}
+
 	header := append([]byte(nil), image[:headerSize]...)
 	if sig == "Linub" {
-		copy(header[32:37], "Linux")
+		copy(header[kernelSigOff:kernelSigEnd], "Linux")
 	}
+
 	want := binary.BigEndian.Uint32(header[4:])
 	binary.BigEndian.PutUint32(header[4:], 0)
+
 	if got := crc32.ChecksumIEEE(header); got != want {
-		return fmt.Errorf("uImage header CRC after fixsig is %08x, want %08x", got, want)
+		return fmt.Errorf("%w %08x, want %08x", errKernelFixedCRC, got, want)
 	}
+
 	return nil
 }

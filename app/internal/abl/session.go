@@ -30,6 +30,21 @@ const (
 	adapterID           = 0x5000
 	adapterSourceMask   = 0x0043
 	adapterCapabilities = 0x000f
+	// announceNameLen is the name field of a device announcement.
+	announceNameLen = 24
+	// announceMinLen is the shortest device announcement: up to its info length byte.
+	announceMinLen = 30
+	// announceCapsLen is the info that carries the capability flags.
+	announceCapsLen = 4
+)
+
+// The session's timing, as stock's ABLServer keeps it.
+const (
+	oldHostQueryAfter = 2 * time.Second        // an old host is asked its type this long after it was found
+	oldHostQueryEvery = 500 * time.Millisecond // and again this often until it answers
+	selectHold        = 2 * time.Second        // a selection request is not repeated within this
+	colinVolumeBlock  = 8 * time.Second        // the SA-4 ignores volume this long after it turns on
+	volumeEchoWindow  = 600 * time.Millisecond // a poll reply's level within this of ours is its echo
 )
 
 // DiscoveryQuery asks the rooms for announcements of class.
@@ -37,19 +52,23 @@ func DiscoveryQuery(class byte) []byte { return []byte{discQuery, class, 0, 0} }
 
 // AdapterAnnouncement is the adapter's class 2 device-info announcement.
 func AdapterAnnouncement(version [4]byte) []byte {
-	name := make([]byte, 24)
+	name := make([]byte, announceNameLen)
 	copy(name, "SOUNDTOUCH")
+
 	const infoLen = 0x21
+
 	info := make([]byte, infoLen)
-	info[0], info[1] = adapterSourceMask>>8, adapterSourceMask&0xff
-	info[2], info[3] = adapterCapabilities>>8, adapterCapabilities&0xff
+	info[0], info[1] = adapterSourceMask>>byteBits, adapterSourceMask&byteMask
+	info[2], info[3] = adapterCapabilities>>byteBits, adapterCapabilities&byteMask
 	info[4] = OwnRoom
 	copy(info[5:9], version[:])
 	copy(info[9:27], "00-00000000-00000")
 	copy(info[29:33], "S-TO")
-	msg := []byte{discAnnounce, ClassDevice, adapterID >> 8, adapterID & 0xff, 0}
+
+	msg := []byte{discAnnounce, ClassDevice, adapterID >> byteBits, adapterID & byteMask, 0}
 	msg = append(msg, name...)
 	msg = append(msg, infoLen)
+
 	return append(msg, info...)
 }
 
@@ -62,16 +81,22 @@ type Announcement struct {
 }
 
 // ParseAnnouncement reads a discovery announcement; ok is false for anything else.
-func ParseAnnouncement(d []byte) (Announcement, bool) {
-	if len(d) < 30 || d[0]&0x3f != discAnnounce || d[0]&0xc0 != 0 {
-		return Announcement{}, false
+func ParseAnnouncement(data []byte) (Announcement, bool) {
+	if len(data) < announceMinLen || data[0]&0x3f != discAnnounce || data[0]&0xc0 != 0 {
+		return Announcement{Class: 0, ID: 0, Name: "", Capabilities: 0}, false
 	}
-	a := Announcement{Class: d[1], ID: uint16(d[2])<<8 | uint16(d[3]),
-		Name: strings.TrimRight(string(d[5:29]), "\x00 ")}
-	if a.Class == ClassDevice && len(d) >= 30+4 && int(d[29]) >= 4 {
-		a.Capabilities = uint16(d[32])<<8 | uint16(d[33])
+
+	announcement := Announcement{
+		Class: data[1], ID: uint16(data[2])<<byteBits | uint16(data[3]),
+		Name:         strings.TrimRight(string(data[5:29]), "\x00 "),
+		Capabilities: 0,
 	}
-	return a, true
+	if announcement.Class == ClassDevice && len(data) >= announceMinLen+announceCapsLen &&
+		int(data[29]) >= announceCapsLen {
+		announcement.Capabilities = uint16(data[32])<<byteBits | uint16(data[33])
+	}
+
+	return announcement, true
 }
 
 // Speaker is what the session drives on soundtapd's side.
@@ -125,19 +150,30 @@ type Session struct {
 }
 
 // NewSession is a session over m for sp.
-func NewSession(m *Master, sp Speaker, log *slog.Logger) *Session {
+func NewSession(master *Master, spk Speaker, log *slog.Logger) *Session {
 	if log == nil {
 		log = slog.Default()
 	}
-	s := &Session{m: m, sp: sp, log: log, now: time.Now, sentVol: -1, hostVol: -1}
-	m.Events = s.Event
-	return s
+
+	sess := &Session{
+		m: master, sp: spk, log: log, now: time.Now,
+		OnHost: nil, OnKey: nil, OnSelect: nil, Bluetooth: false,
+		mu: sync.Mutex{}, hostRoom: 0, hasHost: false, host: HostUnknown, caps: 0,
+		queried: time.Time{}, foundAt: time.Time{}, zone: 0, zoneKnown: false,
+		hostVol: -1, sentVol: -1, sentAt: time.Time{}, blockUntil: time.Time{},
+		selectedAt: time.Time{}, wakeAt: time.Time{}, announced: false, muted: false,
+		muteKnown: false, registered: false, linkUp: false, justStored: false,
+	}
+	master.Events = sess.Event
+
+	return sess
 }
 
 // Host is the host class found so far.
 func (s *Session) Host() Host {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	return s.host
 }
 
@@ -148,9 +184,12 @@ func (s *Session) OwnsVolume() bool { return s.Host() != HostUnknown }
 // Run keeps the link until ctx ends.
 func (s *Session) Run(ctx context.Context) {
 	s.m.Sync()
+
 	for ctx.Err() == nil {
 		s.Tick()
-		if err := s.m.Cycle(); err != nil {
+
+		err := s.m.Cycle()
+		if err != nil {
 			s.log.Debug("abl cycle", "err", err)
 		}
 	}
@@ -163,6 +202,7 @@ func (s *Session) Tick() {
 	s.mu.Lock()
 	first := !s.announced
 	s.announced = true
+
 	room, has, host := s.hostRoom, s.hasHost, s.host
 	if !has && len(active) > 0 {
 		s.hostRoom, s.hasHost, s.foundAt = active[0], true, now
@@ -171,24 +211,91 @@ func (s *Session) Tick() {
 	}
 	// Stock queries and announces on every link up: a host that came on after us, or came
 	// back, hears it then, and a Wave or CineMate is registered again.
-	up := has && slices.Contains(active, room)
-	linkUp := up && !s.linkUp
-	if !up && s.linkUp {
+	answering := has && slices.Contains(active, room)
+
+	linkUp := answering && !s.linkUp
+	if !answering && s.linkUp {
 		s.registered = false
 	}
-	s.linkUp = up
+
+	s.linkUp = answering
 	s.mu.Unlock()
+
 	if first || linkUp {
 		s.discover()
 	}
+
 	if linkUp {
 		s.register(host)
 	}
+
 	if has && host == HostUnknown {
 		s.queryOldHost(now, room)
 	}
+
 	if host != HostUnknown {
 		s.followPlayback(now)
+	}
+}
+
+// SetVolume hands a volume change on SoundTap to the host.
+func (s *Session) SetVolume(level int) {
+	s.mu.Lock()
+	room, has, host := s.hostRoom, s.hasHost, s.host
+
+	blocked := s.now().Before(s.blockUntil)
+	if !has || host == HostUnknown || blocked || level == s.sentVol {
+		s.mu.Unlock()
+
+		return
+	}
+
+	s.sentVol, s.sentAt = level, s.now()
+	s.mu.Unlock()
+	_ = s.m.Command(CmdAttenuate, room, AttenuationArg(host, level))
+}
+
+// SetMute hands SoundTap's mute to the host as a user mute, as stock's ABLMute does.
+//
+//nolint:revive // flag-parameter: a setter, muted is the state it sets
+func (s *Session) SetMute(muted bool) {
+	s.mu.Lock()
+	room, has, host := s.hostRoom, s.hasHost, s.host
+	changed := !s.muteKnown || s.muted != muted
+	s.muted, s.muteKnown = muted, true
+	s.mu.Unlock()
+
+	if !has || host == HostUnknown || !changed {
+		return
+	}
+
+	arg := byte(UnmuteUser)
+	if muted {
+		arg = MuteUser
+	}
+
+	_ = s.m.Command(CmdAttenuate, room, arg)
+}
+
+// Event takes what the bus reported.
+func (s *Session) Event(event Event) {
+	switch {
+	case event.Datagram != nil && event.Datagram.DstPort == PortRemote:
+		s.remote(event.Datagram.Data)
+	case event.Datagram != nil && event.Datagram.DstPort == PortDiscovery:
+		if a, ok := ParseAnnouncement(event.Datagram.Data); ok && a.Class == ClassDevice {
+			if host := HostFromDiscovery(a.ID); host != HostUnknown {
+				s.setHost(host, event.Room, a.Capabilities)
+			}
+		}
+	case len(event.Query) >= 3 && event.QueryOf == QuerySpeakerType:
+		if host := HostFromSpeakerType(event.Query[2]); host != HostUnknown {
+			s.setHost(host, event.Room, 0)
+		}
+	case event.Poll != nil:
+		s.poll(event.Room, event.Poll)
+	default:
+		// Nothing the session follows.
 	}
 }
 
@@ -196,19 +303,23 @@ func (s *Session) Tick() {
 // type: 2 s after it was found, every 500 ms until it answers.
 func (s *Session) queryOldHost(now time.Time, room byte) {
 	s.mu.Lock()
-	need := now.Sub(s.foundAt) > 2*time.Second && now.Sub(s.queried) > 500*time.Millisecond
+
+	need := now.Sub(s.foundAt) > oldHostQueryAfter && now.Sub(s.queried) > oldHostQueryEvery
 	if need {
 		s.queried = now
 	}
 	s.mu.Unlock()
+
 	if need {
 		_ = s.m.Command(CmdQueryInfo, room, QuerySpeakerType)
 	}
 }
 
 func (s *Session) discover() {
-	for _, msg := range [][]byte{DiscoveryQuery(ClassNetwork), AdapterAnnouncement([4]byte{27, 0, '0', '6'}),
-		DiscoveryQuery(ClassDevice), DiscoveryQuery(ClassSource)} {
+	for _, msg := range [][]byte{
+		DiscoveryQuery(ClassNetwork), AdapterAnnouncement([4]byte{27, 0, '0', '6'}),
+		DiscoveryQuery(ClassDevice), DiscoveryQuery(ClassSource),
+	} {
 		_ = s.m.SendDatagram(Broadcast, PortDiscovery, PortDiscovery, msg)
 	}
 }
@@ -218,20 +329,24 @@ func (s *Session) discover() {
 func (s *Session) followPlayback(now time.Time) {
 	s.mu.Lock()
 	room, host, zone, known := s.hostRoom, s.host, s.zone, s.zoneKnown
-	recent := now.Sub(s.selectedAt) < 2*time.Second
+	recent := now.Sub(s.selectedAt) < selectHold
 	waking := now.Sub(s.wakeAt) < time.Second
 	s.mu.Unlock()
+
 	if !s.sp.Playing() || !known || zone == ZoneAdapter || zone == ZoneAdapter2 || recent || waking {
 		return
 	}
+
 	if (host == HostColin || host == HostLuke) && zone == ZoneOff {
 		s.mu.Lock()
 		s.wakeAt = now
 		s.mu.Unlock()
 		_ = s.m.Command(CmdKey, room, KeyPower)
 		s.log.Info("abl wake host", "host", host)
+
 		return
 	}
+
 	s.mu.Lock()
 	s.selectedAt = now
 	s.mu.Unlock()
@@ -239,93 +354,49 @@ func (s *Session) followPlayback(now time.Time) {
 	s.log.Info("abl select adapter on host", "host", host, "zone", zone)
 }
 
-// SetVolume hands a volume change on SoundTap to the host.
-func (s *Session) SetVolume(level int) {
+func (s *Session) setHost(host Host, room byte, caps uint16) {
 	s.mu.Lock()
-	room, has, host := s.hostRoom, s.hasHost, s.host
-	blocked := s.now().Before(s.blockUntil)
-	if !has || host == HostUnknown || blocked || level == s.sentVol {
-		s.mu.Unlock()
-		return
-	}
-	s.sentVol, s.sentAt = level, s.now()
+	changed := s.host != host
+	s.host, s.hostRoom, s.hasHost, s.caps = host, room, true, caps
 	s.mu.Unlock()
-	_ = s.m.Command(CmdAttenuate, room, AttenuationArg(host, level))
-}
 
-// SetMute hands SoundTap's mute to the host as a user mute, as stock's ABLMute does.
-func (s *Session) SetMute(muted bool) {
-	s.mu.Lock()
-	room, has, host := s.hostRoom, s.hasHost, s.host
-	changed := !s.muteKnown || s.muted != muted
-	s.muted, s.muteKnown = muted, true
-	s.mu.Unlock()
-	if !has || host == HostUnknown || !changed {
-		return
-	}
-	arg := byte(UnmuteUser)
-	if muted {
-		arg = MuteUser
-	}
-	_ = s.m.Command(CmdAttenuate, room, arg)
-}
-
-// Event takes what the bus reported.
-func (s *Session) Event(e Event) {
-	switch {
-	case e.Datagram != nil && e.Datagram.DstPort == PortRemote:
-		s.remote(e.Datagram.Data)
-	case e.Datagram != nil && e.Datagram.DstPort == PortDiscovery:
-		if a, ok := ParseAnnouncement(e.Datagram.Data); ok && a.Class == ClassDevice {
-			if h := HostFromDiscovery(a.ID); h != HostUnknown {
-				s.setHost(h, e.Room, a.Capabilities)
-			}
-		}
-	case len(e.Query) >= 3 && e.QueryOf == QuerySpeakerType:
-		if h := HostFromSpeakerType(e.Query[2]); h != HostUnknown {
-			s.setHost(h, e.Room, 0)
-		}
-	case e.Poll != nil:
-		s.poll(e.Room, *e.Poll)
-	}
-}
-
-func (s *Session) setHost(h Host, room byte, caps uint16) {
-	s.mu.Lock()
-	changed := s.host != h
-	s.host, s.hostRoom, s.hasHost, s.caps = h, room, true, caps
-	s.mu.Unlock()
 	if changed {
-		s.log.Info("abl host", "class", h, "room", room, "capabilities", caps)
+		s.log.Info("abl host", "class", host, "room", room, "capabilities", caps)
 		// Every host but the SA-4 keeps its own volume at power-on and the adapter takes it
 		// from the poll replies (stock productOwnsInitialVolume); the SA-4 gets the adapter's.
-		if !OwnsInitialVolume(h) {
+		if !OwnsInitialVolume(host) {
 			s.SetVolume(s.sp.Volume())
 		}
+
 		if s.OnHost != nil {
-			s.OnHost(h)
+			s.OnHost(host)
 		}
-		s.register(h)
+
+		s.register(host)
 	}
 }
 
 // register sends a Wave or CineMate stock's remote-control registration, once: its remote's
 // presets and transport keys then come to the adapter.
-func (s *Session) register(h Host) {
-	if h != HostNelson && h != HostTriode {
+func (s *Session) register(host Host) {
+	if host != HostNelson && host != HostTriode {
 		return
 	}
+
 	s.mu.Lock()
 	done := s.registered
 	s.registered = true
 	s.mu.Unlock()
+
 	if done {
 		return
 	}
+
 	for _, msg := range RegistrationMessages(s.Bluetooth) {
 		_ = s.m.SendDatagram(Broadcast, PortRemote, PortRemote, msg)
 	}
-	s.log.Info("abl remote keys registered", "host", h)
+
+	s.log.Info("abl remote keys registered", "host", host)
 }
 
 // remote takes a remote-control message from the host.
@@ -334,27 +405,48 @@ func (s *Session) remote(d []byte) {
 	if !ok {
 		return
 	}
+
 	switch typ {
 	case rcCommand:
 		s.command(body[3])
 	case rcSourceSelection:
-		preset := 0
-		if body[1] == 2 && len(body) > 4 {
-			preset = int(body[4])
-		}
-		activate := body[3] == rcActivate
-		_ = s.m.SendDatagram(Broadcast, PortRemote, PortRemote, rcActivateDoneMsg(activate))
-		switch {
-		case activate && s.OnSelect != nil:
-			s.OnSelect(preset)
-		case body[3] == rcDeactivate && s.sp.Playing():
-			s.sp.HostLeft()
-		}
+		s.sourceSelection(body)
+	default:
+		// Nothing the adapter answers.
+	}
+}
+
+// sourceSelection takes the host selecting the adapter, or leaving it, from its own UI.
+func (s *Session) sourceSelection(body []byte) {
+	const presetBody = 2 // the body's second byte when it names a preset
+
+	preset := 0
+	if body[1] == presetBody && len(body) > 4 {
+		preset = int(body[4])
+	}
+
+	activate := body[3] == rcActivate
+
+	result := byte(rcNotActivated)
+	if activate {
+		result = rcActivated
+	}
+
+	_ = s.m.SendDatagram(Broadcast, PortRemote, PortRemote, rcActivateDoneMsg(result))
+
+	switch {
+	case activate && s.OnSelect != nil:
+		s.OnSelect(preset)
+	case body[3] == rcDeactivate && s.sp.Playing():
+		s.sp.HostLeft()
+	default:
+		// Selected without a handler, or left while nothing played.
 	}
 }
 
 func (s *Session) command(code byte) {
 	key, preset, store := KeyAction(code)
+
 	s.mu.Lock()
 	// Only preset keys touch the guard, as stock's: a store, then its release.
 	skip := preset > 0 && !store && s.justStored
@@ -362,53 +454,62 @@ func (s *Session) command(code byte) {
 		s.justStored = store
 	}
 	s.mu.Unlock()
+
 	if skip || s.OnKey == nil || key == "" && preset == 0 {
 		return
 	}
+
 	s.OnKey(key, preset, store)
 }
 
-func (s *Session) poll(room byte, r PollReply) {
+func (s *Session) poll(room byte, reply *PollReply) {
 	now := s.now()
 	s.mu.Lock()
 	if !s.hasHost || room != s.hostRoom {
 		s.mu.Unlock()
+
 		return
 	}
+
 	prev, known := s.zone, s.zoneKnown
-	s.zone, s.zoneKnown = r.Zone, true
-	level, take := s.hostVolumeLocked(now, r)
-	if known && prev == ZoneOff && r.Zone != ZoneOff && s.host == HostColin {
-		s.blockUntil = now.Add(8 * time.Second)
+	s.zone, s.zoneKnown = reply.Zone, true
+
+	level, take := s.hostVolumeLocked(now, reply)
+	if known && prev == ZoneOff && reply.Zone != ZoneOff && s.host == HostColin {
+		s.blockUntil = now.Add(colinVolumeBlock)
 	}
+
 	if take {
 		// Before the speaker hears it: its volume hook calls SetVolume back, which must see
 		// the host's own level and send nothing.
 		s.sentVol = level
 	}
 	s.mu.Unlock()
+
 	if take {
 		s.sp.SetVolume(level)
 	}
-	if known && adapterZone(prev) && (r.Zone == ZoneHostLocal || r.Zone == ZoneOff) && s.sp.Playing() {
-		s.log.Info("abl host left the adapter", "zone", r.Zone)
+
+	if known && adapterZone(prev) && (reply.Zone == ZoneHostLocal || reply.Zone == ZoneOff) && s.sp.Playing() {
+		s.log.Info("abl host left the adapter", "zone", reply.Zone)
 		s.sp.HostLeft()
 	}
 }
 
 // hostVolumeLocked is the host's volume from a poll reply, and whether SoundTap takes it: a
 // change the host made, not the echo of one SoundTap sent within stock's 600 ms.
-func (s *Session) hostVolumeLocked(now time.Time, r PollReply) (int, bool) {
-	level := r.Volume
+func (s *Session) hostVolumeLocked(now time.Time, reply *PollReply) (int, bool) {
+	level := reply.Volume
 	if s.host == HostLuke {
-		level = 100 - r.Volume
+		level = volumeMax - reply.Volume
 	}
 	// What the host reports for the level last sent is its echo, not a change: 100 goes out
 	// as 99 to the newer hosts and comes back as 99.
-	echo := s.sentVol >= 0 && r.Volume == int(AttenuationArg(s.host, s.sentVol))
-	take := s.host != HostUnknown && !r.Muted && level != s.hostVol && level != s.sentVol && !echo &&
-		now.Sub(s.sentAt) > 600*time.Millisecond && level >= 0 && level <= 100
+	echo := s.sentVol >= 0 && reply.Volume == int(AttenuationArg(s.host, s.sentVol))
+	take := s.host != HostUnknown && !reply.Muted && level != s.hostVol && level != s.sentVol && !echo &&
+		now.Sub(s.sentAt) > volumeEchoWindow && level >= 0 && level <= volumeMax
 	s.hostVol = level
+
 	return level, take
 }
 

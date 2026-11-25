@@ -4,8 +4,8 @@
 package hw
 
 import (
+	"bytes"
 	"context"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -67,9 +67,11 @@ func TestBluetoothShowsPairingSeparatelyFromPlaying(t *testing.T) {
 	if !waiting.btBlue || waiting.btWhite {
 		t.Fatalf("waiting for a device = %+v, want blue blinking", waiting)
 	}
+
 	if off := ledPattern(speakerstate.StatusSnapshot{Source: "BLUETOOTH", PlayStatus: "STOP_STATE"}, LinkUp, false); off.btBlue {
 		t.Fatalf("blue did not blink: %+v", off)
 	}
+
 	playing := ledPattern(speakerstate.StatusSnapshot{Source: "BLUETOOTH", PlayStatus: "PLAY_STATE"}, LinkUp, true)
 	if !playing.btWhite || playing.btBlue {
 		t.Fatalf("playing = %+v, want solid white", playing)
@@ -84,25 +86,32 @@ func TestWifiLampReportsTheLink(t *testing.T) {
 	if got := ledPattern(idle, LinkConnecting, true); !got.wifiWhite {
 		t.Fatalf("connecting (blink on) = %+v", got)
 	}
+
 	if got := ledPattern(idle, LinkConnecting, false); got.wifiWhite {
 		t.Fatalf("connecting did not blink: %+v", got)
 	}
+
 	if got := ledPattern(idle, LinkSetupAP, true); !got.wifiAmber || got.wifiWhite {
 		t.Fatalf("setup AP = %+v, want amber", got)
 	}
+
 	if got := ledPattern(idle, LinkSetupAP, false); !got.wifiAmber {
 		t.Fatalf("setup AP blink phase = %+v, want steady amber", got)
 	}
+
 	if got := ledPattern(idle, LinkDown, true); !got.wifiAmber {
 		t.Fatalf("link down = %+v, want the amber blink on", got)
 	}
+
 	standby := speakerstate.StatusSnapshot{Standby: true}
 	if got := ledPattern(standby, LinkSetupAP, true); !got.wifiAmber {
 		t.Fatalf("standby in setup mode went dark: %+v", got)
 	}
+
 	if got := ledPattern(standby, LinkConnecting, true); !got.wifiWhite {
 		t.Fatalf("standby while connecting went dark: %+v", got)
 	}
+
 	if got := ledPattern(standby, LinkConnecting, false); got.wifiWhite {
 		t.Fatalf("standby connecting lamp did not blink: %+v", got)
 	}
@@ -122,6 +131,7 @@ func TestReadLinkIgnoresStalePidfiles(t *testing.T) {
 	if got := ReadLink(func() bool { return false }); got != LinkDown {
 		t.Fatalf("no address and no daemons = %v, want linkDown", got)
 	}
+
 	if pidAlive("/run/soundtap-does-not-exist.pid") {
 		t.Fatal("a missing pidfile reported a live process")
 	}
@@ -132,19 +142,24 @@ func TestLiveWifiProcessesOverrideCachedIP(t *testing.T) {
 	if setup != LinkSetupAP {
 		t.Fatalf("setup AP after prior IP = %v, want linkSetupAP", setup)
 	}
+
 	if lamps := ledPattern(speakerstate.StatusSnapshot{}, setup, false); !lamps.wifiAmber || lamps.wifiWhite {
 		t.Fatalf("setup AP lamps = %+v, want solid amber", lamps)
 	}
+
 	if got := linkFromFacts(true, false, true); got != LinkUp {
 		t.Fatalf("associated station with IP = %v, want linkUp", got)
 	}
+
 	connecting := linkFromFacts(false, false, true)
 	if connecting != LinkConnecting {
 		t.Fatalf("station reconnect after prior IP = %v, want linkConnecting", connecting)
 	}
+
 	if lamps := ledPattern(speakerstate.StatusSnapshot{}, connecting, true); !lamps.wifiWhite || lamps.wifiAmber {
 		t.Fatalf("station reconnect lamps = %+v, want white blink on", lamps)
 	}
+
 	if lamps := ledPattern(speakerstate.StatusSnapshot{}, connecting, false); lamps.wifiWhite || lamps.wifiAmber {
 		t.Fatalf("station reconnect lamps = %+v, want white blink off", lamps)
 	}
@@ -154,13 +169,17 @@ func TestApplyLEDState(t *testing.T) {
 	t.Run("stock", func(t *testing.T) {
 		dir := t.TempDir()
 		for _, name := range []string{"uledw", "uledy", "rled3", "rled4", "rled5", "rled6", "rled7"} {
-			if err := os.WriteFile(filepath.Join(dir, name), nil, 0o644); err != nil {
+			err := os.WriteFile(filepath.Join(dir, name), nil, 0o644)
+			if err != nil {
 				t.Fatal(err)
 			}
 		}
-		if err := applyLEDState(dir, ledState{wifiWhite: true, auxWhite: true, stAmber: true, stWhite: true}); err != nil {
+
+		err := applyLEDState(dir, ledState{wifiWhite: true, auxWhite: true, stAmber: true, stWhite: true})
+		if err != nil {
 			t.Fatal(err)
 		}
+
 		assertChannels(t, dir, false, map[string]bool{
 			"uledw": true, "uledy": false, "rled3": false,
 			"rled4": true, "rled5": true, "rled6": false, "rled7": true,
@@ -171,16 +190,23 @@ func TestApplyLEDState(t *testing.T) {
 		dir := t.TempDir()
 		for _, name := range []string{"wifi-white", "wifi-amber", "bt-white", "soundtouch-white", "soundtouch-amber", "bt-blue", "aux-white"} {
 			path := filepath.Join(dir, name)
-			if err := os.Mkdir(path, 0o755); err != nil {
+
+			err := os.Mkdir(path, 0o755)
+			if err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(path, "brightness"), nil, 0o644); err != nil {
+
+			err = os.WriteFile(filepath.Join(path, "brightness"), nil, 0o644)
+			if err != nil {
 				t.Fatal(err)
 			}
 		}
-		if err := applyLEDState(dir, ledState{wifiAmber: true, btWhite: true, auxWhite: true}); err != nil {
+
+		err := applyLEDState(dir, ledState{wifiAmber: true, btWhite: true, auxWhite: true})
+		if err != nil {
 			t.Fatal(err)
 		}
+
 		assertChannels(t, dir, true, map[string]bool{
 			"wifi-white": false, "wifi-amber": true, "bt-white": true, "soundtouch-white": false,
 			"soundtouch-amber": false, "bt-blue": false, "aux-white": true,
@@ -207,10 +233,12 @@ func TestLampChannelsMatchTheHardware(t *testing.T) {
 		{"bt-blue", "rled6"},          // gpio2_9
 		{"aux-white", "rled7"},        // gpio2_23
 	}
+
 	got := ledChannels(ledState{})
 	if len(got) != len(want) {
 		t.Fatalf("%d channels, want %d — this board has seven lamps; rled2 and rled8 drive none", len(got), len(want))
 	}
+
 	for i, w := range want {
 		if got[i].mainline != w.mainline || got[i].stock != w.stock {
 			t.Errorf("channel %d = %s/%s, want %s/%s", i, got[i].mainline, got[i].stock, w.mainline, w.stock)
@@ -230,6 +258,7 @@ func TestEveryLampFieldDrivesAChannel(t *testing.T) {
 			t.Errorf("%s stayed off with every field set", channel.mainline)
 		}
 	}
+
 	for _, channel := range ledChannels(ledState{}) {
 		if channel.on {
 			t.Errorf("%s lit with no field set", channel.mainline)
@@ -239,30 +268,36 @@ func TestEveryLampFieldDrivesAChannel(t *testing.T) {
 
 func assertChannels(t *testing.T, dir string, gpio bool, states map[string]bool) {
 	t.Helper()
+
 	for name, on := range states {
 		path := filepath.Join(dir, name)
 		want := []byte{0x00}
+
 		if gpio {
 			path = filepath.Join(path, "brightness")
 			want = []byte("0")
 		}
+
 		if on {
 			want = []byte{0xff}
 			if gpio {
 				want = []byte("255")
 			}
 		}
+
 		assertFile(t, path, want)
 	}
 }
 
 func assertFile(t *testing.T, path string, want []byte) {
 	t.Helper()
+
 	got, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != string(want) {
+
+	if !bytes.Equal(got, want) {
 		t.Fatalf("%s = %x, want %x", path, got, want)
 	}
 }
@@ -283,19 +318,24 @@ func TestStandbyKeepsWifiProgressVisible(t *testing.T) {
 		if !got.wifiDim {
 			t.Fatalf("standby linkUp (blink=%v): wifiDim not set: %+v", blink, got)
 		}
+
 		if got.stWhite || got.stAmber || got.btWhite || got.btBlue || got.auxWhite || got.wifiWhite || got.wifiAmber {
 			t.Fatalf("standby linkUp (blink=%v): unexpected lamps lit: %+v", blink, got)
 		}
 	}
+
 	if got := ledPattern(standby, LinkSetupAP, true); !got.wifiAmber {
 		t.Fatalf("standby hosting the setup AP = %+v, want amber", got)
 	}
+
 	if got := ledPattern(standby, LinkSetupAP, false); !got.wifiAmber {
 		t.Fatalf("standby hosting the setup AP blink phase = %+v, want steady amber", got)
 	}
+
 	if got := ledPattern(standby, LinkConnecting, true); !got.wifiWhite {
 		t.Fatalf("standby joining Wi-Fi = %+v, want white blink", got)
 	}
+
 	if got := ledPattern(standby, LinkConnecting, false); got != (ledState{}) {
 		t.Fatalf("standby joining Wi-Fi blink phase = %+v, want dark", got)
 	}
@@ -313,6 +353,7 @@ func TestDefaultKeymapIsStable(t *testing.T) {
 	if len(defaultKeymap) != len(want) {
 		t.Fatalf("keymap has %d entries, want %d", len(defaultKeymap), len(want))
 	}
+
 	for index, action := range want {
 		if got := defaultKeymap[index]; got != action {
 			t.Errorf("index %d = %q, want %q", index, got, action)
@@ -326,9 +367,11 @@ func TestST20DrivesItsWiFiLamp(t *testing.T) {
 	if model.Named(model.ST20).LEDDir != "/sys/class/leds" {
 		t.Errorf("st20 LEDDir = %q, want /sys/class/leds", model.Named(model.ST20).LEDDir)
 	}
+
 	if model.Named(model.ST20).AICConfig != "spotty_scm_normal.cfg" {
 		t.Errorf("st20 AICConfig = %q, want spotty config", model.Named(model.ST20).AICConfig)
 	}
+
 	if model.Named(model.ST10).LEDDir == "" {
 		t.Error("st10 lost its LED dir")
 	}
@@ -349,8 +392,10 @@ func TestRunLEDsReturnsOnAModelWithoutLEDs(t *testing.T) {
 	// A context that never cancels: the only way out is the no-LEDs early return.
 	go func() {
 		defer close(done)
-		RunLEDs(context.Background(), model.Named(model.WLA).LEDDir, testLamps{speakerstate.New()}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+		RunLEDs(context.Background(), model.Named(model.WLA).LEDDir, testLamps{speakerstate.New()}, slog.New(slog.DiscardHandler))
 	}()
+
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
@@ -367,23 +412,28 @@ func TestBootChaseIsStocksKnightRider(t *testing.T) {
 	for i, name := range want {
 		state := bootChase(i)
 		lit := []string{}
+
 		for _, c := range ledChannels(state) {
 			if c.on {
 				lit = append(lit, c.mainline)
 			}
 		}
+
 		if len(lit) != 1 || lit[0] != name {
 			t.Fatalf("step %d lights %v, want exactly [%s]", i, lit, name)
 		}
 	}
+
 	for i := 1; i < len(want); i++ {
 		if bootChase(i) == bootChase(i-1) {
 			t.Fatalf("step %d repeats step %d", i, i-1)
 		}
 	}
+
 	if bootChase(len(want)) != bootChase(0) {
 		t.Errorf("the wave does not loop after %d steps", len(want))
 	}
+
 	if bootChase(-1) != bootChase(len(want)-1) {
 		t.Error("a negative step must wrap the same way")
 	}
@@ -406,6 +456,7 @@ func TestEmptyPresetBlinksSoundTouchAmber(t *testing.T) {
 		if got.stAmber != tc.blink {
 			t.Errorf("EmptyPreset link=%v blink=%v: stAmber=%v, want %v", tc.link, tc.blink, got.stAmber, tc.blink)
 		}
+
 		if got.stWhite || got.btBlue || got.btWhite || got.auxWhite {
 			t.Errorf("EmptyPreset lit unexpected lamps: %+v", got)
 		}
@@ -428,6 +479,7 @@ func TestDimStandbyLampOnHealthyNetwork(t *testing.T) {
 	if !got.wifiDim {
 		t.Errorf("standby+linkUp: wifiDim not set: %+v", got)
 	}
+
 	if got.stWhite || got.stAmber || got.btWhite || got.btBlue || got.auxWhite || got.wifiWhite {
 		t.Errorf("standby+linkUp: unexpected lamps lit: %+v", got)
 	}
@@ -448,10 +500,12 @@ func TestApplyLEDStateDimStandby(t *testing.T) {
 	t.Run("stock-dim", func(t *testing.T) {
 		dir := t.TempDir()
 		for _, name := range []string{"uledw", "uledy", "rled3", "rled4", "rled5", "rled6", "rled7"} {
-			if err := os.WriteFile(filepath.Join(dir, name), nil, 0o644); err != nil {
+			err := os.WriteFile(filepath.Join(dir, name), nil, 0o644)
+			if err != nil {
 				t.Fatal(err)
 			}
 		}
+
 		if err := applyLEDState(dir, ledState{wifiDim: true}); err != nil {
 			t.Fatal(err)
 		}
@@ -460,6 +514,7 @@ func TestApplyLEDStateDimStandby(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+
 		if len(got) != 1 || got[0] != ledDimByte {
 			t.Errorf("uledw = %x, want %x (dim)", got, ledDimByte)
 		}
@@ -469,20 +524,27 @@ func TestApplyLEDStateDimStandby(t *testing.T) {
 		dir := t.TempDir()
 		for _, name := range []string{"wifi-white", "wifi-amber", "bt-white", "soundtouch-white", "soundtouch-amber", "bt-blue", "aux-white"} {
 			path := filepath.Join(dir, name)
-			if err := os.Mkdir(path, 0o755); err != nil {
+
+			err := os.Mkdir(path, 0o755)
+			if err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(path, "brightness"), nil, 0o644); err != nil {
+
+			err = os.WriteFile(filepath.Join(path, "brightness"), nil, 0o644)
+			if err != nil {
 				t.Fatal(err)
 			}
 		}
+
 		if err := applyLEDState(dir, ledState{wifiDim: true}); err != nil {
 			t.Fatal(err)
 		}
+
 		got, err := os.ReadFile(filepath.Join(dir, "wifi-white", "brightness"))
 		if err != nil {
 			t.Fatal(err)
 		}
+
 		if string(got) != ledDimBrightness {
 			t.Errorf("wifi-white brightness = %q, want %q (dim)", got, ledDimBrightness)
 		}
@@ -496,14 +558,19 @@ func TestFirmwareLEDPattern(t *testing.T) {
 	// ledPattern; test it at the applyLEDState level via a temp LED dir.
 	dir := t.TempDir()
 	for _, name := range []string{"uledw", "uledy", "rled3", "rled4", "rled5", "rled6", "rled7"} {
-		if err := os.WriteFile(filepath.Join(dir, name), nil, 0o644); err != nil {
+		err := os.WriteFile(filepath.Join(dir, name), nil, 0o644)
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
+
 	fwPattern := ledState{stAmber: true, stWhite: true} // both lit = "blink on" phase
-	if err := applyLEDState(dir, fwPattern); err != nil {
+
+	err := applyLEDState(dir, fwPattern)
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	assertChannels(t, dir, false, map[string]bool{
 		"rled4": true,  // soundtouch-white
 		"rled5": true,  // soundtouch-amber

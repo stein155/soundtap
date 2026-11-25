@@ -17,18 +17,23 @@ type playKey struct {
 	transportAck                     int64 // the Wireless Link lamp blinks on a transport key
 }
 
-func (s *Speaker) key() playKey {
-	return playKey{s.source, s.playStatus, s.location, s.IP, s.volume, s.bassTarget, s.muted, s.selectionGen, s.playGen, s.transportAckUntil.UnixNano()}
+func (s *Speaker) stateKey() playKey {
+	return playKey{
+		source: s.source, playStatus: s.playStatus, location: s.location, ip: s.IP,
+		volume: s.volume, bass: s.bassTarget, muted: s.muted,
+		selection: s.selectionGen, playGen: s.playGen, transportAck: s.transportAckUntil.UnixNano(),
+	}
 }
 
 func (s *Speaker) lock() {
 	s.mu.Lock()
-	s.lockedKey = s.key()
+	s.lockedKey = s.stateKey()
 }
 
 func (s *Speaker) unlock() {
-	moved := s.key() != s.lockedKey
+	moved := s.stateKey() != s.lockedKey
 	s.mu.Unlock()
+
 	if moved {
 		s.sigMu.Lock()
 		if s.changed != nil {
@@ -45,8 +50,10 @@ func (s *Speaker) unlock() {
 func (s *Speaker) Changed() <-chan struct{} {
 	s.sigMu.Lock()
 	defer s.sigMu.Unlock()
+
 	if s.changed == nil {
 		s.changed = make(chan struct{})
 	}
+
 	return s.changed
 }

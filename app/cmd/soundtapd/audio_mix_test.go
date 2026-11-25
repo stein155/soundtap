@@ -25,27 +25,38 @@ import (
 )
 
 func TestOpenAudioSinkModes(t *testing.T) {
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	sink, paced, closeSink, err := openAudioSink(context.Background(), "-", defaultSinkTiming, log)
-	if err != nil || sink == nil || !paced || closeSink() != nil {
-		t.Fatalf("discard sink = (%v, %v, %v)", sink, paced, err)
+	log := slog.New(slog.DiscardHandler)
+
+	discard, err := openAudioSink(context.Background(), "-", defaultSinkTiming(), log)
+	if err != nil || discard.w == nil || !discard.paced || discard.close() != nil {
+		t.Fatalf("discard sink = (%v, %v, %v)", discard.w, discard.paced, err)
 	}
-	if _, _, _, err := openAudioSink(context.Background(), "alsa:", defaultSinkTiming, log); err == nil {
+
+	emptySink, err := openAudioSink(context.Background(), "alsa:", defaultSinkTiming(), log)
+	if err == nil || emptySink.w != nil {
 		t.Fatal("empty ALSA target accepted")
 	}
+
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "aplay"), []byte("#!/bin/sh\ncat >/dev/null\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	_, paced, closeSink, err = openAudioSink(context.Background(), "alsa:plughw:0,0", defaultSinkTiming, log)
+
+	err = os.WriteFile(filepath.Join(dir, "aplay"), []byte("#!/bin/sh\ncat >/dev/null\n"), 0o755)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if paced {
+
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	piped, err := openAudioSink(context.Background(), "alsa:plughw:0,0", defaultSinkTiming(), log)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if piped.paced {
 		t.Fatal("ALSA pipe must use hardware backpressure as its only clock")
 	}
-	if err := closeSink(); err != nil {
+
+	err = piped.close()
+	if err != nil {
 		t.Fatal(err)
 	}
 }
@@ -55,28 +66,38 @@ func TestOpenAudioSinkModes(t *testing.T) {
 func TestWLAFirmwareSinkUsesS32(t *testing.T) {
 	dir := t.TempDir()
 	args := filepath.Join(dir, "args")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" >\"$ARGS\"\ncat >/dev/null\n"
-	if err := os.WriteFile(filepath.Join(dir, "aplay"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("ARGS", args)
-	t.Setenv("SOUNDTAP_FIRMWARE", "1")
-	old := board
-	board = model.Named(model.WLA)
-	defer func() { board = old }()
 
-	_, _, closeSink, err := openAudioSink(context.Background(), board.AudioDev, defaultSinkTiming, quietLog())
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" >\"$ARGS\"\ncat >/dev/null\n"
+
+	err := os.WriteFile(filepath.Join(dir, "aplay"), []byte(script), 0o755)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := closeSink(); err != nil {
+
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("ARGS", args)
+	t.Setenv("SOUNDTAP_FIRMWARE", "1")
+
+	old := board
+
+	board = model.Named(model.WLA)
+	defer func() { board = old }()
+
+	opened, err := openAudioSink(context.Background(), board.AudioDev, defaultSinkTiming(), quietLog())
+	if err != nil {
 		t.Fatal(err)
 	}
+
+	err = opened.close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	got, err := os.ReadFile(args)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if fields := string(got); !bytes.Contains(got, []byte("S32_LE\n-r\n46875\n")) ||
 		!bytes.Contains(got, []byte("plughw:0,0")) {
 		t.Fatalf("WLA aplay args = %q", fields)
@@ -90,24 +111,33 @@ func TestWLAFirmwareSinkUsesS32(t *testing.T) {
 func TestST10FirmwareSinkKeepsPlughw(t *testing.T) {
 	dir := t.TempDir()
 	args := filepath.Join(dir, "args")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" >\"$ARGS\"\ncat >/dev/null\n"
-	if err := os.WriteFile(filepath.Join(dir, "aplay"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("ARGS", args)
-	t.Setenv("SOUNDTAP_FIRMWARE", "1")
-	old := board
-	board = model.Named(model.ST10)
-	defer func() { board = old }()
 
-	_, _, closeSink, err := openAudioSink(context.Background(), "alsa:plughw:0,0", defaultSinkTiming, quietLog())
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" >\"$ARGS\"\ncat >/dev/null\n"
+
+	err := os.WriteFile(filepath.Join(dir, "aplay"), []byte(script), 0o755)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := closeSink(); err != nil {
+
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("ARGS", args)
+	t.Setenv("SOUNDTAP_FIRMWARE", "1")
+
+	old := board
+
+	board = model.Named(model.ST10)
+	defer func() { board = old }()
+
+	opened, err := openAudioSink(context.Background(), "alsa:plughw:0,0", defaultSinkTiming(), quietLog())
+	if err != nil {
 		t.Fatal(err)
 	}
+
+	err = opened.close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	got, err := os.ReadFile(args)
 	if err != nil {
 		t.Fatal(err)
@@ -123,102 +153,157 @@ func TestST10FirmwareSinkKeepsPlughw(t *testing.T) {
 func TestST20FirmwareSinkOpensTheCardRate(t *testing.T) {
 	dir := t.TempDir()
 	args := filepath.Join(dir, "args")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" >\"$ARGS\"\ncat >/dev/null\n"
-	if err := os.WriteFile(filepath.Join(dir, "aplay"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("ARGS", args)
-	t.Setenv("SOUNDTAP_FIRMWARE", "1")
-	old := board
-	board = model.Named(model.ST20)
-	defer func() { board = old }()
 
-	_, _, closeSink, err := openAudioSink(context.Background(), "alsa:plughw:0,0", defaultSinkTiming, quietLog())
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" >\"$ARGS\"\ncat >/dev/null\n"
+
+	err := os.WriteFile(filepath.Join(dir, "aplay"), []byte(script), 0o755)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := closeSink(); err != nil {
+
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("ARGS", args)
+	t.Setenv("SOUNDTAP_FIRMWARE", "1")
+
+	old := board
+
+	board = model.Named(model.ST20)
+	defer func() { board = old }()
+
+	opened, err := openAudioSink(context.Background(), "alsa:plughw:0,0", defaultSinkTiming(), quietLog())
+	if err != nil {
 		t.Fatal(err)
 	}
+
+	err = opened.close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	got, err := os.ReadFile(args)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if !bytes.Contains(got, []byte("hw:0,0")) || !bytes.Contains(got, []byte("S32_LE\n-r\n46875\n")) {
 		t.Fatalf("ST20 aplay args = %q", got)
 	}
 }
 
 func TestTapFailureDoesNotBreakPrimaryAudio(t *testing.T) {
+	t.Parallel()
+
 	var primary bytes.Buffer
-	p := []byte("pcm")
-	n, err := (&tapWriter{primary: &primary, tapFD: -1, on: new(atomic.Bool)}).Write(p)
-	if err != nil || n != len(p) || !bytes.Equal(primary.Bytes(), p) {
+
+	pcm := []byte("pcm")
+
+	n, err := newTapWriter(&primary, -1, new(atomic.Bool)).Write(pcm)
+	if err != nil || n != len(pcm) || !bytes.Equal(primary.Bytes(), pcm) {
 		t.Fatalf("write = (%d, %v, %q)", n, err, primary.Bytes())
 	}
 }
 
+//nolint:paralleltest // changes package-wide state other tests read: tapDropped
 func TestTapCarriesAudioBeforeTheVolume(t *testing.T) {
-	r, w, err := os.Pipe()
+	reader, writer, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
-	defer w.Close()
-	p := []byte{0x00, 0x40, 0x00, 0xc0} // two S16 samples, +0.5 and -0.5
+	defer reader.Close()
+	defer writer.Close()
+
+	pcm := []byte{0x00, 0x40, 0x00, 0xc0} // two S16 samples, +0.5 and -0.5
+
 	var primary bytes.Buffer
-	tap := &tapWriter{primary: &primary, tapFD: int(w.Fd()), on: new(atomic.Bool)}
+
+	tap := newTapWriter(&primary, int(writer.Fd()), new(atomic.Bool))
 	// Solo: the DAC gets its audio, the tap nothing.
 	tap.Tap([]byte{1, 2, 3, 4})
-	if _, err := tap.WriteGain([]byte{1, 2, 3, 4}, 0.1); err != nil || primary.Len() != 4 {
+
+	_, err = tap.WriteGain([]byte{1, 2, 3, 4}, 0.1)
+	if err != nil || primary.Len() != 4 {
 		t.Fatalf("solo write = %v, primary %d bytes", err, primary.Len())
 	}
+
 	tap.on.Store(true)
-	tap.Tap(p)
-	if _, err := tap.WriteGain(p, 0.1); err != nil {
+	tap.Tap(pcm)
+
+	_, err = tap.WriteGain(pcm, 0.1)
+	if err != nil {
 		t.Fatal(err)
 	}
-	got := make([]byte, len(p))
-	if _, err := io.ReadFull(r, got); err != nil || !bytes.Equal(got, p) {
-		t.Fatalf("tap = %x (%v), want the unscaled %x and nothing from the solo write", got, err, p)
+
+	got := make([]byte, len(pcm))
+
+	_, err = io.ReadFull(reader, got)
+	if err != nil || !bytes.Equal(got, pcm) {
+		t.Fatalf("tap = %x (%v), want the unscaled %x and nothing from the solo write", got, err, pcm)
+	}
+}
+
+// blocksHealth is Mixer health with only the blocks of sound counted: source blocks in,
+// sink blocks out.
+func blocksHealth(source, sink uint64) audio.Health {
+	return audio.Health{
+		SourceBytes: 0, SourceNonzeroBlocks: source,
+		MixedBytes: 0, MixedNonzeroBlocks: 0,
+		SinkBytes: 0, SinkNonzeroBlocks: sink,
+		Underruns: 0,
 	}
 }
 
 func TestPCMFlowRequiresSourceAndSink(t *testing.T) {
-	base := audio.Health{SourceNonzeroBlocks: 4, SinkNonzeroBlocks: 7}
-	if pcmFlowStarted(base, audio.Health{SourceNonzeroBlocks: 5, SinkNonzeroBlocks: 7}) {
+	t.Parallel()
+
+	base := blocksHealth(4, 7)
+	if pcmFlowStarted(base, blocksHealth(5, 7)) {
 		t.Fatal("source-only flow opened mute")
 	}
-	if pcmFlowStarted(base, audio.Health{SourceNonzeroBlocks: 4, SinkNonzeroBlocks: 8}) {
+
+	if pcmFlowStarted(base, blocksHealth(4, 8)) {
 		t.Fatal("sink-only flow opened mute")
 	}
-	if !pcmFlowStarted(base, audio.Health{SourceNonzeroBlocks: 5, SinkNonzeroBlocks: 8}) {
+
+	if !pcmFlowStarted(base, blocksHealth(5, 8)) {
 		t.Fatal("source+sink flow did not open mute")
 	}
 }
 
 func TestS32WriterExpandsSamples(t *testing.T) {
+	t.Parallel()
+
 	var dst bytes.Buffer
-	p := []byte{0x01, 0x80, 0xff, 0x7f}
-	n, err := audio.NewS32Writer(&dst, audio.SampleRate).Write(p)
+
+	pcm := []byte{0x01, 0x80, 0xff, 0x7f}
+	n, err := audio.NewS32Writer(&dst, audio.SampleRate).Write(pcm)
+
 	want := []byte{0, 0, 0x01, 0x80, 0, 0, 0xff, 0x7f}
-	if err != nil || n != len(p) || !bytes.Equal(dst.Bytes(), want) {
+	if err != nil || n != len(pcm) || !bytes.Equal(dst.Bytes(), want) {
 		t.Fatalf("write = (%d, %v, %x), want %x", n, err, dst.Bytes(), want)
 	}
 }
 
 func TestDelayWriter(t *testing.T) {
-	var dst bytes.Buffer
-	var blocks atomic.Int64
+	t.Parallel()
+
+	var (
+		dst    bytes.Buffer
+		blocks atomic.Int64
+	)
 	blocks.Store(1)
-	w := delayWriter{w: &dst, blocks: &blocks}
-	if _, err := w.Write([]byte{1, 2}); err != nil {
+
+	delay := newDelayWriter(&dst, &blocks)
+
+	_, err := delay.Write([]byte{1, 2})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.Write([]byte{3, 4}); err != nil {
+
+	_, err = delay.Write([]byte{3, 4})
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	if got, want := dst.Bytes(), []byte{0, 0, 1, 2}; !bytes.Equal(got, want) {
 		t.Fatalf("delayed = %v, want %v", got, want)
 	}
@@ -229,147 +314,202 @@ func TestDelayWriter(t *testing.T) {
 // the mute GPIO every 50 ms, so leaving the fault out of this expression silently
 // undoes the protection runAmpFault applies on the rising edge.
 func TestShouldMute(t *testing.T) {
-	for _, tc := range []struct {
+	t.Parallel()
+
+	for _, row := range []struct {
 		name                                          string
 		ampFault, idle, codecReady, flowing, ampReady bool
 		want                                          bool
 	}{
-		{name: "playing normally", codecReady: true, flowing: true, ampReady: true, want: false},
-		{name: "amp fault while playing", ampFault: true, codecReady: true, flowing: true, ampReady: true, want: true},
-		{name: "amp fault while idle", ampFault: true, idle: true, ampReady: true, want: true},
-		{name: "idle", idle: true, codecReady: true, flowing: true, ampReady: true, want: true},
-		{name: "codec not ready", flowing: true, ampReady: true, want: true},
-		{name: "no pcm flowing yet", codecReady: true, ampReady: true, want: true},
-		{name: "amp waking", codecReady: true, flowing: true, want: true},
+		{"playing normally", false, false, true, true, true, false},
+		{"amp fault while playing", true, false, true, true, true, true},
+		{"amp fault while idle", true, true, false, false, true, true},
+		{"idle", false, true, true, true, true, true},
+		{"codec not ready", false, false, false, true, true, true},
+		{"no pcm flowing yet", false, false, true, false, true, true},
+		{"amp waking", false, false, true, true, false, true},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := shouldMute(tc.ampFault, tc.idle, tc.codecReady, tc.flowing, tc.ampReady); got != tc.want {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := shouldMute(row.ampFault, row.idle, row.codecReady, row.flowing, row.ampReady); got != row.want {
 				t.Errorf("shouldMute(fault=%v, idle=%v, codec=%v, flowing=%v) = %v, want %v",
-					tc.ampFault, tc.idle, tc.codecReady, tc.flowing, got, tc.want)
+					row.ampFault, row.idle, row.codecReady, row.flowing, got, row.want)
 			}
 		})
 	}
 }
 
 func TestMuteDelay(t *testing.T) {
+	t.Parallel()
+
 	now := time.Unix(100, 0)
-	m := muteDelay{muted: true}
-	if m.step(true, false, now) != true {
+
+	mute := muteDelay{muted: true, wantSince: time.Time{}}
+	if !mute.step(true, false, now) {
 		t.Fatal("a muted amp was unmuted")
 	}
-	if m.step(false, false, now) != false {
+
+	if mute.step(false, false, now) {
 		t.Fatal("unmute was delayed")
 	}
+
 	stop := now.Add(time.Minute)
-	if m.step(true, false, stop) || m.step(true, false, stop.Add(ampMuteDelay-time.Millisecond)) {
+	if mute.step(true, false, stop) || mute.step(true, false, stop.Add(ampMuteDelay-time.Millisecond)) {
 		t.Fatal("muted before the delay, on the tail of the audio")
 	}
-	if !m.step(true, false, stop.Add(ampMuteDelay)) {
+
+	if !mute.step(true, false, stop.Add(ampMuteDelay)) {
 		t.Fatal("not muted after the delay")
 	}
-	m.step(false, false, stop.Add(2*time.Second))
-	if m.step(true, false, stop.Add(3*time.Second)) || m.step(false, false, stop.Add(3500*time.Millisecond)) {
+
+	mute.step(false, false, stop.Add(2*time.Second))
+
+	if mute.step(true, false, stop.Add(3*time.Second)) || mute.step(false, false, stop.Add(3500*time.Millisecond)) {
 		t.Fatal("a quick source switch muted the amp")
 	}
-	if m.step(true, false, stop.Add(4*time.Second)) || !m.step(true, true, stop.Add(4050*time.Millisecond)) {
+
+	if mute.step(true, false, stop.Add(4*time.Second)) || !mute.step(true, true, stop.Add(4050*time.Millisecond)) {
 		t.Fatal("a fault or power loss did not mute at once")
 	}
 }
 
+// enabledAmpSequence is the amp power sequence of a board with an amp-power GPIO, before
+// its first step.
+func enabledAmpSequence() ampSequence {
+	return ampSequence{
+		enabled: true, initialized: false, idle: false, powered: false, ready: false, warm: false,
+		changedAt: time.Time{},
+	}
+}
+
 func TestAmpSequenceStandbyAndWake(t *testing.T) {
+	t.Parallel()
+
 	now := time.Unix(100, 0)
-	amp := ampSequence{enabled: true}
+
+	amp := enabledAmpSequence()
 	if changed, powered, ready := amp.step(true, now); !changed || !powered || ready {
 		t.Fatalf("initial standby = changed %v powered %v ready %v", changed, powered, ready)
 	}
+
 	if changed, _, _ := amp.step(true, now.Add(ampPowerDelay-time.Millisecond)); changed {
 		t.Fatal("amp powered down before standby delay")
 	}
+
 	if changed, powered, ready := amp.step(true, now.Add(ampPowerDelay)); !changed || powered || ready {
 		t.Fatalf("power-down = changed %v powered %v ready %v", changed, powered, ready)
 	}
+
 	wake := now.Add(4 * time.Second)
 	if changed, powered, ready := amp.step(false, wake); !changed || !powered || ready {
 		t.Fatalf("wake edge = changed %v powered %v ready %v", changed, powered, ready)
 	}
+
 	if _, _, ready := amp.step(false, wake.Add(ampPowerDelay-time.Millisecond)); ready {
 		t.Fatal("amp became ready before wake delay")
 	}
+
 	if changed, powered, ready := amp.step(false, wake.Add(ampPowerDelay)); changed || !powered || !ready {
 		t.Fatalf("wake complete = changed %v powered %v ready %v", changed, powered, ready)
 	}
 }
 
 func TestAmpSequenceExplicitlyPowersOnAfterRestart(t *testing.T) {
-	amp := ampSequence{enabled: true}
+	t.Parallel()
+
+	amp := enabledAmpSequence()
+
 	now := time.Unix(300, 0)
 	if changed, powered, ready := amp.step(false, now); !changed || !powered || ready {
 		t.Fatalf("initial wake = changed %v powered %v ready %v", changed, powered, ready)
 	}
+
 	if _, _, ready := amp.step(false, now.Add(ampPowerDelay)); !ready {
 		t.Fatal("initial wake did not become ready after delay")
 	}
 }
 
 func TestAmpSequenceCancelsShortStandby(t *testing.T) {
+	t.Parallel()
+
 	now := time.Unix(200, 0)
-	amp := ampSequence{enabled: true}
+	amp := enabledAmpSequence()
 	amp.step(false, now)
 	amp.step(false, now.Add(ampPowerDelay))
 	amp.step(true, now.Add(4*time.Second))
+
 	if changed, powered, ready := amp.step(false, now.Add(5*time.Second)); changed || !powered || !ready {
 		t.Fatalf("short standby wake = changed %v powered %v ready %v", changed, powered, ready)
 	}
 }
 
 func TestAmpSequenceEarlyWakeStillWarmsUp(t *testing.T) {
+	t.Parallel()
+
 	now := time.Unix(250, 0)
-	amp := ampSequence{enabled: true}
+	amp := enabledAmpSequence()
 	amp.step(true, now)
+
 	if changed, powered, ready := amp.step(false, now.Add(time.Second)); changed || !powered || ready {
 		t.Fatalf("early wake = changed %v powered %v ready %v", changed, powered, ready)
 	}
 }
 
 func TestAmpSequenceWaitsAfterPowerWriteRecovers(t *testing.T) {
+	t.Parallel()
+
 	now := time.Unix(275, 0)
-	amp := ampSequence{enabled: true}
+	amp := enabledAmpSequence()
 	amp.step(false, now)
 	amp.powerUnavailable(now.Add(ampPowerDelay))
+
 	if _, _, ready := amp.step(false, now.Add(2*ampPowerDelay-time.Millisecond)); ready {
 		t.Fatal("amp became ready before three seconds of successfully applied power")
 	}
+
 	if _, _, ready := amp.step(false, now.Add(2*ampPowerDelay)); !ready {
 		t.Fatal("amp did not become ready after recovered power delay")
 	}
 }
 
 func TestWaitForAudioReady(t *testing.T) {
+	t.Parallel()
+
 	var ready atomic.Bool
+
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
+
 	go func() {
 		time.Sleep(20 * time.Millisecond)
 		ready.Store(true)
 	}()
+
 	if !waitForAudioReady(ctx, &ready) {
 		t.Fatal("readiness wait did not observe ready state")
 	}
 
 	ready.Store(false)
+
 	cancelled, stop := context.WithCancel(context.Background())
 	stop()
+
 	if waitForAudioReady(cancelled, &ready) {
 		t.Fatal("readiness wait ignored cancellation")
 	}
 }
 
 func TestAnnouncementReplacementCancelsPreviousLifetime(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	t.Parallel()
+
+	ctx := t.Context()
+
 	var lifetime announcementLifetime
+
 	started := make(chan struct{})
 	stopped := make(chan struct{})
+
 	lifetime.Start(ctx, func(ctx context.Context) {
 		close(started)
 		<-ctx.Done()
@@ -377,6 +517,7 @@ func TestAnnouncementReplacementCancelsPreviousLifetime(t *testing.T) {
 	})
 	<-started
 	lifetime.Start(ctx, func(context.Context) {})
+
 	select {
 	case <-stopped:
 	case <-time.After(time.Second):
@@ -385,9 +526,13 @@ func TestAnnouncementReplacementCancelsPreviousLifetime(t *testing.T) {
 }
 
 func TestAnnouncementStopEndsThePlayingOne(t *testing.T) {
+	t.Parallel()
+
 	var lifetime announcementLifetime
 	lifetime.Stop() // nothing playing yet: a no-op
+
 	started, stopped := make(chan struct{}), make(chan struct{})
+
 	lifetime.Start(context.Background(), func(ctx context.Context) {
 		close(started)
 		<-ctx.Done()
@@ -395,6 +540,7 @@ func TestAnnouncementStopEndsThePlayingOne(t *testing.T) {
 	})
 	<-started
 	lifetime.Stop()
+
 	select {
 	case <-stopped:
 	case <-time.After(time.Second):
@@ -408,19 +554,25 @@ func TestAnnouncementStopEndsThePlayingOne(t *testing.T) {
 // claimed the whole of it, and a shorter one left the previous block's tail in place. The
 // delayed stream then carried audio that was never written, or was written twice.
 func TestDelayWriterHandlesBlocksOfDifferentSizes(t *testing.T) {
-	var dst bytes.Buffer
-	var blocks atomic.Int64
+	t.Parallel()
+
+	var (
+		dst    bytes.Buffer
+		blocks atomic.Int64
+	)
 	blocks.Store(1)
-	w := delayWriter{w: &dst, blocks: &blocks}
+
+	w := newDelayWriter(&dst, &blocks)
 
 	long, short, again := []byte{1, 2, 3, 4}, []byte{5, 6}, []byte{7, 8, 9, 10}
 	for _, block := range [][]byte{long, short, again} {
-		n, err := w.Write(block)
+		written, err := w.Write(block)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if n != len(block) {
-			t.Fatalf("Write(%d bytes) = %d; a short count would be a silent drop", len(block), n)
+
+		if written != len(block) {
+			t.Fatalf("Write(%d bytes) = %d; a short count would be a silent drop", len(block), written)
 		}
 	}
 
@@ -432,7 +584,9 @@ func TestDelayWriterHandlesBlocksOfDifferentSizes(t *testing.T) {
 }
 
 func TestHoldForStartKeepsAPlayingAmpOpenAcrossASwitch(t *testing.T) {
-	for _, c := range []struct {
+	t.Parallel()
+
+	for _, row := range []struct {
 		idle, muted, held bool
 		since             time.Duration
 		want              bool
@@ -444,8 +598,9 @@ func TestHoldForStartKeepsAPlayingAmpOpenAcrossASwitch(t *testing.T) {
 		{false, true, false, 0, false},
 		{true, false, false, 0, false}, // going to standby mutes as before
 	} {
-		if got := holdForStart(c.idle, c.muted, c.held, c.since); got != c.want {
-			t.Errorf("holdForStart(%v, %v, %v, %v) = %v, want %v", c.idle, c.muted, c.held, c.since, got, c.want)
+		if got := holdForStart(row.idle, row.muted, row.held, row.since); got != row.want {
+			t.Errorf("holdForStart(%v, %v, %v, %v) = %v, want %v",
+				row.idle, row.muted, row.held, row.since, got, row.want)
 		}
 	}
 }
@@ -454,18 +609,23 @@ func TestHoldForStartKeepsAPlayingAmpOpenAcrossASwitch(t *testing.T) {
 // that played the previous source must stay open through that, as it does for a local
 // source that is still loading, rather than mute and unmute again at the fade-in.
 func TestFollowerStartDoesNotToggleTheMute(t *testing.T) {
+	t.Parallel()
+
 	mutes := func(held bool) int {
-		mute := muteDelay{} // unmuted: the previous source was playing
+		mute := muteDelay{muted: false, wantSince: time.Time{}} // unmuted: the previous source was playing
 		start := time.Unix(0, 0)
 		toggles := 0
+
 		for since := time.Duration(0); since < 10*time.Second; since += 50 * time.Millisecond {
 			flowing := since >= 8*time.Second // in sync and fading in after 8 s
 			starting := holdForStart(false, mute.muted, held && !flowing, since)
+
 			want := shouldMute(false, false, true, flowing || starting, true)
 			if was := mute.muted; mute.step(want, false, start.Add(since)) != was {
 				toggles++
 			}
 		}
+
 		return toggles
 	}
 	if n := mutes(true); n != 0 {
@@ -480,44 +640,59 @@ func TestFollowerStartDoesNotToggleTheMute(t *testing.T) {
 
 // Past tapSilenceHold of digital silence (a leader in standby) the tap stays quiet, and the
 // first block with sound goes out again at once.
+//
+//nolint:paralleltest // changes package-wide state other tests read: tapDropped
 func TestTapHoldsBackLongSilence(t *testing.T) {
-	r, w, err := os.Pipe()
+	reader, writer, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
-	defer w.Close()
-	rfd := int(r.Fd()) // once: every Fd call puts the file back in blocking mode
-	if err := syscall.SetNonblock(rfd, true); err != nil {
-		t.Fatal(err)
+	defer reader.Close()
+	defer writer.Close()
+
+	rfd := int(reader.Fd()) // once: every Fd call puts the file back in blocking mode
+
+	nonblockErr := syscall.SetNonblock(rfd, true)
+	if nonblockErr != nil {
+		t.Fatal(nonblockErr)
 	}
-	tap := &tapWriter{primary: io.Discard, tapFD: int(w.Fd()), on: new(atomic.Bool)}
+
+	tap := newTapWriter(io.Discard, int(writer.Fd()), new(atomic.Bool))
 	tap.on.Store(true)
+
 	block := make([]byte, 3840) // 20 ms
 	drain := func() int {
-		n, buf := 0, make([]byte, 65536)
+		drained, buf := 0, make([]byte, 65536)
 		for {
 			k, err := syscall.Read(rfd, buf)
 			if k <= 0 || err != nil {
-				return n
+				return drained
 			}
-			n += k
+
+			drained += k
 		}
 	}
 	sent := 0
+
 	for range 2 * tapSilenceHold / len(block) {
 		tap.Tap(block)
+
 		sent += drain()
 	}
+
 	if sent > tapSilenceHold || sent < tapSilenceHold-len(block) {
 		t.Fatalf("tap passed %d bytes of silence, want about %d", sent, tapSilenceHold)
 	}
+
 	tap.Tap(block)
+
 	if n := drain(); n != 0 {
 		t.Fatalf("tap passed %d bytes of silence after the hold", n)
 	}
+
 	block[100] = 1
 	tap.Tap(block)
+
 	if n := drain(); n != len(block) {
 		t.Fatalf("tap passed %d bytes of the first block with sound, want %d", n, len(block))
 	}
@@ -525,48 +700,70 @@ func TestTapHoldsBackLongSilence(t *testing.T) {
 
 // The amp is powered and warm before the mute opens, and on standby the mute closes
 // before the power goes: the order a pop is read from.
+//
+//nolint:paralleltest // swaps package variables other tests read: ampLines, amplifier, sourceTrim
 func TestTrackOwnershipPowersBeforeUnmuteAndMutesBeforePowerOff(t *testing.T) {
 	edges := recordAmpLines(t)
 	oldAmp := amplifier
 	amplifier = hw.NewAmp("", "", "test") // a model with an amp-power line
+
 	codecGainReady.Store(true)
 	t.Cleanup(func() { amplifier = oldAmp; codecGainReady.Store(false) })
 
-	sp := speakerstate.New()
-	if err := sp.Select(context.Background(), sourceUPnP, "", "http://192.168.1.10/a.flac", "track", "", ""); err != nil {
+	speaker := speakerstate.New()
+
+	err := speaker.Select(context.Background(), sourceUPnP, "", "http://192.168.1.10/a.flac", "track", "", "")
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	var blocks atomic.Uint64
+
 	health := func() audio.Health { // sound flows from the start
 		n := blocks.Add(1)
-		return audio.Health{SourceNonzeroBlocks: n, SinkNonzeroBlocks: n}
+
+		return blocksHealth(n, n)
 	}
 	arb := audio.NewArbiter(audio.NewMixer(io.Discard, false), nil)
 	ctx, cancel := context.WithCancel(context.Background())
+
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		var shuttingDown, ready atomic.Bool
-		var demand atomic.Int32
-		trackOwnership(ctx, sp, arb, health, &shuttingDown, &demand, &ready, func() {}, slog.New(slog.DiscardHandler))
+
+		var (
+			shuttingDown, ready atomic.Bool
+			demand              atomic.Int32
+		)
+
+		quiet := slog.New(slog.DiscardHandler)
+		flags := ownershipFlags{shuttingDown: &shuttingDown, ampDemand: &demand, notificationReady: &ready}
+		trackOwnership(ctx, speaker, arb, health, flags, func() {}, quiet)
 	}()
+
 	waitEdges := func(want ...string) {
 		t.Helper()
+
 		deadline := time.Now().Add(ampPowerDelay + ampMuteDelay + 3*time.Second)
 		for !slices.Equal(edges(), want) {
 			if time.Now().After(deadline) {
 				t.Fatalf("amp edges %v, want %v", edges(), want)
 			}
+
 			time.Sleep(20 * time.Millisecond)
 		}
 	}
 	waitEdges("amp on", "muted", "unmuted")
-	if err := sp.EnterStandby(context.Background()); err != nil {
+
+	err = speaker.EnterStandby(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	waitEdges("amp on", "muted", "unmuted", "muted", "amp off")
 	cancel()
 	<-done
+
 	if got := edges(); len(got) != 5 {
 		t.Fatalf("shutdown changed the lines again: %v", got)
 	}
@@ -575,18 +772,26 @@ func TestTrackOwnershipPowersBeforeUnmuteAndMutesBeforePowerOff(t *testing.T) {
 // Fd() silently turns an os.File pipe into a blocking fd. The source-bus flush
 // relies on deadlines, so sizing the pipe must leave runtime polling intact.
 func TestPipeSizingPreservesFlushDeadline(t *testing.T) {
-	r, w, err := os.Pipe()
+	t.Parallel()
+
+	reader, writer, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
-	defer w.Close()
-	setPipeSize(r, audio.BusPipeBytes, "test bus", quietLog())
-	if err := r.SetReadDeadline(time.Now()); err != nil {
-		t.Fatal(err)
+	defer reader.Close()
+	defer writer.Close()
+
+	setPipeSize(reader, audio.BusPipeBytes, "test bus", quietLog())
+
+	deadlineErr := reader.SetReadDeadline(time.Now())
+	if deadlineErr != nil {
+		t.Fatal(deadlineErr)
 	}
+
 	done := make(chan error, 1)
-	go func() { var b [1]byte; _, err := r.Read(b[:]); done <- err }()
+
+	go func() { var b [1]byte; _, err := reader.Read(b[:]); done <- err }()
+
 	select {
 	case err := <-done:
 		if !os.IsTimeout(err) {
@@ -595,13 +800,16 @@ func TestPipeSizingPreservesFlushDeadline(t *testing.T) {
 	case <-time.After(time.Second):
 		// Supply a byte as well as closing: a read made blocking through Fd cannot
 		// always be interrupted by Close on every Go/runtime combination.
-		_, _ = w.Write([]byte{0})
+		_, _ = writer.Write([]byte{0})
+
 		t.Fatal("pipe sizing made the reader uninterruptible")
 	}
 }
 
 func TestLogHealthWindowThinsCleanPlayback(t *testing.T) {
-	for _, c := range []struct {
+	t.Parallel()
+
+	for _, row := range []struct {
 		name               string
 		owner, loggedOwner string
 		silence            int64
@@ -615,8 +823,8 @@ func TestLogHealthWindowThinsCleanPlayback(t *testing.T) {
 		{"underrun", "TUNEIN", "TUNEIN", 0, 1, 10 * time.Second, true},
 		{"new owner", "AIRPLAY", "TUNEIN", 0, 0, 10 * time.Second, true},
 	} {
-		if got := logHealthWindow(c.owner, c.loggedOwner, c.silence, c.underruns, c.since); got != c.want {
-			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+		if got := logHealthWindow(row.owner, row.loggedOwner, row.silence, row.underruns, row.since); got != row.want {
+			t.Errorf("%s: got %v, want %v", row.name, got, row.want)
 		}
 	}
 }
@@ -625,15 +833,20 @@ func TestLogHealthWindowThinsCleanPlayback(t *testing.T) {
 // the real lines' caches, a repeated value is not an edge.
 func recordAmpLines(t *testing.T) func() []string {
 	t.Helper()
-	var mu sync.Mutex
-	var edges []string
+
+	var (
+		mu    sync.Mutex
+		edges []string
+	)
+
 	last := map[string]string{}
-	add := func(line, v string) {
+	add := func(line, value string) {
 		mu.Lock()
 		defer mu.Unlock()
-		if last[line] != v {
-			last[line] = v
-			edges = append(edges, v)
+
+		if last[line] != value {
+			last[line] = value
+			edges = append(edges, value)
 		}
 	}
 	old := ampLines
@@ -642,12 +855,16 @@ func recordAmpLines(t *testing.T) func() []string {
 	}
 	ampLines.power = func(p bool, _ *slog.Logger) bool {
 		add("power", map[bool]string{true: "amp on", false: "amp off"}[p])
+
 		return true
 	}
+
 	t.Cleanup(func() { ampLines = old })
+
 	return func() []string {
 		mu.Lock()
 		defer mu.Unlock()
+
 		return slices.Clone(edges)
 	}
 }
@@ -656,55 +873,74 @@ func recordAmpLines(t *testing.T) func() []string {
 // cut off mid-waveform clicks (the pop at the start of multiroom on the ST20, 2026-11-22).
 // The block cut off fades to zero and the first one after the jump rises from zero, both
 // when the delay grows and when it shrinks.
+//
+//nolint:paralleltest // changes package-wide state other tests read: chordCounting, frontPanel
 func TestDelayWriterFadesEveryJump(t *testing.T) {
 	const frames = 8
-	block := func(v int16) []byte {
-		p := make([]byte, frames*4)
-		for i := 0; i < len(p); i += 2 {
-			binary.LittleEndian.PutUint16(p[i:], uint16(v))
+
+	block := func(value int16) []byte {
+		pcm := make([]byte, frames*4)
+		for i := 0; i < len(pcm); i += 2 {
+			binary.LittleEndian.PutUint16(pcm[i:], uint16(value))
 		}
-		return p
+
+		return pcm
 	}
 	sample := func(p []byte, frame int) int16 { return int16(binary.LittleEndian.Uint16(p[frame*4:])) }
-	var dst bytes.Buffer
-	var blocks atomic.Int64
-	w := delayWriter{w: &dst, blocks: &blocks}
-	write := func(v int16) []byte {
+
+	var (
+		dst    bytes.Buffer
+		blocks atomic.Int64
+	)
+
+	w := newDelayWriter(&dst, &blocks)
+	write := func(value int16) []byte {
 		dst.Reset()
-		if n, err := w.Write(block(v)); err != nil || n != frames*4 {
+
+		n, err := w.Write(block(value))
+		if err != nil || n != frames*4 {
 			t.Fatalf("Write = %d, %v", n, err)
 		}
+
 		return slices.Clone(dst.Bytes())
 	}
 
 	if got := write(1000); !bytes.Equal(got, block(1000)) {
 		t.Fatalf("no delay: %v", got)
 	}
+
 	blocks.Store(2) // multiroom on: the delay grows while playing
+
 	out := write(2000)
 	if sample(out, 0) != 2000 || sample(out, frames-1) != 0 {
 		t.Fatalf("the block cut off is not faded out: %v", out)
 	}
+
 	if got := write(3000); !bytes.Equal(got, make([]byte, frames*4)) {
 		t.Fatalf("while the delay fills: %v", got)
 	}
-	in := write(4000)
-	if sample(in, 0) != 0 || sample(in, frames-1) != 2000 {
-		t.Fatalf("the first block after the jump does not rise from zero: %v", in)
+
+	risen := write(4000)
+	if sample(risen, 0) != 0 || sample(risen, frames-1) != 2000 {
+		t.Fatalf("the first block after the jump does not rise from zero: %v", risen)
 	}
+
 	if got := write(5000); !bytes.Equal(got, block(3000)) {
 		t.Fatalf("delayed by two blocks: %v", got)
 	}
 
 	blocks.Store(0) // multiroom off: the delay shrinks, the waiting blocks are skipped
+
 	out = write(6000)
 	if sample(out, 0) != 4000 || sample(out, frames-1) != 0 {
 		t.Fatalf("the block cut off on shrinking is not faded out: %v", out)
 	}
-	in = write(7000)
-	if sample(in, 0) != 0 || sample(in, frames-1) != 7000 {
-		t.Fatalf("the first block after shrinking does not rise from zero: %v", in)
+
+	risen = write(7000)
+	if sample(risen, 0) != 0 || sample(risen, frames-1) != 7000 {
+		t.Fatalf("the first block after shrinking does not rise from zero: %v", risen)
 	}
+
 	if got := write(8000); !bytes.Equal(got, block(8000)) {
 		t.Fatalf("no delay again: %v", got)
 	}

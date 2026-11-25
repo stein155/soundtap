@@ -73,7 +73,7 @@ Keep it short. Add a Mermaid diagram when a picture says it faster.
 | [0041](0041-radio-one-ffmpeg-one-url-rule.md) | Radio: one ffmpeg and one media URL rule | accepted |
 | [0043](0043-mdns-through-avahi.md) | mDNS goes through avahi-daemon over D-Bus; the device registry holds each speaker id to one address | accepted |
 | [0047](0047-wilink8-firmware-and-conf.md) | WiLink8 firmware from linux-firmware, board configuration from wlconf | accepted |
-| [0048](0048-signed-updates.md) | Every update is signed, and each install route says which signed packages it takes | accepted |
+| [0048](0048-signed-updates.md) | A release the speaker fetches installs signed without a press; every upload waits for one | accepted |
 | [0049](0049-no-stock-bytes.md) | Bose-free: no Bose files in the repository or the package | accepted |
 | [0052](0052-soundtapd-lifecycle.md) | soundtapd lifecycle: one operations lock, ordered shutdown, watchdog | accepted |
 | [0055](0055-household-token-and-windows.md) | Who may change things: the home network, the Bluetooth window, a key held on the speaker | accepted |
@@ -91,7 +91,7 @@ Keep it short. Add a Mermaid diagram when a picture says it faster.
 | [0115](0115-shell-only-for-boot.md) | Shell runs the boot and the recovery paths; decisions live in Go | accepted |
 | [0116](0116-st300-tv-input-share.md) | The ST300 shares its TV input by capturing the processor's return on McASP0 | accepted |
 | [0117](0117-no-automated-speaker-install.md) | No automated job installs on a speaker | accepted |
-| [0118](0118-update-button-without-press.md) | A speaker updates itself from the project's releases; the latest app needs no press | accepted |
+| [0118](0118-update-button-without-press.md) | A speaker updates itself from the project's releases, without a press | accepted |
 | [0119](0119-no-ssh-in-production.md) | Production images have no SSH and nothing replaces it | accepted |
 | [0120](0120-on-box-state-migrates.md) | From 0.1.0 on, every update carries the on-box state over | accepted |
 | [0121](0121-one-supervisor-per-process.md) | The init script supervises soundtapd; soundtapd supervises the media daemons | accepted |

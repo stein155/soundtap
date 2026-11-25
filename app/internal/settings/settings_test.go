@@ -4,6 +4,7 @@
 package settings
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -14,6 +15,7 @@ import (
 
 func TestDefaultWhenFileAbsent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
+
 	s := Open(path)
 	if got := s.Get().Language; got != "en" {
 		t.Fatalf("default Language = %q, want \"en\"", got)
@@ -22,10 +24,14 @@ func TestDefaultWhenFileAbsent(t *testing.T) {
 
 func TestSetLanguageAndPersist(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
+
 	s := Open(path)
-	if err := s.SetLanguage("nl"); err != nil {
+
+	err := s.SetLanguage("nl")
+	if err != nil {
 		t.Fatalf("SetLanguage: %v", err)
 	}
+
 	if got := s.Get().Language; got != "nl" {
 		t.Fatalf("Language = %q, want \"nl\"", got)
 	}
@@ -39,18 +45,25 @@ func TestSetLanguageAndPersist(t *testing.T) {
 
 func TestSetNameValidatesAndPersists(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
+
 	s := Open(path)
-	if err := s.SetName("  Living Room  "); err != nil {
+
+	err := s.SetName("  Living Room  ")
+	if err != nil {
 		t.Fatalf("SetName: %v", err)
 	}
+
 	if got := Open(path).Get().Name; got != "Living Room" {
 		t.Fatalf("reopened Name = %q, want Living Room", got)
 	}
+
 	for _, name := range []string{"", "bad\nname", string(make([]rune, 65))} {
-		if err := s.SetName(name); err == nil {
+		err := s.SetName(name)
+		if err == nil {
 			t.Errorf("SetName(%q) succeeded", name)
 		}
 	}
+
 	if got := s.Get().Name; got != "Living Room" {
 		t.Fatalf("Name after rejected writes = %q", got)
 	}
@@ -58,14 +71,19 @@ func TestSetNameValidatesAndPersists(t *testing.T) {
 
 func TestSetLanguageEmptyIsNoop(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
+
 	s := Open(path)
-	if err := s.SetLanguage("fr"); err != nil {
+
+	err := s.SetLanguage("fr")
+	if err != nil {
 		t.Fatalf("SetLanguage: %v", err)
 	}
 	// Empty code must not overwrite the existing language.
-	if err := s.SetLanguage(""); err != nil {
+	err = s.SetLanguage("")
+	if err != nil {
 		t.Fatalf("SetLanguage(\"\"): %v", err)
 	}
+
 	if got := s.Get().Language; got != "fr" {
 		t.Fatalf("Language = %q after empty set, want \"fr\"", got)
 	}
@@ -73,7 +91,9 @@ func TestSetLanguageEmptyIsNoop(t *testing.T) {
 
 func TestOpenCorruptFileFallsBackToDefault(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
-	if err := os.WriteFile(path, []byte("{not valid json"), 0o644); err != nil {
+
+	err := os.WriteFile(path, []byte("{not valid json"), 0o644)
+	if err != nil {
 		t.Fatalf("write corrupt: %v", err)
 	}
 	// A corrupt file falls back to defaults but must not be silently discarded:
@@ -83,6 +103,7 @@ func TestOpenCorruptFileFallsBackToDefault(t *testing.T) {
 	if got := s.Get().Language; got != "en" {
 		t.Fatalf("corrupt-file Language = %q, want default \"en\"", got)
 	}
+
 	if _, err := os.Stat(path + ".corrupt"); err != nil {
 		t.Fatalf("corrupt file not preserved as .corrupt: %v", err)
 	}
@@ -91,14 +112,18 @@ func TestOpenCorruptFileFallsBackToDefault(t *testing.T) {
 func TestRepeatedCorruptionKeepsTheLastTwo(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	for _, bad := range []string{"first", "second", "third"} {
-		if err := os.WriteFile(path, []byte(bad), 0o600); err != nil {
+		err := os.WriteFile(path, []byte(bad), 0o600)
+		if err != nil {
 			t.Fatal(err)
 		}
+
 		Open(path)
 	}
+
 	if _, err := os.Stat(path + ".corrupt.2"); err == nil {
 		t.Fatal("a third copy was kept")
 	}
+
 	for file, want := range map[string]string{
 		path + ".corrupt":   "third",
 		path + ".corrupt.1": "second",
@@ -111,9 +136,12 @@ func TestRepeatedCorruptionKeepsTheLastTwo(t *testing.T) {
 
 func TestFailedWriteDoesNotMutateMemory(t *testing.T) {
 	s := Open(filepath.Join(t.TempDir(), "missing", "settings.json"))
-	if err := s.SetLanguage("nl"); err == nil {
+
+	err := s.SetLanguage("nl")
+	if err == nil {
 		t.Fatal("SetLanguage succeeded with missing parent")
 	}
+
 	if got := s.Get().Language; got != "en" {
 		t.Fatalf("Language = %q after failed write, want en", got)
 	}
@@ -121,9 +149,12 @@ func TestFailedWriteDoesNotMutateMemory(t *testing.T) {
 
 func TestFailedNameWriteDoesNotMutateMemory(t *testing.T) {
 	s := Open(filepath.Join(t.TempDir(), "missing", "settings.json"))
-	if err := s.SetName("Kitchen"); err == nil {
+
+	err := s.SetName("Kitchen")
+	if err == nil {
 		t.Fatal("SetName succeeded with missing parent")
 	}
+
 	if got := s.Get().Name; got != "" {
 		t.Fatalf("Name = %q after failed write, want empty", got)
 	}
@@ -131,8 +162,11 @@ func TestFailedNameWriteDoesNotMutateMemory(t *testing.T) {
 
 func TestCorruptSettingsCanBeReplacedAfterQuarantine(t *testing.T) {
 	dir := t.TempDir()
+
 	path := filepath.Join(dir, "settings.json")
-	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
+
+	err := os.WriteFile(path, []byte("{not json"), 0o600)
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -143,9 +177,11 @@ func TestCorruptSettingsCanBeReplacedAfterQuarantine(t *testing.T) {
 	}
 
 	// Any ordinary write may create a clean replacement while retaining the backup.
-	if err := st.SetName("Keuken"); err != nil {
+	err = st.SetName("Keuken")
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	if next := Open(path); next.Get().Name != "Keuken" {
 		t.Fatalf("name after restart = %q, want Keuken", next.Get().Name)
 	}
@@ -161,7 +197,9 @@ func TestAudioPrefsRoundTrip(t *testing.T) {
 	if got := first.Get().Audio; got.HasVolume {
 		t.Fatalf("fresh store already claims a saved volume: %+v", got)
 	}
-	if err := first.SetAudio(Audio{Volume: 0, Bass: -20, HasVolume: true}); err != nil {
+
+	err := first.SetAudio(Audio{Volume: 0, Bass: -20, HasVolume: true})
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -173,8 +211,11 @@ func TestAudioPrefsRoundTrip(t *testing.T) {
 
 func TestAudioPrefsIgnoreRemovedTreble(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
+
 	old := `{"audio":{"volume":42,"bass":-4,"treble":30,"hasVolume":true,"autoOff":45}}`
-	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+
+	err := os.WriteFile(path, []byte(old), 0o600)
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -188,13 +229,19 @@ func TestAudioPrefsIgnoreRemovedTreble(t *testing.T) {
 // must not clobber the separately-owned timeout.
 func TestSetAudioPreservesAutoOff(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
+
 	st := Open(path)
-	if err := st.SetAutoOff(45); err != nil {
+
+	err := st.SetAutoOff(45)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetAudio(Audio{Volume: 60, HasVolume: true}); err != nil {
+
+	err = st.SetAudio(Audio{Volume: 60, HasVolume: true})
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	if got := Open(path).Get().Audio; got.AutoOff != 45 || got.Volume != 60 {
 		t.Fatalf("got autoOff=%d volume=%d, want 45 / 60", got.AutoOff, got.Volume)
 	}
@@ -203,10 +250,14 @@ func TestSetAudioPreservesAutoOff(t *testing.T) {
 // Disabling auto-off needs a value of its own: zero means "not configured".
 func TestSetAutoOffDisabledIsNotZero(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
+
 	st := Open(path)
-	if err := st.SetAutoOff(-5); err != nil {
+
+	err := st.SetAutoOff(-5)
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	if got := Open(path).Get().Audio.AutoOff; got >= 0 {
 		t.Fatalf("disabled auto-off stored as %d, want negative", got)
 	}
@@ -214,9 +265,12 @@ func TestSetAutoOffDisabledIsNotZero(t *testing.T) {
 
 func TestOldFileMigratesToCurrentSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
-	if err := os.WriteFile(path, []byte(`{"name":"Keuken","language":"nl"}`), 0o600); err != nil {
+
+	err := os.WriteFile(path, []byte(`{"name":"Keuken","language":"nl"}`), 0o600)
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	s := Open(path).Get()
 	if s.SchemaVersion != SchemaVersion || s.Name != "Keuken" || s.Language != "nl" {
 		t.Fatalf("migrated = %+v", s)
@@ -231,12 +285,15 @@ func TestMigrationsRunInOrder(t *testing.T) {
 	migrations = append(append([]func(map[string]json.RawMessage) error{}, saved...),
 		func(raw map[string]json.RawMessage) error {
 			raw["name"] = raw["oldName"]
+
 			return nil
 		})
+
 	s, err := Migrate([]byte(`{"schemaVersion":1,"oldName":"Zolder"}`))
 	if err != nil || s.Name != "Zolder" || s.SchemaVersion != 2 {
 		t.Fatalf("v1 -> v2: %+v, %v", s, err)
 	}
+
 	s, err = Migrate([]byte(`{"schemaVersion":2,"name":"Keuken","oldName":"Zolder"}`))
 	if err != nil || s.Name != "Keuken" {
 		t.Fatalf("v2 read as is: %+v, %v", s, err)
@@ -253,21 +310,30 @@ func TestNewerSchemaIsRefused(t *testing.T) {
 // reads what it knows and refuses writes until a reset.
 func TestOpenLeavesANewerSchemaFileAlone(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
+
 	newer := []byte(`{"schemaVersion":99,"name":"Kitchen","language":"nl","futureField":"keep"}`)
-	if err := os.WriteFile(path, newer, 0o600); err != nil {
+
+	err := os.WriteFile(path, newer, 0o600)
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	s := Open(path)
 	if got := s.Get(); got.Name != "Kitchen" || got.Language != "nl" {
 		t.Fatalf("settings read = %+v", got)
 	}
-	if err := s.SetAudio(Audio{Volume: 25, HasVolume: true}); !errors.Is(err, ErrNewerSchema) {
+
+	err = s.SetAudio(Audio{Volume: 25, HasVolume: true})
+	if !errors.Is(err, ErrNewerSchema) {
 		t.Fatalf("write err = %v, want ErrNewerSchema", err)
 	}
-	if data, _ := os.ReadFile(path); string(data) != string(newer) {
+
+	if data, _ := os.ReadFile(path); !bytes.Equal(data, newer) {
 		t.Fatalf("file changed: %s", data)
 	}
-	if err := s.Reset(); err != nil {
+
+	err = s.Reset()
+	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}
 }
@@ -276,28 +342,44 @@ func TestOpenLeavesANewerSchemaFileAlone(t *testing.T) {
 // cannot overwrite the newer build's file.
 func TestFailedResetKeepsTheNewerSchemaGuard(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "home")
-	if err := os.Mkdir(dir, 0o700); err != nil {
+
+	err := os.Mkdir(dir, 0o700)
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	path := filepath.Join(dir, "settings.json")
+
 	newer := []byte(`{"schemaVersion":99,"futureField":"keep"}`)
-	if err := os.WriteFile(path, newer, 0o600); err != nil {
+
+	err = os.WriteFile(path, newer, 0o600)
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	s := Open(path)
-	if err := os.Rename(dir, dir+".gone"); err != nil {
+
+	err = os.Rename(dir, dir+".gone")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Reset(); err == nil {
+
+	err = s.Reset()
+	if err == nil {
 		t.Fatal("reset into a missing directory succeeded")
 	}
-	if err := os.Rename(dir+".gone", dir); err != nil {
+
+	err = os.Rename(dir+".gone", dir)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetAudio(Audio{Volume: 25, HasVolume: true}); !errors.Is(err, ErrNewerSchema) {
+
+	err = s.SetAudio(Audio{Volume: 25, HasVolume: true})
+	if !errors.Is(err, ErrNewerSchema) {
 		t.Fatalf("write after a failed reset = %v, want ErrNewerSchema", err)
 	}
-	if data, _ := os.ReadFile(path); string(data) != string(newer) {
+
+	if data, _ := os.ReadFile(path); !bytes.Equal(data, newer) {
 		t.Fatalf("newer file overwritten: %s", data)
 	}
 }
@@ -306,6 +388,7 @@ func TestNormalizeNameFitsOneDNSLabel(t *testing.T) {
 	if _, err := NormalizeName(strings.Repeat("\U0001F50A", 16)); err == nil { // 64 bytes
 		t.Fatal("a 64-byte name was accepted; Avahi refuses it as a service name")
 	}
+
 	if _, err := NormalizeName(strings.Repeat("é", 31) + "x"); err != nil { // 63 bytes
 		t.Fatalf("63-byte name refused: %v", err)
 	}
@@ -317,6 +400,7 @@ func TestNormalizeNameStripsBidiControls(t *testing.T) {
 	if err != nil || got != "Keuken 1" {
 		t.Fatalf("NormalizeName = %q, %v; want \"Keuken 1\"", got, err)
 	}
+
 	if _, err := NormalizeName("\u202e\u200f"); err == nil {
 		t.Fatal("a name of only bidi controls was accepted")
 	}
@@ -326,19 +410,25 @@ func TestNormalizeNameStripsBidiControls(t *testing.T) {
 func TestResetRemovesCorruptCopies(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	for _, p := range []string{path + ".corrupt", path + ".corrupt.1"} {
-		if err := os.WriteFile(p, []byte(`{"mqtt":{"password":"dummy-secret"`), 0o600); err != nil {
+		err := os.WriteFile(p, []byte(`{"mqtt":{"password":"dummy-secret"`), 0o600)
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
+
 	s := Open(path)
-	if err := s.Reset(); err != nil {
+
+	err := s.Reset()
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	for _, p := range []string{path + ".corrupt", path + ".corrupt.1"} {
 		if _, err := os.Stat(p); !os.IsNotExist(err) {
 			t.Errorf("%s remains after reset: %v", p, err)
 		}
 	}
+
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("reset settings not written: %v", err)
 	}

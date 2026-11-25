@@ -6,7 +6,6 @@ package main
 import (
 	"context"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"sync/atomic"
 	"time"
@@ -20,19 +19,28 @@ import (
 // LAN: no audio, buttons, lamps, panel or amplifier lines, no mDNS name or _soundtap._tcp
 // service, no hostname, no Wi-Fi manager and no boot confirmation. What is left is speakerstate,
 // the in-process speaker, behind the web API on the -listen address.
+//
+//nolint:gochecknoglobals // process-wide state: set once at start, read wherever hardware is touched
 var devMode atomic.Bool
 
 // devPlayDelay is how long the silent player lets a source buffer before it plays.
 const devPlayDelay = 700 * time.Millisecond
 
+// devPlayPoll is how often the silent player looks: twice per devPlayDelay.
+const devPlayPoll = devPlayDelay / 2
+
 // enterDevMode switches every outward-facing part off for -dev. It refuses a flashed
-// speaker: there the hardware is real and the init script owns soundtapd.
-func enterDevMode(opt *options, log *slog.Logger) {
+// speaker: there the hardware is real and the init script owns soundtapd. It reports
+// whether -dev may run.
+func enterDevMode(opt *options, log *slog.Logger) bool {
 	if onFirmware() {
 		log.Error("-dev runs on a computer, not on a speaker (SOUNDTAP_FIRMWARE=1)")
-		os.Exit(2)
+
+		return false
 	}
+
 	devMode.Store(true)
+
 	opt.noAudio = true
 	// The amplifier lines are written at shutdown even without audio (lifecycle.audioOff).
 	amplifier = hw.NewAmp(board.Name, "", "")
@@ -41,32 +49,40 @@ func enterDevMode(opt *options, log *slog.Logger) {
 	// The names bt.sh reads live under /run on a speaker; keep them with the home.
 	currentNamePath = filepath.Join(opt.home, "run-name")
 	setupNamePath = filepath.Join(opt.home, "run-default-name")
+
 	log.Info("development run: simulated speaker, no audio, no hardware, nothing announced on the LAN",
 		"model", board.Name)
+
+	return true
 }
 
 // runDevPlayer is the -dev stand-in for the player: a source that starts buffering plays
 // after devPlayDelay, as if audio flowed, and nothing is decoded or heard. Without it every
 // selection would end in STOP_STATE (runNoAudioWatchdog) and the UI could not be worked on.
-func runDevPlayer(ctx context.Context, sp *speakerstate.Speaker) {
-	tick := time.NewTicker(devPlayDelay / 2)
+func runDevPlayer(ctx context.Context, speaker *speakerstate.Speaker) {
+	tick := time.NewTicker(devPlayPoll)
 	defer tick.Stop()
+
 	var since time.Time
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
 		}
-		st := sp.StatusSnapshot()
+
+		status := speaker.StatusSnapshot()
 		switch {
-		case st.PlayStatus != playBuffering:
+		case status.PlayStatus != playBuffering:
 			since = time.Time{}
 		case since.IsZero():
 			since = time.Now()
 		case time.Since(since) >= devPlayDelay:
-			sp.ConfirmPlaying(sp.BeginBuffering(st.Source))
+			speaker.ConfirmPlaying(speaker.BeginBuffering(status.Source))
+
 			since = time.Time{}
+		default: // still buffering, not yet for devPlayDelay
 		}
 	}
 }

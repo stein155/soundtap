@@ -66,20 +66,24 @@ type searchResp struct {
 func (c *Client) Search(ctx context.Context, query string) ([]Station, error) {
 	u := fmt.Sprintf("%s/Search.ashx?query=%s&types=station&formats=%s&render=json",
 		base, url.QueryEscape(query), formats)
+
 	body, err := c.get(ctx, u)
 	if err != nil {
 		return nil, err
 	}
+
 	var sr searchResp
 	if err := json.Unmarshal(body, &sr); err != nil {
 		return nil, fmt.Errorf("tunein search decode: %w", err)
 	}
+
 	out := make([]Station, 0, len(sr.Body))
 	for _, o := range sr.Body {
 		// Keep only playable stations (skip "link" browse categories).
 		if o.Item != "station" || !strings.HasPrefix(o.GuideID, "s") {
 			continue
 		}
+
 		out = append(out, Station{
 			ID:         o.GuideID,
 			Name:       o.Text,
@@ -88,6 +92,7 @@ func (c *Client) Search(ctx context.Context, query string) ([]Station, error) {
 			NowPlaying: o.Subtext,
 		})
 	}
+
 	return out, nil
 }
 
@@ -95,10 +100,12 @@ func (c *Client) Search(ctx context.Context, query string) ([]Station, error) {
 // Describe.ashx. Best-effort: returns empty strings (no error) when unavailable.
 func (c *Client) Describe(ctx context.Context, stationID string) (name, logo string) {
 	u := fmt.Sprintf("%s/Describe.ashx?id=%s&render=json", base, url.QueryEscape(stationID))
+
 	body, err := c.get(ctx, u)
 	if err != nil {
 		return "", ""
 	}
+
 	var dr struct {
 		Body []struct {
 			Name string `json:"name"`
@@ -108,6 +115,7 @@ func (c *Client) Describe(ctx context.Context, stationID string) (name, logo str
 	if err := json.Unmarshal(body, &dr); err != nil || len(dr.Body) == 0 {
 		return "", ""
 	}
+
 	return dr.Body[0].Name, dr.Body[0].Logo
 }
 
@@ -118,6 +126,7 @@ type boolish bool
 func (b *boolish) UnmarshalJSON(data []byte) error {
 	s := strings.Trim(strings.TrimSpace(string(data)), `"`)
 	*b = boolish(s == "true" || s == "1")
+
 	return nil
 }
 
@@ -138,10 +147,12 @@ type Track struct {
 // Best-effort: returns a zero Track (no error) when nothing is available.
 func (c *Client) NowPlaying(ctx context.Context, stationID string) (Track, error) {
 	u := fmt.Sprintf("%s/Describe.ashx?id=%s&render=json", base, url.QueryEscape(stationID))
+
 	body, err := c.get(ctx, u)
 	if err != nil {
 		return Track{}, err
 	}
+
 	var dr struct {
 		Body []struct {
 			IsMusic     boolish `json:"is_music"`
@@ -157,11 +168,14 @@ func (c *Client) NowPlaying(ctx context.Context, stationID string) (Track, error
 	if err := json.Unmarshal(body, &dr); err != nil || len(dr.Body) == 0 {
 		return Track{}, nil
 	}
+
 	b := dr.Body[0]
+
 	art := b.AlbumArt
 	if art == "" {
 		art = b.ArtistArt
 	}
+
 	return Track{
 		Song:   strings.TrimSpace(b.CurrentSong),
 		Artist: strings.TrimSpace(b.Artist),
@@ -175,11 +189,14 @@ func (c *Client) NowPlaying(ctx context.Context, stationID string) (Track, error
 // Resolve returns the stream URLs for a station id, in TuneIn's order.
 func (c *Client) Resolve(ctx context.Context, stationID string) ([]string, error) {
 	u := fmt.Sprintf("%s/Tune.ashx?id=%s&formats=%s", base, url.QueryEscape(stationID), formats)
+
 	body, err := c.get(ctx, u)
 	if err != nil {
 		return nil, err
 	}
+
 	var urls []string
+
 	sc := bufio.NewScanner(bytes.NewReader(body))
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
@@ -187,18 +204,22 @@ func (c *Client) Resolve(ctx context.Context, stationID string) ([]string, error
 			urls = append(urls, line)
 		}
 	}
+
 	if err := sc.Err(); err != nil {
 		return nil, fmt.Errorf("tunein: read streams for %s: %w", stationID, err)
 	}
+
 	if len(urls) == 0 {
 		return nil, fmt.Errorf("%w for %s", ErrNoStreams, stationID)
 	}
+
 	return urls, nil
 }
 
 // WithTransport sends the client's requests through rt, for tests that must not go out.
 func (c *Client) WithTransport(rt http.RoundTripper) *Client {
 	c.http = &http.Client{Transport: rt}
+
 	return c
 }
 
@@ -214,9 +235,11 @@ func PlayableURL(urls []string) string {
 			return u
 		}
 	}
+
 	if len(urls) > 0 {
 		return urls[0]
 	}
+
 	return ""
 }
 
@@ -230,10 +253,12 @@ func PlayableURL(urls []string) string {
 // retry that same dead stream forever.
 func PlayableURLs(urls []string) []string {
 	out := make([]string, 0, len(urls))
+
 	for _, mp3 := range []bool{true, false} {
 		for _, http := range []bool{true, false} {
 			for _, u := range urls {
 				isMP3 := strings.Contains(strings.ToLower(u), "mp3")
+
 				isHTTP := strings.HasPrefix(u, "http://")
 				if isMP3 == mp3 && isHTTP == http {
 					out = append(out, u)
@@ -241,6 +266,7 @@ func PlayableURLs(urls []string) []string {
 			}
 		}
 	}
+
 	return out
 }
 
@@ -250,10 +276,12 @@ func (c *Client) StreamURLs(ctx context.Context, stationID string) ([]string, er
 	if err != nil {
 		return nil, err
 	}
+
 	out := PlayableURLs(urls)
 	if len(out) == 0 {
 		return nil, fmt.Errorf("tunein: no playable stream for %s", stationID)
 	}
+
 	return out, nil
 }
 
@@ -261,18 +289,24 @@ func (c *Client) get(ctx context.Context, u string) ([]byte, error) {
 	if !strings.HasPrefix(u, base+"/") {
 		return nil, fmt.Errorf("refusing non-TuneIn host: %s", u)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
 	if err != nil {
 		return nil, err
 	}
+
 	req.Header.Set("User-Agent", "SoundTap/1.0")
+
 	resp, err := safehttp.Do(ctx, c.http, req)
 	if err != nil {
 		return nil, err
 	}
+
 	defer func() { _ = resp.Body.Close() }()
+
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("tunein status %d", resp.StatusCode)
 	}
+
 	return io.ReadAll(io.LimitReader(resp.Body, 256*1024))
 }

@@ -4,11 +4,14 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 )
 
 // logLevel is set from SOUNDTAP_LOG_LEVEL at start-up; info when unset.
+//
+//nolint:gochecknoglobals // process-wide state: every logger of the daemon shares the level
 var (
 	logLevel slog.LevelVar
 	logOpts  = &slog.HandlerOptions{Level: &logLevel}
@@ -21,12 +24,18 @@ type limitedFile struct {
 	left int
 }
 
-func (l *limitedFile) Write(p []byte) (int, error) {
+func (l *limitedFile) Write(data []byte) (int, error) {
 	if l.left <= 0 {
-		return len(p), nil
+		return len(data), nil
 	}
-	n := min(len(p), l.left)
+
+	n := min(len(data), l.left)
 	l.left -= n
-	_, err := l.f.Write(p[:n])
-	return len(p), err
+
+	_, err := l.f.Write(data[:n])
+	if err != nil {
+		return len(data), fmt.Errorf("log copy: %w", err)
+	}
+
+	return len(data), nil
 }

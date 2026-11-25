@@ -12,19 +12,28 @@ import (
 // fakeLink writes a /sys/class/net with a bcolink0 whose bco/ holds files.
 func fakeLink(t *testing.T, files map[string]string) string {
 	t.Helper()
+
 	net := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(net, "wlan0"), 0o755); err != nil {
+
+	err := os.MkdirAll(filepath.Join(net, "wlan0"), 0o755)
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	dir := filepath.Join(net, "bcolink0", "bco")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+
+	err = os.MkdirAll(dir, 0o755)
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	for name, v := range files {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(v), 0o444); err != nil {
+		err := os.WriteFile(filepath.Join(dir, name), []byte(v), 0o444)
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
+
 	return net
 }
 
@@ -37,8 +46,11 @@ func allStats() map[string]string {
 
 func TestReadLinkStats(t *testing.T) {
 	got, ok := ReadLinkStats(fakeLink(t, allStats()))
-	want := LinkStats{TxOK: 1200, TxFailed: 3, TxDropped: 17, LinkDropped: 19, TxFrames: 1220,
-		FlowControl: true, FlowStops: 42}
+
+	want := LinkStats{
+		TxOK: 1200, TxFailed: 3, TxDropped: 17, LinkDropped: 19, TxFrames: 1220,
+		FlowControl: true, FlowStops: 42,
+	}
 	if !ok || got != want {
 		t.Fatalf("got %+v %v, want %+v", got, ok, want)
 	}
@@ -47,6 +59,7 @@ func TestReadLinkStats(t *testing.T) {
 func TestReadLinkStatsFlowOff(t *testing.T) {
 	files := allStats()
 	files["flow"] = "0\n"
+
 	got, ok := ReadLinkStats(fakeLink(t, files))
 	if !ok || got.FlowControl {
 		t.Fatalf("got %+v %v, want flow control off", got, ok)
@@ -58,10 +71,13 @@ func TestReadLinkStatsFlowOff(t *testing.T) {
 func TestReadLinkStatsWithoutCounters(t *testing.T) {
 	files := allStats()
 	delete(files, "tx_ok")
+
 	if got, ok := ReadLinkStats(fakeLink(t, files)); ok {
 		t.Fatalf("got %+v, want nothing", got)
 	}
+
 	files = allStats()
+
 	files["tx_failed"] = "garbage\n"
 	if got, ok := ReadLinkStats(fakeLink(t, files)); ok {
 		t.Fatalf("got %+v from a garbled counter, want nothing", got)
@@ -72,13 +88,16 @@ func TestReadLinkStatsWithoutCounters(t *testing.T) {
 func TestReadLinkStatsNoLink(t *testing.T) {
 	net := t.TempDir()
 	for _, d := range []string{"wlan0", "eth0", "bcolink0"} {
-		if err := os.MkdirAll(filepath.Join(net, d), 0o755); err != nil {
+		err := os.MkdirAll(filepath.Join(net, d), 0o755)
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
+
 	if got, ok := ReadLinkStats(net); ok {
 		t.Fatalf("got %+v, want nothing", got)
 	}
+
 	if _, ok := ReadLinkStats(filepath.Join(net, "missing")); ok {
 		t.Fatal("a missing /sys/class/net gave counters")
 	}

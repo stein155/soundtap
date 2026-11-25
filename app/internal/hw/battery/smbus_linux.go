@@ -6,6 +6,7 @@
 package battery
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"syscall"
@@ -27,6 +28,9 @@ const (
 	smbusBlockMax = 32
 )
 
+// errBlockTooLong is a block write longer than SMBus allows.
+var errBlockTooLong = errors.New("battery: block longer than 32 bytes")
+
 // smbusData is union i2c_smbus_data: a byte, a word or a length-prefixed block.
 type smbusData [smbusBlockMax + 2]byte
 
@@ -42,56 +46,80 @@ type SMBus struct{ f *os.File }
 
 // OpenSMBus opens dev (/dev/i2c-0 on the Portable) for the device at addr (0x0b).
 func OpenSMBus(dev string, addr uint16) (*SMBus, error) {
-	f, err := os.OpenFile(dev, os.O_RDWR, 0)
+	file, err := os.OpenFile(dev, os.O_RDWR, 0)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("battery: opening %s: %w", dev, err)
 	}
-	if _, _, e := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), ioctlI2CSlave, uintptr(addr)); e != 0 {
-		_ = f.Close()
-		return nil, fmt.Errorf("battery: I2C_SLAVE 0x%02x on %s: %w", addr, dev, e)
+
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, file.Fd(), ioctlI2CSlave, uintptr(addr))
+	if errno != 0 {
+		_ = file.Close()
+
+		return nil, fmt.Errorf("battery: I2C_SLAVE 0x%02x on %s: %w", addr, dev, errno)
 	}
-	return &SMBus{f: f}, nil
+
+	return &SMBus{f: file}, nil
 }
 
 // Close releases the node.
-func (b *SMBus) Close() error { return b.f.Close() }
-
-func (b *SMBus) transfer(rw uint8, cmd byte, size uint32, d *smbusData) error {
-	arg := smbusIoctl{readWrite: rw, command: cmd, size: size, data: d}
-	if _, _, e := syscall.Syscall(syscall.SYS_IOCTL, b.f.Fd(), ioctlI2CSMBus, uintptr(unsafe.Pointer(&arg))); e != 0 {
-		return fmt.Errorf("battery: SMBus 0x%02x: %w", cmd, e)
+func (b *SMBus) Close() error {
+	err := b.f.Close()
+	if err != nil {
+		return fmt.Errorf("battery: closing the bus: %w", err)
 	}
+
 	return nil
 }
 
 // ReadWord is an SMBus read word, little endian.
 func (b *SMBus) ReadWord(cmd byte) (uint16, error) {
-	var d smbusData
-	if err := b.transfer(smbusRead, cmd, smbusWordData, &d); err != nil {
+	var buf smbusData
+
+	err := b.transfer(smbusRead, cmd, smbusWordData, &buf)
+	if err != nil {
 		return 0, err
 	}
-	return uint16(d[0]) | uint16(d[1])<<8, nil
+
+	return uint16(buf[0]) | uint16(buf[1])<<8, nil
 }
 
 // ReadBlock is an SMBus block read: the length byte, then that many bytes. It goes out as an
 // I2C block read of the largest block, since the AM335x's I2C controller (i2c-omap) has no
 // I2C_M_RECV_LEN: a real SMBus block read returns the pack's count and zeroes after it there.
 func (b *SMBus) ReadBlock(cmd byte) ([]byte, error) {
-	var d smbusData
-	d[0] = smbusBlockMax
-	if err := b.transfer(smbusRead, cmd, smbusI2CBlockData, &d); err != nil {
+	var buf smbusData
+
+	buf[0] = smbusBlockMax
+
+	err := b.transfer(smbusRead, cmd, smbusI2CBlockData, &buf)
+	if err != nil {
 		return nil, err
 	}
-	return blockPayload(d[1 : 1+smbusBlockMax]), nil
+
+	return blockPayload(buf[1 : 1+smbusBlockMax]), nil
 }
 
 // WriteBlock is an SMBus block write.
 func (b *SMBus) WriteBlock(cmd byte, data []byte) error {
 	if len(data) > smbusBlockMax {
-		return fmt.Errorf("battery: block of %d bytes", len(data))
+		return fmt.Errorf("%w: %d bytes", errBlockTooLong, len(data))
 	}
-	var d smbusData
-	d[0] = byte(len(data)) //nolint:gosec // at most 32, checked above
-	copy(d[1:], data)
-	return b.transfer(smbusWrite, cmd, smbusBlockData, &d)
+
+	var buf smbusData
+
+	buf[0] = byte(len(data)) //nolint:gosec // at most 32, checked above
+	copy(buf[1:], data)
+
+	return b.transfer(smbusWrite, cmd, smbusBlockData, &buf)
+}
+
+func (b *SMBus) transfer(readWrite uint8, cmd byte, size uint32, buf *smbusData) error {
+	arg := smbusIoctl{readWrite: readWrite, command: cmd, size: size, data: buf}
+
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, b.f.Fd(), ioctlI2CSMBus, uintptr(unsafe.Pointer(&arg)))
+	if errno != 0 {
+		return fmt.Errorf("battery: SMBus 0x%02x: %w", cmd, errno)
+	}
+
+	return nil
 }

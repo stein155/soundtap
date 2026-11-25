@@ -10,11 +10,15 @@ import (
 )
 
 // One -home moves every persistent path, so a test or the simulator never touches /mnt/nv.
+//
+//nolint:paralleltest // swaps package variables other tests read: bcoImageMarker, buttonsUserMap, hostnameFile and more
 func TestSetHomeMovesEveryPersistentPath(t *testing.T) {
 	t.Cleanup(func() { setHome(defaultHome) })
-	nv := t.TempDir()
-	home := filepath.Join(nv, "soundtap")
+
+	volume := t.TempDir()
+	home := filepath.Join(volume, "soundtap")
 	setHome(home)
+
 	paths := map[string]string{
 		"hostnameFile": hostnameFile, "soundbarHome": soundbarHome,
 		"snapserverKeepDir": snapserverKeepDir, "bcoImageMarker": bcoImageMarker,
@@ -24,13 +28,14 @@ func TestSetHomeMovesEveryPersistentPath(t *testing.T) {
 		"spotifySystemDir": spotifySystemDir, "irUserMap": irUserMap, "buttonsUserMap": buttonsUserMap,
 	}
 	for name, path := range paths {
-		if !strings.HasPrefix(path, nv+string(filepath.Separator)) {
-			t.Errorf("%s = %q, not under %s", name, path, nv)
+		if !strings.HasPrefix(path, volume+string(filepath.Separator)) {
+			t.Errorf("%s = %q, not under %s", name, path, volume)
 		}
 	}
 	// The speaker's layout is unchanged: state under home, stock's files and the key maps
 	// on the volume above it.
 	setHome(defaultHome)
+
 	for got, want := range map[string]string{
 		hostnameFile:       "/mnt/nv/soundtap/hostname",
 		soundbarHome:       "/mnt/nv/soundtap",

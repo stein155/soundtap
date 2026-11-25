@@ -14,13 +14,14 @@ import (
 
 // ApplyKey applies a key press (e.g. "POWER", "PRESET_3") directly.
 func (s *Speaker) ApplyKey(key string) {
-	s.applyKey(key)
+	s.pressKey(key)
 }
 
 // OnForwardKey registers the hook that sends a follower's keys to its leader.
 func (s *Speaker) OnForwardKey(fn func(key string) bool) {
 	s.lock()
 	defer s.unlock()
+
 	s.forwardKey = fn
 }
 
@@ -30,6 +31,7 @@ func (s *Speaker) forwardsKey(key string) bool {
 	s.lock()
 	fn, following := s.forwardKey, s.source == sourceMultiroom
 	s.unlock()
+
 	return fn != nil && following && fn(key)
 }
 
@@ -37,44 +39,65 @@ func (s *Speaker) forwardsKey(key string) bool {
 // blink stock plays, 250 ms dark and 250 ms lit.
 const TransportAckWindow = 500 * time.Millisecond
 
-// transportKeys are the ones stock acknowledges on the lamp. Volume and the presets
+// transportKey reports the keys stock acknowledges on the lamp. Volume and the presets
 // are deliberately absent -- they have their own states, and on a box with two lamps
 // those states do nothing.
-var transportKeys = map[string]bool{
-	keyPlay: true, keyPause: true, keyStop: true, keyPlayPause: true,
-	"NEXT_TRACK": true, "PREV_TRACK": true, keyMute: true,
+func transportKey(key string) bool {
+	switch key {
+	case keyPlay, keyPause, keyStop, keyPlayPause, "NEXT_TRACK", "PREV_TRACK", keyMute:
+		return true
+	}
+
+	return false
 }
 
-func (s *Speaker) applyKey(key string) {
+// Press timing: an empty preset blinks for emptyPresetWindow; transportQueue presses wait
+// for a source that is slow to answer.
+const (
+	emptyPresetWindow = 2 * time.Second
+	transportQueue    = 16
+)
+
+func (s *Speaker) pressKey(key string) {
 	if s.forwardsKey(key) {
 		return
 	}
-	if transportKeys[key] {
+
+	if transportKey(key) {
 		s.lock()
 		s.transportAckUntil = time.Now().Add(TransportAckWindow)
 		s.unlock()
 	}
+
 	if key == "NEXT_TRACK" || key == "PREV_TRACK" {
 		s.skipTrack(key)
+
 		return
 	}
+
 	var notify func() // fired after the lock is released, never under it
+
 	s.lock()
+
 	volBefore, wasStandby := s.outputLocked(), s.source == sourceStandby
 	defer func() {
 		volChanged := s.volumeHookLocked(volBefore)
 		standby := s.standbyHookLocked(wasStandby)
 		s.unlock()
+
 		if volChanged != nil {
 			volChanged()
 		}
+
 		if notify != nil {
 			notify()
 		}
+
 		if standby != nil {
 			standby()
 		}
 	}()
+
 	switch key {
 	case keyMute, "VOLUME_UP", "VOLUME_DOWN":
 		notify = s.volumeKeyLocked(key)
@@ -96,6 +119,7 @@ func (s *Speaker) skipTrack(key string) {
 	s.lock()
 	fn, standby := s.transport, s.source == sourceStandby
 	s.unlock()
+
 	if fn != nil && !standby {
 		_ = fn(key) // the hook logs; a source that cannot skip is not an error here
 	}
@@ -114,12 +138,14 @@ func (s *Speaker) volumeKeyLocked(key string) func() {
 		// step from a level the user cannot hear would be a guess. The ramp repeats while
 		// a button is held, so only the unmute, one discrete event, is pushed.
 		s.muted = false
+
 		return s.onPlayChange
 	case key == "VOLUME_UP":
-		s.volume = clamp(s.volume+1, 0, 100)
+		s.volume = clamp(s.volume+1, 0, maxVolume)
 	default:
-		s.volume = clamp(s.volume-1, 0, 100)
+		s.volume = clamp(s.volume-1, 0, maxVolume)
 	}
+
 	return nil
 }
 
@@ -128,31 +154,38 @@ func (s *Speaker) transportKeyLocked(key string) func() {
 	if s.source == sourceStandby {
 		return nil
 	}
+
 	pause := key == keyPause || key == keyStop || (key == keyPlayPause && s.playStatus != statePause)
 	// Radio has nothing to pause: the player stops the stream on PAUSE_STATE and
 	// tunes in again on play. Spotify and Bluetooth pause in their own daemon.
 	// STOP is the same transition: a stop that only relabelled the state left the
 	// stream playing and PLAY unable to undo it.
-	if pause {
+	switch {
+	case pause:
 		s.playStatus = statePause
-	} else if s.playStatus == statePause {
+	case s.playStatus == statePause:
 		s.playStatus = startStatus(s.source)
-	} else if s.playStatus == stateStop && s.failedGen == s.playGen && startStatus(s.source) == stateBuffering {
+	case s.playStatus == stateStop && s.failedGen == s.playGen && startStatus(s.source) == stateBuffering:
 		// The player gave up on a dropped stream: PLAY tunes in again, as a new selection.
 		s.playStatus = stateBuffering
 		s.selectionGen++
+	default: // already playing or buffering
 	}
+
 	action := keyPlay
 	if pause {
 		action = keyPause
 	}
-	fn, changed := s.transport, s.onPlayChange
+
+	callback, changed := s.transport, s.onPlayChange
+
 	return func() {
 		if changed != nil {
 			changed()
 		}
-		if fn != nil {
-			s.queueTransport(func() { _ = fn(action) })
+
+		if callback != nil {
+			s.queueTransport(func() { _ = callback(action) })
 		}
 	}
 }
@@ -163,11 +196,14 @@ func (s *Speaker) powerKeyLocked() func() {
 	if resume == nil {
 		return nil
 	}
+
 	changed := s.onPlayChange
+
 	return func() {
 		if changed != nil {
 			changed()
 		}
+
 		resume()
 	}
 }
@@ -203,32 +239,39 @@ func (s *Speaker) presetKeyLocked(key string) func() {
 	if !ok {
 		return nil
 	}
-	p, exists := s.presets[slot]
+
+	preset, exists := s.presets[slot]
 	if !exists {
 		// Empty slot: set a short window so the LED loop can blink amber
 		// as visual feedback, matching the stock speaker's behaviour.
-		s.emptyPresetUntil = time.Now().Add(2 * time.Second)
+		s.emptyPresetUntil = time.Now().Add(emptyPresetWindow)
+
 		return nil
 	}
+
 	s.emptyPresetUntil = time.Time{} // clear any pending empty-slot feedback
-	if p.Source != sourceSpotify {
-		s.applySourceLocked(p.Source, p.Location, p.Name, p.Art)
+	if preset.Source != sourceSpotify {
+		s.applySourceLocked(preset.Source, preset.Location, preset.Name, preset.Art)
+
 		return nil
 	}
-	fn := s.onSpotifyPreset
-	if fn == nil {
+
+	callback := s.onSpotifyPreset
+	if callback == nil {
 		return nil
 	}
 	// Claim the amp now: the old source stops and the panel shows the
 	// preset at once, instead of after librespot's ~2 s round trip.
-	s.applySourceLocked(sourceSpotify, p.Location, p.Name, p.Art)
+	s.applySourceLocked(sourceSpotify, preset.Location, preset.Name, preset.Art)
 	s.playStatus = stateBuffering // until librespot reports the first track
-	uri, changed := p.Location, s.onPlayChange
+	uri, changed := preset.Location, s.onPlayChange
+
 	return func() {
 		if changed != nil {
 			changed()
 		}
-		safego.Go("speakerstate.spotifyPreset", func() { fn(uri) })
+
+		safego.Go("speakerstate.spotifyPreset", func() { callback(uri) })
 	}
 }
 
@@ -238,10 +281,12 @@ func presetSlot(key string) (int, bool) {
 	if !ok {
 		return 0, false
 	}
+
 	n, err := strconv.Atoi(rest)
 	if err != nil || n < 1 || n > speaker.PresetSlots {
 		return 0, false
 	}
+
 	return n, true
 }
 
@@ -250,17 +295,19 @@ func presetSlot(key string) (int, bool) {
 // (the newest goroutine runs first), leaving the phone paused while the speaker said
 // playing. Off the caller's goroutine still: the hook shells out or calls the network. A
 // full queue means the source stopped answering; the press is dropped, not blocked on.
-func (s *Speaker) queueTransport(f func()) {
+func (s *Speaker) queueTransport(task func()) {
 	s.transportOnce.Do(func() {
-		s.transportQ = make(chan func(), 16)
+		s.transportQ = make(chan func(), transportQueue)
+
 		safego.Go("speakerstate.transport", func() {
 			for f := range s.transportQ {
 				f()
 			}
 		})
 	})
+
 	select {
-	case s.transportQ <- f:
+	case s.transportQ <- task:
 	default:
 	}
 }

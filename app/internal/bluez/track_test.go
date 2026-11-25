@@ -21,8 +21,10 @@ func objects(objs ...object) managedObjects {
 		if out[o.path] == nil {
 			out[o.path] = map[string]map[string]dbus.Variant{}
 		}
+
 		maps.Copy(out[o.path], o.ifaces)
 	}
+
 	return out
 }
 
@@ -33,6 +35,7 @@ func player(path, status, title string) object {
 		"Album":    dbus.MakeVariant("Album of " + title),
 		"Duration": dbus.MakeVariant(uint32(1000)),
 	}
+
 	return object{adapterPath + dbus.ObjectPath(path), map[string]map[string]dbus.Variant{playerIface: {
 		"Status": dbus.MakeVariant(status),
 		"Track":  dbus.MakeVariant(track),
@@ -54,6 +57,7 @@ func TestPlayingTrackFallsBackToAnIdlePlayer(t *testing.T) {
 
 func TestPlayingTrackIsEmptyWithoutAPlayer(t *testing.T) {
 	device := object{adapterPath + "/dev_1", map[string]map[string]dbus.Variant{deviceIface: {}}}
+
 	other := object{"/somewhere/else", map[string]map[string]dbus.Variant{playerIface: {}}}
 	if got := playingTrack(objects(device, other)); got != (Track{}) {
 		t.Errorf("got %+v", got)

@@ -43,8 +43,11 @@ func playbackInput(url string, piped bool) []string {
 	if piped {
 		return []string{"-protocol_whitelist", "pipe", "-i", "pipe:0"}
 	}
-	return []string{"-reconnect", "1", "-reconnect_delay_max", "5", "-max_redirects", "0",
-		"-rw_timeout", "15000000", "-protocol_whitelist", FFmpegProtocols, "-i", url}
+
+	return []string{
+		"-reconnect", "1", "-reconnect_delay_max", "5", "-max_redirects", "0",
+		"-rw_timeout", "15000000", "-protocol_whitelist", FFmpegProtocols, "-i", url,
+	}
 }
 
 // FFmpegURL is url after its redirects, followed here under MediaURL's rules on every hop
@@ -54,15 +57,18 @@ func playbackInput(url string, piped bool) []string {
 // manifest names itself, on any host and with its default redirects, since
 // -max_redirects is not passed on to those nested opens.
 func FFmpegURL(ctx context.Context, url string) string {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return url
 	}
+
 	resp, err := playlistClient.Do(req)
 	if err != nil {
 		return url
 	}
+
 	_ = resp.Body.Close()
+
 	return resp.Request.URL.String()
 }
 
@@ -71,10 +77,13 @@ func FFmpegURL(ctx context.Context, url string) string {
 var resolveRedirects = FFmpegURL
 
 func playbackFFmpegArgs(url, audioFilter, format, rate, dev string, piped bool) []string {
-	args := []string{"-y", "-nostdin", "-loglevel", "warning",
+	args := []string{
+		"-y", "-nostdin", "-loglevel", "warning",
 		"-fflags", "nobuffer", "-flags", "low_delay",
-		"-probesize", "32768", "-analyzeduration", "0"}
+		"-probesize", "32768", "-analyzeduration", "0",
+	}
 	args = append(args, playbackInput(url, piped)...)
+
 	return append(args, "-af", audioFilter,
 		"-f", format, "-ar", rate, "-ac", "2", "-flush_packets", "1", dev)
 }
@@ -85,8 +94,10 @@ func playbackSeek(args []string, at time.Duration) []string {
 	if at <= 0 {
 		return args
 	}
+
 	i := slices.Index(args, "-i")
 	ss := strconv.FormatFloat(at.Seconds(), 'f', 3, 64)
+
 	return slices.Concat(args[:i], []string{"-ss", ss}, args[i:])
 }
 
@@ -98,5 +109,6 @@ func playbackOutput(format, dev string) (string, string) {
 	if target, ok := strings.CutPrefix(dev, "alsa:"); ok {
 		return "alsa", target
 	}
+
 	return format, dev
 }

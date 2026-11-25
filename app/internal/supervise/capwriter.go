@@ -40,19 +40,25 @@ func newCapWriter(w io.Writer, name string, budget int) *capWriter {
 func (c *capWriter) Write(p []byte) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	if t := c.now(); t.Sub(c.window) >= time.Minute {
 		if c.dropped > 0 {
 			fmt.Fprintf(c.w, "%s: %d bytes of output dropped\n", c.name, c.dropped)
 		}
+
 		c.window, c.left, c.dropped = t, c.budget, 0
 	}
+
 	n := min(len(p), c.left)
 	if n > 0 {
 		if _, err := c.w.Write(p[:n]); err != nil {
 			return 0, err
 		}
+
 		c.left -= n
 	}
+
 	c.dropped += len(p) - n
+
 	return len(p), nil // the child must never block or fail on its log
 }

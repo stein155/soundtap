@@ -14,8 +14,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"strings"
 	"sync"
@@ -35,6 +37,15 @@ const (
 	maxPeerStreams = 16
 	// maxPeerEvent bounds one line of a peer's stream.
 	maxPeerEvent = 64 << 10
+	// peerReadBuffer is the initial read buffer of a peer stream; it grows to maxPeerEvent.
+	peerReadBuffer = 4096
+)
+
+var (
+	// errPeerStatus is a peer stream that answered with anything but 200.
+	errPeerStatus = errors.New("status")
+	// errPeerClosed is a peer stream that the peer ended.
+	errPeerClosed = errors.New("closed")
 )
 
 // Sub is one browser. Updates coalesce per speaker: a slow client gets the latest
@@ -81,6 +92,7 @@ func New(log *slog.Logger, maxSubs int, idle time.Duration, transport http.Round
 		self:      self,
 		transport: transport,
 		subs:      map[*Sub]struct{}{},
+		mu:        sync.Mutex{},
 		last:      map[string][]byte{},
 		wake:      make(chan struct{}, 1),
 
@@ -96,54 +108,26 @@ type wireEvent struct {
 	State json.RawMessage `json:"state"`
 }
 
-// publish records one speaker's state and hands it to every subscriber. key is the peer
-// id, or "" for this speaker.
-// publish caches and forwards state for key while ctx is live. The check is under h.mu,
-// and a replaced peer stream is cancelled before its entry is cleared under h.mu, so a
-// cancelled stream can never write over its replacement's state.
-func (h *Household) publish(ctx context.Context, key string, state []byte) {
-	if !json.Valid(state) {
-		return // a peer's bytes go into our stream verbatim; never let them break it
-	}
-	b, err := json.Marshal(wireEvent{ID: key, Self: key == "", State: state})
-	if err != nil {
-		return
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if ctx.Err() != nil {
-		return
-	}
-	if bytes.Equal(h.last[key], b) {
-		return
-	}
-	h.last[key] = b
-	for sub := range h.subs {
-		sub.pending[key] = b
-		select {
-		case sub.ready <- struct{}{}:
-		default:
-		}
-	}
-}
-
 // Subscribe registers a browser with every known state already pending. The second
 // result is false when maxSubs streams are already open.
 func (h *Household) Subscribe() (*Sub, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+
 	if len(h.subs) >= h.maxSubs {
 		return nil, false
 	}
+
 	sub := &Sub{pending: map[string][]byte{}, ready: make(chan struct{}, 1)}
-	for k, b := range h.last {
-		sub.pending[k] = b
-	}
+	maps.Copy(sub.pending, h.last)
+
 	if len(sub.pending) > 0 {
 		sub.ready <- struct{}{}
 	}
+
 	h.subs[sub] = struct{}{}
 	h.poke()
+
 	return sub, true
 }
 
@@ -159,25 +143,15 @@ func (h *Household) Unsubscribe(sub *Sub) {
 func (h *Household) Take(sub *Sub) [][]byte {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+
 	out := make([][]byte, 0, len(sub.pending))
 	for k, b := range sub.pending {
 		out = append(out, b)
+
 		delete(sub.pending, k)
 	}
+
 	return out
-}
-
-func (h *Household) poke() {
-	select {
-	case h.wake <- struct{}{}:
-	default:
-	}
-}
-
-func (h *Household) subCount() int {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return len(h.subs)
 }
 
 // Run follows this speaker and its peers while anyone listens, and nothing otherwise.
@@ -190,11 +164,63 @@ func (h *Household) Run(ctx context.Context) {
 			case <-h.wake:
 			}
 		}
+
 		h.follow(ctx)
+
 		if ctx.Err() != nil {
 			return
 		}
 	}
+}
+
+// publish records one speaker's state and hands it to every subscriber. key is the peer
+// id, or "" for this speaker.
+// publish caches and forwards state for key while ctx is live. The check is under h.mu,
+// and a replaced peer stream is cancelled before its entry is cleared under h.mu, so a
+// cancelled stream can never write over its replacement's state.
+func (h *Household) publish(ctx context.Context, key string, state []byte) {
+	if !json.Valid(state) {
+		return // a peer's bytes go into our stream verbatim; never let them break it
+	}
+
+	payload, err := json.Marshal(wireEvent{ID: key, Self: key == "", State: state})
+	if err != nil {
+		return
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if ctx.Err() != nil {
+		return
+	}
+
+	if bytes.Equal(h.last[key], payload) {
+		return
+	}
+
+	h.last[key] = payload
+	for sub := range h.subs {
+		sub.pending[key] = payload
+		select {
+		case sub.ready <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func (h *Household) poke() {
+	select {
+	case h.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (h *Household) subCount() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	return len(h.subs)
 }
 
 // follow runs the upstream streams until the last subscriber leaves or ctx ends. The
@@ -202,7 +228,9 @@ func (h *Household) Run(ctx context.Context) {
 // listens, so what it holds would be stale for the next browser.
 func (h *Household) follow(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
+
 	var wg sync.WaitGroup
+
 	defer func() {
 		cancel()
 		wg.Wait()
@@ -214,6 +242,7 @@ func (h *Household) follow(ctx context.Context) {
 	wg.Add(1)
 	safego.Go("household.followSelf", func() {
 		defer wg.Done()
+
 		h.followSelf(ctx)
 	})
 
@@ -221,38 +250,49 @@ func (h *Household) follow(ctx context.Context) {
 		base   string
 		cancel context.CancelFunc
 	}
+
 	peers := map[string]stream{}
+
 	tick := time.NewTicker(reconcile)
 	defer tick.Stop()
+
 	for {
 		want := h.peers(maxPeerStreams)
-		for id, p := range peers {
-			if want[id] != p.base {
-				p.cancel()
-				delete(peers, id)
-				h.mu.Lock()
-				delete(h.last, id)
-				h.mu.Unlock()
-			}
-		}
-		for id, base := range want {
-			if _, ok := peers[id]; ok {
+		for peerID, p := range peers {
+			if want[peerID] == p.base {
 				continue
 			}
+
+			p.cancel()
+			delete(peers, peerID)
+			h.mu.Lock()
+			delete(h.last, peerID)
+			h.mu.Unlock()
+		}
+
+		for peerID, base := range want {
+			if _, ok := peers[peerID]; ok {
+				continue
+			}
+
 			pctx, pcancel := context.WithCancel(ctx)
-			peers[id] = stream{base, pcancel}
+			peers[peerID] = stream{base, pcancel}
+
 			wg.Add(1)
 			safego.Go("household.followPeer", func() {
 				defer wg.Done()
-				h.followPeer(pctx, id, base)
+
+				h.followPeer(pctx, peerID, base)
 			})
 		}
+
 		select {
 		case <-ctx.Done():
 			return
 		case <-h.wake:
 		case <-tick.C:
 		}
+
 		if h.subCount() == 0 {
 			return
 		}
@@ -261,39 +301,45 @@ func (h *Household) follow(ctx context.Context) {
 
 // followSelf forwards this speaker's own hub.
 func (h *Household) followSelf(ctx context.Context) {
-	ch, unsubscribe, ok := h.self()
+	events, unsubscribe, ok := h.self()
 	if !ok {
 		h.log.Warn("household: own event hub full")
+
 		return
 	}
 	defer unsubscribe()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case b, ok := <-ch:
+		case state, ok := <-events:
 			if !ok {
 				return
 			}
-			h.publish(ctx, "", b)
+
+			h.publish(ctx, "", state)
 		}
 	}
 }
 
 // followPeer keeps one peer's /api/events open until ctx ends.
-func (h *Household) followPeer(ctx context.Context, id, base string) {
+func (h *Household) followPeer(ctx context.Context, peerID, base string) {
 	for {
-		if err := h.readPeer(ctx, id, base+"/api/events"); err != nil && ctx.Err() == nil {
-			h.log.Debug("household: peer stream ended", "device", id, "err", err)
+		err := h.readPeer(ctx, peerID, base+"/api/events")
+		if err != nil && ctx.Err() == nil {
+			h.log.Debug("household: peer stream ended", "device", peerID, "err", err)
 		}
+
 		if ctx.Err() != nil {
 			return // replaced or stopped: follow cleared the entry; a newer stream may own it
 		}
 		// Nothing says what it plays now: a browser that joins must not get its last state
 		// for the minutes it takes the peer to fall off the list.
 		h.mu.Lock()
-		delete(h.last, id)
+		delete(h.last, peerID)
 		h.mu.Unlock()
+
 		select {
 		case <-ctx.Done():
 			return
@@ -302,42 +348,56 @@ func (h *Household) followPeer(ctx context.Context, id, base string) {
 	}
 }
 
-func (h *Household) readPeer(ctx context.Context, id, url string) error {
+func (h *Household) readPeer(ctx context.Context, peerID, url string) error {
 	// Only this peer's request is cancelled when it goes silent; followPeer reconnects.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
 	idle := time.AfterFunc(h.IdleTimeout, cancel)
 	defer idle.Stop()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
-		return err
+		return fmt.Errorf("peer request: %w", err)
 	}
+
 	req.Header.Set("Accept", "text/event-stream")
+
 	resp, err := h.transport.RoundTrip(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("peer request: %w", err)
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("status %d", resp.StatusCode)
+		return fmt.Errorf("%w %d", errPeerStatus, resp.StatusCode)
 	}
-	sc := bufio.NewScanner(resp.Body)
-	sc.Buffer(make([]byte, 0, 4096), maxPeerEvent)
+
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, peerReadBuffer), maxPeerEvent)
+
 	event := ""
-	for sc.Scan() {
+
+	for scanner.Scan() {
 		idle.Reset(h.IdleTimeout)
-		line := sc.Text()
+
+		line := scanner.Text()
 		switch {
 		case line == "":
 			event = ""
 		case strings.HasPrefix(line, "event:"):
 			event = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
 		case strings.HasPrefix(line, "data:") && event == "state":
-			h.publish(ctx, id, []byte(strings.TrimSpace(strings.TrimPrefix(line, "data:"))))
+			h.publish(ctx, peerID, []byte(strings.TrimSpace(strings.TrimPrefix(line, "data:"))))
+		default:
+			// Other fields (id:, retry:, comments) and other events carry nothing we use.
 		}
 	}
-	if err := sc.Err(); err != nil {
-		return err
+
+	err = scanner.Err()
+	if err != nil {
+		return fmt.Errorf("peer stream: %w", err)
 	}
-	return fmt.Errorf("closed")
+
+	return errPeerClosed
 }

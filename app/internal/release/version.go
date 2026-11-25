@@ -13,6 +13,9 @@ import (
 // (ADR 0035).
 const alphaSuffix = "-alpha."
 
+// versionParts is MAJOR, MINOR and PATCH.
+const versionParts = 3
+
 // Version is a SoundTap version as os/VERSION, app/VERSION, a tag and a statement carry it
 // (ADR 0035): MAJOR.MINOR.PATCH for a release, MAJOR.MINOR.PATCH-alpha.N for an alpha. Each
 // of MAJOR, MINOR and PATCH is one to nine decimal digits; N is a positive number of at most
@@ -24,25 +27,34 @@ type Version struct {
 
 // ParseVersion reads v strictly; ok is false for anything that is not a Version.
 func ParseVersion(v string) (Version, bool) {
+	none := Version{Major: 0, Minor: 0, Patch: 0, Alpha: 0}
 	core, alpha, pre := strings.Cut(v, alphaSuffix)
+
 	parts := strings.Split(core, ".")
-	if len(parts) != 3 {
-		return Version{}, false
+	if len(parts) != versionParts {
+		return none, false
 	}
-	var n [3]int
-	for i, p := range parts {
-		if !digits(p) {
-			return Version{}, false
+
+	var numbers [versionParts]int
+
+	for i, part := range parts {
+		if !digits(part) {
+			return none, false
 		}
-		n[i], _ = strconv.Atoi(p)
+
+		numbers[i], _ = strconv.Atoi(part)
 	}
-	out := Version{Major: n[0], Minor: n[1], Patch: n[2]}
+
+	out := Version{Major: numbers[0], Minor: numbers[1], Patch: numbers[2], Alpha: 0}
+
 	if pre {
 		if !digits(alpha) || alpha[0] == '0' {
-			return Version{}, false
+			return none, false
 		}
+
 		out.Alpha, _ = strconv.Atoi(alpha)
 	}
+
 	return out, true
 }
 
@@ -54,6 +66,7 @@ func digits(s string) bool {
 // ValidVersion reports whether v is a Version.
 func ValidVersion(v string) bool {
 	_, ok := ParseVersion(v)
+
 	return ok
 }
 
@@ -61,20 +74,23 @@ func ValidVersion(v string) bool {
 func (v Version) Prerelease() bool { return v.Alpha > 0 }
 
 // Compare orders versions by semver precedence: -1, 0 or +1 as v is older than, the same as or
-// newer than w. An alpha comes before the release of its number, so
+// newer than other. An alpha comes before the release of its number, so
 // 0.1.0-alpha.1 < 0.1.0-alpha.2 < 0.1.0 < 0.1.1-alpha.1.
-func (v Version) Compare(w Version) int {
-	if c := cmp.Or(cmp.Compare(v.Major, w.Major), cmp.Compare(v.Minor, w.Minor),
-		cmp.Compare(v.Patch, w.Patch)); c != 0 {
-		return c
+func (v Version) Compare(other Version) int {
+	byNumber := cmp.Or(cmp.Compare(v.Major, other.Major), cmp.Compare(v.Minor, other.Minor),
+		cmp.Compare(v.Patch, other.Patch))
+	if byNumber != 0 {
+		return byNumber
 	}
+
 	switch {
-	case v.Alpha == w.Alpha:
+	case v.Alpha == other.Alpha:
 		return 0
-	case v.Alpha == 0: // the release after w's alphas
+	case v.Alpha == 0: // the release after other's alphas
 		return 1
-	case w.Alpha == 0:
+	case other.Alpha == 0:
 		return -1
 	}
-	return cmp.Compare(v.Alpha, w.Alpha)
+
+	return cmp.Compare(v.Alpha, other.Alpha)
 }

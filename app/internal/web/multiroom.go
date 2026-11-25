@@ -16,6 +16,9 @@ import (
 	"github.com/stein155/soundtap/app/internal/snapcast"
 )
 
+// multiroomStatusTimeout bounds the reads behind GET /api/multiroom.
+const multiroomStatusTimeout = 5 * time.Second
+
 var snapcastIDRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:#-]{0,127}$`)
 
 func (s *Server) getMultiroom(w http.ResponseWriter, r *http.Request) {
@@ -23,70 +26,98 @@ func (s *Server) getMultiroom(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+
 	if s.multiroomActive != nil {
 		s.multiroomActive(multiroom.HasListener(status, s.snapclientID))
 	}
+
 	names := map[string]string{}
-	for _, dev := range s.knownDevices(Device{}) {
+	for _, dev := range s.knownDevices(new(Device)) {
 		names[dev.ID] = dev.Name
 	}
+
 	name, volume := "", 0
+
 	if s.settings != nil {
 		current := s.settings.Get()
 		name, volume = current.Name, current.Audio.Volume
 	}
+
 	writeJSON(w, http.StatusOK, multiroom.Clients(status, s.snapclientID, names, name, volume))
 }
 
 func (s *Server) putMultiroomVolume(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if !snapcastIDRE.MatchString(id) {
+	deviceID := r.PathValue("id")
+	if !snapcastIDRE.MatchString(deviceID) {
 		s.badRequest(w, "invalid client id", nil)
+
 		return
 	}
+
 	var body struct {
 		Percent *int  `json:"percent"`
 		Muted   *bool `json:"muted"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Percent == nil || body.Muted == nil {
+
+	err := json.NewDecoder(r.Body).Decode(&body)
+	if err != nil || body.Percent == nil || body.Muted == nil {
 		s.badRequest(w, "percent and muted required", err)
+
 		return
 	}
+
 	if *body.Percent < 0 || *body.Percent > 100 {
 		s.badRequest(w, "percent must be 0..100", nil)
+
 		return
 	}
+
 	if !s.multiroomWired(w) {
 		return
 	}
-	volume, err := multiroom.SetVolume(r.Context(), s.groupEnv(), id, snapcast.Volume{Percent: *body.Percent, Muted: *body.Muted})
+
+	level := snapcast.Volume{Percent: *body.Percent, Muted: *body.Muted}
+
+	volume, err := multiroom.SetVolume(r.Context(), s.groupEnv(), deviceID, level)
 	if err != nil {
 		s.failMultiroom(w, err)
+
 		return
 	}
+
 	writeJSON(w, http.StatusOK, volume)
 }
 
 func (s *Server) putMultiroomMembership(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if !snapcastIDRE.MatchString(id) {
+	deviceID := r.PathValue("id")
+	if !snapcastIDRE.MatchString(deviceID) {
 		s.badRequest(w, "invalid client id", nil)
+
 		return
 	}
+
 	var body struct {
 		Member *bool `json:"member"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Member == nil {
+
+	err := json.NewDecoder(r.Body).Decode(&body)
+	if err != nil || body.Member == nil {
 		s.badRequest(w, "member required", err)
+
 		return
 	}
+
 	if !s.multiroomWired(w) {
 		return
 	}
-	if err := s.group.SetMember(r.Context(), s.groupEnv(), id, *body.Member); err != nil {
+
+	err = s.group.SetMember(r.Context(), s.groupEnv(), deviceID, *body.Member)
+	if err != nil {
 		s.failMultiroom(w, err)
+
 		return
 	}
+
 	writeJSON(w, http.StatusOK, map[string]bool{"member": *body.Member})
 }
 
@@ -112,6 +143,7 @@ func (s *Server) multiroomActivePath() string {
 	if s.homeDir == "" {
 		return ""
 	}
+
 	return filepath.Join(s.homeDir, "multiroom-enabled")
 }
 
@@ -119,22 +151,28 @@ func (s *Server) multiroomActivePath() string {
 func (s *Server) multiroomWired(w http.ResponseWriter) bool {
 	if s.multiroom == nil {
 		apiError(w, http.StatusServiceUnavailable, "multiroom unavailable")
+
 		return false
 	}
+
 	return true
 }
 
 func (s *Server) multiroomStatus(w http.ResponseWriter, r *http.Request) (snapcast.Status, bool) {
 	if !s.multiroomWired(w) {
-		return snapcast.Status{}, false
+		return snapcast.Status{Groups: nil}, false
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+
+	ctx, cancel := context.WithTimeout(r.Context(), multiroomStatusTimeout)
 	defer cancel()
+
 	status, err := s.multiroom.GetStatus(ctx)
 	if err != nil {
 		s.fail(w, "multiroom status failed", err)
-		return snapcast.Status{}, false
+
+		return snapcast.Status{Groups: nil}, false
 	}
+
 	return status, true
 }
 
@@ -148,19 +186,22 @@ func (s *Server) WatchMultiroom(ctx context.Context, every time.Duration) {
 	if s.multiroom == nil || s.multiroomActive == nil {
 		return
 	}
-	t := time.NewTicker(every)
-	defer t.Stop()
+
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+
 	for tick := 0; ; tick++ {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-ticker.C:
 		}
 		// In standby nothing plays to share: snapserver is asked on every
 		// multiroomStandbyEvery-th tick only, and again on the first tick after waking.
 		if tick%multiroomStandbyEvery != 0 && s.inStandby(ctx) {
 			continue
 		}
+
 		multiroom.SyncListeners(ctx, s.groupEnv())
 	}
 }

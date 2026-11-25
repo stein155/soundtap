@@ -21,7 +21,7 @@ The standby screen shows the time alone, in the zone of the browser that saved t
 
 - **What it shows.** The time; on a 12-hour clock AM/PM on a line under it. No date, no
   weather. The group walks one pixel diagonally every 5 s over the free area, as stock's does,
-  and its brightness is 25, 50 or 80 %.
+  at one brightness: like stock's, the clock does not dim, and there is no setting for it.
 - **The zone.** Stock shows its clock without a place, so ours does too: the web UI stores the
   zone of the browser that opens the speaker's settings for a panel that has none yet, and
   again with every display save. A first install from stock takes stock's clock settings and
@@ -29,8 +29,9 @@ The standby screen shows the time alone, in the zone of the browser that saved t
   standby screen stays dark.
 - **The zone data** is built into `soundtapd` (`time/tzdata`), because the rootfs ships no
   zoneinfo. The time itself comes from NTP ([ADR 0125](0125-time-sources-and-clock-gating.md)).
-- **Settings.** Clock on or off, 12 or 24 hours, brightness. Settings files from before 0.1.0
-  may still hold `city`, `lat`, `lon` and `weatherOn`; the loader ignores them.
+- **Settings.** Clock on or off, 12 or 24 hours. Settings files from before 0.1.0 may still
+  hold `city`, `lat`, `lon`, `weatherOn` and `brightness`; the loader ignores them, and
+  `PUT /api/settings` accepts and drops a `display.brightness` an older page still sends.
 
 Alternatives that lost:
 
@@ -55,7 +56,7 @@ Alternatives that lost:
 
 ## Code
 
-- `app/internal/panel/clock.go`: `panel.RunClockScreen` (standby frame, walk, brightness) and
+- `app/internal/panel/clock.go`: `panel.RunClockScreen` (standby frame and walk) and
   `clockZone`; it imports `time/tzdata`.
 - `app/oled/screen/screens.go`: `screen.Standby`.
 - `app/internal/settings/settings.go`: `settings.Display` and `settings.Display.ClockOn`.

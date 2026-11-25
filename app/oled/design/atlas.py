@@ -17,6 +17,8 @@ panel's translations) uses them: the whole of those scripts would not fit the bi
 import gzip
 import os
 import sys
+from collections.abc import Iterable, Iterator
+from pathlib import Path
 
 import freetype
 import uharfbuzz as hb
@@ -57,10 +59,14 @@ FACES = [
 WIDTH = 1024
 # Kerning is kept for pairs of these: what station, track and room names are made of.
 KERN = [*range(0x20, 0x7F), *range(0xC0, 0x180)]
+# A shaped pair that stays two glyphs (no ligature) can carry kerning.
+PAIR_GLYPHS = 2
+# Runes from Thai (U+0E00) on are baked only as far as the words file uses them.
+WORDS_ONLY_FROM = 0xE00
 
 
-def kerning(fontdir, file, weight):
-    """Yields (left, right, font units) for every kerned pair HarfBuzz applies."""
+def kerning(fontdir: str, file: str, weight: int) -> Iterator[tuple[int, int, int]]:
+    """Yield (left, right, font units) for every kerned pair HarfBuzz applies."""
     blob = hb.Blob.from_file_path(f"{fontdir}/{file}")
     font = hb.Font(hb.Face(blob))
     if weight:
@@ -74,7 +80,7 @@ def kerning(fontdir, file, weight):
             buf.guess_segment_properties()
             hb.shape(font, buf, {"kern": True, "liga": False})
             pos = buf.glyph_positions
-            if len(pos) == 2 and pos[0].x_advance != alone[a]:
+            if len(pos) == PAIR_GLYPHS and pos[0].x_advance != alone[a]:
                 yield a, b, pos[0].x_advance - alone[a]
 
 
@@ -82,7 +88,8 @@ HINT = os.environ.get("HINT", "light")
 PHASES = int(os.environ.get("PHASES", "4"))
 
 
-def open_face(fontdir, file, weight, size):
+def open_face(fontdir: str, file: str, weight: int, size: float) -> freetype.Face:
+    """Open `file` at `weight` (600 when 0) and `size` pixels."""
     face = freetype.Face(f"{fontdir}/{file}")
     if face.has_multiple_masters:
         axes = face.get_variation_info().axes
@@ -91,7 +98,9 @@ def open_face(fontdir, file, weight, size):
     return face
 
 
-def glyphs(fontdir, file, weight, size, runes):
+def glyphs(fontdir: str, file: str, weight: int, size: float,
+           runes: Iterable[int]) -> Iterator[tuple[int, int, Image.Image | None, int, int, str]]:
+    """Yield (rune, phase, bitmap, left, top, advance) for every rune and sub-pixel phase the face chain has."""
     chain = [open_face(fontdir, f, weight, size) for f in [file, *FALLBACK.get(file, [])]]
     flags = freetype.FT_LOAD_NO_BITMAP | {"none": freetype.FT_LOAD_NO_HINTING,
                                           "light": freetype.FT_LOAD_TARGET_LIGHT}[HINT]
@@ -114,10 +123,11 @@ def glyphs(fontdir, file, weight, size, runes):
             yield r, phase, img, g.bitmap_left, g.bitmap_top, f"{g.linearHoriAdvance / 65536:.4f}".rstrip("0").rstrip(".")
 
 
-def main(fontdir, outdir, words=None):
+def main(fontdir: str, outdir: str, words: str | None = None) -> None:
+    """Write st20-atlas.png and st20-atlas.txt.gz to `outdir` from the fonts in `fontdir`."""
     if words:
-        with open(words, encoding="utf-8") as f:
-            extra = sorted({ord(c) for c in f.read() if ord(c) >= 0xE00 and ord(c) not in TEXT})
+        with Path(words).open(encoding="utf-8") as f:
+            extra = sorted({ord(c) for c in f.read() if ord(c) >= WORDS_ONLY_FROM and ord(c) not in TEXT})
         TEXT.extend(extra)
     lines, placed = [], []
     x = y = row = 0

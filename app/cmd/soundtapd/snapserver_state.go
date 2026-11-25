@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -28,6 +29,14 @@ const (
 	snapserverKeepAge = time.Minute
 )
 
+// Modes of snapserver's state: its directories and the kept copy are soundtapd's own;
+// the tmpfs copy is opened to snapserver's user where it cannot be handed over.
+const (
+	snapserverDirMode    = 0o700
+	snapserverFileMode   = 0o600
+	snapserverSharedMode = 0o666
+)
+
 var snapserverLastSeen = regexp.MustCompile(`"lastSeen":\{[^}]*\}`)
 
 // seedSnapserverState puts the kept server.json in snapserver's datadir after a boot.
@@ -35,30 +44,42 @@ var snapserverLastSeen = regexp.MustCompile(`"lastSeen":\{[^}]*\}`)
 // gone: a factory reset removed it and restarts soundtapd without a reboot, and the old
 // clients and groups must not come back from tmpfs.
 func seedSnapserverState(run, keep string, log *slog.Logger) {
-	if err := os.MkdirAll(run, 0o700); err != nil {
+	err := os.MkdirAll(run, snapserverDirMode)
+	if err != nil {
 		log.Warn("mkdir", "path", run, "err", err)
+
 		return
 	}
+
 	dst := filepath.Join(run, snapserverState)
+
 	data, err := os.ReadFile(filepath.Join(keep, snapserverState))
 	if err != nil {
 		// First boot or a factory reset: snapserver starts empty.
-		if rmErr := os.Remove(dst); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
+		rmErr := os.Remove(dst)
+		if rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
 			log.Warn("clear snapserver state", "err", rmErr)
 		}
+
 		return
 	}
-	if _, err := os.Stat(dst); err == nil {
+
+	_, err = os.Stat(dst)
+	if err == nil {
 		return
 	}
-	if err := os.WriteFile(dst, data, 0o600); err != nil { //nolint:gosec // dst is a fixed path under /run
+
+	err = os.WriteFile(dst, data, snapserverFileMode) //nolint:gosec // dst is a fixed path under /run
+	if err != nil {
 		log.Warn("seed snapserver state", "err", err)
+
 		return
 	}
+
 	if !mayChown() {
 		// ownTree cannot hand it to snapserver's user, which rewrites it in place. The
 		// directory (snapcast:soundtapd 2770, init.d/soundtap) keeps everyone else out.
-		_ = os.Chmod(dst, 0o666) //nolint:gosec // reachable only through that directory
+		_ = os.Chmod(dst, snapserverSharedMode) // reachable only through that directory
 	}
 }
 
@@ -67,16 +88,21 @@ func keepSnapserverState(ctx context.Context, run, keep string, log *slog.Logger
 	// No kept copy (or an unreadable one) compares unequal, so the first change is kept.
 	kept, _ := os.ReadFile(filepath.Join(keep, snapserverState))
 	last := snapserverLastSeen.ReplaceAll(kept, nil)
-	t := time.NewTicker(snapserverKeepAge)
-	defer t.Stop()
+
+	ticker := time.NewTicker(snapserverKeepAge)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-ticker.C:
 		}
+
 		var err error
-		if last, err = keepSnapserverOnce(run, keep, last); err != nil {
+
+		last, err = keepSnapserverOnce(run, keep, last)
+		if err != nil {
 			log.Warn("keep snapserver state", "err", err)
 		}
 	}
@@ -89,18 +115,25 @@ func keepSnapserverOnce(run, keep string, last []byte) ([]byte, error) {
 	if errors.Is(err, fs.ErrNotExist) {
 		return last, nil
 	}
+
 	if err != nil {
-		return last, err
+		return last, fmt.Errorf("read snapserver state: %w", err)
 	}
+
 	now := snapserverLastSeen.ReplaceAll(data, nil)
 	if bytes.Equal(now, last) {
 		return last, nil
 	}
-	if err := os.MkdirAll(keep, 0o700); err != nil {
-		return last, err
+
+	err = os.MkdirAll(keep, snapserverDirMode)
+	if err != nil {
+		return last, fmt.Errorf("keep snapserver state: %w", err)
 	}
-	if err := atomicjson.WriteFile(filepath.Join(keep, snapserverState), data, 0o600); err != nil {
-		return last, err
+
+	err = atomicjson.WriteFile(filepath.Join(keep, snapserverState), data, snapserverFileMode)
+	if err != nil {
+		return last, fmt.Errorf("keep snapserver state: %w", err)
 	}
+
 	return now, nil
 }

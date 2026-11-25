@@ -11,6 +11,9 @@ import (
 	"time"
 )
 
+// seekTimeout bounds a seek in the playing source.
+const seekTimeout = 5 * time.Second
+
 // positioner is a backend that keeps where its track is.
 type positioner interface {
 	SetPosition(source string, positionMs, durationMs int)
@@ -23,18 +26,24 @@ func (s *Server) setPosition(w http.ResponseWriter, r *http.Request) {
 	if !s.loopbackOnly(w, r) {
 		return
 	}
+
 	body := struct {
 		Source     string `json:"source"`
 		PositionMs int    `json:"positionMs"`
 		DurationMs int    `json:"durationMs"`
-	}{DurationMs: -1}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<10)).Decode(&body); err != nil {
+	}{DurationMs: -1, Source: "", PositionMs: 0}
+
+	err := json.NewDecoder(io.LimitReader(r.Body, tinyBody)).Decode(&body)
+	if err != nil {
 		s.badRequest(w, "bad body", err)
+
 		return
 	}
+
 	if p, ok := s.backend.(positioner); ok {
 		p.SetPosition(body.Source, body.PositionMs, body.DurationMs)
 	}
+
 	writeOK(w)
 }
 
@@ -46,12 +55,15 @@ func (s *Server) position(w http.ResponseWriter, _ *http.Request) {
 		DurationMs int  `json:"durationMs"`
 		Seekable   bool `json:"seekable"`
 	}
+
 	if p, ok := s.backend.(positioner); ok {
 		var source string
+
 		source, out.PositionMs, out.DurationMs = p.Position()
 		out.Seekable = s.seeker(source) != nil && out.DurationMs > 0
 	}
-	writeJSON(w, 200, out)
+
+	writeJSON(w, http.StatusOK, out)
 }
 
 // seeker is how the track of source moves, or nil where it cannot.
@@ -62,6 +74,7 @@ func (s *Server) seeker(source string) func(context.Context, int) error {
 	case source == sourceUPnP && s.upnpSeek != nil:
 		return func(ctx context.Context, ms int) error { return s.upnpSeek(ctx, time.Duration(ms)*time.Millisecond) }
 	}
+
 	return nil
 }
 
@@ -71,26 +84,39 @@ func (s *Server) seek(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		PositionMs int `json:"positionMs"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil || body.PositionMs < 0 {
+
+	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, smallBody)).Decode(&body)
+	if err != nil || body.PositionMs < 0 {
 		s.badRequest(w, "bad body", err)
+
 		return
 	}
-	p, ok := s.backend.(positioner)
+
+	pos, ok := s.backend.(positioner)
 	if !ok {
 		apiError(w, http.StatusConflict, "nothing to seek in")
+
 		return
 	}
-	source, _, _ := p.Position()
-	fn := s.seeker(source)
-	if fn == nil {
+
+	source, _, _ := pos.Position()
+
+	seekTo := s.seeker(source)
+	if seekTo == nil {
 		apiError(w, http.StatusConflict, "nothing to seek in")
+
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+
+	ctx, cancel := context.WithTimeout(r.Context(), seekTimeout)
 	defer cancel()
-	if err := fn(ctx, body.PositionMs); err != nil {
+
+	err = seekTo(ctx, body.PositionMs)
+	if err != nil {
 		s.fail(w, "seek failed", err)
+
 		return
 	}
+
 	writeOK(w)
 }

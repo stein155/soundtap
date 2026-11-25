@@ -6,6 +6,7 @@ package bco
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -33,6 +34,7 @@ func ScanNetworks(ctx context.Context, device string) ([]Network, error) {
 	if err := lockSerial(ctx); err != nil {
 		return nil, err
 	}
+
 	defer unlockSerial()
 
 	fd, err := openSerial(ctx, device)
@@ -40,12 +42,14 @@ func ScanNetworks(ctx context.Context, device string) ([]Network, error) {
 		return nil, err
 	}
 	defer syscall.Close(fd)
+
 	buf := make([]byte, 1024)
 	for range 16 {
 		if n, err := syscall.Read(fd, buf); err != nil || n == 0 {
 			break
 		}
 	}
+
 	if _, err := syscall.Write(fd, []byte("sys wlan ctrl scan\r")); err != nil {
 		return nil, fmt.Errorf("BCO serial write: %w", err)
 	}
@@ -55,14 +59,18 @@ func ScanNetworks(ctx context.Context, device string) ([]Network, error) {
 	// end-marker search must not rescan the whole transcript each time: at 64 KiB and
 	// ~3750 iterations that is quadratic work on a single-core ARM. Search only the
 	// newly-read bytes plus the marker's own length, in case a read splits it.
-	var out []byte
-	var lastRead time.Time
+	var (
+		out      []byte
+		lastRead time.Time
+	)
+
 	for time.Now().Before(deadline) && len(out) <= 65536 {
 		n, err := syscall.Read(fd, buf)
 		if n > 0 {
 			from := max(0, len(out)-(len(scanEndMarker)-1))
 			out = append(out, buf[:n]...)
 			lastRead = time.Now()
+
 			if bytes.Contains(out[from:], scanEndMarker) {
 				return parseScanResults(string(out)), nil
 			}
@@ -70,32 +78,38 @@ func ScanNetworks(ctx context.Context, device string) ([]Network, error) {
 			if networks := parseScanResults(string(out)); len(networks) > 0 {
 				return networks, nil
 			}
-		} else if err != nil && err != syscall.EAGAIN && err != syscall.EWOULDBLOCK {
+		} else if err != nil && !errors.Is(err, syscall.EAGAIN) && !errors.Is(err, syscall.EWOULDBLOCK) {
 			return nil, fmt.Errorf("BCO serial read: %w", err)
 		}
+
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-time.After(20 * time.Millisecond):
 		}
 	}
-	return nil, fmt.Errorf("BCO Wi-Fi scan returned no complete result")
+
+	return nil, errors.New("BCO Wi-Fi scan returned no complete result")
 }
 
 func parseScanResults(response string) []Network {
 	strongest := map[string]Network{}
+
 	var current Network
+
 	active := false
 	flush := func() {
 		if !active || strings.TrimSpace(current.SSID) == "" {
 			return
 		}
+
 		current.SSID = strings.TrimSpace(current.SSID)
 		if old, ok := strongest[current.SSID]; !ok || current.Quality > old.Quality {
 			strongest[current.SSID] = current
 		}
 	}
-	for _, raw := range strings.Split(strings.ReplaceAll(response, "\r", "\n"), "\n") {
+
+	for raw := range strings.SplitSeq(strings.ReplaceAll(response, "\r", "\n"), "\n") {
 		if strings.ContainsRune(raw, '\b') {
 			continue
 		}
@@ -106,14 +120,18 @@ func parseScanResults(response string) []Network {
 				line = key + " = " + strings.TrimSpace(value)
 			}
 		}
+
 		switch {
 		case line == "Scan Result:" || strings.HasPrefix(line, "SSID ="):
 			flush()
+
 			current, active = Network{Secure: true}, true
 		}
+
 		if !active {
 			continue
 		}
+
 		switch {
 		case strings.HasPrefix(line, "SSID:"):
 			current.SSID = strings.TrimSpace(strings.TrimPrefix(line, "SSID:"))
@@ -129,14 +147,19 @@ func parseScanResults(response string) []Network {
 			current.Secure = true
 		case line == "END OF SCAN RESULTS":
 			flush()
+
 			active = false
 		}
 	}
+
 	flush() // no-op after the marker; keeps the last record when there is none
+
 	result := make([]Network, 0, len(strongest))
 	for _, network := range strongest {
 		result = append(result, network)
 	}
+
 	sort.Slice(result, func(i, j int) bool { return result[i].Quality > result[j].Quality })
+
 	return result
 }

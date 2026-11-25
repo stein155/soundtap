@@ -41,29 +41,43 @@ type Manager struct {
 }
 
 func New(ctx context.Context, fbPath string, standby func(context.Context) bool, log *slog.Logger) *Manager {
-	m := &Manager{
+	mgr := &Manager{
 		fb:      oled.NewFramebuffer(fbPath),
 		avail:   oled.Available(fbPath),
 		standby: standby,
 		log:     log,
-		wake:    make(chan struct{}, 1),
+
+		mu:             sync.Mutex{},
+		standbyFrame:   nil,
+		npFrame:        nil,
+		overlayFrame:   nil,
+		transientFrame: nil,
+		transientUntil: time.Time{},
+		shown:          nil,
+		drawnAt:        time.Time{},
+
+		wake: make(chan struct{}, 1),
 	}
-	if !m.avail {
+	if !mgr.avail {
 		log.Info("no ST20 OLED framebuffer; display disabled", "path", fbPath)
-		return m
+
+		return mgr
 	}
-	safego.Go("display.loop", func() { m.loop(ctx) })
-	return m
+
+	safego.Go("display.loop", func() { mgr.loop(ctx) })
+
+	return mgr
 }
 
 func (m *Manager) Available() bool { return m != nil && m.avail }
 
-func (m *Manager) SetStandby(c Content) {
+func (m *Manager) SetStandby(content Content) {
 	if !m.Available() {
 		return
 	}
+
 	m.mu.Lock()
-	m.standbyFrame = c.Frame
+	m.standbyFrame = content.Frame
 	m.mu.Unlock()
 	m.nudge()
 }
@@ -73,8 +87,10 @@ func (m *Manager) HasStandby() bool {
 	if !m.Available() {
 		return false
 	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	return m.standbyFrame != nil
 }
 
@@ -84,18 +100,20 @@ func (m *Manager) ClearStandby() {
 	if !m.Available() {
 		return
 	}
+
 	m.mu.Lock()
 	m.standbyFrame = nil
 	m.mu.Unlock()
 	m.nudge()
 }
 
-func (m *Manager) SetNowPlaying(c Content) {
+func (m *Manager) SetNowPlaying(content Content) {
 	if !m.Available() {
 		return
 	}
+
 	m.mu.Lock()
-	m.npFrame = c.Frame
+	m.npFrame = content.Frame
 	m.mu.Unlock()
 	m.nudge()
 }
@@ -104,6 +122,7 @@ func (m *Manager) ClearNowPlaying() {
 	if !m.Available() {
 		return
 	}
+
 	m.mu.Lock()
 	m.npFrame = nil
 	m.mu.Unlock()
@@ -114,12 +133,13 @@ func (m *Manager) ClearNowPlaying() {
 // clock: booting, and "this speaker is not on your Wi-Fi yet". Both are states
 // where what the panel says is the only instruction the owner gets, so neither
 // may be pushed aside by a clock or a station name.
-func (m *Manager) SetOverlay(c Content) {
+func (m *Manager) SetOverlay(content Content) {
 	if !m.Available() {
 		return
 	}
+
 	m.mu.Lock()
-	m.overlayFrame = c.Frame
+	m.overlayFrame = content.Frame
 	m.mu.Unlock()
 	m.nudge()
 }
@@ -128,6 +148,7 @@ func (m *Manager) ClearOverlay() {
 	if !m.Available() {
 		return
 	}
+
 	m.mu.Lock()
 	m.overlayFrame = nil
 	m.mu.Unlock()
@@ -136,13 +157,14 @@ func (m *Manager) ClearOverlay() {
 
 // SetTransient briefly shows direct user feedback such as volume or preset state.
 // Boot/setup remains higher priority; afterward the previous screen returns.
-func (m *Manager) SetTransient(c Content, d time.Duration) {
+func (m *Manager) SetTransient(content Content, lasting time.Duration) {
 	if !m.Available() {
 		return
 	}
+
 	m.mu.Lock()
-	m.transientFrame = c.Frame
-	m.transientUntil = time.Now().Add(d)
+	m.transientFrame = content.Frame
+	m.transientUntil = time.Now().Add(lasting)
 	m.mu.Unlock()
 	m.nudge()
 }
@@ -161,22 +183,28 @@ const (
 
 func (m *Manager) loop(ctx context.Context) {
 	every := paintTick
+
 	tick := time.NewTicker(every)
 	defer tick.Stop()
+
 	for {
 		// Only the slow standby tick listens to nudges; at paintTick the loop is as it was.
 		var wake chan struct{}
 		if every == standbyPaintTick {
 			wake = m.wake
 		}
+
 		select {
 		case <-ctx.Done():
 			_ = m.fb.Restore()
+
 			return
 		case <-tick.C:
 		case <-wake:
 		}
+
 		m.step(ctx)
+
 		if want := m.tickEvery(ctx); want != every {
 			every = want
 			tick.Reset(every)
@@ -197,14 +225,17 @@ func (m *Manager) tickEvery(ctx context.Context) time.Duration {
 	m.mu.Lock()
 	busy := m.overlayFrame != nil || m.transientFrame != nil
 	m.mu.Unlock()
+
 	if !busy && m.standby != nil && m.standby(ctx) {
 		return standbyPaintTick
 	}
+
 	return paintTick
 }
 
 func (m *Manager) step(ctx context.Context) {
 	m.mu.Lock()
+
 	standbyFrame, npFrame, overlay, transient, until, shown := m.standbyFrame, m.npFrame,
 		m.overlayFrame, m.transientFrame, m.transientUntil, m.shown
 	if transient != nil && !time.Now().Before(until) {
@@ -214,6 +245,7 @@ func (m *Manager) step(ctx context.Context) {
 	m.mu.Unlock()
 
 	var want []byte
+
 	switch {
 	case overlay != nil:
 		want = overlay
@@ -224,22 +256,31 @@ func (m *Manager) step(ctx context.Context) {
 	default:
 		want = npFrame
 	}
+
 	if want == nil {
 		if shown != nil {
-			if err := m.fb.Restore(); err == nil {
+			err := m.fb.Restore()
+			if err == nil {
 				m.setShown(nil)
 			}
 		}
+
 		return
 	}
+
 	if bytes.Equal(want, shown) && time.Since(m.drawnAt) < repaintEvery {
 		return
 	}
+
 	m.drawnAt = time.Now()
-	if err := m.fb.Draw(want); err != nil {
+
+	err := m.fb.Draw(want)
+	if err != nil {
 		m.log.Warn("display draw failed", "err", err)
+
 		return
 	}
+
 	m.setShown(want)
 }
 

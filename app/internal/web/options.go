@@ -10,24 +10,24 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/stein155/soundtap/app/internal/btctl"
 	"github.com/stein155/soundtap/app/internal/favorites"
 	"github.com/stein155/soundtap/app/internal/flash"
-	"github.com/stein155/soundtap/app/internal/hw/battery"
 	"github.com/stein155/soundtap/app/internal/install"
 	"github.com/stein155/soundtap/app/internal/multiroom"
 	"github.com/stein155/soundtap/app/internal/nowplaying"
 	"github.com/stein155/soundtap/app/internal/recent"
 	"github.com/stein155/soundtap/app/internal/settings"
-	"github.com/stein155/soundtap/app/internal/speaker"
-	"github.com/stein155/soundtap/app/internal/spotify"
 	"github.com/stein155/soundtap/app/internal/tunein"
 	"github.com/stein155/soundtap/app/internal/update"
-	"github.com/stein155/soundtap/app/internal/upnp"
 	"github.com/stein155/soundtap/app/internal/web/firmware"
 )
+
+// publicProxyTimeout bounds one request the public proxy makes for the UI.
+const publicProxyTimeout = 12 * time.Second
 
 // Options is what New builds a Server from. The first block is required. In the groups
 // below it a nil hook or a zero value means this speaker has no such thing, and the
@@ -113,245 +113,91 @@ type FirmwareOptions struct {
 	Failed   func()
 }
 
-// SoundTapdUpdate is where an uploaded app binary goes; see firmware.Handler.
-type SoundTapdUpdate struct {
-	Run, Base, Home string
-	Restart         func()
-}
-
-// SetupOptions are the network setup and reset hooks.
-type SetupOptions struct {
-	SetupMode    func() error                  // drop into provisioning / setup AP
-	WifiProfiles func() ([]WifiProfile, error) // the Wi-Fi networks the speaker remembers
-	ForgetWifi   func(id string) error         // drop one of them
-	// FactoryReset performs the reset the front-panel chord performs: state, pairings,
-	// Wi-Fi, and a restart.
-	FactoryReset func() error
-}
-
-// BluetoothOptions reach BlueZ: the system bus and soundtapd's pairing agent.
-type BluetoothOptions struct {
-	Bus         btctl.Bus
-	Pair, Clear func(context.Context) error
-}
-
-// PanelOptions is what the speaker's own front shows and asks.
-type PanelOptions struct {
-	// DisplayAvailable says whether an OLED panel is present, so the standby-screen page
-	// is offered only where it does something.
-	DisplayAvailable func() bool
-	// Notice shows an event on the speaker's own display, in English (the display
-	// translates it).
-	Notice func(en string)
-	// Confirm waits for a key press before a dangerous route runs.
-	Confirm DeviceConfirm
-}
-
-// ChangeHooks hear what the API changed that runs elsewhere.
-type ChangeHooks struct {
-	Name      func(string) // restart name-advertising receivers after a rename
-	Receivers func()       // an integration was switched on or off
-}
-
 // New builds a Server from o. Update performs self-updates and NowPlaying enriches
 // now-playing with live track metadata; the server only maps them onto HTTP.
-func New(o Options) *Server {
+func New(opts Options) *Server { //nolint:gocritic // hugeParam: cmd/soundtapd passes Options by value
 	sub, err := fs.Sub(distFS, "dist")
 	if err != nil {
 		// dist is embedded at build time; this only fails if the build is broken.
 		panic("web: embedded dist missing: " + err.Error())
 	}
-	srv := &Server{
-		tunein:         o.TuneIn,
-		backend:        o.Backend,
-		settings:       o.Settings,
-		update:         o.Update,
-		np:             o.NowPlaying,
-		log:            o.Log,
-		version:        o.Update.Version(),
-		homeDir:        o.Home,
-		favoritesStore: favorites.Open(filepath.Join(o.Home, "favorites.json")),
-		startedAt:      time.Now(),
-		ui:             &gzipAssets{fs: sub, next: http.FileServer(http.FS(sub))},
-		proxy:          &http.Client{Timeout: 12 * time.Second, Transport: publicOnlyTransport()},
-		fw:             firmware.New(o.Log, o.Home),
-	}
-	srv.hub = newHub(srv.pollState, o.Log.With("comp", "events"))
-	srv.household = newHousehold(srv, o.Log.With("comp", "household"))
-	srv.recovery = install.LoadRecovery(o.Home, flash.ReadCmdline)
-	srv.configure(o)
+
+	srv := new(Server)
+	srv.tunein, srv.backend, srv.settings, srv.update = opts.TuneIn, opts.Backend, opts.Settings, opts.Update
+	srv.np, srv.log, srv.version, srv.homeDir = opts.NowPlaying, opts.Log, opts.Update.Version(), opts.Home
+	srv.favoritesStore = favorites.Open(filepath.Join(opts.Home, "favorites.json"))
+	srv.startedAt = time.Now()
+	srv.ui = &gzipAssets{fs: sub, next: http.FileServer(http.FS(sub)), mu: sync.Mutex{}, cache: nil}
+	srv.proxy = &http.Client{Timeout: publicProxyTimeout, Transport: publicOnlyTransport()}
+	srv.fw = firmware.New(opts.Log, opts.Home)
+	srv.hub = newHub(srv.pollState, opts.Log.With("comp", "events"))
+	srv.household = newHousehold(srv, opts.Log.With("comp", "household"))
+	srv.recovery = install.LoadRecovery(opts.Home, flash.ReadCmdline)
+	srv.configure(&opts)
+
 	return srv
 }
 
 // configure takes the groups of o over.
-func (s *Server) configure(o Options) {
-	s.opts = o
-	sp := o.Speaker
+func (s *Server) configure(opts *Options) {
+	s.opts = *opts
+	sp := opts.Speaker
 	s.serial, s.port, s.recentStore = sp.Serial, sp.Port, sp.Recent
 	s.capabilities = append([]string(nil), sp.Capabilities...)
 	s.userSources = append([]string(nil), sp.UserSources...)
 	s.notifyBase = strings.TrimRight(sp.NotifyBaseURL, "/")
-	h := o.Health
-	s.presetsLoadErr, s.daemonProblems, s.muteLine, s.firewall = h.PresetsLoadErr, h.DaemonProblems, h.MuteLine, h.Firewall
-	s.multiroom, s.snapclientID = o.Multiroom.Backend, o.Multiroom.LocalID
+	h := opts.Health
+	s.presetsLoadErr, s.daemonProblems = h.PresetsLoadErr, h.DaemonProblems
+	s.muteLine, s.firewall = h.MuteLine, h.Firewall
+
+	s.multiroom, s.snapclientID = opts.Multiroom.Backend, opts.Multiroom.LocalID
 	if s.fw != nil { // a test's bare Server has no install lane
-		s.configureFirmware(o.Firmware)
+		s.configureFirmware(opts.Firmware)
 	}
-	st := o.Setup
-	s.setupMode, s.wifiProfiles, s.forgetWifi, s.hardwareReset = st.SetupMode, st.WifiProfiles, st.ForgetWifi, st.FactoryReset
-	s.btBus, s.btPair, s.btClear = o.Bluetooth.Bus, o.Bluetooth.Pair, o.Bluetooth.Clear
-	s.displayAvailable, s.panelNotice, s.deviceConfirm = o.Panel.DisplayAvailable, o.Panel.Notice, o.Panel.Confirm
-	s.nameChanged, s.receiversChanged = o.Changed.Name, o.Changed.Receivers
-	s.mqtt = o.MQTT
+
+	st := opts.Setup
+	s.setupMode, s.wifiProfiles = st.SetupMode, st.WifiProfiles
+	s.forgetWifi, s.hardwareReset = st.ForgetWifi, st.FactoryReset
+	s.btBus, s.btPair, s.btClear = opts.Bluetooth.Bus, opts.Bluetooth.Pair, opts.Bluetooth.Clear
+
+	s.btForget = opts.Bluetooth.Forget
+	if s.btForget == nil && s.btBus != nil {
+		bus := s.btBus
+		s.btForget = func(ctx context.Context, address string) (bool, error) { return btctl.Forget(ctx, bus, address) }
+	}
+
+	s.btPaired = opts.Bluetooth.Paired
+	if s.btPaired == nil && s.btBus != nil {
+		bus := s.btBus
+		s.btPaired = func(ctx context.Context, address string) (bool, error) {
+			return btctl.IsPaired(ctx, bus, address)
+		}
+	}
+
+	panel := opts.Panel
+	s.displayAvailable, s.panelNotice, s.deviceConfirm = panel.DisplayAvailable, panel.Notice, panel.Confirm
+	s.nameChanged, s.receiversChanged = opts.Changed.Name, opts.Changed.Receivers
+	s.mqtt = opts.MQTT
 }
 
 // configureFirmware hands the install lane its hooks.
-func (s *Server) configureFirmware(fw FirmwareOptions) {
-	if fw.Install {
+func (s *Server) configureFirmware(firmwareOpts FirmwareOptions) {
+	if firmwareOpts.Install {
 		s.fw.EnableInstall(install.LivePlan)
 	}
-	s.fw.SetReboot(fw.Reboot)
-	s.fw.SetBootGuard(fw.BootGuard)
-	if fw.RootRun != nil {
-		s.fw.SetRootRun(fw.RootRun)
+
+	s.fw.SetReboot(firmwareOpts.Reboot)
+	s.fw.SetBootGuard(firmwareOpts.BootGuard)
+
+	if firmwareOpts.RootRun != nil {
+		s.fw.SetRootRun(firmwareOpts.RootRun)
 	}
-	if u := fw.SoundTapd; u != nil {
+
+	if u := firmwareOpts.SoundTapd; u != nil {
 		s.fw.EnableSoundTapdUpdate(u.Run, u.Base, u.Home, s.version, u.Restart)
 	}
-	s.fw.SetActiveFn(fw.Active)
-	s.fw.SetProgressFn(fw.Progress)
-	s.fw.SetFailedFn(fw.Failed)
-}
 
-// AudioHooks are the audio side's: the arbiter, the multiroom group and the chimes. Only a
-// speaker running its audio side has them.
-type AudioHooks struct {
-	// SourceChanging is the synchronous hardware handoff that must finish before an
-	// external receiver's session hook returns and starts writing PCM.
-	SourceChanging func(string)
-	// Flush drops audio already queued for the DAC. Unlike SourceChanging it must not
-	// touch source ownership — see setSource. FlushWait acknowledges a stopped
-	// producer's audio boundary.
-	Flush     func()
-	FlushWait func(context.Context) error
-	// Channel applies the stored channel; Downstream is the audio delay after the bus.
-	Channel    func(string)
-	Downstream func() time.Duration
-	// MultiroomActive switches the Mixer's copy for Snapcast.
-	MultiroomActive func(bool)
-	// SelectSource picks the source the arbiter grants the card to, for the one case the
-	// speaker changes its own source: joining or leaving another speaker's stream.
-	SelectSource func(context.Context, string) error
-	// LeaderLive and LeaderNow report a follower's leader: whether it answers, and what
-	// it plays.
-	LeaderLive func(bool)
-	LeaderNow  func(speaker.NowPlaying)
-	// SelfAddress is this speaker's own address on the network, for the one case it has
-	// to tell another speaker where to find it.
-	SelfAddress func(context.Context) string
-	// RestartSnapclient kicks the supervised snapclient so it re-reads which server it
-	// follows; WantAnchor starts this speaker's group anchor and keeps it for
-	// multiroom.AnchorHold.
-	RestartSnapclient func()
-	WantAnchor        func()
-	// EventChime plays a named builtin tone for an event (BT connected/cleared, grouped).
-	EventChime func(name string)
-	// AmpFault reports whether the amp fault GPIO is asserted, for the health warning.
-	AmpFault func() bool
-	// Battery is the battery as last read, for /api/health; false on a model without one.
-	Battery func() (battery.Status, bool)
-}
-
-// attached is every group handed over after New, as last attached.
-type attached struct {
-	Audio    AudioHooks
-	Spotify  SpotifyHooks
-	Soundbar SoundbarHooks
-	UPnP     UPnPHooks
-}
-
-// AttachAudio hands the audio side's hooks over. Call before serving starts.
-func (s *Server) AttachAudio(a AudioHooks) {
-	s.attached.Audio = a
-	s.sourceChanging, s.flushAudio, s.flushAudioWait = a.SourceChanging, a.Flush, a.FlushWait
-	s.channel, s.downstream, s.multiroomActive = a.Channel, a.Downstream, a.MultiroomActive
-	s.selectSource, s.leaderLive, s.leaderNow, s.selfAddress = a.SelectSource, a.LeaderLive, a.LeaderNow, a.SelfAddress
-	s.restartSnapclient, s.wantAnchor = a.RestartSnapclient, a.WantAnchor
-	s.eventChime, s.ampFaultFn, s.batteryFn = a.EventChime, a.AmpFault, a.Battery
-}
-
-// SpotifyHooks are Spotify browsing and playback through the receiver's own session, and
-// the filters on what librespot claims. Without a Client every /api/spotify route answers
-// spotify_not_connected.
-type SpotifyHooks struct {
-	Client  *spotify.Client
-	Account SpotifyAccount
-	// Claim filters daemon source claims: false drops the claim. Stop filters daemon stop
-	// events: false keeps the source, because the daemon is being asked to start again.
-	Claim func(source string) bool
-	Stop  func(source string) bool
-}
-
-// AttachSpotify hands Spotify over. Call before serving starts.
-func (s *Server) AttachSpotify(h SpotifyHooks) {
-	s.attached.Spotify = h
-	s.spotify, s.spotifyAccount = h.Client, h.Account
-	s.claimSource, s.stopSource = h.Claim, h.Stop
-}
-
-// SoundbarChoice is one of a soundbar's one-of-a-few settings: Get returns "" until the
-// processor has said, Set refuses a value it does not know.
-type SoundbarChoice struct {
-	Get func() string
-	Set func(string) error
-}
-
-// SoundbarHooks reach a soundbar's processor (the SoundTouch 300).
-type SoundbarHooks struct {
-	// Speakers is the paired bass module and rears, nil until the processor has answered.
-	Speakers func() *speaker.Soundbar
-	// Tone and SetTone read and set the tone levels; Tone returns nil until the
-	// processor has answered, SetTone refuses a level outside its range.
-	Tone    func() *speaker.Tone
-	SetTone func(bass, treble, centre, rear int) error
-	// Choices are served at /api/soundbar/<name> (audio-mode, cec-mode, hdmi-input).
-	Choices map[string]SoundbarChoice
-	// LipSync and SetLipSync: the delay in ms the sound waits for the TV picture, 0 to
-	// LipSyncMax. LipSync says false until the soundbar has told.
-	LipSync    func() (int, bool)
-	SetLipSync func(int) error
-	LipSyncMax int
-	// StartADAPTiQ starts the calibration (POST /api/soundbar/adaptiq).
-	StartADAPTiQ func() error
-	// PickInput routes every user source pick to the processor instead of the AUX and
-	// source keys.
-	PickInput func(string) error
-}
-
-// AttachSoundbar hands a soundbar's processor over. Call before serving starts.
-func (s *Server) AttachSoundbar(h SoundbarHooks) {
-	s.attached.Soundbar = h
-	s.soundbar, s.tone, s.setTone = h.Speakers, h.Tone, h.SetTone
-	s.choices = map[string]soundbarChoice{}
-	for name, c := range h.Choices {
-		s.choices[name] = soundbarChoice{c.Get, c.Set}
-	}
-	s.lipSync, s.setLipSync, s.lipSyncMax = h.LipSync, h.SetLipSync, h.LipSyncMax
-	s.startCalibration, s.pickInput = h.StartADAPTiQ, h.PickInput
-}
-
-// UPnPHooks are the UPnP renderer's and the LAN's media servers.
-type UPnPHooks struct {
-	// Seek moves the renderer's track, for the time bar of a track a controller sent.
-	Seek func(context.Context, time.Duration) error
-	// Registry browses MediaServer:1 ContentDirectory devices; nil disables the routes (404).
-	Registry UPnPRegistry
-	// Queue is the folder a played browse result goes into.
-	Queue *upnp.Queue
-}
-
-// AttachUPnP hands UPnP over. Call before serving starts.
-func (s *Server) AttachUPnP(h UPnPHooks) {
-	s.attached.UPnP = h
-	s.upnpSeek, s.upnpReg, s.upnpQueue = h.Seek, h.Registry, h.Queue
+	s.fw.SetActiveFn(firmwareOpts.Active)
+	s.fw.SetProgressFn(firmwareOpts.Progress)
+	s.fw.SetFailedFn(firmwareOpts.Failed)
 }

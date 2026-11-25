@@ -5,10 +5,12 @@ package web_test
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 
@@ -40,77 +42,105 @@ func contractFile(level int) string {
 }
 
 func TestAPIContract(t *testing.T) {
+	t.Parallel()
+
 	now := currentContract(t)
 	path := contractFile(web.APILevel)
+
 	if os.Getenv("UPDATE_API_CONTRACT") != "" {
 		b, err := json.MarshalIndent(now, "", " ")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(path, append(b, '\n'), 0o644); err != nil {
+
+		err = os.WriteFile(path, append(b, '\n'), 0o644)
+		if err != nil {
 			t.Fatal(err)
 		}
+
 		return
 	}
-	b, err := os.ReadFile(path)
+
+	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("no recorded contract for API level %d (%v): a new level records its contract "+
 			"with UPDATE_API_CONTRACT=1 go test ./internal/web -run TestAPIContract", web.APILevel, err)
 	}
+
 	var was contract
-	if err := json.Unmarshal(b, &was); err != nil {
+
+	err = json.Unmarshal(data, &was)
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	for _, p := range contractBreaks(was, now) {
-		t.Errorf("%s: a breaking change at API level %d (ADR 0108); deprecate it first, then raise web.APILevel", p, web.APILevel)
+		t.Errorf(
+			"%s: a breaking change at API level %d (ADR 0108); deprecate it first, then raise web.APILevel",
+			p,
+			web.APILevel,
+		)
 	}
 }
 
 // contractBreaks lists what was in the old contract and is gone or changed in the new one.
 func contractBreaks(was, now contract) []string {
 	var out []string
+
 	routes := map[string]bool{}
 	for _, r := range now.Routes {
 		routes[r] = true
 	}
+
 	for _, r := range was.Routes {
 		if !routes[r] {
 			out = append(out, "route removed: "+r)
 		}
 	}
-	for f, typ := range was.Fields {
-		got, ok := now.Fields[f]
+
+	for field, typ := range was.Fields {
+		got, ok := now.Fields[field]
 		switch {
 		case !ok:
-			out = append(out, "response field removed: "+f)
+			out = append(out, "response field removed: "+field)
 		case got != typ:
-			out = append(out, fmt.Sprintf("response field retyped: %s %s -> %s", f, typ, got))
+			out = append(out, fmt.Sprintf("response field retyped: %s %s -> %s", field, typ, got))
+		default:
+			// The field is there with its type: no break.
 		}
 	}
+
 	required := map[string]bool{}
 	for _, r := range was.Required {
 		required[r] = true
 	}
+
 	oldRoute := map[string]bool{}
 	for _, r := range was.Routes {
 		oldRoute[r] = true
 	}
+
 	for _, r := range now.Required {
 		route := r[:strings.LastIndex(r, " ")]
 		if oldRoute[route] && !required[r] {
 			out = append(out, "request field now required: "+r)
 		}
 	}
-	sort.Strings(out)
+
+	slices.Sort(out)
+
 	return out
 }
 
 type schemaDoc struct {
 	Paths      map[string]map[string]json.RawMessage `json:"paths"`
-	Components struct {
-		Schemas   map[string]json.RawMessage `json:"schemas"`
-		Responses map[string]json.RawMessage `json:"responses"`
-	} `json:"components"`
+	Components schemaComponents                      `json:"components"`
+}
+
+// schemaComponents is the components section of an OpenAPI document.
+type schemaComponents struct {
+	Schemas   map[string]json.RawMessage `json:"schemas"`
+	Responses map[string]json.RawMessage `json:"responses"`
 }
 
 type schema struct {
@@ -126,163 +156,237 @@ type schema struct {
 
 func currentContract(t *testing.T) contract {
 	t.Helper()
-	b, err := os.ReadFile("openapi.json")
+
+	data, err := os.ReadFile("openapi.json")
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	var doc schemaDoc
-	if err := json.Unmarshal(b, &doc); err != nil {
+
+	err = json.Unmarshal(data, &doc)
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	c, err := buildContract(doc)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	return c
 }
 
-func buildContract(doc schemaDoc) (contract, error) {
-	c := contract{Level: web.APILevel, Fields: map[string]string{}}
-	resolve := func(s *schema) (*schema, error) {
-		for depth := 0; s != nil && s.Ref != ""; depth++ {
-			if depth > 20 {
-				return nil, fmt.Errorf("$ref loop at %s", s.Ref)
-			}
-			name := strings.TrimPrefix(s.Ref, "#/components/schemas/")
-			raw, ok := doc.Components.Schemas[name]
-			if !ok {
-				return nil, fmt.Errorf("unknown $ref %s", s.Ref)
-			}
-			var next schema
-			if err := json.Unmarshal(raw, &next); err != nil {
-				return nil, err
-			}
-			s = &next
+// Why a schema reference does not resolve.
+var (
+	errRefLoop    = errors.New("$ref loop")
+	errUnknownRef = errors.New("unknown $ref")
+)
+
+// schemaContent is a request or response body: one schema per media type.
+type schemaContent struct {
+	Content map[string]mediaSchema `json:"content"`
+}
+
+// mediaSchema is the schema of one media type.
+type mediaSchema struct {
+	Schema *schema `json:"schema"`
+}
+
+// maxRefDepth is how many $ref hops a schema may take before it counts as a loop.
+const maxRefDepth = 20
+
+// schemaWalker resolves and walks the schemas of one OpenAPI document.
+type schemaWalker struct {
+	doc schemaDoc
+}
+
+// resolve follows node's $ref chain to the schema it names.
+func (sw schemaWalker) resolve(node *schema) (*schema, error) {
+	for depth := 0; node != nil && node.Ref != ""; depth++ {
+		if depth > maxRefDepth {
+			return nil, fmt.Errorf("%w at %s", errRefLoop, node.Ref)
 		}
-		return s, nil
+
+		name := strings.TrimPrefix(node.Ref, "#/components/schemas/")
+
+		raw, ok := sw.doc.Components.Schemas[name]
+		if !ok {
+			return nil, fmt.Errorf("%w %s", errUnknownRef, node.Ref)
+		}
+
+		var next schema
+
+		err := json.Unmarshal(raw, &next)
+		if err != nil {
+			return nil, fmt.Errorf("schema %s: %w", name, err)
+		}
+
+		node = &next
 	}
-	var walk func(prefix, at string, s *schema, seen map[string]bool, emit func(string, *schema)) error
-	walk = func(prefix, at string, s *schema, seen map[string]bool, emit func(string, *schema)) error {
-		if s == nil {
-			return nil
+
+	return node, nil
+}
+
+// walk emits every field under node, at location below prefix.
+func (sw schemaWalker) walk(
+	prefix, location string, node *schema, seen map[string]bool, emit func(string, *schema),
+) error {
+	if node == nil {
+		return nil
+	}
+
+	if node.Ref != "" {
+		if seen[node.Ref] {
+			return nil // a recursive schema: its fields were recorded at the first level
 		}
-		if s.Ref != "" {
-			if seen[s.Ref] {
-				return nil // a recursive schema: its fields were recorded at the first level
-			}
-			seen = cloneSeen(seen)
-			seen[s.Ref] = true
-		}
-		r, err := resolve(s)
+
+		seen = cloneSeen(seen)
+		seen[node.Ref] = true
+	}
+
+	resolved, err := sw.resolve(node)
+	if err != nil {
+		return err
+	}
+
+	if location != "" {
+		emit(prefix+" "+location, resolved)
+	}
+
+	for _, sub := range resolved.AllOf {
+		err := sw.walk(prefix, location, sub, seen, emit)
 		if err != nil {
 			return err
 		}
-		if at != "" {
-			emit(prefix+" "+at, r)
-		}
-		for _, sub := range r.AllOf {
-			if err := walk(prefix, at, sub, seen, emit); err != nil {
-				return err
-			}
-		}
-		for name, p := range r.Properties {
-			if err := walk(prefix, at+"."+name, p, seen, emit); err != nil {
-				return err
-			}
-		}
-		if r.Items != nil {
-			return walk(prefix, at+"[]", r.Items, seen, emit)
-		}
-		return nil
 	}
+
+	for name, p := range resolved.Properties {
+		err := sw.walk(prefix, location+"."+name, p, seen, emit)
+		if err != nil {
+			return err
+		}
+	}
+
+	if resolved.Items != nil {
+		return sw.walk(prefix, location+"[]", resolved.Items, seen, emit)
+	}
+
+	return nil
+}
+
+func buildContract(doc schemaDoc) (contract, error) {
+	built := contract{Level: web.APILevel, Fields: map[string]string{}, Routes: nil, Required: nil}
+	sw := schemaWalker{doc: doc}
+	resolve, walk := sw.resolve, sw.walk
+
 	for path, methods := range doc.Paths {
 		for method, raw := range methods {
 			if method == "parameters" || strings.HasPrefix(method, "x-") {
 				continue
 			}
+
 			route := strings.ToUpper(method) + " " + path
-			c.Routes = append(c.Routes, route)
-			var op struct {
+			built.Routes = append(built.Routes, route)
+
+			var operation struct {
 				Responses   map[string]json.RawMessage `json:"responses"`
-				RequestBody struct {
-					Content map[string]struct {
-						Schema *schema `json:"schema"`
-					} `json:"content"`
-				} `json:"requestBody"`
+				RequestBody schemaContent              `json:"requestBody"`
 			}
-			if err := json.Unmarshal(raw, &op); err != nil {
-				return c, fmt.Errorf("%s: %w", route, err)
+
+			err := json.Unmarshal(raw, &operation)
+			if err != nil {
+				return built, fmt.Errorf("%s: %w", route, err)
 			}
-			for status, rraw := range op.Responses {
+
+			for status, rraw := range operation.Responses {
 				if !strings.HasPrefix(status, "2") {
 					continue
 				}
-				var resp struct {
-					Content map[string]struct {
-						Schema *schema `json:"schema"`
-					} `json:"content"`
+
+				var resp schemaContent
+
+				err := json.Unmarshal(rraw, &resp)
+				if err != nil {
+					return built, fmt.Errorf("%s %s: %w", route, status, err)
 				}
-				if err := json.Unmarshal(rraw, &resp); err != nil {
-					return c, fmt.Errorf("%s %s: %w", route, status, err)
-				}
+
 				body, ok := resp.Content["application/json"]
 				if !ok {
 					continue
 				}
+
 				emit := func(key string, s *schema) {
 					if s.Type != "" {
-						c.Fields[key] = s.Type
+						built.Fields[key] = s.Type
 					}
 				}
-				if err := walk(route+" "+status, "", body.Schema, map[string]bool{}, emit); err != nil {
-					return c, fmt.Errorf("%s %s: %w", route, status, err)
+
+				err = walk(route+" "+status, "", body.Schema, map[string]bool{}, emit)
+				if err != nil {
+					return built, fmt.Errorf("%s %s: %w", route, status, err)
 				}
 			}
-			if body, ok := op.RequestBody.Content["application/json"]; ok && body.Schema != nil {
+
+			if body, ok := operation.RequestBody.Content["application/json"]; ok && body.Schema != nil {
 				r, err := resolve(body.Schema)
 				if err != nil {
-					return c, fmt.Errorf("%s request: %w", route, err)
+					return built, fmt.Errorf("%s request: %w", route, err)
 				}
+
 				for _, name := range r.Required {
-					c.Required = append(c.Required, route+" ."+name)
+					built.Required = append(built.Required, route+" ."+name)
 				}
 			}
 		}
 	}
-	sort.Strings(c.Routes)
-	sort.Strings(c.Required)
-	return c, nil
+
+	slices.Sort(built.Routes)
+	slices.Sort(built.Required)
+
+	return built, nil
 }
 
 func cloneSeen(m map[string]bool) map[string]bool {
 	out := make(map[string]bool, len(m)+1)
-	for k, v := range m {
-		out[k] = v
-	}
+	maps.Copy(out, m)
+
 	return out
 }
 
 // The check itself: a removed route, a removed or retyped field and a newly required request
 // field are breaks; additions are not.
 func TestContractBreaks(t *testing.T) {
+	t.Parallel()
+
 	was := contract{
 		Routes:   []string{"GET /api/a", "POST /api/b"},
 		Fields:   map[string]string{"GET /api/a 200 .x": "string", "GET /api/a 200 .y": "integer"},
 		Required: []string{"POST /api/b .name"},
+		Level:    0,
 	}
+
 	same := contract{
-		Routes:   []string{"GET /api/a", "POST /api/b", "GET /api/new"},
-		Fields:   map[string]string{"GET /api/a 200 .x": "string", "GET /api/a 200 .y": "integer", "GET /api/a 200 .z": "boolean"},
+		Routes: []string{"GET /api/a", "POST /api/b", "GET /api/new"},
+		Fields: map[string]string{
+			"GET /api/a 200 .x": "string",
+			"GET /api/a 200 .y": "integer",
+			"GET /api/a 200 .z": "boolean",
+		},
 		Required: []string{"POST /api/b .name", "GET /api/new .q"},
+		Level:    0,
 	}
 	if got := contractBreaks(was, same); len(got) != 0 {
 		t.Errorf("additions counted as breaks: %v", got)
 	}
+
 	broken := contract{
 		Routes:   []string{"GET /api/a"},
 		Fields:   map[string]string{"GET /api/a 200 .x": "integer"},
 		Required: []string{"GET /api/a .key"},
+		Level:    0,
 	}
+
 	want := []string{
 		"request field now required: GET /api/a .key",
 		"response field removed: GET /api/a 200 .y",

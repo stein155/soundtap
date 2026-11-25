@@ -29,10 +29,12 @@ package ubootenv
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"hash/crc32"
-	"sort"
+	"math"
+	"slices"
 	"strings"
 )
 
@@ -48,6 +50,8 @@ const (
 	// RedundantOffset is where in NAND.U-Boot the redundant copy lives: its last erase
 	// block, flash 0x240000 (CONFIG_ENV_OFFSET_REDUND). The spare U-Boot ends before it.
 	RedundantOffset = 0x1c0000
+	// crcSize is the little-endian CRC32 every copy starts with.
+	crcSize = 4
 	// headerSize is the CRC and the flag byte in front of a redundant copy's entries.
 	headerSize = 5
 )
@@ -57,6 +61,17 @@ const (
 // default into one that runs whatever we invented on top of the damage.
 var ErrBadCRC = errors.New("u-boot environment CRC does not match")
 
+// The other ways a window or a text form is refused; each message reads as before, with the
+// sentinel in place of its fixed part.
+var (
+	errNeedAtLeast  = errors.New("need at least")
+	errNotKeyValue  = errors.New("is not key=value")
+	errEmpty        = errors.New("environment is empty")
+	errLargerThan   = errors.New("larger than the")
+	errCannotCarry  = errors.New("fw_setenv cannot carry")
+	errCannotDelete = errors.New("fw_setenv cannot delete")
+)
+
 // Env is a parsed environment. Entry order is preserved, because a rewritten
 // environment that reorders entries is needlessly hard to diff against a dump.
 type Env struct {
@@ -65,27 +80,30 @@ type Env struct {
 }
 
 // NewEnv returns an empty environment, for building one up entry by entry.
-func NewEnv() *Env { return &Env{vals: map[string]string{}} }
+func NewEnv() *Env { return &Env{order: nil, vals: map[string]string{}} }
 
 // ParseLegacy reads the single 8 KiB copy at the start of a NAND.U-Boot-Env dump:
 // Bose's environment, and ours before the redundant one.
-func ParseLegacy(b []byte) (*Env, error) {
-	if len(b) < LegacySize {
-		return nil, fmt.Errorf("environment is %d bytes, need at least %d", len(b), LegacySize)
+func ParseLegacy(window []byte) (*Env, error) {
+	if len(window) < LegacySize {
+		return nil, fmt.Errorf("environment is %d bytes, %w %d", len(window), errNeedAtLeast, LegacySize)
 	}
-	return parseBody(b[0:4], b[4:LegacySize])
+
+	return parseBody(window[0:crcSize], window[crcSize:LegacySize])
 }
 
 // ParseCopy reads one copy of the redundant environment, Size bytes, and returns its flag.
-func ParseCopy(b []byte) (*Env, byte, error) {
-	if len(b) < Size {
-		return nil, 0, fmt.Errorf("environment copy is %d bytes, need at least %d", len(b), Size)
+func ParseCopy(window []byte) (*Env, byte, error) {
+	if len(window) < Size {
+		return nil, 0, fmt.Errorf("environment copy is %d bytes, %w %d", len(window), errNeedAtLeast, Size)
 	}
-	env, err := parseBody(b[0:4], b[headerSize:Size])
+
+	env, err := parseBody(window[0:crcSize], window[headerSize:Size])
 	if err != nil {
 		return nil, 0, err
 	}
-	return env, b[4], nil
+
+	return env, window[crcSize], nil
 }
 
 // Copies of the redundant environment, as Current names them.
@@ -97,64 +115,79 @@ const (
 // Current is the copy U-Boot boots from (env_check_redund): the one whose CRC checks out,
 // and of two that do, the one with the newer flag. It returns that copy's environment,
 // which copy it is and its flag; an error wrapping ErrBadCRC when neither checks out.
+//
+//nolint:revive // function-result-limit: flash and install call this exported signature.
 func Current(primary, redundant []byte) (*Env, int, byte, error) {
 	env0, flag0, err0 := ParseCopy(primary)
 	env1, flag1, err1 := ParseCopy(redundant)
+
+	// A copy that does not check out is skipped, not reported, while the other one does.
+	valid0, valid1 := err0 == nil, err1 == nil
 	switch {
-	case err0 != nil && err1 != nil:
+	case !valid0 && !valid1:
 		return nil, 0, 0, fmt.Errorf("neither copy: %w; %w", err0, err1)
-	case err1 != nil:
+	case !valid1:
 		return env0, Primary, flag0, nil
-	case err0 != nil:
+	case !valid0:
 		return env1, Redundant, flag1, nil
 	case Newer(flag1, flag0):
 		return env1, Redundant, flag1, nil
 	}
+
 	return env0, Primary, flag0, nil
 }
 
-// Newer reports whether flag a was written after flag b. Every writer counts up, and U-Boot
+// Newer reports whether flag was written after flag than. Every writer counts up, and U-Boot
 // and libubootenv read 0 after 255 as the wrap. Equal flags are not newer, so U-Boot keeps
 // the primary; libubootenv would take the other one, which is why no writer leaves two
 // valid copies with equal flags.
-func Newer(a, b byte) bool {
+func Newer(flag, than byte) bool {
 	switch {
-	case a == 0 && b == 255:
+	case flag == 0 && than == math.MaxUint8:
 		return true
-	case a == 255 && b == 0:
+	case flag == math.MaxUint8 && than == 0:
 		return false
 	}
-	return a > b
+
+	return flag > than
 }
 
 func parseBody(crc, body []byte) (*Env, error) {
-	stored := uint32(crc[0]) | uint32(crc[1])<<8 | uint32(crc[2])<<16 | uint32(crc[3])<<24
+	stored := binary.LittleEndian.Uint32(crc)
 	if got := crc32.ChecksumIEEE(body); got != stored {
 		return nil, fmt.Errorf("%w: stored %08x, computed %08x", ErrBadCRC, stored, got)
 	}
-	env := &Env{vals: map[string]string{}}
-	for _, entry := range bytes.Split(body, []byte{0}) {
+
+	env := NewEnv()
+
+	for entry := range bytes.SplitSeq(body, []byte{0}) {
 		if len(entry) == 0 || entry[0] == 0xff {
 			break
 		}
+
 		key, value, ok := strings.Cut(string(entry), "=")
 		if !ok || key == "" {
-			return nil, fmt.Errorf("environment entry %q is not key=value", entry)
+			return nil, fmt.Errorf("environment entry %q %w", entry, errNotKeyValue)
 		}
+
 		if _, seen := env.vals[key]; !seen {
 			env.order = append(env.order, key)
 		}
+
 		env.vals[key] = value
 	}
+
 	if len(env.order) == 0 {
-		return nil, errors.New("environment is empty")
+		return nil, errEmpty
 	}
+
 	return env, nil
 }
 
 // Get returns a value and whether the key was present.
 func (e *Env) Get(key string) (string, bool) {
 	v, ok := e.vals[key]
+
 	return v, ok
 }
 
@@ -163,6 +196,7 @@ func (e *Env) Set(key, value string) {
 	if _, seen := e.vals[key]; !seen {
 		e.order = append(e.order, key)
 	}
+
 	e.vals[key] = value
 }
 
@@ -171,10 +205,13 @@ func (e *Env) Delete(key string) {
 	if _, seen := e.vals[key]; !seen {
 		return
 	}
+
 	delete(e.vals, key)
+
 	for i, k := range e.order {
 		if k == key {
 			e.order = append(e.order[:i], e.order[i+1:]...)
+
 			break
 		}
 	}
@@ -183,37 +220,13 @@ func (e *Env) Delete(key string) {
 // Keys returns the entry keys in the order they will be encoded.
 func (e *Env) Keys() []string { return append([]string(nil), e.order...) }
 
-// body renders the entries the way U-Boot's env_export does: sorted by key,
-// NUL-separated, an empty entry at the end, zero padding to n bytes. U-Boot sorts when
-// it saves, so an environment written here is byte-identical to one U-Boot wrote.
-func (e *Env) body(n int) ([]byte, error) {
-	keys := e.Keys()
-	sort.Strings(keys)
-	var body bytes.Buffer
-	for _, key := range keys {
-		body.WriteString(key)
-		body.WriteByte('=')
-		body.WriteString(e.vals[key])
-		body.WriteByte(0)
-	}
-	body.WriteByte(0) // the empty entry that ends the list
-	if body.Len() > n {
-		return nil, fmt.Errorf("environment is %d bytes, larger than the %d byte window", body.Len(), n)
-	}
-	// Zero padding, not 0xff: U-Boot zeroes its buffer before saving, and a dump of this
-	// board's own partition is zero-filled from the terminating empty entry to the end of
-	// the window. (The rest of the 128 KiB erase block stays erased 0xff.)
-	out := make([]byte, n)
-	copy(out, body.Bytes())
-	return out, nil
-}
-
 // EncodeLegacy renders the single 8 KiB copy Bose's U-Boot reads, with a fresh CRC.
 func (e *Env) EncodeLegacy() ([]byte, error) {
-	body, err := e.body(LegacySize - 4)
+	body, err := e.body(LegacySize - crcSize)
 	if err != nil {
 		return nil, err
 	}
+
 	return append(le32(crc32.ChecksumIEEE(body)), body...), nil
 }
 
@@ -223,6 +236,7 @@ func (e *Env) EncodeCopy(flag byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	return append(append(le32(crc32.ChecksumIEEE(body)), flag), body...), nil
 }
 
@@ -236,7 +250,7 @@ const (
 	FreshPrimaryFlag   = 2
 )
 
-func le32(v uint32) []byte { return []byte{byte(v), byte(v >> 8), byte(v >> 16), byte(v >> 24)} }
+func le32(v uint32) []byte { return binary.LittleEndian.AppendUint32(nil, v) }
 
 // The text forms below are what libubootenv's fw_printenv prints and what its
 // fw_setenv -s reads, which is how soundtapd reads and writes the environment on a
@@ -256,35 +270,42 @@ func ParseText(b []byte) (*Env, error) {
 	env := NewEnv()
 	last := ""
 	// Only the newline that ends the last entry: one before it belongs to a value.
-	for _, line := range strings.Split(strings.TrimSuffix(string(b), "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSuffix(string(b), "\n"), "\n") {
 		key, value, ok := strings.Cut(line, "=")
 		if !ok || !isKey(key) {
 			if last == "" {
-				return nil, fmt.Errorf("fw_printenv line %q is not key=value", line)
+				return nil, fmt.Errorf("fw_printenv line %q %w", line, errNotKeyValue)
 			}
+
 			env.Set(last, env.vals[last]+"\n"+line)
+
 			continue
 		}
+
 		env.Set(key, value)
 		last = key
 	}
+
 	if len(env.order) == 0 {
-		return nil, errors.New("environment is empty")
+		return nil, errEmpty
 	}
+
 	return env, nil
 }
 
-// isKey reports whether s can be an entry's name as fw_printenv prints it: printable
+// isKey reports whether name can be an entry's name as fw_printenv prints it: printable
 // ASCII without a space or '='.
-func isKey(s string) bool {
-	if s == "" {
+func isKey(name string) bool {
+	if name == "" {
 		return false
 	}
-	for i := range len(s) {
-		if s[i] <= ' ' || s[i] > '~' {
+
+	for i := range len(name) {
+		if name[i] <= ' ' || name[i] > '~' {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -294,6 +315,7 @@ func (e *Env) Text() []byte {
 	for _, key := range e.order {
 		fmt.Fprintf(&b, "%s=%s\n", key, e.vals[key])
 	}
+
 	return b.Bytes()
 }
 
@@ -303,62 +325,110 @@ func (e *Env) Clone() *Env {
 	for _, key := range e.order {
 		c.Set(key, e.vals[key])
 	}
+
 	return c
 }
 
 // Equal reports whether both hold the same entries, in any order.
-func (e *Env) Equal(o *Env) bool {
-	if len(e.vals) != len(o.vals) {
+func (e *Env) Equal(other *Env) bool {
+	if len(e.vals) != len(other.vals) {
 		return false
 	}
+
 	for key, value := range e.vals {
-		if v, ok := o.vals[key]; !ok || v != value {
+		if v, ok := other.vals[key]; !ok || v != value {
 			return false
 		}
 	}
+
 	return true
 }
 
-// Script is the fw_setenv -s input that turns from into to: key=value for every entry
+// Script is the fw_setenv -s input that turns from into target: key=value for every entry
 // that is new or changed, key= for every entry that is gone. Empty when nothing changed.
 // A value fw_setenv cannot carry (empty, multi-line, or longer than its line buffer)
 // is refused rather than written wrong.
-func Script(from, to *Env) ([]byte, error) {
-	var b bytes.Buffer
-	for _, key := range to.Keys() {
-		value := to.vals[key]
+func Script(from, target *Env) ([]byte, error) {
+	var script bytes.Buffer
+
+	for _, key := range target.Keys() {
+		value := target.vals[key]
 		if old, ok := from.vals[key]; ok && old == value {
 			continue
 		}
 		// A line that starts with # is a comment to fw_setenv -s: such a key would be skipped.
-		if value == "" || strings.HasPrefix(key, "#") || strings.ContainsAny(key+value, "\n\r") ||
-			len(key)+len(value)+2 > scriptLine-1 {
-			return nil, fmt.Errorf("fw_setenv cannot carry %s=%q", key, value)
+		if !scriptCarries(key, value) {
+			return nil, fmt.Errorf("%w %s=%q", errCannotCarry, key, value)
 		}
-		fmt.Fprintf(&b, "%s=%s\n", key, value)
+
+		fmt.Fprintf(&script, "%s=%s\n", key, value)
 	}
+
 	for _, key := range from.Keys() {
-		if _, ok := to.vals[key]; !ok {
+		if _, ok := target.vals[key]; !ok {
 			if strings.HasPrefix(key, "#") || strings.ContainsAny(key, "\n\r") {
-				return nil, fmt.Errorf("fw_setenv cannot delete %q", key)
+				return nil, fmt.Errorf("%w %q", errCannotDelete, key)
 			}
-			fmt.Fprintf(&b, "%s=\n", key)
+
+			fmt.Fprintf(&script, "%s=\n", key)
 		}
 	}
-	return b.Bytes(), nil
+
+	return script.Bytes(), nil
+}
+
+// scriptCarries reports whether fw_setenv -s can set key to value: not empty, not a
+// comment, one line, and within its line buffer with the '=' and the newline.
+func scriptCarries(key, value string) bool {
+	switch {
+	case value == "", strings.HasPrefix(key, "#"), strings.ContainsAny(key+value, "\n\r"):
+		return false
+	}
+
+	return len(key)+len(value)+2 < scriptLine
 }
 
 // Apply runs a fw_setenv -s script against env, as libubootenv does: key= deletes.
 func (e *Env) Apply(script []byte) {
-	for _, line := range strings.Split(string(script), "\n") {
+	for line := range strings.SplitSeq(string(script), "\n") {
 		key, value, ok := strings.Cut(line, "=")
 		if !ok || key == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
+
 		if value == "" {
 			e.Delete(key)
 		} else {
 			e.Set(key, value)
 		}
 	}
+}
+
+// body renders the entries the way U-Boot's env_export does: sorted by key,
+// NUL-separated, an empty entry at the end, zero padding to size bytes. U-Boot sorts when
+// it saves, so an environment written here is byte-identical to one U-Boot wrote.
+func (e *Env) body(size int) ([]byte, error) {
+	keys := e.Keys()
+	slices.Sort(keys)
+
+	var body bytes.Buffer
+	for _, key := range keys {
+		body.WriteString(key)
+		body.WriteByte('=')
+		body.WriteString(e.vals[key])
+		body.WriteByte(0)
+	}
+
+	body.WriteByte(0) // the empty entry that ends the list
+
+	if body.Len() > size {
+		return nil, fmt.Errorf("environment is %d bytes, %w %d byte window", body.Len(), errLargerThan, size)
+	}
+	// Zero padding, not 0xff: U-Boot zeroes its buffer before saving, and a dump of this
+	// board's own partition is zero-filled from the terminating empty entry to the end of
+	// the window. (The rest of the 128 KiB erase block stays erased 0xff.)
+	out := make([]byte, size)
+	copy(out, body.Bytes())
+
+	return out, nil
 }

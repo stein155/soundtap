@@ -6,6 +6,7 @@ package web
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/hex"
@@ -15,11 +16,18 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
+)
+
+// Fields of a saved Wi-Fi line: SSID and key base64-encoded, then the key as typed.
+const (
+	wifiSSIDField = iota
+	wifiEncodedKeyField
+	wifiKeyField
 )
 
 // The files the redactor learns the speaker's secrets from, besides the ones in its home
@@ -34,14 +42,16 @@ const (
 
 // sysRoot is where the absolute system paths the support bundle reads (/tmp, /run, /mnt/nv)
 // start: "/" on a speaker, a fake tree in the redaction test.
+//
+//nolint:gochecknoglobals // a variable so tests can replace it
 var sysRoot = "/"
 
 // sysPath maps a logical absolute path onto sysRoot.
 func sysPath(p string) string { return filepath.Join(sysRoot, p) }
 
 // secretLine matches a log line that carries a credential. A daemon or a hand-written
-// configuration can put one in the log, and a support bundle is pasted into public issues, so the value is replaced rather than the line dropped —
-// the user still sees that a password was set, just not which.
+// configuration can put one in the log, and a support bundle is pasted into public issues,
+// so the value is replaced rather than the line dropped — the user still sees that a password was set, just not which.
 //
 // The match runs to end of line rather than to the next space: "Authorization: Bearer
 // <token>" would otherwise scrub only the word "Bearer" and ship the token.
@@ -49,7 +59,8 @@ func sysPath(p string) string { return filepath.Join(sysRoot, p) }
 // No \b in front: "_" is a word character, so sae_password= slipped through. A quote
 // may close the key, as in JSON's "password":"x". wifi.conf's PSK_B64= and PSK_HEX= and
 // librespot's auth_data carry the key encoded.
-var secretLine = regexp.MustCompile(`(?i)(psk|password|passphrase|passwd|secret|token|authorization|api[_-]?key|auth[_-]?data)(_b64|_hex)?\b"?\s*[:=]\s*.*`)
+var secretLine = regexp.MustCompile(`(?i)(psk|password|passphrase|passwd|secret|token|authorization|` +
+	`api[_-]?key|auth[_-]?data)(_b64|_hex)?\b"?\s*[:=]\s*.*`)
 
 // urlUserinfo matches the user:password@ part of a URL. The player logs whole stream
 // URLs, and custom streams may carry credentials there. The user goes too: some
@@ -75,23 +86,28 @@ var (
 // keptRanges are addresses that say nothing about where the owner lives: shared address
 // space (carrier NAT) and the documentation ranges, which the ST20's USB link uses
 // (203.0.113.0/30).
-var keptRanges = []netip.Prefix{
-	netip.MustParsePrefix("0.0.0.0/8"),
-	netip.MustParsePrefix("100.64.0.0/10"),
-	netip.MustParsePrefix("192.0.2.0/24"),
-	netip.MustParsePrefix("198.51.100.0/24"),
-	netip.MustParsePrefix("203.0.113.0/24"),
-	netip.MustParsePrefix("2001:db8::/32"),
+func keptRanges() []netip.Prefix {
+	return []netip.Prefix{
+		netip.MustParsePrefix("0.0.0.0/8"),
+		netip.MustParsePrefix("100.64.0.0/10"),
+		netip.MustParsePrefix("192.0.2.0/24"),
+		netip.MustParsePrefix("198.51.100.0/24"),
+		netip.MustParsePrefix("203.0.113.0/24"),
+		netip.MustParsePrefix("2001:db8::/32"),
+	}
 }
 
-var globalIPv6 = netip.MustParsePrefix("2000::/3")
+// globalIPv6 is the IPv6 global unicast range.
+func globalIPv6() netip.Prefix { return netip.MustParsePrefix("2000::/3") }
 
 // redactSecrets rewrites credential assignments and URL userinfo to "<redacted>". It is
 // the pattern half of redactor.scrub, which every part of the bundle goes through.
 func redactSecrets(s string) string {
 	s = urlUserinfo.ReplaceAllString(s, "${1}<redacted>@")
+
 	return secretLine.ReplaceAllStringFunc(s, func(m string) string {
 		i := strings.IndexAny(m, ":=")
+
 		return m[:i+1] + " <redacted>"
 	})
 }
@@ -126,41 +142,54 @@ type redactor struct {
 // is on), the MQTT broker password, the Spotify credentials librespot keeps, the press
 // token and a household token older firmware left behind.
 func (s *Server) newRedactor(ctx context.Context) *redactor {
-	c := &secretCollector{seen: map[string]bool{}}
-	nv := filepath.Dir(s.homeDir)
+	collector := &secretCollector{seen: map[string]bool{}, out: nil, ssids: 0}
+
+	nvDir := filepath.Dir(s.homeDir)
 	for _, name := range []string{"wifi.conf", "wifi.conf.good"} {
-		c.wifiConf(filepath.Join(nv, name))
+		collector.wifiConf(filepath.Join(nvDir, name))
 	}
-	c.wifiKnown(filepath.Join(nv, "wifi.conf.known"))
-	c.wpaConf(sysPath(wpaConfFile))
+
+	collector.wifiKnown(filepath.Join(nvDir, "wifi.conf.known"))
+	collector.wpaConf(sysPath(wpaConfFile))
+
 	if s.backend != nil {
-		if net, err := s.backend.NetworkInfo(ctx); err == nil && net != nil {
-			c.ssid(net.SSID)
+		net, err := s.backend.NetworkInfo(ctx)
+		if err == nil && net != nil {
+			collector.ssid(net.SSID)
 		}
 	}
+
 	if s.settings != nil {
-		c.add(s.settings.Get().MQTT.Password, "<mqtt-password>", false)
+		collector.add(s.settings.Get().MQTT.Password, "<mqtt-password>", false)
 	}
+
 	for _, sub := range []string{"system", "cache"} {
-		c.spotify(filepath.Join(nv, "spotify", sub, "credentials.json"))
+		collector.spotify(filepath.Join(nvDir, "spotify", sub, "credentials.json"))
 	}
-	c.file(sysPath(confirmTokenFile), "<confirm-token>")
-	c.file(filepath.Join(s.homeDir, "api-token"), "<household-token>")
-	return newRedactorFrom(c.out)
+
+	collector.file(sysPath(confirmTokenFile), "<confirm-token>")
+	collector.file(filepath.Join(s.homeDir, "api-token"), "<household-token>")
+
+	return newRedactorFrom(collector.out)
 }
 
 // newRedactorFrom builds the matcher over the collected values.
 func newRedactorFrom(literals []secretLiteral) *redactor {
-	sort.SliceStable(literals, func(i, j int) bool { return len(literals[i].value) > len(literals[j].value) })
-	r := &redactor{literals: literals}
+	slices.SortStableFunc(literals, func(a, b secretLiteral) int {
+		return cmp.Compare(len(b.value), len(a.value))
+	})
+
+	red := &redactor{literals: literals, match: nil}
 	if len(literals) > 0 {
 		alts := make([]string, len(literals))
 		for i, l := range literals {
 			alts[i] = regexp.QuoteMeta(l.value)
 		}
-		r.match = regexp.MustCompile(strings.Join(alts, "|"))
+
+		red.match = regexp.MustCompile(strings.Join(alts, "|"))
 	}
-	return r
+
+	return red
 }
 
 // scrub is the redaction every byte of a support bundle passes through: the known
@@ -168,68 +197,84 @@ func newRedactorFrom(literals []secretLiteral) *redactor {
 // assignments and URL userinfo; then network names given as a key; then public addresses.
 // Private, loopback and link-local addresses stay: they say how the speaker sees its
 // network, and not where the owner lives.
-func (r *redactor) scrub(s string) string {
+func (r *redactor) scrub(text string) string {
 	if r.match != nil {
-		s = r.replaceLiterals(s)
+		text = r.replaceLiterals(text)
 	}
-	s = redactSecrets(s)
-	s = ssidField.ReplaceAllStringFunc(s, func(m string) string {
+
+	text = redactSecrets(text)
+	text = ssidField.ReplaceAllStringFunc(text, func(m string) string {
 		sub := ssidField.FindStringSubmatch(m)
+
 		v := strings.TrimSpace(sub[2])
 		if v == "" || isPlaceholder(v) {
 			return m
 		}
+
 		return sub[1] + "<redacted>"
 	})
-	s = ssidQuoted.ReplaceAllString(s, "${1}'<redacted>'")
-	s = ipv4Text.ReplaceAllStringFunc(s, publicIPText)
-	return ipv6Text.ReplaceAllStringFunc(s, func(m string) string {
+	text = ssidQuoted.ReplaceAllString(text, "${1}'<redacted>'")
+	text = ipv4Text.ReplaceAllStringFunc(text, publicIPText)
+
+	return ipv6Text.ReplaceAllStringFunc(text, func(m string) string {
 		sub := ipv6Text.FindStringSubmatch(m)
+
 		return sub[1] + publicIPText(sub[2])
 	})
 }
 
-func (r *redactor) replaceLiterals(s string) string {
-	var b strings.Builder
+func (r *redactor) replaceLiterals(text string) string {
+	var out strings.Builder
+
 	last := 0
-	for _, loc := range r.match.FindAllStringIndex(s, -1) {
-		v := s[loc[0]:loc[1]]
+
+	for _, loc := range r.match.FindAllStringIndex(text, -1) {
+		v := text[loc[0]:loc[1]]
+
 		lit := r.lookup(v)
-		if lit.word && !standsAlone(s, loc[0], loc[1]) {
+		if lit.word && !standsAlone(text, loc[0], loc[1]) {
 			continue
 		}
-		b.WriteString(s[last:loc[0]])
-		b.WriteString(lit.label)
+
+		out.WriteString(text[last:loc[0]])
+		out.WriteString(lit.label)
+
 		last = loc[1]
 	}
+
 	if last == 0 {
-		return s
+		return text
 	}
-	b.WriteString(s[last:])
-	return b.String()
+
+	out.WriteString(text[last:])
+
+	return out.String()
 }
 
-func (r *redactor) lookup(v string) secretLiteral {
+func (r *redactor) lookup(value string) secretLiteral {
 	for _, l := range r.literals {
-		if l.value == v {
+		if l.value == value {
 			return l
 		}
 	}
-	return secretLiteral{value: v, label: "<redacted>"}
+
+	return secretLiteral{value: value, label: "<redacted>", word: false}
 }
 
-// standsAlone reports whether s[i:j] is not part of a longer word.
-func standsAlone(s string, i, j int) bool {
-	if i > 0 {
-		if r, _ := utf8.DecodeLastRuneInString(s[:i]); isWordRune(r) {
+// standsAlone reports whether text[start:end] is not part of a longer word.
+func standsAlone(text string, start, end int) bool {
+	if start > 0 {
+		if r, _ := utf8.DecodeLastRuneInString(text[:start]); isWordRune(r) {
 			return false
 		}
 	}
-	if j < len(s) {
-		if r, _ := utf8.DecodeRuneInString(s[j:]); isWordRune(r) {
+
+	if end < len(text) {
+		if r, _ := utf8.DecodeRuneInString(text[end:]); isWordRune(r) {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -240,20 +285,23 @@ func isPlaceholder(v string) bool {
 }
 
 // publicIPText replaces a public address with "<public-ip>" and leaves anything else.
-func publicIPText(m string) string {
-	a, err := netip.ParseAddr(m)
+func publicIPText(match string) string {
+	addr, err := netip.ParseAddr(match)
 	if err != nil {
-		return m
+		return match
 	}
-	a = a.Unmap()
-	if !a.IsGlobalUnicast() || a.IsPrivate() || (a.Is6() && !globalIPv6.Contains(a)) {
-		return m
+
+	addr = addr.Unmap()
+	if !addr.IsGlobalUnicast() || addr.IsPrivate() || (addr.Is6() && !globalIPv6().Contains(addr)) {
+		return match
 	}
-	for _, p := range keptRanges {
-		if p.Contains(a) {
-			return m
+
+	for _, p := range keptRanges() {
+		if p.Contains(addr) {
+			return match
 		}
 	}
+
 	return "<public-ip>"
 }
 
@@ -271,6 +319,7 @@ func (c *secretCollector) add(v, label string, word bool) {
 		if len(form) < minSecretLen || c.seen[form] {
 			continue
 		}
+
 		c.seen[form] = true
 		c.out = append(c.out, secretLiteral{value: form, label: label, word: word})
 	}
@@ -282,6 +331,7 @@ func (c *secretCollector) ssid(name string) {
 	if len(name) < minSecretLen || c.seen[name] {
 		return
 	}
+
 	c.ssids++
 	c.add(name, fmt.Sprintf("<wifi-ssid-%d>", c.ssids), true)
 }
@@ -290,7 +340,8 @@ func (c *secretCollector) psk(key string) { c.add(key, "<wifi-key>", false) }
 
 // file adds a whole small file (a token) as one secret.
 func (c *secretCollector) file(path, label string) {
-	if b, err := os.ReadFile(path); err == nil {
+	b, err := os.ReadFile(path)
+	if err == nil {
 		c.add(strings.TrimSpace(string(b)), label, false)
 	}
 }
@@ -300,6 +351,7 @@ func decodeB64(v string) string {
 	if err != nil {
 		return ""
 	}
+
 	return string(b)
 }
 
@@ -309,21 +361,25 @@ func (c *secretCollector) wifiConf(path string) {
 	if err != nil {
 		return
 	}
+
 	sc := bufio.NewScanner(bytes.NewReader(b))
 	for sc.Scan() {
-		key, v, ok := strings.Cut(strings.TrimSpace(sc.Text()), "=")
-		if !ok || v == "" {
+		key, value, ok := strings.Cut(strings.TrimSpace(sc.Text()), "=")
+		if !ok || value == "" {
 			continue
 		}
+
 		switch key {
 		case "SSID_B64":
-			c.ssid(decodeB64(v))
-			c.add(v, "<wifi-ssid>", false)
+			c.ssid(decodeB64(value))
+			c.add(value, "<wifi-ssid>", false)
 		case "PSK_B64":
-			c.psk(decodeB64(v))
-			c.psk(v)
+			c.psk(decodeB64(value))
+			c.psk(value)
 		case "PSK_HEX":
-			c.psk(v)
+			c.psk(value)
+		default:
+			// Anything else needs nothing here.
 		}
 	}
 }
@@ -334,21 +390,25 @@ func (c *secretCollector) wifiKnown(path string) {
 	if err != nil {
 		return
 	}
-	for _, line := range strings.Split(string(b), "\n") {
+
+	for line := range strings.SplitSeq(string(b), "\n") {
 		f := strings.Fields(line)
-		for i, v := range f {
-			if v == "-" {
+		for field, value := range f {
+			if value == "-" {
 				continue
 			}
-			switch i {
-			case 0:
-				c.ssid(decodeB64(v))
-				c.add(v, "<wifi-ssid>", false)
-			case 1:
-				c.psk(decodeB64(v))
-				c.psk(v)
-			case 2:
-				c.psk(v)
+
+			switch field {
+			case wifiSSIDField:
+				c.ssid(decodeB64(value))
+				c.add(value, "<wifi-ssid>", false)
+			case wifiEncodedKeyField:
+				c.psk(decodeB64(value))
+				c.psk(value)
+			case wifiKeyField:
+				c.psk(value)
+			default:
+				// Anything else needs nothing here.
 			}
 		}
 	}
@@ -361,25 +421,34 @@ func (c *secretCollector) wpaConf(path string) {
 	if err != nil {
 		return
 	}
-	for _, line := range strings.Split(string(b), "\n") {
-		key, v, ok := strings.Cut(strings.TrimSpace(line), "=")
-		if !ok || v == "" {
+
+	for line := range strings.SplitSeq(string(b), "\n") {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok || value == "" {
 			continue
 		}
+
 		quoted := false
-		if u, err := strconv.Unquote(v); err == nil {
-			v, quoted = u, true
+
+		u, err := strconv.Unquote(value)
+		if err == nil {
+			value, quoted = u, true
 		}
+
 		switch key {
 		case "ssid":
 			if !quoted {
-				if raw, err := hex.DecodeString(v); err == nil {
+				raw, err := hex.DecodeString(value)
+				if err == nil {
 					c.ssid(string(raw))
 				}
 			}
-			c.ssid(v)
+
+			c.ssid(value)
 		case "psk", "sae_password", "password", "identity", "wep_key0":
-			c.psk(v)
+			c.psk(value)
+		default:
+			// Anything else needs nothing here.
 		}
 	}
 }
@@ -387,17 +456,19 @@ func (c *secretCollector) wpaConf(path string) {
 // spotify reads librespot's stored credentials: the account name and the reusable
 // authentication blob.
 func (c *secretCollector) spotify(path string) {
-	b, err := os.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return
 	}
+
 	var cred struct {
 		Username string `json:"username"`
 		AuthData string `json:"auth_data"`
 	}
-	if json.Unmarshal(b, &cred) != nil {
+	if json.Unmarshal(data, &cred) != nil {
 		return
 	}
+
 	c.add(cred.Username, "<spotify-user>", true)
 	c.add(cred.AuthData, "<spotify-credentials>", false)
 }

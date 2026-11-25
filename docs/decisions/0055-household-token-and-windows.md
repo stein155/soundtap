@@ -33,11 +33,16 @@ That check prevents misrouting; it is not authentication. Signed updates are
 ### Dangerous actions need a key held on the speaker
 
 - **Which requests.** `needsPress` names them: `POST /api/factory-reset`, `/api/restore`,
-  `/api/reboot`, `/api/wifi`, `/api/setup`, `/api/bluetooth/clear`, `/api/soundtapd`,
-  `/api/core-update`, `POST /api/firmware?install=1`, `DELETE /api/soundtapd`, `PUT` and
-  `DELETE /api/owner-key`, and `GET /api/debug`. `POST /api/update` waits only when it names a
-  release ([ADR 0118](0118-update-button-without-press.md)). Uploading a firmware file without
-  installing it does not wait.
+  `/api/reboot`, `/api/wifi`, `/api/setup`, `/api/bluetooth/clear`, `/api/bluetooth/forget`,
+  `/api/soundtapd`, `POST /api/firmware?install=1`, `DELETE /api/soundtapd`, and
+  `GET /api/debug`. The install uploads wait for every package, signed or not: a release's
+  `.sig` can be sent with another body, and the press is also what lets an unsigned one install
+  ([ADR 0048](0048-signed-updates.md)). `POST /api/update` and `POST /api/core-update`, where
+  the speaker fetches a signed release itself, never wait
+  ([ADR 0118](0118-update-button-without-press.md)). Uploading a firmware file without
+  installing it does not wait. `POST /api/bluetooth/forget` checks its body and that the
+  address is paired before it waits, so a bad or stale address is refused at once rather than
+  after the walk to the speaker; every other route waits before it reads its body.
 - **The gesture.** One key on the speaker's own panel, other than volume, held for two seconds
   (`confirmHold`), confirms the request that was waiting when the key went down. A shorter press
   confirms nothing. While a request waits that key belongs to the confirmation: it does not
@@ -47,7 +52,7 @@ That check prevents misrouting; it is not authentication. Signed updates are
   IR remote never does: a confirmation stands for someone at the speaker, and a remote works from
   the next room. The SoundTouch 300 has no buttons of its own, so the keys its soundbar processor
   reports from its remote confirm, and soundtapd logs the producer of every confirming hold;
-  refusing them would leave a production ST300 unable to install a Core update, reset or go back
+  refusing them would leave a production ST300 unable to install an upload, reset or go back
   to Bose.
 - **One waits, the newest wins.** A newer dangerous request replaces the waiting one, which fails
   with 409 `confirm_superseded`. A host that repeats a request then only replaces itself, and the
@@ -101,7 +106,8 @@ leaving the close to BlueZ's `DiscoverableTimeout` (the controller keeps answeri
 ## Consequences
 
 - Anyone on the home network or the setup hotspot can play and change settings, with curl or the
-  UI. Reset, restore, Wi-Fi changes, manual installs, the owner key and diagnostics need a hold.
+  UI. Reset, restore, Wi-Fi changes, unsigned installs and diagnostics need a hold; a signed
+  release installs without one, older ones included ([ADR 0048](0048-signed-updates.md)).
 - A speaker must not be exposed beyond the LAN (no port forward); there is no second line.
 - Someone on the LAN can replace the owner's waiting request with their own. The ST20 panel names
   the action and the owner's page says its request was replaced; on the ST10 and the Wireless
@@ -127,7 +133,7 @@ leaving the close to BlueZ's `DiscoverableTimeout` (the controller keeps answeri
   `web.ErrConfirmSuperseded`, `web.DeviceTokenHeader`; `app/internal/web/web.go:Server.updateApp`
   asks only when a tag is named.
 - `app/cmd/soundtapd/confirm.go`: `deviceConfirm` (the lane, the token, the panel text) and
-  `confirmHold`; `app/cmd/soundtapd/buttons.go:buttonHandler.confirming` times the hold;
+  `confirmHold`; `app/cmd/soundtapd/buttons.go:buttonHandler.confirmPressed` times the hold;
   `app/cmd/soundtapd/soundbar.go:newSoundbarKeys` marks the ST300's processor keys as confirming.
 - `app/internal/bluez/agent.go`: `Agent.Pair`, `Agent.tick` (the close), `bluez.PairWindow`;
   `os/overlay/etc/bluetooth/main.conf` keeps BlueZ's timeouts at 0.

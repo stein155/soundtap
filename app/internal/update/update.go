@@ -21,6 +21,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/stein155/soundtap/app/internal/clocksync"
@@ -46,18 +47,22 @@ func verifySigned(path, sigPath string) (release.Statement, error) {
 	if err != nil {
 		return release.Statement{}, err
 	}
+
 	st, err := release.Verify(releaseKeys, string(sig), release.KindApp)
 	if err != nil {
 		return release.Statement{}, err
 	}
+
 	sum, err := release.SHA256File(path)
 	if err != nil {
 		return release.Statement{}, err
 	}
+
 	digest, err := hex.DecodeString(sum)
 	if err != nil {
 		return release.Statement{}, err
 	}
+
 	return st, st.Matches(digest)
 }
 
@@ -137,6 +142,9 @@ type Manager struct {
 	// clockSynced reports whether NTP has set the clock since boot (clocksync.Synced); a
 	// field so the tests can give the signal.
 	clockSynced func() bool
+	// progress is an app download's percentage plus one while it runs with a known size,
+	// and 0 otherwise (Progress).
+	progress atomic.Int64
 }
 
 const releasesTTL = 10 * time.Minute
@@ -163,10 +171,13 @@ func (m *Manager) clockSet(ctx context.Context) error {
 	if m.Mode() != ModeFirmware || m.clockSynced() {
 		return nil
 	}
+
 	deadline := time.NewTimer(clockWait)
 	defer deadline.Stop()
+
 	poll := time.NewTicker(clockPoll)
 	defer poll.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -201,6 +212,7 @@ func (m *Manager) Mode() string {
 	if os.Getenv("SOUNDTAP_FIRMWARE") == "1" {
 		return ModeFirmware
 	}
+
 	return ModeUnmanaged
 }
 
@@ -217,26 +229,33 @@ func (m *Manager) Start(ctx context.Context, tag string) (target string, current
 	if !m.Updatable() {
 		return "", false, ErrNotUpdatable
 	}
+
 	if !m.mu.TryLock() {
 		return "", false, ErrBusy
 	}
+
 	target = strings.TrimSpace(tag)
 	if target == "" {
 		latest, err := m.Latest(ctx)
 		if err != nil {
 			m.mu.Unlock()
+
 			return "", false, fmt.Errorf("latest release check failed: %w", err)
 		}
+
 		if latest == "" {
 			m.mu.Unlock()
+
 			return "", false, errors.New("latest release missing tag")
 		}
-		// Latest never downgrades: an older app goes in only by naming its tag, and that
-		// waits for a press on the speaker (ADR 0118).
+		// Latest never downgrades: an older app goes in only by naming its tag (ADR 0118);
+		// it is a signed release, so it needs no press (ADR 0048).
 		if !newer(latest, m.version) {
 			m.mu.Unlock()
+
 			return m.version, true, nil
 		}
+
 		target = latest
 	} else {
 		// Only ever install a tag we actually publish — never an arbitrary ref —
@@ -244,20 +263,26 @@ func (m *Manager) Start(ctx context.Context, tag string) (target string, current
 		ok, err := m.isOffered(ctx, target)
 		if err != nil {
 			m.mu.Unlock()
+
 			return "", false, fmt.Errorf("release check failed: %w", err)
 		}
+
 		if !ok {
 			m.mu.Unlock()
+
 			return "", false, UnknownTagError{Tag: target}
 		}
 	}
+
 	if target == m.version {
 		m.mu.Unlock()
+
 		return target, true, nil
 	}
-	// Only a named tag may be older: the web API waits for a press on the speaker before
-	// it names one (ADR 0118); the tagless update, also Home Assistant's, never goes back.
+	// Only a named tag may be older, a signed release like any other, so without a press
+	// (ADR 0048, ADR 0118); the tagless update, also Home Assistant's, never goes back.
 	m.install(target, tag != "")
+
 	return target, false, nil
 }
 
@@ -268,20 +293,25 @@ func (m *Manager) Start(ctx context.Context, tag string) (target string, current
 // call, so no false update is offered.
 func (m *Manager) UpdateInfo(ctx context.Context) (installed, latest, releaseURL string, updatable bool, err error) {
 	installed = m.version
+
 	updatable = m.Updatable()
 	if !updatable {
 		return installed, installed, "", false, nil
 	}
+
 	latest, err = m.Latest(ctx)
 	if err != nil {
 		return installed, "", "", true, err
 	}
+
 	if latest == "" || !newer(latest, installed) {
 		latest = installed
 	}
+
 	if latest != installed {
 		releaseURL = "https://github.com/" + Repo + "/releases/tag/" + latest
 	}
+
 	return installed, latest, releaseURL, true, nil
 }
 
@@ -291,6 +321,7 @@ func (m *Manager) UpdateInfo(ctx context.Context) (installed, latest, releaseURL
 // success, and an already-current version is not an error.
 func (m *Manager) UpdateToLatest(ctx context.Context) error {
 	_, _, err := m.Start(ctx, "")
+
 	return err
 }
 
@@ -300,6 +331,7 @@ func (m *Manager) Latest(ctx context.Context) (string, error) {
 	if err != nil || rel == nil {
 		return "", err
 	}
+
 	return strings.TrimSpace(rel.TagName), nil
 }
 
@@ -310,16 +342,23 @@ func (m *Manager) LatestRelease(ctx context.Context) (*Release, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	running, _ := appVersion(m.version) // a dev build runs no prerelease
-	var best *Release
-	var bestV release.Version
+
+	var (
+		best  *Release
+		bestV release.Version
+	)
+
 	for i, rel := range rels {
 		v, ok := appVersion(strings.TrimSpace(rel.TagName))
 		if !ok || !offered(rel, v, running) || (best != nil && v.Compare(bestV) <= 0) {
 			continue
 		}
+
 		best, bestV = &rels[i], v
 	}
+
 	return best, nil
 }
 
@@ -338,6 +377,7 @@ func appVersion(tag string) (release.Version, bool) {
 	if !ok {
 		return release.Version{}, false
 	}
+
 	return release.ParseVersion(v)
 }
 
@@ -348,10 +388,12 @@ func newer(tag, running string) bool {
 	if !ok {
 		return false
 	}
+
 	have, ok := appVersion(running)
 	if !ok {
 		return true
 	}
+
 	return want.Compare(have) > 0
 }
 
@@ -362,12 +404,15 @@ func (m *Manager) Releases(ctx context.Context) ([]Release, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	var appRels []Release
+
 	for _, rel := range all {
 		if _, ok := appAsset(rel.TagName); ok {
 			appRels = append(appRels, rel)
 		}
 	}
+
 	return appRels, nil
 }
 
@@ -379,11 +424,12 @@ const WithdrawnMarker = "Withdrawn:"
 // starts with WithdrawnMarker. Generated notes never start a line with it: their
 // changes are list items.
 func (r Release) Withdrawn() bool {
-	for _, line := range strings.Split(r.Body, "\n") {
+	for line := range strings.SplitSeq(r.Body, "\n") {
 		if strings.HasPrefix(line, WithdrawnMarker) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -395,25 +441,35 @@ func (r Release) Withdrawn() bool {
 // Every GitHub contact starts here, so none is made before the clock is set; the wait
 // is outside the lock.
 func (m *Manager) allReleases(ctx context.Context) ([]Release, error) {
-	if err := m.clockSet(ctx); err != nil {
+	err := m.clockSet(ctx)
+	if err != nil {
 		return nil, err
 	}
+
 	m.relMu.Lock()
 	defer m.relMu.Unlock()
+
 	if m.rels != nil && time.Since(m.relsAt) < releasesTTL {
 		return m.rels, nil
 	}
+
 	var rels []Release
-	if err := m.getJSON(ctx, "https://api.github.com/repos/"+Repo+"/releases?per_page=100", &rels); err != nil {
+
+	err = m.getJSON(ctx, "https://api.github.com/repos/"+Repo+"/releases?per_page=100", &rels)
+	if err != nil {
 		return nil, err
 	}
+
 	kept := []Release{}
+
 	for _, rel := range rels {
 		if !rel.Draft && !rel.Withdrawn() {
 			kept = append(kept, rel)
 		}
 	}
+
 	m.rels, m.relsAt = kept, time.Now()
+
 	return kept, nil
 }
 
@@ -424,6 +480,7 @@ func appAsset(tag string) (string, bool) {
 	if !ok || version == "" || strings.ContainsAny(version, "/?#") {
 		return "", false
 	}
+
 	return "SoundTap-app-" + version + "-armv7.bin", true
 }
 
@@ -434,26 +491,43 @@ func (m *Manager) isOffered(ctx context.Context, tag string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+
 	for _, rel := range rels {
 		if strings.TrimSpace(rel.TagName) == tag {
 			return true, nil
 		}
 	}
+
 	return false, nil
+}
+
+// Progress is how far an app update under way is, in percent (0-99), and false when none
+// runs or the download's size is unknown. It covers the download, which writes the binary
+// next to the running one; it holds at 99 from the last byte until the restart, and goes
+// when the install fails.
+func (m *Manager) Progress() (int, bool) {
+	v := m.progress.Load()
+
+	return int(v - 1), v > 0
 }
 
 // install downloads and installs release `to` in the background. The caller must
 // already hold mu (via TryLock); install hands the lock off to the goroutine and
 // releases it when the install fails. On success the process restarts with it held.
-// allowOlder lets a release older than the running app in; only a pressed request sets it.
+// allowOlder lets a release older than the running app in; only a request naming its tag sets it.
 func (m *Manager) install(to string, allowOlder bool) {
 	from := m.version
+
 	safego.Go("update.install", func() {
-		if err := m.installRelease(context.Background(), to, allowOlder); err != nil {
+		err := m.installRelease(context.Background(), to, allowOlder)
+		if err != nil {
+			m.progress.Store(0)
 			m.mu.Unlock()
 			m.log.Warn("self-update failed", "from", from, "to", to, "err", err)
+
 			return
 		}
+
 		m.log.Info("self-update installed; restarting", "from", from, "to", to)
 	})
 }
@@ -469,8 +543,9 @@ func (m *Manager) admitApp(st release.Statement, tag string, allowOlder bool) er
 	case st.Profile != release.ProfileProduction:
 		return fmt.Errorf("%s is signed for development speakers, not as a release", tag)
 	case !allowOlder && !newer(tag, m.version):
-		return fmt.Errorf("%s is not newer than the running %s: an older app needs the press on the speaker", tag, m.version)
+		return fmt.Errorf("%s is not newer than the running %s: an older app is installed by naming its tag", tag, m.version)
 	}
+
 	return nil
 }
 
@@ -479,28 +554,37 @@ func (m *Manager) installRelease(ctx context.Context, tag string, allowOlder boo
 	if !ok {
 		return UnknownTagError{Tag: tag}
 	}
+
 	path := m.app.StagingPath()
+
 	sigPath := path + ".sig"
 	defer os.Remove(sigPath)
+
 	base := "https://github.com/" + Repo + "/releases/download/" + tag + "/" + asset
-	if err := m.downloadFile(ctx, base, path, 0o755); err != nil {
+	if err := m.downloadApp(ctx, base, path); err != nil {
 		_ = os.Remove(path)
+
 		return err
 	}
 	// Every release is signed the one way ADR 0048 describes: <asset>.sig, the signed
 	// statement naming the asset's kind, profile, version and SHA-256. No tag is exempt.
 	if err := m.downloadFile(ctx, base+".sig", sigPath, 0o644); err != nil {
 		_ = os.Remove(path)
+
 		return err
 	}
+
 	st, err := verifySigned(path, sigPath)
 	if err == nil {
 		err = m.admitApp(st, tag, allowOlder)
 	}
+
 	if err != nil {
 		_ = os.Remove(path)
+
 		return err
 	}
+
 	return m.app.InstallApp(path)
 }
 
@@ -511,7 +595,21 @@ func (m *Manager) getJSON(ctx context.Context, target string, out any) error {
 func (m *Manager) downloadFile(ctx context.Context, target, path string, mode fs.FileMode) error {
 	ctx, cancel := context.WithTimeout(ctx, downloadTimeout)
 	defer cancel()
+
 	return safehttp.Download(ctx, m.download, "SoundTap/"+m.version, target, path, mode)
+}
+
+// downloadApp is downloadFile for the app binary, with its percentage for Progress.
+func (m *Manager) downloadApp(ctx context.Context, target, path string) error {
+	ctx, cancel := context.WithTimeout(ctx, downloadTimeout)
+	defer cancel()
+
+	return safehttp.DownloadWatched(ctx, m.download, "SoundTap/"+m.version, target, path, 0o755,
+		func(done, total int64) {
+			if total > 0 {
+				m.progress.Store(min(done*100/total, 99) + 1)
+			}
+		})
 }
 
 // ErrCoreCurrent means no published Core release is newer than the running one.
@@ -523,6 +621,7 @@ func coreVersion(tag string) (release.Version, bool) {
 	if !ok {
 		return release.Version{}, false
 	}
+
 	return release.ParseVersion(v)
 }
 
@@ -531,6 +630,7 @@ func coreAsset(tag string) (string, bool) {
 	if _, ok := coreVersion(tag); !ok {
 		return "", false
 	}
+
 	return "SoundTap-Core-" + strings.TrimPrefix(tag, "os-v") + ".stu", true
 }
 
@@ -543,19 +643,26 @@ func (m *Manager) LatestCore(ctx context.Context, running string) (*Release, err
 	if !ok {
 		return nil, nil
 	}
+
 	all, err := m.allReleases(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var best *Release
-	var bestV release.Version
+
+	var (
+		best  *Release
+		bestV release.Version
+	)
+
 	for i, rel := range all {
 		v, ok := coreVersion(strings.TrimSpace(rel.TagName))
 		if !ok || !offered(rel, v, have) || v.Compare(have) <= 0 || (best != nil && v.Compare(bestV) <= 0) {
 			continue
 		}
+
 		best, bestV = &all[i], v
 	}
+
 	return best, nil
 }
 
@@ -579,19 +686,25 @@ func (m *Manager) OpenCore(ctx context.Context, running string) (CorePackage, er
 	if m.Mode() != ModeFirmware {
 		return CorePackage{}, ErrNotUpdatable
 	}
+
 	rel, err := m.LatestCore(ctx, running)
 	if err != nil {
 		return CorePackage{}, err
 	}
+
 	if rel == nil {
 		return CorePackage{}, ErrCoreCurrent
 	}
+
 	tag := strings.TrimSpace(rel.TagName)
+
 	asset, ok := coreAsset(tag)
 	if !ok {
 		return CorePackage{}, fmt.Errorf("release %q is not a Core release", tag)
 	}
+
 	base := "https://github.com/" + Repo + "/releases/download/" + tag + "/" + asset
+
 	sig, err := m.fetchSignature(ctx, base+".sig")
 	if err != nil {
 		return CorePackage{}, err
@@ -603,13 +716,16 @@ func (m *Manager) OpenCore(ctx context.Context, running string) (CorePackage, er
 	if err == nil && (st.Profile != release.ProfileProduction || st.Version != strings.TrimPrefix(tag, "os-v")) {
 		err = fmt.Errorf("%s is signed as %s %s", tag, st.Profile, st.Version)
 	}
+
 	if err != nil {
 		return CorePackage{}, err
 	}
+
 	resp, err := m.get(ctx, m.coreDownload, base)
 	if err != nil {
 		return CorePackage{}, err
 	}
+
 	return CorePackage{Tag: tag, Body: resp.Body, Size: resp.ContentLength, Signature: sig}, nil
 }
 
@@ -619,30 +735,38 @@ func (m *Manager) fetchSignature(ctx context.Context, target string) (string, er
 		return "", err
 	}
 	defer func() { _ = resp.Body.Close() }()
+
 	b, err := io.ReadAll(io.LimitReader(resp.Body, sigMax+1))
 	if err != nil {
 		return "", err
 	}
+
 	if len(b) > sigMax {
 		return "", errors.New(target + ": signature too large")
 	}
+
 	return strings.TrimSpace(string(b)), nil
 }
 
 // get starts a GET whose status is 200; the caller closes the body.
 func (m *Manager) get(ctx context.Context, client *http.Client, target string) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
 	if err != nil {
 		return nil, err
 	}
+
 	req.Header.Set("User-Agent", "SoundTap/"+m.version)
+
 	resp, err := safehttp.Do(ctx, client, req)
 	if err != nil {
 		return nil, err
 	}
+
 	if resp.StatusCode != http.StatusOK {
 		_ = resp.Body.Close()
+
 		return nil, safehttp.HTTPStatusError{URL: target, Status: resp.StatusCode}
 	}
+
 	return resp, nil
 }

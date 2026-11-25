@@ -35,6 +35,8 @@ const Dir = "/var/run/wpa_supplicant"
 
 // ClientDir is where a client binds its own socket. wpa_ctrl.c uses /tmp; /run/soundtap is
 // soundtapd's and not writable by the media daemons' users.
+//
+//nolint:gochecknoglobals // a setting: tests (wpactrltest.ShortDir) point it at a directory of their own
 var ClientDir = "/run/soundtap"
 
 // DefaultTimeout bounds a request without a deadline of its own, as wpa_ctrl.c's 10 s.
@@ -45,8 +47,31 @@ const DefaultTimeout = 10 * time.Second
 // a bigger buffer costs nothing here.
 const maxDatagram = 64 << 10
 
+// eventQueue is how many events wait for the consumer before the next is dropped.
+const eventQueue = 64
+
+// scanColumns is the columns of a SCAN_RESULTS row: bssid, frequency, signal level, flags
+// and ssid.
+const scanColumns = 5
+
 // ErrClosed is a request on a connection that is closed, or whose reader stopped.
 var ErrClosed = errors.New("wpactrl: connection closed")
+
+// errMultiLine is a command with a line break or NUL in it, which would reach
+// wpa_supplicant as more than the one command asked for.
+var errMultiLine = errors.New("wpactrl: command must be one line")
+
+// errBadVariable is a SET_NETWORK variable name with a space or line break in it.
+var errBadVariable = errors.New("wpactrl SET_NETWORK: bad variable name")
+
+// replyError is a reply other than the one a command expects: the command's verb and the
+// first line of what wpa_supplicant answered.
+type replyError struct {
+	verb  string
+	reply string
+}
+
+func (e *replyError) Error() string { return "wpactrl " + e.verb + ": " + e.reply }
 
 // Event is one unsolicited message after ATTACH.
 type Event struct {
@@ -58,31 +83,38 @@ type Event struct {
 // Field returns the value of key=value in the event's text, unquoted when quoted, and
 // whether it was there: CTRL-EVENT-SSID-TEMP-DISABLED's reason=WRONG_KEY, or [id=0].
 func (e Event) Field(key string) (string, bool) {
-	for _, w := range strings.Fields(strings.Trim(e.Text, "[]")) {
+	for w := range strings.FieldsSeq(strings.Trim(e.Text, "[]")) {
 		w = strings.Trim(w, "[]")
-		if v, ok := strings.CutPrefix(w, key+"="); ok {
-			if u, err := strconv.Unquote(v); err == nil {
-				v = u
+		if value, ok := strings.CutPrefix(w, key+"="); ok {
+			unquoted, err := strconv.Unquote(value)
+			if err == nil {
+				value = unquoted
 			}
-			return v, true
+
+			return value, true
 		}
 	}
+
 	return "", false
 }
 
 // ParseEvent reads "<3>CTRL-EVENT-…": ok is false for anything without the <N> prefix.
 func ParseEvent(msg string) (Event, bool) {
-	rest, ok := strings.CutPrefix(msg, "<")
-	if !ok {
-		return Event{}, false
+	rest, prefixed := strings.CutPrefix(msg, "<")
+	if !prefixed {
+		return Event{Level: 0, Name: "", Text: ""}, false
 	}
-	n, text, ok := strings.Cut(rest, ">")
-	level, err := strconv.Atoi(n)
-	if !ok || err != nil {
-		return Event{}, false
+
+	num, text, closed := strings.Cut(rest, ">")
+
+	level, err := strconv.Atoi(num)
+	if !closed || err != nil {
+		return Event{Level: 0, Name: "", Text: ""}, false
 	}
+
 	text = strings.TrimRight(text, "\n")
 	name, _, _ := strings.Cut(text, " ")
+
 	return Event{Level: level, Name: name, Text: text}, true
 }
 
@@ -99,54 +131,36 @@ type Conn struct {
 	once    sync.Once
 }
 
-var clientSeq atomic.Uint64
+// clientSeq numbers this process's client sockets, so two connections never bind the same
+// name.
+var clientSeq atomic.Uint64 //nolint:gochecknoglobals // one sequence for every connection of the process
 
 // Dial connects to the control socket at path, such as Dir+"/wlan0".
 func Dial(path string) (*Conn, error) {
 	local := filepath.Join(ClientDir, fmt.Sprintf("wpa_ctrl_%d-%d", os.Getpid(), clientSeq.Add(1)))
 	_ = os.Remove(local) // a leftover of an earlier process with this pid
+
 	sock, err := net.DialUnix("unixgram",
 		&net.UnixAddr{Name: local, Net: "unixgram"}, &net.UnixAddr{Name: path, Net: "unixgram"})
 	if err != nil {
 		_ = os.Remove(local)
+
 		return nil, fmt.Errorf("wpactrl: %w", err)
 	}
-	c := &Conn{
+
+	conn := &Conn{
 		sock:    sock,
 		local:   local,
+		reqMu:   sync.Mutex{},
 		replies: make(chan string, 1),
-		events:  make(chan Event, 64),
+		events:  make(chan Event, eventQueue),
 		done:    make(chan struct{}),
+		closing: atomic.Bool{},
+		once:    sync.Once{},
 	}
-	safego.Go("wpactrl-read", c.read)
-	return c, nil
-}
+	safego.Go("wpactrl-read", conn.read)
 
-// read sorts every datagram into a reply or an event until the socket closes. An event
-// that finds Events full is dropped, as wpa_cli drops what it cannot print: the reader
-// never blocks requests behind a slow consumer.
-func (c *Conn) read() {
-	defer close(c.done)
-	defer close(c.events)
-	buf := make([]byte, maxDatagram)
-	for {
-		n, err := c.sock.Read(buf)
-		if err != nil {
-			return
-		}
-		msg := string(buf[:n])
-		if ev, ok := ParseEvent(msg); ok {
-			select {
-			case c.events <- ev:
-			default:
-			}
-			continue
-		}
-		select {
-		case c.replies <- msg:
-		default: // nobody asked: a reply to a request that already gave up
-		}
-	}
+	return conn, nil
 }
 
 // Events delivers what wpa_supplicant reports after Attach. It is closed with the
@@ -157,28 +171,36 @@ func (c *Conn) Events() <-chan Event { return c.events }
 // its reply until ctx ends, or DefaultTimeout without a deadline.
 func (c *Conn) Request(ctx context.Context, cmd string) (string, error) {
 	if strings.ContainsAny(cmd, "\n\x00") {
-		return "", fmt.Errorf("wpactrl: command must be one line")
+		return "", errMultiLine
 	}
+
 	c.reqMu.Lock()
 	defer c.reqMu.Unlock()
+
 	select { // a late reply to a request that gave up is not this one's
 	case <-c.replies:
 	default:
 	}
+
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
+
 		ctx, cancel = context.WithTimeout(ctx, DefaultTimeout)
 		defer cancel()
 	}
-	if _, err := c.sock.Write([]byte(cmd)); err != nil {
+
+	_, err := c.sock.Write([]byte(cmd))
+	if err != nil {
 		if c.closing.Load() {
 			return "", ErrClosed
 		}
+
 		return "", fmt.Errorf("wpactrl %s: %w", verb(cmd), err)
 	}
+
 	select {
-	case r := <-c.replies:
-		return r, nil
+	case reply := <-c.replies:
+		return reply, nil
 	case <-c.done:
 		return "", ErrClosed
 	case <-ctx.Done():
@@ -189,18 +211,21 @@ func (c *Conn) Request(ctx context.Context, cmd string) (string, error) {
 // verb is the command's first word, so a key in SET_NETWORK never reaches an error text.
 func verb(cmd string) string {
 	v, _, _ := strings.Cut(cmd, " ")
+
 	return v
 }
 
 // OK sends cmd and fails unless wpa_supplicant answered OK.
 func (c *Conn) OK(ctx context.Context, cmd string) error {
-	r, err := c.Request(ctx, cmd)
+	reply, err := c.Request(ctx, cmd)
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(r) != "OK" {
-		return fmt.Errorf("wpactrl %s: %s", verb(cmd), firstLine(r))
+
+	if strings.TrimSpace(reply) != "OK" {
+		return &replyError{verb: verb(cmd), reply: firstLine(reply)}
 	}
+
 	return nil
 }
 
@@ -211,6 +236,7 @@ func (c *Conn) Attach(ctx context.Context) error { return c.OK(ctx, "ATTACH") }
 // stream: a supplicant that went away shows only as a request without a reply.
 func (c *Conn) Ping(ctx context.Context) bool {
 	r, err := c.Request(ctx, "PING")
+
 	return err == nil && strings.TrimSpace(r) == "PONG"
 }
 
@@ -220,19 +246,22 @@ func (c *Conn) Status(ctx context.Context) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	return ParseKV(r), nil
 }
 
 // AddNetwork creates an empty, disabled network block and returns its id.
 func (c *Conn) AddNetwork(ctx context.Context) (int, error) {
-	r, err := c.Request(ctx, "ADD_NETWORK")
+	reply, err := c.Request(ctx, "ADD_NETWORK")
 	if err != nil {
 		return 0, err
 	}
-	id, err := strconv.Atoi(strings.TrimSpace(r))
+
+	id, err := strconv.Atoi(strings.TrimSpace(reply))
 	if err != nil {
-		return 0, fmt.Errorf("wpactrl ADD_NETWORK: %s", firstLine(r))
+		return 0, &replyError{verb: "ADD_NETWORK", reply: firstLine(reply)}
 	}
+
 	return id, nil
 }
 
@@ -240,8 +269,9 @@ func (c *Conn) AddNetwork(ctx context.Context) (int, error) {
 // configuration syntax: a quoted string, or hex and numbers bare.
 func (c *Conn) SetNetwork(ctx context.Context, id int, key, value string) error {
 	if strings.ContainsAny(key, " \n") {
-		return fmt.Errorf("wpactrl SET_NETWORK: bad variable name")
+		return errBadVariable
 	}
+
 	return c.OK(ctx, fmt.Sprintf("SET_NETWORK %d %s %s", id, key, value))
 }
 
@@ -263,15 +293,17 @@ func (c *Conn) RemoveAllNetworks(ctx context.Context) error {
 // Scan asks for a new scan; the results follow with CTRL-EVENT-SCAN-RESULTS. A scan
 // already running answers FAIL-BUSY, which is reported as nil: its results come too.
 func (c *Conn) Scan(ctx context.Context) error {
-	r, err := c.Request(ctx, "SCAN")
+	reply, err := c.Request(ctx, "SCAN")
 	if err != nil {
 		return err
 	}
-	switch strings.TrimSpace(r) {
+
+	switch strings.TrimSpace(reply) {
 	case "OK", "FAIL-BUSY":
 		return nil
+	default:
+		return &replyError{verb: "SCAN", reply: firstLine(reply)}
 	}
-	return fmt.Errorf("wpactrl SCAN: %s", firstLine(r))
 }
 
 // Reconfigure makes wpa_supplicant read its configuration file again.
@@ -292,6 +324,7 @@ func (c *Conn) ScanResults(ctx context.Context) ([]BSS, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	return ParseScanResults(r), nil
 }
 
@@ -299,21 +332,27 @@ func (c *Conn) ScanResults(ctx context.Context) ([]BSS, error) {
 // and ssid separated by tabs. Spaces are part of an SSID and stay.
 func ParseScanResults(out string) []BSS {
 	var res []BSS
+
 	for i, line := range strings.Split(out, "\n") {
 		if i == 0 || strings.TrimSpace(line) == "" {
 			continue
 		}
-		f := strings.SplitN(strings.TrimRight(line, "\r"), "\t", 5)
-		if len(f) < 5 {
+
+		fields := strings.SplitN(strings.TrimRight(line, "\r"), "\t", scanColumns)
+		if len(fields) < scanColumns {
 			continue
 		}
-		freq, _ := strconv.Atoi(strings.TrimSpace(f[1]))
-		sig, err := strconv.Atoi(strings.TrimSpace(f[2]))
+
+		freq, _ := strconv.Atoi(strings.TrimSpace(fields[1]))
+
+		sig, err := strconv.Atoi(strings.TrimSpace(fields[2]))
 		if err != nil {
 			continue
 		}
-		res = append(res, BSS{BSSID: f[0], Freq: freq, Signal: sig, Flags: f[3], SSID: f[4]})
+
+		res = append(res, BSS{BSSID: fields[0], Freq: freq, Signal: sig, Flags: fields[3], SSID: fields[4]})
 	}
+
 	return res
 }
 
@@ -323,34 +362,75 @@ func (c *Conn) SignalPoll(ctx context.Context) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	return ParseKV(r), nil
 }
 
 // ParseKV reads key=value lines. Values keep inner spaces; leading indentation goes.
 func ParseKV(out string) map[string]string {
-	kv := map[string]string{}
-	for _, line := range strings.Split(out, "\n") {
+	pairs := map[string]string{}
+
+	for line := range strings.SplitSeq(out, "\n") {
 		k, v, ok := strings.Cut(strings.TrimLeft(strings.TrimRight(line, "\r"), " \t"), "=")
 		if ok && k != "" {
-			kv[k] = v
+			pairs[k] = v
 		}
 	}
-	return kv
+
+	return pairs
 }
 
 // Close detaches and closes the connection and removes its socket file.
 func (c *Conn) Close() error {
 	var err error
+
 	c.once.Do(func() {
 		c.closing.Store(true)
 		err = c.sock.Close()
 		<-c.done
 		_ = os.Remove(c.local)
 	})
-	return err
+
+	if err != nil {
+		return fmt.Errorf("wpactrl: %w", err)
+	}
+
+	return nil
+}
+
+// read sorts every datagram into a reply or an event until the socket closes. An event
+// that finds Events full is dropped, as wpa_cli drops what it cannot print: the reader
+// never blocks requests behind a slow consumer.
+func (c *Conn) read() {
+	defer close(c.done)
+	defer close(c.events)
+
+	buf := make([]byte, maxDatagram)
+	for {
+		n, err := c.sock.Read(buf)
+		if err != nil {
+			return
+		}
+
+		msg := string(buf[:n])
+		if ev, ok := ParseEvent(msg); ok {
+			select {
+			case c.events <- ev:
+			default:
+			}
+
+			continue
+		}
+
+		select {
+		case c.replies <- msg:
+		default: // nobody asked: a reply to a request that already gave up
+		}
+	}
 }
 
 func firstLine(s string) string {
 	l, _, _ := strings.Cut(strings.TrimSpace(s), "\n")
+
 	return l
 }

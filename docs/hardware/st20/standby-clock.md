@@ -44,7 +44,7 @@ install from stock soundtapd takes these over once
 ## SoundTap
 
 SoundTap's clock (`app/internal/panel/clock.go`) walks the same way over the free area of
-the panel, one pixel diagonally every 5 s, and keeps its brightness setting on top. Like
+the panel, one pixel diagonally every 5 s, and like stock's it does not dim. Like
 stock it shows the time alone, with AM/PM under it on a 12-hour clock: no date and no
 weather, which would light more pixels for the whole of standby and leave the walk less room
 ([ADR 0111](../../decisions/0111-st20-standby-clock.md)).

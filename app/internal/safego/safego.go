@@ -22,8 +22,10 @@ var recorder atomic.Pointer[Recorder]
 func SetRecorder(rec Recorder) {
 	if rec == nil {
 		recorder.Store(nil)
+
 		return
 	}
+
 	recorder.Store(&rec)
 }
 
@@ -33,6 +35,7 @@ func SetRecorder(rec Recorder) {
 func Go(name string, fn func()) {
 	go func() {
 		defer Recover(name)
+
 		fn()
 	}()
 }
@@ -44,10 +47,14 @@ func Recover(name string) {
 	if r == nil {
 		return
 	}
+
 	stack := debug.Stack()
+
 	slog.Error("goroutine panicked", "goroutine", name, "panic", r)
+
 	if rec := recorder.Load(); rec != nil {
 		(*rec)(name, r, stack)
 	}
+
 	panic(r)
 }

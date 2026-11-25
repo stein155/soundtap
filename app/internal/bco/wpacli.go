@@ -53,38 +53,48 @@ func wpaCLI(ctx context.Context, fd int, command string) (string, error) {
 // caller must already hold the serial lock and own fd.
 func shellCommand(ctx context.Context, fd int, line string) (string, error) {
 	if strings.ContainsAny(line, "\r\n") {
-		return "", fmt.Errorf("BCO shell: command must be a single line")
+		return "", errors.New("BCO shell: command must be a single line")
 	}
+
 	buf := make([]byte, 1024)
 	drainSerial(fd, buf)
+
 	if _, err := syscall.Write(fd, []byte(line+"\r")); err != nil {
 		return "", fmt.Errorf("BCO serial write: %w", err)
 	}
 
 	var out strings.Builder
+
 	deadline := time.Now().Add(wpaTimeout)
+
 	var lastData time.Time
+
 	for time.Now().Before(deadline) && out.Len() <= wpaMaxOutput {
 		n, err := syscall.Read(fd, buf)
 		switch {
 		case n > 0:
 			out.Write(buf[:n])
+
 			lastData = time.Now()
-		case err != nil && err != syscall.EAGAIN && err != syscall.EWOULDBLOCK:
+		case err != nil && !errors.Is(err, syscall.EAGAIN) && !errors.Is(err, syscall.EWOULDBLOCK):
 			return "", fmt.Errorf("BCO serial read: %w", err)
 		}
+
 		if !lastData.IsZero() && time.Since(lastData) >= wpaQuiet {
 			break
 		}
+
 		select {
 		case <-ctx.Done():
 			return "", ctx.Err()
 		case <-time.After(20 * time.Millisecond):
 		}
 	}
+
 	if out.Len() == 0 {
 		return "", fmt.Errorf("BCO shell %q: no reply", line)
 	}
+
 	return cleanShellOutput(out.String(), line), nil
 }
 
@@ -102,16 +112,20 @@ func drainSerial(fd int, buf []byte) {
 // echo, never payload.
 func cleanShellOutput(response, sent string) string {
 	var kept []string
-	for _, raw := range strings.Split(strings.ReplaceAll(response, "\r", "\n"), "\n") {
+
+	for raw := range strings.SplitSeq(strings.ReplaceAll(response, "\r", "\n"), "\n") {
 		if strings.ContainsRune(raw, '\b') {
 			continue
 		}
+
 		line := strings.TrimSpace(raw)
 		if line == "" || strings.Contains(line, sent) {
 			continue
 		}
+
 		kept = append(kept, line)
 	}
+
 	return strings.Join(kept, "\n")
 }
 
@@ -128,11 +142,13 @@ type Status struct {
 
 func parseStatus(reply string) Status {
 	var s Status
-	for _, line := range strings.Split(reply, "\n") {
+
+	for line := range strings.SplitSeq(reply, "\n") {
 		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
 		if !ok {
 			continue
 		}
+
 		switch strings.ToLower(strings.TrimSpace(key)) {
 		case "id":
 			s.ID = strings.TrimSpace(value)
@@ -148,7 +164,9 @@ func parseStatus(reply string) Status {
 			s.IP = strings.TrimSpace(value)
 		}
 	}
+
 	s.Linked = strings.EqualFold(s.State, "COMPLETED")
+
 	return s
 }
 
@@ -157,6 +175,7 @@ func ReadStatus(ctx context.Context, device string) (Status, error) {
 	if err := lockSerial(ctx); err != nil {
 		return Status{}, err
 	}
+
 	defer unlockSerial()
 
 	fd, err := openSerial(ctx, device)
@@ -169,10 +188,12 @@ func ReadStatus(ctx context.Context, device string) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
+
 	status := parseStatus(reply)
 	if status.State == "" {
-		return Status{}, fmt.Errorf("BCO wpa_cli STATUS: no wpa_state in reply")
+		return Status{}, errors.New("BCO wpa_cli STATUS: no wpa_state in reply")
 	}
+
 	return status, nil
 }
 
@@ -191,6 +212,7 @@ func Connect(ctx context.Context, device, ssid, psk string) error {
 	if err := validSSID(ssid); err != nil {
 		return err
 	}
+
 	if err := validPSK(psk); err != nil {
 		return err
 	}
@@ -198,6 +220,7 @@ func Connect(ctx context.Context, device, ssid, psk string) error {
 	if err := lockSerial(ctx); err != nil {
 		return err
 	}
+
 	defer unlockSerial()
 
 	fd, err := openSerial(ctx, device)
@@ -210,6 +233,7 @@ func Connect(ctx context.Context, device, ssid, psk string) error {
 	if err != nil {
 		return err
 	}
+
 	id, err := networkID(reply)
 	if err != nil {
 		return err
@@ -224,6 +248,7 @@ func Connect(ctx context.Context, device, ssid, psk string) error {
 		if !joined {
 			cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			defer cancel()
+
 			wpaCLI(cctx, fd, fmt.Sprintf("REMOVE_NETWORK %d", id))
 			wpaCLI(cctx, fd, "ENABLE_NETWORK all")
 		}
@@ -234,9 +259,11 @@ func Connect(ctx context.Context, device, ssid, psk string) error {
 		if err != nil {
 			return err
 		}
+
 		if refused(out) {
 			return fmt.Errorf("BCO wpa_cli SET_NETWORK %s: %s", key, firstLine(out))
 		}
+
 		return nil
 	}
 	// The sdsShell strips double quotes from arguments, so a quoted literal reaches the
@@ -246,30 +273,37 @@ func Connect(ctx context.Context, device, ssid, psk string) error {
 	if err := set("ssid", hex.EncodeToString([]byte(ssid))); err != nil {
 		return err
 	}
+
 	if psk == "" {
 		err = set("key_mgmt", "NONE")
 	} else {
 		err = set("psk", wpaPSK(psk, ssid))
 	}
+
 	if err != nil {
 		return err
 	}
+
 	if _, err := wpaCLI(ctx, fd, fmt.Sprintf("SELECT_NETWORK %d", id)); err != nil {
 		return err
 	}
 
 	deadline := time.Now().Add(wpaAssocTimeout)
+
 	var last Status
+
 	for time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(time.Second):
 		}
+
 		out, err := wpaCLI(ctx, fd, "STATUS")
 		if err != nil {
 			continue // a single missed reply is not a failed association
 		}
+
 		last = parseStatus(out)
 		// Same SSID is not enough: rejoining the network the speaker is already on
 		// would read COMPLETED from the old block before the new one is tried.
@@ -281,40 +315,48 @@ func Connect(ctx context.Context, device, ssid, psk string) error {
 					wpaCLI(ctx, fd, fmt.Sprintf("REMOVE_NETWORK %d", old))
 				}
 			}
+
 			out, err := wpaCLI(ctx, fd, "SAVE_CONFIG")
 			if err == nil && refused(out) {
 				err = errors.New(firstLine(out))
 			}
+
 			if err != nil {
 				return fmt.Errorf("associated with %q but could not persist it: %w", ssid, err)
 			}
+
 			return nil
 		}
 	}
+
 	state := last.State
 	if state == "" {
 		state = "no status reply"
 	}
+
 	return fmt.Errorf("BCO did not associate with %q (last state %s)", ssid, state)
 }
 
 // networkID reads the id ADD_NETWORK returns: the reply is the bare number.
 func networkID(reply string) (int, error) {
-	for _, line := range strings.Split(reply, "\n") {
+	for line := range strings.SplitSeq(reply, "\n") {
 		if id, err := strconv.Atoi(strings.TrimSpace(line)); err == nil && id >= 0 {
 			return id, nil
 		}
 	}
+
 	return 0, fmt.Errorf("BCO wpa_cli ADD_NETWORK: no network id in %q", firstLine(reply))
 }
 
 func validSSID(ssid string) error {
 	if ssid == "" || len(ssid) > 32 {
-		return fmt.Errorf("ssid must be 1..32 bytes")
+		return errors.New("ssid must be 1..32 bytes")
 	}
+
 	if strings.ContainsAny(ssid, "\"\\\r\n") || strings.IndexFunc(ssid, func(r rune) bool { return r < 0x20 }) >= 0 {
-		return fmt.Errorf("ssid must not contain quotes, backslashes or control characters")
+		return errors.New("ssid must not contain quotes, backslashes or control characters")
 	}
+
 	return nil
 }
 
@@ -330,15 +372,19 @@ func validPSK(psk string) error {
 	if psk == "" {
 		return nil // open network
 	}
+
 	if IsHexPSK(psk) {
 		return nil
 	}
+
 	if len(psk) < 8 || len(psk) > 63 {
-		return fmt.Errorf("WPA passphrase must be 8..63 bytes")
+		return errors.New("WPA passphrase must be 8..63 bytes")
 	}
+
 	if strings.ContainsAny(psk, "\"\\\r\n") || strings.IndexFunc(psk, func(r rune) bool { return r < 0x20 }) >= 0 {
-		return fmt.Errorf("passphrase must not contain quotes, backslashes or control characters")
+		return errors.New("passphrase must not contain quotes, backslashes or control characters")
 	}
+
 	return nil
 }
 
@@ -346,15 +392,18 @@ func validPSK(psk string) error {
 // other than keep.
 func staleNetworkIDs(list, ssid string, keep int) []int {
 	var ids []int
-	for _, line := range strings.Split(list, "\n") {
+
+	for line := range strings.SplitSeq(list, "\n") {
 		fields := strings.Split(line, "\t")
 		if len(fields) < 2 || fields[1] != ssid {
 			continue
 		}
+
 		if id, err := strconv.Atoi(strings.TrimSpace(fields[0])); err == nil && id != keep {
 			ids = append(ids, id)
 		}
 	}
+
 	return ids
 }
 
@@ -364,6 +413,7 @@ func wpaPSK(passphrase, ssid string) string {
 	if IsHexPSK(passphrase) {
 		return passphrase
 	}
+
 	var key []byte
 	for block := uint32(1); len(key) < 32; block++ {
 		mac := hmac.New(sha1.New, []byte(passphrase))
@@ -371,16 +421,20 @@ func wpaPSK(passphrase, ssid string) string {
 		mac.Write([]byte{byte(block >> 24), byte(block >> 16), byte(block >> 8), byte(block)})
 		u := mac.Sum(nil)
 		t := append([]byte(nil), u...)
+
 		for range 4095 {
 			mac.Reset()
 			mac.Write(u)
+
 			u = mac.Sum(u[:0])
 			for i := range t {
 				t[i] ^= u[i]
 			}
 		}
+
 		key = append(key, t...)
 	}
+
 	return hex.EncodeToString(key[:32])
 }
 
@@ -390,6 +444,7 @@ func firstLine(s string) string {
 	if len(line) > 120 {
 		return line[:120]
 	}
+
 	return line
 }
 

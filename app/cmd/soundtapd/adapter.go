@@ -14,85 +14,111 @@ import (
 )
 
 // adapterSession is the running link to the adapter's host, nil until it runs.
+//
+//nolint:gochecknoglobals // process-wide state: the link sets it, the mixer and API read it
 var adapterSession atomic.Pointer[abl.Session]
+
+// adapterFullScale is the mixer level while the host or the soundbar applies the volume.
+const adapterFullScale = 100
 
 // mixerLevel is the level the mixer plays at: full scale while the host product or the
 // soundbar processor applies the volume (stock VOLUME_FORWARD_ABL, ADR 0109), the volume
 // itself otherwise.
 func mixerLevel(output int) int {
-	if s := adapterSession.Load(); s != nil && s.OwnsVolume() {
-		return 100
+	if session := adapterSession.Load(); session != nil && session.OwnsVolume() {
+		return adapterFullScale
 	}
+
 	return soundbar.MixerLevel(output)
 }
 
-// adapterSpeaker is the speaker as the link sees it.
+// adapterSpeaker is the speaker as the link sees it. abl.Speaker's methods take no context,
+// so it carries the link's own.
 type adapterSpeaker struct {
-	ctx context.Context
-	sp  *speakerstate.Speaker
+	ctx     context.Context //nolint:containedctx // abl.Speaker's methods take none: the link's lifetime
+	speaker *speakerstate.Speaker
 }
 
 func (a adapterSpeaker) Playing() bool {
-	st := a.sp.StatusSnapshot()
+	st := a.speaker.StatusSnapshot()
+
 	return !st.Standby && st.Source != ""
 }
 
-func (a adapterSpeaker) Volume() int { return a.sp.StatusSnapshot().Volume }
+func (a adapterSpeaker) Volume() int { return a.speaker.StatusSnapshot().Volume }
 
-func (a adapterSpeaker) SetVolume(level int) { _ = a.sp.SetVolume(a.ctx, level) }
+func (a adapterSpeaker) SetVolume(level int) { _ = a.speaker.SetVolume(a.ctx, level) }
 
 // HostLeft follows the host to its own source or off, as stock does: SoundTap stops.
-func (a adapterSpeaker) HostLeft() { _ = a.sp.EnterStandby(a.ctx) }
+func (a adapterSpeaker) HostLeft() { _ = a.speaker.EnterStandby(a.ctx) }
 
 // runAdapterLink runs the SoundTouch adapter's link to its host product until ctx ends: it
 // finds the host, selects the adapter on it while SoundTap plays, and hands the volume over
 // (docs/hardware/lisa/README.md). A model without the link never calls it.
-func runAdapterLink(ctx context.Context, sp *speakerstate.Speaker, btPair func(), log *slog.Logger) {
+func runAdapterLink(ctx context.Context, speaker *speakerstate.Speaker, btPair func(), log *slog.Logger) {
 	port, err := abl.OpenSerial(ctx, board.HostLinkDev) // the module's UART0 (stock /dev/ttyO0)
 	if err != nil {
 		log.Error("adapter link", "err", err)
+
 		return
 	}
+
 	context.AfterFunc(ctx, func() { _ = port.Close() })
-	s := abl.NewSession(abl.NewMaster(port, nil), adapterSpeaker{ctx: ctx, sp: sp}, log)
+	session := abl.NewSession(abl.NewMaster(port, nil), adapterSpeaker{ctx: ctx, speaker: speaker}, log)
 	// The adapter takes its host's name, as stock's product XML for that host does.
-	s.OnHost = func(h abl.Host) { sp.SetType(board.Type + " (" + h.Product() + ")") }
-	s.Bluetooth = board.BTUart != ""
-	s.OnKey = func(key string, preset int, store bool) { adapterKey(ctx, sp, btPair, key, preset, store, log) }
-	s.OnSelect = func(preset int) {
+	session.OnHost = func(host abl.Host) { speaker.SetType(board.Type + " (" + host.Product() + ")") }
+	session.Bluetooth = board.BTUart != ""
+	session.OnKey = func(key string, preset int, store bool) {
+		hostKey := adapterHostKey{key: key, preset: preset, store: store}
+		adapterKey(ctx, speaker, btPair, hostKey, log)
+	}
+	session.OnSelect = func(preset int) {
 		if preset > 0 {
-			_ = sp.PlayPreset(ctx, preset)
-		} else if sp.StatusSnapshot().Standby {
-			sp.ApplyKey("POWER") // wakes into the last source, as stock's TellBoseAppToSelectLastSoundtouchSource
+			_ = speaker.PlayPreset(ctx, preset)
+		} else if speaker.StatusSnapshot().Standby {
+			speaker.ApplyKey("POWER") // wakes into the last source, as stock's TellBoseAppToSelectLastSoundtouchSource
 		}
 	}
 	// The hook's level is 0 while muted: the host gets the volume itself and the mute apart.
-	sp.OnVolume(func(int) {
-		st := sp.StatusSnapshot()
-		s.SetVolume(st.Volume)
-		s.SetMute(st.Muted)
+	speaker.OnVolume(func(int) {
+		st := speaker.StatusSnapshot()
+		session.SetVolume(st.Volume)
+		session.SetMute(st.Muted)
 	})
-	adapterSession.Store(s)
-	s.Run(ctx)
+	adapterSession.Store(session)
+	session.Run(ctx)
 }
 
 // adapterKey does what a key of the host's remote asks: a preset played or stored, a
 // transport key, Bluetooth pairing or clearing the pairings.
-func adapterKey(ctx context.Context, sp *speakerstate.Speaker, btPair func(), key string, preset int, store bool, log *slog.Logger) {
+func adapterKey(
+	ctx context.Context, speaker *speakerstate.Speaker, btPair func(), hostKey adapterHostKey, log *slog.Logger,
+) {
 	switch {
-	case preset > 0 && store:
-		if ok, err := sp.StoreCurrentAsPreset(fmt.Sprintf("PRESET_%d", preset)); err != nil || !ok {
-			log.Warn("adapter: host remote store preset", "preset", preset, "stored", ok, "err", err)
+	case hostKey.preset > 0 && hostKey.store:
+		ok, err := speaker.StoreCurrentAsPreset(fmt.Sprintf("PRESET_%d", hostKey.preset))
+		if err != nil || !ok {
+			log.Warn("adapter: host remote store preset", "preset", hostKey.preset, "stored", ok, "err", err)
 		}
-	case preset > 0:
-		_ = sp.PlayPreset(ctx, preset)
-	case key == abl.KeyBTPair:
+	case hostKey.preset > 0:
+		_ = speaker.PlayPreset(ctx, hostKey.preset)
+	case hostKey.key == abl.KeyBTPair:
 		if btPair != nil {
 			btPair()
 		}
-	case key == abl.KeyBTClear:
-		clearBluetoothPairings(log)
-	case key != "":
-		sp.ApplyKey(key)
+	case hostKey.key == abl.KeyBTClear:
+		// Not cut short when the link ends: the owner asked for the pairings to go.
+		clearBluetoothPairings(context.WithoutCancel(ctx), log)
+	case hostKey.key != "":
+		speaker.ApplyKey(hostKey.key)
+	default: // no key and no preset: nothing to do
 	}
+}
+
+// adapterHostKey is one key of the host's remote as the link reports it: a key name, or a
+// preset to play or (store) to store.
+type adapterHostKey struct {
+	key    string
+	preset int
+	store  bool
 }

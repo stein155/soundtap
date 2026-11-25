@@ -45,6 +45,7 @@ func kindOf(uri string) string {
 	if !ok {
 		return ""
 	}
+
 	return kind
 }
 
@@ -54,43 +55,53 @@ func normSearch(w svResult) SearchResult {
 		if kindOf(h.URI) != "track" {
 			continue
 		}
+
 		t := Track{URI: h.URI, Name: h.Name, Artists: h.Artists, DurationMs: h.Duration, Artwork: artworkFromURL(h.Image)}
 		if t.Artists == nil {
 			t.Artists = []Ref{}
 		}
+
 		if h.Album != nil && kindOf(h.Album.URI) == "album" {
 			t.Album = h.Album
 		}
+
 		out.Tracks = append(out.Tracks, t)
 	}
+
 	for _, h := range w.Results.Artists.Hits {
 		if kindOf(h.URI) == "artist" {
 			out.Artists = append(out.Artists, Artist{URI: h.URI, Name: h.Name, Artwork: artworkFromURL(h.Image)})
 		}
 	}
+
 	for _, h := range w.Results.Albums.Hits {
 		if kindOf(h.URI) == "album" {
 			a := Album{URI: h.URI, Name: h.Name, Artists: h.Artists, Artwork: artworkFromURL(h.Image)}
 			if a.Artists == nil {
 				a.Artists = []Ref{}
 			}
+
 			out.Albums = append(out.Albums, a)
 		}
 	}
+
 	for _, h := range w.Results.Playlists.Hits {
 		// searchview still spells some playlists spotify:user:<owner>:playlist:<id>.
 		uri := h.URI
 		if i := strings.Index(uri, ":playlist:"); i > 0 {
 			uri = "spotify" + uri[i:]
 		}
+
 		if kindOf(uri) == "playlist" {
 			p := Playlist{URI: uri, Name: h.Name, Artwork: artworkFromURL(h.Image)}
 			if h.Author != nil {
 				p.Owner = h.Author.Name
 			}
+
 			out.Playlists = append(out.Playlists, p)
 		}
 	}
+
 	return out
 }
 
@@ -100,10 +111,12 @@ func (c *Client) Search(ctx context.Context, query string) (SearchResult, error)
 	if query == "" || len(query) > 200 {
 		return SearchResult{}, ErrInvalid
 	}
+
 	st, err := c.ctlStatus(ctx)
 	if err != nil {
 		return SearchResult{}, ErrNotConnected
 	}
+
 	if st.State != "connected" {
 		return SearchResult{}, errFromState(st.State)
 	}
@@ -114,16 +127,20 @@ func (c *Client) Search(ctx context.Context, query string) (SearchResult, error)
 		"country": {st.Country}, "locale": {"en"},
 	}
 	uri := "hm://searchview/km/v4/search/" + url.PathEscape(query) + "?" + q.Encode()
+
 	body, err := c.ctl(ctx, http.MethodGet, "/mercury", url.Values{"uri": {uri}})
 	if err != nil {
 		if errors.Is(err, ErrNotConnected) || errors.Is(err, ErrNotAuthenticated) {
 			return SearchResult{}, err
 		}
+
 		return SearchResult{}, errors.Join(ErrSearchUnavailable, err)
 	}
+
 	var w svResult
 	if err := json.Unmarshal(body, &w); err != nil {
 		return SearchResult{}, errors.Join(ErrSearchUnavailable, err)
 	}
+
 	return normSearch(w), nil
 }

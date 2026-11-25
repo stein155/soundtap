@@ -20,18 +20,26 @@ import (
 
 // Hardware paths come from the active model profile (internal/hw/model); an unidentified
 // model has none.
-var (
-	shelbyDev     = board.AudioDev
-	shelbySource  = board.ShelbySource
-	aicConfigured = board.AICConfigured
-	aicConfigFile = board.AICConfigFile
-	aicConfig     = board.AICConfig
+//
+//nolint:gochecknoglobals // process-wide state: the model's audio device, fixed at start
+var shelbyDev = board.AudioDev
+
+// shelbySource is snd-shelby2's source switch.
+//
+//nolint:gochecknoglobals // a test seam: tests point it at a temporary file
+var shelbySource = board.ShelbySource
+
+// The codec reports its configuration done within aicSettlePolls polls aicSettlePoll apart.
+const (
+	aicSettlePolls = 6
+	aicSettlePoll  = 500 * time.Millisecond
 )
 
 func envDefault(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
 	}
+
 	return fallback
 }
 
@@ -40,23 +48,29 @@ func envDefault(key, fallback string) string {
 // kernel exposes variant= on /proc/cmdline. Glob /lib/firmware for the variant's normal config;
 // fall back to the model default if cmdline has no variant or the blob isn't shipped.
 func resolveAICConfig(fallback string) string {
-	b, err := os.ReadFile("/proc/cmdline")
+	data, err := os.ReadFile("/proc/cmdline")
 	if err != nil {
 		return fallback
 	}
+
 	variant := ""
-	for _, f := range strings.Fields(string(b)) {
+
+	for f := range strings.FieldsSeq(string(data)) {
 		if v, ok := strings.CutPrefix(f, "variant="); ok {
 			variant = v
+
 			break
 		}
 	}
+
 	if variant == "" {
 		return fallback
 	}
+
 	if m, _ := filepath.Glob("/lib/firmware/" + variant + "_*_normal.cfg"); len(m) > 0 {
 		return filepath.Base(m[0])
 	}
+
 	return fallback
 }
 
@@ -64,16 +78,23 @@ func initAudio(log *slog.Logger) {
 	if os.Getenv("AUDIO_NOINIT") == "1" || os.Getenv("AUDIO_EXTERNAL_INIT") == "1" {
 		return
 	}
-	if b, err := os.ReadFile(aicConfigured); err == nil && strings.TrimSpace(string(b)) == "1" {
+
+	b, err := os.ReadFile(board.AICConfigured)
+	if err == nil && strings.TrimSpace(string(b)) == "1" {
 		return
 	}
-	_ = hw.SysfsWrite(aicConfigFile, resolveAICConfig(aicConfig), log)
-	for range 6 {
-		time.Sleep(500 * time.Millisecond)
-		if b, err := os.ReadFile(aicConfigured); err == nil && strings.TrimSpace(string(b)) == "1" {
+
+	_ = hw.SysfsWrite(board.AICConfigFile, resolveAICConfig(board.AICConfig), log)
+
+	for range aicSettlePolls {
+		time.Sleep(aicSettlePoll)
+
+		b, err := os.ReadFile(board.AICConfigured)
+		if err == nil && strings.TrimSpace(string(b)) == "1" {
 			break
 		}
 	}
+
 	if shelbySource != "" {
 		_ = hw.SysfsWrite(shelbySource, "wifi", log)
 	}
@@ -82,15 +103,20 @@ func initAudio(log *slog.Logger) {
 // announcementsInFlight counts notifications currently being played. It is what lets
 // sourceRoute know that PCM has to reach the DAC even though the selected source is
 // analogue; playAnnouncement owns both ends of the count.
+//
+//nolint:gochecknoglobals // process-wide state: announcements count it, the source router reads it
 var announcementsInFlight atomic.Int32
 
 // routeWake tells runSourceRouting the announcement count changed: the speaker state does
 // not, so Speaker.Changed alone never woke it for a doorbell over AUX.
+//
+//nolint:gochecknoglobals // process-wide state: announcements send on it, the source router waits on it
 var routeWake = make(chan struct{}, 1)
 
 // announcementDemand moves the announcement count by delta and wakes the routing loop.
 func announcementDemand(delta int32) {
 	announcementsInFlight.Add(delta)
+
 	select {
 	case routeWake <- struct{}{}:
 	default:
@@ -109,24 +135,31 @@ func sourceRoute(source string) string {
 	if source == sourceAux && announcementsInFlight.Load() == 0 {
 		return "aux"
 	}
+
 	return "wifi"
 }
 
 // runSourceRouting selects only modes exposed by stock snd-shelby2. AUX physical
 // unmute remains governed by PCM-flow safety and therefore awaits hardware validation.
-func runSourceRouting(ctx context.Context, sp *speakerstate.Speaker, log *slog.Logger) {
-	if _, err := os.Stat(shelbySource); err != nil {
+func runSourceRouting(ctx context.Context, speaker *speakerstate.Speaker, log *slog.Logger) {
+	_, err := os.Stat(shelbySource)
+	if err != nil {
 		log.Info("stock source routing unavailable", "path", shelbySource)
+
 		return
 	}
+
 	last := ""
+
 	for {
-		changed := sp.Changed()
-		mode := sourceRoute(sp.StatusSnapshot().Source)
+		changed := speaker.Changed()
+
+		mode := sourceRoute(speaker.StatusSnapshot().Source)
 		if mode != last {
 			_ = hw.SysfsWrite(shelbySource, mode, log)
 			last = mode
 		}
+
 		select {
 		case <-ctx.Done():
 			return
@@ -142,20 +175,27 @@ func runSourceRouting(ctx context.Context, sp *speakerstate.Speaker, log *slog.L
 type audioHealth func() audio.Health
 
 // tuneinStreams is the process-wide cache the player reads and player.Prewarm fills.
+//
+//nolint:gochecknoglobals // process-wide state: the player reads it, player.Prewarm fills it
 var tuneinStreams = &player.StreamCache{}
 
 // runPlayer plays radio and UPnP (internal/player): into the source bus under the Mixer,
 // straight into the audio device without it.
-func runPlayer(ctx context.Context, sp *speakerstate.Speaker, tc player.Resolver, health audioHealth, flush func(), log *slog.Logger) {
+func runPlayer(
+	ctx context.Context, speaker *speakerstate.Speaker, resolver player.Resolver, health audioHealth, flush func(),
+	log *slog.Logger,
+) {
 	sink := os.Getenv("AUDIO_DEV")
 	if sink == "" {
 		sink = shelbyDev
 	}
+
 	if mixEnabled() {
 		sink = busPath()
 	}
+
 	initAudio(log)
-	player.Run(ctx, sp, tc, player.Config{
+	player.Run(ctx, speaker, resolver, player.Config{
 		Sink:        sink,
 		Mixed:       mixEnabled(),
 		Mute:        func(muted bool) { ampLines.mute(muted, log) },

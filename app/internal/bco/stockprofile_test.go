@@ -4,6 +4,7 @@
 package bco
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"strings"
@@ -17,14 +18,17 @@ func settingsSector(records ...any) []byte {
 	for i := 0; i < len(records); i += 2 {
 		out = binary.LittleEndian.AppendUint16(out, uint16(records[i].(int)))
 		out = append(out, records[i+1].(string)...)
+
 		out = append(out, 0)
 		if len(out)%2 == 1 {
 			out = append(out, 0)
 		}
 	}
+
 	for len(out) < 256 {
 		out = append(out, 0xff)
 	}
+
 	return out
 }
 
@@ -32,14 +36,19 @@ func settingsSector(records ...any) []byte {
 func rdOutput(base uint32, data []byte) string {
 	var b strings.Builder
 	b.WriteString("rd 0x40030000 128\r\n")
+
 	for o := 0; o < len(data); o += 16 {
 		fmt.Fprintf(&b, "0x%08x: ", base+uint32(o))
+
 		for w := o; w < o+16; w += 4 {
 			fmt.Fprintf(&b, "0x%08x ", binary.LittleEndian.Uint32(data[w:]))
 		}
+
 		b.WriteString("\r\n")
 	}
+
 	b.WriteString("\r\nsds://>")
+
 	return b.String()
 }
 
@@ -47,13 +56,16 @@ func TestStockProfileFromAnRdDump(t *testing.T) {
 	sector := settingsSector(0x4fbc, "Keuken", 0x4d4c, "0", 0x4e4c, "192.168.1.100", 0x54ec, "EU",
 		stockKeySSID, "Home net", stockKeySecurity, "WPA2PSK", stockKeyPassphrase, "correct horse", 0x5e3c, "1")
 	reply := cleanShellOutput(rdOutput(stockSettingsAddr, sector), "rd 0x40030000 128")
+
 	got, err := parseMemoryDump(reply)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != string(sector) {
+
+	if !bytes.Equal(got, sector) {
 		t.Fatal("the dump does not read back as the sector")
 	}
+
 	p, err := parseStockProfile(got)
 	if err != nil || p.SSID != "Home net" || p.Passphrase != "correct horse" {
 		t.Fatalf("profile = %+v, %v", p, err)

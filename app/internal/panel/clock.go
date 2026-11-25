@@ -17,7 +17,9 @@ import (
 	"github.com/stein155/soundtap/app/oled/screen"
 )
 
-var clockScreenTick = time.Second
+// clockScreenTick is how often the standby screen looks at the clock: often enough to
+// catch the minute rollover promptly.
+const clockScreenTick = time.Second
 
 // RunClockScreen drives the ST20 standby screen: the time alone, shown while the speaker is
 // in standby (the display manager only paints standby content in standby). No-op without
@@ -32,15 +34,24 @@ var clockScreenTick = time.Second
 // without a restart. With the clock switched off, or no timezone known, the standby screen
 // is dropped entirely, restoring the framebuffer that existed before SoundTap drew on it.
 func RunClockScreen(ctx context.Context, disp *display.Manager, cfg func() settings.Display, log *slog.Logger) {
+	clockScreenEvery(ctx, disp, cfg, log, clockScreenTick)
+}
+
+// clockScreenEvery is RunClockScreen looking at the clock every period.
+func clockScreenEvery(
+	ctx context.Context, disp *display.Manager, cfg func() settings.Display, log *slog.Logger, period time.Duration,
+) {
 	if !disp.Available() {
 		return
 	}
+
 	log.Info("oled standby screen up")
 
-	tick := time.NewTicker(clockScreenTick) // catch the minute rollover promptly
+	tick := time.NewTicker(period)
 	defer tick.Stop()
 
 	var lastCfg settings.Display
+
 	last := ""
 	// Whether a standby frame is registered. Kept apart from last, which a settings
 	// change resets to force a repaint: turning the clock off is such a change, and the
@@ -49,25 +60,29 @@ func RunClockScreen(ctx context.Context, disp *display.Manager, cfg func() setti
 	// The zone is loaded on a settings change only: LoadLocation parses the embedded
 	// zoneinfo, and this loop ran it every second. "" is UTC, as clockZone has it.
 	zone := time.UTC
+
 	for {
-		d := cfg()
-		if d != lastCfg {
-			zone = clockZone(d.Timezone)
-			lastCfg = d
+		now := cfg()
+		if now != lastCfg {
+			zone = clockZone(now.Timezone)
+			lastCfg = now
 			last = "" // force a repaint in the new format
 		}
 		// Like stock, no clock before the first NTP sync: the one restored from flash can
 		// be hours behind after a power cut.
-		if !d.ClockOn() || !clocksync.Synced() {
+		if !now.ClockOn() || !clocksync.Synced() {
 			if shown {
 				disp.ClearStandby()
+
 				shown = false
 			}
+
 			last = ""
 		} else {
 			at := time.Now().In(zone)
-			if draw, key := standbyFrame(at, d.Hour12); key != last {
-				disp.SetStandby(display.Content{Frame: dimFrame(draw(), d.Brightness)})
+			if draw, key := standbyFrame(at, now.Hour12); key != last {
+				disp.SetStandby(display.Content{Frame: draw()})
+
 				last, shown = key, true
 			}
 		}
@@ -87,17 +102,22 @@ func RunClockScreen(ctx context.Context, disp *display.Manager, cfg func() setti
 // Against burn-in the whole group walks over the panel as stock's walking clock does: one
 // pixel diagonally every walkStep, bouncing off the edges, so every lit pixel of a digit
 // is dark for a stretch every few minutes. Stock moves its clock this way and dims
-// nothing (its brightness is on or off); the brightness setting here comes on top.
+// nothing (its brightness is on or off), and neither does this: there is no setting.
 // It returns the frame as a func, so the caller draws it only when key changed.
-func standbyFrame(at time.Time, hour12 bool) (draw func() []byte, key string) {
-	clock := clockText(at, hour12)
+//
+//nolint:revive // flag-parameter: hour12 is the owner's clock setting, passed through as data
+func standbyFrame(now time.Time, hour12 bool) (func() []byte, string) {
+	clock := clockText(now, hour12)
+
 	marker := ""
 	if hour12 {
-		marker = at.Format("PM")
+		marker = now.Format("PM")
 	}
-	step := int(at.Unix() / int64(walkStep/time.Second))
-	key = clock + "|" + marker + "|" + strconv.Itoa(step)
-	return func() []byte { return walkFrame(screen.Standby(clock, marker, 0).Pix(15), step) }, key
+
+	step := int(now.Unix() / int64(walkStep/time.Second))
+	key := clock + "|" + marker + "|" + strconv.Itoa(step)
+
+	return func() []byte { return walkFrame(screen.Standby(clock, marker, 0).Pix(fullLevel), step) }, key
 }
 
 // walkStep is how long the standby clock stays put before it moves one pixel: about the
@@ -108,30 +128,40 @@ const walkStep = 5 * time.Second
 // two rows, which are the panel's edge.
 const walkMargin, walkBottom = 1, 2
 
+// bounceLegs is the legs of one round of the walk on an axis: there and back.
+const bounceLegs = 2
+
 // walkFrame moves what pix shows to the step-th place of the walk: the lit area's corner
 // runs back and forth over the free width and height at one pixel per step on both axes,
 // so the path is the diagonal bounce of stock's clock. The place follows from the step
 // alone: a restart or a repaint lands on the same pixel.
 func walkFrame(pix []byte, step int) []byte {
-	const w, h = oled.Width, oled.Height
-	minX, minY, maxX, maxY := w, h, -1, -1
+	const width, height = oled.Width, oled.Height
+
+	minX, minY, maxX, maxY := width, height, -1, -1
+
 	for i, v := range pix {
 		if v == 0 {
 			continue
 		}
-		x, y := i%w, i/w
+
+		x, y := i%width, i/width
 		minX, maxX = min(minX, x), max(maxX, x)
 		minY, maxY = min(minY, y), max(maxY, y)
 	}
+
 	if maxX < 0 {
 		return pix
 	}
-	x := walkMargin + bounce(step, w-2*walkMargin-1-(maxX-minX))
-	y := walkMargin + bounce(step, h-walkMargin-walkBottom-1-(maxY-minY))
+
+	x := walkMargin + bounce(step, width-2*walkMargin-1-(maxX-minX))
+	y := walkMargin + bounce(step, height-walkMargin-walkBottom-1-(maxY-minY))
+
 	out := make([]byte, len(pix))
 	for sy := minY; sy <= maxY; sy++ {
-		copy(out[(y+sy-minY)*w+x:(y+sy-minY)*w+x+maxX-minX+1], pix[sy*w+minX:sy*w+maxX+1])
+		copy(out[(y+sy-minY)*width+x:(y+sy-minY)*width+x+maxX-minX+1], pix[sy*width+minX:sy*width+maxX+1])
 	}
+
 	return out
 }
 
@@ -140,30 +170,21 @@ func bounce(step, room int) int {
 	if room <= 0 {
 		return 0
 	}
-	p := step % (2 * room)
-	if p > room {
-		p = 2*room - p
-	}
-	return p
-}
 
-// dimFrame scales the standby frame to the chosen brightness, as stock's clock has a
-// brightness setting: 80, the default, is the design's own level. 0 or 80 leaves it as
-// drawn. It writes in place, which standbyFrame's fresh frame allows.
-func dimFrame(pix []byte, percent int) []byte {
-	if percent == 0 || percent == 80 {
-		return pix
+	place := step % (bounceLegs * room)
+	if place > room {
+		place = bounceLegs*room - place
 	}
-	for i, v := range pix {
-		pix[i] = byte(min(int(v)*percent/80, 255)) //nolint:gosec // clamped, and percent is not negative
-	}
-	return pix
+
+	return place
 }
 
 // clockZone resolves the town's IANA zone; SetDisplay already refused unknown names.
 func clockZone(name string) *time.Location {
-	if loc, err := time.LoadLocation(name); err == nil {
-		return loc
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		return time.UTC
 	}
-	return time.UTC
+
+	return loc
 }

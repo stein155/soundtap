@@ -32,12 +32,15 @@ func KeypadEvent(km map[int]string, log *slog.Logger) KeyEvent {
 		index, pressed, ok := decodeEvent(record[0])
 		if !ok {
 			log.Debug("unmapped keypad byte", "byte", record[0])
+
 			return 0, false, "", false
 		}
+
 		action, mapped := km[index]
 		if !mapped {
 			log.Debug("unmapped key index", "index", index, "pressed", pressed)
 		}
+
 		return index, pressed, action, mapped
 	}
 }
@@ -45,6 +48,7 @@ func KeypadEvent(km map[int]string, log *slog.Logger) KeyEvent {
 // InputEvent decodes a 32-bit ARM struct input_event from evdev.
 func InputEvent(record []byte) (int, bool, string, bool) {
 	code, pressed, ok := decodeInputEvent(record)
+
 	return int(code), pressed, inputKeymap[code], ok
 }
 
@@ -54,25 +58,32 @@ func InputEvent(record []byte) (int, bool, string, bool) {
 // the reader then drops its in-flight gestures and returns.
 func ReadKeyDevice(ctx context.Context, path string, recordSize int, decode KeyEvent, keys KeySink) {
 	record := make([]byte, recordSize)
+
 	for ctx.Err() == nil {
 		f, err := os.Open(path)
 		if err != nil {
 			if !waitToReopen(ctx) {
 				return
 			}
+
 			continue
 		}
+
 		stop := context.AfterFunc(ctx, func() { _ = f.Close() })
+
 		for {
 			_, err := io.ReadFull(f, record)
 			if err != nil || ctx.Err() != nil {
 				break
 			}
+
 			if index, pressed, action, ok := decode(record); ok {
 				keys.Handle(index, pressed, action)
 			}
 		}
+
 		keys.Reset() // device closed mid-gesture or shutting down: no release edge is coming
+
 		if stop() {
 			_ = f.Close()
 		}

@@ -5,11 +5,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,8 +28,12 @@ func realtimePct(bytes uint64, elapsed time.Duration, bytesPerSecond int) int {
 	if want <= 0 {
 		return 0
 	}
-	return int(float64(bytes) / want * 100)
+
+	return int(float64(bytes) / want * realtimePercentScale)
 }
+
+// realtimePercentScale scales realtimePct's fraction to a percentage.
+const realtimePercentScale = 100
 
 // formatS32 is the sample format the McASP cards take.
 const formatS32 = "S32_LE"
@@ -48,42 +54,66 @@ func alsaSinkFormat(target string) (string, string, int) {
 	// and at low volume 16 bits is where the crackle came from. The widen, the gain
 	// and the resample all happen in S32Writer instead. The WLA was left on S16 and
 	// rounded quiet passages at 2 % to digital zero: 50 of 500 blocks per 10 s.
-	if os.Getenv("SOUNDTAP_FIRMWARE") == "1" && (board.Name == model.ST10 || board.Name == model.WLA) && target == "plughw:0,0" {
+	analogMcASP := board.Name == model.ST10 || board.Name == model.WLA
+	if os.Getenv("SOUNDTAP_FIRMWARE") == "1" && analogMcASP && target == "plughw:0,0" {
 		format, rate = formatS32, mcaspCardRate
 	}
+
 	return target, format, rate
 }
 
-func openAudioSink(ctx context.Context, dev string, timing sinkTiming, log *slog.Logger) (io.Writer, bool, func() error, error) {
+// errEmptyALSADevice refuses an "alsa:" sink that names no device.
+var errEmptyALSADevice = errors.New("empty ALSA device")
+
+// openedSink is an open audio sink: where the PCM goes, whether the caller must pace its
+// writes itself (paced: nothing downstream blocks at the sample rate), and how to close it.
+type openedSink struct {
+	w     io.Writer
+	paced bool
+	close func() error
+}
+
+// openAudioSink opens dev: "-" discards, "alsa:DEVICE" pipes into aplay, anything else is
+// a device file written directly.
+func openAudioSink(ctx context.Context, dev string, timing sinkTiming, log *slog.Logger) (openedSink, error) {
 	if dev == "-" {
-		return io.Discard, true, func() error { return nil }, nil
+		return openedSink{w: io.Discard, paced: true, close: func() error { return nil }}, nil
 	}
+
 	if target, ok := strings.CutPrefix(dev, "alsa:"); ok { //nolint:nestif // moved unchanged
 		if strings.TrimSpace(target) == "" {
-			return nil, false, nil, fmt.Errorf("empty ALSA device")
+			return openedSink{w: nil, paced: false, close: nil}, errEmptyALSADevice
 		}
+
 		device, format, rate := alsaSinkFormat(target)
-		cmd := exec.CommandContext(ctx, "aplay", "-q", "-D", device, "-t", "raw", //nolint:gosec // AUDIO_DEV comes from the init script
-			"-f", format, "-r", fmt.Sprint(rate), "-c", "2",
+		cmd := exec.CommandContext(ctx, "aplay", "-q", "-D", device, "-t", "raw",
+			"-f", format, "-r", strconv.Itoa(rate), "-c", "2",
 			fmt.Sprintf("--buffer-time=%d", timing.bufferMicros),
 			fmt.Sprintf("--period-time=%d", timing.periodMicros))
 		// aplay says "underrun!!!" for every xrun; /api/health counts them (ADR 0127).
 		cmd.Stderr = counters.Matches(supervise.ChildLog("aplay"), "underrun!!!", &counters.ALSAUnderruns)
+
 		stdin, err := cmd.StdinPipe()
 		if err != nil {
-			return nil, false, nil, err
+			return openedSink{w: nil, paced: false, close: nil}, fmt.Errorf("aplay stdin: %w", err)
 		}
+
 		setPipeSize(stdin, timing.pipeBytes, "aplay stdin", log)
-		if err := cmd.Start(); err != nil {
+
+		err = cmd.Start()
+		if err != nil {
 			_ = stdin.Close()
-			return nil, false, nil, err
+
+			return openedSink{w: nil, paced: false, close: nil}, fmt.Errorf("start aplay: %w", err)
 		}
-		if f, ok := stdin.(interface{ Fd() uintptr }); ok {
+
+		if pipe, ok := stdin.(interface{ Fd() uintptr }); ok {
 			frameBytes := 4
 			if format == formatS32 {
 				frameBytes = 8
 			}
-			sinkPipe.Store(&pipeMeter{fd: f.Fd(), bytesPerSecond: frameBytes * rate})
+
+			sinkPipe.Store(&pipeMeter{fd: pipe.Fd(), bytesPerSecond: frameBytes * rate})
 		}
 		// ALSA is the hardware clock. A second ticker drifts against it and inserts
 		// periodic silence blocks, heard as crackling during buffered streams.
@@ -91,19 +121,24 @@ func openAudioSink(ctx context.Context, dev string, timing sinkTiming, log *slog
 		if format == formatS32 {
 			sink = audio.NewS32Writer(stdin, rate)
 		}
-		return sink, false, func() error {
+
+		return openedSink{w: sink, paced: false, close: func() error {
 			sinkPipe.Store(nil)
+
 			_ = stdin.Close()
+
 			return cmd.Wait()
-		}, nil
+		}}, nil
 	}
 
 	ensureDACStreaming(dev, log)
-	f, err := os.OpenFile(dev, os.O_WRONLY, 0) //nolint:gosec // moved unchanged
+
+	file, err := os.OpenFile(dev, os.O_WRONLY, 0)
 	if err != nil {
-		return nil, false, nil, err
+		return openedSink{w: nil, paced: false, close: nil}, fmt.Errorf("open audio device: %w", err)
 	}
-	return f, true, f.Close, nil
+
+	return openedSink{w: file, paced: true, close: file.Close}, nil
 }
 
 // mcaspCardRate is the rate the mainline ST10 and ST20 McASP links clock: 46875 Hz,

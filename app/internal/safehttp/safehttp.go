@@ -39,25 +39,31 @@ var (
 // Speakers have no working RTC, so certificate validation can race boot-time NTP.
 func Do(ctx context.Context, client *http.Client, req *http.Request) (*http.Response, error) {
 	resp, err := client.Do(req)
+
 	notBefore, behind := certificateNotYetValid(err)
 	if err == nil || req.URL.Scheme != "https" || !behind || !waitForClock(ctx, notBefore) {
 		return resp, err
 	}
+
 	retry := req.Clone(ctx)
-	if req.Body != nil {
+	// http.NoBody carries no GetBody, but there is nothing to replay.
+	if req.Body != nil && req.Body != http.NoBody {
 		if req.GetBody == nil {
 			return resp, err
 		}
+
 		retry.Body, err = req.GetBody()
 		if err != nil {
 			return nil, err
 		}
 	}
+
 	return client.Do(retry)
 }
 
 func clockSane(notBefore time.Time) bool {
 	t := now()
+
 	return t.Year() >= 2020 && !t.Before(notBefore)
 }
 
@@ -66,14 +72,17 @@ func certificateNotYetValid(err error) (time.Time, bool) {
 	if !errors.As(err, &invalid) || invalid.Reason != x509.Expired || invalid.Cert == nil {
 		return time.Time{}, false
 	}
+
 	return invalid.Cert.NotBefore, now().Before(invalid.Cert.NotBefore)
 }
 
 func waitForClock(ctx context.Context, notBefore time.Time) bool {
 	ticker := time.NewTicker(clockPollInterval)
 	defer ticker.Stop()
+
 	timer := time.NewTimer(clockWaitLimit)
 	defer timer.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -91,55 +100,102 @@ func waitForClock(ctx context.Context, notBefore time.Time) bool {
 // GetJSON fetches url with client and decodes the (bounded) JSON body into out.
 // ua sets the User-Agent so GitHub doesn't reject the request.
 func GetJSON(ctx context.Context, client *http.Client, ua, url string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return err
 	}
+
 	req.Header.Set("User-Agent", ua)
+
 	resp, err := Do(ctx, client, req)
 	if err != nil {
 		return err
 	}
+
 	defer func() { _ = resp.Body.Close() }()
+
 	if resp.StatusCode != http.StatusOK {
 		return HTTPStatusError{URL: url, Status: resp.StatusCode}
 	}
+
 	return json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(out)
 }
 
 // Download fetches url into dst with the given file mode, using client. A partial
 // download is removed rather than left behind.
 func Download(ctx context.Context, client *http.Client, ua, url, dst string, mode fs.FileMode) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	return DownloadWatched(ctx, client, ua, url, dst, mode, nil)
+}
+
+// DownloadWatched is Download that tells seen, when not nil, how many bytes are in dst so
+// far and how many the server announced (-1 when it did not say): once before the first
+// byte and after every write.
+func DownloadWatched(ctx context.Context, client *http.Client, ua, url, dst string, mode fs.FileMode,
+	seen func(done, total int64),
+) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return err
 	}
+
 	req.Header.Set("User-Agent", ua)
+
 	resp, err := Do(ctx, client, req)
 	if err != nil {
 		return err
 	}
+
 	defer func() { _ = resp.Body.Close() }()
+
 	if resp.StatusCode != http.StatusOK {
 		return HTTPStatusError{URL: url, Status: resp.StatusCode}
 	}
+
 	f, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
 	if err != nil {
 		return err
 	}
-	n, copyErr := io.Copy(f, io.LimitReader(resp.Body, maxArtifact+1))
+
+	var w io.Writer = f
+
+	if seen != nil {
+		seen(0, resp.ContentLength)
+		w = &watchedWriter{w: f, total: resp.ContentLength, seen: seen}
+	}
+
+	n, copyErr := io.Copy(w, io.LimitReader(resp.Body, maxArtifact+1))
 	if copyErr == nil && n > maxArtifact {
 		copyErr = errors.New(url + ": artifact exceeds size limit")
 	}
+
 	closeErr := f.Close()
+
 	if copyErr != nil {
 		_ = os.Remove(dst)
+
 		return copyErr
 	}
+
 	if closeErr != nil {
 		_ = os.Remove(dst)
 	}
+
 	return closeErr
+}
+
+// watchedWriter counts what reaches w for DownloadWatched.
+type watchedWriter struct {
+	w           io.Writer
+	done, total int64
+	seen        func(done, total int64)
+}
+
+func (c *watchedWriter) Write(b []byte) (int, error) {
+	n, err := c.w.Write(b)
+	c.done += int64(n)
+	c.seen(c.done, c.total)
+
+	return n, err
 }
 
 // SafeTransport returns a transport whose dialer refuses any non-public address,
@@ -156,9 +212,11 @@ func SafeTransport() *http.Transport {
 				if err != nil {
 					return err
 				}
+
 				if ip := net.ParseIP(host); ip == nil || !PublicIP(ip) {
 					return fmt.Errorf("refusing to connect to non-public address %s", address)
 				}
+
 				return nil
 			},
 		}).DialContext,
@@ -178,21 +236,25 @@ func PublicIP(a net.IP) bool {
 	if !ok {
 		return false
 	}
+
 	ip = ip.Unmap()
 	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
 		ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
 		return false
 	}
+
 	for _, p := range globalExceptions {
 		if p.Contains(ip) {
 			return true
 		}
 	}
+
 	for _, p := range notGlobal {
 		if p.Contains(ip) {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -215,6 +277,7 @@ func prefixes(ss ...string) []netip.Prefix {
 	for i, s := range ss {
 		ps[i] = netip.MustParsePrefix(s)
 	}
+
 	return ps
 }
 

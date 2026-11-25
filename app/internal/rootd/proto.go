@@ -102,4 +102,6 @@ func (e *ExitError) Error() string { return fmt.Sprintf("exit status %d", e.Code
 func (e *ExitError) ExitCode() int { return e.Code }
 
 // BTVerbs are the bt-ctl.sh commands bt.ctl runs.
-var BTVerbs = []string{"next", "prev", "play", "pause", "reconnect", "disconnect", "trim"}
+func BTVerbs() []string {
+	return []string{"next", "prev", "play", "pause", "reconnect", "disconnect", "trim"}
+}

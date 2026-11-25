@@ -17,9 +17,11 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/stein155/soundtap/app/internal/flash"
 	"github.com/stein155/soundtap/app/internal/install"
+	"github.com/stein155/soundtap/app/internal/oplock"
 	"github.com/stein155/soundtap/app/internal/web/apierror"
 )
 
@@ -36,12 +38,17 @@ type Handler struct {
 	log     *slog.Logger
 	homeDir string
 
-	rebootFn         func() error                                                  // reboot into the installed slot
-	bootGuardFn      func(envCount uint32, settle func(fallback bool) error) error // confirm this boot to the boot guard
-	firmwareActiveFn func(bool)                                                    // tells the LED loop a flash started or ended
-	firmwareFailedFn func()                                                        // an install that started has failed
+	// rebootFn reboots into the installed slot.
+	rebootFn func() error
+	// bootGuardFn confirms this boot to the boot guard.
+	bootGuardFn      func(envCount uint32, settle func(fallback bool) error) error
+	firmwareActiveFn func(bool) // tells the LED loop a flash started or ended
+	firmwareFailedFn func()     // an install that started has failed
 
 	firmwareProgressFn func(int) // hears an install's percentage
+	// installPct is an install's percentage plus one while one runs with a known size, and
+	// 0 otherwise (Progress).
+	installPct atomic.Int64
 
 	firmware  firmwareState    // serialises .stu uploads
 	soundtapd *soundtapdUpdate // nil: POST /api/soundtapd refuses
@@ -72,6 +79,18 @@ type Handler struct {
 	// bootChain is the boot chain on NAND as BootChain first read it.
 	bootChainOnce sync.Once
 	bootChain     install.BootChain
+
+	// releaseKeys are the keys a package's .sig must verify against; nil is
+	// release.PublicKeys. Tests sign with their own pair.
+	releaseKeys []string
+	// osVersionFile holds the running SoundTap version; empty is defaultOSVersionFile.
+	osVersionFile string
+	// codecMarker is the boot's codec-only-in-other-slot marker; empty is
+	// defaultCodecMarker.
+	codecMarker string
+	// restartDelay lets an install's answer reach the browser before the speaker goes
+	// away; 0 is defaultRestartDelay, and tests set a nanosecond so they need not wait.
+	restartDelay time.Duration
 }
 
 // RootRun runs one flash command (flash.Command's shape) elsewhere, passing lock, the
@@ -83,7 +102,32 @@ func (s *Handler) SetRootRun(fn RootRun) { s.rootRun = fn }
 
 // New returns the install lane for a speaker whose persistent state lives in homeDir.
 func New(log *slog.Logger, homeDir string) *Handler {
-	return &Handler{log: log, homeDir: homeDir}
+	return &Handler{
+		log:                log,
+		homeDir:            homeDir,
+		rebootFn:           nil,
+		bootGuardFn:        nil,
+		firmwareActiveFn:   nil,
+		firmwareFailedFn:   nil,
+		firmwareProgressFn: nil,
+		installPct:         atomic.Int64{},
+		firmware:           firmwareState{mu: oplock.Lock{}},
+		soundtapd:          nil,
+		bootConfirmed:      atomic.Bool{},
+		flashPlan:          nil,
+		firmwareModel:      nil,
+		flashTools:         nil,
+		flashRunner:        nil,
+		flashReader:        nil,
+		flashOpen:          nil,
+		rootRun:            nil,
+		bootChainOnce:      sync.Once{},
+		bootChain:          install.BootChain{SPL: "", UBoot: "", UBootSpare: ""},
+		releaseKeys:        nil,
+		osVersionFile:      "",
+		codecMarker:        "",
+		restartDelay:       0,
+	}
 }
 
 // Mux is where Register adds routes: an *http.ServeMux, or the web server's own mux.
@@ -97,20 +141,10 @@ func (s *Handler) Register(mux Mux) {
 	mux.HandleFunc("POST "+soundtapdUpdatePath, s.postSoundTapd)
 	mux.HandleFunc("DELETE "+soundtapdUpdatePath, s.deleteSoundTapd)
 	mux.HandleFunc("POST /api/reboot", s.reboot)
-	mux.HandleFunc("GET "+OwnerKeyPath, s.getOwnerKey)
-	mux.HandleFunc("PUT "+OwnerKeyPath, s.putOwnerKey)
-	mux.HandleFunc("DELETE "+OwnerKeyPath, s.deleteOwnerKey)
 }
 
 // EnableInstall lets POST /api/firmware?install=1 write NAND with plan.
 func (s *Handler) EnableInstall(plan func() (flash.Target, error)) { s.flashPlan = plan }
-
-// SetNAND runs the lane's NAND commands, the U-Boot environment's among them, through run
-// and read over plan's layout instead of the speaker's. soundtapd never calls it: the
-// tests of internal/web use it to run a restore and a factory reset over fake NAND.
-func (s *Handler) SetNAND(plan func() (flash.Target, error), run flash.Command, read flash.Reader) {
-	s.flashPlan, s.flashRunner, s.flashReader = plan, run, read
-}
 
 // SetReboot wires POST /api/reboot.
 func (s *Handler) SetReboot(fn func() error) { s.rebootFn = fn }
@@ -130,12 +164,21 @@ func (s *Handler) SetFailedFn(fn func()) { s.firmwareFailedFn = fn }
 // statusRecorder remembers the status an install answered with.
 type statusRecorder struct {
 	http.ResponseWriter
+
 	code int
 }
 
 func (r *statusRecorder) WriteHeader(code int) {
 	r.code = code
 	r.ResponseWriter.WriteHeader(code)
+}
+
+// Progress is how far the install under way is, in percent (0-99), and false when none
+// runs or its size is unknown: GET /api/version shows it to the page that follows an update.
+func (s *Handler) Progress() (int, bool) {
+	v := s.installPct.Load()
+
+	return int(v - 1), v > 0
 }
 
 // SetProgressFn is called with an install's percentage each time it moves.
@@ -148,12 +191,6 @@ func (s *Handler) TryLock() bool { return s.firmware.mu.TryLock() }
 // Unlock releases what TryLock took.
 func (s *Handler) Unlock() { s.firmware.mu.Unlock() }
 
-func writeJSON(w http.ResponseWriter, code int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
 // apiError is the API's one error shape (ADR 0091), as internal/web writes it.
 func apiError(w http.ResponseWriter, status int, msg string) {
 	apierror.Write(w, status, apierror.ForStatus(status), msg)
@@ -164,19 +201,29 @@ func apiErrorCode(w http.ResponseWriter, status int, code apierror.Code, msg str
 	apierror.Write(w, status, code, msg)
 }
 
+// Model is this speaker's hardware model as the installer resolves it.
+func (s *Handler) Model() (string, error) { return s.hardwareFirmwareModel() }
+
+// SetModel overrides how Model resolves the hardware model; tests use it.
+func (s *Handler) SetModel(fn func() (string, error)) { s.firmwareModel = fn }
+
 // fail reports a failure on the speaker's side, as internal/web's fail does.
 func (s *Handler) fail(w http.ResponseWriter, msg string, err error) {
 	code := http.StatusInternalServerError
+
 	if err != nil {
 		s.logger().Warn(msg, "err", err.Error())
+
 		if errors.Is(err, context.DeadlineExceeded) {
 			code = http.StatusGatewayTimeout
 		}
+
 		if errors.Is(err, syscall.ENOSPC) {
 			code = http.StatusInsufficientStorage
 			msg += ": the speaker's storage is full"
 		}
 	}
+
 	apiError(w, code, msg)
 }
 
@@ -184,6 +231,7 @@ func (s *Handler) badRequest(w http.ResponseWriter, msg string, err error) {
 	if err != nil {
 		s.logger().Warn(msg, "err", err.Error())
 	}
+
 	apiError(w, http.StatusBadRequest, msg)
 }
 
@@ -192,11 +240,18 @@ func (s *Handler) logger() *slog.Logger {
 	if s.log == nil {
 		return slog.New(slog.DiscardHandler)
 	}
+
 	return s.log
 }
 
-// Model is this speaker's hardware model as the installer resolves it.
-func (s *Handler) Model() (string, error) { return s.hardwareFirmwareModel() }
+// writeJSON answers w with v and 200 OK. An encoding that fails halfway has already
+// sent the status, so all that is left to do is to log it.
+func (s *Handler) writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
 
-// SetModel overrides how Model resolves the hardware model; tests use it.
-func (s *Handler) SetModel(fn func() (string, error)) { s.firmwareModel = fn }
+	err := json.NewEncoder(w).Encode(v)
+	if err != nil {
+		s.logger().Warn("writing the answer", "err", err)
+	}
+}

@@ -30,6 +30,7 @@ func Have(path string) int {
 	if err != nil {
 		return 0
 	}
+
 	return parse(string(b))
 }
 
@@ -38,5 +39,6 @@ func parse(s string) int {
 	if err != nil {
 		return 0
 	}
+
 	return n
 }

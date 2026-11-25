@@ -15,6 +15,7 @@ func TestTheDecoderRunsNiced(t *testing.T) {
 	if want := []string{"-n", DecoderNice, "/usr/bin/ffmpeg", "-i", "pipe:0"}; !slices.Equal(got, want) {
 		t.Fatalf("decoder command %v, want %v", got, want)
 	}
+
 	if DecoderNice == "0" || DecoderNice == "" {
 		t.Fatal("the decoder is not niced")
 	}

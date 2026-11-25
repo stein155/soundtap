@@ -27,6 +27,7 @@ const signalBuffer = 32
 // Conn is one private connection to a bus.
 type Conn struct {
 	*dbus.Conn
+
 	signals chan *dbus.Signal
 }
 
@@ -41,6 +42,7 @@ func (c *Conn) Done() <-chan struct{} { return c.Context().Done() }
 // Call calls iface.member on dest's object at path and returns the reply's values.
 func (c *Conn) Call(ctx context.Context, dest string, path dbus.ObjectPath, iface, member string, args ...any) ([]any, error) {
 	call := c.Object(dest, path).CallWithContext(ctx, iface+"."+member, 0, args...)
+
 	return call.Body, call.Err
 }
 
@@ -65,41 +67,52 @@ func Dial(ctx context.Context, addr string, timeout time.Duration) (*Conn, error
 	life, cancel := context.WithCancel(ctx)
 	timer := time.AfterFunc(timeout, cancel) // closes the connection a stalled handshake holds
 	q := make(queue, signalBuffer)
+
 	conn, err := dbus.Connect(addr, dbus.WithContext(life), dbus.WithSignalHandler(q))
 	if !timer.Stop() {
 		if conn != nil {
 			_ = conn.Close()
 		}
+
 		cancel()
+
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
+
 		return nil, ErrTimeout
 	}
+
 	if err != nil {
 		cancel()
+
 		return nil, err
 	}
+
 	context.AfterFunc(conn.Context(), cancel) // a closed connection releases life
+
 	return &Conn{Conn: conn, signals: q}, nil
 }
 
 // HasName reports whether name has an owner on the bus.
 func (c *Conn) HasName(ctx context.Context, name string) bool {
 	var has bool
+
 	err := c.BusObject().CallWithContext(ctx, "org.freedesktop.DBus.NameHasOwner", 0, name).Store(&has)
+
 	return err == nil && has
 }
 
 // ErrorName is the D-Bus error name of err, or "" when err is not a D-Bus error reply.
 func ErrorName(err error) string {
-	var e dbus.Error
-	if errors.As(err, &e) {
+	if e, ok := errors.AsType[dbus.Error](err); ok {
 		return e.Name
 	}
+
 	var pe *dbus.Error
 	if errors.As(err, &pe) && pe != nil {
 		return pe.Name
 	}
+
 	return ""
 }

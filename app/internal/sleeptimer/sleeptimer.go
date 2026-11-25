@@ -49,10 +49,13 @@ type Timer struct {
 func (t *Timer) Set(minutes int, unit, retry time.Duration, fire func(ctx context.Context, attempt int) error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
 	t.stopLocked()
+
 	if minutes <= 0 {
 		return
 	}
+
 	d := time.Duration(minutes) * unit
 	t.minutes, t.endsAt = minutes, time.Now().Add(d)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -65,9 +68,11 @@ func (t *Timer) stopLocked() {
 	if t.timer != nil {
 		t.timer.Stop()
 	}
+
 	if t.cancel != nil {
 		t.cancel()
 	}
+
 	t.gen++
 	t.timer, t.cancel, t.minutes, t.endsAt = nil, nil, 0, time.Time{}
 }
@@ -77,25 +82,33 @@ func (t *Timer) stopLocked() {
 func (t *Timer) scheduleLocked(ctx context.Context, gen uint64, d, retry time.Duration, fire func(context.Context, int) error, attempt int) {
 	t.timer = time.AfterFunc(d, func() {
 		t.mu.Lock()
+
 		current := t.gen == gen
 		if current {
 			t.firing = gen
 		}
 		t.mu.Unlock()
+
 		if !current {
 			return
 		}
+
 		err := fire(ctx, attempt)
+
 		t.mu.Lock()
 		defer t.mu.Unlock()
+
 		t.firing = 0
 		if t.gen != gen {
 			return // cancelled or replaced while fire ran (a successful standby does that)
 		}
+
 		if err == nil || attempt >= Attempts {
 			t.stopLocked()
+
 			return
 		}
+
 		t.endsAt = time.Now().Add(retry)
 		t.scheduleLocked(ctx, gen, retry, retry, fire, attempt+1)
 	})
@@ -110,6 +123,7 @@ func (t *Timer) Cancel() { t.Set(0, 0, 0, nil) }
 func (t *Timer) CancelFiring() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
 	if t.firing == 0 || t.firing == t.gen {
 		t.stopLocked()
 	}
@@ -119,9 +133,11 @@ func (t *Timer) CancelFiring() {
 func (t *Timer) View() map[string]any {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
 	ends := ""
 	if t.minutes > 0 {
 		ends = t.endsAt.UTC().Format(time.RFC3339)
 	}
+
 	return map[string]any{"minutes": t.minutes, "endsAt": ends}
 }

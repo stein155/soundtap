@@ -6,6 +6,7 @@ package multiroom
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -90,33 +91,56 @@ type Group struct {
 	peerJobs sync.WaitGroup
 	// members makes SetMember's read-group/write-clients one step (members.go).
 	members sync.Mutex
+	// anchorWait replaces the package's anchorWait when set; a test shortens it.
+	anchorWait time.Duration
 }
 
 // ReadFollow is whom this speaker follows: the leader's address and device id, "" when
 // unknown. Both live in one file, address on the first line and id on the second, so one
 // write changes them together: a power cut can never leave one leader's address with
 // another's id.
-func ReadFollow(path string) (host, id string) {
+func ReadFollow(path string) (string, string) {
 	if path == "" {
 		return "", ""
 	}
+
 	data, _ := os.ReadFile(path)
-	host, id, _ = strings.Cut(strings.TrimSpace(string(data)), "\n")
-	return strings.TrimSpace(host), strings.TrimSpace(id)
+	host, deviceID, _ := strings.Cut(strings.TrimSpace(string(data)), "\n")
+
+	return strings.TrimSpace(host), strings.TrimSpace(deviceID)
 }
 
 // WriteFollow writes the leader's address and id, or with an empty host removes the
 // file. snapclient is pointed at the first line only; the id is for CheckLeader. Only
 // Group calls it outside tests, under its lock.
-func WriteFollow(path, host, id string) error {
+func WriteFollow(path, host, deviceID string) error {
 	if host == "" {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return err
+		err := os.Remove(path)
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove follow: %w", err)
 		}
+
 		return nil
 	}
-	return atomicjson.WriteFile(path, []byte(host+"\n"+id+"\n"), 0o600)
+
+	err := atomicjson.WriteFile(path, []byte(host+"\n"+deviceID+"\n"), stateFileMode)
+	if err != nil {
+		return fmt.Errorf("write follow: %w", err)
+	}
+
+	return nil
 }
+
+// stateFileMode is the mode of the follow file and the multiroom marker.
+const stateFileMode = 0o600
+
+// Bounds of the calls this package makes.
+const (
+	// localCallTimeout bounds one call to this speaker's own snapserver or source switch.
+	localCallTimeout = 5 * time.Second
+	// leaderNowTimeout bounds one ask of what the leader plays.
+	leaderNowTimeout = 4 * time.Second
+)
 
 // The steps of Join that can fail, so the caller can tell them apart.
 var (
@@ -137,39 +161,48 @@ func (e *JoinError) Error() string {
 	if e.Err == nil {
 		return e.Step.Error()
 	}
+
 	return e.Step.Error() + ": " + e.Err.Error()
 }
 
 func (e *JoinError) Unwrap() []error { return []error{e.Step, e.Err} }
 
-// Join makes this speaker follow host (id is the leader's device id, "" if unknown), or
+// Join makes this speaker follow host (deviceID is the leader's, "" if unknown), or
 // with an empty host puts it back on its own, and returns whom it followed before. The
 // caller has already checked that host may be followed.
-func (g *Group) Join(ctx context.Context, env Env, host, id string) (prevHost string, err error) {
+//
+//nolint:gocritic // exported; web passes Env by value
+func (g *Group) Join(ctx context.Context, env Env, host, deviceID string) (string, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+
 	prevHost, prevID := ReadFollow(env.Path)
-	if err := WriteFollow(env.Path, host, id); err != nil {
+
+	err := WriteFollow(env.Path, host, deviceID)
+	if err != nil {
 		return prevHost, &JoinError{ErrWrite, err}
 	}
 	// The peer check before Join and this write are not one step: two speakers grouping
 	// with each other at once both read "follows nobody" and both commit. Asking again now
 	// that ours is written means whichever commits last sees the other's follow and backs out.
 	if host != "" && env.PeerLeader(ctx, host) != "" {
-		if err := WriteFollow(env.Path, prevHost, prevID); err != nil {
+		err = WriteFollow(env.Path, prevHost, prevID)
+		if err != nil {
 			return prevHost, &JoinError{ErrUndo, err}
 		}
+
 		return prevHost, &JoinError{ErrChained, nil}
 	}
 	// The source switch comes first, as on a local start: the old source stops and the
 	// follower's hold closes before the leader's stream can reach the bus.
-	err = selectFollowSource(ctx, env, host)
+	err = selectFollowSource(ctx, &env, host)
 	// The supervisor restarts the wrapper, which reads the file again. Killing the client
 	// is the whole handover; nothing here waits for it, because the speaker answering this
 	// request is the one whose audio is about to change.
 	if env.RestartSnapclient != nil {
 		env.RestartSnapclient()
 	}
+
 	if err != nil {
 		return prevHost, &JoinError{ErrSelect, err}
 	}
@@ -180,15 +213,17 @@ func (g *Group) Join(ctx context.Context, env Env, host, id string) (prevHost st
 		g.peerJobs.Add(1)
 		safego.Go("multiroom.joinLeaderGroup", func() {
 			defer g.peerJobs.Done()
+
 			env.JoinLeaderGroup(host)
 		})
 	}
+
 	return prevHost, nil
 }
 
 // selectFollowSource: following means this speaker plays what arrives on the bus, so it
 // needs a source the arbiter will grant the card to; leaving means it stops.
-func selectFollowSource(ctx context.Context, env Env, host string) error {
+func selectFollowSource(ctx context.Context, env *Env, host string) error {
 	source := SourceMultiroom
 	if host == "" {
 		source = SourceStandby
@@ -198,11 +233,14 @@ func selectFollowSource(ctx context.Context, env Env, host string) error {
 	if env.SourceChanging != nil {
 		env.SourceChanging(source)
 	}
+
 	if env.SelectSource == nil {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+
+	ctx, cancel := context.WithTimeout(ctx, localCallTimeout)
 	defer cancel()
+
 	return env.SelectSource(ctx, source)
 }
 
@@ -214,37 +252,51 @@ const keepFollowFor = 2 * time.Second
 // KeepFollow reports, once, whether the leave from MULTIROOM now happening is the standby
 // the group asked for (SyncLeaderPower), so it must not end the follow. A leave to any
 // other source, or a mark gone stale, is a real leave; the mark is used up either way.
+//
+//nolint:gocritic // exported; web passes Env by value
 func (g *Group) KeepFollow(env Env) bool {
 	until := g.keep.Swap(0)
 	if until <= time.Now().UnixNano() || env.NowPlaying == nil {
 		return false
 	}
+
 	np, err := env.NowPlaying(context.Background())
+
 	return err == nil && np != nil && np.Source == SourceStandby
 }
 
-// LeaveFollow ends the follow of host and id after the source left MULTIROOM. It writes
+// LeaveFollow ends the follow of host and deviceID after the source left MULTIROOM. It writes
 // under the lock like every other change of the follow, and only ends that one follow: a
 // late leave never removes a follow written since, nor one the speaker went back to
 // MULTIROOM with.
-func (g *Group) LeaveFollow(env Env, host, id string) {
+//
+//nolint:gocritic // exported; web passes Env by value
+func (g *Group) LeaveFollow(env Env, host, deviceID string) {
 	if g.KeepFollow(env) || host == "" {
 		return // the leader went to standby: so does this follower, still in the group
 	}
+
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if h, i := ReadFollow(env.Path); h != host || i != id {
+
+	if h, i := ReadFollow(env.Path); h != host || i != deviceID {
 		return
 	}
+
 	if env.NowPlaying != nil {
-		if np, err := env.NowPlaying(context.Background()); err == nil && np != nil && np.Source == SourceMultiroom {
+		np, err := env.NowPlaying(context.Background())
+		if err == nil && np != nil && np.Source == SourceMultiroom {
 			return
 		}
 	}
-	if err := WriteFollow(env.Path, "", ""); err != nil {
+
+	err := WriteFollow(env.Path, "", "")
+	if err != nil {
 		env.Log.Warn("multiroom: could not leave the group", "err", err)
+
 		return
 	}
+
 	if env.RestartSnapclient != nil {
 		env.RestartSnapclient()
 	}
@@ -253,69 +305,41 @@ func (g *Group) LeaveFollow(env Env, host, id string) {
 // SyncLeaderPower runs one WatchLeaderPower tick. Like CheckLeader, it asks the leader
 // without the lock and acts under it only if the follow is still the one asked, so a late
 // answer never overrules leaving the group or picking another leader.
+//
+//nolint:gocritic // exported; web passes Env by value
 func (g *Group) SyncLeaderPower(ctx context.Context, env Env) {
-	host, id := ReadFollow(env.Path)
+	host, deviceID := ReadFollow(env.Path)
 	if host == "" || env.SelectSource == nil || env.NowPlaying == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+
+	ctx, cancel := context.WithTimeout(ctx, leaderNowTimeout)
 	defer cancel()
+
 	leader, ok := env.PeerNow(ctx, host)
 	if env.LeaderLive != nil {
 		env.LeaderLive(ok)
 	}
+
 	if !ok {
 		return // leaving the group is CheckLeader's business
 	}
+
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if h, i := ReadFollow(env.Path); h != host || i != id {
+
+	if h, i := ReadFollow(env.Path); h != host || i != deviceID {
 		return
 	}
+
 	np, err := env.NowPlaying(ctx)
 	if err != nil || np == nil {
 		return
 	}
-	if g.matchLeader(ctx, env, np.Source, leader, host) && env.Nudge != nil {
+
+	if g.matchLeader(ctx, &env, np.Source, &leader, host) && env.Nudge != nil {
 		env.Nudge()
 	}
-}
-
-// matchLeader brings a follower on source in line with what the leader is doing, and says
-// whether that changed anything.
-func (g *Group) matchLeader(ctx context.Context, env Env, source string, leader speaker.NowPlaying, host string) bool {
-	leaderOn := leader.Source != SourceStandby
-	switch {
-	case source == SourceMultiroom && !leaderOn:
-		// Standby makes the arbiter drop the follow (a follower that picks another
-		// source leaves the group); this standby is the group's, so it stays.
-		g.keep.Store(time.Now().Add(keepFollowFor).UnixNano())
-		if err := env.SelectSource(ctx, SourceStandby); err != nil {
-			g.keep.Store(0)
-			env.Log.Warn("multiroom: standby with the leader failed", "err", err)
-			return false
-		}
-		env.Log.Info("multiroom: leader in standby; following it there", "leader", host)
-		// Off MULTIROOM snapclient goes back to the silent anchor: left on the leader, it
-		// kept the whole chain writing the leader's silence into the bus.
-		restartSnapclient(env)
-		return true
-	case source == SourceMultiroom:
-		if env.LeaderNow != nil {
-			env.LeaderNow(leader)
-		}
-	case source == SourceStandby && leaderOn:
-		if err := env.SelectSource(ctx, SourceMultiroom); err != nil {
-			env.Log.Warn("multiroom: joining the playing leader failed", "err", err)
-			return false
-		}
-		env.Log.Info("multiroom: leader playing; joined", "leader", host)
-		// After the source switch, as in Join: back on MULTIROOM, snapclient follows
-		// the leader again.
-		restartSnapclient(env)
-		return true
-	}
-	return false
 }
 
 // LeaderGiveUp is how many failed checks in a row (one per WatchLeader tick) a follower
@@ -327,74 +351,149 @@ const LeaderGiveUp = 10
 // another leader. Reachability is checked without the lock, since it can take seconds;
 // anything it leads to is done under the lock and only if the follow is still the one
 // that was checked, so a follow chosen meanwhile is never undone by a stale verdict.
+//
+//nolint:gocritic // exported; web passes Env by value
 func (g *Group) CheckLeader(ctx context.Context, env Env, fails int) int {
-	host, id := ReadFollow(env.Path)
-	if key := host + "\x00" + id; key != g.leaderKey {
+	host, deviceID := ReadFollow(env.Path)
+	if key := host + "\x00" + deviceID; key != g.leaderKey {
 		g.leaderKey, fails = key, 0
 	}
+
 	if host == "" || env.LeaderReachable(ctx, host) {
 		return 0
 	}
-	if id != "" {
-		if ip := env.DeviceIP(id); ip != "" && ip != host && env.LeaderReachable(ctx, ip) {
-			return g.followMovedLeader(env, host, id, ip, fails)
+
+	if deviceID != "" {
+		if ip := env.DeviceIP(deviceID); ip != "" && ip != host && env.LeaderReachable(ctx, ip) {
+			return g.followMovedLeader(&env, host, deviceID, ip, fails)
 		}
 	}
+
 	if fails+1 < LeaderGiveUp {
 		return fails + 1
 	}
-	g.leaveLostLeader(ctx, env, host, id)
+
+	g.leaveLostLeader(ctx, &env, host, deviceID)
+
 	return 0
 }
 
-// followMovedLeader points the follow of host at the leader's new address ip and returns the
+// matchLeader brings a follower on source in line with what the leader is doing, and says
+// whether that changed anything.
+func (g *Group) matchLeader(
+	ctx context.Context, env *Env, source string, leader *speaker.NowPlaying, host string,
+) bool {
+	leaderOn := leader.Source != SourceStandby
+	switch {
+	case source == SourceMultiroom && !leaderOn:
+		// Standby makes the arbiter drop the follow (a follower that picks another
+		// source leaves the group); this standby is the group's, so it stays.
+		g.keep.Store(time.Now().Add(keepFollowFor).UnixNano())
+
+		err := env.SelectSource(ctx, SourceStandby)
+		if err != nil {
+			g.keep.Store(0)
+			env.Log.Warn("multiroom: standby with the leader failed", "err", err)
+
+			return false
+		}
+
+		env.Log.Info("multiroom: leader in standby; following it there", "leader", host)
+		// Off MULTIROOM snapclient goes back to the silent anchor: left on the leader, it
+		// kept the whole chain writing the leader's silence into the bus.
+		restartSnapclient(env)
+
+		return true
+	case source == SourceMultiroom:
+		if env.LeaderNow != nil {
+			env.LeaderNow(*leader)
+		}
+	case source == SourceStandby && leaderOn:
+		err := env.SelectSource(ctx, SourceMultiroom)
+		if err != nil {
+			env.Log.Warn("multiroom: joining the playing leader failed", "err", err)
+
+			return false
+		}
+
+		env.Log.Info("multiroom: leader playing; joined", "leader", host)
+		// After the source switch, as in Join: back on MULTIROOM, snapclient follows
+		// the leader again.
+		restartSnapclient(env)
+
+		return true
+	default:
+		// Already in line with the leader.
+	}
+
+	return false
+}
+
+// followMovedLeader points the follow of host at the leader's new address newIP and returns the
 // failure count for the next tick.
-func (g *Group) followMovedLeader(env Env, host, id, ip string, fails int) int {
+func (g *Group) followMovedLeader(env *Env, host, deviceID, newIP string, fails int) int {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if h, i := ReadFollow(env.Path); h != host || i != id {
+
+	if h, i := ReadFollow(env.Path); h != host || i != deviceID {
 		return 0
 	}
-	if err := WriteFollow(env.Path, ip, id); err != nil {
+
+	err := WriteFollow(env.Path, newIP, deviceID)
+	if err != nil {
 		env.Log.Warn("multiroom: could not follow the leader's new address", "err", err)
+
 		return fails + 1
 	}
-	g.leaderKey = ip + "\x00" + id
-	env.Log.Info("multiroom: leader moved", "from", host, "to", ip)
+
+	g.leaderKey = newIP + "\x00" + deviceID
+	env.Log.Info("multiroom: leader moved", "from", host, "to", newIP)
+
 	if env.RestartSnapclient != nil {
 		env.RestartSnapclient()
 	}
+
 	return 0
 }
 
 // leaveLostLeader leaves the group of a leader that stopped answering and goes to standby.
-func (g *Group) leaveLostLeader(ctx context.Context, env Env, host, id string) {
+func (g *Group) leaveLostLeader(ctx context.Context, env *Env, host, id string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+
 	if h, i := ReadFollow(env.Path); h != host || i != id {
 		return
 	}
+
 	env.Log.Warn("multiroom: leader gone; leaving the group", "leader", host)
-	if err := WriteFollow(env.Path, "", ""); err != nil {
+
+	err := WriteFollow(env.Path, "", "")
+	if err != nil {
 		env.Log.Warn("multiroom: could not leave the group", "err", err)
+
 		return
 	}
+
 	if env.RestartSnapclient != nil {
 		env.RestartSnapclient()
 	}
+
 	if env.SelectSource != nil {
-		sctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		sctx, cancel := context.WithTimeout(ctx, localCallTimeout)
 		defer cancel()
-		if err := env.SelectSource(sctx, SourceStandby); err != nil {
+
+		err := env.SelectSource(sctx, SourceStandby)
+		if err != nil {
 			env.Log.Warn("multiroom: standby after leaving failed", "err", err)
 		}
 	}
+
 	if env.Nudge != nil {
 		env.Nudge()
 	}
 }
 
-func restartSnapclient(env Env) {
+func restartSnapclient(env *Env) {
 	if env.RestartSnapclient != nil {
 		env.RestartSnapclient()
 	}

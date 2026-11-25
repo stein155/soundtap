@@ -13,78 +13,107 @@ import (
 // cmControl is ConnectionManager: one fixed connection that sinks what ffmpeg can play.
 // Controllers read the sink list to choose the format they stream.
 func cmControl(w http.ResponseWriter, req *http.Request) {
-	switch action := soapAction(req.Header.Get("SOAPACTION")); action {
+	switch soapAction(req.Header.Get("SoapAction")) {
 	case "GetProtocolInfo":
-		soapOK(w, action, connMgrURN, "<Source></Source><Sink>"+sinkProtocols+"</Sink>")
+		soapOK(w, "GetProtocolInfo", connMgrURN, "<Source></Source><Sink>"+sinkProtocols+"</Sink>")
 	case "GetCurrentConnectionIDs":
-		soapOK(w, action, connMgrURN, "<ConnectionIDs>0</ConnectionIDs>")
+		soapOK(w, "GetCurrentConnectionIDs", connMgrURN, "<ConnectionIDs>0</ConnectionIDs>")
 	case "GetCurrentConnectionInfo":
-		soapOK(w, action, connMgrURN, "<RcsID>0</RcsID><AVTransportID>0</AVTransportID><ProtocolInfo></ProtocolInfo>"+
-			"<PeerConnectionManager></PeerConnectionManager><PeerConnectionID>-1</PeerConnectionID>"+
-			"<Direction>Input</Direction><Status>OK</Status>")
+		soapOK(w, "GetCurrentConnectionInfo", connMgrURN,
+			"<RcsID>0</RcsID><AVTransportID>0</AVTransportID><ProtocolInfo></ProtocolInfo>"+
+				"<PeerConnectionManager></PeerConnectionManager><PeerConnectionID>-1</PeerConnectionID>"+
+				"<Direction>Input</Direction><Status>OK</Status>")
 	default:
-		soapFail(w, 401, "Invalid Action")
+		soapFail(w, faultInvalidAction)
 	}
 }
 
-const actGetVolume = "GetVolume"
+// RenderingControl's actions, and the speaker's volume range they work in.
+const (
+	actGetVolume = "GetVolume"
+	actGetMute   = "GetMute"
+	actSetVolume = "SetVolume"
+	actSetMute   = "SetMute"
+	maxVolume    = 100
+)
 
 // rcControl is RenderingControl on the Master channel: the speaker's own volume and
 // mute. Volume is 0..100 like the speaker's; mute is volume 0.
 func (r *Renderer) rcControl(w http.ResponseWriter, req *http.Request) { //nolint:cyclop // moved unchanged
-	action := soapAction(req.Header.Get("SOAPACTION"))
+	action := soapAction(req.Header.Get("SoapAction"))
+
 	body, ok := readBody(w, req)
 	if !ok {
 		return
 	}
+
 	ctx := req.Context()
+
 	if ch := firstGroup(reChannel, body); ch != "" && ch != "Master" {
-		soapFail(w, 402, "Invalid Args")
+		soapFail(w, faultInvalidArgs)
+
 		return
 	}
+
 	switch action {
-	case actGetVolume, "GetMute":
-		v, err := r.Backend.Volume(ctx)
+	case actGetVolume, actGetMute:
+		volume, err := r.Backend.Volume(ctx)
 		if err != nil {
-			soapFail(w, 501, "Action Failed")
+			soapFail(w, faultActionFailed)
+
 			return
 		}
+
 		if action == actGetVolume {
-			soapOK(w, action, renderURN, fmt.Sprintf("<CurrentVolume>%d</CurrentVolume>", v))
+			soapOK(w, actGetVolume, renderURN, fmt.Sprintf("<CurrentVolume>%d</CurrentVolume>", volume))
+
 			return
 		}
+
 		muted := "0"
-		if v == 0 {
+		if volume == 0 {
 			muted = "1"
 		}
-		soapOK(w, action, renderURN, "<CurrentMute>"+muted+"</CurrentMute>")
-	case "SetVolume":
-		v, err := strconv.Atoi(firstGroup(reVolume, body))
-		if err != nil || v < 0 || v > 100 {
-			soapFail(w, 402, "Invalid Args")
+
+		soapOK(w, actGetMute, renderURN, "<CurrentMute>"+muted+"</CurrentMute>")
+	case actSetVolume:
+		volume, err := strconv.Atoi(firstGroup(reVolume, body))
+		if err != nil || volume < 0 || volume > maxVolume {
+			soapFail(w, faultInvalidArgs)
+
 			return
 		}
-		if err := r.Backend.SetVolume(ctx, v); err != nil {
-			soapFail(w, 501, "Action Failed")
+
+		err = r.Backend.SetVolume(ctx, volume)
+		if err != nil {
+			soapFail(w, faultActionFailed)
+
 			return
 		}
-		soapOK(w, action, renderURN, "")
-	case "SetMute":
-		var on bool
+
+		soapOK(w, actSetVolume, renderURN, "")
+	case actSetMute:
+		var mute bool
+
 		switch strings.ToLower(firstGroup(reMute, body)) {
 		case "1", "true", "yes":
-			on = true
+			mute = true
 		case "0", "false", "no":
 		default:
-			soapFail(w, 402, "Invalid Args")
+			soapFail(w, faultInvalidArgs)
+
 			return
 		}
-		if err := r.Backend.SetMute(ctx, on); err != nil {
-			soapFail(w, 501, "Action Failed")
+
+		err := r.Backend.SetMute(ctx, mute)
+		if err != nil {
+			soapFail(w, faultActionFailed)
+
 			return
 		}
-		soapOK(w, action, renderURN, "")
+
+		soapOK(w, actSetMute, renderURN, "")
 	default:
-		soapFail(w, 401, "Invalid Action")
+		soapFail(w, faultInvalidAction)
 	}
 }

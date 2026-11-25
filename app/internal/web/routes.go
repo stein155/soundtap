@@ -9,6 +9,7 @@ import "net/http"
 // hold the routes the server really serves against the API reference.
 type routeMux struct {
 	*http.ServeMux
+
 	patterns []string
 }
 
@@ -19,7 +20,7 @@ func (m *routeMux) HandleFunc(pattern string, handler func(http.ResponseWriter, 
 
 // Handler returns the HTTP mux.
 func (s *Server) Handler() http.Handler { //nolint:funlen // route table, moved unchanged
-	mux := &routeMux{ServeMux: http.NewServeMux()}
+	mux := &routeMux{ServeMux: http.NewServeMux(), patterns: nil}
 	mux.HandleFunc("GET /api/search", s.search)
 	mux.HandleFunc("GET /api/info", s.info)
 	mux.HandleFunc("GET /api/docs", s.docs)
@@ -32,6 +33,7 @@ func (s *Server) Handler() http.Handler { //nolint:funlen // route table, moved 
 	for _, method := range []string{"GET", "POST", "PUT", "DELETE"} {
 		mux.HandleFunc(method+" /api/devices/{id}/{rest...}", s.deviceProxy)
 	}
+
 	mux.HandleFunc("GET /api/tunein/", s.tuneinProxy)
 	mux.HandleFunc("GET /api/logo", s.logoProxy)
 	mux.HandleFunc("GET /api/presets", s.presets)
@@ -88,6 +90,7 @@ func (s *Server) Handler() http.Handler { //nolint:funlen // route table, moved 
 	mux.HandleFunc("GET /api/mqtt/status", s.mqttStatus)
 	mux.HandleFunc("GET /api/bluetooth", s.getBluetooth)
 	mux.HandleFunc("POST /api/bluetooth/clear", s.clearBluetooth)
+	mux.HandleFunc("POST "+bluetoothForgetPath, s.forgetBluetooth)
 	mux.HandleFunc("POST /api/bluetooth/pair", s.pairBluetooth)
 	mux.HandleFunc("POST /api/bluetooth/connected", s.bluetoothConnected)
 	mux.HandleFunc("POST /api/wifi/scan", s.wifiScan)
@@ -126,12 +129,19 @@ func (s *Server) Handler() http.Handler { //nolint:funlen // route table, moved 
 	// patterns above win; this serves index.html, assets and icons.
 	mux.HandleFunc("GET /", s.serveUI)
 	s.routes = mux.patterns
-	guarded := s.guard(s.replays.replay(s.onDevice(jsonRouterErrors(mux))))
+	guarded := s.Guard(s.replays.replay(s.onDevice(jsonRouterErrors(mux))))
 	s.local = guarded
+
 	captive := http.NewServeMux()
-	for _, path := range []string{"/hotspot-detect.html", "/generate_204", "/gen_204", "/connecttest.txt", "/ncsi.txt", "/canonical.html"} {
+
+	probes := []string{
+		"/hotspot-detect.html", "/generate_204", "/gen_204", "/connecttest.txt", "/ncsi.txt", "/canonical.html",
+	}
+	for _, path := range probes {
 		captive.HandleFunc("GET "+path, captivePortal)
 	}
+
 	captive.Handle("/", guarded)
+
 	return captive
 }

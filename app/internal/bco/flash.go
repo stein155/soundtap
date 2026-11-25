@@ -69,9 +69,11 @@ func AllowImage(image []byte, want string) error {
 	if got := hex.EncodeToString(sum[:]); got != want {
 		return fmt.Errorf("-allow-sha256 %s does not match the image (%s)", want, got)
 	}
+
 	appImagesMu.Lock()
 	appImages[want] = "approved experiment"
 	appImagesMu.Unlock()
+
 	return nil
 }
 
@@ -81,13 +83,19 @@ func CheckAppImage(image []byte) (string, error) {
 	if len(image) == 0 || len(image) > StockAppSize {
 		return "", fmt.Errorf("BCO image size %d, want 1..%d", len(image), StockAppSize)
 	}
+
 	sum := sha256.Sum256(image)
+
 	appImagesMu.RLock()
+
 	name, ok := appImages[hex.EncodeToString(sum[:])]
+
 	appImagesMu.RUnlock()
+
 	if !ok {
 		return "", fmt.Errorf("BCO image sha256 %x is not an allowed image", sum)
 	}
+
 	return name, nil
 }
 
@@ -111,7 +119,9 @@ func (f *Flasher) FlashApp(ctx context.Context, image []byte) (ver string, err e
 	if _, err := CheckAppImage(image); err != nil {
 		return "", err
 	}
+
 	c := &console{f: f}
+
 	defer func() {
 		// Whatever happened, leave the BCO powered: off means no Wi-Fi and no Ethernet.
 		// After a failure it may also be sitting in a bootloader menu, which has no
@@ -119,11 +129,15 @@ func (f *Flasher) FlashApp(ctx context.Context, image []byte) (ver string, err e
 		// is sent on to level 2 regardless, which is what stock does too.
 		if err != nil && !errors.Is(err, ErrAppDead) {
 			c.note("flash failed (%v): power-cycling the BCO back into its app", err)
-			if perr := c.powerCycle(context.Background()); perr != nil {
+
+			perr := c.powerCycle(context.Background())
+			if perr != nil {
 				c.note("power cycle after failure: %v", perr)
 			}
 		}
-		if perr := f.Power(true); perr != nil {
+
+		perr := f.Power(true)
+		if perr != nil {
 			c.note("power on after flash: %v", perr)
 		}
 	}()
@@ -131,20 +145,25 @@ func (f *Flasher) FlashApp(ctx context.Context, image []byte) (ver string, err e
 	if err := c.powerCycle(ctx); err != nil {
 		return "", err
 	}
+
 	if err := c.enterLevel1(ctx); err != nil {
 		return "", err
 	}
+
 	key, err := c.menuKey(ctx, "Bootloader Level 1  Menu", "Start Bootloader Level 2", "6) Erase Flash")
 	if err != nil {
 		return "", err
 	}
+
 	if err := c.send(ctx, key); err != nil {
 		return "", err
 	}
+
 	key, err = c.menuKey(ctx, "Bootloader Level 2 Menu", "Download Image and Resources (TFTP)", "Erase Application")
 	if err != nil {
 		return "", err
 	}
+
 	if err := c.send(ctx, key); err != nil {
 		return "", err
 	}
@@ -152,14 +171,19 @@ func (f *Flasher) FlashApp(ctx context.Context, image []byte) (ver string, err e
 	c.note("TFTP upload of %d bytes", len(image))
 	uctx, cancel := context.WithTimeout(ctx, c.d(6*time.Minute))
 	err = f.Upload(uctx, image)
+
 	cancel()
+
 	if err != nil {
 		return "", fmt.Errorf("%w: upload: %w", ErrUpload, err)
 	}
+
 	if _, err := c.expect(ctx, c.d(90*time.Second), "download with TFTP was successful"); err != nil {
 		return "", fmt.Errorf("%w: not confirmed: %w", ErrUpload, err)
 	}
+
 	c.note("download confirmed, rebooting the BCO")
+
 	return c.boot(ctx)
 }
 
@@ -168,6 +192,7 @@ func (c *console) boot(ctx context.Context) (string, error) {
 	if err := c.powerCycle(ctx); err != nil {
 		return "", err
 	}
+
 	if _, err := c.expect(ctx, c.d(15*time.Second), "Starting Application"); err != nil {
 		return "", err
 	}
@@ -177,16 +202,20 @@ func (c *console) boot(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	if got == "netcard up" {
 		return "own app", nil
 	}
+
 	if got != "sdsShell ready" {
 		return "", ErrAppDead
 	}
+
 	ver := appVersion.FindString(boot)
 	if ver == "" {
-		return "", fmt.Errorf("BCO app started but printed no APP= version")
+		return "", errors.New("BCO app started but printed no APP= version")
 	}
+
 	return ver, nil
 }
 
@@ -200,6 +229,7 @@ func (c *console) d(d time.Duration) time.Duration {
 	if c.f.Scale > 0 {
 		return time.Duration(float64(d) * c.f.Scale)
 	}
+
 	return d
 }
 
@@ -230,11 +260,13 @@ const (
 // poll moves what the UART holds into buf, up to pollReads reads.
 func (c *console) poll() error {
 	var b [1024]byte
+
 	defer func() {
 		if len(c.buf) > consoleKeep {
 			c.buf = append([]byte(nil), c.buf[len(c.buf)-consoleKeep:]...)
 		}
 	}()
+
 	for range pollReads {
 		n, err := c.f.Serial.Read(b[:])
 		if n > 0 {
@@ -243,13 +275,16 @@ func (c *console) poll() error {
 				c.f.Log.Write(b[:n])
 			}
 		}
+
 		if err != nil && !errors.Is(err, io.EOF) {
 			return fmt.Errorf("BCO serial read: %w", err)
 		}
+
 		if n == 0 || err != nil {
 			return nil
 		}
 	}
+
 	return nil
 }
 
@@ -257,7 +292,9 @@ func (c *console) send(ctx context.Context, s string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+
 	_, err := c.f.Serial.Write([]byte(s))
+
 	return err
 }
 
@@ -265,54 +302,75 @@ func (c *console) send(ctx context.Context, s string) error {
 // returns which one it was.
 func (c *console) expect(ctx context.Context, timeout time.Duration, wants ...string) (string, error) {
 	got, _, err := c.expectText(ctx, timeout, wants...)
+
 	return got, err
 }
 
 // expectText is expect that also returns the text it skipped before the match.
 func (c *console) expectText(ctx context.Context, timeout time.Duration, wants ...string) (string, string, error) {
 	deadline := time.Now().Add(timeout)
+
 	for {
-		if err := ctx.Err(); err != nil {
+		err := ctx.Err()
+		if err != nil {
 			return "", "", err
 		}
-		if err := c.poll(); err != nil {
+
+		err = c.poll()
+		if err != nil {
 			return "", "", err
 		}
+
 		best, at := "", -1
 		for _, w := range wants {
 			if i := bytes.Index(c.buf, []byte(w)); i >= 0 && (at < 0 || i < at) {
 				best, at = w, i
 			}
 		}
+
 		if at >= 0 {
 			skipped := string(c.buf[:at])
 			c.buf = c.buf[at+len(best):]
+
 			return best, skipped, nil
 		}
+
 		if time.Now().After(deadline) {
 			return "", "", fmt.Errorf("BCO: no %q within %s", wants, timeout)
 		}
-		if err := c.sleep(ctx, 20*time.Millisecond); err != nil {
+
+		err = c.sleep(ctx, 20*time.Millisecond)
+		if err != nil {
 			return "", "", err
 		}
 	}
 }
 
 func (c *console) powerCycle(ctx context.Context) error {
-	if err := c.f.Power(false); err != nil {
+	err := c.f.Power(false)
+	if err != nil {
 		return fmt.Errorf("BCO power off: %w", err)
 	}
-	if err := c.sleep(ctx, c.d(time.Second)); err != nil {
+
+	err = c.sleep(ctx, c.d(time.Second))
+	if err != nil {
 		return err
 	}
+
 	c.buf = c.buf[:0]
-	if err := c.poll(); err != nil { // drop what the dying app printed
+
+	err = c.poll()
+	if err != nil { // drop what the dying app printed
 		return err
 	}
+
 	c.buf = c.buf[:0]
-	if err := c.f.Power(true); err != nil {
+
+	err = c.f.Power(true)
+	if err != nil {
 		return fmt.Errorf("BCO power on: %w", err)
 	}
+
 	return nil
 }
 
@@ -321,20 +379,27 @@ func (c *console) powerCycle(ctx context.Context) error {
 func (c *console) enterLevel1(ctx context.Context) error {
 	deadline := time.Now().Add(c.d(5 * time.Second))
 	for time.Now().Before(deadline) {
-		if err := c.send(ctx, "\x01"); err != nil {
+		err := c.send(ctx, "\x01")
+		if err != nil {
 			return err
 		}
-		if err := c.sleep(ctx, c.d(100*time.Millisecond)); err != nil {
+
+		err = c.sleep(ctx, c.d(100*time.Millisecond))
+		if err != nil {
 			return err
 		}
-		if err := c.poll(); err != nil {
+
+		err = c.poll()
+		if err != nil {
 			return err
 		}
+
 		if bytes.Contains(c.buf, []byte("Bootloader Level 1  Menu")) {
 			return nil
 		}
 	}
-	return fmt.Errorf("BCO: bootloader level 1 menu did not appear")
+
+	return errors.New("BCO: bootloader level 1 menu did not appear")
 }
 
 var appVersion = regexp.MustCompile(`APP=[^,\r\n]*`)
@@ -347,6 +412,7 @@ func (c *console) menuKey(ctx context.Context, title, label, last string) (strin
 	if _, err := c.expect(ctx, c.d(30*time.Second), title); err != nil {
 		return "", err
 	}
+
 	_, menu, err := c.expectText(ctx, c.d(10*time.Second), last)
 	if err != nil {
 		return "", err
@@ -358,16 +424,20 @@ func (c *console) menuKey(ctx context.Context, title, label, last string) (strin
 // parseMenuKey finds the key of the entry labelled exactly label in a printed menu.
 func parseMenuKey(menu, label string) (string, error) {
 	key := ""
+
 	for _, m := range menuLine.FindAllStringSubmatch(strings.ReplaceAll(menu, "\r", "\n"), -1) {
 		if m[2] == label {
 			if key != "" {
 				return "", fmt.Errorf("BCO menu lists %q twice", label)
 			}
+
 			key = m[1]
 		}
 	}
+
 	if key == "" {
 		return "", fmt.Errorf("BCO menu has no entry %q", label)
 	}
+
 	return key, nil
 }

@@ -28,47 +28,57 @@ const uImageMagic = 0x27051956
 func ReadBootChain(read func(string, ...string) ([]byte, error)) BootChain {
 	return BootChain{
 		SPL:        bootSlot{0, 0, stagedSPL}.imageSum(read),
-		UBoot:      bootSlot{4, 0, stagedUBoot}.imageSum(read),
-		UBootSpare: bootSlot{4, SecondUBootOffset, stagedUBoot}.imageSum(read),
+		UBoot:      bootSlot{ubootMTD, 0, stagedUBoot}.imageSum(read),
+		UBootSpare: bootSlot{ubootMTD, SecondUBootOffset, stagedUBoot}.imageSum(read),
 	}
 }
 
-// dump reads the first n bytes of the slot.
-func (s bootSlot) dump(read func(string, ...string) ([]byte, error), n int) ([]byte, error) {
-	args := []string{"--omitoob", "--bb=skipbad", "-l", strconv.Itoa(n)}
+// dump reads the first size bytes of the slot.
+func (s bootSlot) dump(read func(string, ...string) ([]byte, error), size int) ([]byte, error) {
+	args := []string{"--omitoob", "--bb=skipbad", "-l", strconv.Itoa(size)}
 	if s.offset > 0 {
 		args = append(args, "-s", strconv.Itoa(s.offset))
 	}
+
 	return read("nanddump", append(args, s.device())...)
 }
 
 // imageSum is the SHA-256 of the image the slot holds, or "".
 func (s bootSlot) imageSum(read func(string, ...string) ([]byte, error)) string {
 	const headLen = 0x210
+
 	head, err := s.dump(read, headLen)
 	if err != nil || len(head) < headLen {
 		return ""
 	}
+
 	var size, limit int
+
 	switch s.name {
 	case stagedSPL:
-		if binary.LittleEndian.Uint32(head) != 0x40 {
+		if binary.LittleEndian.Uint32(head) != splTOCFirstItem {
 			return ""
 		}
-		size, limit = 0x200+int(binary.LittleEndian.Uint32(head[0x200:])), 128<<10
+
+		size, limit = splGPHeader+int(binary.LittleEndian.Uint32(head[splGPHeader:])), maxSPLSize
 	default:
 		if binary.BigEndian.Uint32(head) != uImageMagic {
 			return ""
 		}
-		size, limit = 64+int(binary.BigEndian.Uint32(head[12:])), SecondUBootOffset
+
+		size, limit = uImageHeaderSize+int(binary.BigEndian.Uint32(head[uImageSizeOff:])), SecondUBootOffset
 	}
+
 	if size > limit {
 		return ""
 	}
+
 	img, err := s.dump(read, size)
 	if err != nil || len(img) != size {
 		return ""
 	}
+
 	sum := sha256.Sum256(img)
+
 	return hex.EncodeToString(sum[:])
 }

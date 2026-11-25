@@ -6,6 +6,7 @@ package hw
 import (
 	"bufio"
 	"encoding/binary"
+	"maps"
 	"os"
 	"strconv"
 	"strings"
@@ -40,9 +41,11 @@ func decodeInputEvent(event []byte) (code uint16, pressed, ok bool) {
 	if len(event) != 16 || binary.LittleEndian.Uint16(event[8:10]) != 1 {
 		return 0, false, false
 	}
+
 	code = binary.LittleEndian.Uint16(event[10:12])
 	value := int32(binary.LittleEndian.Uint32(event[12:16])) //nolint:gosec // G115: the kernel event value is -1, 0 or 1
 	_, mapped := inputKeymap[code]
+
 	return code, value == 1, mapped && (value == 0 || value == 1)
 }
 
@@ -80,25 +83,27 @@ func decodeEvent(b byte) (index int, pressed, ok bool) {
 // (`<scancode> = <KEY>`) over it.
 func LoadKeymap(path string) map[int]string {
 	m := map[int]string{}
-	for k, v := range defaultKeymap {
-		m[k] = v
-	}
+	maps.Copy(m, defaultKeymap)
+
 	f, err := os.Open(path)
 	if err != nil {
 		return m
 	}
 	defer f.Close()
+
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
+
 		if k, v, ok := strings.Cut(line, "="); ok {
 			if idx, err := strconv.Atoi(strings.TrimSpace(k)); err == nil {
 				m[idx] = strings.TrimSpace(v)
 			}
 		}
 	}
+
 	return m
 }

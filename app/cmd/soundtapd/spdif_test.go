@@ -13,27 +13,36 @@ import (
 // The optical pipe takes whole blocks or none: a block that does not fit is dropped, so
 // the frames behind it stay aligned and the analog sink is never held up.
 func TestDropWriterDropsWholeBlocks(t *testing.T) {
-	r, w, err := os.Pipe()
+	t.Parallel()
+
+	reader, writer, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
-	defer w.Close()
-	fd := int(w.Fd())
-	if err := syscall.SetNonblock(fd, true); err != nil {
+	defer reader.Close()
+	defer writer.Close()
+
+	writerFD := int(writer.Fd())
+
+	err = syscall.SetNonblock(writerFD, true)
+	if err != nil {
 		t.Fatal(err)
 	}
-	d := &dropWriter{fd: fd, size: 100}
+
+	drop := &dropWriter{fd: writerFD, size: 100}
 	for range 3 {
-		if n, err := d.Write(make([]byte, 40)); n != 40 || err != nil {
-			t.Fatalf("Write = %d, %v; want 40, nil", n, err)
+		n, writeErr := drop.Write(make([]byte, 40))
+		if n != 40 || writeErr != nil {
+			t.Fatalf("Write = %d, %v; want 40, nil", n, writeErr)
 		}
 	}
-	q, err := pipeQueued(w.Fd())
+
+	queued, err := pipeQueued(writer.Fd())
 	if errors.Is(err, errors.ErrUnsupported) {
 		t.Skip("this system cannot report how many bytes wait in a pipe")
 	}
-	if err != nil || q != 80 {
-		t.Fatalf("queued %d, %v; want 80 (the third block dropped whole)", q, err)
+
+	if err != nil || queued != 80 {
+		t.Fatalf("queued %d, %v; want 80 (the third block dropped whole)", queued, err)
 	}
 }

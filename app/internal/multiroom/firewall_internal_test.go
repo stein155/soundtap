@@ -1,0 +1,71 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 SoundTap contributors
+
+package multiroom
+
+import (
+	"context"
+	"errors"
+	"slices"
+	"testing"
+)
+
+// errNft is an nft run that failed.
+var errNft = errors.New("no nft")
+
+func TestAllowFollowerRunsNftForIPv4Only(t *testing.T) {
+	t.Parallel()
+
+	var got []string
+
+	list := newAllowList(func(_ context.Context, args ...string) error {
+		got = args
+
+		return errNft
+	})
+
+	list.allow(context.Background(), "192.168.1.7:80")
+
+	want := []string{"add", "element", "ip", "filter", "snap_followers", "{", "192.168.1.7", "timeout", "10m", "}"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("argv %v, want %v", got, want)
+	}
+
+	got = nil
+
+	list.allow(context.Background(), "nonexistent.invalid")
+	list.allow(context.Background(), "fe80::1")
+
+	if got != nil {
+		t.Fatalf("non-IPv4 ran nft: %v", got)
+	}
+}
+
+// A repeated ask inside allowRefresh runs no nft; a failed run is retried.
+func TestAllowFollowerRunsNftOncePerRefresh(t *testing.T) {
+	t.Parallel()
+
+	runs := 0
+	fail := true
+	list := newAllowList(func(context.Context, ...string) error {
+		runs++
+
+		if fail {
+			return errNft
+		}
+
+		return nil
+	})
+	follower := "192.168.1.8"
+	list.allow(context.Background(), follower)
+
+	fail = false
+
+	for range 50 {
+		list.allow(context.Background(), follower)
+	}
+
+	if runs != 2 {
+		t.Fatalf("nft ran %d times, want 2 (failed try, then one success)", runs)
+	}
+}

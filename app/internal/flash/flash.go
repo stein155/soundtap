@@ -122,8 +122,58 @@ type Target struct {
 // back to its built-in default on two copies of 32 KiB.
 const EnvRedundantMarker = "soundtap.env=redundant"
 
-var ping = Slot{Name: "PING", KernelMTD: 6, RootfsMTD: 8, RootfsName: rootfsPing}
-var pong = Slot{Name: "PONG", KernelMTD: 7, RootfsMTD: 9, RootfsName: rootfsPong}
+// The documented NAND layout's slot partitions: mtd6/mtd7 the kernels, mtd8/mtd9 the
+// root filesystems. plan holds the live table to these numbers.
+const (
+	kernelPingMTD = 6
+	kernelPongMTD = 7
+	rootfsPingMTD = 8
+	rootfsPongMTD = 9
+)
+
+//nolint:gochecknoglobals // the two fixed slots of the NAND layout, used as values throughout.
+var (
+	ping = Slot{
+		Name: "PING", KernelMTD: kernelPingMTD, RootfsMTD: rootfsPingMTD, RootfsName: rootfsPing,
+		KernelSize: 0, RootfsSize: 0, RootfsEraseSize: 0,
+	}
+	pong = Slot{
+		Name: "PONG", KernelMTD: kernelPongMTD, RootfsMTD: rootfsPongMTD, RootfsName: rootfsPong,
+		KernelSize: 0, RootfsSize: 0, RootfsEraseSize: 0,
+	}
+)
+
+// The ways a partition table is not the layout this package writes. A message with values
+// reads them around its sentinel, as it always has.
+var (
+	errMissingMTD       = errors.New("is missing from /proc/mtd")
+	errExpectedMTD      = errors.New("expected")
+	errNoUsableSize     = errors.New("has no usable size")
+	errBootloaderNotMTD = errors.New("bootloader partition is not")
+	errNoGeometry       = errors.New("has no usable geometry")
+	errNoPartitions     = errors.New("no partitions in /proc/mtd")
+	errKernelReadback   = errors.New("kernel readback verification failed on")
+	errNoBootFiles      = errors.New("no boot files known for variant")
+	errNothingWritten   = errors.New("cannot verify the written root filesystem: no rootfs was written")
+	errNotDeviceTree    = errors.New("is not a whole device tree")
+)
+
+// bootloaderPartitions are the boot chain's partitions, in mtd order: mtd0-mtd4.
+func bootloaderPartitions() []string {
+	return []string{"NAND.SPL", "NAND.SPL.backup1", "NAND.SPL.backup2", "NAND.SPL.backup3", "NAND.U-Boot"}
+}
+
+// procMTDNumbers is size and erasesize, the two hex numbers before a /proc/mtd name.
+const procMTDNumbers = 2
+
+// The flattened device tree header: its magic and, at 4, its total size.
+const (
+	fdtMagic      = 0xd00dfeed
+	fdtHeaderSize = 8
+)
+
+// ubiVIDOffset is where ubiformat -s 2048 put the VID headers.
+const ubiVIDOffset = "2048"
 
 // ErrUnknownSlot means the running slot could not be determined. Guessing is not
 // an option: writing the slot we are running from is the one unrecoverable
@@ -146,19 +196,25 @@ var ErrUnknownSlot = errors.New("cannot tell which NAND slot is running")
 // neither slot, a later entry that names a boot slot too, no entry at all.
 func SlotFromCmdline(cmdline string) (Slot, error) {
 	var running Slot
+
 	first := true
-	for _, field := range strings.Fields(cmdline) {
+
+	for field := range strings.FieldsSeq(cmdline) {
 		value, ok := strings.CutPrefix(field, "ubi.mtd=")
 		if !ok {
 			continue
 		}
+
 		mtd, offset, hasOffset := strings.Cut(value, ",")
 		if hasOffset {
-			if _, err := strconv.ParseUint(offset, 10, 32); err != nil {
+			_, err := strconv.ParseUint(offset, 10, 32)
+			if err != nil {
 				return Slot{}, fmt.Errorf("%w: invalid ubi.mtd offset %q", ErrUnknownSlot, offset)
 			}
 		}
+
 		var slot Slot
+
 		switch mtd {
 		case "8", rootfsPing:
 			slot = ping
@@ -168,18 +224,24 @@ func SlotFromCmdline(cmdline string) (Slot, error) {
 			if first {
 				return Slot{}, fmt.Errorf("%w: the root ubi.mtd=%s is neither slot", ErrUnknownSlot, mtd)
 			}
+
 			first = false
+
 			continue
 		}
+
 		if !first {
 			return Slot{}, fmt.Errorf("%w: %s is attached after the root volume", ErrUnknownSlot, mtd)
 		}
+
 		first = false
 		running = slot
 	}
+
 	if running.Name == "" {
 		return Slot{}, fmt.Errorf("%w: no ubi.mtd= on the kernel command line", ErrUnknownSlot)
 	}
+
 	return running, nil
 }
 
@@ -189,10 +251,12 @@ func Plan(cmdline string, mtd map[string]Partition) (Target, error) {
 	if err != nil {
 		return Target{}, err
 	}
-	target, err := plan(running, mtd)
+
+	target, err := planFor(running, mtd)
 	if err == nil {
 		target.EnvRedundant = slices.Contains(strings.Fields(cmdline), EnvRedundantMarker)
 	}
+
 	return target, err
 }
 
@@ -205,83 +269,119 @@ func Plan(cmdline string, mtd map[string]Partition) (Target, error) {
 // the one erased. Unknown ("") counts as PING.
 func RecoveryPlan(mtd map[string]Partition, selected string) (Target, error) {
 	if selected == pong.Name {
-		return plan(pong, mtd)
+		return planFor(pong, mtd)
 	}
-	return plan(ping, mtd)
+
+	return planFor(ping, mtd)
 }
 
-func plan(running Slot, mtd map[string]Partition) (Target, error) {
+// planFor is the plan for a board running from running.
+func planFor(running Slot, mtd map[string]Partition) (Target, error) {
 	alt := pong
 	if running.Name == pong.Name {
 		alt = ping
 	}
-	// The numbers above are the documented layout; the live table is what we
-	// actually write to. A mismatch means this is not the layout we think it is.
+
+	err := checkSlotPartitions(mtd)
+	if err != nil {
+		return Target{}, err
+	}
+
+	sized := func(slot Slot) Slot {
+		if slot.Name == ping.Name {
+			slot.KernelSize, slot.RootfsSize = mtd[kernelPing].Size, mtd[rootfsPing].Size
+			slot.RootfsEraseSize = mtd[rootfsPing].EraseSize
+		} else {
+			slot.KernelSize, slot.RootfsSize = mtd[kernelPong].Size, mtd[rootfsPong].Size
+			slot.RootfsEraseSize = mtd[rootfsPong].EraseSize
+		}
+
+		return slot
+	}
+
+	bootloaderSizes, bootloaderEraseSizes, err := bootloaderGeometry(mtd)
+	if err != nil {
+		return Target{}, err
+	}
+
+	target := Target{
+		Running: sized(running), Alternate: sized(alt),
+		BootloaderSizes: bootloaderSizes, BootloaderEraseSizes: bootloaderEraseSizes,
+		EnvMTD: -1, EnvSize: 0, EnvEraseSize: 0, PersistentName: "",
+		// Every plan ends in our U-Boot, which counts boots, including a RAM recovery's.
+		BootCount:    true,
+		EnvRedundant: false,
+	}
+
+	for _, name := range []string{"NAND.Persistent-Storage", "NAND.Persistant-Storage"} {
+		if _, ok := mtd[name]; ok {
+			target.PersistentName = name
+
+			break
+		}
+	}
+
+	if env, ok := mtd[envPart]; ok {
+		if env.Size <= 0 || env.EraseSize <= 0 {
+			return Target{}, fmt.Errorf("%s %w", envPart, errNoGeometry)
+		}
+
+		target.EnvMTD, target.EnvSize, target.EnvEraseSize = env.Index, env.Size, env.EraseSize
+	}
+
+	return target, nil
+}
+
+// checkSlotPartitions holds the live table to the slots' documented layout. The numbers in
+// ping and pong are the documented layout; the live table is what we actually write to. A
+// mismatch means this is not the layout we think it is.
+func checkSlotPartitions(mtd map[string]Partition) error {
 	for name, want := range map[string]int{
 		kernelPing: ping.KernelMTD, kernelPong: pong.KernelMTD,
 		rootfsPing: ping.RootfsMTD, rootfsPong: pong.RootfsMTD,
 	} {
 		got, ok := mtd[name]
 		if !ok {
-			return Target{}, fmt.Errorf("%s is missing from /proc/mtd", name)
+			return fmt.Errorf("%s %w", name, errMissingMTD)
 		}
+
 		if got.Index != want {
-			return Target{}, fmt.Errorf("%s is mtd%d, expected mtd%d", name, got.Index, want)
+			return fmt.Errorf("%s is mtd%d, %w mtd%d", name, got.Index, errExpectedMTD, want)
 		}
+
 		if got.Size <= 0 {
-			return Target{}, fmt.Errorf("%s has no usable size", name)
+			return fmt.Errorf("%s %w", name, errNoUsableSize)
 		}
 	}
-	sized := func(s Slot) Slot {
-		if s.Name == ping.Name {
-			s.KernelSize, s.RootfsSize = mtd[kernelPing].Size, mtd[rootfsPing].Size
-			s.RootfsEraseSize = mtd[rootfsPing].EraseSize
-		} else {
-			s.KernelSize, s.RootfsSize = mtd[kernelPong].Size, mtd[rootfsPong].Size
-			s.RootfsEraseSize = mtd[rootfsPong].EraseSize
-		}
-		return s
-	}
-	bootloaderSizes := map[int]int64{}
-	bootloaderEraseSizes := map[int]int64{}
-	for name, want := range map[string]int{
-		"NAND.SPL": 0, "NAND.SPL.backup1": 1, "NAND.SPL.backup2": 2,
-		"NAND.SPL.backup3": 3, "NAND.U-Boot": 4,
-	} {
+
+	return nil
+}
+
+// bootloaderGeometry is the size and erase size of each boot chain partition the table
+// has, by mtd number; one in another place, or of no size, is refused.
+func bootloaderGeometry(mtd map[string]Partition) (map[int]int64, map[int]int64, error) {
+	sizes := map[int]int64{}
+	eraseSizes := map[int]int64{}
+
+	for want, name := range bootloaderPartitions() {
 		got, ok := mtd[name]
 		if !ok {
 			continue
 		}
+
 		if got.Index != want || got.Size <= 0 || got.EraseSize <= 0 {
-			return Target{}, fmt.Errorf("%s bootloader partition is not mtd%d", name, want)
+			return nil, nil, fmt.Errorf("%s %w mtd%d", name, errBootloaderNotMTD, want)
 		}
-		bootloaderSizes[want] = got.Size
-		bootloaderEraseSizes[want] = got.EraseSize
+
+		sizes[want] = got.Size
+		eraseSizes[want] = got.EraseSize
 	}
-	target := Target{
-		Running: sized(running), Alternate: sized(alt),
-		BootloaderSizes: bootloaderSizes, BootloaderEraseSizes: bootloaderEraseSizes,
-		EnvMTD: -1,
-		// Every plan ends in our U-Boot, which counts boots, including a RAM recovery's.
-		BootCount: true,
-	}
-	for _, name := range []string{"NAND.Persistent-Storage", "NAND.Persistant-Storage"} {
-		if _, ok := mtd[name]; ok {
-			target.PersistentName = name
-			break
-		}
-	}
-	if env, ok := mtd[envPart]; ok {
-		if env.Size <= 0 || env.EraseSize <= 0 {
-			return Target{}, fmt.Errorf("%s has no usable geometry", envPart)
-		}
-		target.EnvMTD, target.EnvSize, target.EnvEraseSize = env.Index, env.Size, env.EraseSize
-	}
-	return target, nil
+
+	return sizes, eraseSizes, nil
 }
 
 // WLABootloaderGeometry rejects an unfamiliar boot chain before WLA writes it.
-func (t Target) WLABootloaderGeometry() bool {
+func (t *Target) WLABootloaderGeometry() bool {
 	return t.BootloaderSizes[0] == 0x20000 && t.BootloaderSizes[1] == 0x20000 &&
 		t.BootloaderSizes[2] == 0x20000 && t.BootloaderSizes[3] == 0x20000 &&
 		t.BootloaderSizes[4] == 0x1e0000 &&
@@ -298,18 +398,23 @@ func Fits(n, size int64) bool { return size > 0 && n <= size }
 // ParseProcMTD maps partition names to their device number and size.
 func ParseProcMTD(r io.Reader) (map[string]Partition, error) {
 	out := map[string]Partition{}
-	s := bufio.NewScanner(r)
-	for s.Scan() {
-		line := s.Text()
+
+	lines := bufio.NewScanner(r)
+	for lines.Scan() {
+		line := lines.Text()
+
 		dev, rest, ok := strings.Cut(line, ":")
 		if !ok || !strings.HasPrefix(dev, "mtd") {
 			continue
 		}
-		n, err := strconv.Atoi(strings.TrimPrefix(dev, "mtd"))
+
+		index, err := strconv.Atoi(strings.TrimPrefix(dev, "mtd"))
 		if err != nil {
 			continue
 		}
+
 		start := strings.Index(rest, `"`)
+
 		end := strings.LastIndex(rest, `"`)
 		if start < 0 || end <= start {
 			continue
@@ -318,23 +423,29 @@ func ParseProcMTD(r io.Reader) (map[string]Partition, error) {
 		// A size that does not parse stays 0, which is unknown capacity: Fits refuses
 		// every write to it, so a garbled line can stop an install but never overrun.
 		var size, eraseSize int64
-		if f := strings.Fields(rest[:start]); len(f) >= 2 {
-			size, _ = strconv.ParseInt(f[0], 16, 64)
-			eraseSize, _ = strconv.ParseInt(f[1], 16, 64)
+		if fields := strings.Fields(rest[:start]); len(fields) >= procMTDNumbers {
+			size, _ = strconv.ParseInt(fields[0], 16, 64)
+			eraseSize, _ = strconv.ParseInt(fields[1], 16, 64)
 		}
-		out[rest[start+1:end]] = Partition{Index: n, Size: size, EraseSize: eraseSize}
+
+		out[rest[start+1:end]] = Partition{Index: index, Size: size, EraseSize: eraseSize}
 	}
-	if err := s.Err(); err != nil {
-		return nil, err
+
+	err := lines.Err()
+	if err != nil {
+		return nil, fmt.Errorf("reading /proc/mtd: %w", err)
 	}
+
 	if len(out) == 0 {
-		return nil, errors.New("no partitions in /proc/mtd")
+		return nil, errNoPartitions
 	}
+
 	return out, nil
 }
 
 // Command starts one flash command with an optional stdin stream. Real installs
-// shell out to the mtd-utils binaries already in the image. Tests supply their own and assert on what would have happened.
+// shell out to the mtd-utils binaries already in the image. Tests supply their own and
+// assert on what would have happened.
 type Command func(stdin io.Reader, name string, args ...string) error
 
 // Installer writes a package into the alternate slot.
@@ -385,16 +496,18 @@ func (in *Installer) EraseAlternateRootfs() error {
 func (in *Installer) StartRootfs(size int64) (io.WriteCloser, func() error) {
 	alt := in.Target.Alternate
 	in.written = newRootfsDigest(alt.RootfsEraseSize, alt.RootfsSize)
-	pr, pw := io.Pipe()
+	ubiformatIn, stream := io.Pipe()
 	done := make(chan error, 1)
+
 	safego.Go("flash.ubiformat", func() {
-		done <- in.Run(pr, "ubiformat", in.dev(in.Target.Alternate.RootfsMTD),
+		done <- in.Run(ubiformatIn, "ubiformat", in.dev(in.Target.Alternate.RootfsMTD),
 			"-f", "-", "-S", strconv.FormatInt(size, 10), "-s", "2048", "-y")
 		// Whatever happens to ubiformat, the producer must not block forever on a
 		// pipe nobody is reading any more.
-		_ = pr.CloseWithError(io.ErrClosedPipe)
+		_ = ubiformatIn.CloseWithError(io.ErrClosedPipe)
 	})
-	return &rootfsStream{pw: pw, digest: in.written}, func() error { return <-done }
+
+	return &rootfsStream{pw: stream, digest: in.written}, func() error { return <-done }
 }
 
 // WriteKernel installs the uImage last, which is what makes the new slot
@@ -412,46 +525,59 @@ func (in *Installer) StartRootfs(size int64) (io.WriteCloser, func() error) {
 func (in *Installer) WriteKernel(read Reader, path string) error {
 	image, err := os.ReadFile(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("staged kernel: %w", err)
 	}
+
 	dev := in.dev(in.Target.Alternate.KernelMTD)
-	if err := in.Run(nil, "flash_erase", dev, "0", "0"); err != nil {
+
+	err = in.Run(nil, "flash_erase", dev, "0", "0")
+	if err != nil {
 		return err
 	}
-	if err := in.Run(nil, "nandwrite", "-p", dev, path); err != nil {
+
+	err = in.Run(nil, "nandwrite", "-p", dev, path)
+	if err != nil {
 		return err
 	}
+
 	back, err := read("nanddump", "--omitoob", "--bb=skipbad", "-l", strconv.Itoa(len(image)), dev)
 	if err != nil {
 		return fmt.Errorf("reading the kernel back: %w", err)
 	}
+
 	if len(back) < len(image) || !bytes.Equal(back[:len(image)], image) {
-		return fmt.Errorf("kernel readback verification failed on %s", dev)
+		return fmt.Errorf("%w %s", errKernelReadback, dev)
 	}
+
 	return nil
 }
 
-func (in *Installer) dev(n int) string { return "/dev/mtd" + strconv.Itoa(n) }
-
 // ReadCmdline is the live /proc/cmdline.
 func ReadCmdline() (string, error) {
-	b, err := os.ReadFile("/proc/cmdline")
-	return string(b), err
+	cmdline, err := os.ReadFile("/proc/cmdline")
+	if err != nil {
+		return "", fmt.Errorf("reading the kernel command line: %w", err)
+	}
+
+	return string(cmdline), nil
 }
 
 // ReadMTD is the live /proc/mtd.
 func ReadMTD() (map[string]Partition, error) {
-	f, err := os.Open("/proc/mtd")
+	table, err := os.Open("/proc/mtd")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("reading /proc/mtd: %w", err)
 	}
-	defer f.Close()
-	return ParseProcMTD(f)
+	defer table.Close()
+
+	return ParseProcMTD(table)
 }
 
 // VerifyDir is where VerifyRootfs mounts the written slot. soundtapd points it at
 // soundtap-root's own directory when that helper mounts it (ADR 0066): a mount point in a
 // directory soundtapd may write is one it could swap for a link.
+//
+//nolint:gochecknoglobals // soundtapd sets it once at start (cmd/soundtapd/roothelper.go); rootd reads it.
 var VerifyDir = "/run/soundtap/verify-rootfs"
 
 // verifyUBI is the UBI device number the written slot is attached as for VerifyRootfs;
@@ -468,49 +594,73 @@ const verifyUBI = "7"
 // read-only the way U-Boot will use it and checks the kernel (header and data CRC) and the
 // device tree that slot_boot loads from /boot, and that /init is there.
 func (in *Installer) VerifyRootfs(read Reader, variant string) error {
-	m, ok := recipeModels[variant]
+	files, ok := recipeModels()[variant]
 	if !ok {
-		return fmt.Errorf("no boot files known for variant %q", variant)
+		return fmt.Errorf("%w %q", errNoBootFiles, variant)
 	}
+
 	if in.written == nil {
-		return errors.New("cannot verify the written root filesystem: no rootfs was written")
+		return errNothingWritten
 	}
+
 	dir := VerifyDir
 	// -O 2048: ubiformat -s 2048 put the VID headers there; without it the attach fails.
-	if err := in.Run(nil, "ubiattach", "-m", strconv.Itoa(in.Target.Alternate.RootfsMTD), "-d", verifyUBI, "-O", "2048"); err != nil {
+	err := in.Run(nil, "ubiattach", "-m", strconv.Itoa(in.Target.Alternate.RootfsMTD), "-d", verifyUBI,
+		"-O", ubiVIDOffset)
+	if err != nil {
 		return fmt.Errorf("attaching the written root filesystem: %w", err)
 	}
-	defer in.Run(nil, "ubidetach", "-d", verifyUBI)
+	// The slot was read back above; a detach that fails changes nothing about it.
+	defer func() { _ = in.Run(nil, "ubidetach", "-d", verifyUBI) }()
+
 	open := in.Open
 	if open == nil {
 		open = func(name string) (io.ReadCloser, error) { return os.Open(name) }
 	}
-	if err := in.written.verify(open, verifyUBI); err != nil {
+
+	err = in.written.verify(open)
+	if err != nil {
 		return err
 	}
-	if err := in.Run(nil, "mkdir", "-p", dir); err != nil {
+
+	err = in.Run(nil, "mkdir", "-p", dir)
+	if err != nil {
 		return err
 	}
-	if err := in.Run(nil, "mount", "-t", "ubifs", "-o", "ro", "ubi"+verifyUBI+":rootfs", dir); err != nil {
+
+	err = in.Run(nil, "mount", "-t", "ubifs", "-o", "ro", "ubi"+verifyUBI+":rootfs", dir)
+	if err != nil {
 		return fmt.Errorf("mounting the written root filesystem: %w", err)
 	}
-	defer in.Run(nil, "umount", dir)
-	kernel, err := read("cat", dir+"/boot/"+m[1])
+	// What was to be read is read; an unmount that fails changes nothing about it.
+	defer func() { _ = in.Run(nil, "umount", dir) }()
+
+	kernel, err := read("cat", dir+"/boot/"+files[1])
 	if err != nil {
-		return fmt.Errorf("reading /boot/%s back: %w", m[1], err)
+		return fmt.Errorf("reading /boot/%s back: %w", files[1], err)
 	}
-	if err := ValidateKernel(kernel); err != nil {
-		return fmt.Errorf("/boot/%s: %w", m[1], err)
-	}
-	dtb, err := read("cat", dir+"/boot/"+m[0])
+
+	err = ValidateKernel(kernel)
 	if err != nil {
-		return fmt.Errorf("reading /boot/%s back: %w", m[0], err)
+		return fmt.Errorf("/boot/%s: %w", files[1], err)
 	}
-	if len(dtb) < 8 || binary.BigEndian.Uint32(dtb) != 0xd00dfeed || int(binary.BigEndian.Uint32(dtb[4:])) != len(dtb) {
-		return fmt.Errorf("/boot/%s is not a whole device tree", m[0])
+
+	dtb, err := read("cat", dir+"/boot/"+files[0])
+	if err != nil {
+		return fmt.Errorf("reading /boot/%s back: %w", files[0], err)
 	}
-	if err := in.Run(nil, "test", "-x", dir+"/init"); err != nil {
+
+	if len(dtb) < fdtHeaderSize || binary.BigEndian.Uint32(dtb) != fdtMagic ||
+		int(binary.BigEndian.Uint32(dtb[4:])) != len(dtb) {
+		return fmt.Errorf("/boot/%s %w", files[0], errNotDeviceTree)
+	}
+
+	err = in.Run(nil, "test", "-x", dir+"/init")
+	if err != nil {
 		return fmt.Errorf("the written root filesystem has no executable /init: %w", err)
 	}
+
 	return nil
 }
+
+func (*Installer) dev(mtd int) string { return "/dev/mtd" + strconv.Itoa(mtd) }

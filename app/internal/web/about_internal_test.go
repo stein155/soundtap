@@ -6,7 +6,6 @@ package web
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -21,46 +20,66 @@ import (
 
 type stagedApp struct{ dir string }
 
-func (a stagedApp) StagingPath() string     { return filepath.Join(a.dir, "soundtapd.new") }
-func (a stagedApp) InstallApp(string) error { return nil }
+func (a stagedApp) StagingPath() string   { return filepath.Join(a.dir, "soundtapd.new") }
+func (stagedApp) InstallApp(string) error { return nil }
 
 // Before NTP has set the clock the speaker does not ask GitHub, and says why: the UI
 // shows "clock not set" rather than a TLS failure or a generic "unreachable".
 func TestUpdateCheckSaysTheClockIsNotSet(t *testing.T) {
 	t.Setenv("SOUNDTAP_FIRMWARE", "1")
+
 	synced := clocksync.Path
+
 	clocksync.Path = filepath.Join(t.TempDir(), "missing")
 	defer func() { clocksync.Path = synced }()
 
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	log := slog.New(slog.DiscardHandler)
 	m := update.New("app-v0.1.0", log)
 	m.SetAppInstaller(stagedApp{t.TempDir()})
-	s := &Server{update: m, log: log, version: "app-v0.1.0"}
+
+	srv := new(Server)
+	srv.update = m
+	srv.log = log
+	srv.version = "app-v0.1.0"
 	// A request that has ended: the check gives up at once instead of waiting its bound.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	w := httptest.NewRecorder()
-	s.releases(w, httptest.NewRequestWithContext(ctx, "GET", "/api/releases", nil))
+	rec := httptest.NewRecorder()
+	srv.releases(rec, httptest.NewRequestWithContext(ctx, "GET", "/api/releases", nil))
+
 	var rel struct {
 		Stable          any    `json:"stable"`
 		Unavailable     string `json:"unavailable"`
 		UnavailableCode string `json:"unavailableCode"`
 	}
-	if err := json.Unmarshal(w.Body.Bytes(), &rel); err != nil {
+
+	err := json.Unmarshal(rec.Body.Bytes(), &rel)
+	if err != nil {
 		t.Fatal(err)
-	}
-	if w.Code != 200 || rel.Stable != nil || rel.Unavailable == "" || rel.UnavailableCode != string(apierror.ClockNotSet) {
-		t.Fatalf("GET /api/releases: %d %s", w.Code, w.Body)
 	}
 
-	w = httptest.NewRecorder()
-	s.updateApp(w, httptest.NewRequestWithContext(ctx, "POST", "/api/update", strings.NewReader(`{"confirm":true}`)))
+	if rec.Code != 200 ||
+		rel.Stable != nil ||
+		rel.Unavailable == "" ||
+		rel.UnavailableCode != string(apierror.ClockNotSet) {
+		t.Fatalf("GET /api/releases: %d %s", rec.Code, rec.Body)
+	}
+
+	rec = httptest.NewRecorder()
+	srv.updateApp(
+		rec,
+		httptest.NewRequestWithContext(ctx, "POST", "/api/update", strings.NewReader(`{"confirm":true}`)),
+	)
+
 	var body apierror.Body
-	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+
+	err = json.Unmarshal(rec.Body.Bytes(), &body)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if w.Code != http.StatusServiceUnavailable || body.Code != apierror.ClockNotSet {
-		t.Errorf("POST /api/update: %d %s, want 503 with code clock_not_set", w.Code, w.Body)
+
+	if rec.Code != http.StatusServiceUnavailable || body.Code != apierror.ClockNotSet {
+		t.Errorf("POST /api/update: %d %s, want 503 with code clock_not_set", rec.Code, rec.Body)
 	}
 }

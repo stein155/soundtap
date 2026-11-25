@@ -6,6 +6,7 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"syscall"
 	"unsafe"
@@ -23,7 +24,7 @@ const fSetPipeSize = 1031
 // /proc/sys/fs/pipe-max-size. All of that is fine: this is an optimisation, so a
 // failure is logged and playback continues with the default size.
 func setPipeSize(f any, size int, what string, log *slog.Logger) {
-	h, ok := f.(interface {
+	conn, ok := f.(interface {
 		SyscallConn() (syscall.RawConn, error)
 	})
 	if !ok {
@@ -31,9 +32,10 @@ func setPipeSize(f any, size int, what string, log *slog.Logger) {
 	}
 	// File.Fd switches a pollable pipe back to blocking mode. That prevents a
 	// flush deadline from waking its reader; inspect it through RawConn instead.
-	raw, err := h.SyscallConn()
+	raw, err := conn.SyscallConn()
 	if err == nil {
 		var errno syscall.Errno
+
 		err = raw.Control(func(fd uintptr) {
 			_, _, errno = syscall.Syscall(syscall.SYS_FCNTL, fd, fSetPipeSize, uintptr(size))
 		})
@@ -41,6 +43,7 @@ func setPipeSize(f any, size int, what string, log *slog.Logger) {
 			err = errno
 		}
 	}
+
 	if err != nil {
 		log.Warn("pipe size", "what", what, "bytes", size, "err", err)
 	}
@@ -49,9 +52,12 @@ func setPipeSize(f any, size int, what string, log *slog.Logger) {
 // pipeQueued is how many bytes wait in the pipe or FIFO behind fd (FIONREAD), from either
 // end and without reading them.
 func pipeQueued(fd uintptr) (int, error) {
-	var n int32
-	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, fd, syscall.TIOCINQ, uintptr(unsafe.Pointer(&n))); errno != 0 {
-		return 0, errno
+	var queued int32
+
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, fd, syscall.TIOCINQ, uintptr(unsafe.Pointer(&queued)))
+	if errno != 0 {
+		return 0, fmt.Errorf("FIONREAD: %w", errno)
 	}
-	return int(n), nil
+
+	return int(queued), nil
 }

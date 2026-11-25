@@ -5,13 +5,14 @@ package web
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"fmt"
 	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +22,19 @@ import (
 	"github.com/stein155/soundtap/app/internal/flash"
 	"github.com/stein155/soundtap/app/internal/hw/battery"
 	"github.com/stein155/soundtap/app/internal/install"
+)
+
+// Byte units and the /proc fields the health readings use.
+const (
+	bytesPerKiB = 1 << 10
+	bytesPerMiB = 1 << 20
+	bytesPerGiB = 1 << 30
+	// utimeField and stimeField index /proc/self/stat after the command name.
+	utimeField = 11
+	stimeField = 12
+	// clockTicksPerSecond is USER_HZ, the unit of /proc's CPU times.
+	clockTicksPerSecond = 100
+	percent             = 100
 )
 
 // Bounds a speaker actually runs into. The ST10 has 128 MiB of RAM and a NAND
@@ -43,6 +57,8 @@ const (
 
 // logFiles are the runtime logs, in the order the support bundle tails them. A relative
 // path is under the home directory (Server.logPaths).
+//
+//nolint:gochecknoglobals // a variable so tests can replace it
 var logFiles = []struct{ name, path string }{
 	{"install log", "/tmp/soundtap-install.log"},
 	{"start log", "/tmp/soundtap-start.log"},
@@ -74,6 +90,7 @@ func (s *Server) logPaths() []logFile {
 			out = append(out, logFile{lg.name, p, p})
 		}
 	}
+
 	return out
 }
 
@@ -147,6 +164,7 @@ type bootState struct {
 // starts over with soundtapd, except soundtapdRestarts, which counts this boot's restarts.
 type healthCounters struct {
 	counters.Snapshot
+
 	// SinceSeconds is how long ago soundtapd started.
 	SinceSeconds int64 `json:"sinceSeconds"`
 }
@@ -158,26 +176,34 @@ func (s *Server) healthCounters() healthCounters {
 func (s *Server) bootState() bootState {
 	read := func(path string) string {
 		b, _ := os.ReadFile(path)
+
 		return strings.TrimSpace(string(b))
 	}
-	b := bootState{
-		ID:        read(sysPath(bootIDFile)),
-		Confirmed: s.fw.BootConfirmed(),
-		Previous:  read(filepath.Join(s.homeDir, LastBootDir, "how")),
+
+	boot := bootState{
+		ID:         read(sysPath(bootIDFile)),
+		Confirmed:  s.fw.BootConfirmed(),
+		Previous:   read(filepath.Join(s.homeDir, LastBootDir, "how")),
+		Slot:       "",
+		Bootloader: nil,
 	}
-	if slot, err := flash.SlotFromCmdline(read(sysPath("/proc/cmdline"))); err == nil {
-		b.Slot = slot.Name
+
+	slot, err := flash.SlotFromCmdline(read(sysPath("/proc/cmdline")))
+	if err == nil {
+		boot.Slot = slot.Name
 		chain := s.fw.BootChain()
-		b.Bootloader = &chain
+		boot.Bootloader = &chain
 	}
-	return b
+
+	return boot
 }
 
 func (d diskUsage) freePct() int {
 	if d.TotalBytes == 0 {
 		return 0
 	}
-	return int(d.FreeBytes * 100 / d.TotalBytes)
+
+	return int(min(d.FreeBytes*percent/d.TotalBytes, percent))
 }
 
 // low reports a volume without room to stage an update.
@@ -185,66 +211,117 @@ func (d diskUsage) low() bool {
 	return d.TotalBytes > 0 && (d.FreeBytes < diskLowBytes || d.freePct() < diskLowPct)
 }
 
+// addResourceWarnings warns in report of storage, memory, logs and processes running low
+// or high.
+func (s *Server) addResourceWarnings(report *health) {
+	if s.update != nil && s.update.Updatable() && report.Disk.low() {
+		report.Warnings = append(report.Warnings, fmt.Sprintf(
+			"only %s free on %s (%d%%) — a firmware update needs room to stage an image",
+			humanBytes(report.Disk.FreeBytes), report.Disk.Path, report.Disk.freePct()))
+	}
+
+	if report.Memory.TotalBytes > 0 && report.Memory.AvailableBytes < memLowBytes {
+		report.Warnings = append(report.Warnings,
+			fmt.Sprintf("only %s memory available", humanBytes(report.Memory.AvailableBytes)))
+	}
+
+	for _, lg := range report.Logs {
+		if lg.Bytes >= logLargeBytes {
+			report.Warnings = append(report.Warnings,
+				fmt.Sprintf("%s has grown to %s; /tmp is RAM on this speaker", lg.Path, humanBytes(uint64(lg.Bytes))))
+		}
+	}
+
+	if report.Processes >= procManyCount {
+		report.Warnings = append(report.Warnings,
+			fmt.Sprintf("%d processes running — something is respawning", report.Processes))
+	}
+}
+
+// addBattery puts the battery, on a model with one, and what it warns of into report.
+func (s *Server) addBattery(report *health) {
+	if s.batteryFn == nil {
+		return
+	}
+
+	status, ok := s.batteryFn()
+	if !ok {
+		return
+	}
+
+	report.Battery = &status
+
+	switch {
+	case !status.Present:
+		report.Warnings = append(report.Warnings, "the battery pack does not answer: charging is off")
+	case status.Fault != 0:
+		report.Warnings = append(report.Warnings,
+			fmt.Sprintf("the battery pack reports fault 0x%04x: charging is off", status.Fault))
+	case status.Low:
+		report.Warnings = append(report.Warnings, fmt.Sprintf("battery low: %d %%", status.Level))
+	default:
+		// A healthy battery warns of nothing.
+	}
+}
+
 // collectHealth samples the resources. Anything unreadable (a non-Linux dev box, a
 // missing log) stays zero and simply produces no warning: a monitor that invents a
 // problem when it cannot measure is worse than one that stays quiet.
 func (s *Server) collectHealth(ctx context.Context) health {
-	h := health{Disk: diskUsage{Path: s.homeDir}, Logs: []logUsage{}, Warnings: []string{}, Boot: s.bootState(),
-		Counters: s.healthCounters()}
-	if free, total, err := diskFree(s.homeDir); err == nil {
-		h.Disk.FreeBytes, h.Disk.TotalBytes = free, total
+	report := health{
+		Disk:           diskUsage{Path: s.homeDir, FreeBytes: 0, TotalBytes: 0},
+		Logs:           []logUsage{},
+		Warnings:       []string{},
+		Boot:           s.bootState(),
+		Counters:       s.healthCounters(),
+		Memory:         memUsage{TotalBytes: 0, AvailableBytes: 0},
+		Processes:      0,
+		AmpFault:       false,
+		Battery:        nil,
+		BCO:            nil,
+		Firewall:       "",
+		firewallReason: "",
 	}
-	h.Memory = readMeminfo("/proc/meminfo")
-	h.Processes = countProcesses("/proc")
+
+	free, total, err := diskFree(s.homeDir)
+	if err == nil {
+		report.Disk.FreeBytes, report.Disk.TotalBytes = free, total
+	}
+
+	report.Memory = readMeminfo("/proc/meminfo")
+	report.Processes = countProcesses("/proc")
+
 	for _, lg := range s.logPaths() {
-		if fi, err := os.Stat(lg.file); err == nil {
-			h.Logs = append(h.Logs, logUsage{Path: lg.path, Bytes: fi.Size()})
+		fi, err := os.Stat(lg.file)
+		if err == nil {
+			report.Logs = append(report.Logs, logUsage{Path: lg.path, Bytes: fi.Size()})
 		}
 	}
 
-	if s.update != nil && s.update.Updatable() && h.Disk.low() {
-		h.Warnings = append(h.Warnings, fmt.Sprintf("only %s free on %s (%d%%) — a firmware update needs room to stage an image",
-			humanBytes(h.Disk.FreeBytes), h.Disk.Path, h.Disk.freePct()))
-	}
-	if h.Memory.TotalBytes > 0 && h.Memory.AvailableBytes < memLowBytes {
-		h.Warnings = append(h.Warnings, fmt.Sprintf("only %s memory available", humanBytes(h.Memory.AvailableBytes)))
-	}
-	for _, lg := range h.Logs {
-		if lg.Bytes >= logLargeBytes {
-			h.Warnings = append(h.Warnings, fmt.Sprintf("%s has grown to %s; /tmp is RAM on this speaker", lg.Path, humanBytes(uint64(lg.Bytes))))
-		}
-	}
-	if h.Processes >= procManyCount {
-		h.Warnings = append(h.Warnings, fmt.Sprintf("%d processes running — something is respawning", h.Processes))
-	}
+	s.addResourceWarnings(&report)
+
 	if s.ampFaultFn != nil && s.ampFaultFn() {
-		h.AmpFault = true
-		h.Warnings = append(h.Warnings, "amp fault detected: output muted")
+		report.AmpFault = true
+		report.Warnings = append(report.Warnings, "amp fault detected: output muted")
 	}
-	if s.batteryFn != nil {
-		if b, ok := s.batteryFn(); ok {
-			h.Battery = &b
-			switch {
-			case !b.Present:
-				h.Warnings = append(h.Warnings, "the battery pack does not answer: charging is off")
-			case b.Fault != 0:
-				h.Warnings = append(h.Warnings, fmt.Sprintf("the battery pack reports fault 0x%04x: charging is off", b.Fault))
-			case b.Low:
-				h.Warnings = append(h.Warnings, fmt.Sprintf("battery low: %d %%", b.Level))
-			}
-		}
-	}
+
+	s.addBattery(&report)
+
 	if st, ok := bco.ReadLinkStats(sysPath("/sys/class/net")); ok {
-		h.BCO = &st
+		report.BCO = &st
 	}
+
 	if s.daemonProblems != nil {
-		h.Warnings = append(h.Warnings, s.daemonProblems()...)
+		report.Warnings = append(report.Warnings, s.daemonProblems()...)
 	}
-	h.Firewall, h.firewallReason = s.firewallStatus(ctx)
-	if h.Firewall == FirewallMissing {
-		h.Warnings = append(h.Warnings, "the inbound firewall is not loaded: every listening port is open to the network")
+
+	report.Firewall, report.firewallReason = s.firewallStatus(ctx)
+	if report.Firewall == FirewallMissing {
+		report.Warnings = append(report.Warnings,
+			"the inbound firewall is not loaded: every listening port is open to the network")
 	}
-	return h
+
+	return report
 }
 
 func (s *Server) healthInfo(w http.ResponseWriter, r *http.Request) {
@@ -255,40 +332,50 @@ func (s *Server) healthInfo(w http.ResponseWriter, r *http.Request) {
 // old for MemAvailable falls back to MemFree, which understates what is reclaimable
 // but never overstates it.
 func readMeminfo(path string) memUsage {
-	f, err := os.Open(path)
+	file, err := os.Open(path)
 	if err != nil {
-		return memUsage{}
+		return memUsage{TotalBytes: 0, AvailableBytes: 0}
 	}
-	defer func() { _ = f.Close() }()
-	var m memUsage
-	var free uint64
+	defer func() { _ = file.Close() }()
+
+	var (
+		usage memUsage
+		free  uint64
+	)
 	// Whether the line was there, not whether it is non-zero: MemAvailable 0 is real (the
 	// box is out of memory), and replacing it with MemFree hid exactly that.
 	haveAvailable := false
-	sc := bufio.NewScanner(f)
+
+	sc := bufio.NewScanner(file)
 	for sc.Scan() {
 		key, rest, ok := strings.Cut(sc.Text(), ":")
 		if !ok {
 			continue
 		}
-		kb, err := strconv.ParseUint(strings.TrimSuffix(strings.TrimSpace(rest), " kB"), 10, 64)
+
+		kibibytes, err := strconv.ParseUint(strings.TrimSuffix(strings.TrimSpace(rest), " kB"), 10, 64)
 		if err != nil {
 			continue
 		}
+
 		switch key {
 		case "MemTotal":
-			m.TotalBytes = kb << 10
+			usage.TotalBytes = kibibytes * bytesPerKiB
 		case "MemAvailable":
-			m.AvailableBytes = kb << 10
+			usage.AvailableBytes = kibibytes * bytesPerKiB
 			haveAvailable = true
 		case "MemFree":
-			free = kb << 10
+			free = kibibytes * bytesPerKiB
+		default:
+			// Anything else needs nothing here.
 		}
 	}
+
 	if !haveAvailable {
-		m.AvailableBytes = free
+		usage.AvailableBytes = free
 	}
-	return m
+
+	return usage
 }
 
 // countProcesses counts the numeric entries in /proc. Zero means "could not tell".
@@ -297,25 +384,30 @@ func countProcesses(proc string) int {
 	if err != nil {
 		return 0
 	}
-	n := 0
+
+	count := 0
+
 	for _, e := range entries {
-		if _, err := strconv.Atoi(e.Name()); err == nil {
-			n++
+		_, err := strconv.Atoi(e.Name())
+		if err == nil {
+			count++
 		}
 	}
-	return n
+
+	return count
 }
 
-func humanBytes(b uint64) string {
+func humanBytes(size uint64) string {
 	switch {
-	case b >= 1<<30:
-		return fmt.Sprintf("%.1f GiB", float64(b)/(1<<30))
-	case b >= 1<<20:
-		return fmt.Sprintf("%.1f MiB", float64(b)/(1<<20))
-	case b >= 1<<10:
-		return fmt.Sprintf("%.1f KiB", float64(b)/(1<<10))
+	case size >= 1<<30:
+		return fmt.Sprintf("%.1f GiB", float64(size)/bytesPerGiB)
+	case size >= 1<<20:
+		return fmt.Sprintf("%.1f MiB", float64(size)/bytesPerMiB)
+	case size >= 1<<10:
+		return fmt.Sprintf("%.1f KiB", float64(size)/bytesPerKiB)
 	}
-	return fmt.Sprintf("%d B", b)
+
+	return fmt.Sprintf("%d B", size)
 }
 
 // cpuLine reports CPU use without a shell (production has none): idle against the wall
@@ -325,58 +417,75 @@ func humanBytes(b uint64) string {
 func cpuLine(proc string) string {
 	read := func(name string) string {
 		b, _ := os.ReadFile(filepath.Join(proc, name))
+
 		return string(b)
 	}
-	up, _ := strconv.ParseFloat(strings.Fields(read("uptime") + " 0")[0], 64)
+	uptime, _ := strconv.ParseFloat(strings.Fields(read("uptime") + " 0")[0], 64)
+
 	var idle, forks float64
-	for _, line := range strings.Split(read("stat"), "\n") {
+
+	for line := range strings.SplitSeq(read("stat"), "\n") {
 		f := strings.Fields(line)
 		switch {
 		case len(f) > 4 && f[0] == "cpu":
 			idle, _ = strconv.ParseFloat(f[4], 64)
 		case len(f) == 2 && f[0] == "processes":
 			forks, _ = strconv.ParseFloat(f[1], 64)
+		default:
+			// Anything else needs nothing here.
 		}
 	}
+
 	var self float64
+
 	if _, rest, ok := strings.Cut(read("self/stat"), ") "); ok {
-		if f := strings.Fields(rest); len(f) > 12 {
-			u, _ := strconv.ParseFloat(f[11], 64)
-			s, _ := strconv.ParseFloat(f[12], 64)
+		if f := strings.Fields(rest); len(f) > stimeField {
+			u, _ := strconv.ParseFloat(f[utimeField], 64)
+			s, _ := strconv.ParseFloat(f[stimeField], 64)
 			self = u + s
 		}
 	}
-	if up <= 0 {
+
+	if uptime <= 0 {
 		return "unavailable"
 	}
+
 	return fmt.Sprintf("uptime %.0f s, idle %.0f s (busy %.0f%% since boot), soundtapd %.0f s, forks %.0f",
-		up, idle/100, 100-idle/up, self/100, forks)
+		uptime, idle/clockTicksPerSecond, percent-idle/uptime, self/clockTicksPerSecond, forks)
 }
 
 // largestEntries sums the files under each entry of dir and returns the n biggest,
 // largest first. Errors inside one entry only make its size an undercount.
-func largestEntries(dir string, n int) []logUsage {
+func largestEntries(dir string, count int) []logUsage {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
 	}
+
 	out := make([]logUsage, 0, len(entries))
 	for _, e := range entries {
 		path := filepath.Join(dir, e.Name())
+
 		var size int64
+
 		_ = filepath.WalkDir(path, func(_ string, d fs.DirEntry, err error) error {
 			if err == nil && d.Type().IsRegular() {
-				if fi, err := d.Info(); err == nil {
+				fi, err := d.Info()
+				if err == nil {
 					size += fi.Size()
 				}
 			}
+
 			return nil
 		})
 		out = append(out, logUsage{Path: path, Bytes: size})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Bytes > out[j].Bytes })
-	if len(out) > n {
-		out = out[:n]
+
+	slices.SortFunc(out, func(a, b logUsage) int { return cmp.Compare(b.Bytes, a.Bytes) })
+
+	if len(out) > count {
+		out = out[:count]
 	}
+
 	return out
 }

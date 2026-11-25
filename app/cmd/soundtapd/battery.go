@@ -28,14 +28,19 @@ const (
 )
 
 // batteryMonitor is the running monitor, nil until runBattery opened the pack.
+//
+//nolint:gochecknoglobals // process-wide state: runBattery stores it, /api/health reads it
 var batteryMonitor atomic.Pointer[battery.Monitor]
 
 // batteryStatus is the pack as last read, for /api/health; false on a model without one.
 func batteryStatus() (battery.Status, bool) {
-	if m := batteryMonitor.Load(); m != nil {
-		return m.Status(), true
+	if monitor := batteryMonitor.Load(); monitor != nil {
+		return monitor.Status(), true
 	}
-	return battery.Status{}, false
+
+	var none battery.Status
+
+	return none, false
 }
 
 // runBattery watches the Portable's pack until ctx ends. A model without one never calls it.
@@ -43,37 +48,53 @@ func runBattery(ctx context.Context, log *slog.Logger) {
 	bus, err := battery.OpenSMBus(batteryBus, batteryAddr)
 	if err != nil {
 		log.Error("battery: no gauge", "err", err)
+
 		return
 	}
 	defer bus.Close()
-	dc, err := hw.BankLine(batteryGPIOBank0, batteryDCLine, "in")
+
+	dcPresent, err := hw.BankLine(batteryGPIOBank0, batteryDCLine, "in")
 	if err != nil {
 		log.Error("battery: no DC-present line", "err", err)
+
 		return
 	}
-	defer dc.Close()
+	defer dcPresent.Close()
+
 	activeHigh := true
-	if b, err := os.ReadFile(chargerLevelFile); err == nil && strings.TrimSpace(string(b)) == "0" {
+
+	level, err := os.ReadFile(chargerLevelFile)
+	if err == nil && strings.TrimSpace(string(level)) == "0" {
 		activeHigh = false
 	}
-	cfg := battery.Config{Bus: bus, DCPresent: dc, ChargeActiveHigh: activeHigh,
+
+	cfg := battery.Config{
+		Bus: bus, DCPresent: dcPresent, ChargeEn: nil, ChargeActiveHigh: activeHigh,
 		// Stock's protection is the baseline: SHIP on a pack fault, a critically discharged
 		// pack and DC above 13 V (docs/hardware/portable/README.md).
-		AllowShip: true, Log: log}
+		AllowShip: true, Log: log,
+		Now: nil, Sleep: nil, // the monitor's defaults: the wall clock and time.Sleep
+	}
 	// Opened at the "off" level, so charging starts only once the pack has been read.
 	off := "low"
 	if !activeHigh {
 		off = "high"
 	}
-	if en, err := hw.BankLine(batteryGPIOBank3, batteryChargeEn, off); err != nil {
+
+	chargeEnable, err := hw.BankLine(batteryGPIOBank3, batteryChargeEn, off)
+	if err != nil {
 		log.Error("battery: no charge enable line; reading only", "err", err)
 	} else {
-		defer en.Close()
-		cfg.ChargeEn = en
+		defer chargeEnable.Close()
+
+		cfg.ChargeEn = chargeEnable
 	}
-	m := battery.New(cfg)
-	batteryMonitor.Store(m)
-	if err := m.Run(ctx); err != nil {
+
+	monitor := battery.New(cfg)
+	batteryMonitor.Store(monitor)
+
+	err = monitor.Run(ctx)
+	if err != nil {
 		log.Error("battery: monitoring stopped", "err", err)
 	}
 }

@@ -19,6 +19,7 @@ const reasonTimeout = "org.bluez.Reason.Timeout"
 func (a *Agent) OnLinkLost(f func()) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+
 	a.linkLost = f
 }
 
@@ -27,12 +28,15 @@ func (a *Agent) deviceDisconnected(s *dbus.Signal) {
 	if len(s.Body) == 0 || s.Body[0] != reasonTimeout {
 		return
 	}
+
 	a.mu.Lock()
 	f := a.linkLost
 	a.mu.Unlock()
+
 	if f == nil {
 		return
 	}
+
 	a.log.Info("bluetooth link lost", "device", s.Path)
 	safego.Go("bluez.linkLost", func() { f() })
 }

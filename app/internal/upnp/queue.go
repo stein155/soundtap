@@ -36,58 +36,61 @@ type Queue struct {
 // not hold url, or holds nothing else, leaves no queue.
 func (q *Queue) Set(folder []Item, url string) {
 	var tracks []Item
+
 	pos := -1
-	for _, it := range folder {
-		if it.URL == "" || !strings.HasPrefix(it.Class, "object.item.audioItem") {
+
+	for _, item := range folder {
+		if item.URL == "" || !strings.HasPrefix(item.Class, "object.item.audioItem") {
 			continue
 		}
-		if it.URL == url && pos < 0 {
+
+		if item.URL == url && pos < 0 {
 			pos = len(tracks)
 		}
-		tracks = append(tracks, it)
+
+		tracks = append(tracks, item)
 	}
+
 	if pos < 0 || len(tracks) < 2 {
 		tracks, pos = nil, 0
 	}
+
 	q.mu.Lock()
 	defer q.mu.Unlock()
+
 	q.orig, q.items, q.pos = tracks, slices.Clone(tracks), pos
 	if q.shuffle {
 		q.shuffleLocked()
 	}
 }
 
-// shuffleLocked puts the queue in a random order with the track that is on first, so all
-// the others still follow it.
-func (q *Queue) shuffleLocked() {
-	if len(q.items) == 0 {
-		return
-	}
-	q.items[0], q.items[q.pos] = q.items[q.pos], q.items[0]
-	rest := q.items[1:]
-	rand.Shuffle(len(rest), func(i, j int) { rest[i], rest[j] = rest[j], rest[i] }) //nolint:gosec // play order, not a secret
-	q.pos = 0
-}
-
-// Modes reports whether a folder is queued, and its shuffle and repeat.
-func (q *Queue) Modes() (active, shuffle bool, repeat string) {
+// Modes reports whether a folder is queued, then whether shuffle is on, then the repeat
+// mode.
+func (q *Queue) Modes() (bool, bool, string) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+
 	return len(q.items) > 0, q.shuffle, cmp.Or(q.repeat, RepeatOff)
 }
 
 // SetShuffle turns shuffle on or off. Off goes back to the folder's order, on the same track.
-func (q *Queue) SetShuffle(on bool) {
+//
+//nolint:revive // flag-parameter: the web API's shuffle switch calls it with the state to set
+func (q *Queue) SetShuffle(enabled bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if on == q.shuffle {
+
+	if enabled == q.shuffle {
 		return
 	}
-	q.shuffle = on
-	if on {
+
+	q.shuffle = enabled
+	if enabled {
 		q.shuffleLocked()
+
 		return
 	}
+
 	if len(q.items) > 0 {
 		cur := q.items[q.pos].URL
 		q.items = slices.Clone(q.orig)
@@ -102,9 +105,12 @@ func (q *Queue) SetRepeat(mode string) bool {
 	default:
 		return false
 	}
+
 	q.mu.Lock()
 	defer q.mu.Unlock()
+
 	q.repeat = mode
+
 	return true
 }
 
@@ -116,10 +122,13 @@ func (q *Queue) Clear() { q.Set(nil, "") }
 func (q *Queue) Keep(url string) bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+
 	if q.pos < len(q.items) && q.items[q.pos].URL == url {
 		return true
 	}
+
 	q.items, q.orig, q.pos = nil, nil, 0
+
 	return false
 }
 
@@ -127,6 +136,7 @@ func (q *Queue) Keep(url string) bool {
 func (q *Queue) Holds(url string) bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+
 	return q.pos < len(q.items) && q.items[q.pos].URL == url
 }
 
@@ -135,6 +145,7 @@ func (q *Queue) Holds(url string) bool {
 func (q *Queue) Step(delta int) (Item, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+
 	return q.stepLocked(delta)
 }
 
@@ -142,20 +153,42 @@ func (q *Queue) Step(delta int) (Item, bool) {
 func (q *Queue) Advance() (Item, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+
 	if q.repeat == RepeatTrack {
 		return q.stepLocked(0)
 	}
+
 	return q.stepLocked(1)
 }
 
 func (q *Queue) stepLocked(delta int) (Item, bool) {
-	n := q.pos + delta
+	target := q.pos + delta
 	if l := len(q.items); l > 0 && q.repeat != "" && q.repeat != RepeatOff {
-		n = ((n % l) + l) % l
+		target = ((target % l) + l) % l
 	}
-	if n < 0 || n >= len(q.items) {
-		return Item{}, false
+
+	if target < 0 || target >= len(q.items) {
+		var none Item
+
+		return none, false
 	}
-	q.pos = n
-	return q.items[n], true
+
+	q.pos = target
+
+	return q.items[target], true
+}
+
+// shuffleLocked puts the queue in a random order with the track that is on first, so all
+// the others still follow it.
+func (q *Queue) shuffleLocked() {
+	if len(q.items) == 0 {
+		return
+	}
+
+	q.items[0], q.items[q.pos] = q.items[q.pos], q.items[0]
+	rest := q.items[1:]
+	//nolint:gosec // play order, not a secret
+	rand.Shuffle(len(rest), func(i, j int) { rest[i], rest[j] = rest[j], rest[i] })
+
+	q.pos = 0
 }

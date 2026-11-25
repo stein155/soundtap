@@ -11,6 +11,7 @@ import "time"
 func (m *Mixer) step(src []byte) []byte {
 	out, _, _ := m.stepInto(make([]byte, blockBytes), nil, src, false)
 	m.applyBass(out)
+
 	return out
 }
 
@@ -26,44 +27,16 @@ func (m *Mixer) step(src []byte) []byte {
 // The multiroom tap gets dst too, except while an announcement is mixed in: then, given
 // a tapDst, stepInto writes the source alone into it at the gain it has without one and
 // reports so, and a follower plays neither the leader's chime nor its duck.
-func (m *Mixer) stepInto(dst, tapDst, src []byte, deferGain bool) ([]byte, float64, bool) { //nolint:gocognit,cyclop // moved unchanged
+func (m *Mixer) stepInto( //nolint:revive // deferGain is the sink's kind; where the gain goes runs through the mix
+	dst, tapDst, src []byte, deferGain bool,
+) ([]byte, float64, bool) {
 	m.mu.Lock()
-	var ann []byte
-	if m.ann != nil {
-		// Wait briefly for the very first block, and never again. An announcement has to
-		// be audible the moment it is asked for -- it is a doorbell, not a track -- but a
-		// clip that stalls later must not take the device with it, so from the second
-		// block on the mixer takes whatever is ready and moves on. sourceWait is the
-		// same bound this file already uses for late source PCM.
-		take := func(block []byte, ok bool) {
-			if ok {
-				ann = block
-				m.annBegun = true
-			} else { // clip drained -- start the restore ramp
-				m.ann, m.annStop, m.annBegun = nil, nil, false
-				m.target = 1.0
-			}
-		}
-		if !m.annBegun {
-			t := time.NewTimer(sourceWait)
-			defer t.Stop()
-			select {
-			case block, ok := <-m.ann:
-				take(block, ok)
-			case <-t.C:
-			}
-		} else {
-			// Non-blocking, not a select against a closed channel: with both cases ready
-			// Go picks one at random, and half the blocks of a ready clip came out silent.
-			select {
-			case block, ok := <-m.ann:
-				take(block, ok)
-			default:
-			}
-		}
-	}
+
+	ann := m.takeAnnouncementLocked()
+
 	m.curGain = rampToward(m.curGain, m.target, gainStep)
 	m.curMaster = glide(m.curMaster, m.master)
+
 	shut := 0.0
 	if m.held.Load() {
 		shut = 1
@@ -74,16 +47,20 @@ func (m *Mixer) stepInto(dst, tapDst, src []byte, deferGain bool) ([]byte, float
 	if m.closing && !m.srcHeard {
 		m.shut, m.closing = 1, false
 	}
+
 	m.shut = rampToward(m.shut, shut, float64(blockFrames)/(SampleRate*holdFade.Seconds()))
 	srcGain, annGain := m.curGain*m.curMaster*(1-m.shut)*m.srcTrim, m.annGain
 	fadeOut := m.closing
+
 	m.srcHeard = srcGain > 0 && len(src) > 0 && !fadeOut
 	if fadeOut {
 		src = fadedOut(src)
 	}
+
 	if deferGain && m.codec != nil {
-		dst, tapped := m.codecStepLocked(dst, tapDst, src, ann)
-		return dst, 1, tapped
+		out, tapped := m.codecStepLocked(dst, tapDst, src, ann)
+
+		return out, 1, tapped
 	}
 	m.mu.Unlock()
 
@@ -93,26 +70,14 @@ func (m *Mixer) stepInto(dst, tapDst, src []byte, deferGain bool) ([]byte, float
 		if deferGain && tapGain > 0 {
 			tapGain /= min(tapGain, 1)
 		}
+
 		scaleInto(tapDst, src, tapGain)
 	}
 
 	gain := 1.0
+
 	if deferGain {
-		// At volume 1 the master gain is -87 dB, which leaves a 16-bit sample about
-		// one LSB of the signal: a square-ish wave heard as crackle. Keep the block
-		// near full scale and let the sink scale it after widening.
-		// Only a clip in this block counts: annGain outlives its announcement, and
-		// a stale one pinned gain near 1 so the source was scaled down in 16 bits
-		// again -- the ST20 crackled at low volume after its first chime (2026-10-01).
-		loudest := srcGain
-		if len(ann) > 0 {
-			loudest = max(srcGain, annGain)
-		}
-		gain = min(loudest, 1)
-		if gain > 0 {
-			srcGain /= gain
-			annGain /= gain
-		}
+		gain, srcGain, annGain = deferredGains(srcGain, annGain, ann)
 	}
 
 	if len(ann) == 0 {
@@ -120,5 +85,75 @@ func (m *Mixer) stepInto(dst, tapDst, src []byte, deferGain bool) ([]byte, float
 	} else {
 		mixInto(dst, src, ann, srcGain, annGain)
 	}
+
 	return dst, gain, tapped
+}
+
+// deferredGains splits the gains for a GainWriter: the gain left for the sink, and the
+// source's and the announcement's gains in the block.
+//
+// At volume 1 the master gain is -87 dB, which leaves a 16-bit sample about one LSB of
+// the signal: a square-ish wave heard as crackle. Keep the block near full scale and
+// let the sink scale it after widening. Only a clip in this block counts: annGain
+// outlives its announcement, and a stale one pinned gain near 1 so the source was scaled
+// down in 16 bits again -- the ST20 crackled at low volume after its first chime
+// (2026-10-01).
+func deferredGains(srcGain, annGain float64, ann []byte) (float64, float64, float64) {
+	loudest := srcGain
+	if len(ann) > 0 {
+		loudest = max(srcGain, annGain)
+	}
+
+	gain := min(loudest, 1)
+	if gain > 0 {
+		srcGain /= gain
+		annGain /= gain
+	}
+
+	return gain, srcGain, annGain
+}
+
+// takeAnnouncementLocked takes the active announcement's next block: nil when there is
+// none, or none ready yet. m.mu is held.
+func (m *Mixer) takeAnnouncementLocked() []byte {
+	if m.ann == nil {
+		return nil
+	}
+
+	var ann []byte
+	// Wait briefly for the very first block, and never again. An announcement has to
+	// be audible the moment it is asked for -- it is a doorbell, not a track -- but a
+	// clip that stalls later must not take the device with it, so from the second
+	// block on the mixer takes whatever is ready and moves on. sourceWait is the
+	// same bound this file already uses for late source PCM.
+	take := func(block []byte, ok bool) {
+		if ok {
+			ann = block
+			m.annBegun = true
+		} else { // clip drained -- start the restore ramp
+			m.ann, m.annStop, m.annBegun = nil, nil, false
+			m.target = 1.0
+		}
+	}
+
+	if !m.annBegun {
+		timer := time.NewTimer(sourceWait)
+		defer timer.Stop()
+
+		select {
+		case block, ok := <-m.ann:
+			take(block, ok)
+		case <-timer.C:
+		}
+	} else {
+		// Non-blocking, not a select against a closed channel: with both cases ready
+		// Go picks one at random, and half the blocks of a ready clip came out silent.
+		select {
+		case block, ok := <-m.ann:
+			take(block, ok)
+		default:
+		}
+	}
+
+	return ann
 }

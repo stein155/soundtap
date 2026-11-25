@@ -1,101 +1,148 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-package atomicjson
+package atomicjson_test
 
 import (
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stein155/soundtap/app/internal/atomicjson"
 )
 
 func TestLoadMissingFileKeepsDefaults(t *testing.T) {
-	v := []string{"default"}
-	if err := Load(filepath.Join(t.TempDir(), "absent.json"), &v); err != nil {
+	t.Parallel()
+
+	value := []string{"default"}
+
+	err := atomicjson.Load(filepath.Join(t.TempDir(), "absent.json"), &value)
+	if err != nil {
 		t.Fatalf("Load = %v, want nil for a missing file", err)
 	}
-	if len(v) != 1 || v[0] != "default" {
-		t.Fatalf("v = %v, want the defaults untouched", v)
+
+	if len(value) != 1 || value[0] != "default" {
+		t.Fatalf("value = %v, want the defaults untouched", value)
 	}
 }
 
 func TestLoadReadsAFile(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "state.json")
-	if err := Write(path, []string{"a", "b"}, 0o600); err != nil {
+
+	err := atomicjson.Write(path, []string{"a", "b"}, 0o600)
+	if err != nil {
 		t.Fatal(err)
 	}
-	var v []string
-	if err := Load(path, &v); err != nil || len(v) != 2 || v[1] != "b" {
-		t.Fatalf("Load = %v, %v; want [a b]", v, err)
+
+	var value []string
+
+	err = atomicjson.Load(path, &value)
+	if err != nil || len(value) != 2 || value[1] != "b" {
+		t.Fatalf("Load = %v, %v; want [a b]", value, err)
 	}
 }
 
 // A directory where the file should be reads as EISDIR: not "no file", so the
 // caller must not start over on defaults it would then write.
 func TestReadDirectoryIsUnreadable(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "state.json")
-	if err := os.Mkdir(path, 0o700); err != nil {
+
+	err := os.Mkdir(path, 0o700)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, found, err := Read(path); !errors.Is(err, ErrUnreadable) || found {
+
+	_, found, err := atomicjson.Read(path)
+	if !errors.Is(err, atomicjson.ErrUnreadable) || found {
 		t.Fatalf("Read = found %v, %v; want ErrUnreadable", found, err)
 	}
-	v := []string{"default"}
-	if err := Load(path, &v); !errors.Is(err, ErrUnreadable) {
+
+	value := []string{"default"}
+
+	err = atomicjson.Load(path, &value)
+	if !errors.Is(err, atomicjson.ErrUnreadable) {
 		t.Fatalf("Load = %v, want ErrUnreadable", err)
 	}
-	if len(v) != 1 || v[0] != "default" {
-		t.Fatalf("v = %v, want the defaults untouched", v)
+
+	if len(value) != 1 || value[0] != "default" {
+		t.Fatalf("value = %v, want the defaults untouched", value)
 	}
-	if _, err := os.Stat(path + ".corrupt"); !os.IsNotExist(err) {
+
+	_, err = os.Stat(path + ".corrupt")
+	if !os.IsNotExist(err) {
 		t.Fatalf("an unreadable file was moved aside: %v", err)
 	}
 }
 
 func TestReadWithoutPermissionIsUnreadable(t *testing.T) {
+	t.Parallel()
+
 	if os.Geteuid() == 0 {
 		t.Skip("root reads a mode-000 file")
 	}
+
 	path := filepath.Join(t.TempDir(), "state.json")
-	if err := os.WriteFile(path, []byte(`["kept"]`), 0o000); err != nil {
+
+	err := os.WriteFile(path, []byte(`["kept"]`), 0o000)
+	if err != nil {
 		t.Fatal(err)
 	}
-	var v []string
-	if err := Load(path, &v); !errors.Is(err, ErrUnreadable) || errors.Is(err, ErrCorrupt) {
+
+	var value []string
+
+	err = atomicjson.Load(path, &value)
+	if !errors.Is(err, atomicjson.ErrUnreadable) || errors.Is(err, atomicjson.ErrCorrupt) {
 		t.Fatalf("Load = %v, want ErrUnreadable only", err)
 	}
 }
 
 func TestLoadQuarantinesCorruptFileAndKeepsDefaults(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "state.json")
 	for _, bad := range []string{"first", `["second"`, `{"third":1}`} {
-		if err := os.WriteFile(path, []byte(bad), 0o600); err != nil {
+		err := os.WriteFile(path, []byte(bad), 0o600)
+		if err != nil {
 			t.Fatal(err)
 		}
-		v := []string{"default"}
-		err := Load(path, &v)
-		if !errors.Is(err, ErrCorrupt) || errors.Is(err, ErrUnreadable) {
+
+		value := []string{"default"}
+
+		err = atomicjson.Load(path, &value)
+		if !errors.Is(err, atomicjson.ErrCorrupt) || errors.Is(err, atomicjson.ErrUnreadable) {
 			t.Fatalf("Load(%q) = %v, want ErrCorrupt only", bad, err)
 		}
-		if len(v) != 1 || v[0] != "default" {
-			t.Fatalf("Load(%q) left v = %v, want the defaults", bad, v)
+
+		if len(value) != 1 || value[0] != "default" {
+			t.Fatalf("Load(%q) left value = %v, want the defaults", bad, value)
 		}
 	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
+
+	_, err := os.Stat(path)
+	if !os.IsNotExist(err) {
 		t.Fatalf("corrupt file left in place: %v", err)
 	}
+
 	for file, want := range map[string]string{
 		path + ".corrupt":   `{"third":1}`,
 		path + ".corrupt.1": `["second"`,
 	} {
-		if got, err := os.ReadFile(file); err != nil || string(got) != want {
-			t.Fatalf("%s = %q, %v; want %q", file, got, err, want)
+		got, rerr := os.ReadFile(file)
+		if rerr != nil || string(got) != want {
+			t.Fatalf("%s = %q, %v; want %q", file, got, rerr, want)
 		}
 	}
-	if err := RemoveQuarantine(path); err != nil {
+
+	err = atomicjson.RemoveQuarantine(path)
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	if left, _ := filepath.Glob(path + ".corrupt*"); len(left) != 0 {
 		t.Fatalf("RemoveQuarantine left %v", left)
 	}
@@ -104,21 +151,31 @@ func TestLoadQuarantinesCorruptFileAndKeepsDefaults(t *testing.T) {
 // A corrupt file that cannot be moved aside is still the only copy: the next write
 // would destroy it, so the caller is told to refuse writes.
 func TestCorruptFileThatCannotBeMovedIsUnreadable(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "state.json")
-	if err := os.WriteFile(path, []byte("{broken"), 0o600); err != nil {
+
+	err := os.WriteFile(path, []byte("{broken"), 0o600)
+	if err != nil {
 		t.Fatal(err)
 	}
 	// Both quarantine names are non-empty directories, so neither rename can succeed.
 	for _, dir := range []string{path + ".corrupt", path + ".corrupt.1"} {
-		if err := os.MkdirAll(filepath.Join(dir, "x"), 0o700); err != nil {
-			t.Fatal(err)
+		mkErr := os.MkdirAll(filepath.Join(dir, "x"), 0o700)
+		if mkErr != nil {
+			t.Fatal(mkErr)
 		}
 	}
-	var v []string
-	if err := Load(path, &v); !errors.Is(err, ErrUnreadable) {
+
+	var value []string
+
+	err = atomicjson.Load(path, &value)
+	if !errors.Is(err, atomicjson.ErrUnreadable) {
 		t.Fatalf("Load = %v, want ErrUnreadable", err)
 	}
-	if got, err := os.ReadFile(path); err != nil || string(got) != "{broken" {
+
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != "{broken" {
 		t.Fatalf("file = %q, %v; want it in place", got, err)
 	}
 }

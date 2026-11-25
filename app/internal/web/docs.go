@@ -16,25 +16,27 @@ import (
 var (
 	//go:embed openapi.json
 	openapiSource []byte
-	openapiSpec   = compactJSON(openapiSource)
 	//go:embed docs.html
 	docsPage []byte
 )
 
-func (s *Server) openapi(w http.ResponseWriter, r *http.Request) {
+func (*Server) openapi(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write(openapiSpec)
+	_, _ = w.Write(compactJSON(openapiSource))
 }
 
-func (s *Server) docs(w http.ResponseWriter, r *http.Request) {
+func (*Server) docs(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write(docsPage)
 }
 
 func compactJSON(b []byte) []byte {
 	var out bytes.Buffer
-	if err := json.Compact(&out, b); err != nil {
+
+	err := json.Compact(&out, b)
+	if err != nil {
 		panic("openapi.json: " + err.Error())
 	}
+
 	return out.Bytes()
 }

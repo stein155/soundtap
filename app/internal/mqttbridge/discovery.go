@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"strconv"
 	"time"
 
@@ -63,6 +64,7 @@ func (b *Bridge) announce(ctx context.Context, client *mqtt.Client, tp topics, d
 	if info.Software != "" {
 		_ = client.Publish(tp.swVersion(), []byte(info.Software), true)
 	}
+
 	if info.Type != "" {
 		_ = client.Publish(tp.model(), []byte(info.Type), true)
 	}
@@ -89,11 +91,15 @@ func newAnnouncer(client *mqtt.Client, tp topics, disc string, info *speaker.Inf
 	if info.Type != "" {
 		dev["model"] = info.Type
 	}
+
 	if info.Software != "" {
 		dev["sw_version"] = info.Software
 	}
-	return &announcer{client: client, tp: tp, disc: disc, info: info, dev: dev,
-		origin: map[string]any{"name": "SoundTap"}}
+
+	return &announcer{
+		client: client, tp: tp, disc: disc, info: info, dev: dev,
+		origin: map[string]any{"name": "SoundTap"},
+	}
 }
 
 // entity assembles one discovery payload with the shared device/availability/
@@ -106,9 +112,8 @@ func (a *announcer) entity(name, key string, extra map[string]any) map[string]an
 		"device":             a.dev,
 		"origin":             a.origin,
 	}
-	for k, v := range extra {
-		cfg[k] = v
-	}
+	maps.Copy(cfg, extra)
+
 	return cfg
 }
 
@@ -117,6 +122,7 @@ func (a *announcer) publish(component, key string, cfg map[string]any) {
 	if err != nil {
 		return
 	}
+
 	topic := a.disc + "/" + component + "/" + a.info.DeviceID + "/" + key + "/config"
 	_ = a.client.Publish(topic, payload, true)
 }
@@ -139,6 +145,7 @@ func (a *announcer) controls(presets []string) {
 		"payload_off": powerOff,
 		keyIcon:       "mdi:power",
 	}))
+
 	if a.mute {
 		a.publish("switch", "mute", a.entity("Mute", "mute", map[string]any{
 			keyCommand:    tp.muteSet(),
@@ -148,12 +155,14 @@ func (a *announcer) controls(presets []string) {
 			keyIcon:       "mdi:volume-off",
 		}))
 	}
+
 	a.publish("select", "preset", a.entity("Preset", "preset", map[string]any{
 		keyCommand: tp.presetSet(),
 		keyState:   tp.presetState(),
 		"options":  presets,
 		keyIcon:    "mdi:radio",
 	}))
+
 	for _, tb := range transportButtons {
 		a.publish("button", tb.key, a.entity(tb.name, tb.key, map[string]any{
 			keyCommand: tp.transportSet(tb.key),
@@ -179,9 +188,11 @@ func (a *announcer) sensors() {
 		if s.icon != "" {
 			extra[keyIcon] = s.icon
 		}
+
 		if s.diagnostic {
 			extra["entity_category"] = "diagnostic"
 		}
+
 		a.publish("sensor", s.key, a.entity(s.name, s.key, extra))
 	}
 }
@@ -196,27 +207,36 @@ func (b *Bridge) publishUpdateState(ctx context.Context, client *mqtt.Client, tp
 	if b.updater == nil {
 		return false
 	}
+
 	c, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
+
 	installed, latest, releaseURL, updatable, err := b.updater.UpdateInfo(c)
 	if errors.Is(err, update.ErrClockNotSet) {
 		b.log.Info("mqtt update check waits for the clock to be set")
+
 		return true
 	}
+
 	if err != nil {
 		b.log.Warn("mqtt update check", "err", err)
+
 		return false
 	}
+
 	if !updatable || latest == "" {
 		latest = installed // nothing to offer -> the hub shows "up to date"
 	}
+
 	payload := map[string]string{"installed_version": installed, "latest_version": latest}
 	if releaseURL != "" && latest != installed {
 		payload["release_url"] = releaseURL
 	}
+
 	if data, err := json.Marshal(payload); err == nil {
 		_ = client.Publish(tp.updateState(), data, true)
 	}
+
 	return false
 }
 
@@ -226,19 +246,24 @@ func (b *Bridge) publishUpdateState(ctx context.Context, client *mqtt.Client, tp
 func (b *Bridge) presetOptions(ctx context.Context) []string {
 	c, cancel := context.WithTimeout(ctx, 6*time.Second)
 	defer cancel()
+
 	presets, err := b.sp.Presets(c)
 	if err != nil {
 		return []string{presetPlaceholder}
 	}
+
 	var names []string
+
 	for _, p := range presets {
 		if name := p.Name; name != "" {
 			names = append(names, name)
 		}
 	}
+
 	if len(names) == 0 {
 		return []string{presetPlaceholder}
 	}
+
 	return names
 }
 

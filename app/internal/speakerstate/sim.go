@@ -179,6 +179,9 @@ type Notification struct {
 	Track  string // <reason>
 }
 
+// defaultVolume is the volume a new speaker starts at.
+const defaultVolume = 30
+
 // New returns a speaker with default playback state and no identity: DeviceID, Software
 // and IP are empty until the caller sets them. soundtapd sets the identity from the
 // device before it serves (newSpeaker) and IP once the network has an address (maintainIP).
@@ -186,7 +189,7 @@ func New() *Speaker {
 	return &Speaker{
 		Name:        "SoundTouch",
 		Type:        "SoundTouch 10",
-		volume:      30,
+		volume:      defaultVolume,
 		bassTarget:  0,
 		bassActual:  0,
 		bassMin:     -9,
@@ -197,112 +200,25 @@ func New() *Speaker {
 		source:      sourceStandby,
 		playStatus:  stateStop,
 		playGen:     1, // generation 0 is reserved for "not the current attempt"
+		DeviceID:    "", Software: "", IP: "", mu: sync.Mutex{},
+		lockedKey: playKey{
+			bass: 0, ip: "", location: "", muted: false, playGen: 0, playStatus: "", selection: 0, source: "",
+			transportAck: 0, volume: 0,
+		},
+		sigMu: sync.Mutex{}, changed: nil, muted: false, wifiPSK: "", wifiSave: nil,
+		wifiLinkCache: wifiLink{ssid: "", wifiSignal: wifiSignal{dbm: 0, mbps: 0, mhz: 0, signal: ""}},
+		wifiLinkOK:    false, wifiLinkAt: time.Time{}, presetChange: nil, presetSwap: nil,
+		presetMu: sync.Mutex{}, transport: nil, transportQ: nil, transportOnce: sync.Once{}, forwardKey: nil,
+		lastSource: "", spotifyItem: Preset{Art: "", Location: "", Name: "", Source: "", Type: ""}, track: "",
+		artist: "", album: "", station: "", location: "", art: "", unheard: false, posSource: "",
+		positionMs: 0, durationMs: 0, positionAt: time.Time{}, failedGen: 0, selectionGen: 0, startAt: 0,
+		onPlayChange: nil, onSpotifyPreset: nil, onBluetoothSelect: nil, btPaired: nil, auxName: nil,
+		wakeVolumeMax: 0, wakeVolumeMin: 0, releasedAt: time.Time{}, wakeStation: nil, onVolume: nil,
+		volumeSeq: 0, volumeHookMu: sync.Mutex{}, volumeDelivered: 0, onStandby: nil, pendTrack: "",
+		pendArtist: "", pendArt: "", pendAlbum: "", zoneMaster: "", zoneSenders: "", zoneMembers: nil,
+		lastNotification: nil, notifyUntil: time.Time{}, onNotify: nil, emptyPresetUntil: time.Time{},
+		transportAckUntil: time.Time{},
 	}
-}
-
-// powerToggleLocked flips standby <-> the last active source. Caller holds s.mu.
-// Shared by the POWER key and Wake so both behave identically.
-//
-// A Spotify preset survives standby: with resume set, waking into it returns a func
-// (run it after releasing s.mu) that starts the preset's URI again. Without resume —
-// a wake that a source selection follows — it wakes into TuneIn as before.
-func (s *Speaker) powerToggleLocked(resume bool) func() {
-	s.playGen++ // any wake/standby supersedes an in-flight buffering attempt
-	if s.source == sourceStandby {
-		return s.wakeLocked(resume)
-	}
-	s.enterStandbyLocked()
-	return nil
-}
-
-// wakeLocked is the standby -> active half of powerToggleLocked.
-func (s *Speaker) wakeLocked(resume bool) func() {
-	s.boundWakeVolumeLocked()
-	if s.lastSource == "" {
-		s.lastSource = sourceTuneIn
-	}
-	if start := s.wakeSpotifyLocked(resume); start != nil {
-		return start
-	}
-	if start := s.wakeBluetoothLocked(resume); start != nil {
-		return start
-	}
-	s.source = s.lastSource
-	if fn := s.wakeStation; resume && fn != nil && s.source == sourceTuneIn && s.location == "" {
-		// Stock wakes into what played last; leaving TuneIn idle lit the amber
-		// "no source" lamp and played nothing.
-		if loc, name, art, ok := fn(); ok {
-			s.location, s.station, s.art = loc, name, art
-		}
-	}
-	if resume && s.source == sourceTuneIn && s.location == "" {
-		if start := s.wakeIntoPresetLocked(); start != nil {
-			return start
-		}
-	}
-	if s.source == sourceTuneIn && s.location == "" {
-		s.playStatus = stateStop
-	} else {
-		s.playStatus = startStatus(s.source)
-	}
-	return nil
-}
-
-// wakeSpotifyLocked resumes a Spotify preset on wake when it can. Otherwise it drops
-// Spotify as the wake target and returns nil.
-func (s *Speaker) wakeSpotifyLocked(resume bool) func() {
-	if s.lastSource != sourceSpotify {
-		return nil
-	}
-	if fn := s.onSpotifyPreset; resume && fn != nil && s.location != "" {
-		s.source, s.playStatus = sourceSpotify, stateBuffering
-		uri := s.location
-		return func() { safego.Go("speakerstate.spotifyPreset", func() { fn(uri) }) }
-	}
-	s.lastSource = sourceTuneIn
-	s.location, s.station, s.art = "", "", ""
-	return nil
-}
-
-// wakeBluetoothLocked wakes into Bluetooth when it was the last source and a phone is
-// paired: the select hook calls the phone, and the source waits paused until it
-// streams. Otherwise, or on a wake that a selection follows, it drops Bluetooth as the
-// wake target and returns nil.
-func (s *Speaker) wakeBluetoothLocked(resume bool) func() {
-	if s.lastSource != sourceBT {
-		return nil
-	}
-	if fn := s.onBluetoothSelect; resume && fn != nil && s.btPaired != nil && s.btPaired() {
-		s.source, s.playStatus = sourceBT, statePause
-		return func() { safego.Go("speakerstate.bluetoothSelect", func() { fn() }) }
-	}
-	s.lastSource = sourceTuneIn
-	s.location, s.station, s.art = "", "", ""
-	return nil
-}
-
-// enterStandbyLocked is the active -> standby half of powerToggleLocked.
-func (s *Speaker) enterStandbyLocked() {
-	// Wake target: keep the source we can actually replay on our own — a tuned
-	// station or AUX — or Bluetooth, which calls the phone back on wake.
-	// Another external source (AirPlay/Spotify/UPnP) has no session left after
-	// standby, so waking into it would land on a source that produces nothing;
-	// fall back to TuneIn instead.
-	if s.replayableLocked() || s.source == sourceBT || (s.source == sourceSpotify && s.location != "") {
-		s.lastSource = s.source
-	} else {
-		s.lastSource = sourceTuneIn
-		// Drop what the external source left behind: waking into TuneIn with a
-		// Spotify URI and playlist name put the TuneIn logo over that name.
-		s.location, s.station, s.art = "", "", ""
-	}
-	s.source = sourceStandby
-	// What played is over; a wake starts afresh, and a station's own metadata comes
-	// back with its stream.
-	s.track, s.artist, s.album = "", "", ""
-	// Standby is not "playing": leaving playStatus at PLAY_STATE made the Home
-	// Assistant bridge publish "playing" for a speaker that is off.
-	s.playStatus = stateStop
 }
 
 // SetStartVolume is the level before any saved volume is restored. 0 keeps the built-in one.
@@ -310,6 +226,7 @@ func (s *Speaker) SetStartVolume(level int) {
 	if level == 0 {
 		return
 	}
+
 	s.lock()
 	s.volume = level
 	s.unlock()
@@ -329,54 +246,6 @@ func (s *Speaker) SetWakeVolumeMin(level int) {
 	s.lock()
 	s.wakeVolumeMin = level
 	s.unlock()
-}
-
-// controllerRestartWindow is how soon after a controller's Stop a wake still counts as
-// that controller restarting playback.
-const controllerRestartWindow = 5 * time.Second
-
-// boundWakeVolumeLocked lowers a volume above wakeVolumeMax to it and raises one below
-// wakeVolumeMin to that. Stock does this through BoundVol when it leaves standby, so a
-// speaker left at full volume does not come back at full volume, nor one left at 3 near
-// silent. Caller holds s.mu.
-func (s *Speaker) boundWakeVolumeLocked() {
-	// Music Assistant sends Stop and then Play for every next, previous and seek. That
-	// passes through standby, and bounding it raised a volume below the floor to 10 on
-	// every track change, over the level the controller had just set.
-	if time.Since(s.releasedAt) < controllerRestartWindow {
-		return
-	}
-	if s.wakeVolumeMax > 0 {
-		s.volume = min(s.volume, s.wakeVolumeMax)
-	}
-	if s.wakeVolumeMin > 0 {
-		s.volume = max(s.volume, s.wakeVolumeMin)
-	}
-}
-
-// wakeIntoPresetLocked loads the lowest-numbered preset into a wake that has no station
-// to replay, so a speaker that has presets but has not played anything yet wakes into
-// preset 1 instead of waking silent. With no preset it changes nothing and the
-// speaker wakes idle, pointing the user to the app. A Spotify preset returns the func
-// that starts it, as powerToggleLocked does. Caller holds s.mu.
-func (s *Speaker) wakeIntoPresetLocked() func() {
-	for slot := 1; slot <= speaker.PresetSlots; slot++ {
-		p, ok := s.presets[slot]
-		if !ok {
-			continue
-		}
-		if fn := s.onSpotifyPreset; p.Source == sourceSpotify && fn != nil {
-			s.source, s.lastSource, s.playStatus = sourceSpotify, sourceSpotify, stateBuffering
-			s.location, s.station, s.art = p.Location, p.Name, p.Art
-			uri := p.Location
-			return func() { safego.Go("speakerstate.spotifyPreset", func() { fn(uri) }) }
-		}
-		if p.Source == sourceTuneIn {
-			s.location, s.station, s.art = p.Location, p.Name, p.Art
-		}
-		return nil
-	}
-	return nil
 }
 
 // StatusSnapshot is the compact live state sidecars like leds need.
@@ -402,16 +271,20 @@ type StatusSnapshot struct {
 }
 
 // Output is the volume actually heard: 0 while muted.
+//
+//nolint:gocritic // hugeParam: callers read it on the copy StatusSnapshot returns.
 func (st StatusSnapshot) Output() int {
 	if st.Muted {
 		return 0
 	}
+
 	return st.Volume
 }
 
 func (s *Speaker) StatusSnapshot() StatusSnapshot {
 	s.lock()
 	defer s.unlock()
+
 	return StatusSnapshot{
 		Source:       s.source,
 		PlayStatus:   s.playStatus,
@@ -430,6 +303,7 @@ func (s *Speaker) StatusSnapshot() StatusSnapshot {
 func (s *Speaker) IsStandby() bool {
 	s.lock()
 	defer s.unlock()
+
 	return s.source == sourceStandby
 }
 
@@ -454,10 +328,13 @@ func (s *Speaker) Wake(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
+
 	s.lock()
+
 	if s.source == sourceStandby {
 		s.powerToggleLocked(false)
 	}
+
 	s.unlock()
 }
 
@@ -466,6 +343,7 @@ func (s *Speaker) Wake(ctx context.Context) {
 func (s *Speaker) LastNotification() *Notification {
 	s.lock()
 	defer s.unlock()
+
 	return s.lastNotification
 }
 
@@ -475,5 +353,190 @@ func (s *Speaker) hasMember(id string) bool {
 			return true
 		}
 	}
+
 	return false
+}
+
+// powerToggleLocked flips standby <-> the last active source. Caller holds s.mu.
+// Shared by the POWER key and Wake so both behave identically.
+//
+// A Spotify preset survives standby: with resume set, waking into it returns a func
+// (run it after releasing s.mu) that starts the preset's URI again. Without resume —
+// a wake that a source selection follows — it wakes into TuneIn as before.
+func (s *Speaker) powerToggleLocked(resume bool) func() {
+	s.playGen++ // any wake/standby supersedes an in-flight buffering attempt
+	if s.source == sourceStandby {
+		return s.wakeLocked(resume)
+	}
+
+	s.enterStandbyLocked()
+
+	return nil
+}
+
+// wakeLocked is the standby -> active half of powerToggleLocked.
+//
+//nolint:revive // flag-parameter: resume as powerToggleLocked takes it.
+func (s *Speaker) wakeLocked(resume bool) func() {
+	s.boundWakeVolumeLocked()
+
+	if s.lastSource == "" {
+		s.lastSource = sourceTuneIn
+	}
+
+	if start := s.wakeSpotifyLocked(resume); start != nil {
+		return start
+	}
+
+	if start := s.wakeBluetoothLocked(resume); start != nil {
+		return start
+	}
+
+	s.source = s.lastSource
+	if fn := s.wakeStation; resume && fn != nil && s.source == sourceTuneIn && s.location == "" {
+		// Stock wakes into what played last; leaving TuneIn idle lit the amber
+		// "no source" lamp and played nothing.
+		if loc, name, art, ok := fn(); ok {
+			s.location, s.station, s.art = loc, name, art
+		}
+	}
+
+	if resume && s.source == sourceTuneIn && s.location == "" {
+		if start := s.wakeIntoPresetLocked(); start != nil {
+			return start
+		}
+	}
+
+	if s.source == sourceTuneIn && s.location == "" {
+		s.playStatus = stateStop
+	} else {
+		s.playStatus = startStatus(s.source)
+	}
+
+	return nil
+}
+
+// wakeSpotifyLocked resumes a Spotify preset on wake when it can. Otherwise it drops
+// Spotify as the wake target and returns nil.
+//
+//nolint:revive // flag-parameter: resume as powerToggleLocked takes it.
+func (s *Speaker) wakeSpotifyLocked(resume bool) func() {
+	if s.lastSource != sourceSpotify {
+		return nil
+	}
+
+	if fn := s.onSpotifyPreset; resume && fn != nil && s.location != "" {
+		s.source, s.playStatus = sourceSpotify, stateBuffering
+		uri := s.location
+
+		return func() { safego.Go("speakerstate.spotifyPreset", func() { fn(uri) }) }
+	}
+
+	s.lastSource = sourceTuneIn
+	s.location, s.station, s.art = "", "", ""
+
+	return nil
+}
+
+// wakeBluetoothLocked wakes into Bluetooth when it was the last source and a phone is
+// paired: the select hook calls the phone, and the source waits paused until it
+// streams. Otherwise, or on a wake that a selection follows, it drops Bluetooth as the
+// wake target and returns nil.
+//
+//nolint:revive // flag-parameter: resume as powerToggleLocked takes it.
+func (s *Speaker) wakeBluetoothLocked(resume bool) func() {
+	if s.lastSource != sourceBT {
+		return nil
+	}
+
+	if fn := s.onBluetoothSelect; resume && fn != nil && s.btPaired != nil && s.btPaired() {
+		s.source, s.playStatus = sourceBT, statePause
+
+		return func() { safego.Go("speakerstate.bluetoothSelect", func() { fn() }) }
+	}
+
+	s.lastSource = sourceTuneIn
+	s.location, s.station, s.art = "", "", ""
+
+	return nil
+}
+
+// enterStandbyLocked is the active -> standby half of powerToggleLocked.
+func (s *Speaker) enterStandbyLocked() {
+	// Wake target: keep the source we can actually replay on our own — a tuned
+	// station or AUX — or Bluetooth, which calls the phone back on wake.
+	// Another external source (AirPlay/Spotify/UPnP) has no session left after
+	// standby, so waking into it would land on a source that produces nothing;
+	// fall back to TuneIn instead.
+	if s.replayableLocked() || s.source == sourceBT || (s.source == sourceSpotify && s.location != "") {
+		s.lastSource = s.source
+	} else {
+		s.lastSource = sourceTuneIn
+		// Drop what the external source left behind: waking into TuneIn with a
+		// Spotify URI and playlist name put the TuneIn logo over that name.
+		s.location, s.station, s.art = "", "", ""
+	}
+
+	s.source = sourceStandby
+	// What played is over; a wake starts afresh, and a station's own metadata comes
+	// back with its stream.
+	s.track, s.artist, s.album = "", "", ""
+	// Standby is not "playing": leaving playStatus at PLAY_STATE made the Home
+	// Assistant bridge publish "playing" for a speaker that is off.
+	s.playStatus = stateStop
+}
+
+// controllerRestartWindow is how soon after a controller's Stop a wake still counts as
+// that controller restarting playback.
+const controllerRestartWindow = 5 * time.Second
+
+// boundWakeVolumeLocked lowers a volume above wakeVolumeMax to it and raises one below
+// wakeVolumeMin to that. Stock does this through BoundVol when it leaves standby, so a
+// speaker left at full volume does not come back at full volume, nor one left at 3 near
+// silent. Caller holds s.mu.
+func (s *Speaker) boundWakeVolumeLocked() {
+	// Music Assistant sends Stop and then Play for every next, previous and seek. That
+	// passes through standby, and bounding it raised a volume below the floor to 10 on
+	// every track change, over the level the controller had just set.
+	if time.Since(s.releasedAt) < controllerRestartWindow {
+		return
+	}
+
+	if s.wakeVolumeMax > 0 {
+		s.volume = min(s.volume, s.wakeVolumeMax)
+	}
+
+	if s.wakeVolumeMin > 0 {
+		s.volume = max(s.volume, s.wakeVolumeMin)
+	}
+}
+
+// wakeIntoPresetLocked loads the lowest-numbered preset into a wake that has no station
+// to replay, so a speaker that has presets but has not played anything yet wakes into
+// preset 1 instead of waking silent. With no preset it changes nothing and the
+// speaker wakes idle, pointing the user to the app. A Spotify preset returns the func
+// that starts it, as powerToggleLocked does. Caller holds s.mu.
+func (s *Speaker) wakeIntoPresetLocked() func() {
+	for slot := 1; slot <= speaker.PresetSlots; slot++ {
+		preset, ok := s.presets[slot]
+		if !ok {
+			continue
+		}
+
+		if fn := s.onSpotifyPreset; preset.Source == sourceSpotify && fn != nil {
+			s.source, s.lastSource, s.playStatus = sourceSpotify, sourceSpotify, stateBuffering
+			s.location, s.station, s.art = preset.Location, preset.Name, preset.Art
+			uri := preset.Location
+
+			return func() { safego.Go("speakerstate.spotifyPreset", func() { fn(uri) }) }
+		}
+
+		if preset.Source == sourceTuneIn {
+			s.location, s.station, s.art = preset.Location, preset.Name, preset.Art
+		}
+
+		return nil
+	}
+
+	return nil
 }

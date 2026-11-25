@@ -1,50 +1,60 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-package ubootenv
+package ubootenv_test
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/stein155/soundtap/app/internal/ubootenv"
 	"github.com/stein155/soundtap/app/internal/ubootenv/envfixture"
 )
 
 // parseToolOutput reads what a recovery tool wrote: the primary copy at out and the
 // redundant one at out.redundant, the fresh pair this package writes for the same entries.
-func parseToolOutput(t *testing.T, out string, primary []byte) (*Env, error) {
+func parseToolOutput(t *testing.T, out string, primary []byte) (*ubootenv.Env, error) {
 	t.Helper()
+
 	redundant, err := os.ReadFile(out + ".redundant")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("reading the redundant copy: %w", err)
 	}
-	env, flag, err := ParseCopy(primary)
+
+	env, flag, err := ubootenv.ParseCopy(primary)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("the primary copy: %w", err)
 	}
-	if flag != FreshPrimaryFlag {
-		t.Errorf("primary flag %d, want %d", flag, FreshPrimaryFlag)
+
+	if flag != ubootenv.FreshPrimaryFlag {
+		t.Errorf("primary flag %d, want %d", flag, ubootenv.FreshPrimaryFlag)
 	}
-	wantPrimary, err := env.EncodeCopy(FreshPrimaryFlag)
+
+	wantPrimary, err := env.EncodeCopy(ubootenv.FreshPrimaryFlag)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("encoding the primary copy: %w", err)
 	}
-	wantRedundant, err := env.EncodeCopy(FreshRedundantFlag)
+
+	wantRedundant, err := env.EncodeCopy(ubootenv.FreshRedundantFlag)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("encoding the redundant copy: %w", err)
 	}
+
 	if !bytes.Equal(primary, wantPrimary) || !bytes.Equal(redundant, wantRedundant) {
 		t.Error("the tool's copies differ from the ones this package writes for the same entries")
 	}
+
 	return env, nil
 }
 
 func exists(path string) bool {
 	_, err := os.Stat(path)
+
 	return err == nil
 }
 
@@ -54,28 +64,41 @@ func exists(path string) bool {
 // ours use plain ubi/ubifsload/bootm. Nothing else in the environment may move, because
 // bootselect.go rewrites only bootcmd and expects to find the rest where it was.
 func TestTheMainlineBootToolOnlyRedefinesTheTwoSlotCommands(t *testing.T) {
+	t.Parallel()
+
 	python, err := exec.LookPath("python3")
 	if err != nil {
 		t.Skip("no python3")
 	}
+
 	tool, err := filepath.Abs("../../../os/support/uboot_recipes.py")
 	if err != nil || !exists(tool) {
 		t.Skip("os/support/uboot_recipes.py not found")
 	}
+
 	dir := t.TempDir()
-	in := filepath.Join(dir, "factory.bin")
-	if err := os.WriteFile(in, envfixture.Image(), 0o600); err != nil {
+
+	factory := filepath.Join(dir, "factory.bin")
+
+	err = os.WriteFile(factory, envfixture.Image(), 0o600)
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	out := filepath.Join(dir, "env-mainline.bin")
-	cmd := exec.CommandContext(t.Context(), python, tool, in, out)
-	if output, err := cmd.CombinedOutput(); err != nil {
+
+	cmd := exec.CommandContext(t.Context(), python, tool, factory, out)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
 		t.Fatalf("%s: %v\n%s", tool, err, output)
 	}
+
 	written, err := os.ReadFile(out)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	env, err := parseToolOutput(t, out, written)
 	if err != nil {
 		t.Fatalf("this package rejects what the mainline boot tool wrote: %v", err)
@@ -86,6 +109,7 @@ func TestTheMainlineBootToolOnlyRedefinesTheTwoSlotCommands(t *testing.T) {
 	if !ok {
 		t.Fatal("slot_boot is missing")
 	}
+
 	for _, slot := range []struct{ key, name, rmtd, kernel string }{
 		{"nand_boot", "Ping", "8", "0x280000"},
 		{"nand_boot2", "Pong", "9", "0x780000"},
@@ -94,6 +118,7 @@ func TestTheMainlineBootToolOnlyRedefinesTheTwoSlotCommands(t *testing.T) {
 		if !ok {
 			t.Fatalf("%s is missing", slot.key)
 		}
+
 		for _, want := range []string{
 			"setenv slot " + slot.name,
 			"setenv rmtd " + slot.rmtd,
@@ -105,6 +130,7 @@ func TestTheMainlineBootToolOnlyRedefinesTheTwoSlotCommands(t *testing.T) {
 			}
 		}
 	}
+
 	if strings.Contains(shared, "nboot.e") {
 		t.Error("slot_boot still uses Bose's nboot.e, which our U-Boot does not have")
 	}
@@ -151,15 +177,19 @@ func TestTheMainlineBootToolOnlyRedefinesTheTwoSlotCommands(t *testing.T) {
 	if strings.Contains(shared, "else") {
 		t.Errorf("slot_boot branches with else again; the fallback is the absence of a branch: %q", shared)
 	}
-	original, err := ParseLegacy(factoryEnv(t))
+
+	original, err := ubootenv.ParseLegacy(envfixture.Image())
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	for _, key := range original.Keys() {
 		if key == "nand_boot" || key == "nand_boot2" {
 			continue
 		}
+
 		before, _ := original.Get(key)
+
 		after, ok := env.Get(key)
 		if !ok || after != before {
 			t.Errorf("%s: %q became %q (present=%v)", key, before, after, ok)

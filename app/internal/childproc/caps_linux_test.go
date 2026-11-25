@@ -18,10 +18,13 @@ import (
 func TestNetToolNeverStopsAStart(t *testing.T) {
 	cmd := exec.CommandContext(t.Context(), "true")
 	NetTool(cmd)
+
 	if os.Geteuid() == 0 && cmd.SysProcAttr != nil && len(cmd.SysProcAttr.AmbientCaps) > 0 {
 		t.Error("root got ambient capabilities it already has")
 	}
-	if err := cmd.Run(); err != nil {
+
+	err := cmd.Run()
+	if err != nil {
 		t.Fatal(err)
 	}
 }
@@ -32,6 +35,7 @@ func TestHasCapMatchesRoot(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("needs root")
 	}
+
 	if !HasCap(CapSetuid) || !mayRunAs() {
 		t.Error("root without CAP_SETUID")
 	}
@@ -40,7 +44,8 @@ func TestHasCapMatchesRoot(t *testing.T) {
 // Clearing ambient capabilities works on every thread of a pure-Go process; soundtapd
 // does it first thing.
 func TestClearAmbient(t *testing.T) {
-	if err := ClearAmbient(); errors.Is(err, syscall.ENOTSUP) {
+	err := ClearAmbient()
+	if errors.Is(err, syscall.ENOTSUP) {
 		t.Skip("a cgo build: AllThreadsSyscall is pure Go only, as soundtapd is built")
 	} else if err != nil {
 		t.Fatal(err)

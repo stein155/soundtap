@@ -12,9 +12,11 @@ import (
 	"github.com/stein155/soundtap/app/internal/safego"
 )
 
+//nolint:paralleltest // swaps package variables other tests read: panicLog
 func TestPanicIsWrittenToPanicLogAndRaisedAgain(t *testing.T) {
 	panicLog = filepath.Join(t.TempDir(), "panic.log")
 	defer func() { panicLog = "" }()
+
 	func() {
 		defer func() {
 			if r := recover(); r != "boom" {
@@ -22,13 +24,17 @@ func TestPanicIsWrittenToPanicLogAndRaisedAgain(t *testing.T) {
 			}
 		}()
 		defer safego.Recover("player")
+
 		panic("boom")
 	}()
+
 	b, err := os.ReadFile(panicLog)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s := string(b); !strings.Contains(s, `goroutine "player": panic: boom`) || !strings.Contains(s, "panic_test.go") {
-		t.Fatalf("panic log = %q", s)
+
+	written := string(b)
+	if !strings.Contains(written, `goroutine "player": panic: boom`) || !strings.Contains(written, "panic_test.go") {
+		t.Fatalf("panic log = %q", written)
 	}
 }

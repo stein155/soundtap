@@ -21,15 +21,19 @@ func TestModelsWithAnalogueInputOfferIt(t *testing.T) {
 		if !ok {
 			t.Fatalf("model %q is gone; this test names the models on purpose", name)
 		}
+
 		model := profile()
+
 		var aux, bt bool
 		for _, source := range model.UserSources {
 			aux = aux || source == "AUX"
 			bt = bt || source == "BLUETOOTH"
 		}
+
 		if !aux {
 			t.Errorf("%s does not offer AUX over the LAN API", name)
 		}
+
 		if !bt {
 			t.Errorf("%s does not offer BLUETOOTH over the LAN API", name)
 		}
@@ -41,24 +45,22 @@ func TestModelsWithAnalogueInputOfferIt(t *testing.T) {
 // profile ancestry as the ST10, none of its keypad, infrared or display.
 func TestCapabilitiesComeFromTheProfile(t *testing.T) {
 	has := func(caps []string, want string) bool {
-		for _, c := range caps {
-			if c == want {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(caps, want)
 	}
+
 	st10 := st10().Capabilities()
 	for _, want := range []string{"bluetooth", "ir", "keypad", "aux"} {
 		if !has(st10, want) {
 			t.Errorf("st10 capabilities %v are missing %q", st10, want)
 		}
 	}
+
 	wla := wla().Capabilities()
 	if !has(wla, "bluetooth") {
 		t.Errorf("wla capabilities %v are missing bluetooth; its radio is attached by the "+
 			"kernel, not by hciattach, so an empty BTUart does not mean no Bluetooth", wla)
 	}
+
 	for _, unwanted := range []string{"ir", "keypad"} {
 		if has(wla, unwanted) {
 			t.Errorf("wla capabilities %v claim %q, which this board does not have", wla, unwanted)
@@ -75,21 +77,28 @@ func TestAuxNeedsARoute(t *testing.T) {
 	m := st10()
 	dir := t.TempDir()
 	m.ShelbySource = dir + "/source"
+
 	m.AuxCapture = dir + "/pcmC0D0c"
 	if got := withoutUnroutedAux(m); slices.Contains(got.UserSources, sourceAux) || slices.Contains(got.Capabilities(), "aux") {
 		t.Errorf("AUX offered with no route: %v", got.UserSources)
 	}
-	if err := os.WriteFile(m.ShelbySource, nil, 0o600); err != nil {
+
+	err := os.WriteFile(m.ShelbySource, nil, 0o600)
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	if got := withoutUnroutedAux(m); !slices.Contains(got.UserSources, sourceAux) || !slices.Contains(got.UserSources, sourceBluetooth) {
 		t.Errorf("routed model lost a source: %v", got.UserSources)
 	}
 	// Under the mainline kernel the capture node is the route.
 	m.ShelbySource = ""
-	if err := os.WriteFile(m.AuxCapture, nil, 0o600); err != nil {
+
+	err = os.WriteFile(m.AuxCapture, nil, 0o600)
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	if got := withoutUnroutedAux(m); !slices.Contains(got.UserSources, sourceAux) {
 		t.Errorf("AUX dropped although the line input can be captured: %v", got.UserSources)
 	}
@@ -101,17 +110,22 @@ func TestCurrentModelFailsLoudlyWhenUnknown(t *testing.T) {
 	if len(install.LiveVariants()) > 0 {
 		t.Skip("this host reports a kernel variant")
 	}
+
 	for _, env := range []string{"", "does-not-exist", "unknown"} {
 		t.Setenv("MODEL", env)
+
 		m, err := currentModel()
 		if err == nil || m.Name != "unknown" {
 			t.Fatalf("MODEL=%q gave %q, err %v; want unknown with an error", env, m.Name, err)
 		}
+
 		if m.AudioDev != "" || m.MuteGPIO != "" || m.AmpPowerGPIO != "" || m.AICConfig != "" || m.KeypadDev != "" || m.LEDDir != "" || m.IRDev != "" || m.OLED != "" || m.BTUart != "" {
 			t.Fatalf("MODEL=%q: unknown model names hardware: %+v", env, m)
 		}
 	}
+
 	t.Setenv("MODEL", " ST20 ")
+
 	if m, err := currentModel(); err != nil || m.Name != ST20 {
 		t.Fatalf("MODEL=ST20 gave %q, err %v", m.Name, err)
 	}
@@ -121,6 +135,7 @@ func TestUnprovenModelsEnableNoHardwareControls(t *testing.T) {
 	if model := wla(); model.AudioDev != "alsa:plughw:0,0" || model.AICConfig != "" || model.MuteGPIO != "" || model.KeypadDev != "" || model.LEDDir != "" || model.BTUart != "" {
 		t.Fatalf("WLA enabled unverified hardware controls: %+v", model)
 	}
+
 	if model := st300(); model.AudioDev != "alsa:plughw:0,0" || !slices.Equal(model.UserSources, []string{sourceTV, sourceHDMI, sourceBluetooth}) || !slices.Equal(model.Capabilities(), []string{"bluetooth"}) {
 		t.Fatalf("ST300 enabled unverified hardware controls: %+v", model)
 	}
@@ -155,6 +170,7 @@ func TestSourceGainPerModel(t *testing.T) {
 		if got := c.model.SourceGain("TUNEIN"); got != c.wifi {
 			t.Errorf("%s network gain = %v, want %v", c.model.Name, got, c.wifi)
 		}
+
 		if got := c.model.SourceGain(sourceAux); got != c.aux {
 			t.Errorf("%s AUX gain = %v, want %v", c.model.Name, got, c.aux)
 		}
@@ -167,6 +183,7 @@ func TestST30IsTheST20Board(t *testing.T) {
 	if m.Name != ST20 || m.Type != "SoundTouch 30" || m.AICConfig != "mojo_scm_normal.cfg" {
 		t.Fatalf("st30() = %q %q %q", m.Name, m.Type, m.AICConfig)
 	}
+
 	m.Type, m.AICConfig = want.Type, want.AICConfig
 	if m.KeypadDev != want.KeypadDev || m.AudioDev != want.AudioDev || m.MuteGPIO != want.MuteGPIO {
 		t.Fatalf("st30() differs from st20() beyond its name and codec script")
@@ -185,6 +202,7 @@ func TestSeriesIIIIsTheST10Module(t *testing.T) {
 			m.OLED != "spidev:/dev/spidev1.0?ce=gpio0_12&reset=gpio2_9&dc=gpio2_12" {
 			t.Errorf("seriesIII(%s) = %q %q %q LEDDir %q OLED %q", variant, m.Name, m.Type, m.AICConfig, m.LEDDir, m.OLED)
 		}
+
 		if m.KeypadDev != st10.KeypadDev || m.MuteGPIO != st10.MuteGPIO || m.IRDev != st10.IRDev || m.BTUart != st10.BTUart {
 			t.Errorf("seriesIII(%s) differs from st10() in its board wiring", variant)
 		}

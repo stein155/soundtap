@@ -33,6 +33,8 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/stein155/soundtap/app/internal/atomicjson"
@@ -58,7 +60,10 @@ import (
 var version = "dev"
 
 // bcoImage is the BCO image Core ships (os/board/rootfs/post-build.sh, ADR 0031).
-var bcoImage = "/usr/share/soundtap/bco-app.bcd"
+const bcoImage = "/usr/share/soundtap/bco-app.bcd"
+
+// errOSAPITooOld is an app built for a newer SoundTap Core than the one it runs on.
+var errOSAPITooOld = errors.New("SoundTap Core is too old for this app")
 
 // checkOSAPI refuses an app built for a newer SoundTap Core than the one at path (ADR 0035).
 // The upload is checked too, but only init's .base match keeps an override on the OS it
@@ -66,8 +71,9 @@ var bcoImage = "/usr/share/soundtap/bco-app.bcd"
 // acts on: three quick exits put the firmware's own soundtapd back, which always matches.
 func checkOSAPI(path string) error {
 	if need, have := osapi.Need(), osapi.Have(path); need > have {
-		return fmt.Errorf("this app needs SoundTap Core level %d, Core has level %d", need, have)
+		return fmt.Errorf("%w: this app needs SoundTap Core level %d, Core has level %d", errOSAPITooOld, need, have)
 	}
+
 	return nil
 }
 
@@ -76,6 +82,7 @@ func listenPort(addr string) string {
 	if err != nil || p == "" {
 		return "80"
 	}
+
 	return p
 }
 
@@ -124,21 +131,43 @@ func main() {
 	if os.Getenv("GOMEMLIMIT") == "" {
 		debug.SetMemoryLimit(memLimit)
 	}
+
 	log := setupLogging()
 	serial, serialErr := deviceSerial()
-	defaultName, defaultDeviceID := identityDefaults(board, serial)
+
+	defaultName, defaultDeviceID := identityDefaults(&board, serial)
 	if serialErr != nil {
 		log.Warn("serial unavailable; using default speaker name", "err", serialErr, "name", defaultName)
 	}
-	opt := parseOptions(defaultName, defaultDeviceID)
-	setHome(opt.home)
-	if opt.dev {
-		enterDevMode(&opt, log)
+
+	opt := defineOptions(defaultName, defaultDeviceID)
+
+	flag.Parse()
+
+	code := run(*opt, serial, log)
+	if code != 0 {
+		os.Exit(code)
 	}
+}
+
+// exitDevOnSpeaker is the exit code of -dev on a flashed speaker.
+const exitDevOnSpeaker = 2
+
+// run is soundtapd after its command line: the one-shot answers init asks for, the checks
+// before the daemon starts, and then the daemon. It returns the process's exit code.
+func run(opt options, serial string, log *slog.Logger) int {
+	setHome(opt.home)
+
+	if opt.dev && !enterDevMode(&opt, log) {
+		return exitDevOnSpeaker
+	}
+
 	useRootHelper(log)
+
 	if opt.printOSAPI {
 		fmt.Println(osapi.Need())
-		return
+
+		return 0
 	}
 	// The init script starts snapclient before soundtapd, and snapclient's --hostID used
 	// to be built from a MAC of its own -- a second identifier for one box, chosen from a
@@ -151,68 +180,95 @@ func main() {
 	// out of soundtapd's reach, and gone before the daemon itself could log them.
 	if opt.printIdentity {
 		fmt.Println(speakerIdentity(serial, opt.deviceID))
-		return
+
+		return 0
 	}
+
 	panicLog = filepath.Join(opt.home, web.PanicLogName)
+
 	defer safego.Recover("main")
-	if how, moved, err := keepLastBoot(opt.home); err != nil {
+
+	how, moved, err := keepLastBoot(opt.home)
+	if err != nil {
 		log.Warn("previous boot records", "err", err)
 	} else if moved {
 		log.Info("previous boot ended", "how", how)
 	}
+
 	countSoundtapdStart(log)
 
-	requireOSAPI(log)
+	if !osAPIMatches(log) {
+		return 1
+	}
+
 	refuseUnknownHardware(boardErr, &opt, log)
 	prepareHome(opt.home, log)
+	runDaemon(opt, serial, log)
+
+	return 0
+}
+
+// runDaemon is the daemon itself: it wires every part and serves until shutdown.
+func runDaemon(opt options, serial string, log *slog.Logger) {
 	presetsPath := filepath.Join(opt.home, "presets.json")
 
 	ctx, cancel := context.WithCancel(context.Background())
-	life := &lifecycle{cancel: cancel, log: log}
+
+	life := &lifecycle{
+		cancel: cancel, log: log,
+		once: sync.Once{}, fadeOut: atomic.Pointer[func()]{}, savePrefs: atomic.Pointer[func()]{},
+	}
 	defer life.shutdown()
+
 	stopSignals := life.shutdownOnSignal(ctx)
 	defer stopSignals()
 
 	set := settings.Open(presetsPath + ".settings")
-	fromStock := takeStockOnce(opt.home, log)
-	identity := initialName(set, serial, opt.name, fromStock, log)
+	leftovers := stockTakeover(opt.home, log)
+	identity := initialName(set, serial, opt.name, leftovers.name, log)
 	// Published before anything reads it: bt.sh and the Bluetooth agent, started below,
 	// otherwise find only the setup name and advertise that for the first seconds.
-	if err := publishCurrentName(identity); err != nil {
+	err := publishCurrentName(identity)
+	if err != nil {
 		log.Warn("publish name", "err", err)
 	}
-	sp := newSpeaker(opt, identity, log)
-	tc := tunein.New()
-	st := loadPresets(ctx, sp, presetsPath, fromStock, log)
+
+	speakerState := newSpeaker(opt, identity, log)
+	tuneinClient := tunein.New()
+	presets := loadPresets(ctx, speakerState, presetsPath, leftovers.presets, log)
 	upd := update.New(version, log.With("comp", "update"))
 
 	port, advertisedPort := advertisedPorts(opt)
-	enr := nowplaying.New(sp, tc)
-	recents := recentStations(sp, opt.home)
+	enr := nowplaying.New(speakerState, tuneinClient)
+	recents := recentStations(speakerState, opt.home)
 	spot := spotify.New()
-	disp := display.New(ctx, displayPath(), func(context.Context) bool { return sp.IsStandby() }, log.With("comp", "display"))
-	takeStockClock(set, fromStock, disp.Available(), log)
+	disp := display.New(ctx, displayPath(), func(context.Context) bool { return speakerState.IsStandby() },
+		log.With("comp", "display"))
+	takeStockClock(set, leftovers.clockFor(disp), log)
+
 	gate := newBootGate()
 	wifiConf := filepath.Join(filepath.Dir(opt.home), "wifi.conf")
 	changes, nameUpdates, receiverUpdates := changeNotifiers()
-	mb := newMQTT(sp, set, upd, enr, log)
-	fw := web.NewFirewallCheck(web.ProfileFile, nil, log.With("comp", "firewall"))
+	mqttBridge := newMQTT(speakerState, set, upd, enr, log)
+	firewall := web.NewFirewallCheck(web.ProfileFile, nil, log.With("comp", "firewall"))
 	webSrv := web.New(web.Options{
-		TuneIn: tc, Backend: sp, Settings: set, Update: upd, NowPlaying: enr, Home: opt.home, Log: log,
+		TuneIn: tuneinClient, Backend: speakerState, Settings: set, Update: upd, NowPlaying: enr,
+		Home: opt.home, Log: log,
 		Speaker: speakerOptions(serial, advertisedPort, port, recents),
 		Health: web.HealthOptions{
-			PresetsLoadErr: st.LoadErr, DaemonProblems: problems.list, MuteLine: amplifier.MuteLine, Firewall: fw,
+			PresetsLoadErr: presets.LoadErr, DaemonProblems: problems.list, MuteLine: amplifier.MuteLine,
+			Firewall: firewall,
 		},
 		Multiroom: multiroomOptions(),
-		Firmware:  firmwareOptions(life, disp, opt.home, func() { quietForInstall(sp) }),
-		Setup:     setupOptions(life, set, st, opt.home, wifiConf, log),
+		Firmware:  firmwareOptions(life, disp, opt.home, func() { quietForInstall(speakerState) }),
+		Setup:     setupOptions(life, set, presets, opt.home, wifiConf, log),
 		Bluetooth: bluetoothOptions(ctx, log),
 		Panel:     panelOptions(disp, log),
 		Changed:   changes,
-		MQTT:      mb,
+		MQTT:      mqttBridge,
 	})
-	wireWeb(webSrv, sp)
-	wireTransport(ctx, sp, webSrv, spot, disp, log)
+	wireWeb(webSrv, speakerState)
+	wireTransport(ctx, speakerState, webSrv, spot, disp, log)
 	startBootScreen(ctx, disp, set, log)
 	startFirmwareLane(ctx, webSrv, upd, gate, opt.home, log)
 	// Before the Wi-Fi manager reads wifi.conf: on the first boot after an install from
@@ -224,52 +280,92 @@ func main() {
 	mux := http.NewServeMux()
 	mux.Handle("/", webSrv.Handler())
 
-	startWebServices(ctx, webSrv, sp, mb, identity, advertisedPort, opt, log)
-	goSafe("firewallCheck", func() { fw.Status(ctx) })
+	startWebServices(ctx, webSrv, speakerState, mqttBridge, identity, advertisedPort, opt, log)
+	goSafe("firewallCheck", func() { firewall.Status(ctx) })
 	startPprof(ctx, log)
 
-	pump := startAudioSide(ctx, opt, audioWiring{
-		sp: sp, web: webSrv, spot: spot, set: set, st: st, tc: tc, disp: disp, mux: mux,
+	pump := startAudioSide(ctx, opt, &audioWiring{
+		sp: speakerState, web: webSrv, spot: spot, set: set, st: presets, tc: tuneinClient, disp: disp, mux: mux,
 		home: opt.home, port: port, identity: identity, nameUpdates: nameUpdates,
 		receiverUpdates: receiverUpdates,
 		shutdown:        life.shutdown, fadeOut: &life.fadeOut, savePrefs: &life.savePrefs, log: log,
+		chime: nil, eventChime: nil, // wireChimes sets them
 	})
-	serveUntilDone(ctx, opt, mux, webSrv, port, pump, gate, log)
+	serveUntilDone(ctx, &serveTarget{opt: opt, mux: mux, webSrv: webSrv, port: port, pump: pump, gate: gate}, log)
+}
+
+// httpShutdownGrace is how long the listeners get to finish their requests at shutdown.
+const httpShutdownGrace = 3 * time.Second
+
+// serveTarget is what serveUntilDone serves and watches.
+type serveTarget struct {
+	opt    options
+	mux    *http.ServeMux
+	webSrv *web.Server
+	port   string // the API's port, as text for URLs
+	pump   audioHealth
+	gate   *bootGate
 }
 
 // serveUntilDone opens the listeners, starts the boot confirmation and watchdog, and
 // blocks until shutdown.
-func serveUntilDone(ctx context.Context, opt options, mux *http.ServeMux, webSrv *web.Server, port string, pump audioHealth, gate *bootGate, log *slog.Logger) {
-	servers := listen(opt, mux, log)
-	log.Info("soundtapd up", "listen", listenAddrs(opt.listen), "primary_port", port, "device", opt.deviceID, "home", opt.home)
+func serveUntilDone(ctx context.Context, target *serveTarget, log *slog.Logger) {
+	opt, port, gate := target.opt, target.port, target.gate
+	servers := listen(ctx, opt, target.mux, log)
+	log.Info("soundtapd up",
+		"listen", listenAddrs(opt.listen), "primary_port", port, "device", opt.deviceID, "home", opt.home)
 	// Also on a -no-audio boot: a speaker that answers is one that can be updated again,
 	// and an unconfirmed boot is one U-Boot rolls back (ADR 0010).
 	checks := gate.checks("http://127.0.0.1:" + port + "/api/version")
+
 	if !devMode.Load() { // a computer has no U-Boot environment to confirm a boot in
-		goSafe("confirmBoot", func() { confirmBoot(ctx, webSrv, gate, checks, log.With("comp", "boot")) })
+		goSafe("confirmBoot", func() { confirmBoot(ctx, target.webSrv, gate, checks, log.With("comp", "boot")) })
 	}
+
 	if onFirmware() {
-		healthy := speakerHealthy("http://127.0.0.1:"+port+"/api/version", pump)
+		healthy := speakerHealthy("http://127.0.0.1:"+port+"/api/version", target.pump)
+
 		goSafe("watchdog", func() { hw.RunWatchdog(ctx, healthy, log.With("comp", "watchdog")) })
 	}
+
 	<-ctx.Done()
-	sctx, c := context.WithTimeout(context.Background(), 3*time.Second)
-	defer c()
-	for _, s := range servers {
-		_ = s.Shutdown(sctx)
+
+	// ctx is over by now; the listeners still get their grace.
+	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), httpShutdownGrace)
+	defer cancel()
+
+	for _, server := range servers {
+		_ = server.Shutdown(sctx)
 	}
 }
 
-// requireOSAPI exits when a flashed speaker's OS is too old for this soundtapd.
-func requireOSAPI(log *slog.Logger) {
-	if !onFirmware() {
-		return
+// clockFor is stock's clock for a speaker with disp: nil without a panel, which shows no clock.
+func (s stockLeftovers) clockFor(disp *display.Manager) func() (settings.Display, bool) {
+	if !disp.Available() {
+		return nil
 	}
-	if err := checkOSAPI(osapi.Path); err != nil {
-		log.Error("refusing to start", "err", err)
-		os.Exit(1)
-	}
+
+	return s.clock
 }
+
+// osAPIMatches reports whether a flashed speaker's OS is new enough for this soundtapd.
+func osAPIMatches(log *slog.Logger) bool {
+	if !onFirmware() {
+		return true
+	}
+
+	err := checkOSAPI(osapi.Path)
+	if err != nil {
+		log.Error("refusing to start", "err", err)
+
+		return false
+	}
+
+	return true
+}
+
+// defaultAdvertisedPort is the API's port when the listen address names none (ADR 0001).
+const defaultAdvertisedPort = 80
 
 // advertisedPorts returns the port the API listens on (as text, for URLs) and the one
 // advertised to peers (mDNS, UPnP, notify base URL): :80 on every model (ADR 0001).
@@ -280,10 +376,13 @@ func advertisedPorts(opt options) (string, uint16) {
 	}
 	// Peers proxy to this port. The ST20 advertised 80, which on its address is the BCO's
 	// web server, so every request a peer forwarded to it came back 404.
-	advertisedPort := uint16(80)
-	if n, err := strconv.ParseUint(port, 10, 16); err == nil {
-		advertisedPort = uint16(n)
+	advertisedPort := uint16(defaultAdvertisedPort)
+
+	parsed, err := strconv.ParseUint(port, 10, 16)
+	if err == nil {
+		advertisedPort = uint16(parsed)
 	}
+
 	return port, advertisedPort
 }
 
@@ -292,10 +391,13 @@ const updateFailedFor = 10 * time.Second
 
 // startFirmwareLane starts what only a flashed speaker runs beside its routes: app updates
 // through the server, the BCO's LAN watch and its flash.
-func startFirmwareLane(ctx context.Context, webSrv *web.Server, upd *update.Manager, gate *bootGate, home string, log *slog.Logger) {
+func startFirmwareLane(
+	ctx context.Context, webSrv *web.Server, upd *update.Manager, gate *bootGate, home string, log *slog.Logger,
+) {
 	if onFirmware() {
 		wireFirmwareLane(ctx, webSrv, upd, home, log)
 	}
+
 	if tty := os.Getenv("SOUNDTAP_BCO_TTY"); onFirmware() && tty != "" {
 		// The boot confirmation waits for this step and the BCO link (ADR 0010).
 		gate.waitForBCO()
@@ -311,14 +413,17 @@ const installQuiet = 1500 * time.Millisecond
 // playback for an update. Receiving, hashing and writing the package left the ST20's DAC
 // short of samples while radio played on: an underrun mid-music, heard as a pop
 // (2026-11-22). Standby fades the music out and mutes the amp on silence first.
-func quietForInstall(sp interface {
+func quietForInstall(playing interface {
 	IsStandby() bool
-	EnterStandby(context.Context) error
-}) {
-	if sp.IsStandby() {
+	EnterStandby(ctx context.Context) error
+},
+) {
+	if playing.IsStandby() {
 		return
 	}
-	_ = sp.EnterStandby(context.Background())
+
+	_ = playing.EnterStandby(context.Background())
+
 	time.Sleep(installQuiet)
 }
 
@@ -326,11 +431,14 @@ func quietForInstall(sp interface {
 // updates its app; every speaker shows an install on its lamps and panel. quiet runs as an
 // install starts, before its work.
 func firmwareOptions(life *lifecycle, disp *display.Manager, home string, quiet func()) web.FirmwareOptions {
-	o := web.FirmwareOptions{
+	opts := web.FirmwareOptions{
+		// firmwareLaneOptions fills these in on a flashed speaker.
+		Install: false, Reboot: nil, BootGuard: nil, RootRun: nil, SoundTapd: nil,
 		Active: func(active bool) {
 			if active && !firmwareActive.Load() {
 				quiet()
 			}
+
 			firmwareActive.Store(active)
 		},
 		Progress: func(percent int) { firmwareProgress.Store(int64(percent)) },
@@ -340,42 +448,56 @@ func firmwareOptions(life *lifecycle, disp *display.Manager, home string, quiet 
 		},
 	}
 	if onFirmware() {
-		firmwareLaneOptions(&o, life.audioOff, home)
+		firmwareLaneOptions(&opts, life.audioOff, home)
 	}
-	return o
+
+	return opts
 }
 
 // panelOptions is what the speaker's own front shows and asks: dangerous routes wait for a
 // key press on the speaker, or the root-only token.
 func panelOptions(disp *display.Manager, log *slog.Logger) web.PanelOptions {
-	o := web.PanelOptions{
+	opts := web.PanelOptions{
 		DisplayAvailable: disp.Available,
 		Notice: func(en string) {
 			disp.SetTransient(display.Content{Frame: panel.Message(panel.Text(en))}, panel.NoticeFor)
 		},
+		Confirm: nil, // a flashed speaker asks on its front, below
 	}
+
 	if onFirmware() {
 		confirmer.log = log.With("comp", "confirm")
 		confirmer.show = func(text string, d time.Duration) {
 			disp.SetTransient(display.Content{Frame: panel.Message(panel.Text(text))}, d)
 		}
 		confirmer.rotate()
-		o.Confirm = confirmer.confirm
+		opts.Confirm = confirmer.confirm
 	}
-	return o
+
+	return opts
 }
 
 // bluetoothOptions reach BlueZ. Only a speaker has BlueZ and bt.sh. Off-speaker the
 // endpoints stay honest about there being no Bluetooth rather than shelling out to nothing.
 func bluetoothOptions(ctx context.Context, log *slog.Logger) web.BluetoothOptions {
+	opts := web.BluetoothOptions{Bus: nil, Pair: nil, Clear: nil, Forget: nil, Paired: nil}
 	if !onFirmware() {
-		return web.BluetoothOptions{}
+		return opts
 	}
-	o := web.BluetoothOptions{Bus: bluetoothBus}
-	if a := bluetoothAgent(ctx, log); a != nil {
-		o.Pair, o.Clear = a.Pair, func(ctx context.Context) error { _, err := a.Clear(ctx); return err }
+
+	opts.Bus = bluetoothBus
+	if agent := bluetoothAgent(ctx, log); agent != nil {
+		opts.Pair, opts.Clear = agent.Pair, func(ctx context.Context) error {
+			_, err := agent.Clear(ctx)
+			if err != nil {
+				return fmt.Errorf("clear the Bluetooth pairings: %w", err)
+			}
+
+			return nil
+		}
 	}
-	return o
+
+	return opts
 }
 
 // onFirmware is set by init.d/soundtap: this soundtapd runs on a flashed speaker, with
@@ -387,9 +509,12 @@ func setupLogging() *slog.Logger {
 	// One format for every package, including those that log through slog.Default
 	// (settings), and the level from SOUNDTAP_LOG_LEVEL (debug, info, warn, error).
 	slog.SetDefault(log)
-	if err := logLevel.UnmarshalText([]byte(os.Getenv("SOUNDTAP_LOG_LEVEL"))); err != nil && os.Getenv("SOUNDTAP_LOG_LEVEL") != "" {
+
+	err := logLevel.UnmarshalText([]byte(os.Getenv("SOUNDTAP_LOG_LEVEL")))
+	if err != nil && os.Getenv("SOUNDTAP_LOG_LEVEL") != "" {
 		log.Warn("SOUNDTAP_LOG_LEVEL ignored", "err", err)
 	}
+
 	return log
 }
 
@@ -400,98 +525,138 @@ type options struct {
 	printIdentity, printOSAPI    bool
 }
 
-func parseOptions(defaultName, defaultDeviceID string) options {
-	var o options
-	flag.StringVar(&o.listen, "listen", "", "comma-separated listen addrs; empty = :80")
-	flag.StringVar(&o.home, "home", defaultHome, "writable state dir; its parent holds the key maps and stock's files")
-	flag.StringVar(&o.deviceID, "device-id", defaultDeviceID, "speaker device id")
-	flag.StringVar(&o.name, "name", defaultName, "speaker name")
-	flag.BoolVar(&o.noAudio, "no-audio", false, "skip audio/buttons/leds (for testing)")
-	flag.BoolVar(&o.dev, "dev", false,
+// defineOptions defines soundtapd's flags; the options hold their values once main has
+// parsed the command line.
+func defineOptions(defaultName, defaultDeviceID string) *options {
+	var opt options
+	flag.StringVar(&opt.listen, "listen", "", "comma-separated listen addrs; empty = :80")
+	flag.StringVar(&opt.home, "home", defaultHome,
+		"writable state dir; its parent holds the key maps and stock's files")
+	flag.StringVar(&opt.deviceID, "device-id", defaultDeviceID, "speaker device id")
+	flag.StringVar(&opt.name, "name", defaultName, "speaker name")
+	flag.BoolVar(&opt.noAudio, "no-audio", false, "skip audio/buttons/leds (for testing)")
+	flag.BoolVar(&opt.dev, "dev", false,
 		"development run on a computer: -no-audio, no hardware, nothing announced on the LAN (make dev)")
-	flag.BoolVar(&o.printIdentity, "print-identity", false,
+	flag.BoolVar(&opt.printIdentity, "print-identity", false,
 		"print this speaker's stable identity and exit")
-	flag.BoolVar(&o.printOSAPI, "os-api", false,
+	flag.BoolVar(&opt.printOSAPI, "os-api", false,
 		"print the SoundTap Core level this build needs and exit (ADR 0035)")
-	flag.Parse()
-	return o
+
+	return &opt
 }
 
+// homeDirMode is the mode of soundtapd's state directory and of its runtime directory.
+const homeDirMode = 0o755
+
+// wifiRestartDelay lets the setup client receive the HTTP success response before the
+// Wi-Fi manager tears down the AP to join the selected network.
+const wifiRestartDelay = 2 * time.Second
+
 func prepareHome(home string, log *slog.Logger) {
-	if err := os.MkdirAll(home, 0o755); err != nil {
+	err := os.MkdirAll(home, homeDirMode)
+	if err != nil {
 		log.Warn("mkdir home", "err", err)
 	}
-	if err := removeStalePlugins(home); err != nil {
+
+	err = removeStalePlugins(home)
+	if err != nil {
 		log.Warn("remove stale plugins", "err", err)
 	}
+
+	err = removeRetiredFiles(home)
+	if err != nil {
+		log.Warn("remove retired files", "err", err)
+	}
+
 	if devMode.Load() {
 		return // no boot watchdog to disarm on a computer
 	}
-	if err := os.MkdirAll(filepath.Dir(bootDisarmPath), 0o755); err != nil {
+
+	err = os.MkdirAll(filepath.Dir(bootDisarmPath), homeDirMode)
+	if err != nil {
 		log.Warn("mkdir run dir", "err", err) // the disarm write after listening says so too
 	}
 }
 
 // newSpeaker is the in-process speaker: speakerstate holds all playback state.
 func newSpeaker(opt options, identity string, log *slog.Logger) *speakerstate.Speaker {
-	sp := speakerstate.New()
-	sp.DeviceID = opt.deviceID
-	sp.Name = identity
-	sp.Type = board.Type // product name per model profile (ST10/ST20)
-	sp.Software = strings.TrimPrefix(version, "app-v")
-	sp.SetStartVolume(board.DefaultVolume)
-	sp.SetWakeVolumeMax(board.WakeVolumeMax)
-	sp.SetWakeVolumeMin(board.WakeVolumeMin)
+	state := speakerstate.New()
+	state.DeviceID = opt.deviceID
+	state.Name = identity
+	state.Type = board.Type // product name per model profile (ST10/ST20)
+	state.Software = strings.TrimPrefix(version, "app-v")
+	state.SetStartVolume(board.DefaultVolume)
+	state.SetWakeVolumeMax(board.WakeVolumeMax)
+	state.SetWakeVolumeMin(board.WakeVolumeMin)
+
 	if board.NoBass {
-		sp.NoBass()
+		state.NoBass()
 	}
-	sp.OnWifiProfile(func(ssid, psk string) error {
-		if err := persistWifiProfile(filepath.Join(filepath.Dir(opt.home), "wifi.conf"), ssid, psk, log); err != nil {
+
+	state.OnWifiProfile(func(ssid, psk string) error {
+		err := persistWifiProfile(filepath.Join(filepath.Dir(opt.home), "wifi.conf"), ssid, psk, log)
+		if err != nil {
 			return err
 		}
-		// Let the setup client receive the HTTP success response before the Wi-Fi
-		// manager tears down the AP to join the selected network.
-		restartWifiAfter(2*time.Second, log)
+
+		restartWifiAfter(wifiRestartDelay, log)
+
 		return nil
 	})
-	return sp
+
+	return state
 }
 
 // loadPresets opens the preset store and puts its presets on the speaker.
-func loadPresets(ctx context.Context, sp *speakerstate.Speaker, path string, fromStock bool, log *slog.Logger) *store.Store {
-	// On the first start after an install from Bose's software (fromStock), no file at all
-	// means no preset was ever stored here, so stock's presets are kept. Emptied presets leave a file.
+func loadPresets(
+	ctx context.Context, state *speakerstate.Speaker, path string, stockPresets func() []store.Preset,
+	log *slog.Logger,
+) *store.Store {
+	// On the first start after an install from Bose's software (stockPresets is set then), no
+	// file at all means no preset was ever stored here, so stock's presets are kept. Emptied
+	// presets leave a file.
 	_, statErr := os.Stat(path)
 	// An unreadable file leaves the store empty and read-only, so no preset write can
 	// replace the owner's presets with this empty set; a corrupt one was moved aside.
-	st, err := store.Open(path)
+	presets, err := store.Open(path)
 	atomicjson.LogLoad(log, "presets", path, err)
-	if fromStock && errors.Is(statErr, fs.ErrNotExist) {
-		for _, p := range stockPresets() {
-			if err := st.Set(p); err != nil {
-				log.Warn("preset from stock not kept", "slot", p.Slot, "err", err)
+
+	if stockPresets != nil && errors.Is(statErr, fs.ErrNotExist) {
+		for _, preset := range stockPresets() {
+			err := presets.Set(preset)
+			if err != nil {
+				log.Warn("preset from stock not kept", "slot", preset.Slot, "err", err)
 			}
 		}
 	}
-	for _, p := range st.All() {
-		source, itemType, loc := p.Source, p.Type, p.Location
+
+	for _, preset := range presets.All() {
+		source, itemType, loc := preset.Source, preset.Type, preset.Location
 		if source == "" {
-			source, itemType, loc = sourceTuneIn, "stationurl", speaker.StationLocation(p.StationID)
+			source, itemType, loc = sourceTuneIn, "stationurl", speaker.StationLocation(preset.StationID)
 		}
-		if err := sp.StorePreset(ctx, p.Slot, source, itemType, loc, p.Name, p.Logo); err != nil {
-			log.Warn("stored preset not loaded", "slot", p.Slot, "err", err)
+
+		err := state.StorePreset(ctx, preset.Slot, source, itemType, loc, preset.Name, preset.Logo)
+		if err != nil {
+			log.Warn("stored preset not loaded", "slot", preset.Slot, "err", err)
 		}
 	}
-	sp.OnPresetChange(persistPresetChange(st))
-	sp.OnPresetSwap(st.Swap)
-	return st
+
+	state.OnPresetChange(persistPresetChange(presets))
+	state.OnPresetSwap(presets.Swap)
+
+	return presets
 }
 
-func persistPresetChange(st *store.Store) func(int, *speaker.Preset) error {
-	return func(slot int, p *speaker.Preset) error {
-		if p == nil {
-			return st.Remove(slot)
+func persistPresetChange(presets *store.Store) func(int, *speaker.Preset) error {
+	return func(slot int, preset *speaker.Preset) error {
+		if preset == nil {
+			return presets.Remove(slot)
 		}
-		return st.Set(store.Preset{Slot: slot, StationID: p.StationID, Source: p.Source, Type: p.Type, Location: p.Location, Name: p.Name, Logo: p.Logo})
+
+		return presets.Set(store.Preset{
+			Slot: slot, StationID: preset.StationID, Source: preset.Source, Type: preset.Type,
+			Location: preset.Location, Name: preset.Name, Logo: preset.Logo,
+		})
 	}
 }

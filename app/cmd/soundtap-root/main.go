@@ -22,65 +22,103 @@ import (
 	"github.com/stein155/soundtap/app/internal/rootd"
 )
 
-// The user soundtapd runs as and the groups it has besides its own: audio for the source
+// The user soundtapd runs as and the group it has besides its own: audio for the source
 // bus FIFO (ADR 0066).
 const (
-	daemonUser = "soundtapd"
+	daemonUser  = "soundtapd"
+	daemonGroup = "audio"
 )
 
-var daemonGroups = []string{"audio"}
+// The arguments each subcommand needs: the program and the subcommand, and for
+// exec-soundtapd also the PATH it becomes.
+const (
+	argsSubcommand = 2
+	argsExec       = 3
+)
+
+const (
+	exitFailed = 1
+	exitUsage  = 2
+)
+
+// stateDirMode lets soundtapd's group into rootd's directory and no one else.
+const stateDirMode = 0o750
 
 func main() {
-	if len(os.Args) < 2 {
-		usage()
+	os.Exit(run())
+}
+
+// run is the command; it returns the process's exit code.
+func run() int {
+	if len(os.Args) < argsSubcommand {
+		return usage()
 	}
+
 	switch os.Args[1] {
 	case "serve":
-		os.Exit(serve())
+		return serve()
 	case "exec-soundtapd":
-		if len(os.Args) < 3 {
-			usage()
+		if len(os.Args) < argsExec {
+			return usage()
 		}
+
 		env := append(os.Environ(), rootd.EnvVar+"="+rootd.DefaultSocket)
-		err := childproc.ExecAs(daemonUser, daemonGroups, childproc.SoundtapdCaps, os.Args[2], os.Args[2:], env)
+		groups := []string{daemonGroup}
+		err := childproc.ExecAs(daemonUser, groups, childproc.SoundtapdCaps, os.Args[2], os.Args[2:], env)
 		fmt.Fprintln(os.Stderr, "soundtap-root: exec-soundtapd:", err)
-		os.Exit(1)
+
+		return exitFailed
 	default:
-		usage()
+		return usage()
 	}
 }
 
-func usage() {
+func usage() int {
 	fmt.Fprintln(os.Stderr, "usage: soundtap-root serve | exec-soundtapd PATH [ARGS...]")
-	os.Exit(2)
+
+	return exitUsage
 }
 
 func serve() int {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil)).With("comp", "soundtap-root")
 	if os.Geteuid() != 0 {
 		log.Error("must run as root")
+
 		return 1
 	}
+
 	uid, gid, err := childproc.Lookup(daemonUser)
 	if err != nil {
 		log.Error("no soundtapd user", "err", err)
+
 		return 1
 	}
-	if err := os.MkdirAll(rootd.Dir, 0o750); err != nil {
+
+	err = os.MkdirAll(rootd.Dir, stateDirMode)
+	if err != nil {
 		log.Error("state directory", "err", err)
+
 		return 1
 	}
-	l, err := rootd.Listen(rootd.DefaultSocket, int(gid))
+
+	listener, err := rootd.Listen(rootd.DefaultSocket, int(gid))
 	if err != nil {
 		log.Error("listen", "err", err)
+
 		return 1
 	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
+
 	log.Info("listening", "socket", rootd.DefaultSocket, "uid", uid)
-	if err := rootd.NewServer(log, int(uid), int(gid)).Serve(ctx, l); err != nil {
+
+	err = rootd.NewServer(log, int(uid), int(gid)).Serve(ctx, listener)
+	if err != nil {
 		log.Error("serve", "err", err)
+
 		return 1
 	}
+
 	return 0
 }

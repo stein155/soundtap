@@ -23,34 +23,55 @@ type Serial struct {
 
 // OpenSerial configures and opens dev (/dev/ttyS0, the module's UART0).
 func OpenSerial(ctx context.Context, dev string) (*Serial, error) {
-	if err := exec.CommandContext(ctx, "busybox", "stty", "-F", dev, "19200", "cs8", "cstopb", "-parenb",
-		"raw", "-echo", "clocal", "cread", "-crtscts").Run(); err != nil {
+	err := exec.CommandContext(ctx, "busybox", "stty", "-F", dev, "19200", "cs8", "cstopb", "-parenb",
+		"raw", "-echo", "clocal", "cread", "-crtscts").Run()
+	if err != nil {
 		return nil, fmt.Errorf("abl: stty %s: %w", dev, err)
 	}
-	f, err := os.OpenFile(dev, os.O_RDWR, 0)
+
+	file, err := os.OpenFile(dev, os.O_RDWR, 0)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("abl: open %s: %w", dev, err)
 	}
-	return &Serial{f: f}, nil
+
+	return &Serial{f: file, buf: [1]byte{}}, nil
 }
 
 // Write sends p.
-func (s *Serial) Write(p []byte) (int, error) { return s.f.Write(p) }
+func (s *Serial) Write(p []byte) (int, error) {
+	n, err := s.f.Write(p)
+	if err != nil {
+		return n, fmt.Errorf("abl: write: %w", err)
+	}
+
+	return n, nil
+}
 
 // ReadByteWithin reads one byte, or ErrTimeout after d.
 func (s *Serial) ReadByteWithin(d time.Duration) (byte, error) {
-	if err := s.f.SetReadDeadline(time.Now().Add(d)); err != nil {
-		return 0, err
+	err := s.f.SetReadDeadline(time.Now().Add(d))
+	if err != nil {
+		return 0, fmt.Errorf("abl: read deadline: %w", err)
 	}
+
 	n, err := s.f.Read(s.buf[:])
 	if errors.Is(err, os.ErrDeadlineExceeded) || n == 0 && err == nil {
 		return 0, ErrTimeout
 	}
+
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("abl: read: %w", err)
 	}
+
 	return s.buf[0], nil
 }
 
 // Close releases the line.
-func (s *Serial) Close() error { return s.f.Close() }
+func (s *Serial) Close() error {
+	err := s.f.Close()
+	if err != nil {
+		return fmt.Errorf("abl: close: %w", err)
+	}
+
+	return nil
+}

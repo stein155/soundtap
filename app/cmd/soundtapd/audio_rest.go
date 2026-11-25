@@ -23,37 +23,48 @@ type pumpGate struct {
 	changed chan struct{}
 }
 
-func newPumpGate() *pumpGate { return &pumpGate{changed: make(chan struct{})} }
-
-// pumpRest is the gate of this daemon's one Mixer pump.
-var pumpRest = newPumpGate()
-
-func (g *pumpGate) set(rest bool) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.rest == rest {
-		return
-	}
-	g.rest = rest
-	g.gen++
-	close(g.changed)
-	g.changed = make(chan struct{})
+func newPumpGate() *pumpGate {
+	return &pumpGate{mu: sync.Mutex{}, rest: false, gen: 0, changed: make(chan struct{})}
 }
 
-func (g *pumpGate) state() (rest bool, gen uint64, changed <-chan struct{}) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.rest, g.gen, g.changed
+// pumpRest is the gate of this daemon's one Mixer pump.
+//
+//nolint:gochecknoglobals // process-wide state: set by the ownership loop, awaited by the pump and the codec
+var pumpRest = newPumpGate()
+
+// set records whether the pump rests and wakes every waiter when that changes.
+func (gate *pumpGate) set(rest bool) { //nolint:revive // flag-parameter: a setter, rest is the state it stores
+	gate.mu.Lock()
+	defer gate.mu.Unlock()
+
+	if gate.rest == rest {
+		return
+	}
+
+	gate.rest = rest
+	gate.gen++
+	close(gate.changed)
+	gate.changed = make(chan struct{})
+}
+
+// state returns whether the pump rests, the generation of the last change and the channel
+// the next change closes.
+func (gate *pumpGate) state() (bool, uint64, <-chan struct{}) {
+	gate.mu.Lock()
+	defer gate.mu.Unlock()
+
+	return gate.rest, gate.gen, gate.changed
 }
 
 // awake blocks while the pump rests and returns the generation it ran under, or false when
 // ctx ends first.
-func (g *pumpGate) awake(ctx context.Context) (uint64, bool) {
+func (gate *pumpGate) awake(ctx context.Context) (uint64, bool) {
 	for {
-		rest, gen, changed := g.state()
+		rest, gen, changed := gate.state()
 		if !rest {
 			return gen, true
 		}
+
 		select {
 		case <-ctx.Done():
 			return 0, false

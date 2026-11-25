@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -15,6 +16,15 @@ import (
 	"time"
 
 	"github.com/stein155/soundtap/app/internal/spotify"
+)
+
+const (
+	// spotifyStatusTimeout bounds reading librespot's status.
+	spotifyStatusTimeout = 3 * time.Second
+	// spotifyPollEvery is how often a Spotify command is checked for taking effect.
+	spotifyPollEvery = 50 * time.Millisecond
+	// spotifyImageTimeout bounds fetching a cover image.
+	spotifyImageTimeout = 10 * time.Second
 )
 
 // SpotifyAccount is what soundtapd does to the Spotify login itself; the browser can
@@ -53,6 +63,7 @@ func (s *Server) spotifyRoutes(mux *routeMux) {
 // spotifyError answers with the stable error code for err. Details stay in the log.
 func (s *Server) spotifyError(w http.ResponseWriter, what string, err error) {
 	code, status := "spotify_playback_failed", http.StatusBadGateway
+
 	switch {
 	case errors.Is(err, spotify.ErrNotAuthenticated):
 		code, status = "spotify_not_authenticated", http.StatusConflict
@@ -66,23 +77,25 @@ func (s *Server) spotifyError(w http.ResponseWriter, what string, err error) {
 		code, status = "spotify_invalid_request", http.StatusBadRequest
 	case errors.Is(err, context.DeadlineExceeded):
 		code = "spotify_not_connected"
+	default:
+		// Anything else needs nothing here.
 	}
+
 	if status >= 500 && !errors.Is(err, spotify.ErrNotConnected) {
 		s.log.Warn("spotify "+what, "err", err.Error())
 	}
+
 	apiError(w, status, code)
 }
 
 func (s *Server) spotifyReady(w http.ResponseWriter) bool {
 	if s.spotify == nil {
 		apiError(w, http.StatusServiceUnavailable, "spotify_not_connected")
+
 		return false
 	}
-	return true
-}
 
-func spotifyCtx(r *http.Request) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(r.Context(), spotifyDeadline)
+	return true
 }
 
 func offsetParam(r *http.Request) int {
@@ -90,32 +103,44 @@ func offsetParam(r *http.Request) int {
 	if err != nil {
 		return 0
 	}
+
 	return n
 }
 
 func (s *Server) spotifyStatus(w http.ResponseWriter, r *http.Request) {
 	if s.spotify == nil {
-		writeJSON(w, http.StatusOK, spotify.Status{State: "unavailable"})
+		writeJSON(w, http.StatusOK, spotify.Status{
+			State: "unavailable", Available: false, Authenticated: false, Connected: false, ReauthRequired: false,
+		})
+
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+
+	ctx, cancel := context.WithTimeout(r.Context(), spotifyStatusTimeout)
 	defer cancel()
+
 	writeJSON(w, http.StatusOK, s.spotify.Status(ctx))
 }
 
 // spotifyServe runs one catalogue call and writes its result.
-func spotifyServe[T any](s *Server, w http.ResponseWriter, r *http.Request, what string, call func(context.Context) (T, error)) {
-	if !s.spotifyReady(w) {
+func spotifyServe[T any](
+	srv *Server, w http.ResponseWriter, r *http.Request, what string, call func(context.Context) (T, error),
+) {
+	if !srv.spotifyReady(w) {
 		return
 	}
-	ctx, cancel := spotifyCtx(r)
+
+	ctx, cancel := context.WithTimeout(r.Context(), spotifyDeadline)
 	defer cancel()
-	v, err := call(ctx)
+
+	value, err := call(ctx)
 	if err != nil {
-		s.spotifyError(w, what, err)
+		srv.spotifyError(w, what, err)
+
 		return
 	}
-	writeJSON(w, http.StatusOK, v)
+
+	writeJSON(w, http.StatusOK, value)
 }
 
 func (s *Server) spotifySearch(w http.ResponseWriter, r *http.Request) {
@@ -133,22 +158,34 @@ func (s *Server) spotifyArtist(w http.ResponseWriter, r *http.Request) {
 func (s *Server) spotifyAlbum(w http.ResponseWriter, r *http.Request) {
 	type page struct {
 		spotify.Album
+
 		Next int `json:"next,omitempty"`
 	}
+
 	spotifyServe(s, w, r, "album", func(ctx context.Context) (page, error) {
-		a, next, err := s.spotify.Album(ctx, r.PathValue("id"), offsetParam(r))
-		return page{a, next}, err
+		album, next, err := s.spotify.Album(ctx, r.PathValue("id"), offsetParam(r))
+		if err != nil {
+			return page{Album: album, Next: next}, fmt.Errorf("album: %w", err)
+		}
+
+		return page{Album: album, Next: next}, nil
 	})
 }
 
 func (s *Server) spotifyPlaylist(w http.ResponseWriter, r *http.Request) {
 	type page struct {
 		spotify.Playlist
+
 		Next int `json:"next,omitempty"`
 	}
+
 	spotifyServe(s, w, r, "playlist", func(ctx context.Context) (page, error) {
-		p, next, err := s.spotify.Playlist(ctx, r.PathValue("id"), offsetParam(r))
-		return page{p, next}, err
+		playlist, next, err := s.spotify.Playlist(ctx, r.PathValue("id"), offsetParam(r))
+		if err != nil {
+			return page{Playlist: playlist, Next: next}, fmt.Errorf("playlist: %w", err)
+		}
+
+		return page{Playlist: playlist, Next: next}, nil
 	})
 }
 
@@ -176,56 +213,75 @@ func (s *Server) spotifyLiked(w http.ResponseWriter, r *http.Request) {
 // event hook already reports track changes, so this reuses that rather than asking
 // Spotify a second time.
 func (s *Server) spotifyPlayer(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), backendCallTimeout)
 	defer cancel()
-	np, err := s.backend.NowPlaying(ctx)
+
+	playing, err := s.backend.NowPlaying(ctx)
 	if err != nil {
 		s.fail(w, "now failed", err)
+
 		return
 	}
-	if np.Source != sourceSpotify {
-		writeJSON(w, http.StatusOK, map[string]any{"active": false})
+
+	if playing.Source != sourceSpotify {
+		writeJSON(w, http.StatusOK, map[string]any{keyActive: false})
+
 		return
 	}
-	s.np.Enrich(np)
-	modes := spotify.Modes{Repeat: "off"}
+
+	s.np.Enrich(playing) //nolint:contextcheck // the metadata refresh runs on its own, past this request
+
+	modes := spotify.Modes{Repeat: "off", Shuffle: false}
 	if s.spotify != nil {
 		modes = s.spotify.PlayModes(ctx)
 	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"active": true, "nowPlaying": np, "shuffle": modes.Shuffle, "repeat": modes.Repeat,
+		keyActive: true, "nowPlaying": playing, "shuffle": modes.Shuffle, "repeat": modes.Repeat,
 	})
+}
+
+// spotifyPlayItem names what is playing, so a held preset key can store it.
+type spotifyPlayItem struct {
+	URI  string `json:"uri"`
+	Name string `json:"name"`
+	Art  string `json:"art"`
 }
 
 func (s *Server) spotifyPlay(w http.ResponseWriter, r *http.Request) {
 	if !s.spotifyReady(w) {
 		return
 	}
+
 	var body struct {
-		URI     string `json:"uri"`
-		Context string `json:"context"`
-		// Item names what is playing, so a held preset key can store it.
-		Item *struct {
-			URI  string `json:"uri"`
-			Name string `json:"name"`
-			Art  string `json:"art"`
-		} `json:"item"`
+		URI     string           `json:"uri"`
+		Context string           `json:"context"`
+		Item    *spotifyPlayItem `json:"item"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
+
+	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, smallBody)).Decode(&body)
+	if err != nil {
 		s.badRequest(w, "spotify_invalid_request", err)
+
 		return
 	}
-	ctx, cancel := spotifyCtx(r)
+
+	ctx, cancel := context.WithTimeout(r.Context(), spotifyDeadline)
 	defer cancel()
-	if err := s.spotify.Play(ctx, body.URI, body.Context); err != nil {
+
+	err = s.spotify.Play(ctx, body.URI, body.Context)
+	if err != nil {
 		s.spotifyError(w, "play", err)
+
 		return
 	}
+
 	if rb, ok := s.backend.(interface{ RememberSpotify(uri, name, art string) }); ok && body.Item != nil {
 		if validSpotifyPreset(body.Item.URI) {
 			rb.RememberSpotify(body.Item.URI, body.Item.Name, body.Item.Art)
 		}
 	}
+
 	s.hub.nudge()
 	writeOK(w)
 }
@@ -235,20 +291,26 @@ func (s *Server) spotifyCommand(name string) http.HandlerFunc {
 		if !s.spotifyReady(w) {
 			return
 		}
-		ctx, cancel := spotifyCtx(r)
+
+		ctx, cancel := context.WithTimeout(r.Context(), spotifyDeadline)
 		defer cancel()
-		if err := s.spotify.Command(ctx, name); err != nil {
+
+		err := s.spotify.Command(ctx, name)
+		if err != nil {
 			s.spotifyError(w, name, err)
+
 			return
 		}
 		// librespot accepts every command, then drops it while its Connect session is
 		// not active ("will be ignored while Not Active"), and the UI showed a pause or
 		// a resume that never happened. Its hook reports both transitions, so
 		// wait for that report rather than record the command's hopes.
-		if (name == "pause" || name == "play") && !s.spotifyConfirmed(r.Context(), name == "pause") {
+		if (name == "pause" || name == "play") && !s.spotifyConfirmed(r.Context(), name) {
 			apiError(w, http.StatusConflict, "spotify_command_ignored")
+
 			return
 		}
+
 		s.hub.nudge()
 		writeOK(w)
 	}
@@ -256,20 +318,28 @@ func (s *Server) spotifyCommand(name string) http.HandlerFunc {
 
 // spotifyAckWait bounds how long a pause or resume may take to be reported by
 // librespot's hook. A variable so tests need not wait it out.
+//
+//nolint:gochecknoglobals // a variable so tests can replace it
 var spotifyAckWait = 3 * time.Second
 
-// spotifyConfirmed waits for /api/now to show Spotify paused (or playing). It answers
-// true when Spotify does not own the amp: then there is no status to confirm.
-func (s *Server) spotifyConfirmed(ctx context.Context, paused bool) bool {
+// spotifyConfirmed waits for /api/now to show Spotify paused after the "pause" command, or
+// not paused after "play". It answers true when Spotify does not own the amp: then there is
+// no status to confirm.
+func (s *Server) spotifyConfirmed(ctx context.Context, command string) bool {
+	paused := command == "pause"
+
 	ctx, cancel := context.WithTimeout(ctx, spotifyAckWait)
 	defer cancel()
-	tick := time.NewTicker(50 * time.Millisecond)
+
+	tick := time.NewTicker(spotifyPollEvery)
 	defer tick.Stop()
+
 	for {
 		np, err := s.backend.NowPlaying(ctx)
 		if err == nil && (np.Source != sourceSpotify || (np.PlayStatus == "PAUSE_STATE") == paused) {
 			return true
 		}
+
 		select {
 		case <-ctx.Done():
 			return false
@@ -282,19 +352,28 @@ func (s *Server) spotifySeek(w http.ResponseWriter, r *http.Request) {
 	if !s.spotifyReady(w) {
 		return
 	}
+
 	var body struct {
 		PositionMs int `json:"positionMs"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
+
+	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, smallBody)).Decode(&body)
+	if err != nil {
 		s.badRequest(w, "spotify_invalid_request", err)
+
 		return
 	}
-	ctx, cancel := spotifyCtx(r)
+
+	ctx, cancel := context.WithTimeout(r.Context(), spotifyDeadline)
 	defer cancel()
-	if err := s.spotify.Seek(ctx, body.PositionMs); err != nil {
+
+	err = s.spotify.Seek(ctx, body.PositionMs)
+	if err != nil {
 		s.spotifyError(w, "seek", err)
+
 		return
 	}
+
 	writeOK(w)
 }
 
@@ -304,18 +383,24 @@ func (s *Server) spotifyLikedNow(w http.ResponseWriter, r *http.Request) {
 	if !s.spotifyReady(w) {
 		return
 	}
+
 	uri := s.spotifyTrack.Load()
 	if uri == nil || !spotify.Likeable(*uri) {
 		writeJSON(w, http.StatusOK, map[string]bool{"available": false, "liked": false})
+
 		return
 	}
-	ctx, cancel := spotifyCtx(r)
+
+	ctx, cancel := context.WithTimeout(r.Context(), spotifyDeadline)
 	defer cancel()
+
 	liked, err := s.spotify.Liked(ctx, *uri)
 	if err != nil {
 		s.spotifyError(w, "liked", err)
+
 		return
 	}
+
 	writeJSON(w, http.StatusOK, map[string]bool{"available": true, "liked": liked})
 }
 
@@ -324,24 +409,35 @@ func (s *Server) spotifySetLiked(w http.ResponseWriter, r *http.Request) {
 	if !s.spotifyReady(w) {
 		return
 	}
+
 	var body struct {
 		On bool `json:"on"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
+
+	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, smallBody)).Decode(&body)
+	if err != nil {
 		s.badRequest(w, "spotify_invalid_request", err)
+
 		return
 	}
+
 	uri := s.spotifyTrack.Load()
 	if uri == nil {
 		s.spotifyError(w, "liked", spotify.ErrInvalid)
+
 		return
 	}
-	ctx, cancel := spotifyCtx(r)
+
+	ctx, cancel := context.WithTimeout(r.Context(), spotifyDeadline)
 	defer cancel()
-	if err := s.spotify.SetLiked(ctx, *uri, body.On); err != nil {
+
+	err = s.spotify.SetLiked(ctx, *uri, body.On)
+	if err != nil {
 		s.spotifyError(w, "liked", err)
+
 		return
 	}
+
 	writeOK(w)
 }
 
@@ -349,19 +445,28 @@ func (s *Server) spotifyShuffle(w http.ResponseWriter, r *http.Request) {
 	if !s.spotifyReady(w) {
 		return
 	}
+
 	var body struct {
 		On bool `json:"on"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
+
+	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, smallBody)).Decode(&body)
+	if err != nil {
 		s.badRequest(w, "spotify_invalid_request", err)
+
 		return
 	}
-	ctx, cancel := spotifyCtx(r)
+
+	ctx, cancel := context.WithTimeout(r.Context(), spotifyDeadline)
 	defer cancel()
-	if err := s.spotify.SetShuffle(ctx, body.On); err != nil {
+
+	err = s.spotify.SetShuffle(ctx, body.On)
+	if err != nil {
 		s.spotifyError(w, "shuffle", err)
+
 		return
 	}
+
 	writeOK(w)
 }
 
@@ -369,31 +474,45 @@ func (s *Server) spotifyRepeat(w http.ResponseWriter, r *http.Request) {
 	if !s.spotifyReady(w) {
 		return
 	}
+
 	var body struct {
 		Mode string `json:"mode"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
+
+	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, smallBody)).Decode(&body)
+	if err != nil {
 		s.badRequest(w, "spotify_invalid_request", err)
+
 		return
 	}
-	ctx, cancel := spotifyCtx(r)
+
+	ctx, cancel := context.WithTimeout(r.Context(), spotifyDeadline)
 	defer cancel()
-	if err := s.spotify.SetRepeat(ctx, body.Mode); err != nil {
+
+	err = s.spotify.SetRepeat(ctx, body.Mode)
+	if err != nil {
 		s.spotifyError(w, "repeat", err)
+
 		return
 	}
+
 	writeOK(w)
 }
 
-func (s *Server) spotifyDisconnect(w http.ResponseWriter, r *http.Request) {
+func (s *Server) spotifyDisconnect(w http.ResponseWriter, _ *http.Request) {
 	if s.spotifyAccount == nil {
 		apiError(w, http.StatusServiceUnavailable, "spotify_not_connected")
+
 		return
 	}
-	if err := s.spotifyAccount.Forget(); err != nil {
+
+	err := s.spotifyAccount.Forget()
+	if err != nil {
 		s.fail(w, "spotify disconnect failed", err)
+
 		return
 	}
+
 	s.log.Info("spotify account forgotten")
 	writeOK(w)
 }
@@ -420,34 +539,43 @@ type imageCache struct {
 	byID  map[string]*list.Element
 }
 
-func (c *imageCache) get(id string) (imageEntry, bool) {
+func (c *imageCache) get(imageID string) (imageEntry, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	if c.byID == nil {
-		return imageEntry{}, false
+		return imageEntry{id: "", typ: "", data: nil}, false
 	}
-	el, ok := c.byID[id]
+
+	elem, ok := c.byID[imageID]
 	if !ok {
-		return imageEntry{}, false
+		return imageEntry{id: "", typ: "", data: nil}, false
 	}
-	c.order.MoveToFront(el)
-	return el.Value.(imageEntry), true
+
+	c.order.MoveToFront(elem)
+	entry, ok := elem.Value.(imageEntry)
+
+	return entry, ok
 }
 
-func (c *imageCache) put(e imageEntry) {
+func (c *imageCache) put(entry imageEntry) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	if c.byID == nil {
 		c.byID, c.order = map[string]*list.Element{}, list.New()
 	}
-	if _, ok := c.byID[e.id]; ok {
+
+	if _, ok := c.byID[entry.id]; ok {
 		return
 	}
-	c.byID[e.id] = c.order.PushFront(e)
-	c.size += len(e.data)
+
+	c.byID[entry.id] = c.order.PushFront(entry)
+
+	c.size += len(entry.data)
 	for c.size > imageCacheBytes {
 		old := c.order.Back()
-		oe := old.Value.(imageEntry)
+		oe, _ := old.Value.(imageEntry) // the list holds only imageEntry values
 		c.order.Remove(old)
 		delete(c.byID, oe.id)
 		c.size -= len(oe.data)
@@ -455,39 +583,51 @@ func (c *imageCache) put(e imageEntry) {
 }
 
 func (s *Server) spotifyImage(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	src, ok := spotify.ImageURL(id)
+	imageID := r.PathValue("id")
+
+	src, ok := spotify.ImageURL(imageID)
 	if !ok {
 		http.NotFound(w, r)
+
 		return
 	}
-	e, hit := s.spotifyImages.get(id)
+
+	entry, hit := s.spotifyImages.get(imageID)
 	if !hit {
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), spotifyImageTimeout)
 		defer cancel()
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, src, nil)
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, src, http.NoBody)
 		if err != nil {
 			http.NotFound(w, r)
+
 			return
 		}
+
 		resp, err := s.proxy.Do(req)
 		if err != nil {
 			apiError(w, http.StatusBadGateway, "image unavailable")
+
 			return
 		}
 		defer resp.Body.Close()
+
 		data, err := io.ReadAll(io.LimitReader(resp.Body, imageMaxBytes+1))
+
 		typ := resp.Header.Get("Content-Type")
 		if err != nil || resp.StatusCode != http.StatusOK || len(data) > imageMaxBytes ||
 			(typ != "image/jpeg" && typ != "image/png" && typ != "image/webp") {
 			apiError(w, http.StatusBadGateway, "image unavailable")
+
 			return
 		}
-		e = imageEntry{id: id, typ: typ, data: data}
-		s.spotifyImages.put(e)
+
+		entry = imageEntry{id: imageID, typ: typ, data: data}
+		s.spotifyImages.put(entry)
 	}
-	w.Header().Set("Content-Type", e.typ)
+
+	w.Header().Set("Content-Type", entry.typ)
 	// Spotify image ids are content hashes: the bytes behind one never change.
 	w.Header().Set("Cache-Control", "public, max-age=604800, immutable")
-	_, _ = w.Write(e.data)
+	_, _ = w.Write(entry.data)
 }

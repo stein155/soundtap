@@ -10,27 +10,31 @@ import "time"
 // stacking a second ramp.
 func (h *buttonHandler) startRepeat(index int, action string) {
 	h.stopRepeat(index)
+
 	stop := make(chan struct{})
 	h.repeats[index] = stop
 	h.log.Info("button", "key", action)
 	h.sp.ApplyKey(action)
+
 	go func() {
-		t := time.NewTimer(volumeRepeatDelay)
-		defer t.Stop()
+		timer := time.NewTimer(volumeRepeatDelay)
+		defer timer.Stop()
 		// A release byte can be lost, and a ramp with no end would drive the
 		// volume to a rail and stay there. Give up after a hold no human means.
 		giveUp := time.NewTimer(volumeRampMax)
 		defer giveUp.Stop()
+
 		for {
 			select {
 			case <-stop:
 				return
 			case <-giveUp.C:
 				h.log.Warn("volume key held too long, releasing", "key", action)
+
 				return
-			case <-t.C:
+			case <-timer.C:
 				h.sp.ApplyKey(action)
-				t.Reset(volumeRepeat)
+				timer.Reset(volumeRepeat)
 			}
 		}
 	}()
@@ -52,6 +56,7 @@ func (h *buttonHandler) Reset() {
 	if h.confirmTimer != nil {
 		h.confirmTimer.Stop()
 	}
+
 	h.confirmKey, h.confirmTimer = "", nil
 	for action := range h.down {
 		delete(h.down, action)

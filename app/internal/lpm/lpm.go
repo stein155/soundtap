@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -81,24 +82,26 @@ import (
 // selects it and waking selects the module's input again; merely going idle does not, as
 // that must not switch off a bar that is playing the TV.
 const (
-	lpmDevice          = "/dev/ttyS0"
-	lpmFrameLen        = 128
-	lpmModule          = 6
-	lpmProcessor       = 2
-	lpmEcho            = 0x01
-	lpmEchoReply       = 0x02
-	lpmHealthAsk       = 0x11
-	lpmHealth          = 0x13 // {version string, 23 bytes and a NUL}
-	lpmStatus          = 0x14
-	lpmVolumeInfo      = 0xb0
-	lpmSpeakerList     = 0xb4
-	lpmTone            = 0x8a // tone: bass, treble, centre, rear as BE int16
-	lpmToneQuery       = 0x8b // answered with 0x8a
-	lpmActivate        = 0x50
-	lpmActivated       = 0x51 // stock's answer to the processor's 0x50: {source, 0, 1}
-	lpmKey             = 0x05
-	lpmUpdateDone      = 0x0c // stock U-Boot's `gingeripc 1`: the update attempt is over
-	lpmTapCommand      = 0x09 // stock's TAP passthrough: a line for the processor's console; byte 3 = 1 on the last part
+	lpmDevice      = "/dev/ttyS0"
+	lpmFrameLen    = 128
+	lpmModule      = 6
+	lpmProcessor   = 2
+	lpmEcho        = 0x01
+	lpmEchoReply   = 0x02
+	lpmHealthAsk   = 0x11
+	lpmHealth      = 0x13 // {version string, 23 bytes and a NUL}
+	lpmStatus      = 0x14
+	lpmVolumeInfo  = 0xb0
+	lpmSpeakerList = 0xb4
+	lpmTone        = 0x8a // tone: bass, treble, centre, rear as BE int16
+	lpmToneQuery   = 0x8b // answered with 0x8a
+	lpmActivate    = 0x50
+	lpmActivated   = 0x51 // stock's answer to the processor's 0x50: {source, 0, 1}
+	lpmKey         = 0x05
+	lpmUpdateDone  = 0x0c // stock U-Boot's `gingeripc 1`: the update attempt is over
+	// lpmTapCommand is stock's TAP passthrough: a line for the processor's console; byte 3 =
+	// 1 on the last part.
+	lpmTapCommand      = 0x09
 	lpmContent         = 0x85
 	lpmVolume          = 0xb2 // stock's VolumeCallbackAction: {level 0..100}
 	lpmKeyMute         = 0xfe // key stock's SendMute sends in a 0x05 frame to mute the processor
@@ -123,8 +126,18 @@ const (
 	lpmSourceADAPTiQ = 11
 	lpmSourceCount   = 29
 	lpmPayloadMaxLen = lpmFrameLen - 8
-	playPlaying      = "PLAY_STATE"
-	playBuffering    = "BUFFERING_STATE"
+	// lpmAddrBits is the width of the receiver in byte 0; the sender is above it.
+	lpmAddrBits = 4
+	lpmAddrMask = 1<<lpmAddrBits - 1
+	// lpmLogHead is how much of an op's first frame is logged.
+	lpmLogHead = 24
+	// lpmFollowQuiet is how long the playback loop holds back after soundtapd follows a
+	// change the processor made.
+	lpmFollowQuiet = 2 * time.Second
+	// lpmRadioTick is how often radioLoop looks at the radio status and the silence.
+	lpmRadioTick  = 5 * time.Second
+	playPlaying   = "PLAY_STATE"
+	playBuffering = "BUFFERING_STATE"
 )
 
 // SourceProduct is stock's name for an input the processor plays, as the speaker's source.
@@ -145,6 +158,7 @@ func lpmChecksum(f []byte) uint32 {
 	for i := 0; i < lpmFrameLen-4; i += 4 {
 		x ^= binary.LittleEndian.Uint32(f[i:])
 	}
+
 	return x
 }
 
@@ -156,12 +170,18 @@ func lpmAfterRecovery(cmdline string) bool {
 }
 
 func lpmFrame(dst, op byte, payload []byte) []byte {
-	f := make([]byte, lpmFrameLen)
-	f[0] = lpmModule<<4 | dst&0xf
-	f[1] = op
-	copy(f[4:4+lpmPayloadMaxLen], payload)
-	binary.LittleEndian.PutUint32(f[lpmFrameLen-4:], lpmChecksum(f))
-	return f
+	frame := make([]byte, lpmFrameLen)
+	frame[0] = lpmModule<<lpmAddrBits | dst&lpmAddrMask
+	frame[1] = op
+	copy(frame[lpmPayloadAt:lpmPayloadAt+lpmPayloadMaxLen], payload)
+	binary.LittleEndian.PutUint32(frame[lpmFrameLen-4:], lpmChecksum(frame))
+
+	return frame
+}
+
+// lpmSender is the device that sent frame, from its first byte.
+func lpmSender(frame []byte) byte {
+	return frame[0] >> lpmAddrBits
 }
 
 func lpmValid(f []byte) bool {
@@ -170,31 +190,51 @@ func lpmValid(f []byte) bool {
 
 // lpmActivateSource is stock's ActivateSource: {source, 0, 0} to the processor.
 func lpmActivateSource(source uint32) []byte {
-	p := make([]byte, 12)
-	binary.BigEndian.PutUint32(p, source)
-	return lpmFrame(lpmProcessor, lpmActivate, p)
+	payload := make([]byte, lpmActivateLen)
+	binary.BigEndian.PutUint32(payload, source)
+
+	return lpmFrame(lpmProcessor, lpmActivate, payload)
 }
 
-// lpmFrames reads frames off r, sliding one byte at a time past anything whose checksum
+// lpmFrames reads frames off src, sliding one byte at a time past anything whose checksum
 // does not hold, so a start mid-frame resynchronises.
-func lpmFrames(r io.Reader, frame func([]byte)) error {
+func lpmFrames(src io.Reader, frame func([]byte)) error {
 	buf := make([]byte, lpmFrameLen)
-	if _, err := io.ReadFull(r, buf); err != nil {
+
+	err := readFull(src, buf)
+	if err != nil {
 		return err
 	}
+
 	for {
 		if lpmValid(buf) {
 			frame(bytes.Clone(buf))
-			if _, err := io.ReadFull(r, buf); err != nil {
+
+			err = readFull(src, buf)
+			if err != nil {
 				return err
 			}
+
 			continue
 		}
+
 		copy(buf, buf[1:])
-		if _, err := io.ReadFull(r, buf[lpmFrameLen-1:]); err != nil {
+
+		err = readFull(src, buf[lpmFrameLen-1:])
+		if err != nil {
 			return err
 		}
 	}
+}
+
+// readFull fills buf from src.
+func readFull(src io.Reader, buf []byte) error {
+	_, err := io.ReadFull(src, buf)
+	if err != nil {
+		return fmt.Errorf("lpm read: %w", err)
+	}
+
+	return nil
 }
 
 // Keys takes the keys the processor reports: its buttons' and its remote's.
@@ -205,42 +245,66 @@ type Keys interface {
 }
 
 // Run opens the link and keeps it until ctx ends: it answers the processor, follows the
-// source, volume and keys it reports into sp and keys, and selects the module's input
-// when sp plays.
-func (l *Link) Run(ctx context.Context, sp *speakerstate.Speaker, keys Keys, log *slog.Logger) {
-	if err := exec.CommandContext(ctx, "busybox", "stty", "-F", lpmDevice, "921600", "raw", "-echo").Run(); err != nil {
+// source, volume and keys it reports into spk and keys, and selects the module's input
+// when spk plays.
+func (l *Link) Run(ctx context.Context, spk *speakerstate.Speaker, keys Keys, log *slog.Logger) {
+	err := exec.CommandContext(ctx, "busybox", "stty", "-F", lpmDevice, "921600", "raw", "-echo").Run()
+	if err != nil {
 		log.Error("lpm serial setup", "err", err)
+
 		return
 	}
-	f, err := os.OpenFile(lpmDevice, os.O_RDWR, 0)
+
+	tty, err := os.OpenFile(lpmDevice, os.O_RDWR, 0)
 	if err != nil {
 		log.Error("lpm open", "err", err)
+
 		return
 	}
-	context.AfterFunc(ctx, func() { _ = f.Close() })
-	s := &session{l: l, ctx: ctx, sp: sp, keys: keys, log: log}
-	s.send = func(what string, frame []byte) {
+
+	context.AfterFunc(ctx, func() { _ = tty.Close() })
+
+	sess := &session{
+		l:           l,
+		spk:         spk,
+		keys:        keys,
+		log:         log,
+		send:        nil,
+		fromLPM:     atomic.Int64{},
+		barMute:     atomic.Int32{},
+		bar:         atomic.Int64{},
+		external:    atomic.Int64{},
+		quiet:       atomic.Int64{},
+		statusSeen:  atomic.Bool{},
+		radioResend: atomic.Bool{},
+		lastFrame:   atomic.Int64{},
+		seen:        nil,
+		silent:      false,
+	}
+	sess.send = func(what string, frame []byte) {
 		log.Debug("lpm send", "what", what, "frame", hex.EncodeToString(frame))
-		if _, err := f.Write(frame); err != nil {
+
+		_, err := tty.Write(frame)
+		if err != nil {
 			log.Error("lpm "+what, "err", err)
 		}
 	}
-	s.start()
-	safego.Go("lpmRadio", s.radioLoop)
+	sess.start(ctx)
+	safego.Go("lpmRadio", func() { sess.radioLoop(ctx) })
 	safego.Go("lpmReader", func() {
-		if err := lpmFrames(f, s.frame); ctx.Err() == nil {
+		err := lpmFrames(tty, func(frame []byte) { sess.frame(ctx, frame) })
+		if ctx.Err() == nil {
 			log.Error("lpm read", "err", err)
 		}
 	})
-	s.followPlayback()
+	sess.followPlayback(ctx)
 }
 
 // session is one run of the link: what the module knows of the processor while it talks
-// to it.
+// to it. Its methods take the run's context.
 type session struct {
 	l    *Link
-	ctx  context.Context
-	sp   *speakerstate.Speaker
+	spk  *speakerstate.Speaker
 	keys Keys
 	log  *slog.Logger
 	send func(what string, frame []byte)
@@ -269,40 +333,46 @@ type session struct {
 	lastFrame atomic.Int64
 	// seen holds the ops whose first frame was logged; the reader's alone.
 	seen map[byte]bool
+	// silent is whether the last check found the processor silent; radioLoop's alone.
+	silent bool
 }
 
 // start sets the session up before the reader runs: the volume hand-over, the saved
 // choices and input, and the module's first messages to the processor.
-func (s *session) start() {
-	l, sp := s.l, s.sp
+func (s *session) start(ctx context.Context) {
+	link, spk := s.l, s.spk
 	s.fromLPM.Store(-1)
-	sp.OnVolume(s.volumeChanged)
-	for _, c := range []*Choice{l.AudioModes, l.CECModes, l.HDMIInputs} {
+	spk.OnVolume(s.volumeChanged)
+
+	for _, c := range []*Choice{link.AudioModes, link.CECModes, link.HDMIInputs} {
 		c.Load()
 	}
+
 	send := s.send
-	l.send.Store(&send)
+	link.send.Store(&send)
 	// The recovery combo puts the processor in update mode and it says nothing until told
 	// the attempt is over; stock U-Boot does that, ours does not.
 	if b, _ := os.ReadFile("/proc/cmdline"); lpmAfterRecovery(string(b)) {
 		s.send("update done", lpmFrame(lpmProcessor, lpmUpdateDone, nil))
 	}
-	s.send("health", lpmHealthAnswer(lpmProcessor, "SoundTap "+l.version))
-	l.ask("speaker query", lpmSpeakerQuery)
+
+	s.send("health", lpmHealthAnswer(lpmProcessor, "SoundTap "+link.version))
+	link.ask("speaker query", lpmSpeakerQuery)
 	// Tone too: otherwise only a 0x14 status asks for it, and after a boot the processor
 	// may send none, so the app's first tone read failed with "has not answered yet".
-	l.ask("tone query", lpmToneQuery)
+	link.ask("tone query", lpmToneQuery)
 
 	s.bar.Store(-1)
 	s.external.Store(lpmSourceTV)
-	pick := s.pick
-	l.pick.Store(&pick)
+
+	pick := func(source uint32) { s.pick(ctx, source) }
+	link.pick.Store(&pick)
 	// Before the reader starts, so nothing goes to the processor: it is already playing this.
-	if source, ok := l.SavedInput(); ok {
+	if source, ok := link.SavedInput(); ok {
 		s.bar.Store(int64(source))
 		s.external.Store(int64(source))
-		_ = sp.Select(s.ctx, SourceProduct, "", "", lpmSourceNames[source], "", "")
-		s.log.Info("lpm input from before the restart", "source", source, "name", lpmSourceNames[source])
+		_ = spk.Select(ctx, SourceProduct, "", "", lpmSourceName(source), "", "")
+		s.log.Info("lpm input from before the restart", "source", source, "name", lpmSourceName(source))
 	}
 }
 
@@ -312,16 +382,19 @@ func (s *session) volumeChanged(level int) {
 	if !s.l.ownsVolume.Load() {
 		return
 	}
-	if fr := lpmMuteFrame(s.sp.StatusSnapshot().Muted, &s.barMute); fr != nil {
-		s.send("mute", fr)
+
+	if frame := lpmMuteFrame(s.spk.StatusSnapshot().Muted, &s.barMute); frame != nil {
+		s.send("mute", frame)
 	}
+
 	if lpmForwardVolume(level, &s.fromLPM) {
 		s.send("volume", lpmSetVolume(level))
 	}
 }
 
 func (s *session) remember(source uint32) {
-	if err := s.l.SaveSource(source); err != nil {
+	err := s.l.SaveSource(source)
+	if err != nil {
 		s.log.Warn("lpm remember source", "err", err)
 	}
 }
@@ -329,6 +402,7 @@ func (s *session) remember(source uint32) {
 // activate selects source on the processor, unless it plays it already.
 func (s *session) activate(why string, source uint32) {
 	s.statusSeen.Store(true)
+
 	if s.bar.Swap(int64(source)) != int64(source) {
 		s.remember(source)
 		s.send(why, lpmActivateSource(source))
@@ -337,84 +411,94 @@ func (s *session) activate(why string, source uint32) {
 }
 
 // follow makes the speaker follow a source the processor plays.
-func (s *session) follow(source uint32) {
-	ctx, sp := s.ctx, s.sp
-	s.quiet.Store(time.Now().Add(2 * time.Second).UnixNano())
+func (s *session) follow(ctx context.Context, source uint32) {
+	spk := s.spk
+	s.quiet.Store(time.Now().Add(lpmFollowQuiet).UnixNano())
 	s.bar.Store(int64(source))
 	s.remember(source)
-	st := sp.StatusSnapshot()
+
+	status := spk.StatusSnapshot()
+
 	switch source {
 	case lpmSourceStandby:
-		_ = sp.EnterStandby(ctx)
+		_ = spk.EnterStandby(ctx)
 	case lpmSourceBT:
 		// The bar's own Bluetooth input is the module's: SoundTap's Bluetooth plays it,
 		// and selecting it wakes the speaker as the BLUETOOTH key does on the other models.
-		if st.Source != sourceBluetooth {
-			sp.ApplyKey(sourceBluetooth)
+		if status.Source != sourceBluetooth {
+			spk.ApplyKey(sourceBluetooth)
 		}
 	case lpmSourceModule:
-		if st.Source == SourceProduct {
-			_ = sp.ReleaseSource(ctx, SourceProduct)
-			st.Standby = true
+		if status.Source == SourceProduct {
+			_ = spk.ReleaseSource(ctx, SourceProduct)
+			status.Standby = true
 		}
-		if st.Standby {
-			sp.ApplyKey("POWER")
+
+		if status.Standby {
+			spk.ApplyKey("POWER")
 		}
 	default:
 		if source != lpmSourceADAPTiQ { // waking must not start a calibration again
 			s.external.Store(int64(source))
 		}
-		_ = sp.Select(ctx, SourceProduct, "", "", lpmSourceNames[source], "", "")
+
+		_ = spk.Select(ctx, SourceProduct, "", "", lpmSourceName(source), "", "")
 	}
 }
 
 // pick switches the bar to one of the processor's own inputs, as its remote does.
-func (s *session) pick(source uint32) {
+func (s *session) pick(ctx context.Context, source uint32) {
 	s.bar.Store(-1)
 	s.activate("app", source)
-	s.follow(source)
+	s.follow(ctx, source)
 }
 
 // radioLoop keeps the processor told that the module is there and what its network is.
-func (s *session) radioLoop() {
+func (s *session) radioLoop(ctx context.Context) {
 	radio := &lpmRadio{
-		mhz:  func() int { return wifiMHz(s.ctx) },
-		wifi: func() hw.Link { return hw.ReadLink(func() bool { return s.sp.StatusSnapshot().IP != "" }) },
-		eth0: speakerstate.Eth0,
-		send: s.send,
+		mhz:    func() int { return wifiMHz(ctx) },
+		wifi:   func() hw.Link { return hw.ReadLink(func() bool { return s.spk.StatusSnapshot().IP != "" }) },
+		eth0:   speakerstate.Eth0,
+		send:   s.send,
+		last:   nil,
+		sentAt: time.Time{},
 	}
-	silent := false
+
 	for {
-		silent = s.checkSilence(silent)
-		if fr, news := radio.tick(time.Now(), s.radioResend.Swap(false)); news {
-			s.log.Info("lpm radio status", "mhz", binary.BigEndian.Uint32(fr[4:]), "net", fr[12])
+		s.checkSilence()
+
+		if frame, news := radio.tick(time.Now(), s.radioResend.Swap(false)); news {
+			s.log.Info("lpm radio status", "mhz", binary.BigEndian.Uint32(frame[4:]), "net", frame[12])
 		}
+
 		select {
-		case <-s.ctx.Done():
+		case <-ctx.Done():
 			return
-		case <-time.After(5 * time.Second):
+		case <-time.After(lpmRadioTick):
 		}
 	}
 }
 
 // checkSilence resends the health message while the processor is quiet, and reboots the
-// bar once a processor that talked before has given the module up. silent is whether the
-// last check found it silent; it returns whether this one did.
-func (s *session) checkSilence(silent bool) bool {
+// bar once a processor that talked before has given the module up. It keeps in s.silent
+// whether the processor was found silent.
+func (s *session) checkSilence() {
 	// After its own reset the processor waits for the module's health message and
 	// asks for nothing; stock sends one at start, and a processor that rebooted
 	// later never got another. After its timeout it gives the module up for good and
 	// blinks two lamps orange (2026-11-10). So while it is quiet, tell it again.
-	t := s.lastFrame.Load()
-	if t == 0 || time.Since(time.Unix(0, t)) > lpmSilence {
+	last := s.lastFrame.Load()
+	if last == 0 || time.Since(time.Unix(0, last)) > lpmSilence {
 		s.send("health", lpmHealthAnswer(lpmProcessor, "SoundTap "+s.l.version))
 	}
-	if t == 0 {
-		return silent
+
+	if last == 0 {
+		return
 	}
-	quiet := time.Since(time.Unix(0, t))
-	if quiet > lpmSilence && !silent {
-		s.log.Warn("lpm processor silent", "since", time.Unix(0, t).UTC().Format(time.RFC3339))
+
+	quiet := time.Since(time.Unix(0, last))
+	if quiet > lpmSilence && !s.silent {
+		s.log.Warn("lpm processor silent", "since", time.Unix(0, last).UTC().Format(time.RFC3339))
 	}
 	// Once per boot: the reboot takes the module down too, and a processor that is
 	// silent from the start never sets lastFrame, so this cannot loop.
@@ -423,140 +507,162 @@ func (s *session) checkSilence(silent bool) bool {
 		s.send("reboot", lpmTapLine("rb 0"))
 		s.lastFrame.Store(0)
 	}
-	return quiet > lpmSilence
+
+	s.silent = quiet > lpmSilence
 }
 
 // frame handles one frame from the processor.
-func (s *session) frame(fr []byte) {
-	l := s.l
+func (s *session) frame(ctx context.Context, frame []byte) {
+	link := s.l
 	s.lastFrame.Store(time.Now().UnixNano())
 	// The bar keeps the level it already plays at: SoundTap takes it over from the
 	// next 0xb0 rather than pushing its own, which after an install or a reboot could
 	// be far louder than what the room was listening to. Stock sends no 0xb2 here
 	// either (strace 2026-11-06).
-	if fr[0]>>4 == lpmProcessor && !l.ownsVolume.Swap(true) {
+	if lpmSender(frame) == lpmProcessor && !link.ownsVolume.Swap(true) {
 		s.log.Info("lpm answered; volume handed to the processor")
-		l.alive.Store(true)
+		link.alive.Store(true)
 	}
-	switch fr[1] {
+
+	switch frame[1] {
 	case lpmEcho:
-		s.send("echo", lpmEchoAnswer(fr))
+		s.send("echo", lpmEchoAnswer(frame))
 	case lpmHealthAsk:
-		s.send("health", lpmHealthAnswer(fr[0]>>4, "SoundTap "+l.version))
+		s.send("health", lpmHealthAnswer(lpmSender(frame), "SoundTap "+link.version))
 	case lpmStatus:
-		s.status(fr)
+		s.status(ctx, frame)
 	case lpmCECModeReport:
-		l.CECModes.report(uint32(fr[4]))
+		link.CECModes.report(uint32(frame[4]))
 	case lpmHDMIInputReport:
-		l.HDMIInputs.report(uint32(fr[4]))
+		link.HDMIInputs.report(uint32(frame[4]))
 	case lpmActivate:
-		s.picked(fr)
+		s.picked(ctx, frame)
 	case lpmKey:
-		lpmKeyEvent(s.keys, fr)
+		lpmKeyEvent(s.keys, frame)
 	case lpmContent:
-		s.content(fr)
+		s.content(frame)
 	case lpmVolumeInfo:
-		s.volumeInfo(fr)
+		s.volumeInfo(ctx, frame)
 	case lpmTone:
-		tone := lpmToneOf(fr)
-		l.now.Store(&tone)
+		tone := lpmToneOf(frame)
+		link.now.Store(&tone)
 		s.log.Info("lpm tone", "tone", tone)
 	case lpmSpeakerList:
-		bar := lpmSpeakers(fr)
-		l.bar.Store(&bar)
+		bar := lpmSpeakers(frame)
+		link.bar.Store(&bar)
 		s.log.Info("lpm speakers", "bar", bar)
+	default:
+		// Logged below, as every op is.
 	}
-	s.logFrame(fr)
+
+	s.logFrame(frame)
 }
 
 // logFrame logs the first frame of each op, and every frame at debug.
-func (s *session) logFrame(fr []byte) {
+func (s *session) logFrame(frame []byte) {
 	if s.seen == nil {
 		s.seen = map[byte]bool{}
 	}
-	if !s.seen[fr[1]] {
-		s.seen[fr[1]] = true
-		s.log.Info("lpm first frame", "op", fr[1], "hdr", fr[0], "head", hex.EncodeToString(fr[:24]))
+
+	if !s.seen[frame[1]] {
+		s.seen[frame[1]] = true
+		s.log.Info("lpm first frame", "op", frame[1], "hdr", frame[0], "head", hex.EncodeToString(frame[:lpmLogHead]))
 	}
-	s.log.Debug("lpm frame", "op", fr[1], "frame", hex.EncodeToString(fr))
+
+	s.log.Debug("lpm frame", "op", frame[1], "frame", hex.EncodeToString(frame))
 }
 
 // status takes a 0x14 status: the processor (re)started, or its source changed.
-func (s *session) status(fr []byte) {
+func (s *session) status(ctx context.Context, frame []byte) {
 	s.radioResend.Store(true) // the processor (re)started: tell it again
-	if src := binary.BigEndian.Uint32(fr[0x2c:]); src < lpmSourceCount {
+
+	if src := binary.BigEndian.Uint32(frame[0x2c:]); src < lpmSourceCount {
 		// The first status overrules what was remembered: the bar may have been
 		// powered off since.
 		if !s.statusSeen.Swap(true) && int64(src) != s.bar.Load() {
-			s.follow(src)
+			s.follow(ctx, src)
 		}
+
 		s.bar.Store(int64(src))
 	}
-	s.l.statusMode(fr)
+
+	s.l.statusMode(frame)
 	s.send("tone query", lpmFrame(lpmProcessor, lpmToneQuery, nil))
 }
 
 // picked takes a 0x50: a source picked on the bar, its remote or the TV.
-func (s *session) picked(fr []byte) {
-	src := binary.BigEndian.Uint32(fr[4:])
-	p := make([]byte, 12)
-	binary.BigEndian.PutUint32(p, src)
-	binary.BigEndian.PutUint32(p[8:], 1)
-	s.send("activated", lpmFrame(fr[0]>>4, lpmActivated, p))
+func (s *session) picked(ctx context.Context, frame []byte) {
+	src := binary.BigEndian.Uint32(frame[lpmPayloadAt:])
+	payload := make([]byte, lpmActivateLen)
+	binary.BigEndian.PutUint32(payload, src)
+	binary.BigEndian.PutUint32(payload[8:], 1)
+	s.send("activated", lpmFrame(lpmSender(frame), lpmActivated, payload))
+
 	if src < lpmSourceCount {
-		s.log.Info("lpm picked a source", "source", src, "name", lpmSourceNames[src])
-		s.follow(src)
+		s.log.Info("lpm picked a source", "source", src, "name", lpmSourceName(src))
+		s.follow(ctx, src)
 	}
 }
 
 // content takes a 0x85: play or store a preset, or a transport key.
-func (s *session) content(fr []byte) {
-	switch key, store := lpmContentOf(fr); {
+func (s *session) content(frame []byte) {
+	switch key, store := lpmContentOf(frame); {
 	case store:
-		if _, err := s.sp.StoreCurrentAsPreset(key); err != nil {
+		_, err := s.spk.StoreCurrentAsPreset(key)
+		if err != nil {
 			s.log.Error("lpm store preset", "key", key, "err", err)
 		}
 	case key != "":
-		s.sp.ApplyKey(key)
+		s.spk.ApplyKey(key)
+	default:
+		// Nothing SoundTap acts on.
 	}
 }
 
 // volumeInfo takes a 0xb0: the bar's remote or the TV changed the volume or the mute, and
 // SoundTap follows. The processor keeps the level while muted and does the muting itself.
-func (s *session) volumeInfo(fr []byte) {
-	level, muted := lpmVolumeOf(fr)
+func (s *session) volumeInfo(ctx context.Context, frame []byte) {
+	level, muted := lpmVolumeOf(frame)
 	switch {
 	case muted:
-		s.barMute.Store(1)
-		s.sp.MarkMuted()
-	case level <= 100:
-		s.barMute.Store(2)
-		if st := s.sp.StatusSnapshot(); level != st.Output() || st.Muted {
+		s.barMute.Store(barMuted)
+		s.spk.MarkMuted()
+	case level <= lpmVolumeMax:
+		s.barMute.Store(barUnmuted)
+
+		if status := s.spk.StatusSnapshot(); level != status.Output() || status.Muted {
 			s.fromLPM.Store(int64(level))
-			_ = s.sp.SetVolume(s.ctx, level)
+			_ = s.spk.SetVolume(ctx, level)
 		}
+	default:
+		// Outside the processor's scale: not a level to follow.
 	}
 }
 
 // followPlayback selects the processor's input for the speaker's standby, wake and
 // playback until ctx ends.
-func (s *session) followPlayback() {
-	sp := s.sp
+func (s *session) followPlayback(ctx context.Context) {
+	spk := s.spk
 	playing := false
-	wasStandby := sp.StatusSnapshot().Standby
+
+	wasStandby := spk.StatusSnapshot().Standby
 	for {
-		changed := sp.Changed()
-		st := sp.StatusSnapshot()
+		changed := spk.Changed()
+		status := spk.StatusSnapshot()
+
 		own := time.Now().UnixNano() >= s.quiet.Load()
-		if source, ok := lpmPowerSource(wasStandby, st.Standby); ok && own {
-			if source == lpmSourceModule && st.Source == SourceProduct {
+		if source, ok := lpmPowerSource(wasStandby, status.Standby); ok && own {
+			if source == lpmSourceModule && status.Source == SourceProduct {
 				source = uint32(s.external.Load()) //nolint:gosec // a source below lpmSourceCount
 			}
+
 			s.activate("power", source)
 		}
-		wasStandby = st.Standby
-		now := !st.Standby && st.Source != SourceProduct &&
-			(st.PlayStatus == playPlaying || st.PlayStatus == playBuffering)
+
+		wasStandby = status.Standby
+
+		now := !status.Standby && status.Source != SourceProduct &&
+			(status.PlayStatus == playPlaying || status.PlayStatus == playBuffering)
 		if now && !playing && own {
 			// Always sent, not only when bar says another input plays. bar is a guess that
 			// the processor's status frames also write, and on 2026-11-06 a radio started
@@ -564,11 +670,13 @@ func (s *session) followPlayback() {
 			// Only the start of playback sends it, so a bar already on this input gets one
 			// extra activation, which the processor answers with 0x51.
 			s.bar.Store(-1)
-			s.activate("play", lpmModuleInput(st.Source))
+			s.activate("play", lpmModuleInput(status.Source))
 		}
+
 		playing = now
+
 		select {
-		case <-s.ctx.Done():
+		case <-ctx.Done():
 			return
 		case <-changed:
 		}

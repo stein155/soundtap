@@ -5,6 +5,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -19,32 +21,54 @@ import (
 	"github.com/stein155/soundtap/app/internal/wifi"
 )
 
+// The API's HTTP servers and the files the network side writes.
+const (
+	apiReadHeaderTimeout = 5 * time.Second
+	// apiIdleTimeout never closes an idle connection before the browser does: iOS sends a
+	// write on a kept-alive connection we already closed and reports a network error
+	// instead of retrying. Dead peers still go through TCP keepalive.
+	apiIdleTimeout    = 30 * time.Minute
+	apiMaxHeaderBytes = 16 << 10
+	bootDisarmMode    = 0o644
+	wifiConfDirMode   = 0o755
+	ipRefreshInterval = 15 * time.Second
+	mdnsPeersBuffered = 16
+)
+
 // listenAddrs is where soundtapd listens: :80 on every model (ADR 0001), or the
 // comma-separated -listen list.
 func listenAddrs(listen string) []string {
 	if listen == "" {
 		return []string{defaultListenAddr}
 	}
+
 	var addrs []string
-	for _, a := range strings.Split(listen, ",") {
+
+	for a := range strings.SplitSeq(listen, ",") {
 		if a = strings.TrimSpace(a); a != "" {
 			addrs = append(addrs, a)
 		}
 	}
+
 	return addrs
 }
 
 // listen binds the listeners and, once the model's own one is up, tells the front
-// panel and the boot watchdog that soundtapd started. It exits when that fails.
-func listen(opt options, mux http.Handler, log *slog.Logger) []*http.Server {
+// panel and the boot watchdog that soundtapd started. It exits when that fails, at once:
+// returning would run the daemon's deferred shutdown first, which it never did.
+//
+//nolint:revive // deep-exit: the immediate exit, skipping main's deferred shutdown, is the behaviour
+func listen(ctx context.Context, opt options, mux http.Handler, log *slog.Logger) []*http.Server {
 	// Binding is best-effort: a port already in use (or not permitted) is skipped, and
 	// we only fail if nothing bound.
 	addrs := listenAddrs(opt.listen)
-	servers, bound := serveAll(addrs, mux, log)
+
+	servers, bound := serveAll(ctx, addrs, mux, log)
 	if len(servers) == 0 {
 		log.Error("no listen address could be bound", "tried", addrs)
 		os.Exit(1)
 	}
+
 	if opt.listen == "" && !bound[board.ListenAddr] {
 		log.Error("primary listen address unavailable", "required", board.ListenAddr)
 		os.Exit(1)
@@ -57,90 +81,120 @@ func listen(opt options, mux http.Handler, log *slog.Logger) []*http.Server {
 	if devMode.Load() {
 		return servers // no boot watchdog to disarm on a computer
 	}
-	if err := os.WriteFile(bootDisarmPath, nil, 0o644); err != nil {
+
+	err := os.WriteFile(bootDisarmPath, nil, bootDisarmMode)
+	if err != nil {
 		log.Warn("boot watchdog disarm", "path", bootDisarmPath, "err", err)
 	}
+
 	return servers
 }
 
 // serveAll serves mux on every address it can bind and reports which ones it bound.
 // One that is in use or not permitted is logged and skipped.
-func serveAll(addrs []string, mux http.Handler, log *slog.Logger) ([]*http.Server, map[string]bool) {
+// Binding is not cut short by a shutdown that has begun: the listeners are shut down after.
+func serveAll(
+	ctx context.Context, addrs []string, mux http.Handler, log *slog.Logger,
+) ([]*http.Server, map[string]bool) {
 	var servers []*http.Server
+
 	bound := map[string]bool{}
-	for _, a := range addrs {
-		ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", a)
+
+	for _, addr := range addrs {
+		listener, err := (&net.ListenConfig{}).Listen(context.WithoutCancel(ctx), "tcp", addr)
 		if err != nil {
-			log.Warn("listen skipped", "addr", a, "err", err)
+			log.Warn("listen skipped", "addr", addr, "err", err)
+
 			continue
 		}
-		limited := limitConns(ln)
-		s := &http.Server{
+
+		limited := limitConns(listener)
+		server := &http.Server{
 			ConnState:         limited.connState,
 			Handler:           mux,
-			ReadHeaderTimeout: 5 * time.Second,
-			// Never close an idle connection before the browser does: iOS sends a write
-			// on a kept-alive connection we already closed and reports a network error
-			// instead of retrying. Dead peers still go through TCP keepalive.
-			IdleTimeout:    30 * time.Minute,
-			MaxHeaderBytes: 16 << 10,
+			ReadHeaderTimeout: apiReadHeaderTimeout,
+			IdleTimeout:       apiIdleTimeout,
+			MaxHeaderBytes:    apiMaxHeaderBytes,
 			// Handler panics and TLS noise in the same format and stream as the rest.
 			ErrorLog: slog.NewLogLogger(log.Handler(), slog.LevelError),
 		}
-		servers = append(servers, s)
-		bound[a] = true
-		go func(s *http.Server, ln net.Listener, a string) {
-			if err := s.Serve(limited); err != nil && err != http.ErrServerClosed {
-				log.Error("serve", "addr", a, "err", err)
+		servers = append(servers, server)
+
+		bound[addr] = true
+
+		go func() {
+			err := server.Serve(limited)
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Error("serve", "addr", addr, "err", err)
 			}
-		}(s, limited, a)
-		log.Info("listening", "addr", a)
+		}()
+
+		log.Info("listening", "addr", addr)
 	}
+
 	return servers, bound
 }
 
 func persistWifiProfile(path, ssid, psk string, log *slog.Logger) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	err := os.MkdirAll(filepath.Dir(path), wifiConfDirMode)
+	if err != nil {
 		log.Warn("wifi mkdir", "path", path, "err", err)
-		return err
+
+		return fmt.Errorf("save the Wi-Fi network: %w", err)
 	}
 	// A 64-digit hex key goes to wpa_supplicant as the key itself, not as a passphrase.
-	if err := wifi.WriteConf(path, wifi.NewRecord(ssid, psk)); err != nil {
+	err = wifi.WriteConf(path, wifi.NewRecord(ssid, psk))
+	if err != nil {
 		log.Warn("wifi save", "path", path, "err", err)
-		return err
+
+		return fmt.Errorf("save the Wi-Fi network: %w", err)
 	}
+
 	log.Info("wifi profile saved", "path", path, "ssid", ssid)
+
 	return nil
 }
 
 // maintainIP keeps sp.IP set to the primary LAN IPv4, refreshing as the network changes
 // (Wi-Fi associates after soundtapd starts). It also clears a lease cached before a route
 // disappeared, so the API and LEDs do not report a connection that no longer exists.
-func maintainIP(ctx context.Context, sp *speakerstate.Speaker, webSrv *web.Server, name string, svc mdns.Service, log *slog.Logger) {
-	maintainIPWith(ctx, sp, webSrv, name, svc, log, 15*time.Second, outboundIP)
+func maintainIP(
+	ctx context.Context, sp *speakerstate.Speaker, webSrv *web.Server, name string, svc mdns.Service, log *slog.Logger,
+) {
+	maintainIPWith(ctx, sp, webSrv, name, svc, log, ipRefreshInterval, outboundIP)
 }
 
-func maintainIPWith(ctx context.Context, sp *speakerstate.Speaker, webSrv *web.Server, name string, svc mdns.Service, log *slog.Logger, interval time.Duration, lookup func() string) {
-	cur := sp.StatusSnapshot().IP
-	var md *mdns.Responder
+func maintainIPWith(
+	ctx context.Context, speaker *speakerstate.Speaker, webSrv *web.Server, name string, svc mdns.Service,
+	log *slog.Logger, interval time.Duration, lookup func() string,
+) {
+	cur := speaker.StatusSnapshot().IP
+
+	var responder *mdns.Responder
+
 	for {
-		if ip := lookup(); ip != cur {
-			cur = ip
-			sp.SetIP(ip)
-			if ip == "" {
+		if addr := lookup(); addr != cur {
+			cur = addr
+			speaker.SetIP(addr)
+
+			if addr == "" {
 				log.Info("ip lost")
+
 				continue
 			}
-			log.Info("ip", "addr", ip)
+
+			log.Info("ip", "addr", addr)
+
 			if devMode.Load() {
 				continue // a development run announces nothing on the LAN
 			}
-			if md == nil {
-				md = startMDNS(ctx, ip, name, svc, webSrv, log)
+
+			if responder == nil {
+				responder = startMDNS(ctx, addr, name, svc, webSrv, log)
 			} else {
 				// A new DHCP lease after a reconnect: re-point the A record, or
 				// <name>.local keeps resolving to the old address until a reboot.
-				md.SetIP(ip)
+				responder.SetIP(addr)
 			}
 		}
 		// Without an address the first one should show at once: right after a boot
@@ -149,6 +203,7 @@ func maintainIPWith(ctx context.Context, sp *speakerstate.Speaker, webSrv *web.S
 		if cur == "" {
 			wait = min(interval, time.Second)
 		}
+
 		select {
 		case <-ctx.Done():
 			return
@@ -159,44 +214,53 @@ func maintainIPWith(ctx context.Context, sp *speakerstate.Speaker, webSrv *web.S
 
 // startMDNS starts the responder once we have a real IP (it needs it at creation), so the
 // speaker is reachable at <name>.local.
-func startMDNS(ctx context.Context, ip, name string, svc mdns.Service, webSrv *web.Server, log *slog.Logger) *mdns.Responder {
-	md := mdns.New(ip, name, log.With("comp", "mdns"))
+func startMDNS(
+	ctx context.Context, ip, name string, svc mdns.Service, webSrv *web.Server, log *slog.Logger,
+) *mdns.Responder {
+	responder := mdns.New(ip, name, log.With("comp", "mdns"))
 	// Advertise and browse _soundtap._tcp, enabled before Run. The peers channel is drained
 	// into the web server's device registry -- the list behind GET /api/devices, and what a
 	// group or a proxy route resolves through.
 	if svc.ID != "" {
-		peers := make(chan mdns.Peer, 16)
-		md.EnableDNSService(svc, peers)
+		peers := make(chan mdns.Peer, mdnsPeersBuffered)
+		responder.EnableDNSService(svc, peers)
 		goSafe("drainPeers", func() { drainPeers(ctx, peers, webSrv) })
 	}
 	// One name for the house, alongside every speaker's own. Whoever is up first answers for
 	// it; when that speaker goes away the next one takes it. Not leader election -- avahi's
 	// probe-and-claim, pointed at a name nobody renames.
-	md.EnableSharedName(sharedHostName)
-	webSrv.SetMDNS(md)
+	responder.EnableSharedName(sharedHostName)
+
+	webSrv.SetMDNS(responder)
 	go func() {
-		if err := md.Run(ctx); err != nil {
+		err := responder.Run(ctx)
+		if err != nil {
 			log.Warn("mdns", "err", err)
 		}
 	}()
-	return md
+
+	return responder
 }
 
 // outboundIP returns the primary non-loopback IPv4 by inspecting the route to a public
 // address (no packet is sent). Empty when offline.
 func outboundIP() string {
-	c, err := (&net.Dialer{}).DialContext(context.Background(), "udp4", "8.8.8.8:80")
+	conn, err := (&net.Dialer{}).DialContext(context.Background(), "udp4", "8.8.8.8:80")
 	if err != nil {
 		return ""
 	}
-	defer func() { _ = c.Close() }()
-	if a, ok := c.LocalAddr().(*net.UDPAddr); ok {
-		return a.IP.String()
+	defer func() { _ = conn.Close() }()
+
+	if local, ok := conn.LocalAddr().(*net.UDPAddr); ok {
+		return local.IP.String()
 	}
+
 	return ""
 }
 
 // setupAPUp is the setup AP's marker, which the Wi-Fi manager keeps while the AP runs.
+//
+//nolint:gochecknoglobals // a test seam: tests put the marker in a temp dir
 var setupAPUp = "/run/soundtap/setup-ap"
 
 // toggleSetupAP is the keys' setup chord: into the setup AP, or out of it again as on
@@ -205,9 +269,12 @@ var setupAPUp = "/run/soundtap/setup-ap"
 // goes back to that network.
 func toggleSetupAP(wifiConf string, restart, openSetup func() error) error {
 	_, up := os.Stat(setupAPUp)
-	if conf, err := os.ReadFile(wifiConf); up == nil && err == nil && savedNetwork(conf) {
+
+	conf, err := os.ReadFile(wifiConf)
+	if up == nil && err == nil && savedNetwork(conf) {
 		return restart()
 	}
+
 	return openSetup()
 }
 
@@ -217,6 +284,7 @@ func savedNetwork(conf []byte) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -224,10 +292,13 @@ func savedNetwork(conf []byte) bool {
 func enterSetupMode(wifiConf string) error {
 	// Keep an empty persistent override so the Wi-Fi manager cannot fall back to
 	// credentials baked into /etc/soundtap-wifi.conf after setup mode or factory reset.
-	if err := persistWifiProfile(wifiConf, "", "", slog.Default()); err != nil {
+	err := persistWifiProfile(wifiConf, "", "", slog.Default())
+	if err != nil {
 		return err
 	}
+
 	_ = restartWifi(slog.Default()) // off the speaker there is nothing to restart
+
 	return nil
 }
 
@@ -240,18 +311,20 @@ func drainPeers(ctx context.Context, peers <-chan mdns.Peer, webSrv *web.Server)
 		case <-ctx.Done():
 			return
 		case peer := <-peers:
-			ip := ""
+			addr := ""
 			if peer.IP != nil {
-				ip = peer.IP.String()
+				addr = peer.IP.String()
 			}
+
 			webSrv.SetDevice(web.Device{
-				ID:        peer.ID,
-				Name:      peer.Name,
-				Model:     peer.Model,
-				Firmware:  peer.Firmware,
-				IP:        ip,
-				Port:      peer.Port,
-				Departure: peer.Departure,
+				ID:           peer.ID,
+				Name:         peer.Name,
+				Model:        peer.Model,
+				Firmware:     peer.Firmware,
+				IP:           addr,
+				Port:         peer.Port,
+				Departure:    peer.Departure,
+				Capabilities: nil, // a peer's TXT record does not carry them
 			})
 		}
 	}
