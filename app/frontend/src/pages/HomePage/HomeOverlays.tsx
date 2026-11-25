@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { lazy, Suspense, useCallback, useRef, type ReactNode } from 'react';
+import { lazy, Suspense, useCallback, useRef, useState, type ReactNode } from 'react';
 import { ConnectionBanner } from '../../components/molecules/ConnectionBanner';
 import { SheetModal } from '../../components/molecules/SheetModal';
 import { ErrorPage } from '../../components/molecules/ErrorPage';
@@ -55,16 +55,22 @@ function Notices({
 }) {
   const { t } = useI18n();
   const longLost = useLongLost(lost);
+  // Closed by hand: the banner stands in until the speaker answers, and the next loss shows
+  // the page again.
+  const [dismissed, setDismissed] = useState(false);
+  if (!lost && dismissed) setDismissed(false);
+  const fullPage = longLost && !dismissed;
   const name = lead?.name || 'SoundTap';
   return (
     <TopLayer>
       <OfflinePage
-        open={longLost && !layers.open.speakers}
+        open={longLost && !dismissed && !layers.open.speakers}
+        onClose={() => setDismissed(true)}
         name={name}
         model={lead?.model}
         onOther={() => layers.show('speakers')}
       />
-      {lost && <ConnectionBanner message={t('connectionLost', { name })} />}
+      {lost && !fullPage && <ConnectionBanner message={t('connectionLost', { name })} />}
       {errors.message && (
         <Toast
           message={errors.message}

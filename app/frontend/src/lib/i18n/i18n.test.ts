@@ -127,9 +127,6 @@ describe('translation quality', () => {
   // German, "Latitude" in French, "General" in Spanish). Anything else that matches
   // English is treated as a forgotten translation.
   const shared = new Set([
-    // Bose's own word for the six buttons in Dutch and German, as their apps say it.
-    'presets',
-    'preset slot name',
     // Words the Radio v3 design keeps as-is in more than one language.
     'host',
     'broker',

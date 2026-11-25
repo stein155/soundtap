@@ -4,7 +4,6 @@
 import { lazy, Suspense } from 'react';
 import { AppShell } from '../../components/templates/AppShell';
 import { HomeContent } from '../../components/organisms/HomeContent';
-import type { PresetStripProps } from '../../components/organisms/HomeContent/PresetStrip';
 import { SheetLoading } from '../../components/molecules/SheetLoading';
 import { TopBar } from '../../components/organisms/TopBar';
 import { useSelectedRoom } from '../../hooks/useSelectedRoom';
@@ -33,22 +32,6 @@ import './home.css';
 
 // The search and the whole recent list load when first opened, not with the home page.
 const SourcePage = lazy(() => import('./SourcePage').then((m) => ({ default: m.SourcePage })));
-
-// The six presets on the start page: the selected room's, played on a tap.
-const presetStrip = (
-  { live, speaker }: ReturnType<typeof useSelectedRoom>,
-  playback: ReturnType<typeof usePlayback>,
-  onOpen: () => void
-): PresetStripProps => ({
-  presets: live.presets,
-  player: live.player,
-  speaker,
-  loading: live.loading,
-  canStore: playback.canStore,
-  onPlay: (slot) => void playback.playSlot(slot),
-  onOpen,
-  onStore: (slot) => void playback.storeCurrent(slot),
-});
 
 // The home page: the start page under a top bar, with the selected room's player
 // and speaker docked at the bottom; the presets, the menu, the
@@ -125,7 +108,6 @@ export function HomePage() {
         spotifyReady={info.spotifyReady}
         onAllRecent={() => layers.setAllRecent(true)}
         onSearch={layers.openSearch}
-        presets={lead ? presetStrip(selected, playback, () => show('presets')) : undefined}
       />
     </AppShell>
   );
