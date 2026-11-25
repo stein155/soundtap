@@ -137,11 +137,12 @@ for (const [name, open] of Object.entries(SCREENS)) {
         .getAnimations()
         .every((a) => a.playState !== 'running' || a.effect?.getTiming().iterations === Infinity)
     );
-    expect(await leftoverInsets(page)).toEqual([]);
-    expect(await pastSides(page)).toEqual([]);
-    expect(await inBand(page, 'top')).toEqual([]);
+    // A slow runner can still be settling a layer that slides in: give it a moment.
+    await expect.poll(() => leftoverInsets(page)).toEqual([]);
+    await expect.poll(() => pastSides(page)).toEqual([]);
+    await expect.poll(() => inBand(page, 'top')).toEqual([]);
     for (const bar of await speakerBars(page))
       expect(bar).toEqual({ pad: Math.max(0, ins.bottom - 16), gap: 0, content: 64 });
-    expect(await inBand(page, 'bottom')).toEqual([]);
+    await expect.poll(() => inBand(page, 'bottom')).toEqual([]);
   });
 }
