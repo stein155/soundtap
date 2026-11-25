@@ -13,7 +13,8 @@ const tap = (p, name) =>
 const menu = async (p, name) => {
   await tap(p, 'Menu');
   await p.waitForTimeout(500);
-  await tap(p, name);
+  // In the menu itself: a card on the page under it may carry the same name.
+  await tap(p.getByRole('dialog').last(), name);
 };
 
 async function shoot(name, scheme, steps) {
