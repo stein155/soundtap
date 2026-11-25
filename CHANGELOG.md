@@ -10,33 +10,20 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
 
 ## [Unreleased]
 
-### Added
-
-- **The six presets on the start page**, as the speaker's own buttons: a tap plays one, an
-  open one opens the presets page, and the one playing is ringed.
-
-### Changed
-
-- **Settings look like the installer**: every group has a grey bar with its title, rows are
-  white with line icons, and a speaker's page opens with its drawing large, its name, model
-  and version.
-- **Now playing shows the artwork large** at the top of the page.
-
-### Fixed
-
-- The Wireless Link drew as a SoundTouch 10 where its model came as its short name.
-
-## [app-v0.1.0-alpha.4] - 2026-11-24
+## [app-v0.1.0-alpha.4] - 2026-11-25
 
 - The SoundTap app that SoundTap Core 0.1.0-alpha.4 carries; what it changes is listed under
   that release.
 
-## [os-v0.1.0-alpha.4] - 2026-11-24
+## [os-v0.1.0-alpha.4] - 2026-11-25
 
 The fourth alpha of SoundTap Core 0.1.0.
 
 ### Added
 
+- **The six presets on the start page**, as the speaker's own buttons: a tap plays one, a
+  long press stores what plays, an open one opens the presets page, and the one playing is
+  ringed.
 - **A firmware install names the bootloader copies it rewrote**, in its answer and on the
   Updates page, so it is clear whether the SPL and U-Boot were replaced.
 - **`/api/health` reports the SPL and U-Boot on NAND** by SHA-256 (`boot.bootloader`), so the
@@ -44,7 +31,6 @@ The fourth alpha of SoundTap Core 0.1.0.
 - **An install from Bose's software keeps the SoundTouch 20's clock settings**: on or off,
   12 or 24 hours and the time zone, so the standby clock shows at once without opening the
   settings first.
-
 - **Previews for more SoundTouch models**: the SoundTouch 20 and 30 Series III, the
   SoundTouch 30 Series I/II, the Portable, the SA-5 and the SoundTouch adapter. They are worked
   out from Bose's software alone and have never run on hardware, their recovery included. They
@@ -59,9 +45,30 @@ The fourth alpha of SoundTap Core 0.1.0.
   included. No install from a stick has run on any model yet.
 - **Multiroom sends lossless FLAC between speakers instead of raw PCM**, roughly half to two
   thirds of the data, so a SoundTouch 20 leading a group has far less to push through its
-  network chip, where followers dropped out. **Update every SoundTap speaker to this Core before grouping them:** a
-  speaker on an older Core can still lead a group but stays silent when it follows an updated
-  one.
+  network chip, where followers dropped out. **Update every SoundTap speaker to this Core
+  before grouping them:** a speaker on an older Core can still lead a group but stays silent
+  when it follows an updated one.
+- **Settings, laid out again as Stockholm's**: straight rows in titled groups (Speakers,
+  Household and This app; on a speaker Sound, Speaker, Connection and Maintenance), a chevron on
+  every row that opens a page, and switches and sliders that apply at once; the name and the
+  alarm keep their own Save. Media servers moved to the menu, your own station to the TuneIn
+  page, and the signing key, firmware upload and crash reports under For developers. The MQTT
+  port, TLS and discovery prefix wait behind More options. The stereo/mono switch shows only
+  on the SoundTouch 10, as on stock. The colour scheme follows the system; the AUX name and the
+  appearance setting are gone. Every group has a grey bar with its title, rows are white with
+  line icons, and a speaker's page opens with its drawing large, its name, model and version,
+  as in the installer.
+- **Now playing shows the artwork large** at the top of the page; on a short screen it is
+  small, and on a phone on its side it is left out, so the controls and the volume stay in
+  view.
+
+### Removed
+
+- **The weather and the date on the SoundTouch 20's standby clock**, with the town search
+  (`GET /api/geocode`) and the `city`, `lat`, `lon` and `weatherOn` display settings: the
+  clock shows the time alone, as stock's, which keeps the least of the OLED lit, and the
+  speaker no longer contacts Open-Meteo. The clock keeps the browser's timezone.
+- **Backup and restore in the web UI**; `GET /api/backup` and `POST /api/restore` remain.
 
 ### Fixed
 
@@ -77,25 +84,7 @@ The fourth alpha of SoundTap Core 0.1.0.
   has one buffer more and tries a frame on air seven times instead of five. A multiroom
   leader lost about one TCP segment in ten this way, and followers dropped out. `/api/health`
   shows the chip's transmit counters as `bco`.
-
-### Changed
-
-- **Settings, laid out again as Stockholm's**: straight rows in titled groups (Speakers,
-  Household and This app; on a speaker Sound, Speaker, Connection and Maintenance), a chevron on
-  every row that opens a page, and switches and sliders that apply at once; the name and the
-  alarm keep their own Save. Media servers moved to the menu, your own station to the TuneIn
-  page, and the signing key, firmware upload and crash reports under For developers. The MQTT
-  port, TLS and discovery prefix wait behind More options. The stereo/mono switch shows only
-  on the SoundTouch 10, as on stock. The colour scheme follows the system; the AUX name and the
-  appearance setting are gone.
-
-### Removed
-
-- **The weather and the date on the SoundTouch 20's standby clock**, with the town search
-  (`GET /api/geocode`) and the `city`, `lat`, `lon` and `weatherOn` display settings: the
-  clock shows the time alone, as stock's, which keeps the least of the OLED lit, and the
-  speaker no longer contacts Open-Meteo. The clock keeps the browser's timezone.
-- **Backup and restore in the web UI**; `GET /api/backup` and `POST /api/restore` remain.
+- The Wireless Link drew as a SoundTouch 10 where its model came as its short name.
 
 ## [app-v0.1.0-alpha.3] - 2026-11-23
 
