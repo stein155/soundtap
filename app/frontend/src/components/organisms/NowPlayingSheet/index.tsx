@@ -78,6 +78,7 @@ export function NowPlayingSheet({
           <WashedBlur src={artSrc(view)} />
           <TopBar view={view} onClose={close} onPresets={onPresets} />
           <div className="np-body">
+            {on && <PlayArt artwork={view.artwork} name={view.title} className="np-art" />}
             <h2 className="np-title">{view.title}</h2>
             <p className="np-line">{starting ? t('connecting') : detailLine(view, t)}</p>
             <TransportControls
@@ -107,7 +108,6 @@ export function NowPlayingSheet({
                 {on && <ModeButtonsFor now={lead.now} speaker={speakerArg(lead)} />}
                 <SleepMenu light timer={sleepTimer} onChange={onSleep} />
               </div>
-              {on && <PlayArt artwork={view.artwork} name={view.title} className="np-art" />}
             </div>
           </div>
           <SpeakerBar lead={lead} members={members} onPress={onSpeaker} />
