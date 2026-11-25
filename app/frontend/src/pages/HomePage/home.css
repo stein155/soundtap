@@ -297,7 +297,7 @@
 }
 
 .np-art .art-letters {
-  font-size: 56px;
+  font-size: 40px;
 }
 
 .part .art-letters {
@@ -2144,15 +2144,33 @@ span.vol-ico {
 }
 
 /* The artwork large on top, as in the installer's design: square, as wide as the page
-   allows but never pushing the controls off a short screen. */
+   allows and only as tall as the controls under it leave room for. A short screen (a small
+   phone, a phone on its side) keeps the controls and shows the artwork small or not at all. */
 .np-art {
   flex: none;
-  width: min(100%, 300px, 34vh);
+  width: min(100%, 300px, calc(100dvh - 540px));
   height: auto;
   aspect-ratio: 1;
   margin: 0 auto 22px;
   border-radius: var(--radius);
   box-shadow: var(--shadow-lg);
+}
+
+@media (max-height: 680px) {
+  .np-art {
+    width: 96px;
+    margin: 0 0 14px;
+  }
+
+  .np-art .art-letters {
+    font-size: 22px;
+  }
+}
+
+@media (max-height: 480px) {
+  .np-art {
+    display: none;
+  }
 }
 
 .np .spkbar {
@@ -2259,7 +2277,8 @@ span.vol-ico {
 /* The six presets on the start page, as the speaker's own buttons (the installer's tiles). */
 .pstrip-row {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(44px, 72px));
+  justify-content: space-between;
   gap: 8px;
   margin: 0 0 30px;
   padding: 2px 16px 4px;
@@ -2293,7 +2312,7 @@ span.vol-ico {
     inset 0 0 0 4px var(--surface);
 }
 
-.pstrip-slot[data-pressed] {
+.pstrip-slot:active {
   opacity: 0.7;
 }
 
@@ -2306,4 +2325,29 @@ span.vol-ico {
   font-size: 15px;
   font-weight: 600;
   color: var(--ink-3);
+}
+
+/* On a filled slot its number sits small in the corner, so the logos map to the speaker's
+   buttons. */
+.pstrip-art + .pstrip-num {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+@media (max-width: 340px) {
+  .pstrip-row {
+    gap: 4px;
+    padding-inline: 8px;
+  }
 }

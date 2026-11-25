@@ -44,8 +44,10 @@ const presetStrip = (
   player: live.player,
   speaker,
   loading: live.loading,
+  canStore: playback.canStore,
   onPlay: (slot) => void playback.playSlot(slot),
   onOpen,
+  onStore: (slot) => void playback.storeCurrent(slot),
 });
 
 // The home page: the start page under a top bar, with the selected room's player
