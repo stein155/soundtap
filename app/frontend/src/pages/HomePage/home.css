@@ -2441,3 +2441,56 @@ span.vol-ico {
   height: 18px;
   color: var(--ink-3);
 }
+
+/* Now playing as designed: the station small above the song, a white play/stop disc, the
+   level beside the slider and the sleep timer and speakers as pills. */
+.np-eyebrow {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+
+.np .big {
+  border: 0;
+  background: #fff;
+  color: #111;
+}
+
+.vval {
+  min-width: 28px;
+  text-align: right;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.np-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.np .sleeprow.on-dark,
+.np-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.np-pill svg {
+  width: 16px;
+  height: 16px;
+}

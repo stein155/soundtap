@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
+import type { ReactNode } from 'react';
+import { Button } from 'react-aria-components';
+import { Icon } from '../../atoms/Icon';
 import { WashedBlur, PlayArt } from '../../molecules/Art';
 import { SheetModal } from '../../molecules/SheetModal';
 import { SleepMenu } from '../../molecules/SleepMenu';
@@ -40,6 +43,46 @@ interface Props {
 // Now playing, full screen: what plays over its own blurred picture, the transport, the
 // volume (a group's moves every speaker by the same step), the sleep timer and the
 // speaker bar.
+// What plays, in words: a station that names its song shows the station small above, the
+// song as the title and the artist under it, as the design has it; anything else keeps its
+// title and second line.
+function Titles(p: { title: string; track?: string; artist?: string; line: string }) {
+  if (!p.track) {
+    return (
+      <>
+        <h2 className="np-title">{p.title}</h2>
+        <p className="np-line">{p.line}</p>
+      </>
+    );
+  }
+  return (
+    <>
+      <p className="np-eyebrow">{p.title}</p>
+      <h2 className="np-title">{p.track}</h2>
+      {p.artist && <p className="np-line">{p.artist}</p>}
+    </>
+  );
+}
+
+// Under the volume: Spotify's modes, then the sleep timer and the speakers as pills.
+function Extras(p: { modes: ReactNode; sleep: ReactNode; onSpeaker: () => void }) {
+  const { t } = useI18n();
+  return (
+    <div className="np-row">
+      <div className="np-left">
+        {p.modes}
+        <div className="np-pills">
+          {p.sleep}
+          <Button className="np-pill" onPress={p.onSpeaker}>
+            <Icon.stereo aria-hidden="true" />
+            {t('speakers')}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function NowPlayingSheet({
   open,
   onClose,
@@ -65,6 +108,7 @@ export function NowPlayingSheet({
   const canControl = view.artwork.kind === 'station' || !on;
   const action = on ? view.transport : 'play';
   const skips = on && view.skips;
+  const track = on && view.artwork.kind === 'station' ? lead.now?.track?.trim() : '';
   return (
     <SheetModal
       open={open}
@@ -79,8 +123,12 @@ export function NowPlayingSheet({
           <TopBar view={view} onClose={close} onPresets={onPresets} />
           <div className="np-body">
             {on && <PlayArt artwork={view.artwork} name={view.title} className="np-art" />}
-            <h2 className="np-title">{view.title}</h2>
-            <p className="np-line">{starting ? t('connecting') : detailLine(view, t)}</p>
+            <Titles
+              title={view.title}
+              track={starting ? '' : track}
+              artist={lead.now?.artist}
+              line={starting ? t('connecting') : detailLine(view, t)}
+            />
             <TransportControls
               action={action}
               label={`${t(action)} · ${name}`}
@@ -98,17 +146,17 @@ export function NowPlayingSheet({
             )}
             <VolumeSlider
               light
+              showValue
               label={group.length > 1 ? t('grpVolume') : t('volume')}
               value={average(group)}
               onChange={onVolume}
               onMute={onMute}
             />
-            <div className="np-row">
-              <div className="np-left">
-                {on && <ModeButtonsFor now={lead.now} speaker={speakerArg(lead)} />}
-                <SleepMenu light timer={sleepTimer} onChange={onSleep} />
-              </div>
-            </div>
+            <Extras
+              modes={on && <ModeButtonsFor now={lead.now} speaker={speakerArg(lead)} />}
+              sleep={<SleepMenu light timer={sleepTimer} onChange={onSleep} />}
+              onSpeaker={onSpeaker}
+            />
           </div>
           <SpeakerBar lead={lead} members={members} onPress={onSpeaker} />
         </>
