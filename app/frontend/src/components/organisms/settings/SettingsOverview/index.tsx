@@ -53,6 +53,7 @@ export function SettingsOverview({ rooms, onSpeaker, onIntegrations }: Props) {
       </SetMenu>
       <SetMenu title={t('household')}>
         <SetItem
+          icon="link"
           label={t('integrations')}
           meta={integrationsSummary(prefs, t('off'))}
           onClick={onIntegrations}
@@ -61,6 +62,7 @@ export function SettingsOverview({ rooms, onSpeaker, onIntegrations }: Props) {
       <SetMenu title={t('thisApp')}>
         <Accordion
           {...section('language')}
+          icon="globe"
           title={t('language')}
           summary={LANGS.find((l) => l.code === lang)?.label}
         >
@@ -76,7 +78,7 @@ export function SettingsOverview({ rooms, onSpeaker, onIntegrations }: Props) {
             </Hint>
           )}
         </Accordion>
-        <Accordion {...section('about')} title={t('about')}>
+        <Accordion {...section('about')} icon="info" title={t('about')}>
           <About rooms={rooms} />
         </Accordion>
       </SetMenu>

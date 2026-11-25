@@ -152,4 +152,41 @@ export const settingsIcons = {
       </>
     ),
   },
+  pencil: {
+    svg: line('1.8'),
+    body: <path d="M4 20h4L19 9l-4-4L4 16Z" />,
+  },
+  help: {
+    svg: line('1.8'),
+    body: (
+      <>
+        <circle cx="12" cy="12" r="9" />
+        <path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6M12 17h.01" />
+      </>
+    ),
+  },
+  link: {
+    svg: line('1.8'),
+    body: (
+      <>
+        <path d="M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" />
+        <path d="M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" />
+      </>
+    ),
+  },
+  stereo: {
+    svg: line('1.8'),
+    body: (
+      <>
+        <rect x="2" y="6" width="8" height="14" rx="1.5" />
+        <rect x="14" y="6" width="8" height="14" rx="1.5" />
+        <circle cx="6" cy="14" r="2" />
+        <circle cx="18" cy="14" r="2" />
+      </>
+    ),
+  },
+  code: {
+    svg: line('1.8'),
+    body: <path d="m8 8-4 4 4 4M16 8l4 4-4 4M13.5 5l-3 14" />,
+  },
 } satisfies Record<string, IconSpec>;

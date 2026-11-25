@@ -3,9 +3,11 @@
 
 import type { ReactNode } from 'react';
 import { Accordion, SubPage, type useAccordionGroup } from '../../../molecules/Accordion';
-import { SetItem, SetSwitch } from '../../../molecules/SetItem';
+import { SetSwitch } from '../../../molecules/SetItem';
 import { SetMenu } from '../../../molecules/SetMenu';
 import { ModelArt } from '../../../molecules/ModelArt';
+import { Icon } from '../../../atoms/Icon';
+import { Disc, Hero, Meta as HeroMeta, Name, Pencil, Text as HeroText } from './styled';
 import { NameRow } from './NameRow';
 import { AlarmSettings } from '../AlarmSettings';
 import { DisplaySettings } from '../DisplaySettings';
@@ -56,14 +58,18 @@ export function SpeakerHeader({
   const { t } = useI18n();
   return (
     <>
-      <SetMenu>
-        <SetItem
-          art={<ModelArt model={model} />}
-          label={name}
-          meta={[model, versionLabel(page.version)].filter(Boolean).join(' · ')}
-          onClick={open.onToggle}
-        />
-      </SetMenu>
+      <Hero type="button" onClick={open.onToggle} aria-label={`${t('name')}: ${name}`}>
+        <Disc aria-hidden="true">
+          <ModelArt model={model} />
+        </Disc>
+        <HeroText>
+          <Name>{name}</Name>
+          <HeroMeta>{[model, versionLabel(page.version)].filter(Boolean).join(' · ')}</HeroMeta>
+        </HeroText>
+        <Pencil aria-hidden="true">
+          <Icon.pencil width="20" height="20" />
+        </Pencil>
+      </Hero>
       <SubPage open={open.open} onBack={open.onToggle} title={t('name')}>
         <NameRow
           label={t('name')}
@@ -103,6 +109,7 @@ export function SpeakerGroup({
   return (
     <SetMenu title={t('speaker')}>
       <SetSwitch
+        icon="power"
         label={t('autoOff')}
         desc={t('autoOffHint')}
         on={form.autoOff >= 0}
@@ -110,6 +117,7 @@ export function SpeakerGroup({
       />
       <Accordion
         {...section('alarm')}
+        icon="alarm"
         title={t('page_alarm')}
         summary={alarmSummary(form.alarm, page.presets, t)}
       >
@@ -124,6 +132,7 @@ export function SpeakerGroup({
       {display && (
         <Accordion
           {...section('display')}
+          icon="display"
           title={t('page_display')}
           summary={display.clockOff ? t('off') : t('stateOn')}
         >
@@ -136,6 +145,7 @@ export function SpeakerGroup({
       {page.bluetooth?.adapter && (
         <Accordion
           {...section('bluetooth')}
+          icon="bluetooth"
           title={t('page_bluetooth')}
           summary={bluetoothSummary(page.bluetooth, t)}
         >
@@ -143,7 +153,7 @@ export function SpeakerGroup({
         </Accordion>
       )}
       {rooms.length > 1 && (
-        <Accordion {...section('stereo')} title={t('stereoPair')}>
+        <Accordion {...section('stereo')} icon="stereo" title={t('stereoPair')}>
           <StereoPair room={room} rooms={rooms} onChanged={onRenamed} />
         </Accordion>
       )}
@@ -177,22 +187,28 @@ export function SystemGroups({
   return (
     <>
       <SetMenu title={t('connection')}>
-        <Accordion {...section('wifi')} title={t('wifiLabel')} summary={networkSummary(network, t)}>
+        <Accordion
+          {...section('wifi')}
+          icon="wifi"
+          title={t('wifiLabel')}
+          summary={networkSummary(network, t)}
+        >
           <NetworkSettings network={network} speaker={speaker} speakerName={room.name} />
         </Accordion>
       </SetMenu>
       <SetMenu title={t('maintenance')}>
         <Accordion
           {...section('updates')}
+          icon="refresh"
           title={t('page_updates')}
           summary={newer ? t('updateAvailable') : versionLabel(page.version)}
         >
           <UpdateSettings speaker={speaker} model={model} version={page.version} rooms={rooms} />
         </Accordion>
-        <Accordion {...section('support')} title={t('helpSupport')}>
+        <Accordion {...section('support')} icon="help" title={t('helpSupport')}>
           <SupportSettings speaker={speaker} />
         </Accordion>
-        <Accordion {...section('developer')} title={t('forDevelopers')}>
+        <Accordion {...section('developer')} icon="code" title={t('forDevelopers')}>
           <DeveloperSettings
             speaker={speaker}
             version={page.version}

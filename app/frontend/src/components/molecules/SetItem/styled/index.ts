@@ -86,8 +86,11 @@ export const Glyph = styled.span`
   [data-theme='dark'] & svg {
     filter: brightness(1.8);
   }
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
+  padding: 6px;
+  border-radius: 50%;
+  background: var(--surface-2);
   flex-shrink: 0;
   display: grid;
   place-items: center;
