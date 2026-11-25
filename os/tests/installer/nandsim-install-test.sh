@@ -584,6 +584,13 @@ CONTAINER
 cat >"${WORK}/setup.sh" <<'SETUP'
 set -eu
 export DEBIAN_FRONTEND=noninteractive
+# A stalled download fails and is tried again instead of holding the job until its timeout
+# (2026-11-25: three gates sat 25 minutes on one fetch from the snapshot archive).
+cat >/etc/apt/apt.conf.d/80soundtap-retries <<'APTCONF'
+Acquire::Retries "5";
+Acquire::http::Timeout "60";
+Acquire::https::Timeout "60";
+APTCONF
 # https needs certificates, which this image lacks; bootstrap them from the default
 # source (the archive signs its own metadata, so this only supplies trust anchors),
 # then freeze everything else.
