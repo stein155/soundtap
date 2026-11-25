@@ -12,6 +12,9 @@ import { FieldCard } from '../../../molecules/FieldCard';
 import { FieldRow } from '../../../molecules/FieldRow';
 import { StatusCard } from '../../../molecules/StatusCard';
 import { CoreUpdate } from './CoreUpdate';
+import { FirmwareUpload } from '../FirmwareUpload';
+import { Accordion, useAccordionGroup } from '../../../molecules/Accordion';
+import { SetMenu } from '../../../molecules/SetMenu';
 import { useSelfUpdate, type UpdatePhase } from '../../../../hooks/useSelfUpdate';
 import { useUpdateAll, type UpdateAllState } from '../../../../hooks/useUpdateAll';
 import type { Room } from '../../../../hooks/useRooms';
@@ -116,8 +119,39 @@ function UpdateAll({ rooms }: { rooms: Room[] }) {
   );
 }
 
-// The Updates accordion: model and version, then this speaker's update routes: the app
-// from its releases, a newer SoundTap Core, and a firmware image.
+// Bose's own update files, kept by others: the link the installer gives too.
+const BOSE_ARCHIVE = 'https://archive.org/download/bose-soundtouch-software-and-firmware/Firmware/';
+
+// The other ways to put software on the speaker, each a page of its own: a file of your
+// choice, or Bose's own update file to go back (the same upload, which knows Bose's file and
+// asks for the press on the speaker). The installer sends owners here for the way back.
+function OtherWays({ speaker }: { speaker: string }) {
+  const { t } = useI18n();
+  const page = useAccordionGroup<'upload' | 'bose'>();
+  return (
+    <SetMenu title={t('updatesOther')}>
+      <Accordion {...page('upload')} icon="download" title={t('updatesUpload')}>
+        <FirmwareUpload speaker={speaker} />
+      </Accordion>
+      <Accordion {...page('bose')} icon="refresh" title={t('updatesBose')}>
+        <Stack gap={8}>
+          <Hint>{t('updatesBoseHint')}</Hint>
+          <FirmwareUpload speaker={speaker} />
+          <Hint>
+            {t('updatesArchive')}{' '}
+            <a href={BOSE_ARCHIVE} target="_blank" rel="noreferrer">
+              {t('updatesArchiveLink')}
+            </a>
+          </Hint>
+        </Stack>
+      </Accordion>
+    </SetMenu>
+  );
+}
+
+// The Updates accordion: what an update does, model and version, then this speaker's update
+// routes: the app from its releases, a newer SoundTap Core, and the other ways (a file of
+// your own, Bose's file to go back).
 export function UpdateSettings({
   speaker,
   model,
@@ -132,7 +166,8 @@ export function UpdateSettings({
   const { t } = useI18n();
   return (
     <>
-      <FieldCard>
+      <Hint>{t('updatesIntro')}</Hint>
+      <FieldCard spaced>
         <FieldRow label={t('upModel')} layout="value">
           {modelLabel(model) || '—'}
         </FieldRow>
@@ -145,6 +180,7 @@ export function UpdateSettings({
           {version.updatable && <SelfUpdate speaker={speaker} version={version} />}
           <UpdateAll rooms={rooms} />
           <CoreUpdate key={speaker} speaker={speaker} />
+          <OtherWays speaker={speaker} />
         </>
       ) : (
         <Hint>{t('updatesOnSpeaker')}</Hint>

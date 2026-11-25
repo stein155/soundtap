@@ -119,6 +119,22 @@ const ro: Messages = {
   speakersControl: 'Comandă',
   playTogetherWith: 'Redați împreună cu {name}',
   speakerMore: 'Mai multe despre {name}',
+  updatesIntro:
+    'An update goes in next to the version that runs now. The speaker keeps it only once it has started properly; otherwise it goes on with the version it had.',
+  updatesOther: 'Other ways',
+  updatesUpload: 'Upload a file',
+  updatesBose: 'Back to Bose',
+  updatesBoseHint:
+    "Choose Bose's update file for this speaker (Update.stu). The speaker checks it first; you then press a button on the speaker to confirm. It is not a factory reset.",
+  updatesArchive:
+    "No copy of Bose's update file? It is kept in a public archive on archive.org, run by neither Bose nor SoundTap.",
+  updatesArchiveLink: 'Open the archive',
+  offlineTitle: 'The speaker does not answer',
+  offlineRetrying:
+    'This page keeps trying every few seconds. Once the speaker is back, you go on where you were.',
+  offlineCheck: 'What you can check',
+  offlineRetry: 'Try again',
+  offlineOther: 'Choose another speaker',
   presetEmptyTitle: 'Încă disponibil',
   presetEmptyHint:
     'Nu ați salvat încă nimic la această presetare. Apăsați și mențineți apăsată o presetare deschisă pentru a salva ceea ce se redă acum.',

@@ -5,6 +5,8 @@ import { lazy, Suspense, useCallback, useRef, type ReactNode } from 'react';
 import { ConnectionBanner } from '../../components/molecules/ConnectionBanner';
 import { SheetModal } from '../../components/molecules/SheetModal';
 import { ErrorPage } from '../../components/molecules/ErrorPage';
+import { OfflinePage } from '../../components/organisms/OfflinePage';
+import { useLongLost } from './useLongLost';
 import { Toast } from '../../components/molecules/Toast';
 import { TopLayer } from '../../components/molecules/TopLayer';
 import { DrawerMenu } from '../../components/organisms/DrawerMenu';
@@ -38,18 +40,31 @@ interface HomeOverlaysProps {
   children: ReactNode;
 }
 
-// The banner when the speaker is out of reach (lost: its name), and the toast.
+// The banner when the speaker is out of reach, the full page once it stays away, and the
+// toast. The speakers sheet opened from that page covers it: the page waits behind.
 function Notices({
+  lead,
   lost,
+  layers,
   errors,
 }: {
-  lost: string | null;
+  lead: SelectedRoom['lead'];
+  lost: boolean;
+  layers: Layers;
   errors: ReturnType<typeof useErrorReporter>;
 }) {
   const { t } = useI18n();
+  const longLost = useLongLost(lost);
+  const name = lead?.name || 'SoundTap';
   return (
     <TopLayer>
-      {lost !== null && <ConnectionBanner message={t('connectionLost', { name: lost })} />}
+      <OfflinePage
+        open={longLost && !layers.open.speakers}
+        name={name}
+        model={lead?.model}
+        onOther={() => layers.show('speakers')}
+      />
+      {lost && <ConnectionBanner message={t('connectionLost', { name })} />}
       {errors.message && (
         <Toast
           message={errors.message}
@@ -120,7 +135,7 @@ export function HomeOverlays({
   };
   return (
     <>
-      <Notices lost={live.unreachable ? lead?.name || 'SoundTap' : null} errors={errors} />
+      <Notices lead={lead} lost={!!live.unreachable} layers={layers} errors={errors} />
       <ErrorPage
         open={errors.blocked.open}
         message={errors.blocked.text}

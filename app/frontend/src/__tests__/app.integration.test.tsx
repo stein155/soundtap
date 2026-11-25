@@ -349,13 +349,19 @@ describe('App integration', () => {
     await userEvent.click(await screen.findByRole('button', { name: section }));
   }
 
-  it('offers firmware upload for developers on a flashed speaker', async () => {
+  // Installing a file by hand, the way back to Bose included, lives under Updates.
+  async function openUpload() {
+    await openSpeakerSection(/^Updates/);
+    await userEvent.click(await screen.findByRole('button', { name: /^Upload a file/ }));
+  }
+
+  it('offers firmware upload under Updates on a flashed speaker', async () => {
     api.getVersion.mockResolvedValue({
       version: '1.2.3',
       updatable: false,
       updateMode: 'firmware',
     });
-    await openSpeakerSection(/^For developers/);
+    await openUpload();
     expect(
       await screen.findByText(
         "Pick a firmware image. It is checked before anything is written to NAND. Select its .sig file with it. Bose's own update file needs none."
@@ -380,7 +386,7 @@ describe('App integration', () => {
       .mockResolvedValueOnce(report)
       .mockResolvedValueOnce({ ...report, installed: true, slot: 'Pong' });
     api.reboot.mockResolvedValue(null);
-    await openSpeakerSection(/^For developers/);
+    await openUpload();
     fireEvent.change(document.querySelector('input[accept=".stu,.sig"]')!, {
       target: { files: [new File(['firmware'], 'Update_soundtap-firmware.stu')] },
     });
@@ -408,7 +414,7 @@ describe('App integration', () => {
       modules: [],
       installable: false,
     });
-    await openSpeakerSection(/^For developers/);
+    await openUpload();
     fireEvent.change(document.querySelector('input[accept=".stu,.sig"]')!, {
       target: { files: [new File(['fw'], 'A.stu'), new File(['sigA'], 'A.stu.sig')] },
     });
@@ -426,7 +432,7 @@ describe('App integration', () => {
       updateMode: 'firmware',
     });
     api.uploadFirmware.mockRejectedValue(new Error('truncated package'));
-    await openSpeakerSection(/^For developers/);
+    await openUpload();
     fireEvent.change(document.querySelector('input[accept=".stu,.sig"]')!, {
       target: { files: [new File(['broken'], 'broken.stu')] },
     });
@@ -449,7 +455,7 @@ describe('App integration', () => {
       installable: false,
       reason: 'This is the mainline ST10 package; this ST20 needs another image.',
     });
-    await openSpeakerSection(/^For developers/);
+    await openUpload();
     fireEvent.change(document.querySelector('input[accept=".stu,.sig"]')!, {
       target: { files: [new File(['x'], 'st10.stu')] },
     });

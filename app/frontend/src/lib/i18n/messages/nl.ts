@@ -119,6 +119,22 @@ const nl: Messages = {
   speakersControl: 'Bedienen',
   playTogetherWith: 'Samen met {name} afspelen',
   speakerMore: 'Meer over {name}',
+  updatesIntro:
+    'Een update komt naast de versie die nu draait. De speaker houdt hem pas als hij goed opstart; anders gaat hij verder met de versie die hij had.',
+  updatesOther: 'Andere manieren',
+  updatesUpload: 'Een bestand uploaden',
+  updatesBose: 'Terug naar Bose',
+  updatesBoseHint:
+    'Kies het updatebestand van Bose voor deze speaker (Update.stu). De speaker controleert het eerst; daarna druk je ter bevestiging op een knop op de speaker. Het is geen fabrieksreset.',
+  updatesArchive:
+    'Geen kopie van het updatebestand van Bose? Het staat in een openbaar archief op archive.org, dat niet van Bose of SoundTap is.',
+  updatesArchiveLink: 'Archief openen',
+  offlineTitle: 'De speaker antwoordt niet',
+  offlineRetrying:
+    'Deze pagina probeert het elke paar seconden opnieuw. Zodra hij terug is, ga je verder waar je was.',
+  offlineCheck: 'Wat je kunt nakijken',
+  offlineRetry: 'Opnieuw proberen',
+  offlineOther: 'Andere speaker kiezen',
   presetEmptyTitle: 'Altijd bij de hand',
   presetEmptyHint:
     'Je hebt nog niets opgeslagen onder deze preset. Houd een lege preset ingedrukt om op te slaan wat er nu speelt.',
