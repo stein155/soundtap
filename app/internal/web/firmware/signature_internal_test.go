@@ -271,3 +271,50 @@ func TestCoreThatMissesItsDigestLeavesNoRootfs(t *testing.T) {
 		t.Errorf("PING's root filesystem written at %d, erased at %d: %q", formatted, erased, nand.cmds)
 	}
 }
+
+// A stream cut after the root filesystem, in the boot chain that follows it, fails the scan
+// before the digest is checked; the native rootfs it wrote is erased all the same.
+func TestCoreCutAfterItsRootfsLeavesNoRootfs(t *testing.T) {
+	t.Parallel()
+
+	keys, priv := testKeys(t)
+	pkg := universalST10Package(t)
+	sum := sha256.Sum256(pkg)
+	sig := signed(t, priv, release.KindCore, release.ProfileProduction, "0.2.0", sum[:])
+	cut := pkg[:len(pkg)-16] // inside the last module, after soundtap-rootfs
+
+	nand := newFakeFlash()
+	handler := wlaInstallServer(t, nand, "root=ubi0:rootfs ubi.mtd=9,2048") // running PONG
+	handler.firmwareModel = func() (string, error) { return "st10", nil }
+	handler.releaseKeys, handler.osVersionFile = keys, runningVersionFile(t, "0.1.0")
+	rec := httptest.NewRecorder()
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/core-update", nil)
+
+	err := handler.InstallStream(rec, req, func() (io.ReadCloser, int64, string, error) {
+		return io.NopCloser(bytes.NewReader(cut)), int64(len(cut)), sig, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(rec.Body.String(), `"installed":true`) {
+		t.Fatalf("installed a cut package: %s", rec.Body)
+	}
+
+	formatted, erased := -1, -1
+
+	for index, cmd := range nand.cmds {
+		if strings.HasPrefix(cmd, "ubiformat /dev/mtd8") {
+			formatted = index
+		}
+
+		if cmd == "flash_erase /dev/mtd8 0 0" {
+			erased = index
+		}
+	}
+
+	if formatted < 0 || erased < formatted {
+		t.Errorf("PING's root filesystem written at %d, erased at %d: %q", formatted, erased, nand.cmds)
+	}
+}

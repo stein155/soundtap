@@ -144,16 +144,16 @@ func (d *rootfsDigest) eraseblock(peb []byte) error {
 	volType := vid[5]
 	volID := binary.BigEndian.Uint32(vid[8:])
 	lnum := binary.BigEndian.Uint32(vid[12:])
-	dataSize := int(binary.BigEndian.Uint32(vid[20:]))
-	dataPad := int(binary.BigEndian.Uint32(vid[28:]))
+	rawSize := binary.BigEndian.Uint32(vid[20:])
+	rawPad := binary.BigEndian.Uint32(vid[28:])
 
 	if volID >= ubiInternalVolStart {
 		return nil // the volume table: UBI rewrites it on attach (autoresize)
 	}
 
-	leb := d.peb - dataOff - dataPad
-	if leb <= 0 || (volType != ubiDynamic && volType != ubiStatic) || lnum >= d.lebs {
-		return fmt.Errorf("the rootfs image's volume %d %w", volID, errUnknownVolume)
+	leb, dataSize, err := d.lebSizes(volID, volType, lnum, rawSize, rawPad, dataOff)
+	if err != nil {
+		return err
 	}
 
 	volume := d.vols[volID]
@@ -169,18 +169,46 @@ func (d *rootfsDigest) eraseblock(peb []byte) error {
 	return volume.add(volID, lnum, dataSize, peb[dataOff:dataOff+leb])
 }
 
+// lebSizes is a volume header's LEB size and how much of it holds data, refused when the
+// fields do not fit the eraseblock.
+func (d *rootfsDigest) lebSizes(
+	volID uint32, volType byte, lnum, rawSize, rawPad uint32, dataOff int,
+) (int, int, error) {
+	// Compared before they become an int: on the speaker an int is 32 bits, and a header
+	// field from 2^31 up would turn negative and pass the checks into a slice that panics.
+	room := d.peb - dataOff
+	if int64(rawPad) >= int64(room) || (volType != ubiDynamic && volType != ubiStatic) || lnum >= d.lebs {
+		return 0, 0, fmt.Errorf("the rootfs image's volume %d %w", volID, errUnknownVolume)
+	}
+
+	leb := room - int(rawPad)
+	if int64(rawSize) > int64(leb) && volType == ubiStatic {
+		return 0, 0, fmt.Errorf("the rootfs image's static volume %d %w", volID, errStaticOrder)
+	}
+
+	dataSize := leb // what a dynamic volume holds is its whole LEB; only a static one counts
+	if int64(rawSize) <= int64(leb) {
+		dataSize = int(rawSize)
+	}
+
+	return leb, dataSize, nil
+}
+
 // headerOffsets reads where the EC header puts the VID header and the data, and refuses
 // offsets that do not fit the eraseblock.
 func (d *rootfsDigest) headerOffsets(peb []byte) (int, int, error) {
-	vidOff := int(binary.BigEndian.Uint32(peb[ubiECVIDOff:]))
-	dataOff := int(binary.BigEndian.Uint32(peb[ubiECDataOff:]))
+	// Compared as the uint32 they are: on the speaker an int is 32 bits, and an offset near
+	// 2^31 overflowed vidOff+ubiVIDHeaderSize past the check into a slice that panics.
+	vidOff := binary.BigEndian.Uint32(peb[ubiECVIDOff:])
+	dataOff := binary.BigEndian.Uint32(peb[ubiECDataOff:])
+	size := int64(d.peb)
 
-	if vidOff < ubiECHeaderSize || vidOff+ubiVIDHeaderSize > d.peb ||
-		dataOff < vidOff+ubiVIDHeaderSize || dataOff >= d.peb {
+	if vidOff < ubiECHeaderSize || int64(vidOff)+ubiVIDHeaderSize > size ||
+		int64(dataOff) < int64(vidOff)+ubiVIDHeaderSize || int64(dataOff) >= size {
 		return 0, 0, fmt.Errorf("%w (%d, %d) do not fit a %d-byte eraseblock", errHeaderOffsets, vidOff, dataOff, d.peb)
 	}
 
-	return vidOff, dataOff, nil
+	return int(vidOff), int(dataOff), nil
 }
 
 // add records LEB lnum of the volume, whose data is the LEB's whole data area and dataSize

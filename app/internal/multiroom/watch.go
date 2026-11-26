@@ -7,7 +7,9 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -151,7 +153,7 @@ func Leads(ctx context.Context, env Env) bool {
 // probe is a stream session that snapserver logs as an error when it closes, which was
 // two log lines a minute per follower on the leader (2026-10-09).
 func LeaderReachable(ctx context.Context, host string) bool {
-	if streamingFrom(procNetTCP, host) {
+	if streamingFrom(procNet, host) {
 		return true
 	}
 
@@ -167,27 +169,51 @@ func LeaderReachable(ctx context.Context, host string) bool {
 	return true
 }
 
-const procNetTCP = "/proc/net/tcp"
+// procNet holds the kernel's connection tables: tcp for IPv4 sockets, tcp6 for IPv6 ones
+// (an IPv4 peer of an IPv6 socket shows there as ::ffff:a.b.c.d).
+const procNet = "/proc/net"
 
-// streamingFrom reports whether procNetTCP lists an established connection to host's
-// snapserver stream port. The kernel prints an IPv4 address as the 32-bit word in host
-// byte order, which on these little-endian CPUs is the address bytes reversed.
-func streamingFrom(procNetTCP, host string) bool {
-	addr := net.ParseIP(host).To4()
-	if addr == nil {
-		return false
-	}
-
-	table, err := os.ReadFile(procNetTCP)
+// streamingFrom reports whether procNet's tables list an established connection to host's
+// snapserver stream port. The kernel prints an address as 32-bit words in host byte order,
+// which on these little-endian CPUs is each word's bytes reversed.
+func streamingFrom(procNet, host string) bool {
+	addr, err := netip.ParseAddr(host)
 	if err != nil {
 		return false
 	}
 
-	want := fmt.Sprintf("%02X%02X%02X%02X:06A8", addr[3], addr[2], addr[1], addr[0])
+	addr = addr.WithZone("").Unmap()
+	// As16 of an IPv4 address is its ::ffff: form, the way an IPv6 socket lists it.
+	if addr.Is4() && established(filepath.Join(procNet, "tcp"), procNetHex(addr)+":06A8") {
+		return true
+	}
+
+	return established(filepath.Join(procNet, "tcp6"), procNetHex(netip.AddrFrom16(addr.As16()))+":06A8")
+}
+
+// procNetHex is addr as /proc/net/tcp{,6} print it: each 32-bit word in little-endian order.
+func procNetHex(addr netip.Addr) string {
+	b := addr.AsSlice()
+
+	var out strings.Builder
+
+	for i := 0; i < len(b); i += 4 {
+		fmt.Fprintf(&out, "%02X%02X%02X%02X", b[i+3], b[i+2], b[i+1], b[i])
+	}
+
+	return out.String()
+}
+
+// established reports whether the table at path has an ESTABLISHED (01) row to remote.
+func established(path, remote string) bool {
+	table, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
 
 	for line := range strings.SplitSeq(string(table), "\n") {
 		f := strings.Fields(line)
-		if len(f) > 3 && f[2] == want && f[3] == "01" {
+		if len(f) > 3 && f[2] == remote && f[3] == "01" {
 			return true
 		}
 	}

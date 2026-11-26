@@ -40,6 +40,7 @@ import (
 	"github.com/stein155/soundtap/app/internal/atomicjson"
 	"github.com/stein155/soundtap/app/internal/display"
 	"github.com/stein155/soundtap/app/internal/hw"
+	"github.com/stein155/soundtap/app/internal/lanfilter"
 	"github.com/stein155/soundtap/app/internal/lpm"
 	"github.com/stein155/soundtap/app/internal/nowplaying"
 	"github.com/stein155/soundtap/app/internal/osapi"
@@ -282,6 +283,11 @@ func runDaemon(opt options, serial string, log *slog.Logger) {
 
 	startWebServices(ctx, webSrv, speakerState, mqttBridge, identity, advertisedPort, opt, log)
 	goSafe("firewallCheck", func() { firewall.Status(ctx) })
+	// IPv6 addresses come without a DHCP hook to tell the filter (ADR 0134).
+	if lanfilter.Wanted(web.ProfileFile) {
+		goSafe("lanFilter6", func() { lanfilter.New(log.With("comp", "firewall")).Run(ctx, lanfilter.Interval) })
+	}
+
 	startPprof(ctx, log)
 
 	pump := startAudioSide(ctx, opt, &audioWiring{

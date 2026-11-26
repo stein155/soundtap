@@ -399,7 +399,11 @@ func TestProxiedRoutesKeepTheirLimits(t *testing.T) {
 func TestRedactSecretsCatchesJSONAndUnderscoredKeys(t *testing.T) {
 	t.Parallel()
 
-	for _, line := range []string{`{"password":"hunter2"}`, `sae_password=hunter2`, `wpa_passphrase=hunter2`} {
+	for _, line := range []string{
+		`{"password":"hunter2"}`, `sae_password=hunter2`, `wpa_passphrase=hunter2`,
+		// A password with an @ in it goes whole, not only up to that @.
+		"play url=http://radio:pa@hunter2@stream.example/live",
+	} {
 		if got := redactSecrets(line); strings.Contains(got, "hunter2") {
 			t.Errorf("redactSecrets(%q) = %q", line, got)
 		}
@@ -411,14 +415,21 @@ func TestInviteRefusesLoopback(t *testing.T) { //nolint:paralleltest // it swaps
 
 	peerIPAllowed = privatePeerIP
 
-	for _, target := range []string{"127.0.0.1", "127.0.0.1:80", "localhost:80"} {
+	// IPv6 loopback, also with a zone that net.ParseIP would not read as an address, and
+	// the IPv4-mapped spelling of 127.0.0.1.
+	for _, target := range []string{
+		"127.0.0.1", "127.0.0.1:80", "localhost:80", "::1", "[::1]:80", "[::1%lo]:80", "::ffff:127.0.0.1",
+		"fe80::1%wlan0", "2001:db8::5", // link-local and public, like 169.254/16 and a public IPv4
+	} {
 		if inviteTargetAllowed(target) {
 			t.Errorf("invite to %s allowed", target)
 		}
 	}
 
-	if !inviteTargetAllowed("192.168.1.5") {
-		t.Error("invite to a LAN speaker refused")
+	for _, target := range []string{"192.168.1.5", "fd00::5", "[fd00::5]:80"} {
+		if !inviteTargetAllowed(target) {
+			t.Errorf("invite to the LAN speaker %s refused", target)
+		}
 	}
 }
 

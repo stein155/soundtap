@@ -24,7 +24,7 @@ func RemoveStaleStaging(dir string) {
 		dir = os.TempDir()
 	}
 
-	for _, prefix := range []string{"soundtap-kernel-", "soundtap-mlo-", "soundtap-uboot-"} {
+	for _, prefix := range []string{"soundtap-kernel-", "soundtap-mlo-", "soundtap-uboot-", "soundtap-padded-"} {
 		matches, err := filepath.Glob(filepath.Join(dir, prefix+"*"))
 		if err != nil {
 			continue

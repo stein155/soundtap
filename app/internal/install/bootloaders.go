@@ -362,7 +362,7 @@ func padToBlocks(path string) (string, error) {
 
 	image = append(image, bytes.Repeat([]byte{0xff}, (nandBlock-len(image)%nandBlock)%nandBlock)...)
 
-	padded, err := os.CreateTemp(filepath.Dir(path), "padded-")
+	padded, err := os.CreateTemp(filepath.Dir(path), "soundtap-padded-")
 	if err != nil {
 		return "", fmt.Errorf("padding: %w", err)
 	}

@@ -39,7 +39,7 @@ const maxDownstreamMS = 5000
 var downstreamPort = "80"
 
 func fetchDownstream(ctx context.Context, host string) (int, error) {
-	addr := net.ParseIP(host)
+	addr := literalIP(host)
 	if addr == nil || !peerIPAllowed(addr) {
 		return 0, fmt.Errorf("%w %q", errFollowerAddress, host)
 	}

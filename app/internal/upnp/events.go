@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"strconv"
@@ -250,11 +251,20 @@ func callbackURL(req *http.Request) (string, bool) {
 	}
 
 	peer, _, _ := net.SplitHostPort(req.RemoteAddr)
-	if ip := net.ParseIP(callback.Hostname()); ip == nil || !ip.Equal(net.ParseIP(peer)) {
+	if !sameAddr(callback.Hostname(), peer) {
 		return "", false
 	}
 
 	return callback.String(), true
+}
+
+// sameAddr reports whether a and b are one IP address, an IPv4-mapped IPv6 spelling and
+// an IPv6 zone notwithstanding.
+func sameAddr(a, b string) bool {
+	x, errA := netip.ParseAddr(a)
+	y, errB := netip.ParseAddr(b)
+
+	return errA == nil && errB == nil && x.WithZone("").Unmap() == y.WithZone("").Unmap()
 }
 
 func subTimeout(h string) time.Duration {

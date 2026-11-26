@@ -146,16 +146,18 @@ var (
 // The ways a partition table is not the layout this package writes. A message with values
 // reads them around its sentinel, as it always has.
 var (
-	errMissingMTD       = errors.New("is missing from /proc/mtd")
-	errExpectedMTD      = errors.New("expected")
-	errNoUsableSize     = errors.New("has no usable size")
-	errBootloaderNotMTD = errors.New("bootloader partition is not")
-	errNoGeometry       = errors.New("has no usable geometry")
-	errNoPartitions     = errors.New("no partitions in /proc/mtd")
-	errKernelReadback   = errors.New("kernel readback verification failed on")
-	errNoBootFiles      = errors.New("no boot files known for variant")
-	errNothingWritten   = errors.New("cannot verify the written root filesystem: no rootfs was written")
-	errNotDeviceTree    = errors.New("is not a whole device tree")
+	errMissingMTD        = errors.New("is missing from /proc/mtd")
+	errExpectedMTD       = errors.New("expected")
+	errNoUsableSize      = errors.New("has no usable size")
+	errNoEraseSize       = errors.New("has no erase size that divides it")
+	errRedundantEnvPlace = errors.New("the redundant environment copy is not at NAND.U-Boot's last block")
+	errBootloaderNotMTD  = errors.New("bootloader partition is not")
+	errNoGeometry        = errors.New("has no usable geometry")
+	errNoPartitions      = errors.New("no partitions in /proc/mtd")
+	errKernelReadback    = errors.New("kernel readback verification failed on")
+	errNoBootFiles       = errors.New("no boot files known for variant")
+	errNothingWritten    = errors.New("cannot verify the written root filesystem: no rootfs was written")
+	errNotDeviceTree     = errors.New("is not a whole device tree")
 )
 
 // bootloaderPartitions are the boot chain's partitions, in mtd order: mtd0-mtd4.
@@ -264,9 +266,10 @@ func Plan(cmdline string, mtd map[string]Partition) (Target, error) {
 // slot. The caller must restrict this to hardware with an independent recovery
 // path; normal NAND boots must continue through Plan.
 //
-// selected is the slot the environment boots (SelectedSlot), which stands in for the
-// running one: the install writes the other, so the slot the board last booted is never
-// the one erased. Unknown ("") counts as PING.
+// selected is the slot the environment boots for sure (ProvenSlot), which stands in for the
+// running one: the install writes the other, so the slot that last booted is never the one
+// erased, nor, while a selection is unconfirmed, the fallback U-Boot would return to.
+// Unknown ("") counts as PING.
 func RecoveryPlan(mtd map[string]Partition, selected string) (Target, error) {
 	if selected == pong.Name {
 		return planFor(pong, mtd)
@@ -351,6 +354,11 @@ func checkSlotPartitions(mtd map[string]Partition) error {
 
 		if got.Size <= 0 {
 			return fmt.Errorf("%s %w", name, errNoUsableSize)
+		}
+		// A rootfs's erase size is known before anything is erased: its read-back needs it,
+		// and an install that can only fail must not wipe the other slot first.
+		if (name == rootfsPing || name == rootfsPong) && (got.EraseSize <= 0 || got.Size%got.EraseSize != 0) {
+			return fmt.Errorf("%s %w", name, errNoEraseSize)
 		}
 	}
 

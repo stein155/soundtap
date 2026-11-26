@@ -124,6 +124,30 @@ func TestSubscribeRefusesAForeignCallback(t *testing.T) {
 	}
 }
 
+// A controller on IPv6 is matched against its own address, a zone or an IPv4-mapped
+// spelling notwithstanding; another address is still refused.
+func TestCallbackURLOverIPv6(t *testing.T) {
+	t.Parallel()
+
+	for _, subscribe := range []struct {
+		remote, callback string
+		ok               bool
+	}{
+		{"[fe80::7%wlan0]:40000", "<http://[fe80::7%25wlan0]:9000/ev>", true},
+		{"[2001:db8::7]:40000", "<http://[2001:db8::7]:9000/ev>", true},
+		{"[::ffff:192.0.2.7]:40000", "<http://192.0.2.7:9000/ev>", true},
+		{"[2001:db8::7]:40000", "<http://[2001:db8::8]:9000/ev>", false},
+	} {
+		req := httptest.NewRequestWithContext(t.Context(), "SUBSCRIBE", "/upnp/event/avtransport", http.NoBody)
+		req.RemoteAddr = subscribe.remote
+		req.Header.Set("Callback", subscribe.callback)
+
+		if _, ok := callbackURL(req); ok != subscribe.ok {
+			t.Errorf("callbackURL(%s from %s) ok = %v, want %v", subscribe.callback, subscribe.remote, ok, subscribe.ok)
+		}
+	}
+}
+
 // Every eventSubURL in the description takes a SUBSCRIBE: async_upnp_client subscribes to
 // all three services and drops every subscription when one fails.
 func TestEveryEventSubURLSubscribes(t *testing.T) {

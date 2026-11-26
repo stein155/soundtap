@@ -398,6 +398,9 @@ func TestSetAVTransportURIRejectsInternalTargets(t *testing.T) {
 		"http://127.0.0.1:8080/api/settings",
 		"http://localhost/api/settings",
 		"http://[::1]/x.mp3",
+		"http://[::1%25lo]/x.mp3", // loopback with a zone
+		"http://[::ffff:127.0.0.1]/x.mp3",
+		"http://[fe80::1%25wlan0]:8200/x.mp3", // link-local, like 169.254/16
 		"http://169.254.169.254/latest/meta-data",
 		"http://0.0.0.0/x.mp3",
 		"http://lo.example.test/x.mp3",    // name resolving to 127.0.0.1
@@ -416,6 +419,8 @@ func TestSetAVTransportURIRejectsInternalTargets(t *testing.T) {
 		"http://192.168.1.50:8200/media/1.mp3",
 		"https://stream.example.com/live.aac",
 		"http://10.0.0.5/x.mp3",
+		"http://[fd00::50]:8200/media/1.mp3", // a ULA, like a private IPv4 address
+		"http://[2001:db8::50]/x.mp3",
 		"http://media.example.test/x.mp3",
 	} {
 		if !MediaURL(context.Background(), uri) {

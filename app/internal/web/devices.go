@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"slices"
 	"strconv"
 	"strings"
@@ -106,6 +107,18 @@ var peerIPAllowed = privatePeerIP
 // privatePeerIP is peerIPAllowed as the speaker runs it.
 func privatePeerIP(ip net.IP) bool { return ip != nil && ip.IsPrivate() }
 
+// literalIP is host as an IP address when it is one, nil for a name. An IPv6 literal may
+// carry a zone ("::1%lo"), which net.ParseIP does not take: read as a name it would pass
+// every address check and still be dialled as the address.
+func literalIP(host string) net.IP {
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return nil
+	}
+
+	return net.IP(addr.WithZone("").Unmap().AsSlice())
+}
+
 // SetDevice records a speaker the discovery layer saw. A speaker with no identity is
 // ignored: without one there is nothing a group or a proxy route could refer to later,
 // and two such speakers would collide on the empty key.
@@ -118,7 +131,7 @@ func (s *Server) SetDevice(dev Device) { //nolint:gocritic // hugeParam: cmd/sou
 	dev.ID = deviceID
 	// The proxy forwards to this address, and a request it makes to loopback passes every
 	// loopbackOnly check on this speaker. Only a private LAN address is a peer.
-	if dev.IP != "" && !peerIPAllowed(net.ParseIP(dev.IP)) {
+	if dev.IP != "" && !peerIPAllowed(literalIP(dev.IP)) {
 		return
 	}
 

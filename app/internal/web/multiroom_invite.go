@@ -44,7 +44,7 @@ func inviteTargetAllowed(target string) bool {
 		return false
 	}
 
-	ip := net.ParseIP(host)
+	ip := literalIP(host)
 
 	return ip == nil || peerIPAllowed(ip)
 }

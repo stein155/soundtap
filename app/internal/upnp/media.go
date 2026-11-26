@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"syscall"
@@ -70,8 +71,10 @@ func fetchableHost(ctx context.Context, host string) bool {
 		return false
 	}
 
-	if ip := net.ParseIP(host); ip != nil {
-		return fetchableIP(ip)
+	// An IPv6 literal may carry a zone (fe80::1%wlan0), which net.ParseIP does not take.
+	literal, err := netip.ParseAddr(host)
+	if err == nil {
+		return fetchableIP(net.IP(literal.WithZone("").Unmap().AsSlice()))
 	}
 
 	h := strings.ToLower(strings.TrimSuffix(host, "."))
@@ -96,6 +99,9 @@ func fetchableHost(ctx context.Context, host string) bool {
 	return true
 }
 
+// fetchableIP holds IPv6 to the IPv4 rule: loopback (::1) and link-local (fe80::/10) are
+// refused like 127/8 and 169.254/16, a ULA (fc00::/7) is allowed like a private IPv4
+// address, and a global one like a public one (ADR 0041, ADR 0134).
 func fetchableIP(ip net.IP) bool {
 	return !ip.IsLoopback() && !ip.IsLinkLocalUnicast() && !ip.IsLinkLocalMulticast() &&
 		!ip.IsUnspecified() && !ip.IsInterfaceLocalMulticast()

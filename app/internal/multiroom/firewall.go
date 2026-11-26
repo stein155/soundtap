@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/netip"
 	"os/exec"
 	"sync"
 	"time"
@@ -54,10 +55,11 @@ func runNft(ctx context.Context, args ...string) error {
 var followerAllow = newAllowList(runNft) //nolint:gochecknoglobals // mirrors the one nft set
 
 // AllowFollower lets a follower's address reach the stream port (1704): the production
-// filter (os/board/rootfs/firewall.nft) accepts it only from addresses in snap_followers,
-// and an entry expires after 10 minutes unless it is refreshed. Without nft or the set
-// (dev images) nothing is filtered and the call does nothing. host may carry a port;
-// a name is resolved; anything but IPv4 is ignored.
+// filter (os/board/rootfs/firewall.nft) accepts it only from addresses in snap_followers
+// (IPv4) or snap_followers6 (IPv6), and an entry expires after 10 minutes unless it is
+// refreshed. Without nft or the sets (dev images) nothing is filtered and the call does
+// nothing. host may carry a port and a zone; a name is resolved, and its first IPv4 and
+// first IPv6 address are both let in.
 func AllowFollower(ctx context.Context, host string) {
 	followerAllow.allow(ctx, host)
 }
@@ -72,15 +74,56 @@ func (l *allowList) allow(ctx context.Context, host string) {
 	ctx, cancel := context.WithTimeout(ctx, allowTimeout)
 	defer cancel()
 
-	addr := net.ParseIP(host).To4()
-	if addr == nil {
-		// An invite may name the speaker (speaker.local): it connects from that address.
-		addrs, _ := net.DefaultResolver.LookupIP(ctx, "ip4", host)
-		if len(addrs) == 0 {
-			return
-		}
+	for _, addr := range followerAddrs(ctx, host) {
+		l.add(ctx, addr)
+	}
+}
 
-		addr = addrs[0].To4()
+// followerAddrs is host as the addresses to let in: the literal itself, or a name's first
+// IPv4 and first IPv6 address. An invite may name the speaker (speaker.local): it connects
+// from that address.
+func followerAddrs(ctx context.Context, host string) []netip.Addr {
+	literal, err := netip.ParseAddr(host)
+	if err == nil {
+		return []netip.Addr{literal.WithZone("").Unmap()}
+	}
+
+	addrs, _ := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+
+	var first4, first6 netip.Addr
+
+	for _, addr := range addrs {
+		addr = addr.WithZone("").Unmap()
+		switch {
+		case addr.Is4() && !first4.IsValid():
+			first4 = addr
+		case addr.Is6() && !first6.IsValid():
+			first6 = addr
+		default:
+			// Only the first of each family.
+		}
+	}
+
+	out := make([]netip.Addr, 0, 2) //nolint:mnd // one per address family
+
+	for _, addr := range []netip.Addr{first4, first6} {
+		if addr.IsValid() {
+			out = append(out, addr)
+		}
+	}
+
+	return out
+}
+
+// add puts one address in its family's set, unless it went in less than allowRefresh ago.
+func (l *allowList) add(ctx context.Context, addr netip.Addr) {
+	if !addr.IsValid() || addr.IsUnspecified() || addr.IsLoopback() || addr.IsMulticast() {
+		return
+	}
+
+	set := "snap_followers"
+	if addr.Is6() {
+		set = "snap_followers6"
 	}
 
 	key := addr.String()
@@ -112,7 +155,7 @@ func (l *allowList) allow(ctx context.Context, host string) {
 
 	defer func() { <-l.slot }()
 
-	if l.run(ctx, "add", "element", "ip", "filter", "snap_followers", "{", key, "timeout", "10m", "}") != nil {
+	if l.run(ctx, "add", "element", "inet", "filter", set, "{", key, "timeout", "10m", "}") != nil {
 		l.forget(key)
 	}
 }

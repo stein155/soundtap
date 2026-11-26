@@ -24,12 +24,16 @@ func TestScrubKeepsWhatIsNotASecret(t *testing.T) {
 	}
 
 	for line, want := range map[string]string{
-		"joined home at 8.8.4.4":           "joined <wifi-ssid-1> at <public-ip>",
-		"v6 2001:4860:4860::8888 up":       "v6 <public-ip> up",
-		"ssid       : Somebody's Network":  "ssid       : <redacted>",
-		`ssid="Somebody"`:                  "ssid=<redacted>",
-		"PSK_HEX=00ff00ff":                 "PSK_HEX= <redacted>",
-		"Associated with SSID 'Elsewhere'": "Associated with SSID '<redacted>'",
+		"joined home at 8.8.4.4":     "joined <wifi-ssid-1> at <public-ip>",
+		"v6 2001:4860:4860::8888 up": "v6 <public-ip> up",
+		// The speaker's own SLAAC address and prefix (ADR 0134), and a URL's bracketed host.
+		"inet6 2A02:A46B:1:2:200:ff:fe00:1/64 scope global": "inet6 <public-ip>/64 scope global",
+		"GET http://[2a02:a46b:1:2::5]:80/":                 "GET http://[<public-ip>]:80/",
+		"doc 2001:db8:1::7":                                 "doc 2001:db8:1::7",
+		"ssid       : Somebody's Network":                   "ssid       : <redacted>",
+		`ssid="Somebody"`:                                   "ssid=<redacted>",
+		"PSK_HEX=00ff00ff":                                  "PSK_HEX= <redacted>",
+		"Associated with SSID 'Elsewhere'":                  "Associated with SSID '<redacted>'",
 	} {
 		if got := red.scrub(line); got != want {
 			t.Errorf("scrub(%q) = %q, want %q", line, got, want)

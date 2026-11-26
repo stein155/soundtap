@@ -21,6 +21,7 @@ import (
 	"github.com/stein155/soundtap/app/internal/counters"
 	"github.com/stein155/soundtap/app/internal/hw"
 	"github.com/stein155/soundtap/app/internal/player"
+	"github.com/stein155/soundtap/app/internal/safehttp"
 	"github.com/stein155/soundtap/app/internal/speakerstate"
 	"github.com/stein155/soundtap/app/internal/supervise"
 )
@@ -98,7 +99,7 @@ func playAnnouncement(
 	// is as loud as what it interrupts. A linear volume/ceiling put one at 14 about 49 dB
 	// above the music at 14.
 	gain := audio.VolumeGain(notification.Volume)
-	log.Info("announce", "url", notification.URL, "gain", gain)
+	log.Info("announce", "url", safehttp.LogURL(notification.URL), "gain", gain)
 
 	// Signal EOF so we only Wait() (which closes the stdout pipe) once the Mixer has
 	// drained the whole clip — otherwise the last ~1/3s of every announcement is cut.

@@ -887,8 +887,8 @@ func TestOversizedKernelCannotBeForgottenAtRootfs(t *testing.T) {
 	target, err := flash.Plan("ubi.mtd=8,2048", map[string]flash.Partition{
 		"NAND.Kernel-Ping":      {Index: 6, Size: 0x1ff, EraseSize: 0},
 		"NAND.Kernel-Pong":      {Index: 7, Size: 0x1ff, EraseSize: 0},
-		"NAND.File-System-Ping": {Index: 8, Size: 0x6000000, EraseSize: 0},
-		"NAND.File-System-Pong": {Index: 9, Size: 0x6000000, EraseSize: 0},
+		"NAND.File-System-Ping": {Index: 8, Size: 0x6000000, EraseSize: fakePEB},
+		"NAND.File-System-Pong": {Index: 9, Size: 0x6000000, EraseSize: fakePEB},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -930,8 +930,8 @@ func TestReconstructedModuleMustFitBeforeErase(t *testing.T) {
 	target, err := flash.Plan("ubi.mtd=8,2048", map[string]flash.Partition{
 		"NAND.Kernel-Ping":      {Index: 6, Size: 0x500000, EraseSize: 0},
 		"NAND.Kernel-Pong":      {Index: 7, Size: 0x500000, EraseSize: 0},
-		"NAND.File-System-Ping": {Index: 8, Size: 0x1ff, EraseSize: 0},
-		"NAND.File-System-Pong": {Index: 9, Size: 0x1ff, EraseSize: 0},
+		"NAND.File-System-Ping": {Index: 8, Size: 0x1ff, EraseSize: 0x1ff},
+		"NAND.File-System-Pong": {Index: 9, Size: 0x1ff, EraseSize: 0x1ff},
 	})
 	if err != nil {
 		t.Fatal(err)

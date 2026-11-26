@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -171,6 +172,8 @@ func (m *Manager) startHostapd(ctx context.Context, ssid, scan string) (func(), 
 	}
 
 	delAP := func() { m.runLogged(context.WithoutCancel(ctx), "iw", "dev", m.cfg.AP, "del") }
+
+	m.refuseRouterAdverts()
 
 	channel, country := defaultChannel, m.reg.Country
 	if m.variant == "spotty" {
@@ -392,4 +395,16 @@ func (m *Manager) retryPause(reason string) time.Duration {
 	}
 
 	return m.cfg.Timing.LongPause
+}
+
+// refuseRouterAdverts keeps the setup AP from taking IPv6 router advertisements: the
+// network is open, and a phone on it must not hand the speaker an address or a default
+// route through itself (ADR 0134). A kernel without IPv6 has no such setting.
+func (m *Manager) refuseRouterAdverts() {
+	path := filepath.Join(m.cfg.Paths.IPv6Conf, m.cfg.AP, "accept_ra")
+
+	err := os.WriteFile(path, []byte("0\n"), privateFileMode)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		m.log.Warn("setup AP still takes router advertisements", "err", err)
+	}
 }

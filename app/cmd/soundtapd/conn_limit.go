@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"sync"
 )
 
@@ -54,8 +55,8 @@ func (l *connLimit) Accept() (net.Conn, error) {
 			return nil, err //nolint:wrapcheck // http.Server type-asserts net.Error on it
 		}
 
-		host, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
-		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		host, loopback := limitKey(conn.RemoteAddr().String())
+		if loopback {
 			return conn, nil
 		}
 
@@ -88,6 +89,32 @@ func (l *connLimit) Accept() (net.Conn, error) {
 		return limited, nil
 	}
 }
+
+// limitKey is what a remote address counts against, and whether it is loopback. An IPv6
+// host picks a fresh address from its /64 as it likes (temporary addresses), so its /64
+// counts as one address; a link-local address stays its own, since every host on the link
+// shares fe80::/64.
+func limitKey(remote string) (string, bool) {
+	host, _, err := net.SplitHostPort(remote)
+	if err != nil {
+		host = remote
+	}
+
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return host, false
+	}
+
+	addr = addr.WithZone("").Unmap()
+	if addr.Is4() || addr.IsLinkLocalUnicast() || addr.IsLoopback() {
+		return addr.String(), addr.IsLoopback()
+	}
+
+	return netip.PrefixFrom(addr, ipv6HostBits).Masked().String(), false
+}
+
+// ipv6HostBits is the prefix of one IPv6 host's SLAAC addresses.
+const ipv6HostBits = 64
 
 // oldestIdleAtCap returns the longest-idle connection when the total cap is reached, or
 // host's own longest-idle one when host is at its cap. The caller holds l.mu.

@@ -6,6 +6,7 @@ package firmware
 import (
 	"bufio"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash"
@@ -127,6 +128,12 @@ func (s *Handler) install(w http.ResponseWriter, r *http.Request, restart bool) 
 
 	writeErr := job.finishRootfs(scanErr)
 	if s.refuseScan(w, job, pkg, scanErr, writeErr) {
+		// A refusal after the rootfs began, a stream cut in a later module say, must not
+		// leave a native rootfs in the spare slot either.
+		if job.rootfs != nil {
+			s.discardRootfs(job, pkg)
+		}
+
 		return false
 	}
 	// A stock rootfs carries no /boot; its kernel is the raw partition, read back below.
@@ -184,6 +191,11 @@ func (s *Handler) checkStream(w http.ResponseWriter, r *http.Request, job *insta
 	if err == nil && !job.req.unsignedStock {
 		err = s.checkSignature(r, release.KindCore, digest.Sum(nil))
 	}
+	// ADR 0048: the SHA-256 of every unsigned package installed is logged; Bose's own file
+	// on the way back does not pass checkSignature, which logs the others.
+	if err == nil && job.req.unsignedStock && s.log != nil {
+		s.log.Warn("installing an unsigned stock package", "sha256", hex.EncodeToString(digest.Sum(nil)))
+	}
 
 	if err != nil {
 		s.discardRootfs(job, pkg)
@@ -195,9 +207,10 @@ func (s *Handler) checkStream(w http.ResponseWriter, r *http.Request, job *insta
 	return true
 }
 
-// discardRootfs erases a native root filesystem the install wrote and then refused.
+// discardRootfs erases a native root filesystem the install wrote and then refused. pkg is
+// nil when the scan itself failed.
 func (s *Handler) discardRootfs(job *installJob, pkg *stu.Package) {
-	if !pkg.Native {
+	if !job.nativeRootfs && (pkg == nil || !pkg.Native) {
 		return
 	}
 
@@ -453,6 +466,9 @@ type installJob struct {
 	// arrives immediately before the payload.
 	rootfs     io.WriteCloser
 	rootfsWait func() error
+	// nativeRootfs is set when the rootfs written came from a native module: known before
+	// the package is, so a scan that fails after it still erases it.
+	nativeRootfs bool
 }
 
 func (s *Handler) newInstallJob(req *installRequest, files stagedFiles) *installJob {
@@ -468,6 +484,7 @@ func (s *Handler) newInstallJob(req *installRequest, files stagedFiles) *install
 		inst:        &flash.Installer{Target: req.target, Run: run, Open: s.flashOpen},
 		codecMarker: codecMarker,
 		refusal:     nil, kernelWasSuffixed: false, bootloaders: nil, rootfs: nil, rootfsWait: nil,
+		nativeRootfs: false,
 	}
 }
 
@@ -499,9 +516,11 @@ func (j *installJob) writerFor(module stu.Module) io.Writer {
 		j.refusal = codecOnlyInOtherSlot(j.codecMarker)
 		if j.refusal == nil {
 			sink, j.refusal = j.rootfsWriter(module)
+			j.nativeRootfs = j.nativeRootfs || module.Native
 		}
 	case "ubi.img":
 		sink, j.refusal = j.rootfsWriter(module)
+		j.nativeRootfs = j.nativeRootfs || module.Native
 	case "linuxPatched", "soundtap-kernel":
 		j.kernelWasSuffixed = name != module.Name
 		sink, j.refusal = j.kernelWriter(module)

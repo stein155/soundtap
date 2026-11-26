@@ -45,7 +45,8 @@ func (n *envNAND) installer(running, alt Slot) *Installer {
 	return &Installer{
 		Target: Target{
 			Running: running, Alternate: alt, EnvMTD: 5, EnvSize: 0x20000, EnvEraseSize: 0x20000,
-			EnvRedundant: true, BootloaderSizes: nil, BootloaderEraseSizes: nil, PersistentName: "",
+			EnvRedundant: true, BootloaderSizes: map[int]int64{4: 0x1e0000},
+			BootloaderEraseSizes: map[int]int64{4: 0x20000}, PersistentName: "",
 			BootCount: false,
 		},
 		Open: nil, written: nil,

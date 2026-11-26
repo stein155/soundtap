@@ -194,6 +194,10 @@ func TestWrongPasswordWithoutALastGoodOpensTheSetupAP(t *testing.T) {
 		t.Fatalf("hostapd.conf = %q", hostapd)
 	}
 
+	if got := bench.read(filepath.Join(bench.p.IPv6Conf, "wlan1", "accept_ra")); got != "0\n" {
+		t.Fatalf("wlan1 accept_ra = %q, want router advertisements refused", got)
+	}
+
 	for _, c := range []string{
 		"iw phy phy0 interface add wlan1 type __ap", "ip addr add 192.168.42.1/24 dev wlan1",
 		"lan-allow add wlan1 192.168.42.1 24", "dnsd -i 192.168.42.1", "udhcpd -f",
@@ -621,4 +625,82 @@ func TestLongSpeakerNameFallsBackForTheSSID(t *testing.T) {
 	if got := bench.m.setupSSID(); got != APFallback {
 		t.Fatalf("ssid = %q", got)
 	}
+}
+
+// A setup AP that fails after a failed join is not the end: the saved network is tried
+// again, and joins once the router is back.
+//
+//nolint:paralleltest // its rig points wpactrl.ClientDir, a package variable, at a directory of its own
+func TestFailedSetupAPAfterAFailedJoinTriesAgain(t *testing.T) {
+	bench := newRig(t, "rhino")
+	bench.save("home", "homepass1")
+	bench.sys.keys["home"] = "homepass1"
+	bench.sys.fail["hostapd"] = true
+	bench.start()
+	bench.eventually("the AP problem", func() bool { return strings.Contains(bench.lastProblem(), "hostapd failed") })
+
+	bench.sys.mu.Lock()
+	bench.sys.fail = map[string]bool{}
+	bench.sys.where["home"] = "ok"
+	bench.sys.mu.Unlock()
+	bench.eventually("the join on a retry", func() bool { return bench.joinCount() == 1 })
+}
+
+// wpa_supplicant that does not start opens the setup AP until the next try, not for good.
+//
+//nolint:paralleltest // its rig points wpactrl.ClientDir, a package variable, at a directory of its own
+func TestSupplicantThatDoesNotStartIsTriedAgain(t *testing.T) {
+	bench := newRig(t, "rhino")
+	bench.save("home", "homepass1")
+	bench.sys.where["home"] = "ok"
+	bench.sys.keys["home"] = "homepass1"
+	bench.sys.fail["wpa_supplicant"] = true
+	bench.start()
+	bench.eventually("the setup AP", func() bool { return bench.exists("setup-ap") })
+
+	bench.sys.mu.Lock()
+	bench.sys.fail = map[string]bool{}
+	bench.sys.mu.Unlock()
+	bench.eventually("the join on a retry", func() bool { return bench.joinCount() == 1 && !bench.exists("setup-ap") })
+}
+
+// A wpa_supplicant that dies after the join is brought up again and joins again.
+//
+//nolint:paralleltest // its rig points wpactrl.ClientDir, a package variable, at a directory of its own
+func TestSupplicantThatDiesIsBroughtBack(t *testing.T) {
+	bench := newRig(t, "rhino")
+	bench.save("home", "homepass1")
+	bench.sys.where["home"] = "ok"
+	bench.sys.keys["home"] = "homepass1"
+	bench.start()
+	bench.eventually("the join", func() bool { return bench.joinCount() == 1 })
+
+	bench.sys.mu.Lock()
+	for pid, srv := range bench.sys.servers {
+		srv.Close() // the crash: the process and its control socket are gone
+		delete(bench.sys.servers, pid)
+		delete(bench.sys.alive, pid)
+	}
+	bench.sys.mu.Unlock()
+	bench.eventually("the second join", func() bool { return bench.joinCount() == 2 })
+}
+
+// A setup AP daemon that ends takes its pid file along: its pid, once reused, is never
+// stopped as dnsd.
+//
+//nolint:paralleltest // its rig points wpactrl.ClientDir, a package variable, at a directory of its own
+func TestAnEndedDaemonTakesItsPidFileAlong(t *testing.T) {
+	bench := newRig(t, "rhino")
+	bench.start()
+	bench.eventually("the setup AP", func() bool { return bench.exists("setup-ap") })
+
+	dnsd := filepath.Join(bench.p.Pid, "soundtap-dnsd.pid")
+
+	pid := readPid(dnsd)
+	if pid == 0 {
+		t.Fatal("no dnsd pid file")
+	}
+
+	bench.sys.end(pid)
+	bench.eventually("the pid file gone", func() bool { return !exists(dnsd) })
 }

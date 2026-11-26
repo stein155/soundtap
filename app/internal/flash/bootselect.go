@@ -547,6 +547,11 @@ func (in *Installer) UseLegacyEnv(read Reader) error {
 
 // dumpEnv reads size bytes at offset of mtd.
 func (in *Installer) dumpEnv(read Reader, mtd, offset, size int) ([]byte, error) {
+	err := in.redundantEnvBlock(mtd, offset)
+	if err != nil {
+		return nil, err
+	}
+
 	args := []string{"--omitoob", "--bb=skipbad", "-l", strconv.Itoa(size)}
 	if offset > 0 {
 		args = append(args, "-s", strconv.Itoa(offset))
@@ -565,6 +570,11 @@ func (in *Installer) dumpEnv(read Reader, mtd, offset, size int) ([]byte, error)
 // writeEnvCopy erases the erase block at offset of mtd, writes image at its start and
 // reads it back.
 func (in *Installer) writeEnvCopy(read Reader, mtd, offset int, image []byte) error {
+	err := in.redundantEnvBlock(mtd, offset)
+	if err != nil {
+		return err
+	}
+
 	staged, err := stage(image)
 	if err != nil {
 		return err
@@ -602,7 +612,12 @@ func (in *Installer) writeEnvCopy(read Reader, mtd, offset int, image []byte) er
 
 // eraseEnvCopy erases the erase block at offset of mtd and checks it reads back erased.
 func (in *Installer) eraseEnvCopy(read Reader, mtd, offset int) error {
-	err := in.Run(nil, "flash_erase", in.dev(mtd), strconv.Itoa(offset), "1")
+	err := in.redundantEnvBlock(mtd, offset)
+	if err != nil {
+		return err
+	}
+
+	err = in.Run(nil, "flash_erase", in.dev(mtd), strconv.Itoa(offset), "1")
 	if err != nil {
 		return err
 	}
@@ -734,6 +749,23 @@ func (in *Installer) ClearPendingBootCount(read Reader) error {
 	})
 }
 
+// ProvenSlot is the slot an environment boots for sure: while a selection is unconfirmed
+// (upgrade_available=1) U-Boot falls back to altbootcmd's slot, the one that booted before
+// it, so that one is kept; otherwise bootcmd's. "" when it names neither.
+func ProvenSlot(env *ubootenv.Env) string {
+	if pending, _ := env.Get(pendingKey); pending == "1" {
+		alt, _ := env.Get(altKey)
+		switch {
+		case sameCommand(alt, bootcmdPing):
+			return ping.Name
+		case sameCommand(alt, bootcmdPong):
+			return pong.Name
+		}
+	}
+
+	return SelectedSlot(env)
+}
+
 // SelectedSlot is the slot an environment's bootcmd boots, "" when it names neither.
 func SelectedSlot(env *ubootenv.Env) string {
 	v, _ := env.Get(bootcmdKey)
@@ -799,17 +831,23 @@ func (in *Installer) envConfig() (string, error) {
 
 	lines := fmt.Sprintf("%s 0x0 %#x %#x 1\n", in.dev(in.Target.EnvMTD), size, in.Target.EnvEraseSize)
 	if in.Target.EnvRedundant {
+		err := in.redundantEnvBlock(ubootMTD, ubootenv.RedundantOffset)
+		if err != nil {
+			return "", err
+		}
+
 		lines += fmt.Sprintf("%s %#x %#x %#x 1\n",
-			in.dev(ubootMTD), ubootenv.RedundantOffset, size, in.Target.EnvEraseSize)
+			in.dev(ubootMTD), ubootenv.RedundantOffset, size, in.Target.BootloaderEraseSizes[ubootMTD])
 	}
 
 	config, err := os.CreateTemp("", "soundtap-fw-env-")
 	if err != nil {
 		return "", fmt.Errorf("writing fw_env.config: %w", err)
 	}
-	defer config.Close()
 
 	_, err = config.WriteString(lines)
+
+	err = errors.Join(err, config.Close())
 	if err != nil {
 		_ = os.Remove(config.Name())
 
@@ -844,6 +882,26 @@ func stage(data []byte) (string, error) {
 
 // sameCommand compares two bootcmd values the way U-Boot runs them: a trailing ';'
 // and surrounding space change nothing.
+// redundantEnvBlock refuses the redundant environment copy unless NAND.U-Boot's live
+// geometry puts RedundantOffset at its last erase block, where U-Boot keeps it. It is
+// addressed by number, so a table that lacks NAND.U-Boot or sizes it otherwise must not be
+// erased or written there. Any other block passes.
+func (in *Installer) redundantEnvBlock(mtd, offset int) error {
+	if mtd != ubootMTD || offset != ubootenv.RedundantOffset {
+		return nil
+	}
+
+	size, ok := in.Target.BootloaderSizes[ubootMTD]
+	erase := in.Target.BootloaderEraseSizes[ubootMTD]
+
+	if !ok || erase <= 0 || int64(offset)+erase != size {
+		return fmt.Errorf("%w: NAND.U-Boot is %#x bytes in %#x-byte blocks, not ending at the copy at %#x",
+			errRedundantEnvPlace, size, erase, offset)
+	}
+
+	return nil
+}
+
 func sameCommand(a, b string) bool {
 	trim := func(s string) string { return strings.TrimSuffix(strings.TrimSpace(s), ";") }
 

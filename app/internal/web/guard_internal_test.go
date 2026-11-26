@@ -38,6 +38,8 @@ func TestHostAllowed(t *testing.T) {
 		{"192.168.1.42", true},
 		{"127.0.0.1:8000", true},
 		{"[::1]:8080", true},
+		{"[2001:db8::1]", true},        // an IPv6 literal without a port
+		{"[fe80::1%25wlan0]:80", true}, // a literal with a zone: no name to rebind either
 		{"localhost:8080", true},
 		{"keuken.local", true},
 		{"keuken.local:8080", true},
@@ -141,6 +143,10 @@ func TestSameSpeakerOrigin(t *testing.T) {
 		{"http://keuken.local", "keuken.local:8080", true},
 		{"http://keuken.local.", "keuken.local:8080", true},
 		{"http://192.0.2.129:8080", "192.0.2.129:8080", true}, // plain same-origin
+		// IPv6: brackets with or without a port, spelled differently, are the same speaker.
+		{"http://[2001:db8::81]", "[2001:db8::81]:8080", true},
+		{"http://[2001:DB8:0::81]", "[2001:db8::81]", true},
+		{"http://[2001:db8::82]", "[2001:db8::81]:8080", false},
 		// Another machine on the LAN is still cross-origin, port notwithstanding.
 		{"http://192.0.2.130", "192.0.2.129:8080", false},
 		{"http://keuken.local", "woonkamer.local:8080", false},
@@ -461,6 +467,34 @@ func TestWrongHostPage(t *testing.T) {
 	if api := get("/api/settings"); api.Code != http.StatusForbidden ||
 		!strings.Contains(api.Body.String(), "forbidden host") {
 		t.Errorf("api: %d %q", api.Code, api.Body.String())
+	}
+}
+
+// Reached over IPv6, the page links the address in brackets; a link-local one, which only
+// works with a zone, is left out.
+func TestWrongHostPageIPv6(t *testing.T) {
+	t.Parallel()
+
+	handler := new(Server).Guard(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
+	)
+
+	for local, want := range map[string]string{
+		"2001:db8::42": "http://[2001:db8::42]/",
+		"fe80::42":     "",
+	} {
+		ctx := context.WithValue(t.Context(), http.LocalAddrContextKey, &net.TCPAddr{IP: net.ParseIP(local), Port: 80})
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequestWithContext(ctx, http.MethodGet, "http://evil.example/", nil))
+
+		body := w.Body.String()
+		if want != "" && !strings.Contains(body, want) {
+			t.Errorf("reached at %s: page %q lacks %q", local, body, want)
+		}
+
+		if want == "" && strings.Contains(body, local) {
+			t.Errorf("reached at %s: page %q links the link-local address", local, body)
+		}
 	}
 }
 

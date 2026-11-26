@@ -65,25 +65,35 @@ func TestMuteAnchorMutesOnlyTheLocalClient(t *testing.T) {
 func TestStreamingFromReadsTheConnectionTable(t *testing.T) {
 	t.Parallel()
 
-	path := filepath.Join(t.TempDir(), "tcp")
+	dir := t.TempDir()
 
 	table := "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n" +
 		"   0: 00000000:0050 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1 1\n" +
 		"   1: 870200C0:B2C4 7E0200C0:06A8 01 00000000:00000000 00:00000000 00000000     0        0 2 1\n" +
 		"   2: 870200C0:B2C6 810200C0:06A8 06 00000000:00000000 00:00000000 00000000     0        0 3 1\n"
+	// 2001:db8::7 and, from an IPv6 socket, the IPv4 peer 192.0.2.140 as ::ffff:192.0.2.140.
+	table6 := "  sl  local_address                         remote_address                        st\n" +
+		"   0: 00000000000000000000000000000000:0050 00000000000000000000000000000000:0000 0A\n" +
+		"   1: B80D0120000000000000000001000000:B2C4 B80D0120000000000000000007000000:06A8 01\n" +
+		"   2: 0000000000000000FFFF0000870200C0:B2C6 0000000000000000FFFF00008C0200C0:06A8 01\n"
 
-	err := os.WriteFile(path, []byte(table), 0o644)
-	if err != nil {
-		t.Fatal(err)
+	for name, body := range map[string]string{"tcp": table, "tcp6": table6} {
+		err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	for host, want := range map[string]bool{
 		"192.0.2.126":  true,  // established to :1704
 		"192.0.2.129":  false, // TIME_WAIT only
 		"192.0.2.135":  false, // no connection
+		"192.0.2.140":  true,  // established from an IPv6 socket
+		"2001:db8::7":  true,  // established over IPv6
+		"2001:db8::8":  false, // no connection
 		"keuken.local": false, // not an address: dial instead
 	} {
-		if got := streamingFrom(path, host); got != want {
+		if got := streamingFrom(dir, host); got != want {
 			t.Errorf("streamingFrom(%s) = %v, want %v", host, got, want)
 		}
 	}

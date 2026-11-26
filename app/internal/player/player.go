@@ -18,6 +18,7 @@ import (
 	"github.com/stein155/soundtap/app/internal/audio"
 	"github.com/stein155/soundtap/app/internal/readahead"
 	"github.com/stein155/soundtap/app/internal/safego"
+	"github.com/stein155/soundtap/app/internal/safehttp"
 	"github.com/stein155/soundtap/app/internal/speakerstate"
 	"github.com/stein155/soundtap/app/internal/supervise"
 	"github.com/stein155/soundtap/app/internal/upnp"
@@ -489,9 +490,9 @@ func (l *loop) play(ctx context.Context, next state, pick picker, fade time.Dura
 
 	if err != nil {
 		if errors.Is(err, errNotMedia) {
-			l.log.Warn("refusing UPNP location that is not a media URL", "loc", loc)
+			l.log.Warn("refusing UPNP location that is not a media URL", "loc", safehttp.LogURL(loc))
 		} else {
-			l.log.Warn("no stream url", "src", src, "loc", loc, "err", err, "retry_in", l.backoff)
+			l.log.Warn("no stream url", "src", src, "loc", safehttp.LogURL(loc), "err", err, "retry_in", l.backoff)
 		}
 
 		l.fail(playGen)
@@ -525,7 +526,7 @@ func (l *loop) play(ctx context.Context, next state, pick picker, fade time.Dura
 	}
 
 	decoder, args := l.decoderArgs(src, input, next.vol, fade)
-	l.log.Info("play", "src", src, "decoder", decoder, "url", url, "vol", next.vol, "dev", l.sink,
+	l.log.Info("play", "src", src, "decoder", decoder, "url", safehttp.LogURL(url), "vol", next.vol, "dev", l.sink,
 		"resolve_ms", resolvedAt.Sub(beganAt).Milliseconds(), "connect_ms", time.Since(resolvedAt).Milliseconds(),
 		"dns_ms", trace.DNS, "tcp_ms", trace.TCP, "tls_ms", trace.TLS, "ttfb_ms", trace.TTFB)
 	l.spawn(ctx, decoder, args, feed, playGen)
@@ -578,7 +579,7 @@ func (l *loop) readAhead(ctx context.Context, url string, wanted func() bool, tr
 			BackoffMin: 0, BackoffMax: 0, ScanWait: 0, ScanMax: 0,
 		}, url)
 		if err != nil {
-			l.log.Info("radio read-ahead off, ffmpeg opens the stream", "url", url, "err", err)
+			l.log.Info("radio read-ahead off, ffmpeg opens the stream", "url", safehttp.LogURL(url), "err", err)
 		}
 
 		return "", nil

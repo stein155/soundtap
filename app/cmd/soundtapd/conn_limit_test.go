@@ -174,3 +174,29 @@ func TestConnLimitEvictsOwnIdleConnAtAddressCap(t *testing.T) {
 		t.Errorf("count for .30 = %d, want %d", l.byAddr["192.168.1.30"], maxConnsPerAddr)
 	}
 }
+
+// An IPv6 host's /64 is one address against the cap; link-local and IPv4 addresses are
+// their own, and loopback is never counted.
+func TestLimitKeyCountsAnIPv6HostByItsPrefix(t *testing.T) {
+	t.Parallel()
+
+	for remote, want := range map[string]string{
+		"192.0.2.7:51234":                 "192.0.2.7",
+		"[::ffff:192.0.2.7]:51234":        "192.0.2.7",
+		"[2001:db8:1:2::7]:51234":         "2001:db8:1:2::/64",
+		"[2001:db8:1:2:a1b2:c3d4::9]:443": "2001:db8:1:2::/64",
+		"[fe80::7%wlan0]:51234":           "fe80::7",
+		"[fe80::8%wlan0]:51234":           "fe80::8",
+	} {
+		got, loopback := limitKey(remote)
+		if got != want || loopback {
+			t.Errorf("limitKey(%s) = %q, %v; want %q, false", remote, got, loopback, want)
+		}
+	}
+
+	for _, remote := range []string{"127.0.0.1:1", "[::1]:1"} {
+		if _, loopback := limitKey(remote); !loopback {
+			t.Errorf("limitKey(%s) is not loopback", remote)
+		}
+	}
+}

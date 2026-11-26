@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"strings"
 	"sync"
@@ -383,7 +384,9 @@ func (s *Server) serveUI(w http.ResponseWriter, r *http.Request) {
 // reachedOverLAN reports whether the request arrived on an address other than the setup
 // access point's: the owner already reaches the speaker over a working network (Ethernet on
 // an ST20 or ST300 with no Wi-Fi saved), so the setup page is not forced on them. Without a
-// known local address the request is treated as one on the access point.
+// known local address the request is treated as one on the access point. So is one to an
+// IPv6 link-local address: every link has one, the access point's too, and the address does
+// not say which link it is.
 func reachedOverLAN(r *http.Request) bool {
 	addr, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
 	if !ok || addr == nil {
@@ -395,9 +398,14 @@ func reachedOverLAN(r *http.Request) bool {
 		return false
 	}
 
-	ip := net.ParseIP(host)
+	local, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
 
-	return ip != nil && !ip.IsLoopback() && host != speakerstate.SetupAPAddress
+	local = local.Unmap()
+
+	return !local.IsLoopback() && !local.IsLinkLocalUnicast() && local.String() != speakerstate.SetupAPAddress
 }
 
 // updateApp maps POST /api/update onto the update manager: an optional

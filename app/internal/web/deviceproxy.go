@@ -114,7 +114,7 @@ var errPeerAddress = errors.New("not a peer address")
 // peerDialControl runs after name resolution, on the address about to be dialled.
 func peerDialControl(_, address string, _ syscall.RawConn) error {
 	host, _, err := net.SplitHostPort(address)
-	if err != nil || !peerIPAllowed(net.ParseIP(host)) {
+	if err != nil || !peerIPAllowed(literalIP(host)) {
 		return fmt.Errorf("%w: %s", errPeerAddress, address)
 	}
 

@@ -243,7 +243,8 @@ func startMDNS(
 }
 
 // outboundIP returns the primary non-loopback IPv4 by inspecting the route to a public
-// address (no packet is sent). Empty when offline.
+// address (no packet is sent). Empty when offline. IPv4 stays the speaker's one address
+// for the API, the A record and multiroom; its IPv6 addresses come on top (ADR 0134).
 func outboundIP() string {
 	conn, err := (&net.Dialer{}).DialContext(context.Background(), "udp4", "8.8.8.8:80")
 	if err != nil {

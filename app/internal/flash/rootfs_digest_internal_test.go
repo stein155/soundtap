@@ -228,6 +228,50 @@ func TestRootfsDigestRefusesWhatItCannotFollow(t *testing.T) {
 	}
 }
 
+// Header fields from 2^31 up are refused, not followed: on the speaker an int is 32 bits,
+// and taken as one they turned negative, passed every check and sliced out of range.
+func TestRootfsDigestRefusesHeaderFieldsPastAnInt32(t *testing.T) {
+	t.Parallel()
+
+	image := flashtest.UBIImage(testPEB, testVolume())
+	data := 2 * testPEB // the first eraseblock of the volume, after the two layout copies
+	vid := data + 2048  // ubiformat -s 2048
+
+	patch := func(off int, value uint32, typ byte) []byte {
+		out := bytes.Clone(image)
+		binary.BigEndian.PutUint32(out[off:], value)
+
+		if typ != 0 {
+			out[vid+5] = typ
+		}
+
+		return out
+	}
+
+	for _, test := range []struct {
+		name   string
+		stream []byte
+	}{
+		{"VID header offset", patch(data+ubiECVIDOff, 0x7ffffff0, 0)},
+		{"data offset", patch(data+ubiECDataOff, 0xfffff000, 0)},
+		{"data pad", patch(vid+28, 0xfffffff0, 0)},
+		{"static data size", patch(vid+20, 0xfffffff0, ubiStatic)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			d := newRootfsDigest(testPEB, 0x6000000)
+
+			_, _ = d.Write(test.stream)
+
+			err := d.verify(func(string) (io.ReadCloser, error) { return nil, errMustNotRead })
+			if err == nil || !strings.Contains(err.Error(), "cannot verify") {
+				t.Fatalf("err = %v", err)
+			}
+		})
+	}
+}
+
 // The failures the fakes report.
 var (
 	errIO          = errors.New("input/output error")

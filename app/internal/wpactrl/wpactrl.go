@@ -129,6 +129,9 @@ type Conn struct {
 	done    chan struct{}
 	closing atomic.Bool
 	once    sync.Once
+	// late counts the replies still owed to requests that gave up (reqMu's): one of those can
+	// arrive while a later request waits, and is not its answer.
+	late int
 }
 
 // clientSeq numbers this process's client sockets, so two connections never bind the same
@@ -157,6 +160,7 @@ func Dial(path string) (*Conn, error) {
 		done:    make(chan struct{}),
 		closing: atomic.Bool{},
 		once:    sync.Once{},
+		late:    0,
 	}
 	safego.Go("wpactrl-read", conn.read)
 
@@ -179,6 +183,7 @@ func (c *Conn) Request(ctx context.Context, cmd string) (string, error) {
 
 	select { // a late reply to a request that gave up is not this one's
 	case <-c.replies:
+		c.late = max(c.late-1, 0)
 	default:
 	}
 
@@ -198,13 +203,51 @@ func (c *Conn) Request(ctx context.Context, cmd string) (string, error) {
 		return "", fmt.Errorf("wpactrl %s: %w", verb(cmd), err)
 	}
 
-	select {
-	case reply := <-c.replies:
-		return reply, nil
-	case <-c.done:
-		return "", ErrClosed
-	case <-ctx.Done():
-		return "", fmt.Errorf("wpactrl %s: %w", verb(cmd), ctx.Err())
+	for {
+		select {
+		case reply := <-c.replies:
+			// While a reply is still owed, one that cannot answer cmd is that one. A late OK
+			// for a command that also answers OK cannot be told apart; the next request that
+			// reads its own reply after it settles the count.
+			if c.late > 0 && !fits(cmd, reply) {
+				c.late--
+
+				continue
+			}
+
+			return reply, nil
+		case <-c.done:
+			return "", ErrClosed
+		case <-ctx.Done():
+			c.late = min(c.late+1, maxLate)
+
+			return "", fmt.Errorf("wpactrl %s: %w", verb(cmd), ctx.Err())
+		}
+	}
+}
+
+// maxLate bounds the replies counted as owed: a supplicant that went away owes them for good.
+const maxLate = 4
+
+// fits reports whether reply can be wpa_supplicant's answer to cmd.
+func fits(cmd, reply string) bool {
+	answer := strings.TrimSpace(reply)
+
+	switch verb(cmd) {
+	case "PING":
+		return answer == "PONG"
+	case "STATUS":
+		return strings.Contains(answer, "wpa_state=")
+	case "ADD_NETWORK":
+		_, err := strconv.Atoi(answer)
+
+		return err == nil || strings.HasPrefix(answer, "FAIL")
+	case "SCAN_RESULTS":
+		return strings.HasPrefix(answer, "bssid")
+	case "SIGNAL_POLL":
+		return strings.Contains(answer, "RSSI=") || strings.HasPrefix(answer, "FAIL")
+	default: // the commands that answer OK or FAIL
+		return strings.HasPrefix(answer, "OK") || strings.HasPrefix(answer, "FAIL")
 	}
 }
 

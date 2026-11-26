@@ -123,8 +123,8 @@ func TestRecoveryPlanTargetsPong(t *testing.T) {
 		"NAND.U-Boot":           {Index: 4, Size: 0x1e0000, EraseSize: 0x20000},
 		"NAND.Kernel-Ping":      {Index: 6, Size: 0x500000, EraseSize: 0},
 		"NAND.Kernel-Pong":      {Index: 7, Size: 0x500000, EraseSize: 0},
-		"NAND.File-System-Ping": {Index: 8, Size: 0x6000000, EraseSize: 0},
-		"NAND.File-System-Pong": {Index: 9, Size: 0x6000000, EraseSize: 0},
+		"NAND.File-System-Ping": {Index: 8, Size: 0x6000000, EraseSize: 0x20000},
+		"NAND.File-System-Pong": {Index: 9, Size: 0x6000000, EraseSize: 0x20000},
 	}
 
 	target, err := RecoveryPlan(table, "")
@@ -170,6 +170,15 @@ func TestUnexpectedPartitionTableIsRefused(t *testing.T) {
 	_, err = Plan("ubi.mtd=8,2048", table)
 	if err == nil {
 		t.Fatal("a partition with no capacity was accepted")
+	}
+
+	table = mtd(t)
+
+	table["NAND.File-System-Pong"] = Partition{Index: 9, Size: 0x6000000, EraseSize: 0}
+
+	_, err = Plan("ubi.mtd=8,2048", table)
+	if err == nil {
+		t.Fatal("a root filesystem with no erase size was accepted")
 	}
 }
 

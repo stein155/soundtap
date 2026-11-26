@@ -92,6 +92,7 @@ func (r *Responder) browseSession(ctx context.Context, tbl *table, updates chan<
 		r: r, c: conn, t: tbl, updates: updates,
 		path: "", pending: nil, gen: 0,
 		results: make(chan lookup), slots: make(chan struct{}, maxResolving),
+		inflight: 0, cancels: map[instanceKey]context.CancelFunc{},
 	}
 	for {
 		err = brw.start(ctx)
@@ -136,6 +137,12 @@ type browser struct {
 	gen     uint64
 	results chan lookup
 	slots   chan struct{}
+	// inflight counts the resolves started and not yet handed back, superseded ones too, so a
+	// host that announces and withdraws names over and over cannot start them without end.
+	inflight int
+	// cancels ends a key's resolve once it is reported again or removed, so a superseded one
+	// gives its slot back at once.
+	cancels map[instanceKey]context.CancelFunc
 }
 
 // start makes a new browser. A new browser lists the peers there are now; one that left
@@ -150,6 +157,12 @@ func (b *browser) start(ctx context.Context) error {
 
 	b.t.known = map[string]map[string]Peer{}
 	b.pending = map[instanceKey]uint64{}
+
+	for key, cancel := range b.cancels { // a browser of before the refresh: its results are dropped
+		cancel()
+		delete(b.cancels, key)
+	}
+
 	b.r.note("avahi browser started")
 
 	return nil
@@ -172,6 +185,7 @@ func (b *browser) follow(ctx context.Context, refresh, tick <-chan time.Time) er
 		case <-refresh:
 			return errRefresh
 		case result := <-b.results:
+			b.inflight--
 			b.resolved(&result)
 		case <-tick:
 			peers := b.t.all()
@@ -199,16 +213,22 @@ func (b *browser) signal(ctx context.Context, sig *dbus.Signal) error {
 		switch {
 		case !ok:
 			b.r.note("skipped: not an IPv4 instance")
-		case len(b.pending) >= maxPeers:
+		case len(b.pending) >= maxPeers || b.inflight >= maxPeers:
 			b.r.note("ignored: too many instances resolving: " + key.name)
 		default:
+			b.stopResolve(key)
+
+			rctx, cancel := context.WithCancel(ctx)
+			b.cancels[key] = cancel
 			b.gen++
 			b.pending[key] = b.gen
-			resolveAsync(ctx, b.c, key, b.gen, b.path, b.slots, b.results)
+			b.inflight++
+			resolveAsync(ctx, rctx, b.c, key, b.gen, b.path, b.slots, b.results)
 		}
 	case avahiBrowser + ".ItemRemove":
 		if key, ok := item(sig); ok {
 			delete(b.pending, key)
+			b.stopResolve(key)
 
 			gone := b.t.removed(interfaceName(key.iface), key.name)
 			for i := range gone {
@@ -226,6 +246,14 @@ func (b *browser) signal(ctx context.Context, sig *dbus.Signal) error {
 	return nil
 }
 
+// stopResolve ends the resolve running for key, if any.
+func (b *browser) stopResolve(key instanceKey) {
+	if cancel, ok := b.cancels[key]; ok {
+		cancel()
+		delete(b.cancels, key)
+	}
+}
+
 // resolved applies a resolve unless the instance was removed, or reported again, since.
 func (b *browser) resolved(result *lookup) {
 	if result.browser != b.path || b.pending[result.key] != result.gen {
@@ -233,6 +261,7 @@ func (b *browser) resolved(result *lookup) {
 	}
 
 	delete(b.pending, result.key)
+	b.stopResolve(result.key)
 
 	if result.err != nil {
 		b.r.note("not resolved: " + result.key.name + ": " + result.err.Error())
@@ -277,20 +306,26 @@ func firstString(body []any) string {
 	return ""
 }
 
-// resolveAsync resolves key once a slot is free and hands the outcome back.
-func resolveAsync(ctx context.Context, conn *sysbus.Conn, key instanceKey, gen uint64, browser dbus.ObjectPath,
-	slots chan struct{}, results chan<- lookup,
+// resolveAsync resolves key once a slot is free and hands the outcome back. rctx ends this
+// resolve alone, when it is superseded; its outcome still goes back, so the browser's count
+// of resolves in flight stays true. Only the session's end (ctx) drops it.
+func resolveAsync(ctx, rctx context.Context, conn *sysbus.Conn, key instanceKey, gen uint64,
+	browser dbus.ObjectPath, slots chan struct{}, results chan<- lookup,
 ) {
 	safego.Go("mdns.resolve", func() {
+		var (
+			res resolved
+			err error
+		)
+
 		select {
 		case slots <- struct{}{}:
-		case <-ctx.Done():
-			return
+			res, err = resolveInstance(rctx, conn, key.iface, key.name, serviceType)
+
+			<-slots
+		case <-rctx.Done():
+			err = rctx.Err()
 		}
-
-		res, err := resolveInstance(ctx, conn, key.iface, key.name, serviceType)
-
-		<-slots
 
 		select {
 		case results <- lookup{key: key, gen: gen, browser: browser, res: res, err: err}:

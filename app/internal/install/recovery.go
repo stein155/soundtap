@@ -187,7 +187,7 @@ func LivePlan() (flash.Target, error) {
 
 		env, envErr := (&flash.Installer{Target: first, Run: nil, Open: nil}).Env(ReadNAND)
 		if envErr == nil {
-			selected, planErr := flash.RecoveryPlan(mtd, flash.SelectedSlot(env))
+			selected, planErr := flash.RecoveryPlan(mtd, flash.ProvenSlot(env))
 			selected.EnvRedundant = redundant
 
 			if planErr != nil {

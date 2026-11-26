@@ -214,3 +214,33 @@ func TestMultiLineCommandIsRefused(t *testing.T) {
 		t.Fatal("a command with a newline went out")
 	}
 }
+
+// A reply that comes after its request gave up is not taken as the next request's answer.
+//
+//nolint:paralleltest // wpactrltest.ShortDir points wpactrl.ClientDir, a package variable, at this test's directory
+func TestALateReplyIsNotTheNextOnes(t *testing.T) {
+	conn, _, _ := dial(t, func(cmd string) string {
+		if cmd == "STATUS" {
+			time.Sleep(300 * time.Millisecond) // slow, as during a scan
+
+			return "wpa_state=COMPLETED\n"
+		}
+
+		return ""
+	})
+
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+
+	_, err := conn.Status(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("STATUS err = %v, want a timeout", err)
+	}
+
+	pctx, pcancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer pcancel()
+
+	if !conn.Ping(pctx) {
+		t.Fatal("PING took STATUS's late reply for its own")
+	}
+}

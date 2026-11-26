@@ -62,10 +62,11 @@ func sysPath(p string) string { return filepath.Join(sysRoot, p) }
 var secretLine = regexp.MustCompile(`(?i)(psk|password|passphrase|passwd|secret|token|authorization|` +
 	`api[_-]?key|auth[_-]?data)(_b64|_hex)?\b"?\s*[:=]\s*.*`)
 
-// urlUserinfo matches the user:password@ part of a URL. The player logs whole stream
-// URLs, and custom streams may carry credentials there. The user goes too: some
-// services put the token in it.
-var urlUserinfo = regexp.MustCompile(`(://)[^/\s@]+@`)
+// urlUserinfo matches the user:password@ part of a URL: the authority up to its last @,
+// as a URL parser reads it, so a password with an @ in it goes whole. Custom streams may
+// carry credentials there, and an older log may hold a whole stream URL. The user goes
+// too: some services put the token in it.
+var urlUserinfo = regexp.MustCompile(`(://)[^/?#\s]+@`)
 
 // ssidField matches a network name given as a key, as wpa_supplicant's STATUS ("ssid=...") and the
 // bundle's own network section ("ssid       : ...") write it, and wpa_supplicant's

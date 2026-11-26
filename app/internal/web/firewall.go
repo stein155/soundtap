@@ -136,7 +136,7 @@ func (f *FirewallCheck) check(ctx context.Context) (string, string) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), firewallTimeout)
 	defer cancel()
 	// The chain that firewall.nft defines; its default verdict is what makes it a filter.
-	out, err := f.run(ctx, "/usr/sbin/nft", "list", "chain", "ip", "filter", "input")
+	out, err := f.run(ctx, "/usr/sbin/nft", "list", "chain", "inet", "filter", "input")
 	if err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) && len(bytes.TrimSpace(exit.Stderr)) > 0 {

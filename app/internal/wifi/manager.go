@@ -55,6 +55,7 @@ type Paths struct {
 	FirmwareParam string // the kernel firmware loader's search path parameter
 	BootLog       string // the boot trace on /mnt/nv
 	LanAllow      string // the production filter's subnet helper
+	IPv6Conf      string // /proc/sys/net/ipv6/conf: the setup AP takes no router advertisements
 }
 
 // DefaultPaths are the speaker's.
@@ -74,6 +75,7 @@ func DefaultPaths() Paths {
 		FirmwareParam: "/sys/module/firmware_class/parameters/path",
 		BootLog:       "/mnt/nv/soundtap-boot.log",
 		LanAllow:      "/opt/soundtap/lan-allow.sh",
+		IPv6Conf:      "/proc/sys/net/ipv6/conf",
 	}
 }
 
@@ -346,27 +348,46 @@ type adoption int
 const (
 	adoptNone  adoption = iota // nothing kept: bring up
 	adoptKept                  // kept and supervised until ctx ended
-	adoptRetry                 // kept the setup AP until its retry: bring up
+	adoptRetry                 // kept the setup AP until its retry, or a kept station lost wpa_supplicant: bring up
 )
+
+// adoptStation keeps a station a previous soundtapd left joined, and supervises it until ctx
+// ends (adoptKept) or its wpa_supplicant goes away (adoptRetry). It reports false when there
+// is no joined station to keep.
+func (m *Manager) adoptStation(ctx context.Context) (adoption, bool) {
+	sess, err := m.attach(ctx)
+	if err != nil {
+		return adoptNone, false
+	}
+
+	status, err := sess.status(ctx)
+	if err != nil || status["wpa_state"] != "COMPLETED" {
+		sess.close()
+
+		return adoptNone, false
+	}
+
+	m.log.Info("wifi already joined; keeping it", "ssid", status["ssid"])
+	m.lastSSID, m.hasLast = status["ssid"], true
+	m.ensureRegulatory(ctx)
+	m.problem("")
+
+	if m.watch(ctx, sess, nil) {
+		// wpa_supplicant went away: bring it up again.
+		sess.close()
+
+		return adoptRetry, true
+	}
+
+	return adoptKept, true
+}
 
 // adopt keeps what a previous soundtapd left running: a joined station, or the setup AP.
 // At boot nothing runs and it returns at once.
 func (m *Manager) adopt(ctx context.Context) adoption {
 	if m.alive(m.pid("wpa")) && m.cfg.Sys.HasIPv4(m.cfg.STA) {
-		sess, err := m.attach(ctx)
-		if err == nil {
-			st, err := sess.status(ctx)
-			if err == nil && st["wpa_state"] == "COMPLETED" {
-				m.log.Info("wifi already joined; keeping it", "ssid", st["ssid"])
-				m.lastSSID, m.hasLast = st["ssid"], true
-				m.ensureRegulatory(ctx)
-				m.problem("")
-				m.watch(ctx, sess, nil)
-
-				return adoptKept
-			}
-
-			sess.close()
+		if adopted, ok := m.adoptStation(ctx); ok {
+			return adopted
 		}
 	}
 
@@ -485,17 +506,19 @@ func (m *Manager) bringUp(ctx context.Context, pass kind) (bool, error) {
 		if ctx.Err() != nil {
 			return false, nil
 		}
+		// wpa_supplicant did not start or answer, a socket of the previous one still in the
+		// way say: there is a saved network, so the setup AP waits for the next try.
+		m.log.Warn("wifi join could not start", "err", err)
 
-		return false, m.apOnly(ctx, err.Error())
+		return m.apUntilRetry(ctx, err.Error(), m.cfg.Timing.ShortPause), nil
 	}
 	defer sess.close()
 
 	switch {
 	case res.joined:
 		m.joined(ctx, sess, confPath, nets[0].rec, &res)
-		m.watch(ctx, sess, nil)
 
-		return false, nil
+		return m.watch(ctx, sess, nil), nil
 	case ctx.Err() != nil:
 		return false, nil
 	default:
@@ -517,15 +540,14 @@ func (m *Manager) joinFailed(ctx context.Context, sess *session, confPath string
 		m.log.Info("wifi join pending; no AP mode, the station keeps trying")
 
 		watchConf, _ := m.readConf()
-		m.watch(ctx, sess, func() {
+
+		return m.watch(ctx, sess, func() {
 			// The address came: what a join does next.
 			b, _ := os.ReadFile(watchConf)
 			m.joined(ctx, sess, watchConf, ParseConf(b), &joinResult{
 				joined: false, assoc: -1, took: -1, seen: nil, reason: "",
 			})
-		})
-
-		return false, nil
+		}), nil
 	case exists(good) && !sameFile(confPath, good) && copyFile(good, confPath) == nil:
 		// New settings that do not join, a mistyped password above all: a speaker that was
 		// on the network must not need the setup AP to get back.
@@ -541,14 +563,29 @@ func (m *Manager) joinFailed(ctx context.Context, sess *session, confPath string
 
 	sess.close()
 
-	err := m.openAP(ctx, "wifi join failed")
+	return m.apUntilRetry(ctx, "wifi join failed", pause), nil
+}
+
+// apUntilRetry opens the setup AP until the saved network's next try. An AP that does not
+// open is a problem, not the end: the saved network is tried again after the pause, so a
+// speaker never stays without both its network and its setup AP.
+func (m *Manager) apUntilRetry(ctx context.Context, reason string, pause time.Duration) bool {
+	err := m.openAP(ctx, reason)
 	if err != nil {
-		return false, err
+		if ctx.Err() != nil {
+			return false
+		}
+
+		m.log.Error("wifi", "err", err)
+		m.problem(err.Error())
+		m.tries++
+
+		return sleep(ctx, pause)
 	}
 
 	m.problem("")
 
-	return m.holdAP(ctx, pause), nil
+	return m.holdAP(ctx, pause)
 }
 
 // apOnly opens the setup AP with no saved network to go back to, and keeps it.
@@ -700,13 +737,25 @@ func (m *Manager) startDaemon(ctx context.Context, pidName, name string, args ..
 		return err //nolint:wrapcheck // the caller wraps it with the daemon's name
 	}
 
-	_ = os.WriteFile(m.pid(pidName), []byte(strconv.Itoa(pid)+"\n"), publicFileMode)
+	path := m.pid(pidName)
+	_ = os.WriteFile(path, []byte(strconv.Itoa(pid)+"\n"), publicFileMode)
+
 	select {
 	case <-exited:
-		remove(m.pid(pidName))
+		remove(path)
 
 		return errExitedAtOnce
 	case <-time.After(m.cfg.Timing.Settle):
+		// A daemon that ends later takes its pid file along, so a reused pid is never
+		// signalled as this daemon. A newer daemon's pid file is left alone.
+		safego.Go("wifi-pidfile", func() {
+			<-exited
+
+			if readPid(path) == pid {
+				remove(path)
+			}
+		})
+
 		return nil
 	case <-ctx.Done():
 		return fmt.Errorf("%s: %w", name, ctx.Err())

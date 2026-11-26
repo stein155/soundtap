@@ -216,7 +216,7 @@ func followTargetAllowed(host string) bool {
 		return false
 	}
 
-	ip := net.ParseIP(host)
+	ip := literalIP(host)
 
 	return ip == nil || !ownAddress(ip)
 }

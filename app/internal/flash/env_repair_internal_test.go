@@ -140,7 +140,7 @@ func (r *rawNAND) installer(redundant bool) *Installer {
 		Target: Target{
 			Running: pong, Alternate: ping, EnvMTD: 5, EnvSize: 0x20000, EnvEraseSize: 0x20000,
 			EnvRedundant: redundant, BootloaderSizes: map[int]int64{4: 0x1e0000},
-			BootloaderEraseSizes: nil, PersistentName: "", BootCount: false,
+			BootloaderEraseSizes: map[int]int64{4: 0x20000}, PersistentName: "", BootCount: false,
 		},
 		Run: r.run, Open: nil, written: nil,
 	}

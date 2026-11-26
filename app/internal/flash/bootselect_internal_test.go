@@ -5,6 +5,7 @@ package flash
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 
@@ -264,6 +265,69 @@ func TestSelectionRemovesTheRetiredOwnerKey(t *testing.T) {
 
 		if _, ok := c.Get(retiredOwnerKey); ok {
 			t.Errorf("copy %d still holds the owner key", index)
+		}
+	}
+}
+
+// While a selection is unconfirmed the slot that booted before it is the proven one: a RAM
+// recovery keeps it and writes the other.
+func TestProvenSlotKeepsTheFallbackWhilePending(t *testing.T) {
+	t.Parallel()
+
+	env := ubootenv.NewEnv()
+	env.Set(bootcmdKey, bootcmdPong)
+	env.Set(altKey, bootcmdPing)
+
+	if got := ProvenSlot(env); got != "PONG" {
+		t.Fatalf("confirmed: proven slot = %q, want PONG", got)
+	}
+
+	env.Set(pendingKey, "1")
+
+	if got := ProvenSlot(env); got != "PING" {
+		t.Fatalf("pending: proven slot = %q, want PING", got)
+	}
+
+	env.Delete(altKey)
+
+	if got := ProvenSlot(env); got != "PONG" {
+		t.Fatalf("pending without altbootcmd: proven slot = %q, want PONG", got)
+	}
+}
+
+// The redundant environment copy is only written where NAND.U-Boot ends.
+func TestRedundantEnvBlockMustBeTheLastBlock(t *testing.T) {
+	t.Parallel()
+
+	installer := func(size, erase int64) *Installer {
+		sizes, erases := map[int]int64{}, map[int]int64{}
+		if size > 0 {
+			sizes[ubootMTD], erases[ubootMTD] = size, erase
+		}
+
+		return &Installer{
+			Target: Target{
+				Running: ping, Alternate: pong, BootloaderSizes: sizes, BootloaderEraseSizes: erases,
+				EnvMTD: 5, EnvSize: 0x20000, EnvEraseSize: 0x20000, PersistentName: "", BootCount: false,
+				EnvRedundant: true,
+			},
+			Run: nil, Open: nil, written: nil,
+		}
+	}
+
+	err := installer(0x1e0000, 0x20000).redundantEnvBlock(ubootMTD, ubootenv.RedundantOffset)
+	if err != nil {
+		t.Fatalf("the stock layout was refused: %v", err)
+	}
+
+	for name, in := range map[string]*Installer{
+		"no NAND.U-Boot": installer(0, 0),
+		"larger":         installer(0x200000, 0x20000),
+		"other blocks":   installer(0x1e0000, 0x40000),
+	} {
+		err := in.redundantEnvBlock(ubootMTD, ubootenv.RedundantOffset)
+		if !errors.Is(err, errRedundantEnvPlace) {
+			t.Errorf("%s: err = %v, want errRedundantEnvPlace", name, err)
 		}
 	}
 }

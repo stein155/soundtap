@@ -194,16 +194,19 @@ func TestSetupMarkerRedirectsBareRoot(t *testing.T) {
 			t.Errorf("root reached on %s redirected to %q, want the UI", local, lan.Header().Get("Location"))
 		}
 	}
-	// On the access point's own address the setup page still comes first.
-	addr, _ := net.ResolveTCPAddr("tcp", speakerstate.SetupAPAddress+":80")
-	ctx := context.WithValue(t.Context(), http.LocalAddrContextKey, net.Addr(addr))
-	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/", http.NoBody)
-	req.Host = speakerstate.SetupAPAddress
-	rec = httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
+	// On the access point's own address, or an IPv6 link-local one that may be the access
+	// point's, the setup page still comes first.
+	for _, local := range []string{speakerstate.SetupAPAddress + ":80", "[fe80::1]:80"} {
+		addr, _ := net.ResolveTCPAddr("tcp", local)
+		ctx := context.WithValue(t.Context(), http.LocalAddrContextKey, net.Addr(addr))
+		req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/", http.NoBody)
+		req.Host = speakerstate.SetupAPAddress
+		rec = httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusFound {
-		t.Errorf("root on the access point = %d, want the setup redirect", rec.Code)
+		if rec.Code != http.StatusFound {
+			t.Errorf("root on %s = %d, want the setup redirect", local, rec.Code)
+		}
 	}
 }
 

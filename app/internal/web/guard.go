@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"time"
@@ -226,14 +227,31 @@ func sameSpeakerOrigin(origin, host string, names []string) bool {
 	return strings.EqualFold(hostOnly(parsed.Host), hostOnly(host))
 }
 
+// urlHost is addr as a URL's host: an IPv6 address in brackets.
+func urlHost(addr netip.Addr) string {
+	if addr.Is6() {
+		return "[" + addr.String() + "]"
+	}
+
+	return addr.String()
+}
+
 // hostOnly strips the port and any trailing root dot, so "keuken.local.:80" and
-// "keuken.local" compare equal.
+// "keuken.local" compare equal. An IPv6 literal loses its brackets and comes out in its
+// one canonical spelling, so "[2001:DB8::1]" and "[2001:db8:0::1]:80" compare equal too.
 func hostOnly(hostport string) string {
 	host := hostport
 
 	h, _, err := net.SplitHostPort(hostport)
 	if err == nil {
 		host = h
+	} else if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = host[1 : len(host)-1]
+	}
+
+	literal, err := netip.ParseAddr(host)
+	if err == nil {
+		return literal.String()
 	}
 
 	return strings.TrimSuffix(host, ".")
@@ -249,7 +267,8 @@ func hostAllowed(hostport string, names []string) bool {
 		return false
 	}
 
-	if host == "localhost" || net.ParseIP(host) != nil {
+	_, err := netip.ParseAddr(host)
+	if err == nil || host == "localhost" {
 		return true
 	}
 
@@ -270,8 +289,10 @@ func (s *Server) wrongHostPage(w http.ResponseWriter, r *http.Request) {
 
 	if a, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok {
 		host, _, err := net.SplitHostPort(a.String())
-		if err == nil && net.ParseIP(host).To4() != nil {
-			links = append(links, "http://"+host+"/")
+		addr, perr := netip.ParseAddr(host)
+		// A link-local IPv6 address needs a zone no browser takes in a link.
+		if addr = addr.Unmap(); err == nil && perr == nil && !addr.IsLinkLocalUnicast() {
+			links = append(links, "http://"+urlHost(addr)+"/")
 		}
 	}
 

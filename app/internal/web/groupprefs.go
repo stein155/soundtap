@@ -127,7 +127,7 @@ func (s *Server) followerAddress(id, ip string) string {
 		return base
 	}
 
-	addr := net.ParseIP(ip)
+	addr := literalIP(ip)
 	if addr == nil || !peerIPAllowed(addr) {
 		return ""
 	}

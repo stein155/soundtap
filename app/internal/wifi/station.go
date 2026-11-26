@@ -36,6 +36,7 @@ const (
 	attachRetry = 100 * time.Millisecond // between tries at it
 	pingTimeout = 2 * time.Second        // for wpa_supplicant to answer a watch's ping
 	pingEvery   = 6                      // a watch pings every this many looks
+	pingMisses  = 3                      // pings in a row without an answer: wpa_supplicant is gone
 )
 
 func (s *session) status(ctx context.Context) (map[string]string, error) {
@@ -475,32 +476,43 @@ func (m *Manager) rememberJoined(ctx context.Context, sess *session, confPath st
 	}
 }
 
-// watch supervises a station until ctx ends: it renews the lease on a network change and,
-// for a station still waiting (no AP mode), runs onAddress once the address comes; nil for
-// a station that is joined.
-func (m *Manager) watch(ctx context.Context, sess *session, onAddress func()) {
+// watch supervises a station until ctx ends or wpa_supplicant is gone: it renews the lease
+// on a network change and, for a station still waiting (no AP mode), runs onAddress once the
+// address comes; nil for a station that is joined. It reports whether wpa_supplicant went
+// away, so the caller brings it up again. That follows the supplicant's own end, never an
+// unanswered gateway.
+func (m *Manager) watch(ctx context.Context, sess *session, onAddress func()) bool {
+	misses := 0
+
 	for look := 1; ; look++ {
 		if !m.events(ctx, sess, m.cfg.Timing.Watch) {
-			return
+			return false
 		}
 		// A datagram socket has no end of stream: a supplicant that went away shows only
-		// as a request without an answer.
+		// as requests without an answer. One slow answer, during a scan say, is not that.
 		if look%pingEvery == 0 {
 			pctx, cancel := context.WithTimeout(ctx, pingTimeout)
-			if !sess.conn.Ping(pctx) && ctx.Err() == nil {
-				sess.lost = true
-
-				m.log.Warn("wpa_supplicant no longer answers")
-			}
+			answered := sess.conn.Ping(pctx)
 
 			cancel()
+
+			switch {
+			case answered:
+				misses = 0
+			case ctx.Err() == nil:
+				misses++
+				if misses >= pingMisses {
+					sess.lost = true
+
+					m.log.Warn("wpa_supplicant no longer answers", "pings", misses)
+				}
+			default:
+				// ctx ended during the ping: the loop's next look returns.
+			}
 		}
 
 		if sess.lost {
-			// wpa_supplicant went away; the next Restart brings it back.
-			<-ctx.Done()
-
-			return
+			return ctx.Err() == nil
 		}
 
 		if onAddress != nil && m.cfg.Sys.HasIPv4(m.cfg.STA) {

@@ -16,8 +16,8 @@ import (
 	"time"
 )
 
-// The input chain as `nft list chain ip filter input` prints it from firewall.nft.
-const loadedChain = `table ip filter {
+// The input chain as `nft list chain inet filter input` prints it from firewall.nft.
+const loadedChain = `table inet filter {
 	chain input {
 		type filter hook input priority filter; policy drop;
 		ct state established,related accept
@@ -102,7 +102,7 @@ func TestFirewallLoadedOnProduction(t *testing.T) {
 		t.Errorf("got %q (%q), want %q", state, reason, FirewallLoaded)
 	}
 
-	want := []string{"/usr/sbin/nft", "list", "chain", "ip", "filter", "input"}
+	want := []string{"/usr/sbin/nft", "list", "chain", "inet", "filter", "input"}
 	if len(nft.calls) != 1 || !slices.Equal(nft.calls[0], want) {
 		t.Errorf("nft calls = %v, want one %v", nft.calls, want)
 	}

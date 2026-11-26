@@ -217,6 +217,7 @@ type fakeSys struct {
 	keys    map[string]string // SSID -> the passphrase the network takes; absent: any
 	env     string            // what fw_printenv prints; "" fails
 	servers map[int]*wpactrltest.Server
+	exits   map[int]chan struct{} // closed to end a daemon Start started
 }
 
 func newFakeSys(t *testing.T, paths *Paths) *fakeSys {
@@ -226,7 +227,7 @@ func newFakeSys(t *testing.T, paths *Paths) *fakeSys {
 		t: t, p: *paths, mu: sync.Mutex{}, calls: nil, signals: nil, alive: map[int]bool{}, nextPid: 1000,
 		sup: nil, where: map[string]string{}, scan: nil, dhcp: false, noIP: false, apMode: true,
 		fail: map[string]bool{}, iwScan: "", station: "", keys: map[string]string{}, env: "",
-		servers: map[int]*wpactrltest.Server{},
+		servers: map[int]*wpactrltest.Server{}, exits: map[int]chan struct{}{},
 	}
 }
 
@@ -313,6 +314,11 @@ func (s *fakeSys) Start(name string, args ...string) (int, <-chan struct{}, erro
 	}
 
 	pid := s.spawn(arg(args, "-p"))
+
+	s.mu.Lock()
+	s.exits[pid] = exited
+	s.mu.Unlock()
+
 	if name == "udhcpc" {
 		s.mu.Lock()
 		s.dhcp = true
@@ -456,10 +462,12 @@ func newRig(t *testing.T, variant string) *rig {
 		ProcMTD: filepath.Join(dir, "mtd"), Dev: filepath.Join(dir, "dev"), Cmdline: filepath.Join(dir, "cmdline"),
 		Firmware: "/lib/firmware/ti-connectivity", FirmwareParam: filepath.Join(dir, "fwpath"),
 		BootLog: filepath.Join(dir, "nv", "soundtap-boot.log"), LanAllow: "lan-allow",
+		IPv6Conf: filepath.Join(dir, "ipv6"),
 	}
 	for _, d := range []string{
 		paths.State, paths.Pid, paths.Tmp, paths.CtrlDir, filepath.Join(paths.SysNet, "wlan0"),
 		filepath.Join(paths.SysPhy, "phy0"), paths.Dev, filepath.Join(dir, "nv"),
+		filepath.Join(paths.IPv6Conf, "wlan1"),
 	} {
 		err := os.MkdirAll(d, 0o755)
 		if err != nil {
@@ -556,4 +564,17 @@ func (r *rig) joinCount() int {
 	defer r.mu.Unlock()
 
 	return r.joins
+}
+
+// end ends the daemon Start started as pid, as a crash would.
+func (s *fakeSys) end(pid int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	delete(s.alive, pid)
+
+	if exited, ok := s.exits[pid]; ok {
+		close(exited)
+		delete(s.exits, pid)
+	}
 }
