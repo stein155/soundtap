@@ -16,7 +16,7 @@ each would add a protocol stack to a 128 MiB speaker:
 - **Google Cast / Google Home and Sonos.** A Cast session loads the service's own receiver app,
   a web page that needs a browser on the speaker, and adoption through the Google Home app is
   gated on a certificate signed by Google. The Sonos app adopts only devices in its
-  certificate-backed (S2) household. Both end at a certificate we cannot have and would not
+  certificate-backed (S2) household. Both end at a certificate SoundTap cannot have and would not
   fake.
 - **A dedicated Music Assistant player provider**, Python code in Music Assistant's own
   repository talking to the soundtapd API.
@@ -26,7 +26,7 @@ The speaker already ships two open receivers that these ecosystems speak: AirPla
 
 ## Decision
 
-Ecosystems reach SoundTap through the open receivers it already ships. We write no bridge,
+Ecosystems reach SoundTap through the open receivers it already ships. SoundTap writes no bridge,
 emulation or provider for one ecosystem.
 
 ### Apple Home through AirPlay 2
@@ -39,7 +39,7 @@ the procedure in `ADDINGTOHOME.md`; the Home setting *Allow Speaker & TV Access*
 
 Membership needs no persistent key state: shairport derives the AirPlay device id from the MAC
 and the accessory's Ed25519 key pair from that id, and its verify path does not check the
-controller pairings it keeps in RAM. A reboot on our tmpfs `/tmp` and `/run` keeps the
+controller pairings it keeps in RAM. A reboot on SoundTap's tmpfs `/tmp` and `/run` keeps the
 speaker in the home.
 
 shairport-sync keeps `ignore_volume_control = "yes"`, so the Mixer stays the one place volume is
@@ -85,14 +85,14 @@ Alternatives that lost:
 - No Cast, Google Home, Sonos or HAP code, issues or experiments in this repository.
 - What only a certified (MFi) receiver gets stays out of reach: an accurate playback state on the
   Home tile, the Home transport controls (shairport forwards remote control for classic AirPlay
-  only), and the occasional "No Response" on secondary devices. We do not chase them.
+  only), and the occasional "No Response" on secondary devices. SoundTap does not chase them.
 - Services that reach speakers only through Cast (YouTube Music on Android) stay out unless they
   ship an open protocol. Music Assistant is the route for Deezer, Tidal, Qobuz, YouTube Music
   and Apple Music libraries.
 - Every DLNA controller (BubbleUPnP, Home Assistant's DLNA integration, VLC) benefits from what
   the renderer gains for Music Assistant, and SoundTap still runs without Music Assistant.
 - SoundTap presets and sources do not appear as Music Assistant sources, and a multiroom group is
-  not one Music Assistant player. Music Assistant's DLNA quirks are ours to work around or
+  not one Music Assistant player. Music Assistant's DLNA quirks are SoundTap's to work around or
   report upstream; an upstream PR needs the maintainer's approval.
 - Exposing SoundTap's own controls (power, presets, source) to Siri and the Home app is a
   separate question and the one place a HAP accessory would add something; it is not done.

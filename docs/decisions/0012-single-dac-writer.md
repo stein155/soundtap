@@ -78,7 +78,7 @@ full-scale pass has succeeded:
 
 - `SetVolume` hands the gain to the codec at once; a worker runs the tool and the newest value
   wins. The PCM then reaches the codec at full scale.
-- Word 0 is `stockVolumeGain` (our own fit to stock's curve) in Q22, word 1 its level in dB
+- Word 0 is `stockVolumeGain` (SoundTap's own fit to stock's curve) in Q22, word 1 its level in dB
   times 65536. No table is copied from Bose. Sending the gain as one 48-bit number instead put
   noise in word 1 that changed with every step, and the bass with it (ST20, 2026-11-23).
 - The PCM keeps what is relative: the duck, the hold gate, and an announcement against the
@@ -99,8 +99,8 @@ Alternatives that lost:
 - **dmix or PulseAudio.** More RAM and CPU than the 128 MiB boards can spare, and no clean hook
   for source ownership.
 - **Each daemon on the device in turn.** No mixing, no ducking, and races on handover.
-- **Our own codec configuration without the miniDSP.** It changes the sound.
-- **Our own configuration with Bose's EQ rebuilt in the Mixer.** Close but not bit-exact, and
+- **SoundTap's own codec configuration without the miniDSP.** It changes the sound.
+- **SoundTap's own configuration with Bose's EQ rebuilt in the Mixer.** Close but not bit-exact, and
   still Bose's tuning in another form.
 - **Copying the script from stock in the C installer.** It covers only the STU route; the boot
   copy covers the STU route and updates from images that still carry the script.
@@ -113,7 +113,7 @@ Alternatives that lost:
   Mixer must stay cheap on a single-core Cortex-A8 ([ADR 0001](0001-soundtapd-one-go-daemon.md)).
 - The ST300 processor owns its local TV path and its volume protocol; the Mixer does not duck
   TV audio inside that processor.
-- No Bose program or tuning is in the repository or in any image we build or publish. The
+- No Bose program or tuning is in the repository or in any image the project builds or publishes. The
   persistent volume and the owner's backup file hold the speaker's own copy; factory reset
   keeps it, because the reset removes only named files.
 - A speaker whose persistent volume lost the script, and whose other slot has none, stays muted

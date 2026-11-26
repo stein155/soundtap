@@ -24,7 +24,7 @@ SoundTap boots more boards as previews, from what stock does on them:
 | `bardeen` | Lifestyle 600/650 module | st300 | The ST300's tree and processor link ([ls650](../hardware/ls650/README.md)) |
 | `lisa`, `lisa2` | SoundTouch adapter (SA-4, Stereo JC, Wave, CineMate, Lifestyle, VideoWave) | st20 (scm), st10 (sm2) | Their trees and the Bose link master ([lisa](../hardware/lisa/README.md)) |
 
-**Our U-Boot tells the boards apart as stock's does.** On the SCM, the variant resistor on
+**SoundTap's U-Boot tells the boards apart as stock's does.** On the SCM, the variant resistor on
 ADC channel 1 (`variant_raw`, decimal): 100–1024 lisa, 1025–2046 spotty, 2047–2867 mojo,
 2868–3481 taigan. On the SM2, the product name at 0x170 of `NAND.Manufacturing-Data`. The
 rows live in `os/models.json` (`detect`) and in `rt_boards`.
@@ -97,7 +97,7 @@ Alternatives that lost:
   preview through the same feed and file as a supported model, with nothing in the package
   that marks the choice.
 - Waiting for owners of each board: nothing in the stock packages is missing to start with.
-- Asking the stock kernel for the variant at runtime: our U-Boot must name the tree before any
+- Asking the stock kernel for the variant at runtime: SoundTap's U-Boot must name the tree before any
   Linux runs.
 
 **The trees were checked pad for pad against stock's.** Each new tree, compiled, was compared
@@ -114,15 +114,15 @@ The new trees differ from stock only in those same places. Ethernet, UART0 (the 
 
 - Every new board is a preview. Nothing here is a hardware observation, and none of it may be
   marked Observed or shipped without that board's column of the checklist.
-- **Recovery exists only in code.** The stick and button gestures below are implemented in our
+- **Recovery exists only in code.** The stick and button gestures below are implemented in SoundTap's
   U-Boot and have never run on any of these boards. An implemented route is not a proven one
   ([the contract](../../CONTRIBUTING.md#recovery-invariant)): nothing in the documentation may present them as a way
   back until each has run on that model.
-  - SCM boards and the Series III take the keypad chord (Volume Down + Preset 4) in our
+  - SCM boards and the Series III take the keypad chord (Volume Down + Preset 4) in SoundTap's
     U-Boot.
   - The SA-5 and the adapter take their stock gesture, their one button at power-on
     (gpio0_27 on the SM2, gpio0_29 on the SCM).
-  - The Lifestyle 600/650 module has no recovery gesture, in stock or in ours. The code still
+  - The Lifestyle 600/650 module has no recovery gesture, in stock or in SoundTap's. The code still
     carries the board, but the installers and the STU installer refuse it: its way back must be
     proven before any write. An SM2 Lifestyle adapter (`lisa2`) reports what the installers
     cannot tell from the module, so they refuse it too; on a Lifestyle only the SCM adapter is
@@ -134,7 +134,7 @@ The new trees differ from stock only in those same places. Ethernet, UART0 (the 
 - **The Portable follows stock's battery protection by default**: SHIP on a critically
   discharged pack, a pack fault or overvoltage on DC, as stock does. Leaving the pack to drain
   or a faulty pack charging would be the larger risk.
-- Things we must not do:
+- Things that must not be done:
   - SHIP the Portable's pack on anything but stock's three conditions, or write any other gauge
     register.
   - Write any SA-5 controller register other than 0x06 and 0x11, or talk to 0x1e.

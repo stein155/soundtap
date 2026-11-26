@@ -5,7 +5,7 @@ Status: accepted — 2026-10-21
 ## Context
 
 Every model's image needs the WiLink8 (WL1835MOD) radio firmware, the Bluetooth init script and the
-radio's board configuration `wl18xx-conf.bin`. None of them is code we compile, and a file lifted
+radio's board configuration `wl18xx-conf.bin`. None of them is code SoundTap compiles, and a file lifted
 from a Bose image may not ship ([ADR 0049](0049-no-stock-bytes.md)). A binary nobody here compiles
 comes from upstream with its source recorded.
 

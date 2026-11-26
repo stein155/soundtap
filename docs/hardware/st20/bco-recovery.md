@@ -3,7 +3,7 @@
 Source identity and missing provenance are listed in the
 [RE source register](../../../os/stock/PROVENANCE.md#reverse-engineering-source-register).
 
-The BCO is the DM870 network processor. SoundTap runs our app and WiLD core above the
+The BCO is the DM870 network processor. SoundTap runs its own app and WiLD core above the
 existing BFL and BSL loaders. This page preserves read-only analysis of stock
 `Update_ti_27.0.6.46330.5043500.scm.stu`; it is not a recovery session authorisation.
 
@@ -14,7 +14,7 @@ existing BFL and BSL loaders. This page preserves read-only analysis of stock
   forbidden, including on sacrificial hardware. BFL and BSL stay stock.
 - App recovery uses the existing loaders' **app** TFTP/XMODEM path (ADR 0031). Entering
   BSL to load an app is different from replacing BSL. The 2026-10-16 app boot through
-  real BFL is recorded in [the network card notes](bco-network-card.md#our-first-stage-through-the-real-bfl);
+  real BFL is recorded in [the network card notes](bco-network-card.md#soundtaps-first-stage-through-the-real-bfl);
   it is not a fault-injection test of every interrupted-flash case.
 - A running SoundTap ST20 installs its own BCO app at boot; the web API has no route to
   flash another one. A manual restore goes through the `bcoflash` development tool, which
@@ -204,7 +204,7 @@ Other stock strings: `BCORestoreFactoryDefaults`, `EVT_AIRPLAY_CLI_RESTORE_CNE_S
 The extracted `S97shelby_local` runs executable `/mnt/nv/rc.local` as root before
 `S99SoundTouch`; its stop action calls `DM870_power_off` and `sync`. This describes
 stock init only. `SCM_Update.xml` names `SoftwareUpdateInstaller`, `SoftwareUpdate`,
-`SCMReset_Update`, `ARMUpdate` and `UbootUpdate`; none is part of our STU.
+`SCMReset_Update`, `ARMUpdate` and `UbootUpdate`; none is part of SoundTap's STU.
 `rootfs/etc/init.d/shelby_usb` uses `microbswitch` on lisa/ST20, otherwise `g_ether`.
 
 Stock sdsShell on USB port 8000 was not reachable in the recorded provisioned and

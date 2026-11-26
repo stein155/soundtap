@@ -11,7 +11,7 @@ The installers refuse it: it has no way back ([Open](#open)). The code still car
 and source list. Only the device type differs, 8 here and 9 on the ST300.
 
 SoundTap runs it as the ST300 under its own name: the ST300's tree, kernel, boot chain and
-`internal/lpm`, with `bootdelay=-2`. Our U-Boot knows it by the manufacturing name `bardeen`.
+`internal/lpm`, with `bootdelay=-2`. SoundTap's U-Boot knows it by the manufacturing name `bardeen`.
 
 ## What the console adds
 

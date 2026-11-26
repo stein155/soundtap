@@ -35,7 +35,7 @@ Wi-Fi manager. WPA and open networks are taken; WEP is not. On the ST20, where B
 soundtapd reads the profile from the BCO while Bose's BCO app is still there, just before it
 replaces that app.
 
-Alternatives that lost: shipping the key and IV in our source (simpler, but it puts Bose-derived
+Alternatives that lost: shipping the key and IV in SoundTap's source (simpler, but it puts Bose-derived
 bytes in git); the owner typing the password again after the install.
 
 ## Consequences

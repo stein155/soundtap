@@ -21,7 +21,7 @@ tested with:
 | --- | --- |
 | `app/` | The SoundTap app: `soundtapd` (Go) and its React frontend. `app/VERSION`. `app/oled/design/` holds the ST20 panel's design and the tools that bake its atlas and goldens. |
 | `os/` | SoundTap Core, and the Buildroot external tree (`BR2_EXTERNAL=os`). `os/VERSION`. |
-| `bco/` | The ST20's BCO network processor: our app (`app/`), WiLD core (`wild/`) and image packer (`tools/`). |
+| `bco/` | The ST20's BCO network processor: SoundTap's app (`app/`), WiLD core (`wild/`) and image packer (`tools/`). |
 | `docs/` | The documentation and its site; `docs/tools/` makes the README's images and holds the MkDocs hook. |
 | `releases/` | Each Core release's hardware reports and their evidence files, `releases/os-vX.Y.Z/`, as tested; `sign.yml` signs a release only against them ([ADR 0035](0035-releases.md)). Nothing in it ships. |
 | `tools/` | Host tooling that delivers nothing into the image: `ci/` (the CI entry points and helpers: repository lints, licence checks, `buildroot-reuse.sh`, the fake speaker), `release/` (notes, approval, signing, the feed check and mock update server), `hil/` (bench scripts against a speaker), `recovery/` (NAND backup, the ROM-USB restore, its loader and read-back script) and `dev/` (the developer loop behind `make dev`). |
@@ -43,10 +43,10 @@ Inside `os/`:
 | `board/common` | Device trees and shared patches |
 | `board/image` | Kernel fragment, post-build and post-image steps for the universal image |
 | `board/rootfs` | Rootfs files, kernel patches, UBI config, module list |
-| `package/` | Our Buildroot packages |
+| `package/` | SoundTap's Buildroot packages |
 | `overlay/` | Shared rootfs overlay (init scripts, ALSA, IR map) |
 | `bootloader/` | SPL and U-Boot sources and the scripts that build them |
-| `drivers/` | Our C drivers (AIC3256 loader, ST10 audio) |
+| `drivers/` | SoundTap's C drivers (AIC3256 loader, ST10 audio) |
 | `installer/` | STU packager and the on-box installer module |
 | `stock/` | Register of analysed stock sources; no stock firmware bytes |
 | `container/` | The pinned builder image |

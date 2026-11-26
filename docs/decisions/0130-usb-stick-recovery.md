@@ -1,4 +1,4 @@
-# 0130. A button chord at power-on installs Update.stu from USB, SoundTap's or Bose's, in our U-Boot
+# 0130. A button chord at power-on installs Update.stu from USB, SoundTap's or Bose's, in SoundTap's U-Boot
 
 Status: accepted — 2026-11-20, changed 2026-11-24 (no signature; Bose's file goes back to stock)
 
@@ -6,7 +6,7 @@ Status: accepted — 2026-11-20, changed 2026-11-24 (no signature; Bose's file g
 
 Stock U-Boot on the ST10 and ST20 samples the keypad at power-on. With VOLUME DOWN + PRESET 4
 held it reads `Update.stu` from a FAT USB stick and installs it with the settings kept. That
-gesture is the recovery an owner knows, and it goes away when `NAND.U-Boot` becomes ours
+gesture is the recovery an owner knows, and it goes away when `NAND.U-Boot` becomes SoundTap's
 ([ADR 0009](0009-mainline-linux-own-bootloaders.md)). The product ships one recovery; every other
 route (ROM USB loaders, NAND restore scripts) is development tooling.
 
@@ -26,7 +26,7 @@ has nothing but the speaker and a stick.
 
 ## Decision
 
-Our U-Boot (`wla-uboot`, shared by every model, the only build with USB storage and FAT) runs the
+SoundTap's U-Boot (`wla-uboot`, shared by every model, the only build with USB storage and FAT) runs the
 recovery at `EVT_LAST_STAGE_INIT`:
 
 - **The gesture.** The model comes from the board (`rt_v`, from the SYSBOOT straps on the ST20 and
@@ -57,16 +57,16 @@ recovery at `EVT_LAST_STAGE_INIT`:
   rootfs, environment and bootloaders are written; the BCO, CC2540, STM32, host-product and
   soundbar-processor firmware in the package are left to Bose's own software. The SoundTouch 300
   starts it with the remote combo its processor passes on at power-on, as Bose's own USB update
-  does; the Lifestyle 650 module has no gesture in our U-Boot. Before anything is written the stick checks that our U-Boot reads the SPL the ROM booted
+  does; the Lifestyle 650 module has no gesture in SoundTap's U-Boot. Before anything is written the stick checks that SoundTap's U-Boot reads the SPL the ROM booted
   without an ECC error. Then, in order:
   1. Bose's kernel and root filesystem into the slot that is not booting, each read back.
-  2. That slot selected with our rollback state (`altbootcmd` the old slot, `bootlimit` 4) and
-     saved twice; our U-Boot boots it through its stock recipe.
+  2. That slot selected with SoundTap's rollback state (`altbootcmd` the old slot, `bootlimit` 4) and
+     saved twice; SoundTap's U-Boot boots it through its stock recipe.
   3. The environment moved to the 8 KiB copy Bose's U-Boot reads, read back.
   4. Bose's boot chain, only the copies that differ from NAND (or read back worn), each read back,
      in the way-back order of [ADR 0009](0009-mainline-linux-own-bootloaders.md) and
-     `install/bootloaders.go`: first U-Boot copy, SPL 1, 2, 3, 0, the spare last, so our SPL never
-     starts Bose's U-Boot and Bose's SPL never starts ours.
+     `install/bootloaders.go`: first U-Boot copy, SPL 1, 2, 3, 0, the spare last, so SoundTap's SPL never
+     starts Bose's U-Boot and Bose's SPL never starts SoundTap's.
   5. Bose's own recipes in that environment, as `/api/firmware`'s way back writes them, then a
      reset into Bose's chain.
 
@@ -93,7 +93,7 @@ recovery at `EVT_LAST_STAGE_INIT`:
 Alternatives that lost: a signed package only, Bose's file refused (the decision until
 2026-11-24: it left an owner without a browser and a working network no way back to Bose, and a
 signature guards against what can be triggered from the network, not against someone holding the
-speaker's keys); Bose's kernel and rootfs without its bootloaders (Bose would boot on our U-Boot,
+speaker's keys); Bose's kernel and rootfs without its bootloaders (Bose would boot on SoundTap's U-Boot,
 half stock, until a later Bose update).
 
 ## Consequences

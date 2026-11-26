@@ -7,7 +7,7 @@ Status: accepted — 2026-10-21
 Bose's updated app retains local grouping after the cloud shutdown
 ([Bose's announcement](https://www.bose.com/soundtouch-end-of-life-row)). SoundTap replaces that
 firmware and needs its own way to play one source on several speakers in step. The speakers are
-on one LAN; under our BCO app the ST20's main CPU has its own `wlan0` address there, as an ST10
+on one LAN; under SoundTap's BCO app the ST20's main CPU has its own `wlan0` address there, as an ST10
 does ([ADR 0031](0031-bco-network-card.md)). Any source must be groupable, not only Apple's,
 and soundtapd stays the only writer to the DAC
 ([ADR 0012](0012-single-dac-writer.md)). Measurements behind the choices below are in the
@@ -138,7 +138,7 @@ against ADR 0012); a larger Snapcast buffer (every play and group change would s
 
 ## Consequences
 
-- The ST20 depends on our BCO app for this, as for everything else on the network.
+- The ST20 depends on SoundTap's BCO app for this, as for everything else on the network.
 - The leader does the source work and the snapserver FLAC encode for the whole group; every
   follower and the leader's anchor decode. Both are estimates until measured (above).
 - A follower on an older SoundTap Core, whose snapclient is built without FLAC, cannot play a

@@ -6,7 +6,7 @@ Status: accepted — 2026-10-21
 
 A speaker sits on a home LAN next to phones, TVs and whatever else is there, and everything it
 listens on is reachable by all of them. The daemons that parse what the LAN sends are the most
-exposed code we ship, and none of them is ours: shairport-sync, librespot, snapclient and
+exposed code SoundTap ships, and none of them is SoundTap's own: shairport-sync, librespot, snapclient and
 snapserver, nqptp, and ffmpeg (radio and announcement URLs anyone on the LAN can set). Running
 them as root makes a bug in any of them root on the speaker, with write access to `/mnt/nv` and
 the boot slots. The same holds for soundtapd, which parses every request on port 80. A writable
@@ -30,9 +30,11 @@ first; the image's own `wl18xx-conf.bin` stays a valid default.
 ### A production image filters inbound traffic, default deny
 
 A production image loads `os/board/rootfs/firewall.nft` with nftables as its first sysinit step,
-before the USB gadget brings up the first interface. Policy drop on input; accepted are
-established and related traffic, loopback, basic ICMP, and, from hosts on the speaker's own
-subnets only, as on stock: TCP 80 (soundtapd), 7000 (shairport-sync), 1704 (snapserver, to
+before the USB gadget brings up the first interface. It is one `inet` table, so the same rules
+hold for IPv4 and IPv6 ([ADR 0134](0134-ipv6-on-the-speaker.md)). Policy drop on input; accepted
+are established and related traffic, loopback, basic ICMP and ICMPv6, IPv6 neighbour discovery
+and router advertisements from the link itself (hop limit 255), multicast listener queries from a
+link-local router, and, from hosts on the speaker's own subnets only, as on stock: TCP 80 (soundtapd), 7000 (shairport-sync), 1704 (snapserver, to
 followers soundtapd lets in), UDP 5353 (avahi), 1900 (SSDP), 319 and 320 (nqptp), and the kernel's
 ephemeral range 32768–60999, where AirPlay 2 and librespot's zeroconf pick their ports. On the
 setup interface `wlan1` only, DHCP and DNS also answer. Outbound traffic is not filtered. Alpha
@@ -40,10 +42,13 @@ loads no ruleset.
 
 The own subnets are the set `lan_nets`, kept by `/opt/soundtap/lan-allow.sh`: every way an
 interface gets an address (the DHCP hook, the setup access point, the ST20's static `eth0`) adds
-its subnet and removes it again. The one fixed exception is the ST20 BCO bootloader's TFTP
+its subnet and removes it again. For IPv6 they are the set `lan_nets6`, interface and prefix
+together (`fe80::/10` and each SLAAC prefix of `eth0`, `wlan0` and `wlan1`), which soundtapd keeps
+(`internal/lanfilter`), since the kernel configures those addresses without a hook. Snapcast
+followers are `snap_followers` and `snap_followers6`. The one fixed exception is the ST20 BCO bootloader's TFTP
 replies from 192.168.1.100, on a link soundtapd addresses itself during a BCO flash. The kernel
-builds nf_tables and connection tracking in, because the image loads no modules; without a
-ruleset no hook is registered.
+builds nf_tables, its inet family and connection tracking in, because the image loads no
+modules; without a ruleset no hook is registered.
 
 A failing `nft -f` does not stop the boot: the speaker comes up unfiltered rather than not at
 all, and says so. soundtapd lists the input chain with a bounded, read-only `nft` run at start and
@@ -158,7 +163,9 @@ run-this-command helper (a hole as wide as root); util-linux `setpriv` (a new pa
   Wi-Fi manager links the region's wl18xx configuration there, and init points the loader at it.
 - Anything new that listens on a fixed port needs a line in `firewall.nft`, or it works in alpha
   and not in production. Anything that gives an interface an address another way must call
-  `lan-allow.sh`.
+  `lan-allow.sh`; a new interface that serves the LAN over IPv6 goes into `lanfilter`'s list.
+  A rule that names an address family (`ip saddr`) needs its IPv6 twin, or IPv6 is refused
+  where IPv4 is let in.
 - A port forward, routed VLAN or VPN into the home network reaches nothing on the speaker, as on
   stock.
 - The ephemeral range stays open to the LAN, so whatever binds there on 0.0.0.0 is reachable;
@@ -186,6 +193,7 @@ run-this-command helper (a hole as wide as root); util-linux `setpriv` (a new pa
 
 - `os/board/rootfs/firewall.nft`, `os/overlay/opt/soundtap/lan-allow.sh`,
   `os/board/rootfs/rootfs-overlay/etc/inittab`, `os/board/image/linux.fragment`.
+- `app/internal/lanfilter`: `lanfilter.Sync`, which keeps `lan_nets6`.
 - `app/internal/web/firewall.go`: `web.NewFirewallCheck`, `FirewallCheck.Status`.
 - `os/board/rootfs/users.txt`, `os/board/rootfs/post-build.sh` (the `/etc/asound.conf` and
   Bluetooth links, the production ruleset).
@@ -203,4 +211,4 @@ run-this-command helper (a hole as wide as root); util-linux `setpriv` (a new pa
   `os/package/soundtapd/soundtapd.mk` builds soundtap-root.
 - `os/support/rootfs_check.py`: fails a rootfs whose init remounts `/` read-write or starts
   soundtapd other than as its own user through soundtap-root, and a production rootfs without
-  `nft`, a default-deny ruleset or an inittab that loads it first.
+  `nft`, a default-deny ruleset in one `inet` table or an inittab that loads it first.

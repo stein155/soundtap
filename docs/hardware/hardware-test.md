@@ -81,10 +81,10 @@ during the first authorized reboot, before relying on serial rollback.
 6. Write presets/settings/Wi-Fi, boot each A/B slot, and confirm identical persistent state.
 7. After separate recovery permission, exercise the selected USB-stick or stock-return
    scenario. Record the observed gesture, installed payload and subsequent boot; a stock
-   chord measurement does not validate our U-Boot's implementation.
+   chord measurement does not validate SoundTap's U-Boot implementation.
 8. After separate U-Boot-environment permission, test serial slot selection with a known-good
    slot compatible with the installed boot chain. Do not assume the other slot is still
-   stock or that stock will boot under our loaders.
+   stock or that stock will boot under SoundTap's loaders.
 
 ## Safety rules (every session)
 
@@ -293,7 +293,7 @@ power cycle is the last resort when the HTTP server itself is gone.
   headphone and sent the stream about 22 dB down (2026-11-16).
 - **AirPlay** — start/stop several times; confirm reliable acquire/release, no orphaned amp.
   Confirm the track and artist appear in `/api/now` (this needs shairport-sync ≥ 5.2; 5.1
-  dropped the DMAP `core` items we parse). Move the sender's volume slider and confirm the
+  dropped the DMAP `core` items soundtapd parses). Move the sender's volume slider and confirm the
   speaker's master volume follows and the web UI updates without a reload.
 - **Apple Home** — in the Home app, Settings → _Allow Speaker & TV Access_ → **Anyone on the
   Same Network**, password off. Add Accessory → _More options…_ → pick the speaker under its
@@ -328,8 +328,19 @@ power cycle is the last resort when the HTTP server itself is gone.
 - **Reboot persistence** — presets, settings, Wi-Fi and source recovery survive a reboot.
 - **Security** — port 22 is closed; blank-password root login is impossible from LAN and setup AP.
   Production: the web UI and AirPlay answer from the speaker's own subnet and on the setup AP,
-  and `nft list set ip filter lan_nets` lists exactly the subnets of `ip -4 addr`; from another
+  and `nft list set inet filter lan_nets` lists exactly the subnets of `ip -4 addr`; from another
   subnet routed to the speaker, port 80 does not answer.
+- **IPv6** ([ADR 0134](../decisions/0134-ipv6-on-the-speaker.md)) — on a network whose router
+  sends router advertisements, `ip -6 addr` shows a link-local, a SLAAC and a temporary address
+  on `wlan0` (and `eth0` when wired). From a LAN host: `ping -6` on the speaker's link-local and
+  SLAAC addresses answers, `curl -g http://[<SLAAC address>]/api/info` returns the speaker,
+  `avahi-resolve -6 -n <name>.local` gives an AAAA, and AirPlay from an Apple device and
+  Spotify Connect still find and play on it. A radio station on an IPv6-only host plays.
+  Production: `nft list set inet filter lan_nets6` lists `fe80::/10` and the SLAAC prefix per
+  interface, port 80 answers over IPv6 from the LAN and not from a routed IPv6 host, and
+  `GET /api/health` says `"firewall": "loaded"`. On a network without IPv6 nothing changes. The
+  ST20's BCO network card passes IPv6 multicast (neighbour discovery, mDNS) or this row fails
+  there.
 - **Soak** — run 24 hours with network loss/recovery and source changes; `/tmp/soundtap.log` stays
   below 512 KiB and the daemon remains reachable.
 
@@ -342,7 +353,7 @@ power cycle is the last resort when the HTTP server itself is gone.
 ## ST20 candidate validation
 
 The ST20 takes the same universal STU as the other models
-([install guide](../owners/install.md)): its own kernel and our SPL/U-Boot pair, the
+([install guide](../owners/install.md)): its own kernel and SoundTap's SPL/U-Boot pair, the
 `.spotty` modules, installed through stock's `:17008` like the WLA. Bose's MLO/U-Boot are
 replaced, so the way back is the ST20's [mask-ROM USB route](st20/rom-usb-recovery.md)
 with that board's NAND backup, and an install needs a separately authorised session.
@@ -380,9 +391,10 @@ Record model `SoundTouch Wireless Link Adapter`, variant `binky`.
 The SoundTouch 300 (`ginger`) ships in the first release ([install records](install-records.md#soundtouch-300)).
 Every hardware action on it needs a fresh explicit approval, and audio stays at 5% or below.
 
-- Install and reboot as in section A. ST300 recovery remains unproven; do not
-  infer it from a stock remote gesture or an offline GPIO-trigger implementation. Resolve
-  the recovery plan under [the contract](../../CONTRIBUTING.md#soundtouch-300-ginger--sm2) before any write.
+- Install and reboot as in section A. Installs, updates and the way back to Bose through the
+  Updates page are proven on the bar, its boot chain included; the USB stick's remote combo and
+  a ROM-USB route are not, so do not infer them from a stock remote gesture or an offline
+  GPIO-trigger implementation ([the contract](../../CONTRIBUTING.md#soundtouch-300-ginger--sm2)).
 - The soundbar processor link on UART0: the bar answers, takes the volume, and follows
   SoundTap's power and the TV input.
 - On a cable: `eth0` gets a DHCP lease, the log shows `lpm radio status` with `net=4` and the
@@ -512,7 +524,7 @@ prohibited and historical results are not silently counted as pending executable
 | a new slot confirms with the router switched off: the boot confirm checks no network (ADR 0010) | open |
 | ROM-USB restore of the release's boot chain (`tools/recovery/rom-usb-restore.py`, [recovery tools](install-records.md#repairing-the-boot-chain-over-rom-usb)) | open |
 
-### ST20 (41 open)
+### ST20 (45 open)
 
 | Prove on the speaker | Status |
 |---|---|
@@ -520,7 +532,7 @@ prohibited and historical results are not silently counted as pending executable
 | signing and the press (ADR 0048): on a production image, an own build's `.stu` picked without `.sig` on the Updates page is reported not signed; *Install firmware* waits for the hold and installs into the inactive slot after it, without the hold it is refused (403) and NAND is untouched; a release's `.stu` with its `.sig`, an older release with `downgrade` and an alpha with its `.sig` each wait for the hold too (the press prompt shows; without the hold, 403 and NAND untouched); Bose's file under the plain confirmation is refused before a write; a `.sig` that does not match is refused (403) without a write; *Update now*, *Update* on a new app card and a picked app release install with no hold and no press prompt; *Update* on a new SoundTap Core card is one tap with no second step and no hold: the speaker installs while the Updating page shows its percentage (download and write, up to 99), restarts into the new slot by itself, the Updating page follows it away and back, and the new slot is confirmed (`fw_printenv`); a Core update whose download is cut off leaves the speaker running on its slot without a restart; an install over a speaker whose environment held `soundtap_owner_key` leaves it out of both copies after the boot confirmation (`fw_printenv`, `nanddump` of `mtd5` and of `mtd4`+0x1c0000) | open |
 | USB stick at power-on (ADR 0130, no `.sig`): a SoundTap `Update.stu` installs and boots the other slot; Bose's `Update.stu` for this model goes back to Bose, bootloaders included, and Bose's software starts; a file for another model, or one with a broken CRC, writes nothing and the old slot boots (`soundtap.recovery=-8` or `-74`); record the time from power-on to the new slot (ADR 0009) | open |
 | Historical stock-BCO Wi-Fi join path | not applicable: stock BCO networking is unsupported (ADR 0031) |
-| Series III (spotty3, mojo3): our U-Boot takes the board for it without a stored environment. Stock's U-Boot (identical in every package) reads the product name at 0x170 of `NAND.Manufacturing-Data` on the SM2, and the Series III say `spotty` or `mojo` there; `rt_boards` maps them to spotty3 and mojo3 with `spotty3_sm2.dtb` and `uImage-rhino` ([ADR 0133](../decisions/0133-more-soundtouch-models-from-stock.md)). Read only, on a Series III under stock: confirm the name at 0x170 and that the default bootcmd boots the Series III tree | unavailable: no Series III board; offline-covered by the U-Boot probe tests |
+| Series III (spotty3, mojo3): SoundTap's U-Boot takes the board for it without a stored environment. Stock's U-Boot (identical in every package) reads the product name at 0x170 of `NAND.Manufacturing-Data` on the SM2, and the Series III say `spotty` or `mojo` there; `rt_boards` maps them to spotty3 and mojo3 with `spotty3_sm2.dtb` and `uImage-rhino` ([ADR 0133](../decisions/0133-more-soundtouch-models-from-stock.md)). Read only, on a Series III under stock: confirm the name at 0x170 and that the default bootcmd boots the Series III tree | unavailable: no Series III board; offline-covered by the U-Boot probe tests |
 | radio plays through a Wi-Fi stall (read-ahead) | open |
 | Spotify artist context playback against a live session | open |
 | install writes the full chain; a second install leaves mtd0-mtd4 identical | historical pass, second install identical: 2026-11-15 |
@@ -528,6 +540,10 @@ prohibited and historical results are not silently counted as pending executable
 | Bluetooth hint disappears after the pairing window | unavailable: Series I; Series III has offline coverage only (scope above) |
 | join a hidden network; visible networks still join | open |
 | BCO network choice (ADR 0031, [choosing the network](st20/bco-network-card.md#choosing-the-network)): with two access points of one SSID in range, `iw dev wlan0 link` names the stronger one's BSSID (compare the levels in `iw dev wlan0 scan`), also when the weaker one was heard more often; the access point's station list shows the speaker with short slot time and short preamble, and the BSS stays on the short slot | open |
+| BCO link events (ADR 0135, BCO app and driver of one build): the kernel log says nothing of refused link events; the router's own "disconnect this client" makes `iw event` show the disconnect with the router's reason within a second and the kernel log `BCO link lost: event 1` (or 2); switching the access point off shows `event 3` about 8 s later instead of at the next 5 s poll; `wpa_supplicant` joins again once the access point is back | open |
+| BCO roaming (ADR 0135): two access points of one SSID on different channels; with the ST20's level below -70 dBm on the one it joined (`iw dev wlan0 link`), it scans one channel at a time, and a ping from the LAN every 100 ms loses no run of replies longer than a second while it does (so the keys survive the core's return to its channel); with the other access point 8 dB or more stronger, the kernel log says `BCO roamed to` its BSSID, `iw event` shows the roam, and DHCP and the stream on `wlan0` go on; with the level above -65 dBm it never leaves its channel | open |
+| BCO regulatory domain (ADR 0135): after soundtapd's `iw reg set`, the kernel log says `BCO regulatory domain` with the speaker's country, its channels and passive channels, and that the TX power limit is not enforced; under `iw reg set 00` an access point on channel 12 or 13 is still found by the passive listen, and a setup access point is never started on a passive channel | open |
+| BCO antenna setting (ADR 0135), a read-only check with the owner's OK for this read alone, on an alpha image whose BCO app announces `BCOLINK_CAP_NVINFO`: `cat /sys/class/net/bcolink0/bco/nv_keys` as root lists the PersParam keys with their lengths; record which key holds the antenna setting and its value in [the BCO network card](st20/bco-network-card.md#antenna-setting); nothing is written | open |
 | phone volume slider follows speaker volume (AVRCP) | unavailable: Series I; Series III has offline coverage only (scope above) |
 | reconnect of trusted phones when Bluetooth is selected | unavailable: Series I; Series III has offline coverage only (scope above) |
 | pairings read and cleared over D-Bus | unavailable: Series I; Series III has offline coverage only (scope above) |
@@ -659,11 +675,11 @@ an SM2 Lifestyle adapter (`lisa2`), which they cannot tell apart from it.
 
 | Prove on the board | Portable (`taigan`) | SA-5 (`burns`) | SoundTouch adapter (`lisa`, `lisa2`) | Series III (`spotty3`, `mojo3`) | Lifestyle 600/650 module (`bardeen`) |
 |---|---|---|---|---|---|
-| Read only, under stock: the variant our U-Boot would pick (`variant_raw` on the SCM, the name at 0x170 of `NAND.Manufacturing-Data` on the SM2) | open | open | open | open | open |
+| Read only, under stock: the variant SoundTap's U-Boot would pick (`variant_raw` on the SCM, the name at 0x170 of `NAND.Manufacturing-Data` on the SM2) | open | open | open | open | open |
 | A full per-partition NAND backup with OOB and the ROM-USB route checked with `rom-usb-restore.py --dry-run`, before any write | open | open | open | open | open: no ROM-USB route known |
 | Install from stock (update feed), with the actual bootloader write set shown first | open | open | open | open | not offered |
 | U-Boot loads the board's own tree and Linux runs `/init` | open | open | open | open | not offered |
-| Recovery gesture at power-on with a stick (ADR 0130, no `.sig`): a SoundTap `Update.stu` installs and boots the other slot; a file for another board, or one with a broken CRC, writes nothing | open: Volume Down + Preset 4 | open: the one button | open: the one button | open: Volume Down + Preset 4 | none: no gesture in stock or ours |
+| Recovery gesture at power-on with a stick (ADR 0130, no `.sig`): a SoundTap `Update.stu` installs and boots the other slot; a file for another board, or one with a broken CRC, writes nothing | open: Volume Down + Preset 4 | open: the one button | open: the one button | open: Volume Down + Preset 4 | none: no gesture in stock or SoundTap |
 | Back to Bose (`/api/firmware`, unsigned Bose STU) and back through the update feed | open | open | open | open | not offered |
 | Audio at the agreed volume, the codec script copied from the speaker | open | open | open: through the host | open | not offered |
 | Keypad, lamps and display as mapped from stock | open | open | open | open: panel, Wi-Fi lamp | not offered |

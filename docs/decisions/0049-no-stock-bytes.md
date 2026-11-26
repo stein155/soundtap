@@ -6,8 +6,8 @@ Status: accepted — 2026-11-15
 
 SoundTap runs its own SPL, U-Boot, kernel, drivers and userland on every model
 ([ADR 0009](0009-mainline-linux-own-bootloaders.md)) and its own BCO app on the ST20
-([ADR 0031](0031-bco-network-card.md)), so nothing we build needs Bose's binaries. Bose's software
-is not ours to redistribute, and the repository is public. Installing SoundTap starts from a
+([ADR 0031](0031-bco-network-card.md)), so nothing SoundTap builds needs Bose's binaries. Bose's software
+is not the project's to redistribute, and the repository is public. Installing SoundTap starts from a
 speaker on Bose's software, and owners must be able to go back to it.
 
 ## Decision
@@ -20,7 +20,7 @@ speaker on Bose's software, and owners must be able to go back to it.
 - Stock bytes are never committed. Local copies stay outside git (`SOUNDTAP_STOCK`). Stock-image
   analysis happens outside the repository; its findings go into docs as facts, registered in the
   [source register](../../os/stock/PROVENANCE.md), not into scripts or copied code.
-- A binary we ship but do not compile comes from upstream with its source recorded, never from a
+- A binary SoundTap ships but does not compile comes from upstream with its source recorded, never from a
   Bose image ([ADR 0047](0047-wilink8-firmware-and-conf.md)).
 - Two things the speaker already carries are used where they are, and are neither in the
   repository nor in the STU: the speaker's own codec script on the ST10 and ST20
@@ -35,7 +35,7 @@ Alternatives that lost: keeping the stock files in the repository for tests and 
 but keeps Bose bytes in the repository and the old STU shape alive); a hash gate that scans every
 build against an index of stock file hashes (it catches only a whole file from one stock version,
 nothing embedded or from another version, and was never the goal); a wider bar that every byte on
-the board be built by us from source (prebuilt upstream packages are fine).
+the board be built by the project from source (prebuilt upstream packages are fine).
 
 ## Consequences
 

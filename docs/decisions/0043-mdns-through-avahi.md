@@ -7,7 +7,7 @@ Status: accepted — 2026-11-20
 A speaker needs a name on the LAN, a `_soundtap._tcp` service, the shared `soundtap.local` name,
 and a list of the other speakers behind `GET /api/devices`. avahi-daemon runs on every speaker
 anyway, because shairport-sync, librespot and snapcast advertise through it, and it is the Linux
-mDNS stack; a second responder of our own would share UDP 5353 with it. The project prefers
+mDNS stack; a second responder of SoundTap's own would share UDP 5353 with it. The project prefers
 popular, widely used projects wherever they exist ([ADR 0124](0124-third-party-code.md)).
 
 What comes in over mDNS is unauthenticated: any host on the LAN can publish an A record or a
@@ -56,7 +56,7 @@ nothing answers, the new address takes the entry over, so a speaker renumbered b
 reachable again at once. A speaker reachable on two interfaces departs only when both report it
 gone. The registry holds at most 64 entries.
 
-Alternatives that lost: our own responder (a second mDNS stack in our code next to the one the
+Alternatives that lost: a responder of SoundTap's own (a second mDNS stack in SoundTap's code next to the one the
 image already runs); avahi's command-line tools (up to four processes held open, collisions found
 by matching their output, a line format to parse); libavahi-client through cgo (ends the static,
 cgo-free build); a `<slug>.local` per speaker (nothing needs a per-speaker name people type);

@@ -61,11 +61,11 @@ the IR remote do not go through the web layer, which is why playback starts from
 Alternatives that lost:
 
 - **The Web API with a developer app and OAuth.** More features, but it asks the owner for
-  credentials and depends on a quota we do not own.
+  credentials and depends on a quota SoundTap does not own.
 - **Another librespot player patch, or a replacement Spotify implementation, for the skip.**
   An upgrade burden the project declined. Snapcast's librespot adapter avoids the ALSA period
   with the pipe backend but needs a 44.1 kHz ingest path; go-librespot drops the old output
-  before changing source, which is the ordering we take through upstream's sink hooks.
+  before changing source, which is the ordering SoundTap takes through upstream's sink hooks.
 - **A Spotify URI under the TUNEIN source.** It breaks every consumer that treats a TuneIn
   location as a station id.
 - **Starting preset playback in the web handler.** The keypad and the remote would not work.
@@ -74,7 +74,7 @@ Alternatives that lost:
 
 - Features are limited to what the session can reach. The server search route tries mercury and
   can be refused; the UI opens Spotify's own search instead of promising catalogue search.
-- Our librespot carries patches (control API, volume follow and more), so it is built from a
+- SoundTap's librespot carries patches (control API, volume follow and more), so it is built from a
   pinned version and the patches are rebased on every upgrade.
 - Natural track tails are complete, but gapless albums are not promised: upstream ALSA pads the
   last period when closing. Audio already handed to the DAC or Snapcast keeps its bounded

@@ -8,10 +8,10 @@ Every model has the same NAND layout: two kernel partitions (`mtd6`/`mtd7`, Ping
 rootfs partitions (`mtd8`/`mtd9`). A power loss or a bad image during an update must never leave a
 speaker without a bootable system.
 
-Our U-Boot picks the slot from its environment (`bootcmd`, `altbootcmd`, the boot recipes). Bose's
+SoundTap's U-Boot picks the slot from its environment (`bootcmd`, `altbootcmd`, the boot recipes). Bose's
 U-Boot keeps one 8 KiB copy of the environment at the start of `NAND.U-Boot-Env` (mtd5, one erase
 block): every write erases the only copy first, so a power cut in that window leaves U-Boot on its
-built-in default, and Bose's entries plus our recipes nearly fill it. mtd5 is one erase block and
+built-in default, and Bose's entries plus SoundTap's recipes nearly fill it. mtd5 is one erase block and
 the next partition is Kernel-Ping, so a second copy cannot go there.
 
 U-Boot can count boots: built with `CONFIG_BOOTCOUNT_LIMIT` and `CONFIG_BOOTCOUNT_AM33XX` it adds
@@ -49,7 +49,7 @@ RAUC use it, and Buildroot packages it.
 
 ### The environment: two copies, written with libubootenv
 
-Our U-Boot keeps a redundant environment (`CONFIG_ENV_REDUNDANT`): two copies of 32 KiB, each at
+SoundTap's U-Boot keeps a redundant environment (`CONFIG_ENV_REDUNDANT`): two copies of 32 KiB, each at
 the start of its own erase block, the primary at the start of `NAND.U-Boot-Env` (flash 0x260000)
 and the other in the last erase block of `NAND.U-Boot` (flash 0x240000), behind the spare U-Boot
 ([ADR 0009](0009-mainline-linux-own-bootloaders.md)). Each copy is a CRC32, a flag byte and the
@@ -58,7 +58,7 @@ save writes the other copy with the next flag, so a cut leaves the old one. `CON
 stays one erase block for both, so a bad block under either copy loses that copy, not the
 environment.
 
-- **The format follows the U-Boot.** Our U-Boot adds `soundtap.env=redundant` to every kernel
+- **The format follows the U-Boot.** SoundTap's U-Boot adds `soundtap.env=redundant` to every kernel
   command line; soundtapd writes the redundant format only under that marker and Bose's single
   8 KiB copy otherwise, so no U-Boot meets a format it cannot read. While neither redundant copy
   checks out, U-Boot reads the single copy (`CONFIG_ENV_REDUNDANT_UPGRADE`), and its first save
@@ -80,7 +80,7 @@ environment.
   value, a newline, a line longer than its buffer) is refused before anything is written. The
   installer module writes the environment itself, because Bose's root filesystem has no
   `fw_setenv`. `fw_printenv` prints a value that holds a newline over several lines; a
-  line that does not start with a key continues the value before it. Our U-Boot left such
+  line that does not start with a key continues the value before it. SoundTap's U-Boot left such
   values before 0.1.0-alpha.3: `board_late_init` set `board_name`, `board_rev`,
   `board_serial` and `serial#` from TI EEPROM data that on these boards is SRAM nothing
   initialised, and the boot count's save wrote them to NAND. It no longer sets them
@@ -89,7 +89,7 @@ environment.
   so libubootenv exits with an error instead of falling back to defaults. Before an install and at
   boot confirm, soundtapd reads the raw copies: one that checks out is enough (libubootenv writes
   the other), the single copy is converted with every entry kept, and anything else is rebuilt
-  with our recipes for this model and `bootcmd` on the running slot, which just proved it boots.
+  with SoundTap's recipes for this model and `bootcmd` on the running slot, which just proved it boots.
 - **A copy on a bad block is lost, the other carries the environment.** U-Boot boots the copy
   that reads, and a save that fails on the lost copy writes the other one. libubootenv refuses
   both copies when one cannot be read, so when `fw_printenv` refuses, soundtapd checks the two
@@ -114,7 +114,7 @@ environment.
 - **Confirmation.** A boot counts as good once soundtapd's HTTP service has run a minute (also on
   `-no-audio` boots) and every check holds, looked at again every 10 s for as long as soundtapd
   runs: `/api/version` answers HTTP 200 on loopback within 5 s, and on the ST20 this boot's BCO
-  install step is over and `bcolink0` exists. Only our own BCO app brings up that link
+  install step is over and `bcolink0` exists. Only SoundTap's own BCO app brings up that link
   ([ADR 0031](0031-bco-network-card.md)); a slot whose BCO image does not come up rolls back, so
   that the other slot's soundtapd flashes its own image back. Nothing else is checked: not the
   network, so a speaker without a router still confirms a good image; not the audio, because what
@@ -162,12 +162,12 @@ sequenceDiagram
   end
 ```
 
-Alternatives that lost: full-NAND flash per update (no fallback; it bricked an ST10); keeping our
-own environment writer (it worked, but it is our code doing what a standard tool does); linking
+Alternatives that lost: full-NAND flash per update (no fallback; it bricked an ST10); keeping a
+self-written environment writer (it worked, but it is SoundTap's code doing what a standard tool does); linking
 libubootenv through cgo (soundtapd is a static Go binary built without cgo); a try flag in the
-environment read by our own `bootcmd` (our own logic where U-Boot's boot count already does the
+environment read by SoundTap's own `bootcmd` (SoundTap's own logic where U-Boot's boot count already does the
 job); `CONFIG_BOOTCOUNT_ENV` alone (it is the same Kconfig choice as the RTC backend, so a
-confirmed slot would lose its warm-reset fallback); a boot guard in our SPL (one boot chain for
+confirmed slot would lose its warm-reset fallback); a boot guard in SoundTap's SPL (one boot chain for
 every model replaces it); a limit of 3 (three power cuts during a long ST20 trial boot rolled a
 good update back).
 

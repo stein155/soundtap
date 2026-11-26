@@ -12,7 +12,7 @@ in the block's own spare area, and only an expert's `nand scrub` takes it away. 
 block by mistake loses it for ever.
 
 Two writers in this repository write a slot without `ubiformat`: the installer that runs on stock
-firmware (`os/installer/module`) and the USB-stick recovery in our U-Boot
+firmware (`os/installer/module`) and the USB-stick recovery in SoundTap's U-Boot
 ([ADR 0130](0130-usb-stick-recovery.md)).
 
 ## Decision

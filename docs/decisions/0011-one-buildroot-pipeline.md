@@ -70,7 +70,7 @@ default to `HEAD` (commit date and hash), can be set on the command line, and
   filesystem is, and init closes module loading once the boot has loaded them
   ([ADR 0048](0048-signed-updates.md)).
 - `mkfs.ubifs` takes a fixed UUID and `--timestamp $(SOURCE_DATE_EPOCH)` for every inode, and
-  writes directories and hard links in sorted order (our patches in
+  writes directories and hard links in sorted order (SoundTap's patches in
   `os/board/common/patches/mtd/`); `ubinize` takes a fixed image sequence number (`-Q`).
 - `mkimage` stamps the uImages with `SOURCE_DATE_EPOCH`; the post scripts refuse to run without
   it. The bootloaders use their own fixed epoch (`os/bootloader/source-date-epoch`).
@@ -121,9 +121,9 @@ Alternatives that lost:
 
 - **Alpine.** Prebuilt packages look simpler to maintain, and size does not rule it out (all
   packages stock, without librespot and nqptp, which it does not carry for armv7, came to 145 MB;
-  with our trimmed ffmpeg about 82 MB against 76 MB). It would save an estimated 25 to 30 of the
+  with SoundTap's trimmed ffmpeg about 82 MB against 76 MB). It would save an estimated 25 to 30 of the
   files in `os/`, while the kernel, bootloaders, installer, drivers, ffmpeg, librespot, Snapcast and
-  AirPlay stay ours to build. We would lose exact rebuilds, since Alpine keeps little beyond each
+  AirPlay stay SoundTap's to build. The project would lose exact rebuilds, since Alpine keeps little beyond each
   package's newest version, and `make legal-info`. Rejected: little gain, and it reopens boot,
   Wi-Fi and audio on every model.
 - **Yocto.** Heavier, aimed at many products and teams, no advantage for one product.
@@ -153,7 +153,7 @@ single packages, or if a board with a very different chip joins.
   `os/configs/soundtap_toolchain_defconfig`: the profile, the production overlay, the toolchain.
 - `os/board/rootfs/post-build.sh`: the profile file and alpha's access removed from production.
 - `os/support/rootfs_check.py`: refuses a rootfs that carries the other profile's access.
-- `os/board/common/patches/`: version overrides' hashes and our patches (`os/board/common/patches/mtd/` for the reproducible UBIFS).
+- `os/board/common/patches/`: version overrides' hashes and SoundTap's patches (`os/board/common/patches/mtd/` for the reproducible UBIFS).
 - `os/board/image/post-image.sh`, `os/bootloader/source-date-epoch`: timestamps from `SOURCE_DATE_EPOCH`.
 - `os/support/repro-check.sh`, `os/support/repro_compare.py`, `.github/workflows/reproducible.yml`: the reproducibility check.
 - `app/vendor/`: the vendored Go modules; `os/package/soundtapd/`: the offline Go build.

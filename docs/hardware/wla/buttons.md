@@ -10,7 +10,7 @@ stock image this board shipped with. What follows is what a port has to respect.
 
 A tap on AUX toggles the source and a hold picks Bluetooth; a tap on Bluetooth selects it
 and a hold opens pairing. Holding both for ten seconds enters the setup network, or leaves
-it again. Stock's runtime gesture for this unit could not be read, so this one is ours: it
+it again. Stock's runtime gesture for this unit could not be read, so this one is SoundTap's own: it
 follows the setup chord on the keypad models.
 
 ## There are two, and they are not the ST10's keypad

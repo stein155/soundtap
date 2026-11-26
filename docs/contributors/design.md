@@ -21,7 +21,7 @@ Everything for contributors starts here:
 
 ## 1. Goal and scope
 
-SoundTap replaces the discontinued Bose SoundTouch software stack with firmware we build
+SoundTap replaces the discontinued Bose SoundTouch software stack with firmware built
 from source: bootloader, mainline Linux, drivers, userland, update path and app. Bose-free
 has one definition: [ADR 0049](../decisions/0049-no-stock-bytes.md).
 
@@ -29,7 +29,7 @@ has one definition: [ADR 0049](../decisions/0049-no-stock-bytes.md).
 |---|---|---|
 | SoundTouch 10 (ST10) | `rhino` / sm2 | fully SoundTap incl. SPL/U-Boot |
 | Wireless Link Adapter (WLA) | `binky` / sm2 | fully SoundTap incl. SPL/U-Boot |
-| SoundTouch 20 (ST20) | `spotty` / scm | fully SoundTap incl. SPL/U-Boot; BCO runs our app and WiLD core (its BFL/BSL stay stock) |
+| SoundTouch 20 (ST20) | `spotty` / scm | fully SoundTap incl. SPL/U-Boot; BCO runs SoundTap's app and WiLD core (its BFL/BSL stay stock) |
 | SoundTouch 300 | `ginger` / sm2 | fully SoundTap incl. SPL/U-Boot; the soundbar processor (LPM) keeps its own firmware and drives the bass module, rears and HDMI |
 
 Previews ([ADR 0133](../decisions/0133-more-soundtouch-models-from-stock.md)), worked out from the
@@ -95,11 +95,12 @@ flowchart TB
       BA[bluealsa]
       NET[wpa_supplicant · hostapd · avahi · dropbear in alpha only]
     end
-    subgraph Kernel["Mainline Linux 6.12 + our drivers"]
+    subgraph Kernel["Mainline Linux 6.12 + SoundTap drivers"]
       AUD[McASP + AIC3256 audio]
       IR[IR]
       KEY[keypad GPIO]
       WIFI[wl18xx Wi-Fi]
+      NF["IPv4 + IPv6 · nftables inet filter in production"]
     end
     subgraph Boot["Boot chain"]
       ROM[AM335x ROM] --> SPL[SPL] --> UB[U-Boot] --> K[kernel slot A/B]
@@ -129,7 +130,7 @@ flowchart TB
   smart battery: gauge, charger and stock's SHIP rules), `hw/stm32amp` (the SA-5's amplifier
   controller), `abl` (the Bose link master for the SoundTouch adapter, [ADR 0133](../decisions/0133-more-soundtouch-models-from-stock.md)), `supervise`
   (the media daemons' supervisor), `counters` (the counts `/api/health` reports,
-  [ADR 0127](../decisions/0127-health-counters-and-alpha-pprof.md)) and `wifi` (the Wi-Fi manager: the
+  [ADR 0127](../decisions/0127-health-counters-and-alpha-pprof.md)), `lanfilter` (keeps the production filter's IPv6 own-prefix set `lan_nets6`, [ADR 0134](../decisions/0134-ipv6-on-the-speaker.md)) and `wifi` (the Wi-Fi manager: the
   station join over wpa_supplicant's control socket through `wpactrl`, the fallback to the last
   network that worked and the hostapd setup AP, [ADR 0063](../decisions/0063-wifi-lease-and-setup-ap.md)). `app/cmd/soundtapd` keeps what wires them together per model:
   the button handler, the arbiter's wiring and the source ownership, the media daemons' table,
@@ -165,7 +166,7 @@ flowchart LR
   subgraph ST20
     A3[AM335x SCM] --- C3[AIC3256 + amp]
     A3 --- O3[OLED 128x100]
-    A3 -- USB bulk / bcolink --- BCO[BCO DM870<br/>our app + WiLD core<br/>Ethernet frames, no NAT]
+    A3 -- USB bulk / bcolink --- BCO[BCO DM870<br/>SoundTap app + WiLD core<br/>Ethernet frames, no NAT]
     BCO --- LAN((home LAN))
   end
   subgraph ST300
@@ -185,7 +186,7 @@ flowchart LR
 ```
 
 Under the stock BCO app the ST20's main CPU sits behind NAT with selected inbound ports
-and no multicast forwarding, so SoundTap does not support that firmware. Our own BCO app puts it
+and no multicast forwarding, so SoundTap does not support that firmware. SoundTap's own BCO app puts it
 on the LAN with its own `wlan0` address, and SoundTap serves `:80` there as everywhere (§12,
 [ADR 0001](../decisions/0001-soundtapd-one-go-daemon.md)). All four models share one NAND layout:
 
@@ -197,7 +198,7 @@ on the LAN with its own `wlan0` address, and SoundTap serves `:80` there as ever
 | 6 / 7 | kernel Ping / Pong | the inactive one |
 | 8 / 9 | rootfs Ping / Pong (UBI) | the inactive one |
 | 10 | `/mnt/nv` persistent | never |
-| 11 | update staging | never by us |
+| 11 | update staging | never by SoundTap |
 | 12 | manufacturing data | never |
 
 ## 4. Boot
@@ -205,19 +206,19 @@ on the LAN with its own `wlan0` address, and SoundTap serves `:80` there as ever
 ```mermaid
 flowchart TB
   subgraph SM2[ST10 and WLA: the same sm2 chain]
-    r1[ROM<br/>USB RAM boot: development restore] --> s1[our SPL] --> u1[our U-Boot<br/>bootcmd picks the slot] --> k1[our kernel]
+    r1[ROM<br/>USB RAM boot: development restore] --> s1[SoundTap SPL] --> u1[SoundTap U-Boot<br/>bootcmd picks the slot] --> k1[SoundTap kernel]
   end
   subgraph ST20b[ST20]
-    r3[ROM<br/>USB via busy pad: development restore] --> s3[our SPL<br/>USB first, then NAND] --> u3[our U-Boot<br/>bootcmd + bootcount] --> k3[our kernel]
+    r3[ROM<br/>USB via busy pad: development restore] --> s3[SoundTap SPL<br/>USB first, then NAND] --> u3[SoundTap U-Boot<br/>bootcmd + bootcount] --> k3[SoundTap kernel]
     u3 -. bootcount exceeds bootlimit .-> o3[other slot]
   end
   u1 -. physical button chord .-> USB[USB stick: Update.stu, no signature<br/>SoundTap rootfs, or Bose's file back to stock]
   u3 -. physical button chord .-> USB
 ```
 
-The ST10, ST20 and Wireless Link run our SPL, U-Boot, kernel and rootfs since 2026-09-30
+The ST10, ST20 and Wireless Link run SoundTap's SPL, U-Boot, kernel and rootfs since 2026-09-30
 ([ADR 0009](../decisions/0009-mainline-linux-own-bootloaders.md)), the ST300 since its first install
-(2026-11-15). Our U-Boot implements
+(2026-11-15). SoundTap's U-Boot implements
 USB-stick recovery with Vol- + Preset 4 (ST10/ST20) or both buttons (WLA). The ST300 starts it
 with its remote's combo, passed on by the soundbar processor. Holding the keys is the
 authorization: no signature is read ([ADR 0130](../decisions/0130-usb-stick-recovery.md)).
@@ -237,12 +238,12 @@ timeout-setup failure is logged and does not establish this guarantee. The daemo
 uses magic-close to disarm it, and a kernel oops panics and resets the board rather than
 leaving a half-dead kernel to be fed ([ADR 0052](../decisions/0052-soundtapd-lifecycle.md)).
 Nothing of that timeout crosses a reboot: the kernel's `omap_wdt` shutdown hook stops the
-watchdog before the reset, and our SPL reloads it for 120 s (nominal, from the internal RC
+watchdog before the reset, and SoundTap's SPL reloads it for 120 s (nominal, from the internal RC
 oscillator) before anything else. U-Boot does not feed it, so SPL, U-Boot and the kernel
 share that one window until `omap_wdt` takes over, and a hang in any of them resets into
 U-Boot's boot count.
 
-On the ST20 our U-Boot also switches on the OLED's VDD3 supply and paints soundtapd's first boot frame, so the panel shows a picture about a second after power-on ([ADR 0131](../decisions/0131-st20-boot-frame.md)).
+On the ST20 SoundTap's U-Boot also switches on the OLED's VDD3 supply and paints soundtapd's first boot frame, so the panel shows a picture about a second after power-on ([ADR 0131](../decisions/0131-st20-boot-frame.md)).
 
 Details: [ADR 0009](../decisions/0009-mainline-linux-own-bootloaders.md),
 [`st20/rom-usb-recovery.md`](../hardware/st20/rom-usb-recovery.md).
@@ -269,7 +270,7 @@ A/B rules and the confirm sequence: [ADR 0010](../decisions/0010-ab-slots-boot-c
 A preview model installs only from the preview package, which differs from the main one in its
 installer (module 0) alone and has its own `.sig` and feed ([ADR 0133](../decisions/0133-more-soundtouch-models-from-stock.md)).
 "Alive" means soundtapd has run a minute and its API answers on loopback; on the ST20 also
-that its BCO install step is over and our BCO app's link (`bcolink0`) is up. The network is
+that its BCO install step is over and SoundTap's BCO app's link (`bcolink0`) is up. The network is
 never checked, so a speaker on a broken LAN keeps a good image. On every model,
 init reboots a NAND boot whose soundtapd never comes up within 300 s. U-Boot's boot count
 (RTC SCRATCH2, and for an unconfirmed slot the environment, which a power cut does not
@@ -343,8 +344,8 @@ Announcements duck the bus.
 | Source / integration | Component | Notes |
 |---|---|---|
 | Spotify Connect + browse | librespot + control API on loopback | [ADR 0014](../decisions/0014-spotify-through-librespot.md) |
-| AirPlay 2 | shairport-sync + nqptp | Apple Home through AirPlay ([ADR 0003](../decisions/0003-apple-home-via-airplay-no-cast-no-sonos.md)); ST20: our BCO forwards multicast; discovery needs model-specific validation |
-| TuneIn / internet radio | soundtapd + our shared ffmpeg package (ADR 0041) | presets 1-6 |
+| AirPlay 2 | shairport-sync + nqptp | Apple Home through AirPlay ([ADR 0003](../decisions/0003-apple-home-via-airplay-no-cast-no-sonos.md)); ST20: SoundTap's BCO app forwards multicast; discovery needs model-specific validation |
+| TuneIn / internet radio | soundtapd + SoundTap's shared ffmpeg package (ADR 0041) | presets 1-6 |
 | UPnP/DLNA renderer | soundtapd `upnp` | |
 | Bluetooth | bluealsa | ST10/WLA pairing and silent-stream evidence; phone checks remain open; not on ST20 gen 1 ([checklist](../hardware/hardware-test.md#open-hardware-checks)) |
 | Multiroom | Snapcast | [ADR 0013](../decisions/0013-multiroom-through-snapcast.md) |
@@ -411,7 +412,7 @@ flowchart LR
   main --> REPRO[reproducible.yml weekly: make repro-check<br/>two clean builds, same SHA256SUMS and STU]
   CB --> HW[hardware test on ST10, WLA, ST20, ST300]
   HW --> REL[release.yml lane=os: tag os-vX.Y.Z, draft exact bytes]
-  HW --> REP[hardware reports PR: releases/os-vX.Y.Z/]
+  HW --> REP["hardware reports PR: releases/os-vX.Y.Z/"]
   CB -. alpha X.Y.Z-alpha.N: no hardware reports, a prerelease .-> REL
   main --> APP[release.yml lane=app: tag app-vX.Y.Z, draft soundtapd + UI]
   REL & APP --> SIGN[sign.yml in the release environment, main only:<br/>release key secret, still a draft]
@@ -475,13 +476,18 @@ flowchart LR
   other users' state go to the root helper `soundtap-root` as typed requests it checks against
   the NAND contract (`app/internal/rootd`). The media daemons run as users of their own and get
   no capability unless they need one ([ADR 0066](../decisions/0066-production-hardening.md)).
+- The speaker runs IPv6 next to IPv4: link-local and SLAAC addresses, temporary addresses for
+  connections out; IPv4 stays its address for the API, mDNS peers, UPnP and multiroom. A production
+  image filters both in one nftables `inet` table that answers only the speaker's own subnets and
+  prefixes (`lan_nets` from `lan-allow.sh`, `lan_nets6` from soundtapd's `lanfilter`)
+  ([ADR 0066](../decisions/0066-production-hardening.md), [ADR 0134](../decisions/0134-ipv6-on-the-speaker.md)).
 - Credentials (Wi-Fi, Spotify) stay on the speaker in `/mnt/nv`, with mode 0600. They never go
   to the browser, logs or diagnostics.
 - Bootloader writes follow the permission gates of [the contract](../../CONTRIBUTING.md#absolute-safety-rules) and need a proven recovery plan,
   including the board's NAND backup and ROM-USB restore path on every model; only the first
   install from Bose's software runs without a backup. The firmware API
   writes shared bootloaders when their bytes differ; A/B protects kernel/rootfs slots only.
-- Under SoundTap the BCO runs our app; going back to stock restores stock's BCO app
+- Under SoundTap the BCO runs SoundTap's app; going back to stock restores stock's BCO app
   separately, with the `bcoflash` development tool. The BFL/BSL loaders stay as they are:
   updating the app through them is allowed, replacing them is not. Never use BSL flashing
   tools, raw BCO memory writes or guessed commands (ADR 0031).
@@ -531,10 +537,17 @@ keeps time from the USB frame number ([detail](../hardware/st20/bco-network-card
 
 For setup soundtapd's Wi-Fi manager adds `wlan1` as `__ap` and starts `hostapd`, as on the ST10
 ([ADR 0031](../decisions/0031-bco-network-card.md)). The driver passes hostapd's beacon to the BCO. The WiLD core
-beacons from it with the BCO's own MAC as BSSID and answers probes; our BCO app answers authentication and
+beacons from it with the BCO's own MAC as BSSID and answers probes; SoundTap's BCO app answers authentication and
 association (AP SME in the device). Channel 1 then carries `wlan1`'s frames.
 
 The BCO reports its free Wi-Fi transmit buffers as credit; the driver stops `wlan0`'s (or `wlan1`'s) queue
 while there is none, so frames wait in the SCM's qdisc instead of being dropped on the BCO. The BCO's transmit
 counters and the flow-control state are in `/sys/class/net/bcolink0/bco/` and in `bco` in `/api/health`
 ([detail](../hardware/st20/bco-network-card.md#flow-control-and-the-counters)).
+The BCO also reports a lost link at once (deauthentication, disassociation, beacon loss), and the driver ends
+the connection with the access point's reason; it roams within the SSID below -70 dBm, one channel per visit away
+from its own, to an access point at least 8 dB stronger, which the driver reports as `cfg80211_roamed`; the
+regulatory domain cfg80211 settles on (soundtapd's country) reaches it through the driver's `reg_notifier` as
+channel masks and a TX power limit (recorded, not enforced); and its directed probe takes the scan's SSID for
+hidden networks ([ADR 0135](../decisions/0135-bco-standard-firmware-features.md),
+[detail](../hardware/st20/bco-network-card.md#link-events-roaming-and-the-regulatory-domain)).

@@ -11,7 +11,7 @@ only by Linux. Without VDD3 the panel shows a faint, washed-out image.
 
 ## Decision
 
-Our U-Boot ([ADR 0009](0009-mainline-linux-own-bootloaders.md)), on the ST20 only (SYSBOOT
+SoundTap's U-Boot ([ADR 0009](0009-mainline-linux-own-bootloaders.md)), on the ST20 only (SYSBOOT
 10010b), from `board_init`:
 
 1. switches VDD3 on: one polled I2C2 write of the value Linux leaves in the TPS65910;

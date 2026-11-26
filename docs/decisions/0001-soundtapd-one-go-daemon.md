@@ -13,7 +13,7 @@ soundtapd in Node.js, the maintainer's strongest language, was proposed.
 
 One rootfs serves every model ([ADR 0008](0008-one-universal-stu.md)), so there is one daemon
 binary. On every model the LAN reaches the main CPU directly: on the ST10, Wireless Link and ST300
-through their own Wi-Fi, on the ST20 through our BCO app, which gives the SCM its own `wlan0`
+through their own Wi-Fi, on the ST20 through SoundTap's BCO app, which gives the SCM its own `wlan0`
 ([ADR 0031](0031-bco-network-card.md)).
 
 ## Decision

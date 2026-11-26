@@ -7,14 +7,14 @@ Status: accepted — 2026-11-20
 Owners want the speaker in their home-automation hub: volume, power, presets, what is playing,
 and the update. Stock offers nothing for this. Hubs differ, but most of them speak MQTT and read
 MQTT discovery messages, so one protocol reaches all of them. The speakers are small 32-bit ARM
-boards, and every dependency adds to the image and to the code we must review.
+boards, and every dependency adds to the image and to the code the project must review.
 
 ## Decision
 
 soundtapd has an MQTT bridge that is off until the owner turns it on in the settings. It is an
 outbound client, never a listener, and speaks MQTT 3.1.1 through Eclipse Paho's Go client
 (`github.com/eclipse/paho.mqtt.golang`, [ADR 0124](0124-third-party-code.md)): QoS 0 only,
-plain TCP or TLS dialled by us so the context can cancel the handshake, a clean session, no
+plain TCP or TLS dialled by SoundTap itself so the context can cancel the handshake, a clean session, no
 fallback to 3.1, and Paho's automatic reconnect off. The bridge reconnects every 15 seconds and
 reads the settings again on each attempt; a settings change drops the connection and reconnects
 at once, without restarting the daemon.
@@ -39,8 +39,8 @@ refuse settings the bridge cannot use (`settings.MQTT.Validate`). The broker pas
 out of API responses, backup downloads and diagnostics. The UI and docs say "MQTT", never the
 name of one hub.
 
-Alternatives that lost: our own MQTT 3.1.1 client (every corner of the protocol, keepalive, QoS 1
-and 2 inbound, framing, was ours to get right and keep right); Paho's MQTT 5 client
+Alternatives that lost: an MQTT 3.1.1 client of SoundTap's own (every corner of the protocol, keepalive, QoS 1
+and 2 inbound, framing, was SoundTap's to get right and keep right); Paho's MQTT 5 client
 (`paho.golang`, smaller, but brokers that speak only 3.1.1 would refuse the speaker); a native
 integration per hub (own code and release cycle each, where discovery reaches them all); QoS 1
 (acknowledgement tracking and resending for commands the hub or user can simply send again).

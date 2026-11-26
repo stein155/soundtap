@@ -2,14 +2,15 @@
 
 Thanks for wanting to help. SoundTap is new firmware for speakers people already own and
 love, so the bar is simple: **never leave someone with a dead speaker**. Everything below
-follows from that.
+follows from that. New here? [Start here](docs/contributors/start-here.md) has the five rules
+that matter and what to read for your change.
 
 ## Ways to help
 
 | You have… | You can… |
 | --- | --- |
 | a SoundTouch running SoundTap | report what works and what does not ([bug form](../../issues/new?template=bug.yml)); attach the support bundle (*Settings → Maintenance → Help and support → Support bundle*), and with *Settings → Maintenance → For developers → Offer crash reports* on, a crash comes with a ready-made issue |
-| a SoundTouch still on Bose software | read-only evidence from a model we do not support yet ([device form](../../issues/new?template=device.yml)) |
+| a SoundTouch still on Bose software | read-only evidence from a model SoundTap does not support yet ([device form](../../issues/new?template=device.yml)) |
 | a translator's eye | improve a language in [`app/frontend/src/lib/i18n/messages/`](app/frontend/src/lib/i18n/messages/) |
 | Go or React | pick an issue labelled [`good first issue`](../../issues?q=is%3Aopen+label%3A%22good+first+issue%22) |
 | Linux, U-Boot or embedded experience | the boot chain, drivers and the ST20's network processor; start at [`docs/contributors/design.md`](docs/contributors/design.md) |
@@ -126,19 +127,19 @@ gets read-only permissions and no secrets. The steps:
   module, not only what changed, to every golangci-lint linter, each configured to the project's
   contracts in `app/.golangci.yml`. `make lint-shell` holds every shell script to every
   shellcheck check, the optional ones too, down to style, each by its shebang (`sh` is BusyBox
-  ash on the speaker); `make lint-c` holds our C to every cppcheck check at the exhaustive level.
+  ash on the speaker); `make lint-c` holds SoundTap's C to every cppcheck check at the exhaustive level.
   Where the code is right and a check is not, an inline `shellcheck disable` or
   `cppcheck-suppress` on the line says why;
 - `web`, `e2e`, `go`, `go-race`, `python`, `firewall` and `bco` (together `make test`). The Go steps
   cover both build architectures, vet, the tests and the tests under the race detector; the
   frontend step covers lint, format, types, tests and build. TypeScript runs with every
   strictness flag (`app/frontend/tsconfig.json`: `strict`, `noUncheckedIndexedAccess`,
-  `exactOptionalPropertyTypes` and the rest), ESLint with typescript-eslint's strict and
-  stylistic type-checked sets, jsx-a11y strict and React's hooks rules
-  (`app/frontend/eslint.config.mjs`), and Stylelint with every rule of the standard set and
-  stricter limits (`app/frontend/stylelint.config.mjs`). An option that fits a deliberate idiom
-  says why beside it. The one `eslint-disable` is the trust boundary in `src/lib/api/http.ts`,
-  where the server's OpenAPI contract types a response; a `stylelint-disable` says why on its
+  `exactOptionalPropertyTypes` and the rest), ESLint with every rule of ESLint,
+  typescript-eslint, eslint-plugin-react and React's hooks plugin and jsx-a11y strict
+  (`app/frontend/eslint.config.mjs`), and Stylelint with stylelint-config-standard and
+  stricter limits (`app/frontend/stylelint.config.mjs`). An option that fits a deliberate idiom,
+  and each of the few rules that are off, says why beside it. Where the code is right and a
+  rule is not, an inline `eslint-disable-next-line` or `stylelint-disable` says why on its
   line;
 - `vuln` (`make vuln`: `govulncheck` and `npm audit`).
 
@@ -156,7 +157,7 @@ For documentation-only changes, the focused suite is
   with which build.
 - Anything that changes an install or update route, the flash layout, the boot chain or a
   safety boundary needs an ADR and a hardware-test plan before it can merge.
-- Keep commits readable; we squash on merge.
+- Keep commits readable; pull requests are squashed on merge.
 
 ## Reporting security problems
 
@@ -169,8 +170,8 @@ See the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## The contract
 
-SoundTap replaces the Bose SoundTouch software with one Go daemon (`soundtapd`) and an OS we build
-ourselves: our SPL, U-Boot, mainline kernel and rootfs. One universal STU installs on the
+SoundTap replaces the Bose SoundTouch software with one Go daemon (`soundtapd`) and an OS it builds
+itself: its own SPL, U-Boot, mainline kernel and rootfs. One universal STU installs on the
 SoundTouch 10 (ST10), the Wireless Link Adapter (WLA), the SoundTouch 20 (ST20) and the SoundTouch
 300 (ST300) ([ADR 0008](docs/decisions/0008-one-universal-stu.md)).
 
@@ -209,7 +210,7 @@ reasons and details are in the linked ADRs and docs. The design starts at
 
 Every hardware action keeps a way back. This is about the way back, not about keeping Bose code.
 
-- **USB stick (the product's recovery).** Our U-Boot, before Linux and without soundtapd,
+- **USB stick (the product's recovery).** SoundTap's U-Boot, before Linux and without soundtapd,
   networking or `/mnt/nv`: a FAT/FAT32 stick with `Update.stu` at its root (a release's `.stu`
   renamed, or Bose's own update file for that model), power off, hold **Volume Down + Preset 4**
   (ST10, ST20) or **both buttons** (WLA), apply power. Holding the keys is the authorization: no
@@ -222,7 +223,7 @@ Every hardware action keeps a way back. This is about the way back, not about ke
   each read back. Holding the keys at power-on is the owner's OK for that `mtd0`-`mtd4` write.
   The ST300 has no proven gesture.
 - An implemented route is not a proven one: prove it on the exact candidate and model before
-  relying on it. Stock's chord on stock bootloaders proves nothing about ours.
+  relying on it. Stock's chord on stock bootloaders proves nothing about SoundTap's.
 - Do not change the physical keypad or button mapping U-Boot reads. The remote is a recovery
   trigger only where it starts the USB stick at power-on (the ST300's remote combo, which its
   soundbar processor passes on, as Bose's own USB update does): a stick still has to be in the
@@ -238,11 +239,13 @@ Every hardware action keeps a way back. This is about the way back, not about ke
   development tooling, not owner recovery:
   - ST10 and WLA: the ROM tries USB first (same sm2 module and straps;
     [ST10 notes](docs/hardware/st10/usb-recovery-and-rom.md), [`tools/recovery/rom-usb-loader/`](tools/recovery/rom-usb-loader/README.md)).
-  - ST20: the ROM boots NAND first; USB needs the busy pad held, inside the speaker. Our ST20 SPL
+  - ST20: the ROM boots NAND first; USB needs the busy pad held, inside the speaker. SoundTap's ST20 SPL
     asks the micro-B port first ([ST20 ROM-USB recovery](docs/hardware/st20/rom-usb-recovery.md)).
-  - ST300: how its ROM reaches USB is unknown. No bootloader work on an ST300 until that and a way
-    back are established, except the owner's own USB stick back to Bose
-    ([ADR 0130](docs/decisions/0130-usb-stick-recovery.md)), at their risk.
+  - ST300: how its ROM reaches USB is unknown. Installs and updates write its boot chain as on
+    the other models: proven on the owner's bar with the install from Bose, updates over the web
+    UI and the way back to Bose and again to SoundTap
+    ([install records](docs/hardware/install-records.md#soundtouch-300)). Other bootloader work,
+    a RAM-booted chain say, waits for a ROM-USB route.
 - **Before bootloader work on a board** (anything that may write `mtd0`-`mtd4`, an install
   included): a full per-partition NAND backup of that board including OOB
   (`tools/recovery/nand-backup-ssh.sh`, which needs root SSH and so an alpha image), and that
@@ -261,12 +264,12 @@ and installing SoundTap needs no original Bose STU.
   artifacts.
 - Stock analysis happens outside the repository; its findings go into docs as facts, registered in
   [`os/stock/PROVENANCE.md`](os/stock/PROVENANCE.md), never as copied code.
-- A binary we ship but do not compile comes from upstream with its source recorded
+- A binary SoundTap ships but does not compile comes from upstream with its source recorded
   (`os/support/check_provenance.py`), never from a Bose image.
 - Two things stay on the speaker and are used in place: its own codec script (ST10, ST20;
   [ADR 0012](docs/decisions/0012-single-dac-writer.md)) and the ST20's BFL/BSL
   ([ADR 0031](docs/decisions/0031-bco-network-card.md)).
-- The STU header's `BOSE` magic is the only borrowed thing; every module in the STU is ours.
+- The STU header's `BOSE` magic is the only borrowed thing; every module in the STU is SoundTap's own.
 - Third-party libraries are welcome under the rules of [ADR 0124](docs/decisions/0124-third-party-code.md).
 
 ### NAND and boot contract
@@ -343,12 +346,12 @@ read-only hardware evidence for that model exists.
 
 #### ST20 (`spotty` / scm)
 
-- Dual CPU. The BCO (DM870) runs our own BCO app as the SCM's network card: the SCM's
+- Dual CPU. The BCO (DM870) runs SoundTap's own BCO app as the SCM's network card: the SCM's
   `soundtap_bco` driver shows `wlan0` (WPA2 station, PMK offload), `eth0` (wired) and on request
   `wlan1` (open setup AP for hostapd), as on the ST10 ([ADR 0031](docs/decisions/0031-bco-network-card.md)).
   SoundTap does not support stock BCO firmware.
-- The rootfs carries our BCO app at `/usr/share/soundtap/bco-app.bcd`; soundtapd installs it when
-  its hash differs and keeps retrying while the BCO runs no app of ours. CC2540 is not included.
+- The rootfs carries SoundTap's BCO app at `/usr/share/soundtap/bco-app.bcd`; soundtapd installs it when
+  its hash differs and keeps retrying while the BCO runs no SoundTap app. CC2540 is not included.
 - BCO app updates use the existing loaders' app TFTP/XMODEM path. Entering the BSL app-update menu
   is not replacing BSL. Stock BCO firmware must always stay restorable.
 - Never add a network watchdog that reboots the SCM or restarts its networking because the gateway
@@ -372,11 +375,15 @@ read-only hardware evidence for that model exists.
 - The WLA's module, kernel and boot chain with its own device tree; soundtapd speaks the soundbar
   processor (LPM) protocol on UART0 ([ADR 0109](docs/decisions/0109-st300-soundbar-processor-link.md)).
 - U-Boot never listens on UART0 (`bootdelay=-2`).
-- Never send LPM op `0x08`: it reboots the processor. The processor's firmware is never written.
+- Never send LPM op `0x08` or a line for the processor's console (op `0x09`): both can reboot
+  the bar. soundtapd never reboots the bar; a processor that gave the module up waits for the
+  owner to power the bar off and on. The processor's firmware is never written.
 - ADAPTiQ and tone-control frames are never sent to a bar without its owner's explicit permission
   for that test.
-- Recovery is unproven (the stick's remote combo has never run on a bar, no known ROM-USB entry):
-  resolve a way back before any write.
+- Installs, updates and the way back to Bose through the Updates page are proven on the bar,
+  its boot chain included ([install records](docs/hardware/install-records.md#soundtouch-300)).
+  The stick's remote combo has never run on a bar and no ROM-USB entry is known: no bootloader
+  work beyond those routes.
 
 #### Previews from the stock packages ([ADR 0133](docs/decisions/0133-more-soundtouch-models-from-stock.md))
 
@@ -428,8 +435,8 @@ board it resembles.
   same PR: a change to what runs where, an install or update route, the flash layout, a build
   pipeline, an external protocol or a safety boundary without one is incomplete. Stock behaviour is
   the baseline and needs none ([decision records](docs/decisions/README.md)).
-- An ADR describes what holds now: update it when the decision changes, delete it when we no longer
-  do it. Update [`docs/contributors/design.md`](docs/contributors/design.md), Mermaid diagrams included, in the same PR.
+- An ADR describes what holds now: update it when the decision changes, delete it when the project no longer
+  does it. Update [`docs/contributors/design.md`](docs/contributors/design.md), Mermaid diagrams included, in the same PR.
 - A new test goes next to what it tests: Go tests beside the package, frontend tests beside the
   component, shell/build/docs tests in `os/tests/<subject>/` as [the test map](docs/contributors/testing/README.md)
   lists. A PR that adds, moves or removes tests updates the map.
@@ -468,7 +475,7 @@ Production work lands on `main`.
 - Go is the daemon language; one daemon on :80 ([ADR 0001](docs/decisions/0001-soundtapd-one-go-daemon.md)).
 - Apple Home through AirPlay 2; no Google Cast, Google Home, Sonos or Sendspin
   ([ADR 0003](docs/decisions/0003-apple-home-via-airplay-no-cast-no-sonos.md)).
-- One universal STU (ADR 0008); mainline Linux and our own bootloaders (ADR 0009); A/B slots with boot
+- One universal STU (ADR 0008); mainline Linux and SoundTap's own bootloaders (ADR 0009); A/B slots with boot
   confirmation (ADR 0010); Buildroot as the only pipeline (ADR 0011).
 - soundtapd is the only DAC writer (ADR 0012); multiroom through Snapcast, stereo pairs as groups
   (ADR 0013, [ADR 0107](docs/decisions/0107-stereo-pair-acts-as-one-speaker.md)); Spotify only through

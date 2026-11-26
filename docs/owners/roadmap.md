@@ -149,7 +149,7 @@ preview becomes a supported model once an owner has run its hardware checklist.
       the DAC` fire during the hold; it is now logged once the hold ends.
 - [ ] **Bootloader findings from the alpha review** (2026-11-23), each a bootloader or
       first-install change that is RAM-booted and run on a speaker before it ships:
-  - Done: our U-Boot set `board_name`, `board_rev`, `board_serial` and `serial#` from TI
+  - Done: SoundTap's U-Boot set `board_name`, `board_rev`, `board_serial` and `serial#` from TI
     EEPROM data that nothing initialises on these boards and saved that SRAM with the boot
     count (an ST10, 2026-11-23). soundtapd reads such values since 0.1.0-alpha.2, and U-Boot
     no longer sets them since 0.1.0-alpha.3 (booted on the Wireless Link, 2026-11-23).
@@ -209,7 +209,7 @@ preview becomes a supported model once an owner has run its hardware checklist.
       `main` with its license-hash fixes had no open CVE scoring 7.0 or
       more. That is not an audit of the candidate: re-run the SBOM audit for release. The
       release route's first run on the production profile (Buildroot 2025.02.19) found
-      five more: two kernel CVEs in code our kernel does not build (F2FS, Arm FF-A), and three
+      five more: two kernel CVEs in code SoundTap's kernel does not build (F2FS, Arm FF-A), and three
       in the LTS's GLib 2.82.5, two of them now patched and one in GLib's Windows-only spawn
       code. On 2026-11-22 a production SBOM of `main` (Buildroot 2025.02.19) had no open CVE
       scoring 7.0 or more, or not yet scored. The release runs `make os-cves` again on the

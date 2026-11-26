@@ -102,9 +102,11 @@ Alternatives that lost:
   dynamically against the shared libav build. Using a filter or protocol the package does not
   build fails a test that reads the package. A version or configuration change rebuilds the
   package and its consumers; a warm output tree is no evidence that an old artifact has it.
-- A host that does not resolve is refused up front. A media server on an IPv6 link-local
-  address is refused (the speakers' kernel has no IPv6). The DNS answer can still change between
-  our check and ffmpeg's own lookup. HLS variant playlists and segments are opened by ffmpeg
+- A host that does not resolve is refused up front. IPv6 follows the IPv4 rule
+  ([ADR 0134](0134-ipv6-on-the-speaker.md)): loopback and link-local addresses are refused like
+  127/8 and 169.254/16, also with a zone; a ULA is allowed like a private IPv4 address and a
+  global address like a public one. The DNS answer can still change between
+  SoundTap's check and ffmpeg's own lookup. HLS variant playlists and segments are opened by ffmpeg
   itself, within the protocol whitelist. Who may call these routes at all is
   [ADR 0055](0055-household-token-and-windows.md).
 - A stall shorter than the buffered audio is inaudible, and a reconnect does not replay the

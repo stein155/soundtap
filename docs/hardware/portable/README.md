@@ -14,7 +14,7 @@ The ST20's SCM board. Stock's `taigan_scm` and `spotty_scm` trees differ in four
 - **Codec script:** `taigan_scm_normal.cfg`.
 - **Sync-out:** none.
 
-Our U-Boot knows it by the variant resistor: `variant_raw` 2868–3481. It installs from the
+SoundTap's U-Boot knows it by the variant resistor: `variant_raw` 2868–3481. It installs from the
 ST20/30/Portable package (device id 0x0925) and recovers like the ST20.
 
 ## Battery and charger (stock BatteryMonitor)
@@ -65,8 +65,8 @@ charge rules and reports the pack on `/api/health` (`battery`).
 
 ## Amplifiers and audio
 
-APConfig-taigan has no PowerAmp object, and stock never puts the amplifiers in standby. Our
-tree holds ampstby (gpio1_23) high from boot.
+APConfig-taigan has no PowerAmp object, and stock never puts the amplifiers in standby. SoundTap's
+device tree holds ampstby (gpio1_23) high from boot.
 
 Stock settings:
 - volume 50 by default, range 30–70;
@@ -78,5 +78,5 @@ Stock settings:
 
 - The gauge reads.
 - The charger polarity.
-- That charging runs with our rules.
+- That charging runs with SoundTap's rules.
 - The RTC wake, which SoundTap does not use.

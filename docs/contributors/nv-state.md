@@ -52,7 +52,7 @@ later boots change nothing. Ownership is no format: no file changes.
 | `st20-eth0` | Machine (ST20) | Written by hand from stock's address; the init script and `app/internal/bco` read it | One line: `ADDR/PREFIX GATEWAY [DNS]` | none |
 | `codec/` | Machine, must not be lost | The init script copies the speaker's own codec script out of the slot it was installed from ([ADR 0012](../decisions/0012-single-dac-writer.md)) | The speaker's own codec script, kept byte for byte | none |
 | `soundtapd.override` (`.gz`, `.base`, `.trial`) | Machine | `app/internal/web/firmware/soundtapd.go`; the init script | An uploaded soundtapd, gzipped, and the base firmware soundtapd hash it was made for; dropped when that hash no longer matches, a previous trial never passed, or loading fails; three consecutive runtime failures, or a web page or update route that still does not answer after five minutes, also fall back to the built-in app | none |
-| `bco-image` | Machine (ST20) | `app/internal/bco` (`autoinstall.go`) | One line: the BCO image's SHA-256, then ` ok` once installed. A bare hash suppresses retries after an attempted install; ` ok` also checks that our app still runs. Lost: the bundled image is attempted again, which may write BCO flash | none |
+| `bco-image` | Machine (ST20) | `app/internal/bco` (`autoinstall.go`) | One line: the BCO image's SHA-256, then ` ok` once installed. A bare hash suppresses retries after an attempted install; ` ok` also checks that SoundTap's app still runs. Lost: the bundled image is attempted again, which may write BCO flash | none |
 | `snapserver/` | Other | snapserver | snapserver's clients and groups; snapserver writes /run/soundtap/snapserver, soundtapd copies it here when more than lastSeen changes | — |
 | `current-boot.log`, `previous-boot.log`, `previous-boot.1.log`, `previous-boot.2.log` | Log | The init script; the health page reads them | Text, 32 KiB each | — |
 | `panic.log`, `last-boot/` | Log | soundtapd | Text: the last crash, and how the last boot ended | — |
@@ -82,7 +82,7 @@ also decides whether a flash is attempted, so deleting it can cause another hard
 | `ntp-servers` | User, written by hand | `clock.sh` | NTP host names or addresses separated by white space, `#` comments. Asked after the DHCP lease's servers, instead of the default; a word that is not a name or an address is ignored. Absent or without a name: the default | none |
 | `soundtap-clock` | Machine | The init script | Seconds since 1970, one line. Lost: the clock waits for NTP | none |
 | `charger_active_level` | Other (Portable) | Stock's file; soundtapd reads it (`cmd/soundtapd/battery.go`) and never writes or removes it | One character, `1` or `0`: the charge enable's active level. Anything but `0`, or no file, means active high ([portable](../hardware/portable/README.md)) | none |
-| `model` | Machine | Read by the init script, written by nothing of ours | A model name; one that conflicts with the hardware is logged and ignored | none |
+| `model` | Machine | Read by the init script, written by nothing in SoundTap | A model name; one that conflicts with the hardware is logged and ignored | none |
 | `soundtap-boot.log`, `soundtap-netfail.log` | Log | The init script | Text | — |
 | `bluetooth/`, `bluealsa/` | Other | BlueZ (pairings), bluealsa (volumes per device) | Theirs | — |
 | `spotify/` | Other | librespot (`system/credentials.json`, `cache/`) | Theirs | — |

@@ -33,7 +33,7 @@ useArmVolumeControl="true"      (spotty: false)
 ```
 
 The speakers hand volume to their DSP. This box has no DSP in the path, so the scaling
-is ours to do, which is what `app/internal/audio` already does, and it is why the APServer
+is SoundTap's to do, which is what `app/internal/audio` already does, and it is why the APServer
 coefficient table is the right curve to be applying in software. See
 `TestStockVolumeCurveMatchesAPServerTable`.
 
@@ -47,7 +47,7 @@ primaryParameters hasAIC="false" hasABL="false" hasBattery="false" hasAudioInput
 The ST10 and ST20 offer bass over -9…0. Stock offers none here, and neither does SoundTap:
 the Wireless Link reports the range 0…0 and its settings page has no Sound section.
 
-## Two output drivers, which are our two cards
+## Two output drivers, which are SoundTap's two cards
 
 ```
 defaultOutputDriverIndex="0"
@@ -88,7 +88,7 @@ which agrees with `defaultOutputDriverIndex="0"` and with the order of the two p
 sets above. **Both lines reading `0` select analog; both reading `1` select optical.**
 This establishes the software selection, not the physical jack state for every bit pair.
 
-Both pads are muxed as inputs in our tree now so they can be read at all; until then they
+Both pads are muxed as inputs in SoundTap's device tree now so they can be read at all; until then they
 sat in whatever mode the bootloader left and an optical plug was undetectable.
 
 Reading them on the board on 2026-09-19 gave **0 and 1**: a disagreement, which is the
@@ -118,5 +118,5 @@ measurement is a plug going in and out while these two values are watched, and t
 hands on the speaker.
 
 The rates match what SoundTap already builds: analog first at 46875, S/PDIF at 44100. The dither flag and the per-path latency
-compensation are not implemented on our side, and neither is the ASRC constant set
+compensation are not implemented in SoundTap, and neither is the ASRC constant set
 (`invFsamp`, `ki`, `invki`) that stock uses to resample into those rates.

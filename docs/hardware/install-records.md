@@ -21,7 +21,7 @@ Older Bose software works too: the oldest tested is 20.0.6 (Wireless Link adapte
 
 | Model | Update server | Upload to port 17008 |
 | --- | --- | --- |
-| **SoundTouch 20** | 2026-11-11, Bose 27.0.6 → SoundTap: API answered after 336 s; its BCO app was then replaced and Wi-Fi/Ethernet returned. No audio test. 2026-11-14, again from 27.0.6: after 534 s, Wi-Fi taken over from Bose's software | 2026-10-17: installed from Bose's software 27.0.6 over its setup network (`Bose SoundTouch Wi-Fi Network`, upload to `192.168.1.1:17008`, HTTP 200 after 196 s), then booted SoundTap with our bootloaders |
+| **SoundTouch 20** | 2026-11-11, Bose 27.0.6 → SoundTap: API answered after 336 s; its BCO app was then replaced and Wi-Fi/Ethernet returned. No audio test. 2026-11-14, again from 27.0.6: after 534 s, Wi-Fi taken over from Bose's software | 2026-10-17: installed from Bose's software 27.0.6 over its setup network (`Bose SoundTouch Wi-Fi Network`, upload to `192.168.1.1:17008`, HTTP 200 after 196 s), then booted SoundTap with its own bootloaders |
 | **Wireless Link adapter** | 2026-11-06: installed from Bose's software 27.0.6, also from GitHub over HTTPS. 2026-11-11: again, started from the browser installer in Chrome, and with the Wi-Fi taken over from Bose's software. 2026-11-14, from Bose's software 20.0.6: Wi-Fi taken over. 2026-11-17: put back on Bose's 27.0.6 from SoundTap's firmware page (up in 50 s), then back to SoundTap through the update feed in 233 s, with its name, presets, volume and Wi-Fi kept | 2026-10-23: installed from Bose's software 27.0.6 over its setup network (`Bose ST WLA (…)`, upload to `192.0.2.1:17008`, HTTP 200 after 202 s), then rebooted into SoundTap by itself 46 s later with its settings intact |
 | **SoundTouch 10** | 2026-11-12, from Bose's software 27.0.6: SoundTap answered after 262 s, Wi-Fi taken over from Bose's profile. 2026-11-14, from Bose's software 22.0.3: after 259 s, Wi-Fi taken over. 2026-11-17, back to Bose 27.0.6 through the Updates page (unsigned Bose package) and returned through the feed: after 336 s, name, presets, volume and Wi-Fi kept | 2026-10-23: installed from Bose's software 27.0.6 over its setup network (`Bose ST 10 (…)`, upload to `192.0.2.1:17008`, HTTP 200 after 211 s), then rebooted into SoundTap by itself 44 s later with its settings intact |
 | **SoundTouch 300** | 2026-11-15: installed from Bose's software, started from the browser installer, with the Wi-Fi taken over from Bose's software; the same day back to Bose through the Updates page and returned through the feed ([checklist](hardware-test.md#release-checklist-per-model)) | 2026-11-06, one bar: see [SoundTouch 300](#soundtouch-300) |
@@ -138,7 +138,7 @@ Back to the guide: [Going back to Bose](../owners/install.md#going-back-to-bose)
   processor and bass-link payloads (an offline installer test covers that), so the processor
   keeps the firmware it has. The round trip ran on one bar (2026-11-15). Do not
   treat it as a full soundbar factory restore.
-- **When SoundTap does not start but its SPL/U-Boot still work:** our bootloader implements
+- **When SoundTap does not start but its SPL/U-Boot still work:** SoundTap's bootloader implements
   USB-stick recovery. Prove it on the exact model and candidate before relying on it. Put an
   `Update.stu` (a SoundTap release, or Bose's file for that model; no `.sig`, ADR 0130) on a
   FAT USB stick, plug it into the micro-B port through an OTG adapter, and
@@ -164,7 +164,7 @@ Back to the guide: [Going back to Bose](../owners/install.md#going-back-to-bose)
   mask ROM over USB with `tools/recovery/rom-usb-restore.py`, below, and that board's verified
   NAND backup. It is not an owner-ready recovery guarantee for any candidate.
 - **ST20 BCO app:** restoring Bose's BCO app by hand is a development step with the `bcoflash`
-  tool, before the stock SCM boot. Plan and verify independent SCM access first: replacing our
+  tool, before the stock SCM boot. Plan and verify independent SCM access first: replacing SoundTap's
   BCO app removes SoundTap's normal LAN path. See [BCO recovery limits](st20/bco-recovery.md).
 - Every write, reset and power cycle follows the rules in [the contract](../../CONTRIBUTING.md#the-contract).
 

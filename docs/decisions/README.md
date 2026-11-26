@@ -7,9 +7,9 @@ choice. The overall design and how these decisions fit together is in
 **Stock is the baseline.** Where the stock firmware had a feature, SoundTap behaves as stock
 does: the same buttons, lamps, volume steps, sound, setup, reset and recovery flow. When stock
 behaviour is unknown, it is read out of the stock firmware (clean room, outside the repository,
-[ADR 0049](0049-no-stock-bytes.md)) before we build it, rather than guessed. "Do it like stock"
+[ADR 0049](0049-no-stock-bytes.md)) before it is built, rather than guessed. "Do it like stock"
 needs no ADR. An ADR records a departure from stock, with the reason it was chosen; something
-stock did not have; or a hard-to-reverse choice in how we build it. A behaviour that differs from
+stock did not have; or a hard-to-reverse choice in how it is built. A behaviour that differs from
 stock and has no ADR is a bug. The deliberate differences are listed in
 [`../contributors/design.md`](../contributors/design.md#stock-behaviour-is-the-baseline).
 
@@ -25,7 +25,7 @@ pipeline, or a safety boundary. A bug fix or a refactor inside one package is no
    own ADR.
 2. **It says what holds now.** When a decision changes, update its ADR in the same PR, or
    merge the newer ADR into the older one. There are no chains of superseded ADRs, and an ADR
-   whose subject we no longer do is deleted. History lives in git, not in the body.
+   whose subject SoundTap no longer does is deleted. History lives in git, not in the body.
 3. **It cites the code that implements it.** The Code section names the files (repository
    paths such as `app/internal/release/release.go`) and, where it helps, the symbols
    (`release.Verify`, or `app/internal/release/release.go:Verify`). A move or rename updates
@@ -46,9 +46,9 @@ a row to the index below with the ADR's own title. A new or rewritten ADR has th
 
 - **Status**: one line under the title, `proposed` or `accepted`, with the date of that state.
 - **Context**: the forces at play: what the hardware, the users or the project need.
-- **Decision**: what we do, in one or two paragraphs, and the alternatives that lost, in a
+- **Decision**: what SoundTap does, in one or two paragraphs, and the alternatives that lost, in a
   sentence each.
-- **Consequences**: what becomes easier, what becomes harder, and what we must not do now.
+- **Consequences**: what becomes easier, what becomes harder, and what must not be done now.
 - **Code**: where the decision is implemented, as paths and symbols (principle 3).
 
 Keep it short. Add a Mermaid diagram when a picture says it faster.
@@ -60,14 +60,14 @@ Keep it short. Add a Mermaid diagram when a picture says it faster.
 | [0001](0001-soundtapd-one-go-daemon.md) | soundtapd is one Go daemon for every model, on :80 | accepted |
 | [0003](0003-apple-home-via-airplay-no-cast-no-sonos.md) | Apple Home through AirPlay 2; no HomeKit bridge, Google Cast or Sonos | accepted |
 | [0008](0008-one-universal-stu.md) | One universal STU for every model | accepted |
-| [0009](0009-mainline-linux-own-bootloaders.md) | Mainline Linux and our own SPL and U-Boot | accepted |
+| [0009](0009-mainline-linux-own-bootloaders.md) | Mainline Linux and SoundTap's own SPL and U-Boot | accepted |
 | [0010](0010-ab-slots-boot-confirm-rollback.md) | A/B slots, boot confirmation and rollback | accepted |
 | [0011](0011-one-buildroot-pipeline.md) | One Buildroot pipeline, with alpha and production profiles | accepted |
 | [0012](0012-single-dac-writer.md) | soundtapd is the only writer to the DAC | accepted |
 | [0013](0013-multiroom-through-snapcast.md) | Multiroom through Snapcast | accepted |
 | [0014](0014-spotify-through-librespot.md) | Spotify through the librespot session | accepted |
 | [0029](0029-speaker-side-timers-and-household-prefs.md) | Speaker-side sleep timer, alarm and multiroom preferences for the multi-device UI | accepted |
-| [0031](0031-bco-network-card.md) | The BCO is the ST20's network card and runs our own app | accepted |
+| [0031](0031-bco-network-card.md) | The BCO is the ST20's network card and runs SoundTap's own app | accepted |
 | [0035](0035-releases.md) | Releases: two lanes, versioned in the repo, built cold, signed in a protected environment | accepted |
 | [0040](0040-repository-layout.md) | Repository layout: app/, os/, bco/, docs/ and a slim tools/; Buildroot sees only os/ | accepted |
 | [0041](0041-radio-one-ffmpeg-one-url-rule.md) | Radio: one ffmpeg and one media URL rule | accepted |
@@ -86,7 +86,7 @@ Keep it short. Add a Mermaid diagram when a picture says it faster.
 | [0109](0109-st300-soundbar-processor-link.md) | The ST300: the Wireless Link's module, and soundtapd speaks to the soundbar processor | accepted |
 | [0110](0110-mqtt-bridge.md) | Home automation goes through one optional MQTT bridge with discovery | accepted |
 | [0111](0111-st20-standby-clock.md) | The ST20 standby screen shows the time alone | accepted |
-| [0113](0113-threat-model.md) | What a stranger can do to a production speaker, and what we accept | accepted |
+| [0113](0113-threat-model.md) | What a stranger can do to a production speaker, and what SoundTap accepts | accepted |
 | [0114](0114-bluetooth-agent-in-soundtapd.md) | soundtapd is the Bluetooth pairing agent, over godbus | accepted |
 | [0115](0115-shell-only-for-boot.md) | Shell runs the boot and the recovery paths; decisions live in Go | accepted |
 | [0116](0116-st300-tv-input-share.md) | The ST300 shares its TV input by capturing the processor's return on McASP0 | accepted |
@@ -103,7 +103,9 @@ Keep it short. Add a Mermaid diagram when a picture says it faster.
 | [0127](0127-health-counters-and-alpha-pprof.md) | /api/health counts restarts, underruns and failed writes; alpha images serve pprof on loopback | accepted |
 | [0128](0128-bad-block-marking.md) | A slot block that fails to erase or program is marked bad | accepted |
 | [0129](0129-first-install-keeps-settings.md) | A first install keeps the speaker's name, presets, Wi-Fi and clock | accepted |
-| [0130](0130-usb-stick-recovery.md) | A button chord at power-on installs Update.stu from USB, SoundTap's or Bose's, in our U-Boot | accepted |
+| [0130](0130-usb-stick-recovery.md) | A button chord at power-on installs Update.stu from USB, SoundTap's or Bose's, in SoundTap's U-Boot | accepted |
 | [0131](0131-st20-boot-frame.md) | The ST20's U-Boot paints the first boot frame on the OLED | accepted |
 | [0132](0132-modules-locked-after-boot.md) | The kernel loads modules only while the speaker boots | accepted |
 | [0133](0133-more-soundtouch-models-from-stock.md) | More SoundTouch models, worked out from the stock packages alone | accepted |
+| [0134](0134-ipv6-on-the-speaker.md) | The speaker runs IPv6 next to IPv4, behind the same filter | accepted |
+| [0135](0135-bco-standard-firmware-features.md) | BCO network card: standard firmware features | accepted |

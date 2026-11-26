@@ -172,7 +172,7 @@ RNDIS link on 192.168.7.2: a way in that does not depend on Wi-Fi.
 `perform_uboot_update` and `update_all`, and `usb_uboot` loads a `u-boot.img` from a stick
 and `go`es straight into it. So a USB write path exists below Linux as well.
 
-**Mask-ROM USB boot is not a setting.** It happens before any of our code, and whether it
+**Mask-ROM USB boot is not a setting.** It happens before any SoundTap code, and whether it
 is attempted is decided by the SYSBOOT strapping resistors on the board. No kernel option,
 device tree property or environment variable reaches it; only reading the straps, as above,
 tells.

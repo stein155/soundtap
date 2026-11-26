@@ -9,12 +9,12 @@ The forces at play: what the hardware, the users or the project need. Link evide
 
 ## Decision
 
-What we do, in one or two paragraphs, as it holds now. Then the alternatives that lost, a
+What SoundTap does, in one or two paragraphs, as it holds now. Then the alternatives that lost, a
 sentence each and why.
 
 ## Consequences
 
-What becomes easier, what becomes harder, and what we now must not do.
+What becomes easier, what becomes harder, and what must not be done now.
 
 ## Code
 

@@ -13,8 +13,8 @@ preset, power and volume on one remote. The supplied Bose map is `/etc/soundtap/
 `/mnt/nv/ir.map` replaces it for another remote.
 
 The steps below need an alpha (development) image with SSH access. Production images have
-no SSH, so this is not an owner procedure. Restarting the daemon or playing a preset while
-learning still needs explicit permission.
+no SSH, so this is not an owner procedure. On someone else's speaker, ask its owner before you
+restart the daemon or play a preset while learning.
 
 1. **Capture.** Restart soundtapd with `IR_LEARN=1` and press each key you want. Every code is
    logged and nothing is acted on:
@@ -47,7 +47,7 @@ track. A sender may refuse a command; a decoded key does not prove the sender ac
 The decoder synthesises both edges, so a remote gets the front panel's volume ramp and
 1750 ms preset hold. On the mainline path it reports a release after 200 ms without another
 frame; soundtapd then waits `IR_RELEASE_GRACE_MS` (150 ms by default) and cancels the pending
-release if the same code returns. Tune the grace only with an approved hands-on test. A
+release if the same code returns. Change the grace only after trying it by hand on the speaker. A
 second tap of the same key before the release settles can read as one continued hold.
 `IR_DEVICE=off` disables the receiver.
 
@@ -65,9 +65,8 @@ flow, and there is no setup code to scan.
 2. **Add Accessory → More options…** The speaker appears under the name set in
    SoundTap's settings. Pick it and assign a room.
 
-Once added it is groupable with HomePods and an Apple TV, Siri can route playback to
-it, and the volume slider in Home, Control Center and the phone's hardware buttons
-all drive the master volume.
+Once added, play to it from Control Center or the AirPlay button in any app
+([FAQ](docs/owners/faq.md#does-airplay-work-and-apple-home)).
 
 Two things will not work, and are not worth investigating: the Home tile's transport
 buttons, and accurate playback status there. Both need vendor features Apple only

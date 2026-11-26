@@ -64,7 +64,7 @@ and a test fails on a bare `go` statement.
    nothing feeds it or changes its timeout before a reboot. On a reboot through `reboot(2)` the
    kernel's `omap_wdt` shutdown hook stops WDT1 before `reboot: Restarting system`; the earlier
    `watchdog did not stop!` line only means soundtapd's descriptor closed without the `V`. A
-   panic restarts without that hook, and WDT1 counts on into the reset. Either way our SPL's
+   panic restarts without that hook, and WDT1 counts on into the reset. Either way the SoundTap SPL's
    `s_init` stops WDT1 and reloads it before it does anything else, for 120 s at a nominal
    32.768 kHz. It runs from the internal RC oscillator, so the real figure varies by board: the
    ST20 note gives about 100 s, and a Wireless Link reset about 90 s in. U-Boot leaves WDT1 alone

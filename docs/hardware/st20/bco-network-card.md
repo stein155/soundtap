@@ -1,6 +1,6 @@
 # The BCO network card in detail
 
-Under SoundTap the ST20's BCO (DM870) runs our own app as the SCM's network card
+Under SoundTap the ST20's BCO (DM870) runs SoundTap's own app as the SCM's network card
 ([ADR 0031](../../decisions/0031-bco-network-card.md) records the decision and its rules). This page
 holds the detail behind it: the link protocol, how the setup access point and the Wi-Fi data path
 use the WiLD core, and the measurements taken on the bench ST20. The app's build, first stage and
@@ -15,11 +15,13 @@ observation on one board, not approval of a later image: release evidence belong
 3. [Choosing the network](#choosing-the-network)
 4. [Protocol level and resent requests](#protocol-level-and-resent-requests)
 5. [Flow control and the counters](#flow-control-and-the-counters)
-6. [The card's clock](#the-cards-clock)
-7. [The setup access point on the WiLD core](#the-setup-access-point-on-the-wild-core)
-8. [CCMP on the core's cipher engine](#ccmp-on-the-cores-cipher-engine)
-9. [Medium access and rate adaptation](#medium-access-and-rate-adaptation)
-10. [Measurements on the bench ST20](#measurements-on-the-bench-st20)
+6. [Link events, roaming and the regulatory domain](#link-events-roaming-and-the-regulatory-domain)
+7. [Antenna setting](#antenna-setting)
+8. [The card's clock](#the-cards-clock)
+9. [The setup access point on the WiLD core](#the-setup-access-point-on-the-wild-core)
+10. [CCMP on the core's cipher engine](#ccmp-on-the-cores-cipher-engine)
+11. [Medium access and rate adaptation](#medium-access-and-rate-adaptation)
+12. [Measurements on the bench ST20](#measurements-on-the-bench-st20)
 
 ## The link
 
@@ -42,7 +44,8 @@ index), `mwifiex` (BSS index), `rndis_wlan` (usbnet minidriver with a cfg80211 `
   Wi-Fi MAC (PersParam `MAC0`, reported in `HELLO`), so the access point sees one station. `scan`
   maps to SCAN, `connect` to SET_PROFILE with the handshake offloaded
   (`NL80211_EXT_FEATURE_4WAY_HANDSHAKE_STA_PSK`), `disconnect` to FORGET and station info to
-  STATUS; STATUS is polled while connected and a drop reports a disconnect. `eth0` is the wired
+  STATUS; STATUS is polled while connected and a drop reports a disconnect, at once when the app
+  sends a [link event](#link-events-roaming-and-the-regulatory-domain). `eth0` is the wired
   port on channel 2. The usbnet device itself is the transport (`bcolink0`, no addresses); the
   driver brings it up with its children.
 - On the BCO, channel 1 goes to the Wi-Fi station (Ethernet ↔ 802.11 data with the device MAC),
@@ -62,14 +65,18 @@ Control messages on channel 0 are `u8 type, u16 seq` and a payload; the SCM retr
 and the BCO answers with the same `seq` and `type|0x80`, status first.
 
 - `HELLO`: firmware version, Wi-Fi MAC, state, protocol level and capability bits.
-- `SCAN`: payload `{1}` starts a scan, an empty payload polls; status 3 means still scanning,
+- `SCAN`: payload `{1}` starts a scan, `{1, ssid_len, ssid}` starts one whose directed pass probes
+  for that SSID (`BCOLINK_CAP_SCAN_SSID`), an empty payload polls; status 3 means still scanning,
   status 0 carries the results (`ssid_len, ssid, bssid[6], channel, rssi i8, security`: 0 open,
-  1 RSN, 2 WPA1 only). A scan is two probing passes over channels 1-13, 200 ms per channel;
-  while connected the cached list is returned. With a profile set, the second pass probes for its
-  SSID ([choosing the network](#choosing-the-network)).
+  1 RSN, 2 WPA1 only). A scan is two passes over the channels the regulatory domain allows (1-13
+  until one is set), 200 ms per channel, probing on each but a passive one, where it only listens;
+  while connected the cached list is returned. The second pass probes for the SCAN's SSID, else the
+  profile's ([choosing the network](#choosing-the-network)).
 - `SET_PROFILE`: `ssid_len, ssid, security = 1, pmk_len = 32, PMK, 32 random bytes` from the SCM
-  kernel for the SNonce. Only WPA2-PSK on 2.4 GHz; anything else is answered "unsupported"
-  (status 2). The PMK is never echoed or logged.
+  kernel for the SNonce, and with `BCOLINK_CAP_ROAM` a tail of `flags, bssid[6]` (1 this BSSID
+  only, 2 this BSSID first, 4 roam within the SSID). Without the tail the app joins any BSSID and
+  never roams. Only WPA2-PSK on 2.4 GHz; anything else is answered "unsupported" (status 2). The
+  PMK is never echoed or logged.
 - `FORGET` leaves the network without sending deauthentication and drops the profile; the WiLD
   core keeps running (a core reboot recalibrates the radio in busy waits that stall USB; the app
   reboots the core only when its transmitter wedges). `STATUS` reports state, network, channel
@@ -81,6 +88,11 @@ and the BCO answers with the same `seq` and `type|0x80`, status first.
 - `LINK_STATS` (14): status, then five le32 counters since the app started: Wi-Fi frames
   acknowledged, failed on air after the retries, dropped before the air (no free transmit buffer,
   not joined), messages the link dropped on any channel, and frames from the SCM the radio took.
+- `EVENTS` (15: `1` on, `0` off; reply status, on) switches the unasked link events on; `SET_REGDOM`
+  (16: `country[2], le16 channels, le16 passive, i8 dBm`; reply status, enforced) sets the
+  regulatory domain; `NV_INFO` (17, read-only) lists the PersParam keys
+  ([link events, roaming and the regulatory domain](#link-events-roaming-and-the-regulatory-domain),
+  [antenna setting](#antenna-setting)).
 
 ## Choosing the network
 
@@ -92,10 +104,14 @@ and the BCO answers with the same `seq` and `type|0x80`, status first.
   naming the profile's SSID (the core's probe from payload bytes 6 onward), the access point
   answers it with its name, and the scan table keeps that name: a later beacon without the SSID
   does not erase it. The first pass stays a wildcard, so the list still shows every network. The
-  SCM's SCAN carries no SSID, so the directed probe runs only while a profile is set (from
-  SET_PROFILE until FORGET). `wpa_supplicant` picks the network from the scan list, where
-  a hidden one has no name until such a probe, so whether a first join of a hidden network
-  reaches SET_PROFILE at all is open (the hardware checklist's hidden-network row).
+  driver puts the SSID of `wpa_supplicant`'s scan request (`scan_ssid=1`, which soundtapd writes
+  for every network) into SCAN (ADR 0135), so the first join of a hidden network finds it by name;
+  without a SCAN SSID the profile's is probed, as before. A first join of a hidden network on the
+  speaker is still open (the hardware checklist's hidden-network row).
+- SET_PROFILE's tail names a BSSID: a fixed one is the only one joined, a hinted one is joined
+  first when it was heard, else the strongest. `wpa_supplicant` sends a hint, not a fixed BSSID, to
+  a driver that roams by itself (`WIPHY_FLAG_SUPPORTS_FW_ROAM`), unless the network names a
+  `bssid`.
 - The association request's capability is ESS and Privacy, plus Short Preamble and Short Slot
   Time when the access point's own capability has them, as an ERP station sends: a station that
   leaves Short Slot out makes the access point move the whole BSS to the long slot.
@@ -180,6 +196,54 @@ from the other seven, and neither area is proven free of BFL's use on hardware; 
 `0x3f40` and `0x7040` are too small. `wifi.c` asserts at build time that the seven end below the
 command rings.
 
+## Link events, roaming and the regulatory domain
+
+[ADR 0135](../../decisions/0135-bco-standard-firmware-features.md) holds the decision; each feature
+has a capability bit and the driver uses it only when HELLO announces it.
+
+- **Link events.** With `EVENTS` on, the app sends `type 15 | 0x80`, seq 0, payload `status 0,
+  event, le16 reason, bssid[6], channel, rssi` the moment it drops the link: 1 deauthenticated
+  and 2 disassociated (with the access point's reason code), 3 beacon loss (no beacon for 8 s,
+  `WIFI_BEACON_LOSS_MS`), 4 the transmitter wedged and the core was rebooted, 5 roamed, 6 a roam
+  failed. The app keeps the newest four; a report the link cannot take is sent again. The driver
+  runs its STATUS poll at once and reports `cfg80211_disconnected` with the access point's reason
+  (not locally generated) or, for beacon loss, `WLAN_REASON_DISASSOC_DUE_TO_INACTIVITY` (locally
+  generated), and takes `wlan0`'s carrier down. Without events the 5 s poll still finds it.
+- **Roaming**, like `wpa_supplicant`'s bgscan simple. The app averages the beacons of its access
+  point (each moves the average an eighth). Below -70 dBm it scans in the background, 30 s after
+  the previous scan at the soonest; above -65 dBm it stops. A background scan visits one allowed
+  channel at a time other than its own: it gives the SCM no new credit and waits up to 50 ms for
+  the transmit buffers to empty, sends one probe for the SSID (a passive channel: listens), stays
+  200 ms, then sends the core's join command (`0xbc`) for its own access point and channel, which
+  retunes the radio and keeps the peer and its keys (`JOIN_DONE`, which drops them, is not sent),
+  and stays home 500 ms. Frames from the SCM while away are dropped (`tx_dropped`); beacon loss
+  does not count the time away. After the last channel it roams to the strongest access point of
+  the SSID heard in that scan when that one is at least 8 dB above its own average: it leaves the
+  old one locally (nothing on air), joins the new one with the same PMK and a fresh 4-way, and
+  reports `roamed`. Otherwise the next scan waits twice as long, up to 300 s. The driver keeps the
+  connection while STATUS says joining during a roam and reports `cfg80211_roamed` and the open
+  port when STATUS names a new BSSID. A fixed BSSID, or a profile without the roam flag, never
+  leaves its channel.
+- **Regulatory domain.** The driver's `reg_notifier` turns the domain cfg80211 settles on (soundtapd
+  runs `iw reg set` with the speaker's country, [ADR 0063](../../decisions/0063-wifi-lease-and-setup-ap.md))
+  into SET_REGDOM: the enabled channels, the `NO_IR` ones as passive, and the lowest power limit
+  among them. The app scans and joins only those channels, never probes on a passive one and never
+  starts the access point on one. Until SET_REGDOM it allows 1-13, as before. The TX power limit
+  is recorded, not applied: the core has no known TX power control, and none is guessed; the
+  driver logs that.
+
+## Antenna setting
+
+Whether the ST20's BCO keeps an antenna setting in its NOR, and under which PersParam key, is not
+known: no stock file on hand records it, and the stock BCO app is not among the local stock
+copies. The read path exists so that a check can find it without writing anything: `NV_INFO` makes
+the app walk the PersParam log (`pp_keys` in `bco/app/src/persparam.h`) through the NOR's memory
+map, as it reads `MAC0` at boot, and answer each key with its value length, plus the value when it
+is at most 4 bytes, so no passphrase or PMK leaves the BCO. The driver asks only when root reads
+`/sys/class/net/bcolink0/bco/nv_keys`; nothing reads it on its own, and the app applies no antenna
+setting. The read has not been run: it needs a read-only check at the speaker with the owner's OK
+for that read (the hardware checklist's antenna row), and the key it finds is recorded here.
+
 ## The card's clock
 
 The BCO keeps time from the host's 1 ms SOF frames (`usblink_ms`), not from a timer interrupt:
@@ -194,12 +258,12 @@ module 4, which hands the WiLD core a beacon template (core commands `0xe2`, the
 IEs before the TIM, and `0xe3`, the IEs after it) and then sets the BSS up with `0xbc`, its own MAC
 as BSSID. From then on the core beacons by itself, inserts the TIM and answers probe requests from
 the same template (read from `0x6003bfb0` case `0x5b`, `0x60073c90` and `0x60073e84`). That C++
-code is not ours and is not re-implemented; only those three core commands are reused. The core
-transmits whatever management frame our app puts on its frame ring and delivers received frames
-to us.
+code is not SoundTap's and is not re-implemented; only those three core commands are reused. The core
+transmits whatever management frame the app puts on its frame ring and delivers received frames
+to the app.
 
-- Our app (`bco/app/src/wifi.c`) gives the core hostapd's beacon as the `0xe2`/`0xe3` template,
-  then `0xbc` with our MAC as BSSID and the beacon interval, then `0xb8` without privacy. It
+- SoundTap's app (`bco/app/src/wifi.c`) gives the core hostapd's beacon as the `0xe2`/`0xe3` template,
+  then `0xbc` with the BCO's own MAC as BSSID and the beacon interval, then `0xb8` without privacy. It
   answers open-system authentication and (re)association itself, for up to six clients (one core
   peer slot each).
 - Frames from associated clients (toDS) go to the SCM as Ethernet frames (DA = addr3, SA =
@@ -258,7 +322,7 @@ Software AES was too slow for the link: about 10 ms per 1400-byte frame on the c
 ## Medium access and rate adaptation
 
 The core sends host frames on the management queue 9, because the access-class (EDCA) queues do
-not transmit on our core. A queue-9 start with only the start bits goes out at once, without
+not transmit on this core. A queue-9 start with only the start bits goes out at once, without
 waiting for the medium to be free and without a random backoff, so the core adds the 802.11 DCF
 itself (`tx_kick`, `ACK_LATE`, `rate_cls` in `bco/wild/fw/src/xport.c`):
 
@@ -294,10 +358,10 @@ capture is identified, that provenance is missing.
 2026-10-06: `wpa_supplicant` reached COMPLETED in 12 s, `wlan0` took a DHCP lease, SoundTap
 answered on :80 from the LAN and 1500-byte frames passed. Not every API route was exercised.
 
-### Our first stage through the real BFL
+### SoundTap's first stage through the real BFL
 
-2026-10-16: our own first stage started on the ST20 through the real BFL, flashed through the BSL
-XMODEM menu, with stock restorable the same way. With our own WiLD core embedded in the app, the
+2026-10-16: SoundTap's own first stage started on the ST20 through the real BFL, flashed through the BSL
+XMODEM menu, with stock restorable the same way. With SoundTap's own WiLD core embedded in the app, the
 BCO runs no Bose code above BFL/BSL. This is not a fault-injection test of every interrupted-flash
 case.
 

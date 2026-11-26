@@ -180,14 +180,14 @@ name a published, not withdrawn Core release asset whose `.sig` verifies
 (`updates/soundtouch-preview`) is held the same way to the release's preview package, which
 carries its own `.sig` in this format ([ADR 0133](0133-more-soundtouch-models-from-stock.md)).
 
-### Bose's own firmware installs without our signature, behind the press
+### Bose's own firmware installs without SoundTap's signature, behind the press
 
 `POST /api/firmware?install=1` takes an upload without `X-SoundTap-Signature` when it carries
 `X-SoundTap-Confirm: stock`; the route already waits for the press. The way back to stock then
 works as on stock, with Bose's own file. No list of stock hashes and no published stock
 signatures are kept.
 
-- Only Bose's modules reach NAND. A `soundtap-*` module, or one of our native chain, is
+- Only Bose's modules reach NAND. A `soundtap-*` module, or one of SoundTap's native chain, is
   refused when the scan reaches it, before its payload is written; after the scan a SoundTap
   kernel is refused before the kernel and the bootloaders are written.
 - The check of such an upload reports version and confirmation `stock`.
@@ -206,7 +206,7 @@ removes the variable `soundtap_owner_key` a build before 0.1.0 left); a second c
 owner (every owner would need their own U-Boot and soundtapd build); `allow-unsigned` as the
 owner's route (alpha-only, SSH-only, and it proves nothing about who built the package);
 published stock signatures or a list of stock hashes for the way back (an owner has Bose's
-file, not our signature over it).
+file, not SoundTap's signature over it).
 
 ## Consequences
 
@@ -236,7 +236,7 @@ file, not our signature over it).
   stick and the chord at power-on. Over the network the press is the only thing that stops a
   file shaped like Bose's firmware with other content, and such a file writes only the spare slot
   and the bootloaders stock carries. On the ST20, Bose's software
-  puts its own BCO app back when it finds ours (seen by the owner;
+  puts its own BCO app back when it finds SoundTap's (seen by the owner;
   [BCO recovery](../hardware/st20/bco-recovery.md) stays the development route).
 - The active release key is held only as an encrypted secret of the protected `release`
   environment, which one job on `main` reads; it is never a repository secret and never on a

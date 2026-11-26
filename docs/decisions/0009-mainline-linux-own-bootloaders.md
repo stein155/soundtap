@@ -1,10 +1,10 @@
-# 0009. Mainline Linux and our own SPL and U-Boot
+# 0009. Mainline Linux and SoundTap's own SPL and U-Boot
 
 Status: accepted — 2026-11-20
 
 ## Context
 
-Our userland on Bose's 3.14 kernel could only ever be as maintainable as a vendor kernel nobody
+SoundTap's userland on Bose's 3.14 kernel could only ever be as maintainable as a vendor kernel nobody
 updates, and the package would have to carry Bose's kernel, which neither the repository nor the
 STU may hold ([ADR 0049](0049-no-stock-bytes.md)).
 
@@ -22,11 +22,11 @@ and the project ruled that out as a recovery for owners.
 
 ## Decision
 
-### Mainline Linux, our own bootloaders, one chain on every model
+### Mainline Linux, SoundTap's own bootloaders, one chain on every model
 
-Speakers run mainline Linux (6.12 line) with our own device trees and drivers (`os/bootloader/`,
-`os/drivers/`). The bootloader is mainline U-Boot and its SPL, built by us. Every model ends in the
-same shape: our SPL, our U-Boot, our kernel, our rootfs, and no Bose boot code kept as a fallback.
+Speakers run mainline Linux (6.12 line) with SoundTap's own device trees and drivers (`os/bootloader/`,
+`os/drivers/`). The bootloader is mainline U-Boot and its SPL, built by the project. Every model ends in the
+same shape: SoundTap's own SPL, U-Boot, kernel and rootfs, and no Bose boot code kept as a fallback.
 
 - One SPL source for all models. It enables the clocks and starts a 120 s watchdog on every model;
   only on the ST20 (SYSBOOT 0x12) does it restart the BCO and try USB ether before NAND. It builds
@@ -39,8 +39,8 @@ same shape: our SPL, our U-Boot, our kernel, our rootfs, and no Bose boot code k
   in C rather than in `bootcmd`, which keeps the default environment small.
 - The installer and soundtapd treat every model alike: the same slot selection, recipes, boot
   confirmation and way back to stock (a stock package through `/api/firmware`, or on a stick).
-- Our U-Boot carries the owner's recovery, a USB stick at power-on
-  ([ADR 0130](0130-usb-stick-recovery.md)). With Bose's file on it, our U-Boot writes Bose's SPL
+- SoundTap's U-Boot carries the owner's recovery, a USB stick at power-on
+  ([ADR 0130](0130-usb-stick-recovery.md)). With Bose's file on it, SoundTap's U-Boot writes Bose's SPL
   and U-Boot itself, in the order below; on the ST20 it also paints
   the first boot frame ([ADR 0131](0131-st20-boot-frame.md)).
 
@@ -53,9 +53,9 @@ U-Boot copy erases its own blocks and nothing past them.
 
 The SPL loads the first copy and falls back to the spare. A CRC mismatch of the loaded data counts
 as a load failure, because a cut leaves a good header in front of bad data. The SPL also prefers
-the spare when the first copy checks out but is not ours (its uImage name is not ours) and the
-spare is, so our SPL never runs Bose's U-Boot, a pairing nobody has proven. A first copy that is
-not ours still boots when there is no spare of ours.
+the spare when the first copy checks out but is not SoundTap's (its uImage name is not SoundTap's) and the
+spare is, so SoundTap's SPL never runs Bose's U-Boot, a pairing nobody has proven. A first copy that is
+not SoundTap's still boots when there is no SoundTap spare.
 
 Both installers, soundtapd and the module that runs on stock firmware, write the spare, then SPL
 copies 1, 2, 3 and 0, then the first U-Boot, and verify each by reading it back. soundtapd leaves
@@ -65,13 +65,13 @@ header, and refuses the boot chain otherwise, or when the first copy holds no uI
 copy is written only into its own half of `NAND.U-Boot`: one that bad blocks leave no room for
 fails at the end of its half and never reaches the other copy's blocks.
 
-The way back to stock writes in its own order: the first U-Boot copy first, while our SPL and our
+The way back to stock writes in its own order: the first U-Boot copy first, while SoundTap's SPL and
 spare still stand behind it, then Bose's SPL (backups before mtd0), and the spare last, which
-Bose's chain never reads. No step of either route runs our SPL with Bose's U-Boot.
+Bose's chain never reads. No step of either route runs SoundTap's SPL with Bose's U-Boot.
 
 ### Repairing a damaged boot chain over ROM USB
 
-The USB stick lives in our U-Boot, so it cannot repair a damaged SPL or U-Boot. Below it is the
+The USB stick lives in SoundTap's U-Boot, so it cannot repair a damaged SPL or U-Boot. Below it is the
 AM335x mask ROM, which boots over USB on every model (the ST20 only with its busy pad held) and can
 never be flashed away. One development tool,
 `tools/recovery/rom-usb-restore.py --model st10|st20|wla|st300`, takes the release's images (a built `output/os/images` with its
@@ -107,7 +107,7 @@ cycle, and on the ST20 a busy-pad hold, per range); a generic RAM U-Boot that so
 ## Consequences
 
 - One kernel body serves every model; device trees differ. A boot fix lands once.
-- Drivers Bose had as out-of-tree modules (audio, IR, keypad) are ours and are proven per model on
+- Drivers Bose had as out-of-tree modules (audio, IR, keypad) are SoundTap's own and are proven per model on
   hardware.
 - With no Bose fallback copy, a bad bootloader means ROM-USB recovery, so every bootloader change
   is RAM-booted first.
@@ -118,7 +118,7 @@ cycle, and on the ST20 a busy-pad hold, per range); a generic RAM U-Boot that so
   written around.
 - Hardware proof is in [`docs/hardware/hardware-test.md`](../hardware/hardware-test.md): the per-model ROM-USB
   restore rows are open, and on the ST300 even the way into ROM USB is unknown. The SPL telling
-  the two U-Boots apart, and a first install from stock interrupted between our SPL and the first
+  the two U-Boots apart, and a first install from stock interrupted between SoundTap's SPL and the first
   copy, have no hardware run.
 
 ## Code

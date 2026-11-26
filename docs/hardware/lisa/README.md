@@ -15,7 +15,7 @@ serves many host products. It takes the product's name from the host it is cable
 **Names.** Stock calls the adapter `lisa` on both modules. Under SoundTap the SCM one stays
 `lisa` (the ST20's board) and the SM2 one is `lisa2` (the ST10's module), as the Series III
 are `spotty3` and `mojo3`.
-- Our U-Boot knows the SCM adapter by the variant resistor (100–1024) and the SM2 adapter by the
+- SoundTap's U-Boot knows the SCM adapter by the variant resistor (100–1024) and the SM2 adapter by the
   manufacturing name `lisa`.
 - The installer maps stock's `lisa` on an SM2 to `lisa2`.
 
@@ -147,7 +147,7 @@ on SoundTap. When the host selects the adapter itself, SoundTap acknowledges as 
 plays the preset it names or wakes into the last source; a deactivation puts it in standby.
 The SA-4, Stereo JC and Lifestyle/VideoWave get no registration, as on stock.
 
-**Recovery.** Its one button held at power-on runs our U-Boot's USB-stick update, as stock's
+**Recovery.** Its one button held at power-on runs the USB-stick update in SoundTap's U-Boot, as stock's
 does: gpio0_27 on the SM2, gpio0_29 on the SCM.
 
 ## Open on hardware

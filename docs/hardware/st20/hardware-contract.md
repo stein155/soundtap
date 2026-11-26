@@ -42,7 +42,7 @@ during a stock restore.
 - Stock BCO firmware owns LAN, Wi-Fi and NAT, with the SCM behind it on `192.168.1.101` and the
   BCO on `192.168.1.100`.
 - It does not forward multicast; its `RemoteOnlyPorts` setting controls which inbound unicast
-  ports reach the SCM. Our BCO app passes Ethernet frames without NAT or a port filter, so
+  ports reach the SCM. SoundTap's BCO app passes Ethernet frames without NAT or a port filter, so
   these limits do not apply under SoundTap; discovery still needs proof on the ST20 itself.
 - The rear SETUP A micro-USB port is a separate USB network link: the SCM is `203.0.113.1/30`,
   the host `.2` ([installing over USB](../../owners/install.md)).

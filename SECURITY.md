@@ -7,7 +7,7 @@ Spotify login on it.
 
 [ADR 0113](docs/decisions/0113-threat-model.md) is SoundTap's one security story: what a
 stranger on your network, in Wi-Fi or Bluetooth range, with an update file or with the
-speaker in hand can and cannot do, and what we accept and why. Read it before you report.
+speaker in hand can and cannot do, and what SoundTap accepts and why. Read it before you report.
 Something it lists as accepted (no login on the home network, the open setup access point,
 no secure boot, passwords stored in plain text on the speaker) is not a vulnerability by
 itself; a way around anything it says holds is.

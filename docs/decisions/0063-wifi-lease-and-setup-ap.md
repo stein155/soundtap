@@ -20,13 +20,13 @@ move belongs in 0.1.0.
 ### Decision
 
 `app/internal/wifi` owns Wi-Fi on every model whose main processor drives the radio
-(`SOUNDTAP_WIFI_MODE=scm`: ST10, WLA, ST300, and the ST20 with our BCO app). soundtapd starts it
+(`SOUNDTAP_WIFI_MODE=scm`: ST10, WLA, ST300, and the ST20 with SoundTap's BCO app). soundtapd starts it
 once its name is published; `/etc/init.d/soundtap` starts no Wi-Fi script.
 
 - **Control socket.** `app/internal/wpactrl` speaks wpa_supplicant's ctrl_iface protocol
   (datagrams on `/var/run/wpa_supplicant/wlan0`; ATTACH and events on the same socket). The
   library candidates (`pifke.org/wpasupplicant`, `hdiniz/wpa_supplicant-go`) are unmaintained
-  for years and cover only part of it; the protocol is a few commands, so it is our own small,
+  for years and cover only part of it; the protocol is a few commands, so it is SoundTap's own small,
   tested package ([ADR 0124](0124-third-party-code.md)).
 - **No key in a file.** wpa_supplicant starts with a configuration that names only its control
   socket. The manager adds each network with ADD_NETWORK and SET_NETWORK: the SSID in hex, the
@@ -110,20 +110,20 @@ keeps the 5 minutes, since it needs the AP and trying sooner does not help.
 - A supervised udhcpc with its own script: more machinery, and the lease renewal alone only
   needed dropping `-q`.
 
-## The setup access point: channel, country and lease as on stock; our own subnet
+## The setup access point: channel, country and lease as on stock; SoundTap's own subnet
 
 ### Context
 
 A comparison with stock 27.0.6 (NetManager) on 2026-11-18 found the setup AP fixed on
 channel 6, without 802.11d, and with udhcpd's default lease. Stock picks the quietest of
 channels 1, 6 and 11, always sends its country, and leases for 600 s. Stock serves
-192.0.2.1/24 (pool .2-.254); we serve 192.168.42.1/24 (pool .10-.50).
+192.0.2.1/24 (pool .2-.254); SoundTap serves 192.168.42.1/24 (pool .10-.50).
 
 ### Decision
 
 As on stock: the manager picks the channel among 1, 6 and 11 with the fewest networks in the
 scan it already makes (6 on a tie or without a scan; stock also weighs channel load, which
-we do not measure), hostapd sends `country_code` with `ieee80211d=1` when the country is
+SoundTap does not measure), hostapd sends `country_code` with `ieee80211d=1` when the country is
 known, and udhcpd leases for 600 s. The ST20 keeps channel 6 and no country element: its
 `wlan1` is the BCO's radio behind `soundtap_bco` ([ADR 0031](0031-bco-network-card.md)), proven
 on channel 6 only.
@@ -132,7 +132,7 @@ Kept on purpose: 192.168.42.1/24. The portal, the firewall and their tests use i
 phone on the AP sees no difference.
 
 When DHCP fails, stock gives the station a link-local address (`avahi-autoipd`) and stays
-on the network. We do not: after 90 s without a lease the manager opens the setup AP and
+on the network. SoundTap does not: after 90 s without a lease the manager opens the setup AP and
 retries the saved network (above). A network without DHCP is rare, and a station with only
 a 169.254 address cannot be set up from the app, while the AP can.
 
@@ -153,8 +153,8 @@ retried every 5 minutes while no client is on the AP. That leaves the question o
 itself should be open.
 
 Stock Bose firmware does the same: its setup network is open. The ST10 and the Wireless Link
-have no screen, so a per-device passphrase would have to be printed on a label, and our
-speakers carry Bose's label, not ours.
+have no screen, so a per-device passphrase would have to be printed on a label, and the
+speakers carry Bose's label, not SoundTap's.
 
 ### Decision
 
@@ -173,6 +173,6 @@ The setup AP stays open, as on stock. Project decision, 2026-10-09.
 ### Alternatives that lost
 
 - **WPA2 with a per-device PSK.** Lost because the ST10 and WLA have no screen, and a label
-  we do not ship cannot carry it.
+  that SoundTap does not ship cannot carry it.
 - **Open the AP only after a button chord when credentials exist.** Lost because it differs
   from stock and strands a speaker whose router changed, until someone finds the chord.

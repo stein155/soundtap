@@ -1,4 +1,4 @@
-# 0113. What a stranger can do to a production speaker, and what we accept
+# 0113. What a stranger can do to a production speaker, and what SoundTap accepts
 
 Status: accepted — 2026-11-21
 
@@ -9,7 +9,7 @@ need a key held on the speaker ([ADR 0055](0055-household-token-and-windows.md))
 signed ([ADR 0048](0048-signed-updates.md)), the root filesystem is read-only behind an inbound
 filter ([ADR 0066](0066-production-hardening.md)), and a production image has no SSH
 ([ADR 0119](0119-no-ssh-in-production.md)). This ADR says in one place what a stranger can and
-cannot do with all of them together, including what we leave undefended and why. It is the
+cannot do with all of them together, including what SoundTap leaves undefended and why. It is the
 project's one security story; [`SECURITY.md`](../../SECURITY.md) is the reporting policy and
 points here.
 
@@ -18,13 +18,15 @@ meant to leave the bench.
 
 ## Decision
 
-For each stranger: what they can do, what stops the rest, and what we accept.
+For each stranger: what they can do, what stops the rest, and what SoundTap accepts.
 
 ### A stranger on the home network, or on the open setup hotspot
 
 - **What reaches them.** The filter answers only hosts on the speaker's own subnets, as stock
-  did; a port forward or routed network gets nothing. From those it lets in port 80 (soundtapd)
-  and 7000 (AirPlay); new Snapcast connections on 1704 only from addresses in `snap_followers`,
+  did, over IPv4 and IPv6 alike ([ADR 0134](0134-ipv6-on-the-speaker.md)); a port forward or
+  routed network gets nothing, and neither does a host elsewhere on the internet that can route
+  to the speaker's global IPv6 address. From those it lets in port 80 (soundtapd)
+  and 7000 (AirPlay); new Snapcast connections on 1704 only from addresses in `snap_followers` (or `snap_followers6`),
   never from the setup interface `wlan1` (soundtapd adds a follower and refreshes its ten-minute
   allowance, and anyone on the LAN may ask through `POST /api/multiroom/listen`, so the set keeps
   out passive listeners only); mDNS, SSDP and PTP, the last two not from `wlan1`; the kernel's
@@ -35,7 +37,7 @@ For each stranger: what they can do, what stops the rest, and what we accept.
   route without one.
 - **That includes the linked Spotify account.** The `/api/spotify/*` routes are open: anyone on
   the LAN can read the account's library and recent listening, like or unlike tracks, start
-  playback and unlink the account. We accept this because the speaker's Spotify session is the
+  playback and unlink the account. SoundTap accepts this because the speaker's Spotify session is the
   household's, as on a shared Connect speaker, and the app's Spotify browser is built on these
   routes; a press per read would make it unusable. No route returns the Spotify credentials or an
   access token.
@@ -44,7 +46,7 @@ For each stranger: what they can do, what stops the rest, and what we accept.
   ([ADR 0126](0126-opt-in-crash-reports-without-a-server.md)). While reports are off it returns
   nothing.
 - **The traffic is plain HTTP.** A host that can see the traffic reads what the UI reads, and the
-  passwords an owner sends in: a new Wi-Fi password and the MQTT broker password. We accept this:
+  passwords an owner sends in: a new Wi-Fi password and the MQTT broker password. SoundTap accepts this:
   such a host can already ask the speaker for everything else, there is no certificate a browser
   would trust for a `.local` name, and no route sends a password back out.
 - **What stops the rest.** Reboot, factory reset, restore, Wi-Fi changes, setup mode, every
@@ -89,7 +91,7 @@ in range who captures that exchange learns the password, and anyone can run thei
 `SoundTap-Setup` (an evil twin) and collect it from an owner who joins that one instead. What
 limits it: setup mode is short and comes only when no network is saved, or for stretches after a
 failed join; and a stranger on the access point cannot point the speaker at their own network
-without a hold on it. We accept it because the ST10 and the Wireless Link have no screen and carry
+without a hold on it. SoundTap accepts it because the ST10 and the Wireless Link have no screen and carry
 Bose's label, so a per-device passphrase has nowhere to be shown, and it is the setup stock
 offered. An owner worried about it sets the speaker up where no stranger is in range, or changes
 the Wi-Fi password afterwards.
@@ -120,7 +122,7 @@ There is no secure boot, and secrets on the speaker are stored in plain text. So
 the speaker, or already has root on it, can run anything and read everything on it.
 
 - **No chain of trust.** The AM335x ROM boots an unsigned SPL from NAND or USB; that is how USB
-  recovery works. Our SPL loads U-Boot, and U-Boot loads a legacy uImage and device tree from the
+  recovery works. SoundTap's SPL loads U-Boot, and U-Boot loads a legacy uImage and device tree from the
   selected slot without checking a signature; it is built without `FIT_SIGNATURE`. Whoever can
   write NAND, through the ROM's USB boot or a clip on the chip, boots what they like; a remote
   attacker with root on a running speaker can write a slot, and the next boot does not notice.
@@ -133,7 +135,7 @@ the speaker, or already has root on it, can run anything and read everything on 
 - **What holds.** Over the network nothing reaches NAND without a signature and a hold, the root
   filesystem is read-only, the media daemons do not run as root, and there is no SSH or root
   login. The protection is against getting root, not against what root can do.
-- **Why we accept it.** The ROM boots unsigned code over USB on any opened board, and that is our
+- **Why SoundTap accepts it.** The ROM boots unsigned code over USB on any opened board, and that is the
   recovery path, so a chain of trust after the ROM stops nobody with the speaker on a bench while
   it would cost the way back. The boards have no secure element: a key to encrypt the secrets
   would sit on the same NAND. wpa_supplicant and the MQTT client need the passwords themselves.
@@ -152,7 +154,7 @@ the speaker, or already has root on it, can run anything and read everything on 
   ([`RELEASING.md`](../../RELEASING.md#the-first-install-feed)).
 - Buildroot packages, container images, Go modules and npm packages are pinned
   ([ADR 0011](0011-one-buildroot-pipeline.md), [ADR 0124](0124-third-party-code.md)); each is code
-  we trust and review.
+  the project trusts and reviews.
 - Credentials are inert data, never sourced or evaluated as shell code.
 - Core updates go into the inactive A/B slot; SPL, U-Boot and the boot environment are shared and
   may change during an install, outside that protection. App updates use an override with trial
@@ -187,7 +189,7 @@ and Spotify Connect pick their ports at run time, and pinning them means patchin
 ## Code
 
 - `os/board/rootfs/firewall.nft`; `multiroom.AllowFollower` (`app/internal/multiroom/firewall.go`)
-  keeps `snap_followers`.
+  keeps `snap_followers` and `snap_followers6`; `lanfilter.Sync` keeps `lan_nets6`.
 - `app/internal/web/route_access_test.go`: the class of every route.
 - `app/internal/web/guard.go`: the Host and Origin checks, `sameSpeakerOrigin`, and the open
   `Access-Control-Allow-Origin` on `/api/version`.

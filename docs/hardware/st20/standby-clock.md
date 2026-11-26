@@ -47,4 +47,11 @@ SoundTap's clock (`app/internal/panel/clock.go`) walks the same way over the fre
 the panel, one pixel diagonally every 5 s, and like stock's it does not dim. Like
 stock it shows the time alone, with AM/PM under it on a 12-hour clock: no date and no
 weather, which would light more pixels for the whole of standby and leave the walk less room
-([ADR 0111](../../decisions/0111-st20-standby-clock.md)).
+([ADR 0111](../../decisions/0111-st20-standby-clock.md)). Its digits are Plus Jakarta Sans 500,
+a lighter weight than the rest of the panel, nearer stock's thin clock.
+
+While music plays the panel has no status bar: no clock, source or room is drawn, as those
+would stay lit in one place for as long as something plays. A pause or stop icon, a stereo
+pair's L or R and the Portable's battery are drawn only when they apply. The playing screen
+fills the panel and has no room to walk, so it orbits instead: every minute it moves one
+pixel around its place and back (`orbitFrame` in `app/internal/panel/panel.go`).

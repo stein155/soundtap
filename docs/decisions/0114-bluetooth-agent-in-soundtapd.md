@@ -50,7 +50,7 @@ Alternatives that lost:
 
 - **`bluetoothctl` with hardened text matching.** The approach that failed silently, and still
   untestable.
-- **Our own D-Bus client.** avahi's D-Bus API ([ADR 0043](0043-mdns-through-avahi.md)) needs more
+- **A D-Bus client of SoundTap's own.** avahi's D-Bus API ([ADR 0043](0043-mdns-through-avahi.md)) needs more
   of the protocol than BlueZ does, and two D-Bus stacks in one daemon is one too many; godbus
   covers the whole protocol and is maintained.
 - **`dbus-send` for the reads.** One process per read, and its text parsed by hand.

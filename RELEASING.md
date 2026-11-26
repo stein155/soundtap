@@ -111,8 +111,8 @@ permissions and no secrets. Development builds run the same entry points
 Before step 1, once the web UI is final for this release, refresh the README screenshots
 from it, in the PR that raises the version or one after it: `make screenshots` builds the web
 UI from the checkout (`make web`), serves it with a fake speaker, photographs it in a pinned
-Chromium ([`docs/tools/`](docs/tools/)) and rewrites the hero, screens and social-preview
-images in `docs/assets/`. Next to them it writes `docs/assets/screenshots.source`, the git
+Chromium ([`docs/tools/`](docs/tools/)) and rewrites the hero, features, screens, speakers and
+social-preview images in `docs/assets/`. Next to them it writes `docs/assets/screenshots.source`, the git
 trees of `app/frontend` and `docs/tools` they were made from; it refuses uncommitted changes
 under either. Look at the images, then commit `docs/assets`. Both lanes of `release.yml` and
 `dry-run.sh` refuse a commit whose `app/frontend` or `docs/tools` differs from that record

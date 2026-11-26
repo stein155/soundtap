@@ -7,7 +7,7 @@ Status: accepted — 2026-11-21
 A user should not have to know which file matches which speaker, and each extra package is
 another validation path. Stock's `:17008` updater checks only the four-byte container magic,
 runs module 0 as root and leaves validating the content to that installer, so whether one file
-can serve every model is a question about our installer, not about Bose.
+can serve every model is a question about SoundTap's installer, not about Bose.
 
 One package for every model means that every part that installs or boots it decides the model
 on the board, from the variant the board reports, and all of them must decide alike: the init
@@ -20,12 +20,12 @@ install differently depending on which route flashed it.
 ### One file
 
 A release is exactly one file, `SoundTap-Core-X.Y.Z.stu`, and it installs on the ST10, the
-Wireless Link, the ST20 and the ST300. It carries our installer as module 0, one shared rootfs,
+Wireless Link, the ST20 and the ST300. It carries SoundTap's installer as module 0, one shared rootfs,
 one kernel (model-suffixed copies where the bootloader needs a name), per-model device trees,
-and our SPL and U-Boot. The same file goes through every route. A first install from stock takes,
+and SoundTap's SPL and U-Boot. The same file goes through every route. A first install from stock takes,
 in order of preference, the update feed (stock's updater fetches it itself), an upload to stock's
 `:17008`, or a USB stick at power-on ([ADR 0130](0130-usb-stick-recovery.md) for
-the stick under our U-Boot). Every later update goes through SoundTap's own `POST /api/firmware`.
+the stick under SoundTap's U-Boot). Every later update goes through SoundTap's own `POST /api/firmware`.
 
 ```mermaid
 flowchart LR
@@ -53,7 +53,7 @@ what has worked, not a known limit. The installation guide lists those versions.
 
 `os/models.json` is the one table of the models. Per model: its variant, the module suffix and
 boot chain it takes from the package, the model its kernel's uImage names, the stock rootfs
-ceiling, and what our U-Boot identifies it by (the manufacturing name, the recorded
+ceiling, and what SoundTap's U-Boot identifies it by (the manufacturing name, the recorded
 `variant_raw` range). Per variant: the model it runs as, its product name and module type, the
 device tree and kernel its slot loads from `/boot`, and its codec script. Names only stock
 firmware reports are marked as such and get no boot files. The table records only what is
@@ -102,7 +102,7 @@ choice: the person updating a speaker cannot judge it, the package can).
 - A stock `Update.stu` goes back through the same request as an update, bootloaders included.
 - An STU with a changed SPL or U-Boot writes mtd0-mtd4 on every speaker that installs it,
   without anyone being asked. A bad SPL then leaves only the mask ROM. The gate is the release:
-  a build whose bootloaders changed is proven on our own speakers before it ships (the install
+  a build whose bootloaders changed is proven on the maintainer's own speakers before it ships (the install
   gate and the hardware layer of `docs/contributors/testing/install-gate.md`). Whoever installs a candidate
   by hand compares its SPL and U-Boot with the speaker first when the bootloader sources
   changed.

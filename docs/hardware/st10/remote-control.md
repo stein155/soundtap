@@ -58,7 +58,7 @@ Stock Linux reads the receiver differently, and this is not the mainline interfa
 release; an empty nonblocking read returns zero bytes and callers wait with poll/select. DMA
 stays disabled on that path.
 
-Our kernel keeps a bounded driver for that interface
+SoundTap's kernel keeps a bounded driver for that interface
 (`os/board/rootfs/linux-patches/0008-misc-add-bounded-shelby-ir-driver.patch`); no SoundTap
 device tree binds it. Any UART implementation that is kept must hold three invariants: reset
 polling is bounded, FIFO draining is bounded and reads only while the LSR data-ready bit is

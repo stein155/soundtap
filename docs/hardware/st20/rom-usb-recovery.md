@@ -61,7 +61,7 @@ stock SPL and were removed; the tool above replaces them.
 
 ## WP#: why the first erase changed nothing
 
-The SCM module (ST20) routes NAND WP# to `gpmc_wpn`. The SM2 modules (ST10, WLA) use that pad for Wi-Fi. Our NAND pin mux left the pad alone, so WP# stayed low, and every erase and write "succeeded" while doing nothing. The rescue fixes this at runtime with `mw.l 0x44e10874 0x20`, which is the stock mux value. The permanent fixes are:
+The SCM module (ST20) routes NAND WP# to `gpmc_wpn`. The SM2 modules (ST10, WLA) use that pad for Wi-Fi. SoundTap's NAND pin mux left the pad alone, so WP# stayed low, and every erase and write "succeeded" while doing nothing. The rescue fixes this at runtime with `mw.l 0x44e10874 0x20`, which is the stock mux value. The permanent fixes are:
 
 - U-Boot: `os/bootloader/uboot/uboot-2026.07-scm-nand-wp.patch`, applied when the environment says `module_type=scm`.
 - Kernel: `nand_wp_pins` in `am335x-soundtap-st20.dts`.
@@ -75,22 +75,22 @@ A ROM-like test script (`spl-romlike-test.sh`, removed since) got stock U-Boot t
   - Its RNDIS gadget enumerated at once, and gave up 3 s later because nobody answered. The ROM-USB run with the old SPL took 45 s.
   - It then read NAND. mtd4+0x100000 was empty, so it fell back to stock U-Boot at mtd4+0x80000, and stock booted.
 
-That covers USB first, the fallback to NAND, the check on each copy and the stock fallback, all from the ROM state. It does not prove our U-Boot as primary copy: that needs a write to mtd4.
+That covers USB first, the fallback to NAND, the check on each copy and the stock fallback, all from the ROM state. It does not prove SoundTap's U-Boot as primary copy: that needs a write to mtd4.
 
-2026-09-27, with our U-Boot written to mtd4+0x100000: the stock SPL in mtd2 reads only +0x80000, so that write is inert for the stock boot. The same ROM-like test then ran the whole chain in one go:
+2026-09-27, with SoundTap's U-Boot written to mtd4+0x100000: the stock SPL in mtd2 reads only +0x80000, so that write is inert for the stock boot. The same ROM-like test then ran the whole chain in one go:
 
 1. The SPL gadget came up for 8 s and nobody answered.
-2. The SPL loaded our U-Boot from NAND.
-3. Our U-Boot showed its d022 gadget.
+2. The SPL loaded SoundTap's U-Boot from NAND.
+3. SoundTap's U-Boot showed its d022 gadget.
 4. SoundTap came up, with 6.12.0 and `soundtap.bootloader=u-boot-2026.07` on the kernel command line.
 
-A reboot returned the speaker to stock. What remains is our SPL in mtd0.
+A reboot returned the speaker to stock. What remains is SoundTap's SPL in mtd0.
 
 ## Boot guard: a hang before Linux ends in stock, on its own
 
-The dead boots (1.5 W, no USB) came from the SPL calling `watchdog_disable()`: with mtd0 holding our SPL, any hang after that point was permanent. The SPL now leaves WDT1 running for 120 s (nominal: WDT1 runs from the RC32K oscillator, and in practice it fired after about 100 s). Our U-Boot leaves it alone, and the kernel takes it over with `omap_wdt.early_enable=1`. U-Boot used to take it over with `WATCHDOG_AUTOSTART`, but then it serviced the watchdog from every polling loop. On 2026-09-27 its gadget never enumerated, and the speaker sat silent for over six minutes with no reset. The rescue script stops the watchdog itself, because its command loop never ends.
+The dead boots (1.5 W, no USB) came from the SPL calling `watchdog_disable()`: with mtd0 holding SoundTap's SPL, any hang after that point was permanent. The SPL now leaves WDT1 running for 120 s (nominal: WDT1 runs from the RC32K oscillator, and in practice it fired after about 100 s). SoundTap's U-Boot leaves it alone, and the kernel takes it over with `omap_wdt.early_enable=1`. U-Boot used to take it over with `WATCHDOG_AUTOSTART`, but then it serviced the watchdog from every polling loop. On 2026-09-27 its gadget never enumerated, and the speaker sat silent for over six minutes with no reset. The rescue script stops the watchdog itself, because its command loop never ends.
 
-RTC SCRATCH2 (0x44e3e068) counts the attempts as `0x57200000 | tries`. A warm or watchdog reset leaves it alone; Linux's pm33xx owns SCRATCH0 and 1. Our U-Boot leaves the count standing through Linux, and soundtapd clears it after a minute (`ST20ConfirmBoot`); a deliberate `/api/reboot` clears it first. Past two attempts the SPL skips USB and our primary copy, stops the watchdog and loads the copy at mtd4+0x80000. Until 2026-09-30 that was Bose's U-Boot, and stock Linux then rewrote mtd0 from mtd2. Since the installer puts our U-Boot there too, it is our second copy: it still offers the USB rescue, then boots the other slot once more, now without the watchdog until the kernel starts it (`omap_wdt.early_enable=1`). A hang before that point needs a power cycle.
+RTC SCRATCH2 (0x44e3e068) counts the attempts as `0x57200000 | tries`. A warm or watchdog reset leaves it alone; Linux's pm33xx owns SCRATCH0 and 1. SoundTap's U-Boot leaves the count standing through Linux, and soundtapd clears it after a minute (`ST20ConfirmBoot`); a deliberate `/api/reboot` clears it first. Past two attempts the SPL skips USB and SoundTap's primary copy, stops the watchdog and loads the copy at mtd4+0x80000. Until 2026-09-30 that was Bose's U-Boot, and stock Linux then rewrote mtd0 from mtd2. Since the installer puts SoundTap's U-Boot there too, it is SoundTap's second copy: it still offers the USB rescue, then boots the other slot once more, now without the watchdog until the kernel starts it (`omap_wdt.early_enable=1`). A hang before that point needs a power cycle.
 
 ROM-like harness runs on 2026-09-27:
 
@@ -102,9 +102,9 @@ ROM-like harness runs on 2026-09-27:
 
 Harness trap: stock U-Boot leaves the RTC module unclocked, so a `mw.l` to 0x44e3e0xx in the one-shot aborts before `go`. Write `mw.l 44e00804 2; mw.l 44e00800 2` first. The one-shot restores `bootcmd` before that point, so the cost is one power cycle.
 
-Stock also erases mtd4+0x100000 on its own, so whatever we put there does not survive a stock boot.
+Stock also erases mtd4+0x100000 on its own, so whatever is put there does not survive a stock boot.
 
-The runs above all fell back to stock before our U-Boot started, which is why they passed. In the real ROM chain, nine resets in a row never fell back. The cause was U-Boot's own `BOOTCOUNT_AM33XX`, which keeps its count in the same SCRATCH2. It wrote `0xb0010001`, stored byte-swapped and read back as `0x010001b0` by a U-Boot script on 2026-09-27. It did this at every start, so the SPL never saw its magic and counted from 1 again. The chain U-Boot is now built with `BOOTCOUNT_LIMIT` off.
+The runs above all fell back to stock before SoundTap's U-Boot started, which is why they passed. In the real ROM chain, nine resets in a row never fell back. The cause was U-Boot's own `BOOTCOUNT_AM33XX`, which keeps its count in the same SCRATCH2. It wrote `0xb0010001`, stored byte-swapped and read back as `0x010001b0` by a U-Boot script on 2026-09-27. It did this at every start, so the SPL never saw its magic and counted from 1 again. The chain U-Boot is now built with `BOOTCOUNT_LIMIT` off.
 
 Harness trap: `mark-*` TFTP requests are sometimes lost; a request times out and dnsmasq never logs it. Send each mark two or three times. To read a register, copy it to DDR with `cp.l` and test one byte at a time with `itest.b ... == 0xNN`.
 
@@ -122,13 +122,13 @@ So the clock may arrive late, and no power cycle is needed. `power_control_pins`
 
 ## Why no gadget showed on a cold boot from mtd0
 
-PER CLKDCOLDO (CM_CLKDCOLDO_DPLL_PER, 0x44e0047c) carries the 960 MHz USB PHY clock. It resets gated. The ROM opens it only for its own USB boot; stock U-Boot sets 0x300. Our SPL leaves the PLLs to the ROM, so from NAND it ran with the PHY unclocked. The SPL and U-Boot gadgets never enumerated, and only Linux, which opens the gate itself, showed up. The harness had inherited stock's 0x300 and so missed it.
+PER CLKDCOLDO (CM_CLKDCOLDO_DPLL_PER, 0x44e0047c) carries the 960 MHz USB PHY clock. It resets gated. The ROM opens it only for its own USB boot; stock U-Boot sets 0x300. SoundTap's SPL leaves the PLLs to the ROM, so from NAND it ran with the PHY unclocked. The SPL and U-Boot gadgets never enumerated, and only Linux, which opens the gate itself, showed up. The harness had inherited stock's 0x300 and so missed it.
 
 - Reproduced: that SPL with `mw.l 44e0047c 0` before `go` showed no SPL gadget.
 - Fixed: `st20_spl_clocks()` writes 0x300, and the harness now gates CLKDCOLDO by default.
-- Proven 2026-09-27: that SPL, with CLKDCOLDO gated, after a cold power cycle. The SPL gadget came up, the SPL fetched `u-boot.img` over USB TFTP, our U-Boot showed its d022 gadget, SoundTap 6.12 booted, and scratch2 read 0 afterwards. A reboot returned the speaker to stock.
+- Proven 2026-09-27: that SPL, with CLKDCOLDO gated, after a cold power cycle. The SPL gadget came up, the SPL fetched `u-boot.img` over USB TFTP, SoundTap's U-Boot showed its d022 gadget, SoundTap 6.12 booted, and scratch2 read 0 afterwards. A reboot returned the speaker to stock.
 
-## A/B slots under our chain
+## A/B slots under SoundTap's chain
 
 Since ADR 0009 the ST20 boots the same U-Boot as the ST10 and WLA, from `NAND.U-Boot`+0, with `bootcmd` selecting the slot and the RTC bootcount falling back to the other one. The way back to stock is a stock package through `/api/firmware`, or the ROM-USB rescue.
 

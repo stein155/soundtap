@@ -22,7 +22,7 @@ The standby screen shows the time alone, in the zone of the browser that saved t
 - **What it shows.** The time; on a 12-hour clock AM/PM on a line under it. No date, no
   weather. The group walks one pixel diagonally every 5 s over the free area, as stock's does,
   at one brightness: like stock's, the clock does not dim, and there is no setting for it.
-- **The zone.** Stock shows its clock without a place, so ours does too: the web UI stores the
+- **The zone.** Stock shows its clock without a place, so SoundTap's does too: the web UI stores the
   zone of the browser that opens the speaker's settings for a panel that has none yet, and
   again with every display save. A first install from stock takes stock's clock settings and
   zone instead ([ADR 0129](0129-first-install-keeps-settings.md)). Until a zone is known the

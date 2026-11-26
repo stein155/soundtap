@@ -28,6 +28,9 @@ The fifth alpha of SoundTap Core 0.1.0.
 
 ### Changed
 
+- **SoundTouch 20: a calmer display while music plays**: no clock or status line, a bigger
+  title on two lines, and the screen moves a pixel every minute against burn-in. The standby
+  clock is drawn thinner, closer to the original.
 - **Every speaker serves the same app**: settings no longer single out the speaker you
   opened the page on as "this speaker".
 
@@ -37,6 +40,11 @@ The fifth alpha of SoundTap Core 0.1.0.
   diagnostics, it connects to the strongest access point of your network rather than the one it
   heard most often, and leaving a network no longer restarts its Wi-Fi radio.
 - **SoundTouch 20: a dark display in standby with the clock off**, instead of "Connecting…".
+- **Wi-Fi comes back by itself** after its helper stopped or a setup network failed to open,
+  instead of waiting for a restart or the setup buttons.
+- **SoundTouch 300: SoundTap no longer restarts the bar by itself** when its sound processor
+  stops answering. That restart could switch the TV on. If the bar stops responding, unplug
+  it for a few seconds.
 - **The menu marks the page you are on**, Settings and Media servers included.
 - **Quieter logs**: a device on the network that is no media server, and Bluetooth's own
   messages, are logged once.
@@ -211,7 +219,7 @@ a few restarts.
 
 ### Fixed
 
-- **A new version stays on the speaker.** Our bootloader can leave a value of several lines in
+- **A new version stays on the speaker.** SoundTap's bootloader can leave a value of several lines in
   its settings; the player could not read them then, so it never confirmed the new version and
   the speaker would have returned to the previous one after four restarts or power cuts.
 - **A restart in the first minute of a new version** no longer counts as proof that it works:
@@ -231,7 +239,7 @@ like a release but published before the hardware tests of 0.1.0 have passed on e
 
 ### Added
 
-- **A complete system for the speaker.** Our own bootloader, mainline Linux 6.12 and one
+- **A complete system for the speaker.** SoundTap's own bootloader, mainline Linux 6.12 and one
   player, `soundtapd`, replace Bose's software on the SoundTouch 10, the SoundTouch 20
   (Series I), the SoundTouch Wireless Link adapter and the SoundTouch 300. One universal
   package installs on all of them; the SoundTouch 20 and 30 of other series install it as a

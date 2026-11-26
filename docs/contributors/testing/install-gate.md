@@ -62,7 +62,7 @@ One guest boots once and runs every scenario in turn, reloading `nandsim` betwee
    that a stray write or erase shows.
 7. The bootloader partitions start out different from the package, as on a board still
    running stock's chain. The four SPL copies and U-Boot are rewritten (all four copies
-   identical), the slot recipes in the environment are ours for this model
+   identical), the slot recipes in the environment are SoundTap's for this model
    (`internal/flash/recipes.go`), no entry outside the slot switch and those recipes
    changed, and a second install over the new chain leaves mtd0-mtd4 byte-identical.
 
@@ -236,7 +236,7 @@ With 0 installs any placeholder stands for the package. On an alpha image the in
 the warm reboots run unattended; the cold boots always need someone.
 
 The rollback by boot count has its own script,
-[`tools/hil/rollback-check.sh`](../../../tools/hil/rollback-check.sh), for models running our
+[`tools/hil/rollback-check.sh`](../../../tools/hil/rollback-check.sh), for models running SoundTap's
 boot-counting U-Boot, including the SCM ST20 (ADR 0009/0010):
 
 ```sh

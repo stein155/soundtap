@@ -64,7 +64,11 @@ Alternatives that lost:
 - CEC and HDMI selection have code paths; auto power-down and screensaver reports are read, with
   no setting exposed. ADAPTiQ and tone frames are implemented but never run on the bench bar, and
   implementation is not evidence that calibration works. op `0x08` is never sent: it reboots the
-  processor.
+  processor. Nor is a line for the processor's console (op `0x09`, stock's TAP passthrough).
+  A processor that gave the module up after missing its health messages stays so until the bar
+  is powered off and on; soundtapd keeps sending the health message and logs it, as stock's
+  heartbeat timer only logs and marks the link down. It never reboots the bar for it: a bar
+  that restarts can switch the TV on over HDMI-CEC.
 - Do not derive a fixed link timeout from an estimate; the processor's health cadence is recorded
   in the [install records](../hardware/install-records.md#soundtouch-300). Tests on the bar follow
   [the ST300 candidate validation](../hardware/hardware-test.md#soundtouch-300-candidate-validation).

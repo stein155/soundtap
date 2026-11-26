@@ -6,7 +6,7 @@ can expect from it.
 ## Supported speakers
 
 The [compatibility page](compatibility.md) records the evidence for each feature per model. A
-model marked *Supported* in the README is one SoundTap is released for: a release is published
+model marked *Supported* there is one SoundTap is released for: a release is published
 only after the exact candidate has passed that model's [hardware test](../hardware/hardware-test.md).
 Earlier observations or a partly completed checklist do not count as release approval.
 

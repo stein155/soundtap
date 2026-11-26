@@ -1,6 +1,6 @@
 # Hardware
 
-What we know about each speaker, what a release must prove on it, and how a board comes back.
+What is known about each speaker, what a release must prove on it, and how a board comes back.
 [The contract](../../CONTRIBUTING.md#the-contract) says what may be done to a speaker; these pages hold the facts.
 
 ## Per model

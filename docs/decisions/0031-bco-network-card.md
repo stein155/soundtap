@@ -1,4 +1,4 @@
-# 0031. The BCO is the ST20's network card and runs our own app
+# 0031. The BCO is the ST20's network card and runs SoundTap's own app
 
 Status: accepted — 2026-10-21
 
@@ -15,7 +15,7 @@ stage are Bose code and cannot ship ([ADR 0049](0049-no-stock-bytes.md)).
 
 ## Decision
 
-The BCO runs our own app as the SCM's network card. The SCM sees a real `wlan0` and `eth0`, as on
+The BCO runs SoundTap's own app as the SCM's network card. The SCM sees a real `wlan0` and `eth0`, as on
 the ST10. The protocol, register and measurement detail is in
 [the BCO network card in detail](../hardware/st20/bco-network-card.md).
 
@@ -28,7 +28,9 @@ that names its channel: 0 control, 1 Wi-Fi, 2 the wired port; data messages are 
 frames.
 
 - `wlan0` is a cfg80211 FullMAC station with the device's own Wi-Fi MAC. `wpa_supplicant` hands
-  the driver a PMK; the PSK never leaves the SCM. The BCO runs the 4-way and group handshakes.
+  the driver a PMK; the PSK never leaves the SCM. The BCO runs the 4-way and group handshakes,
+  reports a lost link at once, roams within the SSID, keeps to the regulatory domain and probes
+  for the scan's SSID ([ADR 0135](0135-bco-standard-firmware-features.md)).
 - `eth0` is the wired port. Neither interface is a bridge of the other, and the SCM must not
   bridge them: that loops through the BCO.
 - SoundTap is model-agnostic: the ST10's Wi-Fi code drives `wlan0`, and `eth0` gets DHCP when it
@@ -47,7 +49,7 @@ up to six clients; there is no WPA2 access point. On the SCM it is standard cfg8
 `soundtap_bco` advertises AP mode with the authentication and association done in the device, so
 `iw … interface add wlan1 type __ap` and `hostapd` work as on the ST10, with the ST10's Wi-Fi
 script and `hostapd.conf` unchanged. The core beacons and answers probes from hostapd's beacon;
-our app answers authentication and association.
+SoundTap's app answers authentication and association.
 
 ### The link carries a protocol level, and a resent request is answered, not re-run
 
@@ -60,7 +62,8 @@ carries the PMK. The level goes up in the commit that changes a message's layout
 a contract test holds the app and the driver to the same framing values. An addition the other
 side may ignore keeps the level and gets a capability bit instead: the driver uses it only when
 HELLO announces it, and the app sends nothing new until the driver asks, so an older app with a
-newer driver and the other way round keep working as before.
+newer driver and the other way round keep working as before. Flow control and the counters below,
+and the features of [ADR 0135](0135-bco-standard-firmware-features.md), came that way.
 
 ### Wi-Fi frames wait on the SCM, not on the BCO
 
@@ -80,9 +83,9 @@ flow-control state are read-only files in `/sys/class/net/bcolink0/bco/`; the dr
 at most once a second. soundtapd reads them without privileges into `bco` in `/api/health`. The
 core gives up on a unicast frame after seven attempts, 802.11's default retry limit.
 
-### Wi-Fi runs in our own WiLD core, and the keys stay on the BCO
+### Wi-Fi runs in SoundTap's own WiLD core, and the keys stay on the BCO
 
-The WLAN core firmware is ours (`bco/wild/fw`), linked into the app. CCMP runs on the core's
+The WLAN core firmware is SoundTap's own (`bco/wild/fw`), linked into the app. CCMP runs on the core's
 cipher engine, as stock does it: the core enciphers every protected frame it sends and deciphers
 every protected frame it receives, drops a frame it cannot encipher rather than sending it in
 clear, and checks the PN. The temporal keys never leave the BCO; the SCM driver never sees a key.
@@ -91,20 +94,20 @@ adapts the data rate between 54 and 24 Mb/s. Stock's transmit code stays unread.
 
 ### The image ships with SoundTap Core, and soundtapd installs it
 
-The ST20 part of SoundTap Core carries one BCO image, built by `bco/tools/bco-pack` from our code
-alone: our first stage, which the stock loader BFL starts and which does the PLL and SDRAM init,
-and our app with our WiLD core. The register values the first stage writes are hardware facts read
-from stock; the code is ours. The rootfs carries it as `/usr/share/soundtap/bco-app.bcd`. BFL and
+The ST20 part of SoundTap Core carries one BCO image, built by `bco/tools/bco-pack` from SoundTap's code
+alone: SoundTap's first stage, which the stock loader BFL starts and which does the PLL and SDRAM init,
+and SoundTap's app with its WiLD core. The register values the first stage writes are hardware facts read
+from stock; the code is SoundTap's. The rootfs carries it as `/usr/share/soundtap/bco-app.bcd`. BFL and
 BSL stay stock ([the contract](../../CONTRIBUTING.md#the-contract) forbids writing them).
 
 On an ST20, 30 s after boot, soundtapd flashes the image when its sha256 differs from the marker
 `/mnt/nv/soundtap/bco-image`, which it writes with the attempt count before flashing and replaces
 with ` ok` on success. Each attempt holds the operations lock and is cut off after 15 minutes.
-A failed attempt is not retried while the BCO still runs our app, because the LAN runs through
-it. While it runs no app of ours (a flash cut off after the erase, or stock firmware), the
+A failed attempt is not retried while the BCO still runs SoundTap's app, because the LAN runs through
+it. While it runs no SoundTap app (a flash cut off after the erase, or stock firmware), the
 speaker has no network at all, so the install is retried without a limit, 5 minutes after a
 failure and doubling up to an hour, on this boot and later ones. A marker that says ` ok` while
-the BCO no longer runs our app, or a deleted marker, asks for another install. The first install
+the BCO no longer runs SoundTap's app, or a deleted marker, asks for another install. The first install
 over stock BCO firmware first adopts the Wi-Fi network stock had joined, and reboots afterwards
 to start the new network path. The boot confirmation waits for this step and for `bcolink0`
 ([ADR 0010](0010-ab-slots-boot-confirm-rollback.md)). The image is trusted because it came with
@@ -151,7 +154,7 @@ Alternatives that lost:
 - **CCMP in software on the core or the app.** Too slow for the link
   ([measurements](../hardware/st20/bco-network-card.md#throughput-with-the-cipher-engine)).
 - **Management over the BCO UART.** About 42 ms per character, and the UART is the debug console.
-- **Our stage 2 inside the speaker's own stock container, packed on the speaker.** The release
+- **SoundTap's stage 2 inside the speaker's own stock container, packed on the speaker.** The release
   would stay Bose-free, but the BCO would still run Bose's first stage.
 - **Keeping the BCO app out of SoundTap Core.** The driver and the app drift apart, and a
   converted speaker never gets the network card.
@@ -167,8 +170,8 @@ Alternatives that lost:
 
 - Normal setup uses the common `wlan0`/`eth0` userspace path; the ST20-specific parts are the
   kernel driver, the image install and the link recovery in `internal/bco`.
-- SoundTap does not support stock BCO firmware: without our BCO app the ST20 has no network.
-- We must not add a port filter or IP service on the BCO's data path.
+- SoundTap does not support stock BCO firmware: without SoundTap's BCO app the ST20 has no network.
+- No port filter or IP service may be added on the BCO's data path.
 - A newer or older protocol level stops the driver until the matching app is flashed; a newer or
   older capability does not.
 - Flow control and the counters need the app and the driver of the same build or newer; with an
@@ -196,7 +199,7 @@ Alternatives that lost:
   (`app/internal/web/health.go`).
 - `bco/app/src/wifi.c` (station and setup access point), `bco/app/src/wpa.c` (handshakes),
   `bco/app/src/wired.c` (the wired port).
-- `bco/wild/fw`: our WiLD core; `bco/wild/fw/src/xport.c` (cipher engine, backoff, rate
+- `bco/wild/fw`: SoundTap's WiLD core; `bco/wild/fw/src/xport.c` (cipher engine, backoff, rate
   adaptation) and `bco/wild/fw/src/sta.c` (keys per peer slot).
 - `bco/app/src/first.c`, `bco/tools/bco-pack` and `os/package/soundtap-bco-app`: the first stage,
   the image and its build.

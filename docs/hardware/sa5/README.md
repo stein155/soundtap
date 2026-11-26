@@ -14,7 +14,7 @@ these changes:
 - **Lamps:** two, the Series III's. White is PWM on DM timer 4, amber is gpio2_17.
 - **Codec scripts:** `burns_sm2_normal.cfg`, plus `burns_sm2_mono.cfg`.
 
-Our U-Boot knows it by the manufacturing name `burns`. Its stock package is the SA-5's own
+SoundTap's U-Boot knows it by the manufacturing name `burns`. Its stock package is the SA-5's own
 (device id 0x093A).
 
 ## Audio
@@ -67,8 +67,8 @@ Stopping runs the other way: mute, wait 1 s, standby, wait 1 s, clocks valid = 0
 
 ## Recovery
 
-Its one front button (gpio0_27, stock's bit 9) held at power-on runs our U-Boot's USB-stick
-update, as stock's does: two reads 50 ms apart must agree (`rt_single_button_held`).
+Its one front button (gpio0_27, stock's bit 9) held at power-on runs the USB-stick update in
+SoundTap's U-Boot, as stock's does: two reads 50 ms apart must agree (`rt_single_button_held`).
 
 ## Open on hardware
 

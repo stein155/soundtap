@@ -54,28 +54,28 @@ six preset buttons.
 
 ### Why does it exist?
 
-Bose ended its cloud service on 6 May 2026, withdrawing service browsing, supported presets
-and further firmware updates. Local control remains available in Bose's updated app
+Bose ended its cloud service on 6 May 2026. Browsing music services, cloud presets and new
+firmware went with it; Bose's updated app still offers local control
 ([Bose's announcement](https://www.bose.com/soundtouch-end-of-life-row)). SoundTap gives the
 speaker a maintained operating system and its own web app, without a SoundTap account or server.
 
 ### Is it really built from scratch?
 
 Yes. Neither the repository nor the package holds Bose files
-([ADR 0049](../decisions/0049-no-stock-bytes.md)); every layer is ours or open source:
+([ADR 0049](../decisions/0049-no-stock-bytes.md)); every layer is SoundTap's own or open source:
 
 | Layer | SoundTap |
 | --- | --- |
-| Bootloader | our SPL and U-Boot, built from mainline source |
-| Kernel | mainline Linux 6.12 with our own device trees |
-| Drivers | ours: audio, keypad, LEDs, infrared, the ST20 display |
+| Bootloader | SoundTap's SPL and U-Boot, built from mainline source |
+| Kernel | mainline Linux 6.12 with SoundTap's own device trees |
+| Drivers | SoundTap's own: audio, keypad, LEDs, infrared, the ST20 display |
 | System | built by Buildroot from pinned source |
 | Player and web page | `soundtapd` (Go) and a React app, written for SoundTap |
-| Updates | our own installer and A/B slots |
+| Updates | SoundTap's own installer and A/B slots |
 
 Two things the speaker already carries stay as they are ([ADR 0049](../decisions/0049-no-stock-bytes.md)): ST10
 and ST20 retain their own stock codec configuration for the original tuning, and the ST20
-retains its BCO boot loaders (BFL/BSL) for recovery. Our BCO app includes our own WiLD core;
+retains its BCO boot loaders (BFL/BSL) for recovery. SoundTap's BCO app includes its own WiLD core;
 it does not load a stock radio blob. ST10/WLA Wi-Link firmware comes from upstream
 `linux-firmware`, with its provenance recorded.
 
@@ -116,27 +116,31 @@ Nothing. No account, no subscription, no ads, and nothing to buy.
 
 The SoundTouch 10, the SoundTouch 20 Series I, the Wireless Link adapter and the SoundTouch 300
 soundbar, whose own processor keeps driving its bass module, rear speakers and HDMI
-([notes](install.md#soundtouch-300)). The SoundTouch 20 Series II is waiting for hardware
-validation. The Series III, the SoundTouch 30 generations, the Portable, the SA-5 and the
-SoundTouch adapter (SA-4, Stereo JC, Wave, CineMate, Lifestyle, VideoWave) are previews: worked
-out from Bose's software, offered by the installers after an extra confirmation, and never run
-on hardware, their way back included; on a Lifestyle only the older adapter is offered. The
-Lifestyle 600/650 module is in the code too, but the installers refuse it: it has no recovery
-gesture at all. They refuse a Lifestyle's newer adapter with it, since they cannot tell the two
-apart. The [list on the home page](../../README.md#supported-speakers)
-says which, and the [compatibility matrix](compatibility.md) says what works on each. All run the
-same package. SoundTap is alpha software: "supported" means it runs every day on our own
-speakers and a release goes out only after it has passed that model's hardware checklist (no
-candidate has passed it yet), not that every feature is proven on every model. What has run on which speaker is in
-the [hardware checklist](../hardware/hardware-test.md#release-checklist-per-model); the [road to 1.0](roadmap.md) has
-the details.
+([notes](install.md#soundtouch-300)). All of them run the same package.
+
+- **Waiting for hardware validation:** the SoundTouch 20 Series II.
+- **Previews:** the SoundTouch 20 Series III, the SoundTouch 30 generations, the Portable, the
+  SA-5 and the SoundTouch adapter (SA-4, Stereo JC, Wave, CineMate, Lifestyle, VideoWave; on a
+  Lifestyle only the older adapter). They are worked out from Bose's software and have never
+  run on hardware, their way back included. The installers offer them only after an extra
+  confirmation.
+- **Refused by the installers:** the Lifestyle 600/650 module, which has no recovery gesture at
+  all, and with it a Lifestyle's newer adapter, which the installers cannot tell apart from it.
+
+SoundTap is alpha software. "Supported" means it runs every day on the maintainer's speakers and that a
+release goes out only after it has passed that model's hardware checklist (no candidate has
+passed it yet). It does not mean every feature is proven on every model. The
+[compatibility matrix](compatibility.md) says what works on each, the
+[hardware checklist](../hardware/hardware-test.md#release-checklist-per-model) what has run on
+which speaker, and the [road to 1.0](roadmap.md) what is still open.
 
 ### What about the SoundTouch 30, Portable or Wave?
 
 The SoundTouch 30, the Portable and the Wave SoundTouch adapter are previews: the release's
-preview package installs them, worked out from Bose's software, but none has run on hardware, and their recovery
-gestures are untested. Other models need someone with the speaker and some patience. Collecting **read-only** information from a speaker that still runs Bose's software
-is the first step, and nothing in it risks the speaker:
+preview package installs on them, worked out from Bose's software, but none has run on
+hardware, and their recovery gestures are untested. Other models need someone with the speaker
+and some patience. The first step is collecting **read-only** information from a speaker that
+still runs Bose's software, and nothing in it risks the speaker:
 [open a device issue](https://github.com/stein155/soundtap/issues/new?template=device.yml).
 
 ### I want to buy a used SoundTouch for this. Which one?
@@ -182,8 +186,9 @@ install over Wi-Fi from the speaker's settings page. See the [install guide](ins
 
 ### Do I need Linux?
 
-No. macOS, Linux and Windows all have the `curl` command the install uses. Building SoundTap
-yourself does need a Linux machine with Docker.
+No. The one-line install runs in Terminal on a Mac or Linux and in PowerShell on Windows, and
+the other routes need only a browser. Building SoundTap yourself does need a Linux machine
+with Docker.
 
 ### What happens to my Bose presets?
 
@@ -253,21 +258,17 @@ still causes a short delay before a change is heard, especially in multiroom.
 
 ### Does AirPlay work? And Apple Home?
 
-**AirPlay 2** is built in, for iPhone, iPad and Mac. It is meant to let you add the speaker to
-the **Home** app as an AirPlay speaker, group it with HomePods and Apple TV, and ask Siri to play
-on it. It is not a HomeKit
-accessory, and the Home tile's play/pause buttons do not work: Apple reserves those for
-certified receivers ([ADR 0003](../decisions/0003-apple-home-via-airplay-no-cast-no-sonos.md)). AirPlay is built for
-every supported model. So far it has played on the Wireless Link, from Music Assistant, and on
-the SoundTouch 300 by its owner's report (2026-11-22); an older SoundTouch 10 report has no
-recorded run. An iPhone, HomePods, the Home app and Siri have no recorded run on any model. On the SoundTouch 20 it needs our own BCO app (ADR 0031), which the
-install puts on it.
+**AirPlay 2** is built in on every supported model, for iPhone, iPad and Mac, and you can add
+the speaker to the **Home** app as an AirPlay speaker. It is not a HomeKit accessory, and the
+Home tile's play/pause buttons do not work: Apple reserves those for certified receivers
+([ADR 0003](../decisions/0003-apple-home-via-airplay-no-cast-no-sonos.md)). On the SoundTouch 20
+it needs SoundTap's own BCO app (ADR 0031), which the install puts on it.
 
 ### Why no Google Cast, Google Home or Sonos?
 
 Because neither can be done honestly ([ADR 0003](../decisions/0003-apple-home-via-airplay-no-cast-no-sonos.md)).
 Google Home and the Sonos app only adopt speakers that hold a certificate signed by Google or
-Sonos; there is no open mode, and faking one is not something we would ship. Casting itself
+Sonos; there is no open mode, and faking one is not something SoundTap would ship. Casting itself
 also needs the service's own receiver app, a web page that needs a browser the speaker does not
 have. Android phones can use Spotify Connect, Bluetooth or UPnP/DLNA apps such as BubbleUPnP
 instead, and Music Assistant plays Deezer, Tidal, Qobuz, YouTube Music and

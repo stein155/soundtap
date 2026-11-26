@@ -17,7 +17,7 @@ breaks one of them breaks the contract. Nothing here is ST20 proof: the ST20 has
 
 - Under stock Linux the audio link is raw S16_LE, 48 kHz stereo written to
   `/dev/snd/snd_shelby` (`app/internal/hw/model/model.go`). Under mainline it is the ALSA card
-  of our McASP machine driver (`os/drivers/soundtap-st10-audio.c`), S16 stereo at the one rate
+  of SoundTap's McASP machine driver (`os/drivers/soundtap-st10-audio.c`), S16 stereo at the one rate
   that driver's clock makes, 46875 Hz; the init script hands it to soundtapd as
   `AUDIO_DEV=alsa:plughw:0,0`. soundtapd is the only writer to the DAC
   ([ADR 0012](../../decisions/0012-single-dac-writer.md)).

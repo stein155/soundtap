@@ -33,7 +33,7 @@ frontend, the image, the tools) when it meets all of these:
 - **Reasonable size.** What it adds fits the speakers' binary and rootfs. A large framework for
   one function loses.
 - **It fixes a real problem.** A maintained library beats in-house code when it fixes something
-  ours does wrong or would have to grow into: a protocol we only partly speak, a format we parse by
+  SoundTap's code does wrong or would have to grow into: a protocol it only partly speaks, a format it parses by
   hand. A library for what a few lines of the standard library already do is not that.
 
 soundtapd stays a static binary built with `CGO_ENABLED=0`, so a Go module must be pure Go;
@@ -43,7 +43,7 @@ byte as `go.mod` and `go.sum` say.
 
 ### Every file says whose it is and under what licence
 
-The repository follows the [REUSE specification](https://reuse.software) 3.3. Our source files
+The repository follows the [REUSE specification](https://reuse.software) 3.3. SoundTap's source files
 carry `SPDX-License-Identifier` and `SPDX-FileCopyrightText` tags (the form is in
 [`CONTRIBUTING.md`](../../CONTRIBUTING.md)): GPL-3.0-only, except code built into another project,
 which takes that project's licence (the kernel driver and device trees GPL-2.0-only, U-Boot
@@ -58,7 +58,7 @@ its boot chain. `LICENSES/` holds the text of every licence named. What ships is
 ### Vendored files are recorded and kept byte-identical
 
 Code copied into the repository rather than fetched by a package manager is listed here with its
-source, version, licence and the SHA-256 of each file as taken. It stays byte-identical; our
+source, version, licence and the SHA-256 of each file as taken. It stays byte-identical; SoundTap's
 changes go around it, not into it.
 
 **TweetNaCl, the ed25519 check written for U-Boot's USB-stick recovery.** U-Boot verified
@@ -75,7 +75,7 @@ no ed25519.
 - **Licence:** public domain (the authors' statement on tweetnacl.cr.yp.to), which fits U-Boot's
   GPL-2.0+ and this project's licences.
 - **What is used:** `crypto_sign_open` and the SHA-512 it calls; the linker drops the rest. The
-  build copies it next to `board.c` with our `soundtap-sig.c`, which parses the statement.
+  build copies it next to `board.c` with SoundTap's `soundtap-sig.c`, which parses the statement.
 - **Why this one:** about 800 lines with its own SHA-512, no allocation, no tables, no
   dependencies, and finished, which the maintained rule allows for a small library that is done;
   its speed does not matter for one statement at power-on.
@@ -86,7 +86,7 @@ no ed25519.
   U-Boot, defines as the arithmetic shift the code expects.
 
 Alternatives that lost: the Go standard library only (a small supply chain, but protocol code of
-our own that maintained libraries already do); no rule at all (licence compatibility and pinning
+SoundTap's own that maintained libraries already do); no rule at all (licence compatibility and pinning
 are not optional for a GPL firmware image); Monocypher for the U-Boot check (faster, but ten times
 the code for a check that runs once).
 
@@ -100,7 +100,7 @@ the code for a check that runs once).
   [ADR 0043](0043-mdns-through-avahi.md)); it requires golang.org/x/sys, so `app/vendor/` keeps its
   `unix` package although nothing of it is compiled for the speakers, and the repository lints skip
   `app/vendor/`.
-- Every dependency is supply chain we trust. Pinning and review keep that in check, and
+- Every dependency is supply chain the project trusts. Pinning and review keep that in check, and
   [ADR 0113](0113-threat-model.md) says so instead of claiming a standard-library-only daemon.
 - A new source file without a licence header, or a licence without its text, fails the build's
   lint.

@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-dark.png">
-    <img src="docs/assets/hero-light.png" alt="SoundTap: a second life for your Bose SoundTouch. Three phones show the SoundTap web app: the Just for You start page, now playing, and the Spotify page.">
+    <img src="docs/assets/hero-light.png" alt="SoundTap. SoundTouch, the way it should have been. New software for the Bose speaker you already own: AirPlay 2, Apple Home and multiroom with anything, with no cloud, no account and no extra box. Three screens of the SoundTap app, now playing, the Just for You start page and a group of three speakers, between a SoundTouch 10 and a SoundTouch 300.">
   </picture>
 </p>
 
@@ -10,204 +10,97 @@
 </p>
 
 <p align="center">
-  <sub>Run the installer, one line on a computer on the same Wi-Fi, or upload the file on the
-  speaker's own update page, from a phone. For the SoundTouch 10, SoundTouch 20 Series I, SoundTouch 300 and
-  Wireless Link adapter, and as previews, never run on hardware, most other SoundTouch models (<a href="#supported-speakers">all models</a>), step by step in 25
-  languages; the details are in the <a href="docs/owners/install.md">installation guide</a>.</sub>
+  <a href="docs/owners/install.md">Install guide</a> ·
+  <a href="docs/owners/faq.md">FAQ</a> ·
+  <a href="docs/owners/compatibility.md">Supported speakers</a> ·
+  <a href="CONTRIBUTING.md">Contribute</a>
 </p>
+
+<br>
 
 <p align="center">
-  <a href="https://github.com/stein155/soundtap/actions/workflows/build-stu.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/stein155/soundtap/build-stu.yml?branch=main&style=flat-square&label=CI&labelColor=5e5e5e&color=111111"></a>
-  <img alt="Status: alpha" src="https://img.shields.io/badge/status-alpha-111111?style=flat-square&labelColor=5e5e5e">
-  <img alt="SoundTap Core 0.1.0 alpha" src="https://img.shields.io/badge/SoundTap%20Core-0.1.0%20alpha-111111?style=flat-square&labelColor=5e5e5e">
-  <img alt="Linux 6.12" src="https://img.shields.io/badge/Linux-6.12-111111?style=flat-square&labelColor=5e5e5e">
-  <a href="LICENSE"><img alt="License: GPL-3.0" src="https://img.shields.io/badge/license-GPL--3.0-111111?style=flat-square&labelColor=5e5e5e"></a>
+  In May 2026 Bose switched off the SoundTouch cloud. <b>SoundTap gives your speaker a second
+  life</b>: new software that runs on the speaker itself, with no Bose software, no cloud and no
+  account, and that does more than SoundTouch ever did.
 </p>
+
+<br>
 
 <p align="center">
-  <a href="docs/owners/install.md"><b>Install guide</b></a> ·
-  <a href="docs/owners/faq.md"><b>FAQ</b></a> ·
-  <a href="#how-it-works"><b>How it works</b></a> ·
-  <a href="docs/contributors/design.md"><b>Design</b></a> ·
-  <a href="CONTRIBUTING.md"><b>Contribute</b></a>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/features-dark.png">
+    <img src="docs/assets/features-light.png" alt="What SoundTouch never had. AirPlay 2 on every speaker: play from iPhone, iPad and Mac, straight to any SoundTouch. In Apple Home: add your speaker to the Home app as an AirPlay speaker. Multiroom with anything: every speaker in sync, and a Raspberry Pi or any Snapcast player joins too. Home Assistant built in, over MQTT: power, volume, presets and what's playing. Your own music from a NAS or media server, or from BubbleUPnP and VLC. No cloud, no account, no box: open soundtap.local on any phone. Updates that keep coming, signed and only kept once they work.">
+  </picture>
 </p>
 
----
+## Everything you had is still there
 
-Bose ended SoundTouch cloud support on 6 May 2026. Its updated app still controls and groups
-speakers locally, but service browsing and supported preset operation are gone, and Bose
-provides no further firmware or security updates ([Bose's announcement](https://www.bose.com/soundtouch-end-of-life-row)).
+Your six presets and the buttons on the speaker, the remote, internet radio, Spotify Connect,
+the alarm and the sleep timer, the SoundTouch 20's clock, Bluetooth and AUX.
 
-**SoundTap is new software for the speaker you already own.** Not an app, not a server you
-have to keep running next to it: a complete operating system built from open source, with
-no Bose software in it, from the bootloader to the web page on your phone. Afterwards the speaker runs on its own, on
-your home network, and does more than it ever did.
-
-> [!WARNING]
-> SoundTap is **alpha** software, version 0.x. It runs every day on our own speakers, but it
-> has not yet passed everything a 1.0 needs: for now its web page has no login, so anyone on
-> your network can control the speaker. Use it only on a network you trust. What is left is listed on the
-> [road to 1.0](docs/owners/roadmap.md).
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screens-dark.png">
+    <img src="docs/assets/screens.png" alt="One app. Every speaker. Five screens of the SoundTap app, which every speaker serves itself: Just for You with your stations and music, now playing with the song and its artwork, a group of speakers each at its own volume, the integrations with AirPlay, Apple Home, Spotify and MQTT, and the sound settings of a SoundTouch 300 with bass, treble, centre and rear levels.">
+  </picture>
+</p>
 
 ## Why SoundTap
 
-- **Yours, not a server's.** No SoundTap account, cloud service or tracking. Music services
-  remain your choice; the speaker also uses public time servers and GitHub for updates
-  ([network contacts](docs/owners/faq.md#does-it-phone-home)).
-- **Rebuilt from the ground up.** Our own bootloader, mainline Linux 6.12, our own drivers
-  and a player written for SoundTap. Not a patch on top of Bose's software, which is what
-  makes everything below possible. ([What "built from scratch" means here.](docs/owners/faq.md#is-it-really-built-from-scratch))
-- **More than it ever was.** AirPlay 2, Spotify Connect, multiroom with any Snapcast
-  client, your own media server and any MQTT client, controlled from the speaker's own web page.
-- **Built not to strand you.** Updates go into a second slot, and the speaker only keeps a
-  new version once it has proven itself. Every supported model has a documented way back to
-  Bose's software.
-
-## Screenshots
-
-<p align="center">
-  <img src="docs/assets/screens.png" alt="Five screens of the SoundTap web app: the Just for You start page, presets, the now-playing view, the Spotify page in dark mode, and the settings page in dark mode.">
-</p>
-
-The speaker serves this page itself. Open it on any phone, tablet or computer, add it to your
-home screen, and it behaves like an app, with no app store and no account involved.
-
-## What you get
-
-| | |
-| --- | --- |
-| <img src="docs/assets/icons/radio.svg" width="20" height="20" alt=""> **Internet radio** | Search and play thousands of TuneIn stations, or add your own stream. SoundTap shows the song that is on and its album art, read from the station's own stream. |
-| <img src="docs/assets/icons/connect.svg" width="20" height="20" alt=""> **Spotify Connect** | The speaker appears in the Spotify app like any Connect speaker. Browse your playlists, albums and liked songs from its own page too. |
-| <img src="docs/assets/icons/airplay.svg" width="20" height="20" alt=""> **AirPlay 2** | Play from iPhone, iPad and Mac, group with HomePods and join the Apple Home app, on every speaker. |
-| <img src="docs/assets/icons/multiroom.svg" width="20" height="20" alt=""> **Multiroom** | Group speakers and play the same music everywhere, in sync, with a volume per room. Any speaker can lead. Built on [Snapcast](https://github.com/badaix/snapcast), so any Snapcast client, such as a Raspberry Pi, can join too. |
-| <img src="docs/assets/icons/presets.svg" width="20" height="20" alt=""> **Six presets** | The buttons on the speaker and its remote work again. A preset is a station, a Spotify playlist or something from your media server. |
-| <img src="docs/assets/icons/mqtt.svg" width="20" height="20" alt=""> **MQTT** | Point it at your MQTT broker: power, volume, presets, play/pause and what is playing, for any MQTT client. Compatible hubs find the speaker by themselves. |
-| <img src="docs/assets/icons/library.svg" width="20" height="20" alt=""> **Your own music** | Browse a NAS or media server (UPnP/DLNA), or push music from apps such as BubbleUPnP and VLC. |
-| <img src="docs/assets/icons/clock.svg" width="20" height="20" alt=""> **The little things** | Sleep timer, recently played, announcements and a standby clock on speakers with a display. |
-| <img src="docs/assets/icons/globe.svg" width="20" height="20" alt=""> **25 languages** | The app in 25 languages, including English, Nederlands, Deutsch, Français, Español and Afrikaans, with light and dark themes. |
-| <img src="docs/assets/icons/update.svg" width="20" height="20" alt=""> **Safe updates** | Install new versions from the settings page. Each one goes into a second slot and is only kept once it has proven itself. |
-| <img src="docs/assets/icons/bluetooth.svg" width="20" height="20" alt=""> **Bluetooth and AUX** | Play from your phone over Bluetooth, or plug in a cable, on the speakers that have it. |
-
-The [compatibility matrix](docs/owners/compatibility.md) shows what works on each model.
-
-## Supported speakers
-
-<table>
-  <tr>
-    <td align="center" width="25%"><img src="docs/assets/models/st10.svg" width="96" height="96" alt=""><br><b>SoundTouch 10</b></td>
-    <td align="center" width="25%"><img src="docs/assets/models/st20.svg" width="96" height="96" alt=""><br><b>SoundTouch 20</b><br><sub>Series I</sub></td>
-    <td align="center" width="25%"><img src="docs/assets/models/st300.svg" width="96" height="96" alt=""><br><b>SoundTouch 300</b></td>
-    <td align="center" width="25%"><img src="docs/assets/models/wla.svg" width="96" height="96" alt=""><br><b>Wireless Link adapter</b></td>
-  </tr>
-</table>
-
-| Speaker | Status | Notes |
-| --- | --- | --- |
-| **SoundTouch 10** | <img alt="Supported" src="https://img.shields.io/badge/supported-1d7a3e?style=flat-square"> | Front buttons, lights and the remote. |
-| **SoundTouch 20 Series I** | <img alt="Supported" src="https://img.shields.io/badge/supported-1d7a3e?style=flat-square"> | Display with clock and now playing. No Bluetooth audio. |
-| SoundTouch 20 Series II | <img alt="Validation pending" src="https://img.shields.io/badge/validation%20pending-5e5e5e?style=flat-square"> | Shares the Series I platform; generation-specific hardware validation is still required. No Bluetooth audio. |
-| SoundTouch 20 Series III | <img alt="Preview" src="https://img.shields.io/badge/preview-5e5e5e?style=flat-square"> | Installs from the preview package; never run on hardware. It carries the ST10's module, so it runs as an ST10 with its own sound tuning from its stock firmware. Its display, Wi-Fi lamp and rear Ethernet port are mapped from stock's hardware description, untested. |
-| **SoundTouch Wireless Link adapter** | <img alt="Supported" src="https://img.shields.io/badge/supported-1d7a3e?style=flat-square"> | Turns any amplifier or active speakers into a SoundTap player. |
-| SoundTouch 30 Series I/II | <img alt="Preview" src="https://img.shields.io/badge/preview-5e5e5e?style=flat-square"> | Installs from the preview package; never run on hardware. Stock's hardware description is the ST20 Series I's except for its own codec settings, so it runs as an ST20 with the ST30's own sound tuning, read from its stock firmware. |
-| SoundTouch 30 Series III | <img alt="Preview" src="https://img.shields.io/badge/preview-5e5e5e?style=flat-square"> | As the ST20 Series III, with the ST30's own sound tuning. Its Wi-Fi lamp and front panel are mapped from stock's hardware description, untested. |
-| SoundTouch Portable | <img alt="Preview" src="https://img.shields.io/badge/preview-5e5e5e?style=flat-square"> | The ST20 Series I's board with a battery. Built to charge by stock's rules, show the level on the display and in the app, and go to standby after 20 idle minutes on battery; worked out from stock, never run. |
-| SoundTouch SA-5 | <img alt="Preview" src="https://img.shields.io/badge/preview-5e5e5e?style=flat-square"> | The ST10's module on an amplifier board. Built to follow its controller's state, faults and heat protection as stock does; worked out from stock, never run. |
-| Lifestyle 600/650 (SoundTouch module) | <img alt="Not offered" src="https://img.shields.io/badge/not%20offered-b90000?style=flat-square"> | The code carries it as the SoundTouch 300's module and link, but the installers do not offer it: **it has no way back, and stock has no recovery gesture on it either.** Never run on hardware. |
-| SoundTouch adapter: SA-4, Stereo JC, Wave SoundTouch, CineMate, Lifestyle 135–535, VideoWave | <img alt="Preview" src="https://img.shields.io/badge/preview-5e5e5e?style=flat-square"> | Built to drive the host product over the Bose link: select the adapter, hand the volume over and take the Wave's and CineMate's remote keys. Both the older and the Bluetooth adapter, but on a Lifestyle the installers offer only the older one. Worked out from stock, never run. |
-| **SoundTouch 300** | <img alt="Supported" src="https://img.shields.io/badge/supported-1d7a3e?style=flat-square"> | The soundbar, with its TV and HDMI inputs, bass module, rear speakers and ADAPTiQ, from the app and its remote ([notes](docs/owners/install.md#soundtouch-300)). |
-
-"Supported" means the model is part of the first release: a release is published only after it has passed that model's [hardware checklist](docs/hardware/hardware-test.md#release-checklist-per-model). No candidate has passed it yet; the alphas published so far are prereleases that come before that test. Individual features may not have run on every model yet. "Validation pending" models install from the same file and "Preview" models from the release's preview package (`SoundTap-Core-X.Y.Z-preview.stu`), but neither has had that test. A preview is worked out from Bose's own software alone ([ADR 0133](docs/decisions/0133-more-soundtouch-models-from-stock.md)) and has never run on hardware, its recovery gesture included; the installers offer one only when you pick it by name and confirm it as a preview, and refuse the Lifestyle 600/650 module, and with it a Lifestyle's Bluetooth adapter, which they cannot tell apart from it.
-
-**One universal file serves the supported models**; each speaker picks its own parts from it.
-The four supported models come first, then the ST30 generations. Shared stock firmware and
-offline tests help prepare a port, but do not establish hardware support for an untested
-generation or revision. Have another model? [Help bring it up](https://github.com/stein155/soundtap/issues/new?template=device.yml):
-the first step is read-only investigation.
-
-## Getting started
-
-The [installer](https://stein155.github.io/soundtap/installer/) walks you through it one
-screen at a time, in the same 25 languages as the speaker's own page, and offers three routes:
-
-<table>
-  <tr>
-    <td valign="top" width="33%"><img src="docs/assets/icons/route-computer.svg" width="48" height="48" alt=""><br><b>With a computer</b><br>One line in Terminal or PowerShell finds every speaker that still runs Bose's software and installs the ones you pick. The speaker downloads SoundTap itself.</td>
-    <td valign="top" width="33%"><img src="docs/assets/icons/route-browser.svg" width="48" height="48" alt=""><br><b>From the installer page</b><br>Pick your model, type the speaker's IP address and install, in Chrome or Edge. The speaker downloads SoundTap itself.</td>
-    <td valign="top" width="33%"><img src="docs/assets/icons/route-upload.svg" width="48" height="48" alt=""><br><b>Without internet</b><br>Put the speaker in setup mode and upload the <code>.stu</code> from the <a href="https://github.com/stein155/soundtap/releases">newest release</a> on Bose's own update page, from a phone.</td>
-  </tr>
-</table>
-
-1. **Install.** Follow the installer on one of these routes; you need it only once. The
-   [installation guide](docs/owners/install.md) has the same steps in more detail, a USB route
-   and troubleshooting.
-2. **Connect.** If the stock Wi-Fi profile was imported, the speaker rejoins your home
-   network. Otherwise join its setup network and choose your Wi-Fi. Open **http://soundtap.local**.
-
-Everything after that, including updates, happens from the speaker's own page.
-
-> [!NOTE]
-> SoundTap Core 0.1.0 is out as an **alpha**, a prerelease signed like a release. The release
-> 0.1.0 follows once it has passed the hardware test on the ST10, ST20, Wireless Link and
-> SoundTouch 300.
-
-## How it works
-
-One Go daemon, `soundtapd`, is the speaker: it owns the audio path, the presets, the buttons
-and lights, the web page and the updates, on mainline Linux with our own bootloader. Every
-update goes into the slot that is not running, and the speaker keeps it only after the new
-version has stayed up for a minute. There are two version numbers: *SoundTap Core* is
-everything that boots, delivered as the `.stu` file and changed rarely; *SoundTap app* is the
-player and the page, and updates on its own. The settings page shows both, for example
-*SoundTap Core 0.1.0 · app 0.1.0*.
-
-The diagrams and every choice behind this are in the [technical design](docs/contributors/design.md).
-
-## Compared with the alternatives
-
-|  | Bose software today | Cloud emulators | **SoundTap** |
+|  | Bose app today | Cloud replacements | **SoundTap** |
 | --- | :---: | :---: | :---: |
 | Presets and radio | — | ✓ | ✓ |
-| Spotify Connect | ✓ | ✓ | ✓ |
-| AirPlay 2 | AirPlay 1, some models | as before | ✓ |
-| Multiroom with other devices | — | — | ✓ Snapcast |
-| MQTT | via integrations | via integrations | ✓ built in |
-| Extra device in your home | none | usually, always on | **none** |
-| Bose's software on the speaker | yes | yes | **no** ¹ |
-| Future updates | — | from the project | ✓ signed, A/B |
+| AirPlay 2 and Apple Home | — | — | ✓ |
+| Multiroom with other players | — | — | ✓ |
+| Needs an extra device running | no | usually | **no** |
+| New updates | — | for the server | **for the speaker** |
 
-¹ The ST20 network processor runs our app and WiLD core; its original BFL/BSL loaders stay
-for recovery. ST10/ST20 also retain their own stock codec tuning. These on-device exceptions
-are recorded in [ADR 0049](docs/decisions/0049-no-stock-bytes.md).
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/speakers-dark.png">
+    <img src="docs/assets/speakers-light.png" alt="For the speaker you already own: the SoundTouch 10, SoundTouch 20, SoundTouch 300 and Wireless Link adapter.">
+  </picture>
+</p>
 
-Cloud emulators are a good choice if you want to keep Bose's software and change as little
-as possible; several community projects do this well. SoundTap is for people who would rather
-have the speaker stand on its own.
+<p align="center">
+  Another SoundTouch? See <a href="docs/owners/compatibility.md">every model and what works on each</a>.
+</p>
+
+## Install in three steps
+
+<table>
+  <tr>
+    <td valign="top" width="33%"><b>1. Open the <a href="https://stein155.github.io/soundtap/installer/">installer</a></b><br>On a computer or phone on the same Wi-Fi as the speaker.</td>
+    <td valign="top" width="33%"><b>2. Pick your speaker</b><br>It shows only the steps for your model, in 25 languages.</td>
+    <td valign="top" width="33%"><b>3. Open soundtap.local</b><br>That's it. Updates come from there too.</td>
+  </tr>
+</table>
+
+The [install guide](docs/owners/install.md) has every route in detail and the way back to
+Bose's software.
+
+> [!WARNING]
+> SoundTap is **alpha** software. It runs every day on the maintainer's speakers, but its web page has
+> no login yet: anyone on your network can control the speaker. Use it on a network you trust.
+> What is left before 1.0 is on the [road to 1.0](docs/owners/roadmap.md).
 
 ## For developers
 
-Start with the [technical design](docs/contributors/design.md); it links to everything else. Setup without
-a speaker, checks and pull requests are in [CONTRIBUTING.md](CONTRIBUTING.md), and
-[its contract](CONTRIBUTING.md#the-contract) holds the rules for anything that touches real
-hardware. Every speaker serves a browsable reference of its HTTP API, offline, at
-`http://<speaker>/api/docs`.
+One Go program on mainline Linux, with its own bootloader and signed A/B updates. Start with
+the [technical design](docs/contributors/design.md); setup, checks and pull requests are in
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Thanks
+## Thanks and legal
 
-SoundTap stands on the shoulders of [Linux](https://kernel.org), [U-Boot](https://u-boot.org),
+SoundTap stands on [Linux](https://kernel.org), [U-Boot](https://u-boot.org),
 [Buildroot](https://buildroot.org), [librespot](https://github.com/librespot-org/librespot),
 [shairport-sync](https://github.com/mikebrady/shairport-sync),
 [Snapcast](https://github.com/badaix/snapcast), [BlueALSA](https://github.com/arkq/bluez-alsa)
 and [Avahi](https://avahi.org), and owes a lot to everyone in the SoundTouch community who
 documented these speakers after the cloud went dark.
 
-## Legal
-
-SoundTap's own code is licensed under the [GNU GPL v3.0](LICENSE); bundled open-source components keep their
-own licenses, listed in [NOTICE.md](NOTICE.md).
-
-SoundTap is an independent project, **not affiliated with, endorsed by or sponsored by Bose
-Corporation**. *Bose* and *SoundTouch* are trademarks of Bose Corporation, used only to
-identify the speakers SoundTap runs on. Installing alternative firmware is at your own risk.
-
-The tree and its history hold no stock firmware; reference inputs stay outside git
-([ADR 0049](docs/decisions/0049-no-stock-bytes.md)). See [NOTICE.md](NOTICE.md).
+SoundTap's own code is licensed under the [GNU GPL v3.0](LICENSE); bundled open-source
+components keep their own licenses, listed in [NOTICE.md](NOTICE.md). SoundTap is an
+independent project, **not affiliated with, endorsed by or sponsored by Bose Corporation**.
+*Bose* and *SoundTouch* are trademarks of Bose Corporation, used only to identify the speakers
+SoundTap runs on. Installing alternative firmware is at your own risk.

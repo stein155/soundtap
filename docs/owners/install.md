@@ -11,10 +11,8 @@ this guide adds the detail and the troubleshooting.
 > **SoundTap is alpha software (0.x).** Installing it replaces everything on the speaker,
 > including the part that starts it (the bootloader). There is a way back: the speaker's
 > Updates page takes Bose's own update file and puts Bose's software back. Keep that file
-> before you start ([step 2](#2-what-you-need)). On a SoundTouch 20 the way back does not
-> restore Bose's software on the speaker's separate network chip; that still takes a
-> developer. A speaker
-> that no longer starts at all needs a technical rescue. Read
+> before you start ([step 2](#2-what-you-need)). A speaker that no longer starts at all needs
+> a technical rescue. Read
 > [Going back to Bose](#going-back-to-bose) **before** you start. If returning to Bose matters
 > to you, wait for 1.0, and do not make your only speaker your first test.
 
@@ -29,21 +27,10 @@ this guide adds the detail and the troubleshooting.
 
 A USB stick is the last resort when steps 3 and 4 both failed, and is untested: see [USB stick](#usb-stick).
 
-What has run on which speaker, and when, is in the [install records](../hardware/install-records.md).
-
-## Contents
-
-1. [Which speaker you have](#1-which-speaker-you-have)
-2. [What you need](#2-what-you-need)
-3. [Install automatically](#3-install-automatically)
-4. [Without internet: upload the file](#4-without-internet-upload-the-file)
-5. [What happens next](#5-what-happens-next): [Wi-Fi](#put-the-speaker-on-your-wi-fi), [start playing](#start-playing)
-6. [Going back to Bose](#going-back-to-bose)
-7. [Updating](#updating)
-8. [Buttons that always work](#buttons-that-always-work)
-9. [SoundTouch 300](#soundtouch-300)
-10. [USB stick](#usb-stick)
-11. [When something goes wrong](#when-something-goes-wrong)
+Also in this guide: [Updating](#updating) · [Buttons that always work](#buttons-that-always-work) ·
+[SoundTouch 300](#soundtouch-300) · [USB stick](#usb-stick) ·
+[When something goes wrong](#when-something-goes-wrong). What has run on which speaker, and
+when, is in the [install records](../hardware/install-records.md).
 
 ## 1. Which speaker you have
 
@@ -90,7 +77,7 @@ preview package, `SoundTap-Core-X.Y.Z-preview.stu`: the same system with an inst
 installs on previews, while the plain package refuses them.
 
 The installers refuse the Lifestyle 600/650 module. The code carries it, but it has no
-recovery gesture at all, in Bose's software or ours. A Lifestyle with the newer (Bluetooth)
+recovery gesture at all, in Bose's software or SoundTap's. A Lifestyle with the newer (Bluetooth)
 adapter reports the same module, and the installers cannot tell the two apart, so they refuse
 that adapter too; only a Lifestyle with the older adapter is offered as a preview.
 
@@ -99,8 +86,8 @@ that adapter too; only a Lifestyle with the older adapter is offered as a previe
 - a SoundTouch 10, SoundTouch 20, SoundTouch 300 or Wireless Link adapter, or one of the
   [previews](#1-which-speaker-you-have), still running
   Bose's software (or already running SoundTap: then skip to [Updating](#updating)), with the
-  Bose software of [step 1](#which-bose-software) or newer. Other models are listed on the
-  [home page](../../README.md#supported-speakers);
+  Bose software of [step 1](#which-bose-software) or newer. Other models are listed in the
+  [compatibility matrix](compatibility.md#previews);
 - the speaker plugged in, with its power cable within reach;
 - for [step 3](#3-install-automatically): a computer (macOS, Windows or Linux) on the same Wi-Fi,
   and a speaker that can reach the internet;
@@ -113,10 +100,8 @@ that adapter too; only a Lifestyle with the older adapter is offered as a previe
 ### Save Bose's update file for your model
 
 SoundTap does not ship Bose's software, and the way back to Bose needs Bose's own update file
-for your model (`Update.stu`). Before you install, get the update file your speaker can
-download from Bose and keep it somewhere safe, next to this guide. Without it, you have no
-way back to Bose's software.
-No copy yet? Bose's update files are kept in a public
+for your model (`Update.stu`). Get it before you install and keep it somewhere safe: without
+it, you have no way back to Bose's software. No copy yet? Bose's update files are kept in a public
 [archive on archive.org](https://archive.org/download/bose-soundtouch-software-and-firmware/Firmware/), run by neither Bose nor SoundTap: take
 the file for your own model.
 
@@ -135,7 +120,7 @@ the speaker.
 The speaker stays on your Wi-Fi and downloads SoundTap itself. You do not download a package.
 
 1. Open the [installer page](https://stein155.github.io/soundtap/installer/) on a computer on
-   the same network: its route "With a computer" shows the command for that computer. Or use the SoundTap app.
+   the same network: its route "With a computer" shows the command for that computer.
    - **One command.** Paste one line into Terminal (macOS, Linux) or PowerShell (Windows):
 
      ```sh
@@ -332,9 +317,9 @@ What to know first:
 - **It is not a factory reset.** Bose's software goes back on the speaker, including the part
   that starts it, but not every byte SoundTap wrote is removed. A file that contains any part
   of SoundTap is refused before anything is written.
-- **SoundTouch 20:** this puts Bose's software back on the main processor only. The separate
-  network chip keeps SoundTap's software, and whether Bose's software replaces it by itself is
-  not known yet. Putting Bose's back there is a developer step for now.
+- **SoundTouch 20:** this puts Bose's software back on the main processor. The separate
+  network chip still runs SoundTap's app at first; Bose's software then puts its own app back
+  there by itself when it finds another one (seen on a test speaker).
 - **SoundTouch 300:** the soundbar's own processor keeps the firmware it has, so this is not a
   full soundbar restore either.
 - **With a USB stick, also when SoundTap does not start any more:** SoundTap's bootloader has

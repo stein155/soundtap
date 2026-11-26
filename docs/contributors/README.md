@@ -1,6 +1,7 @@
 # For contributors
 
-Start with [CONTRIBUTING.md](../../CONTRIBUTING.md): setup, pull requests and
+New here? [Start here](start-here.md): the five rules that matter and what to read for your
+change. Then [CONTRIBUTING.md](../../CONTRIBUTING.md): setup, pull requests and
 [the contract](../../CONTRIBUTING.md#the-contract), the rules for touching a speaker.
 
 - [Technical design](design.md): what runs where, and the links to everything else.

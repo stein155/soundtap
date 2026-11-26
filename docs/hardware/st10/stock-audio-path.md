@@ -44,7 +44,7 @@ The audio path's parameters, in Bose's own words:
 | `bassParameters` | −9 … 0, default 0 | The configured slider range; this XML alone does not establish its signal-processing effect. |
 | `muteParams` | `/dev/gpiodev/mute_out`, polarity true, 100 ms each way | The amp mute, with a settling delay on both edges. |
 | `asrcConstants` | `invFsamp = 2.1333333e-05` | 1 / 46875, again. |
-| `dspImages` | `rhino_sm2_normal.cfg` | The 9976-write blob we load; separate left/right images exist for stereo pairing. |
+| `dspImages` | `rhino_sm2_normal.cfg` | The 9976-write blob SoundTap loads; separate left/right images exist for stereo pairing. |
 
 A later PCM measurement of stock on an ST20 found a first-order bass shelf at about 260 Hz,
 1.22 dB per step. That is separate hardware evidence on an ST20, not a result obtained from this
@@ -86,7 +86,7 @@ What APServer does, read out of its disassembly on 2026-09-22:
 32-bit words, and `SendVolumeAction()` seeks the codec device to **0x2C10** (page 0x2C,
 register 0x10, the block the September SoundTap build wrote once at boot) and writes that whole
 vector, every time the volume changes. So the block is stock's volume control, not a
-one-time setup, and ours is a constant sitting where stock puts a variable. Whether that
+one-time setup, and SoundTap's is a constant sitting where stock puts a variable. Whether that
 constant matched stock's value at volume 100 was initially unresolved; the later table
 analysis below answered it.
 

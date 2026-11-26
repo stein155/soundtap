@@ -51,7 +51,7 @@ The clock was never the SoC's to make. Bose leaves `AHCLKXCTL` at 0 on mcasp1, w
 means the high-frequency clock is an input, and `RMII1_REF_CLK` in mux mode 6 is
 `mcasp1_ahclkx`, not `aclkx` as this tree's comment said. There is an oscillator on
 the board feeding it: 11.2896 MHz, halved by `CLKXDIV` to 5.6448 MHz, which is
-128 x 44100. Bose's declared SPDIF rate is 44100. Our driver was not only clocking it
+128 x 44100. Bose's declared SPDIF rate is 44100. SoundTap's driver was not only clocking it
 wrongly, it was driving that pin as an output against the oscillator.
 
 ## What mcasp0 is
@@ -105,7 +105,7 @@ Module 2 design), so this is not a guess that happens to fit.
 
 `mii1_col` is the one to leave out. Bose muxes it as `mcasp0_axr2` and then immediately
 re-muxes it as `mcasp1_axr2` in the group applied after, which is what it ends up as and
-what our `mcasp1_pins` already claims. `serial-dir` leaves mcasp0's serializer 2
+what SoundTap's `mcasp1_pins` already claims. `serial-dir` leaves mcasp0's serializer 2
 inactive, so nothing wants it, and two pinctrl nodes claiming one pad is a failed
 request.
 
