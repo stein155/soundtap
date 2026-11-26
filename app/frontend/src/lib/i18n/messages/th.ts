@@ -458,7 +458,6 @@ const th: Messages = {
   crashReportBodyLabel: 'รายงาน',
   crashReportOpen: 'เปิดรายงานบน GitHub',
   crashReportAttach: 'จากนั้นแนบชุดข้อมูลสนับสนุน ({path}) ไปกับรายงาน ซึ่งมีบันทึกฉบับเต็ม',
-  thisSpeakerShort: 'ลำโพงนี้',
   updateBadge: 'อัปเดต',
   updatesNewBadge: 'ใหม่',
   stereoSideLeft: 'ซ้าย',

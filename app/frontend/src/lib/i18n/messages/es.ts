@@ -488,7 +488,6 @@ const es: Messages = {
   crashReportOpen: 'Abrir el informe en GitHub',
   crashReportAttach:
     'Después adjunta el paquete de soporte ({path}) a la incidencia: contiene los registros completos.',
-  thisSpeakerShort: 'este altavoz',
   updateBadge: 'Actualización',
   updatesNewBadge: 'Nueva',
   stereoSideLeft: 'Izquierda',

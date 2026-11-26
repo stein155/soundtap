@@ -492,7 +492,6 @@ const ro: Messages = {
   crashReportOpen: 'Deschideți raportul pe GitHub',
   crashReportAttach:
     'Apoi atașați pachetul de asistență ({path}) la raport: conține jurnalele complete.',
-  thisSpeakerShort: 'acest difuzor',
   updateBadge: 'Actualizare',
   updatesNewBadge: 'Nou',
   stereoSideLeft: 'Stânga',

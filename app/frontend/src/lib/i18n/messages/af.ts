@@ -489,7 +489,6 @@ const af: Messages = {
   crashReportOpen: 'Maak die verslag op GitHub oop',
   crashReportAttach:
     'Heg daarna die ondersteuningspakket ({path}) by die verslag aan: dit bevat die volledige logs.',
-  thisSpeakerShort: 'hierdie luidspreker',
   updateBadge: 'Opdatering',
   updatesNewBadge: 'Nuut',
   stereoSideLeft: 'Links',

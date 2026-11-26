@@ -496,7 +496,6 @@ const el: Messages = {
   crashReportOpen: 'Άνοιγμα της αναφοράς στο GitHub',
   crashReportAttach:
     'Έπειτα επισυνάψτε το πακέτο υποστήριξης ({path}) στην αναφορά: περιέχει τα πλήρη αρχεία καταγραφής.',
-  thisSpeakerShort: 'αυτό το ηχείο',
   updateBadge: 'Ενημέρωση',
   updatesNewBadge: 'Νέο',
   stereoSideLeft: 'Αριστερά',

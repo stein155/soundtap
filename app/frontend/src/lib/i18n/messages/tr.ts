@@ -486,7 +486,6 @@ const tr: Messages = {
   crashReportOpen: 'Raporu GitHub’da aç',
   crashReportAttach:
     'Ardından destek paketini ({path}) bildirime ekleyin: tam günlükler onun içinde.',
-  thisSpeakerShort: 'bu hoparlör',
   updateBadge: 'Güncelleme',
   updatesNewBadge: 'Yeni',
   stereoSideLeft: 'Sol',

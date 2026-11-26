@@ -484,7 +484,6 @@ const nb: Messages = {
   crashReportOpen: 'Åpne rapporten på GitHub',
   crashReportAttach:
     'Legg deretter ved støttepakken ({path}) i saken: den inneholder de fullstendige loggene.',
-  thisSpeakerShort: 'denne høyttaleren',
   updateBadge: 'Oppdatering',
   updatesNewBadge: 'Ny',
   stereoSideLeft: 'Venstre',

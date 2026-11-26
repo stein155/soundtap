@@ -485,7 +485,6 @@ const cs: Messages = {
   crashReportOpen: 'Otevřít hlášení na GitHubu',
   crashReportAttach:
     'Pak k hlášení přiložte balíček pro podporu ({path}): obsahuje úplné protokoly.',
-  thisSpeakerShort: 'tento reproduktor',
   updateBadge: 'Aktualizace',
   updatesNewBadge: 'Nové',
   stereoSideLeft: 'Levý',

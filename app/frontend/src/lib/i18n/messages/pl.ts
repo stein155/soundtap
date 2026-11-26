@@ -488,7 +488,6 @@ const pl: Messages = {
   crashReportBodyLabel: 'Raport',
   crashReportOpen: 'Otwórz raport na GitHubie',
   crashReportAttach: 'Następnie dołącz do zgłoszenia pakiet wsparcia ({path}): zawiera pełne logi.',
-  thisSpeakerShort: 'ten głośnik',
   updateBadge: 'Aktualizacja',
   updatesNewBadge: 'Nowa',
   stereoSideLeft: 'Lewy',

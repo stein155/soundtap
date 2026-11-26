@@ -486,7 +486,6 @@ const sv: Messages = {
   crashReportOpen: 'Öppna rapporten på GitHub',
   crashReportAttach:
     'Bifoga sedan supportpaketet ({path}) i ärendet: det innehåller de fullständiga loggarna.',
-  thisSpeakerShort: 'den här högtalaren',
   updateBadge: 'Uppdatering',
   updatesNewBadge: 'Ny',
   stereoSideLeft: 'Vänster',

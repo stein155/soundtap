@@ -490,7 +490,6 @@ const pt: Messages = {
   crashReportOpen: 'Abrir o relatório no GitHub',
   crashReportAttach:
     'Depois anexe o pacote de suporte ({path}) ao relatório: ele contém os registros completos.',
-  thisSpeakerShort: 'este alto-falante',
   updateBadge: 'Atualização',
   updatesNewBadge: 'Nova',
   stereoSideLeft: 'Esquerda',

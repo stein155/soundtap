@@ -490,7 +490,6 @@ const nl: Messages = {
   crashReportOpen: 'Rapport openen op GitHub',
   crashReportAttach:
     'Voeg daarna het supportpakket ({path}) toe aan de melding: daarin staan de volledige logboeken.',
-  thisSpeakerShort: 'deze speaker',
   updateBadge: 'Update',
   updatesNewBadge: 'Nieuw',
   stereoSideLeft: 'Links',

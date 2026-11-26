@@ -485,7 +485,6 @@ const ru: Messages = {
   crashReportBodyLabel: 'Отчет',
   crashReportOpen: 'Открыть отчет на GitHub',
   crashReportAttach: 'Затем приложите к отчету пакет для поддержки ({path}): в нем полные журналы.',
-  thisSpeakerShort: 'этот динамик',
   updateBadge: 'Обновление',
   updatesNewBadge: 'Новое',
   stereoSideLeft: 'Слева',

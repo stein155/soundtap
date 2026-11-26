@@ -457,7 +457,6 @@ const zhHans: Messages = {
   crashReportBodyLabel: '报告',
   crashReportOpen: '在 GitHub 上打开报告',
   crashReportAttach: '然后把支持包（{path}）附加到该问题中：其中包含完整日志。',
-  thisSpeakerShort: '此扬声器',
   updateBadge: '更新',
   updatesNewBadge: '新',
   stereoSideLeft: '左',

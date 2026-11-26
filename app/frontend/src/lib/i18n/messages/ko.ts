@@ -480,7 +480,6 @@ const ko: Messages = {
   crashReportOpen: 'GitHub에서 보고서 열기',
   crashReportAttach:
     '그런 다음 지원 자료({path})를 이슈에 첨부하십시오. 전체 로그가 들어 있습니다.',
-  thisSpeakerShort: '이 스피커',
   updateBadge: '업데이트',
   updatesNewBadge: '신규',
   stereoSideLeft: '왼쪽',

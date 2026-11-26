@@ -483,7 +483,6 @@ const da: Messages = {
   crashReportOpen: 'Åbn rapporten på GitHub',
   crashReportAttach:
     'Vedhæft derefter supportpakken ({path}) til sagen: den indeholder de fulde logfiler.',
-  thisSpeakerShort: 'denne højttaler',
   updateBadge: 'Opdatering',
   updatesNewBadge: 'Ny',
   stereoSideLeft: 'Venstre',

@@ -484,7 +484,6 @@ const en = {
   crashReportOpen: 'Open the report on GitHub',
   crashReportAttach:
     'Then attach the support bundle ({path}) to the issue: it holds the full logs.',
-  thisSpeakerShort: 'this speaker',
   updateBadge: 'Update',
   updatesNewBadge: 'New',
   stereoSideLeft: 'Left',

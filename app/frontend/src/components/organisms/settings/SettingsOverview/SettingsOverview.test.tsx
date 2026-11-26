@@ -19,7 +19,7 @@ const room = (id: string, model: string, self = false, online = true): Room =>
   roomFixture({ id, name: id, model, ip: '192.0.2.1', online, self });
 
 describe('SettingsOverview', () => {
-  it('names the speaker serving the page and marks one with an update waiting', async () => {
+  it('lists every speaker alike, the one serving the page too, and marks one with an update waiting', async () => {
     vi.mocked(getSettings).mockResolvedValue(null);
     vi.mocked(getVersion).mockImplementation(async (speaker) =>
       version({ version: speaker ? 'app-v1.0.0' : 'app-v1.1.0' })
@@ -38,7 +38,8 @@ describe('SettingsOverview', () => {
     const { findByRole, getByRole } = renderWithI18n(
       <SettingsOverview rooms={rooms} onSpeaker={vi.fn()} onIntegrations={vi.fn()} />
     );
-    expect(getByRole('button', { name: /Living room.*SoundTouch 10 · this speaker/ })).toBeTruthy();
+    const living = getByRole('button', { name: /Living room.*SoundTouch 10/ });
+    expect(living.textContent).not.toMatch(/this speaker/);
     expect(getByRole('button', { name: /Kitchen.*Offline/ })).toBeTruthy();
     expect(await findByRole('button', { name: /Bedroom.*Wireless Link.*Update/ })).toBeTruthy();
     expect(getByRole('button', { name: /Living room/ }).textContent).not.toMatch(/Update/);

@@ -492,7 +492,6 @@ const it: Messages = {
   crashReportOpen: 'Apri la segnalazione su GitHub',
   crashReportAttach:
     'Poi allega il pacchetto di supporto ({path}) alla segnalazione: contiene i registri completi.',
-  thisSpeakerShort: 'questo diffusore',
   updateBadge: 'Aggiornamento',
   updatesNewBadge: 'Nuovo',
   stereoSideLeft: 'Sinistra',

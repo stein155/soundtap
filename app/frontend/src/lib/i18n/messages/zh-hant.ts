@@ -457,7 +457,6 @@ const zhHant: Messages = {
   crashReportBodyLabel: '報告',
   crashReportOpen: '在 GitHub 上開啟報告',
   crashReportAttach: '接著將支援資料（{path}）附加到該問題中：其中包含完整的記錄。',
-  thisSpeakerShort: '此揚聲器',
   updateBadge: '更新',
   updatesNewBadge: '新',
   stereoSideLeft: '左',

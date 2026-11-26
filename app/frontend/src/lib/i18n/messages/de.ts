@@ -504,7 +504,6 @@ const de: Messages = {
   crashReportOpen: 'Bericht auf GitHub öffnen',
   crashReportAttach:
     'Hängen Sie danach das Supportpaket ({path}) an die Meldung an: Es enthält die vollständigen Protokolle.',
-  thisSpeakerShort: 'dieser Lautsprecher',
   updateBadge: 'Update',
   updatesNewBadge: 'Neu',
   stereoSideLeft: 'Links',

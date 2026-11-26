@@ -94,9 +94,8 @@ function SpeakerRow({ room, onOpen }: { room: Room; onOpen: () => void }) {
     };
   }, [speaker, room.online]);
   const newer = useUpdateAvailable(speaker, version);
-  const model = room.self
-    ? `${shortModel(room.model)} · ${t('thisSpeakerShort')}`
-    : shortModel(room.model);
+  // Every speaker serves the same app, so the list names no speaker as "this one".
+  const model = shortModel(room.model);
   return (
     <SetItem
       art={<ModelArt model={room.model} />}

@@ -489,7 +489,6 @@ const fi: Messages = {
   crashReportOpen: 'Avaa raportti GitHubissa',
   crashReportAttach:
     'Liitä sen jälkeen tukipaketti ({path}) raporttiin: siinä ovat täydelliset lokit.',
-  thisSpeakerShort: 'tämä kaiutin',
   updateBadge: 'Päivitys',
   updatesNewBadge: 'Uusi',
   stereoSideLeft: 'Vasen',

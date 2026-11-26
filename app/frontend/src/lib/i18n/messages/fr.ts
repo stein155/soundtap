@@ -495,7 +495,6 @@ const fr: Messages = {
   crashReportOpen: 'Ouvrir le rapport sur GitHub',
   crashReportAttach:
     "Joignez ensuite le dossier d'assistance ({path}) au signalement : il contient les journaux complets.",
-  thisSpeakerShort: 'cette enceinte',
   updateBadge: 'Mise à jour',
   updatesNewBadge: 'Nouveau',
   stereoSideLeft: 'Gauche',

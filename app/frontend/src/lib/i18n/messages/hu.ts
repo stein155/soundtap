@@ -492,7 +492,6 @@ const hu: Messages = {
   crashReportOpen: 'Jelentés megnyitása a GitHubon',
   crashReportAttach:
     'Ezután csatolja a támogatási csomagot ({path}) a bejelentéshez: ebben vannak a teljes naplók.',
-  thisSpeakerShort: 'ez a hangszóró',
   updateBadge: 'Frissítés',
   updatesNewBadge: 'Új',
   stereoSideLeft: 'Bal',

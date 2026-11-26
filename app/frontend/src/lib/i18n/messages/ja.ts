@@ -493,7 +493,6 @@ const ja: Messages = {
   crashReportOpen: 'GitHubでレポートを開く',
   crashReportAttach:
     'その後、サポート用データ（{path}）をIssueに添付してください。完全なログが含まれています。',
-  thisSpeakerShort: 'このスピーカー',
   updateBadge: '更新',
   updatesNewBadge: '新着',
   stereoSideLeft: '左',

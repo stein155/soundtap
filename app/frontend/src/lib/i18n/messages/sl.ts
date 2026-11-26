@@ -487,7 +487,6 @@ const sl: Messages = {
   crashReportBodyLabel: 'Poročilo',
   crashReportOpen: 'Odpri poročilo na GitHubu',
   crashReportAttach: 'Nato poročilu priložite paket za podporo ({path}): vsebuje celotne dnevnike.',
-  thisSpeakerShort: 'ta zvočnik',
   updateBadge: 'Posodobitev',
   updatesNewBadge: 'Novo',
   stereoSideLeft: 'Levo',
