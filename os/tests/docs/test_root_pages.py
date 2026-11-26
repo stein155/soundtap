@@ -107,7 +107,7 @@ class RootPagesTest(unittest.TestCase):
         """nl/index.md carries the home template, its language and its own title."""
         self.assertEqual(root_pages.landing_page("en"), "index.md")
         self.assertEqual(root_pages.landing_page("nl"), "nl/index.md")
-        md = root_pages.landing_markdown("nl", {"title": "Een tweede leven: \"SoundTouch\""})
+        md = root_pages.landing_markdown("nl", {"title": 'Een tweede leven: "SoundTouch"'})
         self.assertEqual(md, ('---\ntemplate: home.html\nlanding_lang: nl\n'
                               'title: "Een tweede leven: \\"SoundTouch\\""\n'
                               'search:\n  exclude: true\n---\n'))
