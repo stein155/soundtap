@@ -48,8 +48,12 @@ mkdir -p /run/dbus
 # /usr/lib. Hardcoding the first left the ST10 restarting a daemon that was not there.
 BLUETOOTHD=/usr/libexec/bluetooth/bluetoothd
 [ -x "${BLUETOOTHD}" ] || BLUETOOTHD=/usr/lib/bluetooth/bluetoothd
+# bluetoothd writes every message to syslog itself and again to stderr: with syslogd
+# running (the FIFO above), its stderr would put each line in the log twice.
+BT_OUT=${LOG}
+[ -p "${LOG}" ] && BT_OUT=/dev/null
 start_bt_stack() {
-	"${BLUETOOTHD}" -n >>"${LOG}" 2>&1 &
+	"${BLUETOOTHD}" -n >>"${BT_OUT}" 2>&1 &
 	BLUETOOTHD_PID=$!
 	log "bluetoothd (pid ${BLUETOOTHD_PID})"
 	sleep 1
