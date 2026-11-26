@@ -1,0 +1,38 @@
+{#-
+  SPDX-License-Identifier: GPL-3.0-only
+  SPDX-FileCopyrightText: 2026 SoundTap contributors
+-#}
+{#-
+  The top bar: the mark and name, a few owner links and the Install pill, with Material's
+  drawer button, search and light/dark toggle kept. Replaces Material's partials/header.html.
+-#}
+{%- import "partials/st-links.html" as st with context -%}
+{%- set w = t if t is defined else {} -%}
+<header class="md-header st-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="{{ lang.t('header') }}">
+    <label class="md-header__button md-icon st-header__drawer" for="__drawer" aria-label="Menu">
+      {% set icon = config.theme.icon.menu or "material/menu" %}
+      {% include ".icons/" ~ icon ~ ".svg" %}
+    </label>
+    <a href="{{ nav.homepage.url | url }}" class="st-brand" aria-label="{{ config.site_name }}, home" data-md-component="logo">
+      {% include "partials/mark.html" %}<span>{{ config.site_name }}</span>
+    </a>
+    <div class="st-header__links">{{ st.links("st-header__link") }}</div>
+    <span class="st-header__spacer"></span>
+    {% if config.theme.palette and not config.theme.palette is mapping %}
+      {% include "partials/palette.html" %}
+      {% include "partials/javascripts/palette.html" %}
+    {% endif %}
+    {% if "material/search" in config.plugins %}
+      {% set search = config.plugins["material/search"] | attr("config") %}
+      {% if search.enabled %}
+        <label class="md-header__button md-icon" for="__search" aria-label="{{ lang.t('search.placeholder') }}">
+          {% set icon = config.theme.icon.search or "material/magnify" %}
+          {% include ".icons/" ~ icon ~ ".svg" %}
+        </label>
+        {% include "partials/search.html" %}
+      {% endif %}
+    {% endif %}
+    <a href="{{ 'installer/' | url }}" class="st-pill st-pill--small">{{ w.nav_install or "Install" }}</a>
+  </nav>
+</header>

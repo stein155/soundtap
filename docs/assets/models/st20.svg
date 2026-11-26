@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="SoundTouch 20">
   <title>SoundTouch 20</title>
-  <!-- Our own drawing of the speaker (app/frontend/src/components/molecules/ModelArt) on the web UI's grey disc. -->
-  <style>.disc{fill:#f0f0f0}@media (prefers-color-scheme:dark){.disc{fill:#2a2a2c}}</style>
+  <!-- SoundTap's own drawing of the speaker (app/frontend/src/components/molecules/ModelArt) on the web UI's grey disc. -->
+  <style>.disc{fill:#f0f0f0}@media (prefers-color-scheme:dark){.disc{fill:#444448}}</style>
   <defs>
     <linearGradient id="gb" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2e2f32"/><stop offset="1" stop-color="#36373b"/></linearGradient>
     <linearGradient id="gt" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#555658"/><stop offset="1" stop-color="#47484a"/></linearGradient>

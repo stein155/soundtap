@@ -1,0 +1,33 @@
+{#-
+  SPDX-License-Identifier: GPL-3.0-only
+  SPDX-FileCopyrightText: 2026 SoundTap contributors
+-#}
+{#- The footer of every page: the mark, the licence line and three columns of links. -#}
+{#- A landing page passes its language's words as t (docs/tools/root_pages.py). -#}
+{%- set w = t if t is defined else {} -%}
+{%- set columns = [
+  (w.foot_owners or "Owners", [(w.nav_install_guide or "Install guide", "owners/install/"), (w.foot_faq or "FAQ", "owners/faq/"),
+              (w.foot_compatibility or "Compatibility", "owners/compatibility/"), (w.nav_changelog or "Changelog", "changelog/")]),
+  (w.foot_developers or "Developers", [(w.foot_design or "Technical design", "contributors/design/"), (w.foot_decisions or "Decisions", "decisions/"),
+                  (w.foot_contributing or "Contributing", config.repo_url ~ "/blob/main/CONTRIBUTING.md"), ("GitHub", config.repo_url)]),
+  (w.foot_help or "Help", [(w.foot_report or "Report a problem", config.repo_url ~ "/issues"), (w.foot_security or "Security", "security/"),
+            (w.roadmap or "Road to 1.0", "owners/roadmap/")]),
+] -%}
+<footer class="md-footer st-footer">
+  <div class="st-footer__inner">
+    <div class="st-footer__about">
+      <p class="st-footer__brand">{% include "partials/mark.html" %}{{ config.site_name }}</p>
+      <p>{{ w.foot_licence or "Free and open source, GPL-3.0. Not affiliated with Bose Corporation; Bose and SoundTouch are its trademarks." }}</p>
+    </div>
+    {%- for title, items in columns %}
+    <nav class="st-footer__column" aria-label="{{ title }}">
+      <p class="st-footer__title">{{ title }}</p>
+      <ul>
+        {%- for label, url in items %}
+        <li><a href="{{ url if url.startswith('https:') else (url | url) }}">{{ label }}</a></li>
+        {%- endfor %}
+      </ul>
+    </nav>
+    {%- endfor %}
+  </div>
+</footer>

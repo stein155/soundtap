@@ -1,0 +1,25 @@
+{#-
+  SPDX-License-Identifier: GPL-3.0-only
+  SPDX-FileCopyrightText: 2026 SoundTap contributors
+-#}
+{#-
+  The site's own links, in the top bar on a wide screen (header.html) and at the top of the
+  drawer on a phone or tablet (nav.html), so both show the same menu. A landing page passes its
+  language's words as t (docs/tools/root_pages.py); every other page is English, and so are the
+  pages linked.
+-#}
+{%- macro links(cls) -%}
+{%- set here = page.url if page else "" -%}
+{%- set w = t if t is defined else {} -%}
+{%- for title, url, prefixes in [
+  (w.nav_install_guide or "Install guide", "owners/install/", ["owners/install/"]),
+  (w.nav_speakers or "Speakers", "owners/compatibility/", ["owners/compatibility/", "hardware/"]),
+  (w.nav_help or "Help", "owners/faq/", ["owners/faq/", "runbook/", "owners/maintenance/"]),
+  (w.nav_changelog or "Changelog", "changelog/", ["changelog/"]),
+  (w.nav_developers or "For developers", "contributors/", ["contributors/", "decisions/", "documentation/"]),
+] %}
+  {%- set ns = namespace(on=false) %}
+  {%- for prefix in prefixes %}{% if here.startswith(prefix) %}{% set ns.on = true %}{% endif %}{% endfor %}
+  <a href="{{ url | url }}" class="{{ cls }}"{% if ns.on %} aria-current="true"{% endif %}>{{ title }}</a>
+{%- endfor %}
+{%- endmacro -%}

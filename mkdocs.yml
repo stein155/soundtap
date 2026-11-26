@@ -2,10 +2,12 @@
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
 # The documentation site. Owners get the first section; everything after it is for
-# contributors. The repository's front pages (README.md as the home page, CHANGELOG.md,
-# RUNBOOK.md, SECURITY.md) come in through docs/tools/root_pages.py, which serves
-# docs/README.md, the documentation map, as documentation.md. Maintainer procedure
-# (RELEASING.md, CONTRIBUTING.md) stays on GitHub; links to it leave the site.
+# contributors. The repository's front pages (README.md as the overview, CHANGELOG.md,
+# RUNBOOK.md, SECURITY.md) and the landing page (index.md, docs/overrides/home.html) come in
+# through docs/tools/root_pages.py, which serves docs/README.md, the documentation map, as
+# documentation.md. Maintainer procedure (RELEASING.md, CONTRIBUTING.md) stays on GitHub;
+# links to it leave the site. The look follows the web UI (Montserrat, black on light grey):
+# docs/overrides holds the templates, docs/stylesheets/site.css the styles.
 site_name: SoundTap
 site_description: A second life for your Bose SoundTouch.
 site_url: https://stein155.github.io/soundtap/
@@ -15,6 +17,7 @@ docs_dir: docs
 exclude_docs: |
   *.patch
   /tools/
+  /overrides/
 # Reached through their index page rather than the navigation.
 not_in_nav: |
   /decisions/0*.md
@@ -24,25 +27,30 @@ hooks:
   - docs/tools/github_links.py
 theme:
   name: material
+  custom_dir: docs/overrides
   logo: assets/logo.svg
   favicon: assets/logo.svg
+  # Montserrat comes from docs/assets/fonts (site.css), never from Google Fonts.
+  font: false
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: brown
-      accent: deep orange
+      primary: custom
+      accent: custom
       toggle: {icon: material/weather-night, name: Dark mode}
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: brown
-      accent: deep orange
+      primary: custom
+      accent: custom
       toggle: {icon: material/weather-sunny, name: Light mode}
-  features: [navigation.sections, navigation.indexes, navigation.top, search.highlight, content.action.edit]
+  features: [navigation.sections, navigation.indexes, navigation.top, search.highlight, content.action.edit, toc.follow]
+extra_css:
+  - stylesheets/site.css
 markdown_extensions:
   - admonition
   - attr_list
   - tables
-  - toc: {permalink: true}
+  - toc: {permalink: true, title: On this page}
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
@@ -54,6 +62,7 @@ nav:
   - Home: index.md
   - Owners:
       - owners/README.md
+      - Overview: overview.md
       - Installing SoundTap: owners/install.md
       - FAQ: owners/faq.md
       - Compatibility: owners/compatibility.md
@@ -66,6 +75,7 @@ nav:
       - Road to 1.0: owners/roadmap.md
   - Contributors:
       - contributors/README.md
+      - Start here: contributors/start-here.md
       - Documentation map: documentation.md
       - Technical design: contributors/design.md
       - Decision records: decisions/README.md
