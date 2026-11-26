@@ -75,7 +75,7 @@ class RootPagesTest(unittest.TestCase):
         nav = set(re.findall(r":\s+(\S+\.md)\s*$", (ROOT / "mkdocs.yml").read_text(), re.MULTILINE))
         self.assertIn(root_pages.HOME, nav)
         self.assertNotIn(root_pages.HOME, root_pages.PAGES.values())
-        self.assertFalse((ROOT / "docs" / root_pages.HOME).exists(), "docs/index.md would clash")
+        self.assertFalse((ROOT / "docs" / root_pages.HOME).exists(), "a Markdown home page would clash")
         template = re.search(r"^template: (\S+)$", root_pages.HOME_MARKDOWN, re.MULTILINE).group(1)
         self.assertTrue((ROOT / "docs/overrides" / template).is_file())
 

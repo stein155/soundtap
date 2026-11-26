@@ -102,6 +102,7 @@
    "docs/assets/features-*.png",
    "docs/assets/screens.png",
    "docs/assets/screens-dark.png",
+   "docs/assets/screens/*.png",
    "docs/assets/speakers-*.png",
    "docs/assets/social-preview.png"
   ]
