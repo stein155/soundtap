@@ -4,17 +4,24 @@
 // The UI font ships with the app: the speaker's own setup access point has no internet,
 // and loading it from Google sent every visitor's address there.
 import '@fontsource-variable/montserrat';
-import React from 'react';
+import React, { useEffect } from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import { ErrorBoundary } from './ErrorBoundary';
 import { initialLang } from './hooks/useLanguage';
 import { loadLanguage } from './lib/i18n';
+import { dismissLaunchScreen } from './lib/launchScreen';
 import { GlobalStyle } from './theme/GlobalStyle';
 
 // A chunk that hangs must not keep the app away: past this the page opens in the fallback.
 const LANG_WAIT_MS = 3000;
 const langWait = new Promise((resolve) => setTimeout(resolve, LANG_WAIT_MS));
+
+// index.html's launch screen stays until the app's first render is on the screen.
+function LaunchDone(): null {
+  useEffect(() => dismissLaunchScreen(), []);
+  return null;
+}
 
 // The language has to be here before the first paint; without it the page falls back.
 void Promise.race([loadLanguage(initialLang()), langWait])
@@ -30,6 +37,7 @@ void Promise.race([loadLanguage(initialLang()), langWait])
         <ErrorBoundary>
           <App />
         </ErrorBoundary>
+        <LaunchDone />
       </React.StrictMode>
     );
   });

@@ -28,7 +28,7 @@ async function settings(page) {
 
 async function speakerPage(page) {
   await settings(page);
-  await button(page, /^Woonkamer .*this speaker/).click();
+  await button(page, /^Woonkamer /).click();
   await expect(page.getByRole('heading', { name: 'Connection and maintenance' })).toBeVisible();
 }
 
