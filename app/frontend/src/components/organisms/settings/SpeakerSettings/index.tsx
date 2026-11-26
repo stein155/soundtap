@@ -10,7 +10,6 @@ import { Note } from '../../../atoms/Note';
 import { useAccordionGroup } from '../../../molecules/Accordion';
 import { SaveBar } from '../../../molecules/SaveBar';
 import { StatusCard } from '../../../molecules/StatusCard';
-import { SoundSettings } from '../SoundSettings';
 import { FactoryReset } from '../SystemSettings';
 import { CrashNotice } from '../CrashReport';
 import { useSpeakerSettings } from '../../../../hooks/useSpeakerSettings';
@@ -98,7 +97,7 @@ function useSpeakerActions(page: Page, onRenamed: () => void) {
 }
 
 // One speaker's settings, laid out as Stockholm's Speaker Details in groups: the speaker
-// itself (its name opens a page to change it), Sound, Speaker, Connection and Maintenance,
+// itself (its name opens a page to change it), Speaker (Sound first), Connection and Maintenance,
 // with the factory reset apart at the bottom. A switch, slider or choice goes to the
 // speaker at once; the name and the alarm, which are typed, have their own Save.
 export function SpeakerSettings({ room, rooms, onRenamed, onDirty }: Props): ReactElement {
@@ -130,14 +129,6 @@ export function SpeakerSettings({ room, rooms, onRenamed, onDirty }: Props): Rea
         open={section('name')}
         saveBar={saveBar}
       />
-      <SoundSettings
-        bass={form.bass}
-        caps={bassCapsOf(settings)}
-        soundbar={settings.soundbar}
-        speaker={speaker}
-        mono={model === 'SoundTouch 10'}
-        onBass={onBass}
-      />
       <SpeakerGroup
         page={page}
         form={form}
@@ -147,6 +138,12 @@ export function SpeakerSettings({ room, rooms, onRenamed, onDirty }: Props): Rea
         commit={commit}
         saveBar={saveBar}
         onRenamed={onRenamed}
+        sound={{
+          caps: bassCapsOf(settings),
+          soundbar: settings.soundbar,
+          mono: model === 'SoundTouch 10',
+          onBass,
+        }}
       />
       <SystemGroups
         page={page}

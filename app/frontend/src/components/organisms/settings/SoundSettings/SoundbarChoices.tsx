@@ -90,16 +90,22 @@ function SoundbarChoiceCard({
   );
 }
 
-// A soundbar's audio mode, HDMI-CEC mode and HDMI input button, each hidden until the bar has reported it.
-export function SoundbarChoices({ speaker }: { speaker?: string | undefined }): ReactElement {
+// The soundbar's audio mode, hidden until the bar has reported it.
+export function AudioModeChoice({ speaker }: { speaker?: string | undefined }): ReactElement {
+  return (
+    <SoundbarChoiceCard
+      speaker={speaker}
+      choice="audio-mode"
+      title="audioMode"
+      options={AUDIO_MODES}
+    />
+  );
+}
+
+// The soundbar's HDMI-CEC mode and HDMI input button, each hidden until the bar has reported it.
+export function TvChoices({ speaker }: { speaker?: string | undefined }): ReactElement {
   return (
     <>
-      <SoundbarChoiceCard
-        speaker={speaker}
-        choice="audio-mode"
-        title="audioMode"
-        options={AUDIO_MODES}
-      />
       <SoundbarChoiceCard speaker={speaker} choice="cec-mode" title="cecMode" options={CEC_MODES} />
       <SoundbarChoiceCard
         speaker={speaker}

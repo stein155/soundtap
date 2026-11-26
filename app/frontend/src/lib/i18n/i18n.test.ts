@@ -219,6 +219,7 @@ describe('translation quality', () => {
     'general',
     'speaker',
     'speakers',
+    'extra speakers', // nl: the Bose app's word
     'n min',
     // Loanwords and cognates in the stock languages.
     'alarm',

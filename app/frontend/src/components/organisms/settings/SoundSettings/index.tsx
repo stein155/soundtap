@@ -21,12 +21,21 @@ import {
 import { getChannel, setChannel, type Channel } from '../../../../lib/api/multiroom';
 import type { BassCaps, Soundbar, Tone } from '../../../../lib/types';
 import { Card, Head, Inset, Level, Name, Scale } from './styled';
-import { SoundbarChoices } from './SoundbarChoices';
+import { AudioModeChoice, TvChoices } from './SoundbarChoices';
 
-// The Sound group: on a soundbar its speakers, choices, tone, lip sync and room
-// calibration; elsewhere bass within the range the speaker reports, filling from its
-// neutral value; and, as on stock, stereo or mono on a speaker that has both (mono).
-// Nothing at all when the speaker has none of these.
+// Whether a speaker has anything for the Sound page: a soundbar, a bass range or the
+// stereo output switch. Stock's Wireless Link has none of these.
+export const hasSound = (
+  caps: BassCaps,
+  soundbar: Soundbar | null | undefined,
+  mono: boolean
+): boolean => soundbar !== undefined || hasBass(caps) || mono;
+
+// The Sound page, opened from the Speaker group of every speaker that has one: on a
+// soundbar its tone and audio mode, the TV, its extra speakers and room calibration;
+// elsewhere bass within the range the speaker reports, filling from its neutral value;
+// and, as on stock, stereo or mono on a speaker that has both (mono). Nothing at all when
+// the speaker has none of these.
 export function SoundSettings({
   bass,
   caps,
@@ -44,41 +53,64 @@ export function SoundSettings({
 }): ReactElement | null {
   const { t } = useI18n();
   const bar = soundbar !== undefined;
-  if (!bar && !hasBass(caps) && !mono) return null;
+  if (!hasSound(caps, soundbar, mono)) return null;
+  // Keyed by speaker: a card must not show or write one bar's value on the next one's
+  // screen while its own read is on the way.
+  const key = String(speaker);
+  if (bar)
+    return (
+      <>
+        <SetMenu title={t('soundTone')}>
+          <SoundbarTone speaker={speaker} />
+          <AudioModeChoice key={`mode-${key}`} speaker={speaker} />
+        </SetMenu>
+        <SetMenu title={t('soundTv')}>
+          <TvChoices key={`tv-${key}`} speaker={speaker} />
+          <SoundbarLipSync key={`lipsync-${key}`} speaker={speaker} />
+        </SetMenu>
+        {soundbar && (
+          <SetMenu title={t('soundExtras')}>
+            <SoundbarSpeakers bar={soundbar} />
+          </SetMenu>
+        )}
+        <SetMenu title="ADAPTiQ">
+          <SoundbarAdaptiq speaker={speaker} />
+        </SetMenu>
+      </>
+    );
   return (
-    <SetMenu title={t('sound')}>
-      {soundbar && <SoundbarSpeakers bar={soundbar} />}
-      {/* Keyed by speaker: a card must not show or write one bar's value on the next
-          one's screen while its own read is on the way. */}
-      {bar && <SoundbarChoices key={`choices-${String(speaker)}`} speaker={speaker} />}
-      {bar && <SoundbarTone speaker={speaker} />}
-      {bar && <SoundbarLipSync key={`lipsync-${String(speaker)}`} speaker={speaker} />}
-      {bar && <SoundbarAdaptiq speaker={speaker} />}
+    <>
       {hasBass(caps) && (
-        <Card>
-          <Head>
-            <Name>{t('bass')}</Name>
-            <Level>{formatBass(bass)}</Level>
-          </Head>
-          <Inset>
-            <Slider
-              tall
-              value={bass}
-              onChange={onBass}
-              label={t('bass')}
-              min={caps.min}
-              max={caps.max}
-              valueText={formatBass(bass)}
-            />
-          </Inset>
-          <Scale>
-            <span>{formatBass(caps.min)}</span>
-            <span>{formatBass(caps.max)}</span>
-          </Scale>
-        </Card>
+        <SetMenu title={t('soundTone')}>
+          <Card>
+            <Head>
+              <Name>{t('bass')}</Name>
+              <Level>{formatBass(bass)}</Level>
+            </Head>
+            <Inset>
+              <Slider
+                tall
+                value={bass}
+                onChange={onBass}
+                label={t('bass')}
+                min={caps.min}
+                max={caps.max}
+                valueText={formatBass(bass)}
+              />
+            </Inset>
+            <Scale>
+              <span>{formatBass(caps.min)}</span>
+              <span>{formatBass(caps.max)}</span>
+            </Scale>
+          </Card>
+        </SetMenu>
       )}
-      {mono && <MonoSwitch key={`mono-${String(speaker)}`} speaker={speaker} />}
-    </SetMenu>
+      {mono && (
+        <SetMenu title={t('soundOutput')}>
+          <MonoSwitch key={`mono-${key}`} speaker={speaker} />
+        </SetMenu>
+      )}
+    </>
   );
 }
 

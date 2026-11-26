@@ -13,6 +13,7 @@ import { AlarmSettings } from '../AlarmSettings';
 import { DisplaySettings } from '../DisplaySettings';
 import { BluetoothSettings } from '../BluetoothSettings';
 import { StereoPair } from '../StereoPair';
+import { SoundSettings, hasSound } from '../SoundSettings';
 import { NetworkSettings } from '../NetworkSettings';
 import { UpdateSettings } from '../UpdateSettings';
 import { SupportSettings } from '../SystemSettings';
@@ -20,13 +21,15 @@ import { DeveloperSettings } from '../DeveloperSettings';
 import type { useSpeakerSettings, SpeakerForm } from '../../../../hooks/useSpeakerSettings';
 import { useUpdateAvailable } from '../../../../hooks/useUpdateAvailable';
 import { useI18n } from '../../../../lib/i18n';
-import type { NetworkInfo } from '../../../../lib/types';
+import type { BassCaps, NetworkInfo, Soundbar } from '../../../../lib/types';
 import { versionLabel } from '../../../../lib/version';
-import { alarmSummary, bluetoothSummary, networkSummary } from '../../../../lib/summaries';
+import { alarmSummary, bluetoothSummary, hasBass, networkSummary } from '../../../../lib/summaries';
+import { formatBass } from '../../../../lib/format';
 import { speakerArg, type Room } from '../../../../hooks/useRooms';
 
 export type Section =
   | 'name'
+  | 'sound'
   | 'alarm'
   | 'display'
   | 'bluetooth'
@@ -89,7 +92,48 @@ export function SpeakerHeader({
   );
 }
 
-// The Speaker group: idle standby, alarm, the ST20's clock, Bluetooth and the stereo pair.
+// What the Sound page shows and how its bass goes to the speaker.
+export interface Sound {
+  caps: BassCaps;
+  soundbar: Soundbar | null | undefined;
+  mono: boolean;
+  onBass: (bass: number) => void;
+}
+
+// The Sound row: its page, on every speaker that has anything to set there, with the
+// bass beside it where that is all it has.
+function SoundRow({
+  sound,
+  bass,
+  speaker,
+  open,
+}: {
+  sound: Sound;
+  bass: number;
+  speaker: string | undefined;
+  open: ReturnType<Open>;
+}): ReactElement | null {
+  const { t } = useI18n();
+  if (!hasSound(sound.caps, sound.soundbar, sound.mono)) return null;
+  const summary =
+    sound.soundbar === undefined && hasBass(sound.caps)
+      ? `${t('bass')} ${formatBass(bass)}`
+      : undefined;
+  return (
+    <Accordion {...open} icon="volume" title={t('sound')} summary={summary}>
+      <SoundSettings
+        bass={bass}
+        caps={sound.caps}
+        soundbar={sound.soundbar}
+        speaker={speaker}
+        mono={sound.mono}
+        onBass={sound.onBass}
+      />
+    </Accordion>
+  );
+}
+
+// The Speaker group: its Sound page, idle standby, alarm, the ST20's clock, Bluetooth and the stereo pair.
 export function SpeakerGroup({
   page,
   form,
@@ -99,6 +143,7 @@ export function SpeakerGroup({
   commit,
   saveBar,
   onRenamed,
+  sound,
 }: {
   page: Page;
   form: SpeakerForm;
@@ -108,12 +153,14 @@ export function SpeakerGroup({
   commit: Commit;
   saveBar: ReactNode;
   onRenamed: () => void;
+  sound: Sound;
 }): ReactElement {
   const { t } = useI18n();
   const speaker = speakerArg(room);
   const display = form.display;
   return (
     <SetMenu title={t('speaker')}>
+      <SoundRow sound={sound} bass={form.bass} speaker={speaker} open={section('sound')} />
       <SetSwitch
         icon="power"
         label={t('autoOff')}

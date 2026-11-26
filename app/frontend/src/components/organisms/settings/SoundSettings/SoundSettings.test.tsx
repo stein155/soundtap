@@ -169,10 +169,11 @@ describe('SoundSettings group', () => {
     expect(container.textContent).toBe('');
   });
 
-  it('puts bass under the Sound title, with the mono note only where stock has the switch', async () => {
+  it('puts bass under Tone, with the Output switch only where stock has it', async () => {
     const caps = { actual: 0, target: 0, min: -9, max: 0, default: 0 };
     const plain = renderWithI18n(<SoundSettings {...props} soundbar={undefined} caps={caps} />);
-    expect(plain.getByText('Sound')).toBeTruthy();
+    expect(plain.getByText('Tone')).toBeTruthy();
+    expect(plain.queryByText('Output')).toBeNull();
     expect(plain.queryByText('Turn off for mono')).toBeNull();
     plain.unmount();
     const st10 = renderWithI18n(<SoundSettings {...props} soundbar={undefined} caps={caps} mono />);
