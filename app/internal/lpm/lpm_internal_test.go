@@ -6,6 +6,7 @@ package lpm
 import (
 	"bytes"
 	"encoding/binary"
+	"log/slog"
 	"net"
 	"slices"
 	"sync/atomic"
@@ -186,18 +187,6 @@ func TestLPMHealthAnswer(t *testing.T) {
 
 	if got := string(frame[4:27]); got != "SoundTap 0123456789abcd" || frame[27] != 0 {
 		t.Fatalf("version %q, terminator %#x", got, frame[27])
-	}
-}
-
-// The frame that rebooted the bar from its console on 2026-11-10.
-func TestLPMTapLine(t *testing.T) {
-	t.Parallel()
-
-	frame := lpmTapLine("rb 0")
-
-	want := []byte{0x62, lpmTapCommand, 0, 1, 'r', 'b', ' ', '0', '\r', 0}
-	if !bytes.Equal(frame[:len(want)], want) || !lpmValid(frame) {
-		t.Fatalf("frame % x", frame[:12])
 	}
 }
 
@@ -689,5 +678,46 @@ func TestLPMNetWiredValue(t *testing.T) {
 		if got := lpmNet(speakerstate.WiredIP(test.carrier, test.addrs), test.wifi); got != test.want {
 			t.Errorf("lpmNet(%v, %v, %d) = %d, want %d", test.carrier, test.addrs, test.wifi, got, test.want)
 		}
+	}
+}
+
+// A processor that gave the module up is never rebooted: soundtapd only keeps sending its
+// health message, in this session and the next.
+func TestCheckSilenceNeverRebootsTheBar(t *testing.T) {
+	t.Parallel()
+
+	link := New(t.TempDir(), "0123456789abcd")
+
+	var sent []string
+
+	giveUp := func() {
+		sess := &session{
+			l: link, spk: nil, keys: nil, log: slog.New(slog.DiscardHandler),
+			send: func(what string, frame []byte) {
+				sent = append(sent, what)
+				if frame[1] != lpmHealth {
+					t.Errorf("sent %q, op %#x, want only the health message", what, frame[1])
+				}
+			},
+			fromLPM: atomic.Int64{}, barMute: atomic.Int32{}, bar: atomic.Int64{}, external: atomic.Int64{},
+			quiet: atomic.Int64{}, statusSeen: atomic.Bool{}, radioResend: atomic.Bool{},
+			lastFrame: atomic.Int64{}, seen: nil, silent: false,
+		}
+
+		for range 2 { // the processor talked, then said nothing past lpmGiveUp
+			sess.lastFrame.Store(time.Now().Add(-lpmGiveUp - time.Second).UnixNano())
+			sess.checkSilence()
+
+			if got := sess.lastFrame.Load(); got != 0 {
+				t.Fatalf("lastFrame = %d after a give-up, want 0", got)
+			}
+		}
+	}
+
+	giveUp()
+	giveUp() // a new session, as after the link is opened again
+
+	if len(sent) != 4 {
+		t.Fatalf("sent %q, want the health message once per check", sent)
 	}
 }

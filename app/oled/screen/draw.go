@@ -388,6 +388,9 @@ type face struct {
 	glyphs map[rune][]glyph
 	kern   map[[2]rune]int // pair adjustment in font units
 	scale  float64         // pixels per font unit
+	// thai holds the other forms of Thai marks by {tall consonant, upper vowel, mark}
+	// (see thaiForm); a mark without one here is drawn as glyphs has it.
+	thai map[[3]rune][]glyph
 }
 
 // fontAtlas is the embedded glyph atlas and its faces, decoded on first use.
@@ -425,10 +428,10 @@ func loadAtlas() {
 	parseMetrics(txt, fontAtlas.faces)
 }
 
-// metricFields is the most fields a metrics line has (a glyph line).
-const metricFields = 10
+// metricFields is the most fields a metrics line has (a Thai mark form).
+const metricFields = 11
 
-// parseMetrics reads the atlas metrics into faces: ~86,000 lines, which strings.Fields and
+// parseMetrics reads the atlas metrics into faces: ~91,000 lines, which strings.Fields and
 // strconv took 1.7 s to parse on the ST20, so it splits and converts the bytes itself.
 func parseMetrics(txt []byte, faces map[string]face) {
 	var cur face
@@ -462,6 +465,7 @@ func parseMetrics(txt []byte, faces map[string]face) {
 				glyphs: map[rune][]glyph{},
 				kern:   kerns[string(cols[3])+string(cols[4])],
 				scale:  0,
+				thai:   map[[3]rune][]glyph{},
 			}
 			if u := upems[string(cols[3])+string(cols[4])]; u > 0 {
 				cur.scale = number(cols[5]) / u
@@ -473,6 +477,12 @@ func parseMetrics(txt []byte, faces map[string]face) {
 			cur.glyphs[r] = append(cur.glyphs[r], glyph{
 				int(number(cols[3])), int(number(cols[4])), int(number(cols[5])),
 				int(number(cols[6])), int(number(cols[7])), int(number(cols[8])), number(cols[9]),
+			})
+		case count == 11 && cols[0][0] == 'v': // v <tall> <upper vowel> <mark> <phase> <x> <y> <w> <h> <left> <top>
+			key := [3]rune{hex(cols[1]), hex(cols[2]), hex(cols[3])}
+			cur.thai[key] = append(cur.thai[key], glyph{
+				int(number(cols[5])), int(number(cols[6])), int(number(cols[7])),
+				int(number(cols[8])), int(number(cols[9])), int(number(cols[10])), 0,
 			})
 		default: // a line of no kind above: nothing to read
 		}

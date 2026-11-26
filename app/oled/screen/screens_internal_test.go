@@ -29,6 +29,13 @@ func goldenScreens() map[string]func() *Frame {
 
 			return Track(bar, "Sun Goes Down", "Robin Schulz · Discover Weekly", 60.5, 214)
 		},
+		"spotify-long": func() *Frame {
+			return Track(sampleBar("Spotify", "+1"), "Bohemian Rhapsody - Remastered 2011 Live at Wembley",
+				"Robin Schulz · Discover Weekly", 60.5, 214)
+		},
+		"radio-long": func() *Frame {
+			return Station(sampleBar("", ""), "Radio Swiss Classic Jazz", "Er is muziek voor iedereen", 1, "LIVE", 10)
+		},
 		"volume":    func() *Frame { return Volume(32) },
 		"volume-0":  func() *Frame { return Volume(0) },
 		"volume-80": func() *Frame { return Volume(80) },
@@ -55,7 +62,7 @@ func goldenScreens() map[string]func() *Frame {
 
 // snapshotScreens are screens the design does not draw, kept as the frames this package
 // renders: the boot bar (stock-style, without the design's wordmark and word), Message
-// and Notice, and each with a long translation. Regenerate with UPDATE_SNAPSHOTS=1
+// and Notice, each with a long translation, and Thai. Regenerate with UPDATE_SNAPSHOTS=1
 // after a change meant to move them.
 func snapshotScreens() map[string]func() *Frame {
 	return map[string]func() *Frame{
@@ -74,9 +81,19 @@ func snapshotScreens() map[string]func() *Frame {
 				"Μην αποσυνδέετε το ηχείο από το ρεύμα", "40%",
 			}, 0.4)
 		},
-		"notice-long-setup-ja": func() *Frame {
+		"notice-setup-ja": func() *Frame {
 			return Notice("セットアップ", []string{
-				"Wi-Fiに接続してください", "SoundTap ST20 A1B2C3", "その後、次のアドレスを開いてください", "192.168.4.1",
+				"Wi-Fiに接続", "SoundTap ST20 A1B2C3", "次に開く", "192.168.4.1",
+			}, -1)
+		},
+		// Thai tone marks stacked on an upper vowel (ที่ ตั้ เชื่) and a mark on a tall
+		// consonant (ปุ่), in the title face and in Notice's small one.
+		"message-th": func() *Frame {
+			return Message("ที่ ตั้งค่า เชื่อมต่อ ปุ่ม")
+		},
+		"notice-setup-th": func() *Frame {
+			return Notice("ตั้งค่า", []string{
+				"เชื่อมต่อ Wi-Fi", "SoundTap ST20 A1B2C3", "แล้วเปิด", "192.168.4.1",
 			}, -1)
 		},
 	}

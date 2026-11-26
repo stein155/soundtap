@@ -6,6 +6,8 @@
 const CASES = [
   ["radio", "radio", 0, {}],
   ["spotify", "spotify", 60500, {}],
+  ["spotify-long", "spotify", 60500, { track: "Bohemian Rhapsody - Remastered 2011 Live at Wembley" }],
+  ["radio-long", "radio", 0, { station: "Radio Swiss Classic Jazz" }],
   ["volume", "volume", 0, { vol: 32 }],
   ["volume-0", "volume", 0, { vol: 0 }],
   ["volume-80", "volume", 0, { vol: 80 }],

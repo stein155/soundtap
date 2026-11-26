@@ -82,26 +82,23 @@ import (
 // selects it and waking selects the module's input again; merely going idle does not, as
 // that must not switch off a bar that is playing the TV.
 const (
-	lpmDevice      = "/dev/ttyS0"
-	lpmFrameLen    = 128
-	lpmModule      = 6
-	lpmProcessor   = 2
-	lpmEcho        = 0x01
-	lpmEchoReply   = 0x02
-	lpmHealthAsk   = 0x11
-	lpmHealth      = 0x13 // {version string, 23 bytes and a NUL}
-	lpmStatus      = 0x14
-	lpmVolumeInfo  = 0xb0
-	lpmSpeakerList = 0xb4
-	lpmTone        = 0x8a // tone: bass, treble, centre, rear as BE int16
-	lpmToneQuery   = 0x8b // answered with 0x8a
-	lpmActivate    = 0x50
-	lpmActivated   = 0x51 // stock's answer to the processor's 0x50: {source, 0, 1}
-	lpmKey         = 0x05
-	lpmUpdateDone  = 0x0c // stock U-Boot's `gingeripc 1`: the update attempt is over
-	// lpmTapCommand is stock's TAP passthrough: a line for the processor's console; byte 3 =
-	// 1 on the last part.
-	lpmTapCommand      = 0x09
+	lpmDevice          = "/dev/ttyS0"
+	lpmFrameLen        = 128
+	lpmModule          = 6
+	lpmProcessor       = 2
+	lpmEcho            = 0x01
+	lpmEchoReply       = 0x02
+	lpmHealthAsk       = 0x11
+	lpmHealth          = 0x13 // {version string, 23 bytes and a NUL}
+	lpmStatus          = 0x14
+	lpmVolumeInfo      = 0xb0
+	lpmSpeakerList     = 0xb4
+	lpmTone            = 0x8a // tone: bass, treble, centre, rear as BE int16
+	lpmToneQuery       = 0x8b // answered with 0x8a
+	lpmActivate        = 0x50
+	lpmActivated       = 0x51 // stock's answer to the processor's 0x50: {source, 0, 1}
+	lpmKey             = 0x05
+	lpmUpdateDone      = 0x0c // stock U-Boot's `gingeripc 1`: the update attempt is over
 	lpmContent         = 0x85
 	lpmVolume          = 0xb2 // stock's VolumeCallbackAction: {level 0..100}
 	lpmKeyMute         = 0xfe // key stock's SendMute sends in a 0x05 frame to mute the processor
@@ -479,9 +476,9 @@ func (s *session) radioLoop(ctx context.Context) {
 	}
 }
 
-// checkSilence resends the health message while the processor is quiet, and reboots the
-// bar once a processor that talked before has given the module up. It keeps in s.silent
-// whether the processor was found silent.
+// checkSilence resends the health message while the processor is quiet, and logs once when
+// a processor that talked before has given the module up. It never reboots the bar. It
+// keeps in s.silent whether the processor was found silent.
 func (s *session) checkSilence() {
 	// After its own reset the processor waits for the module's health message and
 	// asks for nothing; stock sends one at start, and a processor that rebooted
@@ -500,11 +497,12 @@ func (s *session) checkSilence() {
 	if quiet > lpmSilence && !s.silent {
 		s.log.Warn("lpm processor silent", "since", time.Unix(0, last).UTC().Format(time.RFC3339))
 	}
-	// Once per boot: the reboot takes the module down too, and a processor that is
-	// silent from the start never sets lastFrame, so this cannot loop.
+	// Once per silence: lastFrame goes back to 0, and the health message keeps going out in
+	// case the processor comes back by itself. One that is silent from the start never sets
+	// lastFrame.
 	if quiet > lpmGiveUp {
-		s.log.Error("lpm processor gave up on the module; rebooting the bar", "silent", quiet.Round(time.Second))
-		s.send("reboot", lpmTapLine("rb 0"))
+		s.log.Error("lpm processor gave up on the module; power the bar off and on",
+			"silent", quiet.Round(time.Second))
 		s.lastFrame.Store(0)
 	}
 

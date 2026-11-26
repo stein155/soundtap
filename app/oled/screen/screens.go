@@ -18,7 +18,7 @@ const (
 	j600s8   = "j600-8"
 	j600s9   = "j600-9"
 	j700s10  = "j700-10"
-	j700s32  = "j700-32"
+	j500s32  = "j500-32"
 	j700s9   = "j700-9"
 	j800s11  = "j800-11"
 	j800s12  = "j800-12"
@@ -35,7 +35,8 @@ const (
 // Every screen below is the function of the same name in app/oled/design/design-screens.js,
 // with the design's sample text turned into parameters. Words arrive translated.
 
-// Bar is the status line along the top.
+// Bar is the status line along the top. Offline draws all of it; the playing screens only
+// its State, Mark and Battery (corner), so no clock or name stays lit while music plays.
 type Bar struct {
 	Source string // "", "bt", "aux", or a source name drawn as text ("Spotify")
 	Room   string // room name, or "+1" for a group
@@ -143,6 +144,57 @@ func (f *Frame) statusBar(bar *Bar) {
 	f.Rect(4, 16, 120, 1, 2)
 }
 
+// corner is what the playing screens keep of the status bar. While music plays nothing
+// stays lit in one place for long on the OLED: no clock, source or room. A pause or stop
+// icon, a stereo pair's L or R and a pack's level are drawn, and only when they apply.
+//
+//nolint:mnd // the design's coordinates, sizes and grey levels (design-screens.js)
+func (f *Frame) corner(bar *Bar) {
+	switch bar.State {
+	case StatePaused:
+		f.Rect(5, 4, 2, 8, 12)
+		f.Rect(9, 4, 2, 8, 12)
+	case StateStopped:
+		f.Rect(5, 4, 7, 7, 12)
+	default:
+		// Playing: nothing in the corner.
+	}
+
+	right := 124.0
+	if bar.Battery > 0 {
+		left := f.battery(right-2, bar.Battery)
+		if bar.Charging {
+			left = f.chargingPlus(left)
+		}
+
+		right = left - 4
+	}
+
+	if bar.Mark != "" {
+		markX := right - 8
+		f.RRect(markX-2, 3, 10, 10, 2, 4)
+		f.TextMid(bar.Mark, markX+3, 8, Font{Face: pix7, Level: 15, Align: Center, Max: 0})
+	}
+}
+
+// titleLines is how many lines a playing screen's title may take.
+const titleLines = 2
+
+// title draws a playing screen's title in up to two lines and returns the baseline of the
+// last: one line sits at 34, two at 26 and 43 (the design's title()).
+//
+//nolint:mnd // the design's coordinates, sizes and grey levels (design-screens.js)
+func (f *Frame) title(s string) float64 {
+	lines := Wrap(j800s15, s, 116, titleLines)
+	first := 34 - 8*float64(len(lines)-1)
+
+	for i, line := range lines {
+		f.Text(line, 6, first+17*float64(i), Font{Face: j800s15, Level: 15, Align: Left, Max: 0})
+	}
+
+	return first + 17*float64(len(lines)-1)
+}
+
 // sourceLabel draws the source at the bar's left and moves next past it.
 //
 //nolint:mnd // the design's coordinates, sizes and grey levels (design-screens.js)
@@ -203,9 +255,9 @@ func Station(
 	name, tagline string, preset int, badge string, badgeLevel int,
 ) *Frame {
 	frame := newFrame()
-	frame.statusBar(&bar)
-	frame.Text(name, 6, 42, Font{Face: j800s15, Level: 15, Align: Left, Max: 116})
-	frame.Text(tagline, 6, 55, Font{Face: j500s8, Level: 8, Align: Left, Max: 116})
+	frame.corner(&bar)
+	last := frame.title(name)
+	frame.Text(tagline, 6, last+14, Font{Face: j500s8, Level: 8, Align: Left, Max: 116})
 
 	if preset > 0 {
 		frame.RRect(6, 75, 14, 14, 7, 3)
@@ -228,9 +280,9 @@ func Track(
 	title, sub string, elapsed float64, total int,
 ) *Frame {
 	frame := newFrame()
-	frame.statusBar(&bar)
-	frame.Text(title, 6, 40, Font{Face: j800s13, Level: 15, Align: Left, Max: 116})
-	frame.Text(sub, 6, 52, Font{Face: j500s8, Level: 8, Align: Left, Max: 116})
+	frame.corner(&bar)
+	last := frame.title(title)
+	frame.Text(sub, 6, last+14, Font{Face: j500s8, Level: 8, Align: Left, Max: 116})
 
 	if total > 0 {
 		done := math.Min(1, elapsed/float64(total))
@@ -323,10 +375,10 @@ func Bluetooth(
 	title, device string,
 ) *Frame {
 	frame := newFrame()
-	frame.statusBar(&bar)
-	frame.iconBT(58, 26, 1.4, 15)
-	frame.Text(title, 64, 58, Font{Face: j800s13, Level: 15, Align: Center, Max: 0})
-	frame.Text(device, 64, 71, Font{Face: j500s8, Level: 8, Align: Center, Max: 0})
+	frame.corner(&bar)
+	frame.iconBT(58, 18, 1.4, 15)
+	frame.Text(title, 64, 52, Font{Face: j800s15, Level: 15, Align: Center, Max: 120})
+	frame.Text(device, 64, 66, Font{Face: j500s8, Level: 8, Align: Center, Max: 120})
 
 	return frame
 }
@@ -361,14 +413,13 @@ func Saved(word string) *Frame {
 //
 //nolint:mnd // the design's coordinates, sizes and grey levels (design-screens.js)
 func Aux(
-	bar Bar, //nolint:gocritic // hugeParam: the exported screens take the bar by value and set their copy
+	bar Bar, //nolint:gocritic // hugeParam: the exported screens take the bar by value
 	sub string,
 ) *Frame {
 	frame := newFrame()
-	bar.Source = SourceAux
-	frame.statusBar(&bar)
-	frame.Text("AUX", 64, 56, Font{Face: j800s26, Level: 15, Align: Center, Max: 0})
-	frame.Text(sub, 64, 72, Font{Face: j500s8, Level: 8, Align: Center, Max: 0})
+	frame.corner(&bar)
+	frame.Text("AUX", 64, 50, Font{Face: j800s26, Level: 15, Align: Center, Max: 0})
+	frame.Text(sub, 64, 66, Font{Face: j500s8, Level: 8, Align: Center, Max: 120})
 
 	return frame
 }
@@ -394,7 +445,7 @@ func Standby(clock, marker string, minute int) *Frame {
 	frame := newFrame()
 	drift := minute % 4
 	dx, dy := float64(drift%2*2-1), float64(drift/2*2)
-	frame.Text(clock, 64+dx, 54+dy, Font{Face: j700s32, Level: 10, Align: Center, Max: 0})
+	frame.Text(clock, 64+dx, 54+dy, Font{Face: j500s32, Level: 10, Align: Center, Max: 0})
 
 	if marker != "" {
 		frame.Text(marker, 64+dx, 76+dy, Font{Face: j600s9, Level: 8, Align: Center, Max: 0})

@@ -12,7 +12,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"unicode"
 
 	"github.com/stein155/soundtap/app/internal/hw"
 	"github.com/stein155/soundtap/app/internal/speaker"
@@ -151,21 +150,6 @@ func TestST20WordsFit(t *testing.T) {
 		for _, en := range []string{"Muted", "Pairing…", "Starting…", "Connecting…"} {
 			if w := screen.Width("j800-13", table.words[en]); w > 124 {
 				t.Errorf("%s %q is %.0f px wide", lang, table.words[en], w)
-			}
-		}
-
-		all := ""
-
-		var allSb129 strings.Builder
-		for _, w := range table.words {
-			allSb129.WriteString(w)
-		}
-
-		all += allSb129.String()
-
-		for _, face := range []string{"j600-9", "j800-13", "pix-8"} {
-			if r, ok := missingGlyph(face, all); !ok {
-				t.Errorf("%s: %s has no glyph for %q", lang, face, r)
 			}
 		}
 
@@ -457,10 +441,38 @@ func writePNG(t *testing.T, path string, frame []byte) {
 	}
 }
 
+// textFaces are the faces the atlas bakes the panel's words into (atlas.py's TEXT faces).
+//
+//nolint:gochecknoglobals // a fixed list, only read
+var textFaces = []string{
+	"j500-7.5", "j500-8", "j600-7.5", "j600-8", "j600-9", "j700-9", "j700-10",
+	"j800-11", "j800-12", "j800-13", "j800-15", "pix-7", "pix-8",
+}
+
+// Every letter of every text the panel shows, in every language, has a glyph of its own in
+// every text face: a letter the atlas lacks draws as '?'. Thai, Japanese, Korean and
+// Chinese are baked only as far as words.go uses them, so a new word needs a new atlas
+// (ATLAS_ONLY=1 app/oled/design/golden.sh).
+func TestST20WordsHaveGlyphs(t *testing.T) {
+	t.Parallel()
+
+	for lang, table := range st20Words {
+		for english, word := range table.words {
+			for _, text := range []string{english, word} {
+				for _, face := range textFaces {
+					if r, ok := missingGlyph(face, text); !ok {
+						t.Errorf("%s %q: %s has no glyph for %q (U+%04X)", lang, text, face, r, r)
+					}
+				}
+			}
+		}
+	}
+}
+
 // missingGlyph is the first letter of s the face has no glyph for.
 func missingGlyph(face, s string) (rune, bool) {
 	for _, r := range s {
-		if !unicode.IsSpace(r) && !unicode.Is(unicode.Mn, r) && screen.Width(face, string(r)) == 0 {
+		if !screen.Has(face, r) {
 			return r, false
 		}
 	}

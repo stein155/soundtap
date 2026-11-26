@@ -46,6 +46,29 @@ function iconBt(ctx, x, y, level) {
   ctx.strokeStyle = G(level); ctx.lineWidth = 1.1; ctx.lineJoin = "round"; ctx.beginPath();
   ctx.moveTo(x, y + 2.5); ctx.lineTo(x + 5, y + 7); ctx.lineTo(x + 2.5, y + 9.5); ctx.lineTo(x + 2.5, y); ctx.lineTo(x + 5, y + 2.5); ctx.lineTo(x, y + 7); ctx.stroke();
 }
+// wrap is screen.Wrap: words onto at most max lines no wider than width, the last one
+// shortened as text() does.
+function wrap(ctx, s, width, max, { size = 8, weight = 600, font = FONT } = {}) {
+  ctx.font = `${weight} ${size}px ${font}`;
+  const lines = [];
+  for (const word of s.split(/\s+/).filter(Boolean)) {
+    if (lines.length && ctx.measureText(lines[lines.length - 1] + " " + word).width <= width) lines[lines.length - 1] += " " + word;
+    else lines.push(word);
+  }
+  if (lines.length > max) lines.splice(max - 1, lines.length, lines.slice(max - 1).join(" "));
+  return lines.map((l) => { while (ctx.measureText(l).width > width && l.length > 1) l = l.slice(0, -2) + "…"; return l; });
+}
+// title draws the playing screens' title in up to two lines and returns the baseline of
+// the last: one line sits at 34, two at 26 and 43.
+function title(ctx, s, max = 2) {
+  const lines = wrap(ctx, s, 116, max, { size: 15, weight: 800 });
+  const first = 34 - 8 * (lines.length - 1);
+  lines.forEach((l, i) => text(ctx, l, 6, first + 17 * i, { size: 15, weight: 800 }));
+  return first + 17 * (lines.length - 1);
+}
+// While music plays the panel shows no status bar: no clock, source or room stays lit in
+// one place on the OLED. Only a pause or stop icon, a stereo pair's L/R and a battery do,
+// and only when they apply.
 function statusBar(ctx, { room = "", src = "wifi", time = "08:42", group = 0 } = {}) {
   let x = 4;
   if (src === "spotify") { text(ctx, "Spotify", 4, 11, { size: 8, weight: 600, level: 8 }); x = 40; }
@@ -64,17 +87,15 @@ const S = {
     rrect(ctx, 24, 72, Math.max(4, Math.min(1, p) * 80), 4, 2, 15);
   },
   radio(ctx, t, st = {}) {
-    statusBar(ctx, st);
-    text(ctx, st.station || "NPO Radio 2", 6, 42, { size: 15, weight: 800, max: 116 });
-    text(ctx, st.tag || "Er is muziek voor iedereen", 6, 55, { size: 8, weight: 500, level: 8, max: 116 });
+    const last = title(ctx, st.station || "NPO Radio 2");
+    text(ctx, st.tag || "Er is muziek voor iedereen", 6, last + 14, { size: 8, weight: 500, level: 8, max: 116 });
     rrect(ctx, 6, 75, 14, 14, 7, 3);
     textMid(ctx, String(st.preset || 1), 13, 82, { size: 8.5, weight: 800, level: 14, align: "center" });
     textMid(ctx, "LIVE", 122, 82, { size: 7, font: PIX, weight: 400, level: 10, align: "right" });
   },
-  spotify(ctx, t) {
-    statusBar(ctx, { group: 1, src: "spotify" });
-    text(ctx, "Sun Goes Down", 6, 40, { size: 13, weight: 800, max: 116 });
-    text(ctx, "Robin Schulz · Discover Weekly", 6, 52, { size: 8, weight: 500, level: 8, max: 116 });
+  spotify(ctx, t, st = {}) {
+    const last = title(ctx, st.track || "Sun Goes Down");
+    text(ctx, "Robin Schulz · Discover Weekly", 6, last + 14, { size: 8, weight: 500, level: 8, max: 116 });
     const p = ((t / 1000) % 214) / 214;
     rrect(ctx, 6, 70, 116, 3, 1.5, 3); rrect(ctx, 6, 70, Math.max(3, p * 116), 3, 1.5, 13);
     const s = Math.floor(p * 214);
@@ -104,10 +125,9 @@ const S = {
     text(ctx, st.station || "Qmusic", 64, 84, { size: 10, weight: 700, level: 12, align: "center", max: 116 });
   },
   bluetooth(ctx, t) {
-    statusBar(ctx, { src: "bt", room: "Keuken" });
-    ctx.save(); ctx.translate(58, 26); ctx.scale(1.4, 1.4); iconBt(ctx, 0, 0, 15); ctx.restore();
-    text(ctx, "Bluetooth", 64, 58, { size: 13, weight: 800, align: "center" });
-    text(ctx, "iPhone van Sanne", 64, 71, { size: 8, weight: 500, level: 8, align: "center" });
+    ctx.save(); ctx.translate(58, 18); ctx.scale(1.4, 1.4); iconBt(ctx, 0, 0, 15); ctx.restore();
+    text(ctx, "Bluetooth", 64, 52, { size: 15, weight: 800, align: "center", max: 120 });
+    text(ctx, "iPhone van Sanne", 64, 66, { size: 8, weight: 500, level: 8, align: "center", max: 120 });
   },
   holding(ctx, t, st = {}) {
     const p = Math.max(0, Math.min(1, st.holdP ?? 0.6));
@@ -122,17 +142,15 @@ const S = {
     text(ctx, "Opgeslagen als preset", 64, 72, { size: 9, weight: 700, align: "center" });
   },
   buffering(ctx, t, st = {}) {
-    statusBar(ctx, st);
-    text(ctx, st.station || "NPO Radio 2", 6, 42, { size: 15, weight: 800, max: 116 });
-    text(ctx, st.tag || "Er is muziek voor iedereen", 6, 55, { size: 8, weight: 500, level: 8, max: 116 });
+    const last = title(ctx, st.station || "NPO Radio 2");
+    text(ctx, st.tag || "Er is muziek voor iedereen", 6, last + 14, { size: 8, weight: 500, level: 8, max: 116 });
     textMid(ctx, "BUFFEREN", 122, 82, { size: 7, font: PIX, weight: 400, level: 7, align: "right" });
     rrect(ctx, 6, 75, 14, 14, 7, 3);
     textMid(ctx, String(st.preset || 1), 13, 82, { size: 8.5, weight: 800, level: 14, align: "center" });
   },
   aux(ctx) {
-    statusBar(ctx, { src: "aux" });
-    text(ctx, "AUX", 64, 56, { size: 26, weight: 800, align: "center" });
-    text(ctx, "Externe ingang", 64, 72, { size: 8, weight: 500, level: 8, align: "center" });
+    text(ctx, "AUX", 64, 50, { size: 26, weight: 800, align: "center" });
+    text(ctx, "Externe ingang", 64, 66, { size: 8, weight: 500, level: 8, align: "center", max: 120 });
   },
   pairing(ctx, t) {
     ctx.strokeStyle = G(6); ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(64, 36, 12, 0, Math.PI * 2); ctx.stroke();
@@ -143,7 +161,7 @@ const S = {
   standby(ctx, t, st = {}) {
     const drift = Math.floor(t / 60000) % 4;
     const dx = (drift % 2) * 2 - 1, dy = Math.floor(drift / 2) * 2;
-    text(ctx, st.h12 ? "8:42" : "08:42", 64 + dx, 54 + dy, { size: 32, weight: 700, level: 10, align: "center" });
+    text(ctx, st.h12 ? "8:42" : "08:42", 64 + dx, 54 + dy, { size: 32, weight: 500, level: 10, align: "center" });
     if (st.h12) text(ctx, "PM", 64 + dx, 76 + dy, { size: 9, weight: 600, level: 8, align: "center" });
   },
   offline(ctx, t) {

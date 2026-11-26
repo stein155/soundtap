@@ -179,19 +179,12 @@ func lpmRadioStatusFrame(mhz int, netStatus byte) []byte {
 // lpmRadioRefresh is how often the radio status goes out again unchanged.
 const lpmRadioRefresh = time.Minute
 
-// lpmTapLine is one console line for the processor, as stock's TAP passthrough sends it.
-func lpmTapLine(line string) []byte {
-	frame := lpmFrame(lpmProcessor, lpmTapCommand, []byte(line+"\r"))
-	frame[3] = 1
-	binary.LittleEndian.PutUint32(frame[lpmFrameLen-4:], lpmChecksum(frame))
-
-	return frame
-}
-
 // lpmGiveUp is how long a processor that has talked before may stay silent, health messages
-// and all, before soundtapd reboots the bar through its console. A processor that missed
-// the module's health messages for too long gives the module up ("SM2 is toast") and
-// stays so until it reboots; nothing else on the link brings it back (2026-11-10).
+// and all, before soundtapd logs that it gave the module up. A processor that missed the
+// module's health messages for too long gives the module up and stays so until the bar is
+// powered off and on (2026-11-10). soundtapd never reboots the bar for it: stock's own
+// heartbeat timer only logs and marks the link down, and a reboot of the bar can wake the
+// TV over HDMI-CEC.
 const lpmGiveUp = 2 * time.Minute
 
 // lpmSilence is how long the processor may say nothing before soundtapd sends its health

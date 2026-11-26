@@ -18,6 +18,7 @@ import (
 	"github.com/stein155/soundtap/app/internal/display"
 	"github.com/stein155/soundtap/app/internal/speaker"
 	"github.com/stein155/soundtap/app/internal/speakerstate"
+	"github.com/stein155/soundtap/app/oled"
 	"github.com/stein155/soundtap/app/oled/screen"
 )
 
@@ -282,7 +283,8 @@ func (p *Panel) Run(
 		dim := dimFor(now, input)
 
 		_, posMs, durMs := spk.Position()
-		disp.SetNowPlaying(display.Content{Frame: drawn.playing(&info, &bar, posMs, durMs, dim)})
+		orbit := int(now.Unix() / int64(orbitStep/time.Second))
+		disp.SetNowPlaying(display.Content{Frame: drawn.playing(&info, &bar, posMs, durMs, dim, orbit)})
 	}
 }
 
@@ -436,15 +438,56 @@ type playingMemo struct {
 	pix []byte
 }
 
-func (m *playingMemo) playing(info *npInfo, bar *screen.Bar, posMs, durMs, dim int) []byte {
+func (m *playingMemo) playing(info *npInfo, bar *screen.Bar, posMs, durMs, dim, orbit int) []byte {
 	posMs -= posMs % msPerSecond // the screen shows whole seconds; redraw once a second at most
 
-	key := fmt.Sprintf("%+v|%+v|%v|%v|%d|%d|%d", *info.np, info.presets, info.pairing, *bar, posMs, durMs, dim)
+	key := fmt.Sprintf("%+v|%+v|%v|%v|%d|%d|%d|%d",
+		*info.np, info.presets, info.pairing, *bar, posMs, durMs, dim, orbit)
 	if key != m.key {
-		m.pix, m.key = playingScreen(info, bar, posMs, durMs).Pix(dim), key
+		m.pix, m.key = orbitFrame(playingScreen(info, bar, posMs, durMs).Pix(dim), orbit), key
 	}
 
 	return m.pix
+}
+
+// orbitStep is how long the playing screen stays put before it moves one pixel.
+const orbitStep = time.Minute
+
+// orbitPath is the playing screen's offsets, one per orbitStep: a pixel around its place
+// and back. The layout stays where it is to the eye, yet no edge of a letter, the progress
+// bar or a badge lights the same pixels for more than a minute at a time: the OLED's
+// burn-in comes from what stays lit in one place. The standby clock walks the whole panel
+// instead (walkFrame); a playing screen fills it and has nowhere to walk.
+//
+//nolint:gochecknoglobals // a constant table
+var orbitPath = [...][2]int{{0, 0}, {1, 0}, {1, 1}, {0, 1}, {-1, 1}, {-1, 0}, {-1, -1}, {0, -1}, {1, -1}}
+
+// orbitFrame moves what pix shows to the step-th place of orbitPath; what moves off the
+// panel is dropped (the screens keep 3 px clear of every edge).
+func orbitFrame(pix []byte, step int) []byte {
+	const width, height = oled.Width, oled.Height
+
+	offset := orbitPath[(step%len(orbitPath)+len(orbitPath))%len(orbitPath)]
+	if offset == [2]int{} {
+		return pix
+	}
+
+	out := make([]byte, len(pix))
+
+	for row := range height {
+		toRow := row + offset[1]
+		if toRow < 0 || toRow >= height {
+			continue
+		}
+
+		for col := range width {
+			if toCol := col + offset[0]; toCol >= 0 && toCol < width {
+				out[toRow*width+toCol] = pix[row*width+col]
+			}
+		}
+	}
+
+	return out
 }
 
 //nolint:revive // flag-parameter: hour12 is the owner's clock setting, passed through as data

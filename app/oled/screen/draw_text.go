@@ -36,6 +36,14 @@ func Width(faceName, s string) float64 {
 	return width
 }
 
+// Has says whether the face has a glyph of its own for r; Width and Text draw a rune it
+// lacks as '?'.
+func Has(faceName string, r rune) bool {
+	_, ok := faceOf(faceName).glyphs[r]
+
+	return ok
+}
+
 // kerning is the pair adjustment in pixels between a and b.
 func (fc face) kerning(a, b rune) float64 {
 	return float64(fc.kern[[2]rune{a, b}]) * fc.scale
@@ -53,6 +61,71 @@ func (fc face) glyphFor(r rune, phase int) glyph {
 	}
 
 	return phased[phase]
+}
+
+// thaiContext is what the form of a Thai mark depends on: the tall consonant it sits on
+// and the upper vowel it stacks on, 0 for none. atlas.py bakes the forms by the same rule.
+type thaiContext struct {
+	tall, above rune
+}
+
+// Thai letters thaiForm tells apart.
+const (
+	thaiPoPla      = 0x0E1B // ป
+	thaiFoFa       = 0x0E1D // ฝ
+	thaiFoFan      = 0x0E1F // ฟ
+	thaiLoChula    = 0x0E2C // ฬ
+	thaiMaiHanAkat = 0x0E31 // ั
+	thaiSaraI      = 0x0E34 // ิ, then ี ึ ื
+	thaiSaraUee    = 0x0E37 // ื
+	thaiPhinthu    = 0x0E3A // ฺ, the last of the vowels below
+	thaiMaitaikhu  = 0x0E47 // ็, the first of the marks above after the vowels
+	thaiYamakkan   = 0x0E4E // ๎, the last of them
+)
+
+// isThaiMark is a combining Thai mark: a vowel above or below, a tone mark or another
+// mark above.
+func isThaiMark(r rune) bool {
+	return r == thaiMaiHanAkat || r >= thaiSaraI && r <= thaiPhinthu || r >= thaiMaitaikhu && r <= thaiYamakkan
+}
+
+// isThaiAbove is an upper vowel, which a tone mark stacks on.
+func isThaiAbove(r rune) bool {
+	return r == thaiMaiHanAkat || r >= thaiSaraI && r <= thaiSaraUee || r == thaiMaitaikhu
+}
+
+// isThaiTall is a consonant whose ascender reaches the marks above it.
+func isThaiTall(r rune) bool {
+	return r == thaiPoPla || r == thaiFoFa || r == thaiFoFan || r == thaiLoChula
+}
+
+// thaiForm is char's glyph at phase, in its Thai form after the letters before it, and moves
+// ctx past char. A Thai mark is drawn raised above an upper vowel and clear of the ascender of
+// ป ฝ ฟ ฬ, as the font's shaping draws it; any other rune is fc.glyphFor(char, phase).
+func (fc face) thaiForm(ctx *thaiContext, char rune, phase int) glyph {
+	plain := fc.glyphFor(char, phase)
+	if !isThaiMark(char) {
+		*ctx = thaiContext{tall: 0, above: 0}
+		if isThaiTall(char) {
+			ctx.tall = char
+		}
+
+		return plain
+	}
+
+	form, ok := fc.thai[[3]rune{ctx.tall, ctx.above, char}]
+	if isThaiAbove(char) {
+		ctx.above = char
+	}
+
+	if !ok || phase >= len(form) {
+		return plain
+	}
+
+	drawn := form[phase]
+	drawn.adv = plain.adv
+
+	return drawn
 }
 
 // fitDrop is how many runes each step of Fit takes off the end before it adds the
@@ -92,30 +165,35 @@ func (f *Frame) Text(text string, anchorX, baseline float64, font Font) {
 		anchorX -= Width(font.Face, text)
 	}
 
-	fontFace := faceOf(font.Face)
-
-	pen, prev := 0.0, rune(0)
-	for _, char := range text {
-		pen += fontFace.kerning(prev, char)
-		prev = char
-		at := anchorX + pen
-		whole := math.Floor(at)
-
-		phase := int(math.Round((at - whole) * float64(fontFace.phases)))
-		if phase == fontFace.phases {
-			whole, phase = whole+1, 0
-		}
-
-		drawn := fontFace.glyphFor(char, phase)
-		originX := int(whole) + drawn.left
-
-		originY := int(math.Round(baseline)) - drawn.top
+	faceOf(font.Face).layout(text, anchorX, baseline, func(_ rune, drawn glyph, originX, originY int) {
 		for row := range drawn.h {
 			for col := range drawn.w {
 				alpha := fontAtlas.img.GrayAt(drawn.x+col, drawn.y+row).Y
 				f.paint(originX+col, originY+row, font.Level, float64(alpha)/fullScale)
 			}
 		}
+	})
+}
+
+// layout places text from anchorX on baseline: it calls place with each rune, the glyph
+// drawn for it and the pixel the glyph's top-left corner lands on.
+func (fc face) layout(text string, anchorX, baseline float64, place func(r rune, drawn glyph, originX, originY int)) {
+	var thai thaiContext
+
+	pen, prev := 0.0, rune(0)
+	for _, char := range text {
+		pen += fc.kerning(prev, char)
+		prev = char
+		at := anchorX + pen
+		whole := math.Floor(at)
+
+		phase := int(math.Round((at - whole) * float64(fc.phases)))
+		if phase == fc.phases {
+			whole, phase = whole+1, 0
+		}
+
+		drawn := fc.thaiForm(&thai, char, phase)
+		place(char, drawn, int(whole)+drawn.left, int(math.Round(baseline))-drawn.top)
 
 		pen += drawn.adv
 	}
@@ -126,8 +204,10 @@ func (f *Frame) TextMid(text string, anchorX, centreY float64, font Font) {
 	fontFace := faceOf(font.Face)
 	asc, desc := 0, 0
 
+	var thai thaiContext
+
 	for _, char := range text {
-		drawn := fontFace.glyphFor(char, 0)
+		drawn := fontFace.thaiForm(&thai, char, 0)
 		asc, desc = max(asc, drawn.top), max(desc, drawn.h-drawn.top)
 	}
 
