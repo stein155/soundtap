@@ -203,9 +203,15 @@ static void tx_reclaim(void)
     wifi_tx_ok += ok, wifi_tx_failed += failed;
 }
 
+/* A background scan's hold on the SCM's frames (ADR 0135): TX_DRAIN gives no new credit while the
+ * buffers empty before the radio leaves its channel, TX_OFF also drops what comes while it is away
+ * (it would go out on the wrong channel). */
+enum { TX_OPEN, TX_DRAIN, TX_OFF };
+static unsigned tx_hold;
+
 unsigned wifi_tx_free(void)
 {
-    if (!txready)
+    if (!txready || tx_hold)
         return 0;
     tx_reclaim();
     return txnfree > 1 ? txnfree - 1 : 0;
@@ -242,6 +248,21 @@ static signed char link_rssi(void)
     return 0;
 }
 
+/* The joined access point's level averaged over its beacons (each moves it 1/8 of the way), in
+ * 1/16 dBm, for the roaming decisions (ADR 0135); 0 until its first beacon after the join. */
+static int rssi_avg16;
+
+static void rssi_track(signed char r)
+{
+    if (r < 0)
+        rssi_avg16 = rssi_avg16 ? rssi_avg16 + (16 * r - rssi_avg16) / 8 : 16 * r;
+}
+
+static int cur_rssi(void)
+{
+    return rssi_avg16 ? rssi_avg16 / 16 : link_rssi();
+}
+
 static struct wpa_sm sm;
 static int keyed;                      /* PTK installed in the core */
 static unsigned keys_due;              /* WPA_RX_INSTALL_PTK/GTK not yet in the command ring */
@@ -249,12 +270,112 @@ static unsigned keys_due;              /* WPA_RX_INSTALL_PTK/GTK not yet in the 
 /* join sub-steps */
 enum { J_SCAN, J_SETUP, J_AUTH, J_ASSOC, J_4WAY };
 static unsigned jstep, jtries, deadline, join_pending, corebd, rxauthok, rxassocok, kicked;
+static unsigned kick_sub, kick_reason; /* the deauthentication (0xc0) or disassociation (0xa0) and its reason */
 static unsigned last_beacon, beacons_up;
 
 /* scan: pass 0 passive (0xc1) channels 1..13, pass 1 wildcard probe (0xc2), then 0xe4 */
 static unsigned scan_pass, scan_chan, scan_next;
 #define DWELL_MS 200u   /* per-channel app budget; must exceed the core listen (~112 ms) + its tail */
 #define NCHAN 13u
+#define LISTEN_MS 110u  /* a passive listen per channel (units of 1024 ticks ~= ms), as a probe listens */
+
+/* ---- regulatory domain (SET_REGDOM, ADR 0135) ---- */
+
+#define CHANS_ALL ((1u << NCHAN) - 1)
+static unsigned reg_chans = CHANS_ALL, reg_passive;
+static unsigned char reg_cc[2] = {'0', '0'};
+static int reg_dbm = 20;
+
+/* A channel the station may use, and one it may also probe on (and beacon on as the AP). */
+static int chan_ok(unsigned c)
+{
+    return c >= 1 && c <= NCHAN && (reg_chans >> (c - 1) & 1);
+}
+
+static int chan_active(unsigned c)
+{
+    return chan_ok(c) && !(reg_passive >> (c - 1) & 1);
+}
+
+/* The next allowed channel after c, 0 when none is left. */
+static unsigned next_chan(unsigned c)
+{
+    while (++c <= NCHAN)
+        if (chan_ok(c))
+            return c;
+    return 0;
+}
+
+int wifi_set_regdom(const unsigned char cc[2], unsigned chans, unsigned passive, int max_dbm)
+{
+    if (!(chans & CHANS_ALL) || max_dbm < 0 || max_dbm > 30)
+        return -1;
+    reg_cc[0] = cc[0], reg_cc[1] = cc[1];
+    reg_chans = chans & CHANS_ALL;
+    reg_passive = passive & reg_chans;
+    reg_dbm = max_dbm;
+    /* The core has no TX power control we know of: the limit is recorded, not applied (ADR 0135).
+     * Never guess an RF register for it. */
+    return 0;
+}
+
+/* ---- link events (ADR 0135) ---- */
+
+#define NEVQ 4u
+static struct wifi_event evq[NEVQ];
+static unsigned evhead, evcount;
+
+int wifi_event_next(struct wifi_event *o)
+{
+    if (!evcount)
+        return 0;
+    *o = evq[evhead];
+    evhead = (evhead + 1) % NEVQ, evcount--;
+    return 1;
+}
+
+/* Queue an event about the access point in cur; a full queue gives up its oldest. */
+static void post(unsigned type, unsigned reason)
+{
+    struct wifi_event *e;
+    if (evcount == NEVQ)
+        evhead = (evhead + 1) % NEVQ, evcount--;
+    e = &evq[(evhead + evcount++) % NEVQ];
+    e->type = (unsigned char)type, e->reason = (unsigned short)reason;
+    copy(e->bssid, cur.bssid, 6);
+    e->chan = cur.chan;
+    e->rssi = (signed char)cur_rssi();
+}
+
+/* ---- roaming within the SSID (ADR 0135), like wpa_supplicant's bgscan simple ----
+ * While the averaged level of the access point stays below ROAM_THRESHOLD the station scans in
+ * the background, one channel per visit away from its own, and goes back between visits so the
+ * link keeps running. It stops looking once the level is ROAM_HYSTERESIS above the threshold. A
+ * scan that finds no access point of the SSID at least ROAM_DELTA stronger doubles the time to
+ * the next, up to BG_LONG_MS. Above the threshold it never leaves its channel. */
+#define ROAM_THRESHOLD (-70)
+#define ROAM_HYSTERESIS 5
+#define ROAM_DELTA 8
+#define BG_SHORT_MS 30000u
+#define BG_LONG_MS 300000u
+#define BG_DRAIN_MS 50u  /* at most this long for the transmit buffers to empty before leaving */
+#define BG_HOME_MS 500u  /* on the own channel between two visits */
+enum { BG_IDLE, BG_HOME, BG_DRAIN, BG_OFF };
+static unsigned prof_flags, roam_on, roaming, weak;
+static unsigned char prof_bssid[6], roam_bssid[6];
+static unsigned bg_phase, bg_chan, bg_until, bg_next, bg_last, bg_interval, bg_scanned, off_since;
+
+/* The station is (again) joined: a fresh level average and no background scan yet. A roam that
+ * got here is reported. */
+static void link_up(void)
+{
+    rssi_avg16 = 0, weak = 0;
+    bg_phase = BG_IDLE, tx_hold = TX_OPEN;
+    bg_interval = BG_SHORT_MS;
+    if (roaming)
+        post(WIFI_EV_ROAMED, 0);
+    roaming = 0;
+}
 
 #define PEER_AP 0u
 #define PEER_NONE 6u
@@ -393,7 +514,7 @@ int radio_tx_eth(const unsigned char *f, unsigned n)
     int body;
     if (state == WIFI_AP)
         return ap_tx_eth(f, n);
-    if (state != WIFI_UP || !same(f + 6, own, 6) || et == WPA_EAPOL_ETHERTYPE ||
+    if (state != WIFI_UP || tx_hold == TX_OFF || !same(f + 6, own, 6) || et == WPA_EAPOL_ETHERTYPE ||
         !(a = tx_buf())) {
         wifi_tx_drop++;
         return -1;
@@ -472,7 +593,7 @@ static void rx_station(const volatile unsigned char *b, unsigned len)
         if (!same(h + 4, own, 6) || (fc & 0x0300) || len < 0xcc + 2)
             return;
         if (sub == 0xc0 || sub == 0xa0) /* deauth / disassoc */
-            kicked = 1;
+            kicked = 1, kick_sub = sub, kick_reason = le16(body);
         else if (sub == 0xb0 && len >= 0xcc + 6 && le16(body) == 0 && le16(body + 2) == 2 &&
                  le16(body + 4) == 0)
             rxauthok = 1;
@@ -685,8 +806,11 @@ static void rx_frames(void)
                 }
 #endif
                 bss_add((const unsigned char *)b + 0xac, n - 0xac, scan_chan, (signed char)b[0xac + RXRSSI]);
-                if (have_cur && same(b + 0xac + 16, cur.bssid, 6))
+                if (have_cur && same(b + 0xac + 16, cur.bssid, 6)) {
                     last_beacon = now, beacons_up++;
+                    if (state == WIFI_UP)
+                        rssi_track((signed char)b[0xac + RXRSSI]);
+                }
             } else if (state == WIFI_AP) {
                 rx_ap(b, n);
             } else {
@@ -766,10 +890,51 @@ static void rx_cmds(void)
 #define SCAN_PASSES 2u
 #define SCAN_ALL_ACTIVE 1
 
-static void scan_step(void)
+/* The SSID the SCM's SCAN asked the directed pass to probe for (ADR 0135), 0 = the profile's. */
+static unsigned char scan_ssid[32];
+static unsigned scan_ssidlen;
+
+void wifi_scan_ssid(const unsigned char *ssid, unsigned n)
+{
+    scan_ssidlen = ssid && n <= 32 ? n : 0;
+    copy(scan_ssid, ssid, scan_ssidlen);
+}
+
+/* One probe request on chan ([6] SSID length, [7..] SSID, the core's probe_req; n = 0 is the
+ * wildcard), then its listen; the answers reach the scan table through rx_frames. */
+static void probe_on(unsigned chan, const unsigned char *ssid, unsigned n)
 {
     static const unsigned char rate_block[13] = {0x0c, 0x02, 0x04, 0x0b, 0x12, 0x96, 0x24,
                                                  0x48, 0x6c, 0x0c, 0x18, 0x30, 0x60};
+    unsigned w[16];
+    unsigned char *pr = (unsigned char *)w;
+    for (unsigned j = 0; j < 64; j++)
+        pr[j] = j < 6 ? 0xff : 0;
+    if (n && n <= 32) {
+        pr[6] = (unsigned char)n;
+        copy(pr + 7, ssid, n);
+    }
+    pr[0x27] = (unsigned char)chan;
+    copy(pr + 0x28, rate_block, 13);
+    /* listen ~112 ms per channel (0x36, units of 1024 ticks ~= ms) so a full ~102 ms beacon
+     * interval is covered and a weak AP is caught by its beacon, not only by a probe response;
+     * extend ~30 ms (0x38) each time a probe response keeps the dwell alive. */
+    pr[0x36] = LISTEN_MS, pr[0x38] = 30, pr[0x3c] = 6;
+    wr_cmd(&tx, 0xc2, 0x0013, 2, w, 62);
+    DOORBELL();
+}
+
+/* A listen without a probe (0xc1: channel, dwell, band), for a channel the regulatory domain
+ * allows only passively. */
+static void listen_on(unsigned chan)
+{
+    const unsigned p[2] = {chan | LISTEN_MS << 16, 6};
+    wr_cmd(&tx, 0xc1, 0x0013, 1, p, 6);
+    DOORBELL();
+}
+
+static void scan_step(void)
+{
     if (!due(scan_next))
         return;
     if (scan_pass == SCAN_PASSES) { /* 0xe4 was sent a dwell ago: done */
@@ -800,47 +965,38 @@ static void scan_step(void)
 #endif
         return;
     }
-    if (++scan_chan > NCHAN) {
-        scan_chan = 0;
+    if (!(scan_chan = next_chan(scan_chan))) { /* the regulatory mask's channels, in order */
         if (++scan_pass == SCAN_PASSES) {
             wr_cmd(&tx, 0xe4, 0x13, 2, 0, 0);
             DOORBELL();
             scan_next = now + 200;
             return;
         }
-        scan_chan = 1;
+        scan_chan = next_chan(0);
     }
     if (!SCAN_ALL_ACTIVE && scan_pass < SCAN_PASSES - 1) { /* passive beacon-listen passes (disabled: RX is deaf without a TX) */
         const unsigned p[2] = {scan_chan | 250u << 16, 6};
         wr_cmd(&tx, 0xc1, 0x0013, 1, p, 6);
+        DOORBELL();
+    } else if (!chan_active(scan_chan)) {
+        listen_on(scan_chan); /* a passive channel of the regulatory domain: no probe on it */
+    } else if (scan_pass == SCAN_PASSES - 1 && scan_ssidlen) {
+        /* The last pass probes for one SSID: the one the SCM's SCAN named, else the profile's. A
+         * hidden network answers only a probe that names it. The first pass stays a wildcard,
+         * so the list still holds every network around. */
+        probe_on(scan_chan, scan_ssid, scan_ssidlen);
+    } else if (scan_pass == SCAN_PASSES - 1 && have_cur && cur.ssidlen <= 32) {
+        probe_on(scan_chan, cur.ssid, cur.ssidlen);
     } else {
-        unsigned w[16];
-        unsigned char *pr = (unsigned char *)w;
-        for (unsigned j = 0; j < 64; j++)
-            pr[j] = j < 6 ? 0xff : 0;
-        /* The last pass probes for the profile's SSID ([6] length, [7..] SSID; the core's
-         * probe_req): a hidden network answers only a probe that names it. The first pass stays a
-         * wildcard, so the list still holds every network around. */
-        if (have_cur && scan_pass == SCAN_PASSES - 1 && cur.ssidlen <= 32) {
-            pr[6] = cur.ssidlen;
-            copy(pr + 7, cur.ssid, cur.ssidlen);
-        }
-        pr[0x27] = scan_chan;
-        copy(pr + 0x28, rate_block, 13);
-        /* listen ~112 ms per channel (0x36, units of 1024 ticks ~= ms) so a full ~102 ms beacon
-         * interval is covered and a weak AP is caught by its beacon, not only by a probe response;
-         * extend ~30 ms (0x38) each time a probe response keeps the dwell alive. */
-        pr[0x36] = 110, pr[0x38] = 30, pr[0x3c] = 6;
-        wr_cmd(&tx, 0xc2, 0x0013, 2, w, 62);
+        probe_on(scan_chan, 0, 0);
     }
-    DOORBELL();
     scan_next = now + DWELL_MS;
 }
 
-static void scan_begin(void)
+/* A new scan generation. Age the table instead of wiping it: drop BSSes not heard in the last
+ * BSS_KEEP scans, keep the rest so an intermittently-heard target survives into the join decision. */
+static void age_table(void)
 {
-    /* Age the table instead of wiping it: drop BSSes not heard in the last BSS_KEEP scans, keep the
-     * rest so an intermittently-heard target survives into the join decision. */
     unsigned w = 0;
     scan_gen++;
     for (unsigned i = 0; i < nbss; i++)
@@ -850,6 +1006,11 @@ static void scan_begin(void)
             w++;
         }
     nbss = w;
+}
+
+static void scan_begin(void)
+{
+    age_table();
 #ifdef BCO_DEBUG_TRACE
     dg_sup3 = dg_frame = dg_bcn = dg_presp = dg_evt = dg_bok = dg_bokraw = 0;   /* per-scan so a capture is readable */
     dg_bss_short = dg_bss_nossid = 0;
@@ -904,19 +1065,30 @@ static int stronger(const struct bss *a, const struct bss *b)
     return (unsigned short)(scan_gen - a->gen) < (unsigned short)(scan_gen - b->gen);
 }
 
-/* The strongest RSN BSS with this SSID on 2.4 GHz, -1 if none. */
+/* An RSN BSS with the profile's SSID on a channel the regulatory domain allows. A passive channel
+ * counts: the access point was heard there, and a station may answer the BSS it heard. */
+static int match(const struct bss *b)
+{
+    return b->ssidlen == cur.ssidlen && same(b->ssid, cur.ssid, cur.ssidlen) && b->rsn &&
+           chan_ok(b->chan);
+}
+
+/* The BSS to join, -1 if none: during a roam its target only, with a fixed BSSID that one only,
+ * else the hinted BSSID when it was heard, else the strongest match. */
 static int pick(void)
 {
-    int best = -1;
+    int best = -1, hint = -1;
     for (unsigned i = 0; i < nbss; i++) {
         const struct bss *b = &bsstab[i];
-        if (b->ssidlen != cur.ssidlen || !same(b->ssid, cur.ssid, cur.ssidlen) || !b->rsn ||
-            b->chan < 1 || b->chan > NCHAN)
+        if (!match(b) || (roaming && !same(b->bssid, roam_bssid, 6)) ||
+            ((prof_flags & WIFI_BSSID_FIXED) && !same(b->bssid, prof_bssid, 6)))
             continue;
+        if ((prof_flags & WIFI_BSSID_HINT) && same(b->bssid, prof_bssid, 6))
+            hint = (int)i;
         if (best < 0 || stronger(b, &bsstab[best]))
             best = (int)i;
     }
-    return best;
+    return !roaming && hint >= 0 ? hint : best;
 }
 
 /* Lowest rate the AP advertises: the one frame rate it is sure to decode. */
@@ -957,6 +1129,9 @@ static void fail(void)
         hex("join evseq ", dg_evseq[i] | dg_evseq[i + 1] << 8 | dg_evseq[i + 2] << 16 |
                            (unsigned)dg_evseq[i + 3] << 24);
 #endif
+    if (roaming)
+        post(WIFI_EV_ROAM_FAILED, 0); /* the old link is gone too: the SCM learns it now */
+    roaming = 0;
     state = WIFI_FAILED;
     join_pending = 0;
 }
@@ -1061,6 +1236,7 @@ static void join_step(void)
         if (sm.state == WPA_DONE && keyed && !keys_due) {
             state = WIFI_UP;
             last_beacon = now, beacons_up = 0;
+            link_up();
         } else if (due(deadline)) {
             retry();
         }
@@ -1118,8 +1294,125 @@ static void drop_link(void)
         ((volatile unsigned char *)&sm)[i] = 0;
 }
 
+/* ---- background scan and roam (ADR 0135) ---- */
+
+/* The next allowed channel after c other than the own one, 0 when none is left. */
+static unsigned next_visit(unsigned c)
+{
+    while ((c = next_chan(c)) && c == cur.chan) {}
+    return c;
+}
+
+/* The strongest access point of the SSID heard since this background scan began (on the own
+ * channel or on a visit), other than the joined one; -1 if none. */
+static int roam_candidate(void)
+{
+    int best = -1;
+    for (unsigned i = 0; i < nbss; i++) {
+        const struct bss *b = &bsstab[i];
+        if (b->gen != scan_gen || b->rssi >= 0 || !match(b) || same(b->bssid, cur.bssid, 6) ||
+            ((prof_flags & WIFI_BSSID_FIXED) && !same(b->bssid, prof_bssid, 6)))
+            continue;
+        if (best < 0 || stronger(b, &bsstab[best]))
+            best = (int)i;
+    }
+    return best;
+}
+
+/* Leave the access point (locally, nothing on air) and join bsstab[i] with the same profile: the
+ * same PMK, a fresh 4-way. */
+static void roam_to(int i)
+{
+    copy(roam_bssid, bsstab[i].bssid, 6);
+    drop_link();
+    roaming = 1, jtries = 0, state = WIFI_JOINING;
+    bg_phase = BG_IDLE, tx_hold = TX_OPEN;
+    join_attempt();
+}
+
+/* A background scan visited every channel: roam when it found an access point at least
+ * ROAM_DELTA stronger, else wait twice as long for the next one. */
+static void bg_finish(void)
+{
+    int i = roam_candidate();
+    bg_phase = BG_IDLE, bg_last = now, bg_scanned = 1;
+    if (i >= 0 && bsstab[i].rssi >= cur_rssi() + ROAM_DELTA) {
+        roam_to(i);
+        return;
+    }
+    bg_interval = bg_interval * 2 < BG_LONG_MS ? bg_interval * 2 : BG_LONG_MS;
+    bg_next = now + bg_interval;
+}
+
+/* Back on the own channel: the core's join (0xbc) retunes the radio and its receive filter to the
+ * access point and keeps the peer and its keys (JOIN_DONE, which would drop them, is not sent).
+ * Beacon loss does not count the time away. 0 while the command ring is full. */
+static int go_home(void)
+{
+    unsigned char bc[28];
+    build_join_bc(bc, cur.bssid, cur.chan);
+    if (!wr_cmd_checked(&tx, 0xbc, MGMT_MODULE, 11, bc, sizeof bc))
+        return 0;
+    DOORBELL();
+    scan_chan = 0;
+    if ((int)(off_since - last_beacon) >= 0)
+        last_beacon += now - off_since;
+    tx_hold = TX_OPEN;
+    return 1;
+}
+
+/* One step of the background scan, from wifi_poll while the link is up. */
+static void bg_step(void)
+{
+    int r = cur_rssi();
+    if (!roam_on)
+        return;
+    if (!weak && r < ROAM_THRESHOLD) {
+        weak = 1, bg_interval = BG_SHORT_MS;
+        bg_next = bg_scanned && !due(bg_last + BG_SHORT_MS) ? bg_last + BG_SHORT_MS : now;
+    } else if (weak && r >= ROAM_THRESHOLD + ROAM_HYSTERESIS) {
+        weak = 0;
+    }
+    switch (bg_phase) {
+    case BG_IDLE:
+        if (weak && due(bg_next)) {
+            age_table(); /* a new generation: what this scan hears */
+            bg_chan = 0, bg_phase = BG_HOME, bg_until = now;
+        }
+        return;
+    case BG_HOME:
+        if (!due(bg_until))
+            return;
+        if (!weak) { /* strong again: stop looking */
+            bg_phase = BG_IDLE;
+            return;
+        }
+        if (!(bg_chan = next_visit(bg_chan))) {
+            bg_finish();
+            return;
+        }
+        bg_phase = BG_DRAIN, bg_until = now + BG_DRAIN_MS, tx_hold = TX_DRAIN;
+        return;
+    case BG_DRAIN: /* no new credit; leave once the buffers are back, or after BG_DRAIN_MS */
+        tx_reclaim();
+        if (txnfree < NTXFBUF && !due(bg_until))
+            return;
+        if (chan_active(bg_chan))
+            probe_on(bg_chan, cur.ssid, cur.ssidlen); /* directed: only the SSID's access points answer */
+        else
+            listen_on(bg_chan);
+        scan_chan = bg_chan, off_since = now;
+        bg_phase = BG_OFF, bg_until = now + DWELL_MS, tx_hold = TX_OFF;
+        return;
+    case BG_OFF:
+        if (due(bg_until) && go_home())
+            bg_phase = BG_HOME, bg_until = now + BG_HOME_MS;
+        return;
+    }
+}
+
 int wifi_join(const unsigned char *ssid, unsigned ssid_len, const unsigned char k[32],
-              const unsigned char s[32])
+              const unsigned char s[32], unsigned flags, const unsigned char bssid[6])
 {
     if (ssid_len < 1 || ssid_len > 32 || state == WIFI_AP)
         return -1;
@@ -1128,6 +1421,11 @@ int wifi_join(const unsigned char *ssid, unsigned ssid_len, const unsigned char 
     cur.ssidlen = ssid_len;
     copy(pmk, k, 32);
     copy(seed, s, 32);
+    prof_flags = bssid ? flags & (WIFI_BSSID_FIXED | WIFI_BSSID_HINT | WIFI_ROAM) : 0;
+    if (bssid)
+        copy(prof_bssid, bssid, 6);
+    roam_on = (prof_flags & WIFI_ROAM) && !(prof_flags & WIFI_BSSID_FIXED);
+    roaming = 0, bg_phase = BG_IDLE, tx_hold = TX_OPEN, bg_scanned = 0;
     have_cur = 1, jtries = 0;
     join_pending = 1, jstep = J_SCAN;
     if (state != WIFI_SCANNING) {
@@ -1147,6 +1445,7 @@ void wifi_leave(void)
     for (unsigned i = 0; i < 32; i++)
         pmk[i] = seed[i] = 0;
     have_cur = 0, join_pending = 0;
+    prof_flags = roam_on = roaming = 0, bg_phase = BG_IDLE, tx_hold = TX_OPEN;
     if (state != WIFI_SCANNING && state != WIFI_AP)
         state = WIFI_IDLE;
 }
@@ -1169,7 +1468,7 @@ int wifi_ap_start(unsigned chan, unsigned bint, const unsigned char *body, unsig
 {
     unsigned char bc[28];
     unsigned h = 12, t;
-    if (chan < 1 || chan > NCHAN || bint < 20 || bint > 1000 || len < 12 || len > sizeof ap_body ||
+    if (!chan_active(chan) || bint < 20 || bint > 1000 || len < 12 || len > sizeof ap_body ||
         state == WIFI_SCANNING)
         return -1;
     while (h + 2 <= len && h + 2 + body[h + 1] <= len && body[h] != 5)
@@ -1303,11 +1602,18 @@ void wifi_poll(unsigned t)
         ap_step();
         break;
     case WIFI_UP:
-        /* The AP sent us away, or went quiet (only judged once its beacons were seen at all). */
-        if (kicked || (beacons_up && due(last_beacon + 8000))) {
+        /* The AP sent us away, or went quiet (only judged once its beacons were seen at all, and
+         * not while a background scan has the radio on another channel). The SCM hears of it at
+         * once (ADR 0135). */
+        if (kicked || (beacons_up && bg_phase != BG_OFF && due(last_beacon + WIFI_BEACON_LOSS_MS))) {
             hex("link lost kicked ", kicked);
+            if (kicked)
+                post(kick_sub == 0xc0 ? WIFI_EV_DEAUTH : WIFI_EV_DISASSOC, kick_reason);
+            else
+                post(WIFI_EV_BEACON_LOSS, 0);
             drop_link();
             state = WIFI_FAILED;
+            bg_phase = BG_IDLE, tx_hold = TX_OPEN;
         }
 #ifdef WILD_OWN
         /* TX-starvation self-heal: if every TX buffer is outstanding and the core has reported no
@@ -1322,13 +1628,17 @@ void wifi_poll(unsigned t)
                 last_prog = prog, last_prog_t = now;
             else if (due(last_prog_t + 3000)) {
                 hex("link lost tx wedge ", prog);
+                post(WIFI_EV_TX_WEDGE, 0);
                 drop_link();
+                bg_phase = BG_IDLE, tx_hold = TX_OPEN;
                 wifi_reset_core();
                 state = WIFI_FAILED;
                 last_prog_t = now;
             }
         }
 #endif
+        if (state == WIFI_UP)
+            bg_step();
         break;
     }
 }

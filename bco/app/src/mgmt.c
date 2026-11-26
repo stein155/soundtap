@@ -4,7 +4,15 @@
 #include "bcolink.h"
 #include "mgmt.h"
 #include "netcard.h"
+#include "persparam.h"
 #include "wifi.h"
+
+_Static_assert(MGMT_EV_DEAUTH == WIFI_EV_DEAUTH && MGMT_EV_DISASSOC == WIFI_EV_DISASSOC &&
+               MGMT_EV_BEACON_LOSS == WIFI_EV_BEACON_LOSS && MGMT_EV_TX_WEDGE == WIFI_EV_TX_WEDGE &&
+               MGMT_EV_ROAMED == WIFI_EV_ROAMED && MGMT_EV_ROAM_FAILED == WIFI_EV_ROAM_FAILED,
+               "the link's event numbers are the station's");
+_Static_assert(MGMT_PROFILE_BSSID_FIXED == WIFI_BSSID_FIXED && MGMT_PROFILE_BSSID_HINT == WIFI_BSSID_HINT &&
+               MGMT_PROFILE_ROAM == WIFI_ROAM, "SET_PROFILE's flags are the station's");
 
 /* The management server on top of the station in wifi.c (host tests: a fake wifi). */
 unsigned char mgmt_wifi_mac[6];
@@ -53,6 +61,37 @@ void mgmt_flow_lost(void)
     rep_free = 0, rep_ms = mgmt_uptime - MGMT_FLOW_HEARTBEAT_MS;
 }
 
+/* ---- link events (MGMT_EVENT_LEN in mgmt.h) ---- */
+unsigned mgmt_events;
+static struct wifi_event ev;
+static unsigned ev_held; /* ev is due again: the link could not take it */
+
+unsigned mgmt_event_due(unsigned char *r)
+{
+    unsigned char *o = r + MGMT_HDR;
+    if (!mgmt_events || (!ev_held && !wifi_event_next(&ev)))
+        return 0;
+    ev_held = 0;
+    *o++ = 0, *o++ = ev.type, *o++ = (unsigned char)ev.reason, *o++ = ev.reason >> 8;
+    for (unsigned i = 0; i < 6; i++)
+        *o++ = ev.bssid[i];
+    *o++ = ev.chan, *o++ = (unsigned char)ev.rssi;
+    r[0] = 1, r[1] = 15 | 0x80, r[2] = 0, r[3] = 0, r[4] = 0, r[5] = MGMT_EVENT_LEN;
+    return MGMT_HDR + MGMT_EVENT_LEN;
+}
+
+void mgmt_event_lost(void)
+{
+    ev_held = 1;
+}
+
+/* The PersParam sector NV_INFO reads (netcard.c maps the NOR on hardware); the weak default has
+ * none. */
+__attribute__((weak)) const volatile unsigned char *mgmt_nv(void)
+{
+    return 0;
+}
+
 static unsigned char *put_bss(unsigned char *o, const struct wifi_bss *b)
 {
     *o++ = b->ssid_len;
@@ -79,7 +118,7 @@ static unsigned last_len, last_key; /* type << 16 | seq; 0 = nothing kept */
 
 static int changes_state(unsigned type)
 {
-    return type == 3 || type == 4 || type == 6 || type == 7;
+    return type == 3 || type == 4 || type == 6 || type == 7 || type == 15;
 }
 
 unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
@@ -121,8 +160,11 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
         *o++ = BCOLINK_PROTO;
         o = put32(o, BCOLINK_CAPS); /* capabilities, le32 */
         break;
-    case 2: { /* SCAN [start]: status (3 = still scanning), count, entries */
-        int found = wifi_scan(len >= 1 && a[0] == 1);
+    case 2: { /* SCAN [start [ssid_len ssid]]: status (3 = still scanning), count, entries */
+        int start = len >= 1 && a[0] == 1, found;
+        if (start) /* the directed probe's SSID (BCOLINK_CAP_SCAN_SSID); none leaves the profile's */
+            wifi_scan_ssid(a + 2, len >= 2 && a[1] <= 32 && len >= 2u + a[1] ? a[1] : 0);
+        found = wifi_scan(start);
         struct wifi_bss b;
         *o++ = found < 0 ? 3 : 0;
         unsigned char *cnt = o++;
@@ -134,16 +176,20 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
         }
         break;
     }
-    case 3: /* SET_PROFILE: ssid_len, ssid, security, pmk_len, pmk, 32-byte seed */
-        if (len < 1 || a[0] < 1 || a[0] > 32 || len < 1u + a[0] + 2 ||
-            len != 1u + a[0] + 2 + a[1 + a[0] + 1] + 32)
+    case 3: { /* SET_PROFILE: ssid_len, ssid, security, pmk_len, pmk, 32-byte seed [, flags, bssid] */
+        unsigned base = len >= 1 && len >= 1u + a[0] + 2 ? 1u + a[0] + 2 + a[1 + a[0] + 1] + 32 : 0;
+        if (len < 1 || a[0] < 1 || a[0] > 32 || !base || (len != base && len != base + MGMT_PROFILE_TAIL))
             st = 1;
         else if (a[1 + a[0]] != 1 || a[1 + a[0] + 1] != 32)
             st = 2; /* WPA2-PSK with a PMK only */
-        else
-            st = wifi_join(a + 1, a[0], a + 1 + a[0] + 2, a + 1 + a[0] + 2 + 32) ? 1 : 0;
+        else { /* without the tail (an older driver): any BSSID, no roaming */
+            const unsigned char *tail = len > base ? a + base : 0; /* cppcheck-suppress knownConditionTrueFalse ; len is base without the tail */
+            st = wifi_join(a + 1, a[0], a + 1 + a[0] + 2, a + 1 + a[0] + 2 + 32, tail ? tail[0] : 0,
+                           tail ? tail + 1 : 0) ? 1 : 0;
+        }
         *o++ = st;
         break;
+    }
     case 4: /* FORGET: drop the association and the profile. The core keeps running: a reboot would
              * recalibrate the radio in busy waits that stall USB, and wifi.c already reboots a
              * core whose transmitter wedged. */
@@ -187,6 +233,39 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
         *o++ = 0;
         o = put32(put32(put32(o, k[0]), k[1]), k[2]);
         o = put32(put32(o, netcard_dropped), netcard_to_wifi);
+        break;
+    }
+    case 15: /* EVENTS: on (1) or off (0); reply status, on. Turning them on drops older events. */
+        if (len != 1 || a[0] > 1) {
+            *o++ = 1;
+            break;
+        }
+        if (a[0] && !mgmt_events)
+            for (ev_held = 0; wifi_event_next(&ev);) {}
+        mgmt_events = a[0];
+        *o++ = 0, *o++ = (unsigned char)mgmt_events;
+        break;
+    case 16: { /* SET_REGDOM: country[2], le16 channels, le16 passive, i8 dBm; reply status, enforced */
+        int res = len != MGMT_REGDOM_LEN ? -1 :
+                  wifi_set_regdom(a, a[2] | a[3] << 8, a[4] | a[5] << 8, (signed char)a[6]);
+        *o++ = res < 0, *o++ = res > 0;
+        break;
+    }
+    case 17: { /* NV_INFO: status, count, entries (mgmt.h); read-only */
+        static uint32_t keys[MGMT_NV_MAX];
+        static unsigned lens[MGMT_NV_MAX];
+        const volatile unsigned char *nv = mgmt_nv();
+        unsigned count = nv ? pp_keys(nv, PERSPARAM_SIZE, keys, lens, MGMT_NV_MAX) : 0;
+        *o++ = !nv, *o++ = (unsigned char)count;
+        for (unsigned i = 0; i < count; i++) {
+            uint8_t v[4] = {0, 0, 0, 0};
+            if (lens[i] <= sizeof v) /* never a longer value: no passphrase or PMK leaves the BCO */
+                pp_get(nv, PERSPARAM_SIZE, keys[i], v, sizeof v);
+            o = put32(o, keys[i]);
+            *o++ = (unsigned char)lens[i], *o++ = (unsigned char)(lens[i] >> 8);
+            for (unsigned k = 0; k < sizeof v; k++)
+                *o++ = v[k];
+        }
         break;
     }
     case 12: { /* WIRED_PROBE: status (1 = no wired port in this build), then wired_probe's bytes */

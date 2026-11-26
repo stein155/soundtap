@@ -50,6 +50,38 @@ static unsigned pp_get(const volatile uint8_t *sec, unsigned size, uint32_t key,
     return hit ? hitlen : 0;
 }
 
+/* The distinct keys of the log, in the order first written, and the length of each one's newest
+ * value: up to max of them. Reads only, like pp_get, and refuses the same layouts. Returns the
+ * count, 0 for a missing or malformed log. For NV_INFO's bench read (ADR 0135). */
+static unsigned pp_keys(const volatile uint8_t *sec, unsigned size, uint32_t *keys, unsigned *lens,
+                        unsigned max)
+{
+    static const char magic[9] = "PersParam";
+    unsigned n = 0;
+    if (size < 0x20)
+        return 0;
+    for (unsigned i = 0; i < sizeof magic; i++)
+        if (sec[0x10 + i] != (uint8_t)magic[i])
+            return 0;
+    for (unsigned o = 0x20; o + 16 <= size;) {
+        uint32_t rl = pp_le32(sec + o), vl = pp_le32(sec + o + 4), kl = pp_le32(sec + o + 12);
+        unsigned i;
+        if (rl == 0xffffffffu)
+            break;
+        if (rl < 16 || kl != 4 || vl > rl || 16 + kl + vl + 4 > rl || rl > size - o)
+            return 0;
+        uint32_t k = pp_le32(sec + o + 16);
+        for (i = 0; i < n && keys[i] != k; i++) {}
+        if (i < max) {
+            if (i == n)
+                keys[n++] = k;
+            lens[i] = vl;
+        }
+        o += (rl + 3) & ~3u;
+    }
+    return n;
+}
+
 /* The device's Wi-Fi MAC from 'MAC0'. Returns 1 on a usable unicast address. */
 static int pp_wifi_mac(const volatile uint8_t *sec, unsigned size, uint8_t mac[6])
 {

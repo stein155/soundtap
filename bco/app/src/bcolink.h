@@ -27,7 +27,15 @@
  * for them and an older app never announces them (ADR 0031). */
 #define BCOLINK_CAP_FLOW     0x4u          /* FLOW: credit reports of the free Wi-Fi transmit buffers */
 #define BCOLINK_CAP_STATS    0x8u          /* LINK_STATS: the transmit and link counters */
-#define BCOLINK_CAPS (BCOLINK_CAP_AP | BCOLINK_CAP_REPLAY | BCOLINK_CAP_FLOW | BCOLINK_CAP_STATS)
+/* Standard firmware features (ADR 0135), each one off until the driver uses it. */
+#define BCOLINK_CAP_EVENTS   0x10u         /* EVENTS: link events (deauth, disassoc, beacon loss, roamed) */
+#define BCOLINK_CAP_ROAM     0x20u         /* SET_PROFILE's BSSID and roaming tail; roaming only when asked */
+#define BCOLINK_CAP_REGDOM   0x40u         /* SET_REGDOM: country, channel masks, TX power limit */
+#define BCOLINK_CAP_SCAN_SSID 0x80u        /* SCAN {1, ssid_len, ssid}: the directed probe's SSID */
+#define BCOLINK_CAP_NVINFO   0x100u        /* NV_INFO: read-only PersParam key list (bench only) */
+#define BCOLINK_CAPS (BCOLINK_CAP_AP | BCOLINK_CAP_REPLAY | BCOLINK_CAP_FLOW | BCOLINK_CAP_STATS | \
+                      BCOLINK_CAP_EVENTS | BCOLINK_CAP_ROAM | BCOLINK_CAP_REGDOM | BCOLINK_CAP_SCAN_SSID | \
+                      BCOLINK_CAP_NVINFO)
 
 #define BCOLINK_USB_VID  0x1209u           /* pid.codes; 0x0001 is its test PID: allocate one before release */
 #define BCOLINK_USB_PID  0x0001u

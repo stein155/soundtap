@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"testing"
@@ -392,5 +393,37 @@ func TestRadioCheckJudgesTheRadioNotTheGateway(t *testing.T) {
 
 	if radioCheck(noPing, counter)() {
 		t.Fatal("no counter and no ping is no evidence of a working radio")
+	}
+}
+
+// A hung ip is given up after ipTimeout, so it cannot hold the LAN watch and its BCO power
+// cycle: both of the watch's routes to ip, the static address and the lease check, return.
+func TestLANWatchGivesUpOnAHungIP(t *testing.T) {
+	dir := t.TempDir()
+
+	err := os.WriteFile(filepath.Join(dir, "ip"), []byte("#!/bin/sh\nexec /bin/sleep 600\n"), 0o700)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only the stub: no udhcpc either, so redhcp ends right after its ip call.
+	t.Setenv("PATH", dir)
+
+	for name, call := range map[string]func() error{
+		"static address": func() error {
+			return applyStatic("st-no-such-netdev", filepath.Join(dir, "missing"))
+		},
+		"lease check": func() error { return redhcp("st-no-such-netdev") },
+	} {
+		start := time.Now()
+
+		err := call()
+
+		if took := time.Since(start); took > 2*ipTimeout {
+			t.Fatalf("%s: returned after %v with a hung ip, want about %v", name, took, ipTimeout)
+		}
+
+		if err == nil {
+			t.Fatalf("%s: no error with a hung ip", name)
+		}
 	}
 }

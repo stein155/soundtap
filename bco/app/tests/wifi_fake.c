@@ -26,9 +26,14 @@ int wifi_bss(unsigned i, struct wifi_bss *o)
     o->chan = 1 + i, o->rssi = -40 - (int)i, o->sec = 1;
     return 0;
 }
+unsigned fake_join_flags;
+unsigned char fake_join_bssid[6];
 int wifi_join(const unsigned char *ssid, unsigned ssid_len, const unsigned char k[32],
-              const unsigned char s[32])
+              const unsigned char s[32], unsigned flags, const unsigned char bssid[6])
 {
+    fake_join_flags = bssid ? flags : 0xff; /* 0xff: no tail */
+    if (bssid)
+        memcpy(fake_join_bssid, bssid, 6);
     memcpy(fake_ssid, ssid, ssid_len), fake_ssid_len = ssid_len;
     memcpy(fake_pmk, k, 32), memcpy(fake_seed, s, 32);
     fake_joins++, fake_state = WIFI_JOINING;
@@ -73,3 +78,37 @@ void wifi_ap_counters(unsigned c[WIFI_AP_COUNTERS])
 unsigned fake_tx_free = WIFI_TX_BUFS - 1;
 unsigned wifi_tx_free(void) { return fake_tx_free; }
 void wifi_tx_counters(unsigned c[3]) { c[0] = 0x101, c[1] = 0x202, c[2] = 0x303; }
+
+/* The directed probe's SSID (SCAN's tail). */
+unsigned char fake_scan_ssid[32];
+unsigned fake_scan_ssid_len = 99;
+void wifi_scan_ssid(const unsigned char *ssid, unsigned n)
+{
+    fake_scan_ssid_len = n;
+    if (n)
+        memcpy(fake_scan_ssid, ssid, n);
+}
+
+/* Link events: a queue the test fills. */
+struct wifi_event fake_evq[8];
+unsigned fake_evn;
+int wifi_event_next(struct wifi_event *o)
+{
+    if (!fake_evn)
+        return 0;
+    *o = fake_evq[0];
+    memmove(fake_evq, fake_evq + 1, --fake_evn * sizeof *o);
+    return 1;
+}
+
+/* Regulatory domain. */
+unsigned char fake_cc[2];
+unsigned fake_chans, fake_passive;
+int fake_dbm;
+int wifi_set_regdom(const unsigned char cc[2], unsigned chans, unsigned passive, int max_dbm)
+{
+    if (!(chans & 0x1fff) || max_dbm < 0 || max_dbm > 30)
+        return -1;
+    memcpy(fake_cc, cc, 2), fake_chans = chans, fake_passive = passive, fake_dbm = max_dbm;
+    return 0;
+}

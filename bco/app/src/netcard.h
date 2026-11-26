@@ -15,5 +15,7 @@ void usblink_rx(unsigned ch, const unsigned char *p, unsigned n);
 void netcard_from_port(unsigned ch, const unsigned char *f, unsigned n);
 /* Send the flow-control credit report that is due (mgmt_flow_due); call once per main-loop pass. */
 void netcard_flow_poll(void);
+/* Send the link event that is due (mgmt_event_due); call once per main-loop pass. */
+void netcard_event_poll(void);
 
 extern unsigned netcard_to_wifi, netcard_to_wired, netcard_to_scm, netcard_mgmt, netcard_dropped;

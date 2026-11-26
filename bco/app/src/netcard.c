@@ -65,6 +65,15 @@ void netcard_flow_poll(void)
         mgmt_flow_lost();
 }
 
+/* Link events (mgmt.h, ADR 0135): send the one that is due, once per main-loop pass. */
+void netcard_event_poll(void)
+{
+    static unsigned char r[MGMT_HDR + MGMT_EVENT_LEN];
+    unsigned m = mgmt_event_due(r);
+    if (m && usblink_send(BCOLINK_CH_CTRL, r, m))
+        mgmt_event_lost();
+}
+
 #ifdef NETCARD_HW
 #include "board.h"
 #include "persparam.h"
@@ -72,6 +81,12 @@ void netcard_flow_poll(void)
 #include "wifi.h"
 
 extern void fault_undef(void), fault_swi(void), fault_pabort(void), fault_dabort(void);
+
+/* NV_INFO's PersParam sector: the NOR, read through its memory map as at boot, never written. */
+const volatile unsigned char *mgmt_nv(void)
+{
+    return PERSPARAM_NOR;
+}
 
 /* cppcheck-suppress unusedFunction ; app.S calls it */
 void app_fault(unsigned kind, unsigned lr, unsigned spsr)
@@ -129,6 +144,7 @@ void app_main(void)
         if (!w)
             wifi_poll(mgmt_uptime);
         netcard_flow_poll();
+        netcard_event_poll();
         wired_poll(mgmt_uptime);
     }
 }

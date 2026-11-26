@@ -19,7 +19,7 @@ static void rec(uint32_t key, const uint8_t *val, unsigned vl)
     put32(sec + at + 16, key);
     memcpy(sec + at + 20, val, vl);
     put32(sec + at + 20 + vl, 0);
-    at += rl;
+    at += (rl + 3) & ~3u; /* records start word-aligned */
 }
 
 int main(void)
@@ -40,8 +40,18 @@ int main(void)
     uint8_t v[4];
     assert(pp_get(sec, sizeof sec, PP_KEY('S', 'A', 'F', 'E'), v, 4) == 4 && !memcmp(v, x, 4));
     assert(!pp_get(sec, sizeof sec, PP_KEY('N', 'O', 'N', 'E'), v, 4));
+    /* the key list (NV_INFO): each key once, in the order first written, with its newest length */
+    uint32_t keys[4];
+    unsigned lens[4];
+    rec(PP_KEY('S', 'A', 'F', 'E'), x, 2);
+    assert(pp_keys(sec, sizeof sec, keys, lens, 4) == 3);
+    assert(keys[0] == PP_KEY('M', 'A', 'C', '0') && lens[0] == 8);
+    assert(keys[1] == PP_KEY('S', 'A', 'F', 'E') && lens[1] == 2);
+    assert(keys[2] == PP_KEY('M', 'A', 'C', '1') && lens[2] == 8);
+    assert(pp_keys(sec, sizeof sec, keys, lens, 2) == 2 && lens[1] == 2); /* no more than max */
     sec[0x20] = 3;                                         /* corrupt first length */
     assert(!pp_wifi_mac(sec, sizeof sec, mac));
+    assert(!pp_keys(sec, sizeof sec, keys, lens, 4));      /* refused, as pp_get refuses it */
     sec[0x20] = 28;
     sec[0x10] = 'X';                                       /* not a PersParam sector */
     assert(!pp_wifi_mac(sec, sizeof sec, mac));

@@ -342,6 +342,18 @@ func lanRxPackets() (uint64, bool) {
 // pingTimeout bounds lanAnswers' ping, whose own reply wait is 3 s (-W3).
 const pingTimeout = 5 * time.Second
 
+// ipTimeout bounds one ip call of the watch, as pingTimeout bounds its ping: a hung ip
+// must not hold the watch, and with it the BCO power cycle of ADR 0031.
+const ipTimeout = 5 * time.Second
+
+// ipWithin runs ip with args for at most ipTimeout.
+func ipWithin(args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), ipTimeout)
+	defer cancel()
+
+	return ip(ctx, args...)
+}
+
 // lanAnswers pings the default gateway when the own BCO link carries it. No gateway (setup
 // AP, no lease yet, stock BCO) is not a failure: there is nothing to judge.
 func lanAnswers() bool {
@@ -560,16 +572,14 @@ func applyStatic(netdev string, files ...string) error {
 		}
 	}
 
-	ctx := context.Background()
-
-	out, err := ip(ctx, "link", "set", netdev, "up")
+	out, err := ipWithin("link", "set", netdev, "up")
 	if err != nil {
 		return fmt.Errorf("%w: %s", errLinkUp, strings.TrimSpace(out))
 	}
 
-	_, _ = ip(ctx, "addr", "add", addr, "dev", netdev) // "exists" is fine; a real failure fails the route below
+	_, _ = ipWithin("addr", "add", addr, "dev", netdev) // "exists" is fine; a real failure fails the route below
 
-	out, err = ip(ctx, "route", "replace", "default", "via", gateway, "dev", netdev)
+	out, err = ipWithin("route", "replace", "default", "via", gateway, "dev", netdev)
 	if err != nil {
 		return fmt.Errorf("%w: %s", errDefaultRoute, strings.TrimSpace(out))
 	}
@@ -589,7 +599,7 @@ func applyStatic(netdev string, files ...string) error {
 // asking again. Without an address on n, it is replaced by a fresh one. After a BCO reflash
 // on 2026-10-07 the ST20 stayed off the LAN for want of exactly this.
 func redhcp(netdev string) error {
-	addr, _ := ip(context.Background(), "-4", "addr", "show", "dev", netdev)
+	addr, _ := ipWithin("-4", "addr", "show", "dev", netdev)
 	if strings.Contains(addr, "inet ") {
 		return nil
 	}

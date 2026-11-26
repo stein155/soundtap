@@ -8,6 +8,7 @@
 #include "bcolink.h"
 #include "mgmt.h"
 #include "netcard.h"
+#include "wifi.h"
 
 static unsigned sent_ch, sent_n, radio_n, link_busy;
 static unsigned char sent[BCOLINK_MAX];
@@ -85,6 +86,23 @@ int main(void)
     netcard_flow_poll();
     assert(sent_ch == BCOLINK_CH_CTRL && sent_n == MGMT_HDR + MGMT_FLOW_LEN && sent[1] == (13 | 0x80) &&
            sent[2] == 0 && sent[3] == 0 && sent[MGMT_HDR + 1] == fake_tx_free && sent[MGMT_HDR + 4] == 4);
+    /* link events: on when the driver asks; one the link refuses is sent again, once */
+    extern struct wifi_event fake_evq[8];
+    extern unsigned fake_evn;
+    unsigned char evon[MGMT_HDR + 1] = {1, 15, 0, 11, 0, 1, 1};
+    usblink_rx(BCOLINK_CH_CTRL, evon, sizeof evon);
+    assert(sent_ch == BCOLINK_CH_CTRL && sent[1] == (15 | 0x80) && sent[MGMT_HDR + 1] == 1 && mgmt_events);
+    fake_evq[0] = (struct wifi_event){.type = WIFI_EV_BEACON_LOSS, .chan = 6};
+    fake_evn = 1;
+    link_busy = 1;
+    netcard_event_poll();
+    link_busy = 0, sent_n = 0;
+    netcard_event_poll();
+    assert(sent_ch == BCOLINK_CH_CTRL && sent_n == MGMT_HDR + MGMT_EVENT_LEN && sent[1] == (15 | 0x80) &&
+           sent[2] == 0 && sent[3] == 0 && sent[MGMT_HDR + 1] == MGMT_EV_BEACON_LOSS && sent[MGMT_HDR + 10] == 6);
+    sent_n = 0;
+    netcard_event_poll();
+    assert(sent_n == 0);
     puts("netcard ok");
     return 0;
 }

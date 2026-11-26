@@ -29,6 +29,35 @@ static unsigned ask(unsigned char t, const unsigned char *pl, unsigned pn, unsig
     return send(t, pl, pn, r);
 }
 #define again send
+
+/* A PersParam sector for NV_INFO: the MAC, a one-byte setting and a 32-byte secret. */
+#include "persparam.h"
+static uint8_t nv[PERSPARAM_SIZE];
+static unsigned nv_at = 0x20, nv_present = 1;
+static void nv_rec(uint32_t key, const uint8_t *val, unsigned vl)
+{
+    unsigned rl = 16 + 4 + vl + 4;
+    const uint32_t w[5] = {rl, vl, 0, 4, key};
+    for (unsigned i = 0; i < 20; i++)
+        nv[nv_at + i] = w[i / 4] >> 8 * (i % 4);
+    memcpy(nv + nv_at + 20, val, vl);
+    memset(nv + nv_at + 20 + vl, 0, 4);
+    nv_at += (rl + 3) & ~3u; /* records start word-aligned */
+}
+const volatile unsigned char *mgmt_nv(void)
+{
+    if (nv_at == 0x20) {
+        memset(nv, 0xff, sizeof nv);
+        memcpy(nv + 0x10, "PersParam", 9);
+        nv_rec(PP_KEY('M', 'A', 'C', '0'), (const uint8_t *)"\x00\x0c\x8a\x01\x02\x03\x00\x00", 8);
+        nv_rec(PP_KEY('A', 'N', 'T', 'X'), (const uint8_t *)"\x01", 1);
+        uint8_t secret[32];
+        memset(secret, 0x5a, sizeof secret);
+        nv_rec(PP_KEY('W', 'P', 'S', 'K'), secret, sizeof secret);
+        nv_rec(PP_KEY('A', 'N', 'T', 'X'), (const uint8_t *)"\x02", 1); /* the newest value counts */
+    }
+    return nv_present ? nv : 0;
+}
 int main(void)
 {
     unsigned char r[MGMT_MAX]; unsigned n;
@@ -37,9 +66,11 @@ int main(void)
     n = ask(1, 0, 0, r); /* HELLO: status, ver_len, ver, wifi mac, state, uptime, proto, caps */
     assert(n == MGMT_HDR + 24 && r[1] == 0x81 && r[3] == 8 && r[5] == 24 && r[6] == 0 && r[7] == 6 &&
            !memcmp(r + 8, "link-2", 6) && !memcmp(r + 14, mgmt_wifi_mac, 6) && r[21] == 4 &&
-           r[24] == 1 && r[25] == BCOLINK_PROTO &&
-           r[26] == (BCOLINK_CAP_AP | BCOLINK_CAP_REPLAY | BCOLINK_CAP_FLOW | BCOLINK_CAP_STATS) &&
-           r[27] == 0 && r[29] == 0);
+           r[24] == 1 && r[25] == BCOLINK_PROTO && le32(r + 26) == BCOLINK_CAPS &&
+           (BCOLINK_CAPS & (BCOLINK_CAP_AP | BCOLINK_CAP_REPLAY | BCOLINK_CAP_FLOW | BCOLINK_CAP_STATS |
+                            BCOLINK_CAP_EVENTS | BCOLINK_CAP_ROAM | BCOLINK_CAP_REGDOM |
+                            BCOLINK_CAP_SCAN_SSID | BCOLINK_CAP_NVINFO)) == BCOLINK_CAPS &&
+           BCOLINK_CAPS == 0x1ff);
     n = ask(5, 0, 0, r); assert(r[6] == 0 && r[7] == WIFI_IDLE && r[8] == 0 && n == MGMT_HDR + 11);
 
     /* scan: start -> still scanning (3), poll -> results */
@@ -54,13 +85,26 @@ int main(void)
     assert(r[21] == 3 && !memcmp(r + 22, "ap1", 3) && r[31] == 2);     /* entry 1 */
     fake_nbss = 24;
     n = ask(2, 0, 0, r); assert(r[7] == 24 && n <= MGMT_MAX);
+    /* SCAN naming an SSID (BCOLINK_CAP_SCAN_SSID): the directed probe looks for it */
+    extern unsigned char fake_scan_ssid[32];
+    extern unsigned fake_scan_ssid_len;
+    const unsigned char dir[] = {1, 3, 'H', 'i', 'd'};
+    ask(2, dir, sizeof dir, r); assert(fake_scan_ssid_len == 3 && !memcmp(fake_scan_ssid, "Hid", 3));
+    ask(2, dir, 4, r); assert(fake_scan_ssid_len == 0);                /* cut short: none */
+    ask(2, dir, 2, r); assert(fake_scan_ssid_len == 0);
+    fake_scan_ssid_len = 99;
+    ask(2, 0, 0, r); assert(fake_scan_ssid_len == 99);                  /* a poll leaves it */
+    ask(2, &one, 1, r); assert(fake_scan_ssid_len == 0);                /* a start without one clears it */
+    fake_scanning = 0;
 
     /* profile: ssid, security 1, the 32-byte PMK, the 32-byte seed */
     unsigned char sp[1 + 4 + 2 + 32 + 32] = {4, 't', 'e', 's', 't', 1, 32};
     memset(sp + 7, 0xab, 32), memset(sp + 39, 0xcd, 32);
+    extern unsigned fake_join_flags;
+    extern unsigned char fake_join_bssid[6];
     ask(3, sp, sizeof sp, r);
     assert(r[6] == 0 && fake_joins == 1 && fake_ssid_len == 4 && fake_pmk[31] == 0xab &&
-           fake_seed[0] == 0xcd);
+           fake_seed[0] == 0xcd && fake_join_flags == 0xff);             /* no tail: no BSSID, no roaming */
     /* the reply got lost: the driver resends with the same seq and must not join twice */
     unsigned char first[MGMT_MAX]; memcpy(first, r, MGMT_HDR + 1);
     n = again(3, sp, sizeof sp, r);
@@ -71,9 +115,19 @@ int main(void)
            (signed char)r[20] == -50);
     for (unsigned i = 0; i + 4 <= n; i++) assert(memcmp(r + i, "\xab\xab\xab\xab", 4)); /* PMK never echoed */
     ask(3, sp, sizeof sp - 1, r); assert(r[6] == 1);              /* no seed */
+    /* the tail (BCOLINK_CAP_ROAM): flags and the BSSID */
+    unsigned char spt[sizeof sp + MGMT_PROFILE_TAIL];
+    memcpy(spt, sp, sizeof sp);
+    spt[sizeof sp] = MGMT_PROFILE_BSSID_HINT | MGMT_PROFILE_ROAM;
+    memcpy(spt + sizeof sp + 1, "\x02\x00\x00\x00\x00\x42", 6);
+    ask(3, spt, sizeof spt, r);
+    assert(r[6] == 0 && fake_joins == 2 && fake_join_flags == (MGMT_PROFILE_BSSID_HINT | MGMT_PROFILE_ROAM) &&
+           fake_join_bssid[5] == 0x42);
+    ask(3, spt, sizeof spt - 1, r); assert(r[6] == 1 && fake_joins == 2); /* a short tail */
     sp[5] = 0; ask(3, sp, sizeof sp, r); assert(r[6] == 2);       /* open: unsupported */
     sp[5] = 1, sp[0] = 0; ask(3, sp, sizeof sp, r); assert(r[6] == 1); /* empty ssid */
-    assert(fake_joins == 1);
+    ask(3, sp, 0, r); assert(r[6] == 1);                           /* no payload at all */
+    assert(fake_joins == 2);
     ask(4, 0, 0, r); assert(r[6] == 0 && fake_leaves == 1);
     assert(fake_resets == 0); /* FORGET leaves the network; the core keeps running */
     ask(5, 0, 0, r); assert(r[7] == WIFI_IDLE && r[8] == 0);
@@ -126,10 +180,59 @@ int main(void)
     fake_tx_free = 6, mgmt_uptime += 1000;
     assert(mgmt_flow_due(rep) == 0);                                   /* off: no reports */
 
-    n = ask(99, 0, 0, r); assert(r[6] == 0xff && r[1] == (99 | 0x80));
+    /* EVENTS: nothing unasked until the driver asks; then each event once, a lost one again */
+    extern struct wifi_event fake_evq[8];
+    extern unsigned fake_evn;
+    unsigned char evm[MGMT_HDR + MGMT_EVENT_LEN];
+    fake_evq[0] = (struct wifi_event){.type = WIFI_EV_BEACON_LOSS};
+    fake_evn = 1;
+    assert(!mgmt_events && mgmt_event_due(evm) == 0 && fake_evn == 1);
+    n = ask(15, &on, 1, r);
+    assert(n == MGMT_HDR + MGMT_EVENTS_REPLY_LEN && r[1] == (15 | 0x80) && r[6] == 0 && r[7] == 1 &&
+           mgmt_events && fake_evn == 0);                             /* older events dropped */
+    again(15, &off, 1, r);                                             /* a resend: the kept reply */
+    assert(mgmt_events && r[7] == 1);
+    assert(mgmt_event_due(evm) == 0);
+    fake_evq[0] = (struct wifi_event){.type = WIFI_EV_DEAUTH, .bssid = {2, 0, 0, 0, 0, 9}, .chan = 11,
+                                      .reason = 0x0103, .rssi = -61};
+    fake_evq[1] = (struct wifi_event){.type = WIFI_EV_ROAMED, .bssid = {2, 0, 0, 0, 0, 10}, .chan = 1};
+    fake_evn = 2;
+    assert(mgmt_event_due(evm) == MGMT_HDR + MGMT_EVENT_LEN);
+    assert(evm[0] == 1 && evm[1] == (15 | 0x80) && evm[2] == 0 && evm[3] == 0 && evm[5] == MGMT_EVENT_LEN &&
+           evm[6] == 0 && evm[7] == MGMT_EV_DEAUTH && evm[8] == 3 && evm[9] == 1 && evm[15] == 9 &&
+           evm[16] == 11 && (signed char)evm[17] == -61);
+    mgmt_event_lost();                                                 /* the link could not take it */
+    assert(mgmt_event_due(evm) && evm[7] == MGMT_EV_DEAUTH);
+    assert(mgmt_event_due(evm) && evm[7] == MGMT_EV_ROAMED && evm[15] == 10);
+    assert(mgmt_event_due(evm) == 0);
+    ask(15, &bad, 1, r); assert(r[6] == 1);
+    ask(15, &off, 1, r); assert(r[6] == 0 && r[7] == 0 && !mgmt_events);
+
+    /* SET_REGDOM: country, channels, passive, dBm; the reply says the limit is not enforced */
+    extern unsigned char fake_cc[2];
+    extern unsigned fake_chans, fake_passive;
+    extern int fake_dbm;
+    const unsigned char rd[MGMT_REGDOM_LEN] = {'N', 'L', 0xff, 0x1f, 0x00, 0x18, 20};
+    n = ask(16, rd, sizeof rd, r);
+    assert(n == MGMT_HDR + 2 && r[6] == 0 && r[7] == 0 && !memcmp(fake_cc, "NL", 2) &&
+           fake_chans == 0x1fff && fake_passive == 0x1800 && fake_dbm == 20);
+    ask(16, rd, sizeof rd - 1, r); assert(r[6] == 1);                 /* short */
+    const unsigned char rd0[MGMT_REGDOM_LEN] = {'N', 'L', 0, 0, 0, 0, 20};
+    ask(16, rd0, sizeof rd0, r); assert(r[6] == 1 && fake_chans == 0x1fff); /* no channel: refused */
+
+    ask(99, 0, 0, r); assert(r[6] == 0xff && r[1] == (99 | 0x80));
     unsigned char q[8] = {2, 1, 0, 0, 0, 0}; assert(mgmt_handle(q, 6, r) == 0); /* wrong version */
     q[0] = 1, q[5] = 9; assert(mgmt_handle(q, 8, r) == 0);                      /* length past the end */
     assert(mgmt_handle(q, 3, r) == 0);                                            /* short */
+    /* NV_INFO: keys and lengths; a value only when it is at most 4 bytes */
+    n = ask(17, 0, 0, r);
+    assert(r[1] == (17 | 0x80) && r[6] == 0 && r[7] == 3 && n == MGMT_HDR + 2 + 3 * MGMT_NV_ENTRY);
+    assert(le32(r + 8) == PP_KEY('M', 'A', 'C', '0') && r[12] == 8 && r[13] == 0 && !le32(r + 14));
+    assert(le32(r + 18) == PP_KEY('A', 'N', 'T', 'X') && r[22] == 1 && r[24] == 2 && !r[25]);
+    assert(le32(r + 28) == PP_KEY('W', 'P', 'S', 'K') && r[32] == 32 && !le32(r + 34));
+    for (unsigned i = 0; i + 4 <= n; i++) assert(memcmp(r + i, "\x5a\x5a\x5a\x5a", 4)); /* the long secret never */
+    nv_present = 0;
+    n = ask(17, 0, 0, r); assert(n == MGMT_HDR + 2 && r[6] == 1 && r[7] == 0);
     puts("mgmt ok");
     return 0;
 }

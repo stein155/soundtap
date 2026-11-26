@@ -119,7 +119,10 @@ radio stays off). `src/mgmt.c` serves the control messages of ADR 0031 on channe
 (async, poll until status 0), SET_PROFILE (SSID, PMK, 32 random bytes for the SNonce), FORGET
 and STATUS, plus the setup AP of ADR 0031. On the SCM, `soundtap_bco` turns that into a
 cfg80211 `wlan0` for `wpa_supplicant`; the PSK never reaches the BCO, only the PMK. The 4-way
-and group handshakes run in `src/wpa.c`.
+and group handshakes run in `src/wpa.c`. The link events, roaming within the SSID, the regulatory
+domain, the SCAN's SSID and the read-only PersParam listing (EVENTS, SET_PROFILE's tail,
+SET_REGDOM, NV_INFO) are ADR 0135's; `tests/wifi_roam_test.c` runs them against the real
+`wifi.c`.
 
 The card's clock is the host's 1 ms USB frame number (`usblink_ms`): the timer IRQ does not fire
 after `usblink_init`'s clock replay. USB starts before the radio because that replay also
