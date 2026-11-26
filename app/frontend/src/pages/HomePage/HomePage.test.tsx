@@ -106,6 +106,22 @@ describe('HomePage', () => {
     expect(await screen.findByRole('region', { name: 'Settings' })).toBeInTheDocument();
   }, 30000);
 
+  it('the menu marks Settings, not Just for You, while the settings are open', async () => {
+    render(<App />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Menu' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Settings' }));
+    await screen.findByRole('region', { name: 'Settings' });
+    await userEvent.click(await screen.findByRole('button', { name: 'Menu' }));
+    const menu = await screen.findByRole('dialog', { name: 'Menu' });
+    expect(within(menu).getByRole('button', { name: 'Settings' })).toHaveAttribute(
+      'aria-current',
+      'page'
+    );
+    expect(within(menu).getByRole('button', { name: 'Just for You' })).not.toHaveAttribute(
+      'aria-current'
+    );
+  }, 30000);
+
   it('the volume icon on the speaker bar opens the volume panel, not the speakers', async () => {
     render(<App />);
     await userEvent.click(await screen.findByRole('button', { name: /^Volume / }));

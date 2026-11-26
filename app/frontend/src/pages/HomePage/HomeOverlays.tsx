@@ -8,7 +8,7 @@ import { OfflinePage } from '../../components/organisms/OfflinePage';
 import { useLongLost } from './useLongLost';
 import { Toast } from '../../components/molecules/Toast';
 import { TopLayer } from '../../components/molecules/TopLayer';
-import { DrawerMenu } from '../../components/organisms/DrawerMenu';
+import { DrawerMenu, type DrawerPage } from '../../components/organisms/DrawerMenu';
 import type { useErrorReporter } from '../../hooks/useErrorReporter';
 import type { SelectedRoom } from '../../hooks/useSelectedRoom';
 import { useI18n } from '../../lib/i18n';
@@ -64,6 +64,14 @@ function Notices({
   );
 }
 
+// The main page on screen, in the order SourcePage picks it: the menu marks its row.
+function drawerAt({ open, mediaServers, search }: Layers): DrawerPage | undefined {
+  if (open.settings) return 'settings';
+  if (mediaServers) return 'mediaservers';
+  if (search) return search.service || 'tunein';
+  return undefined;
+}
+
 // Everything above the page: the connection banner and toast, the menu and the player's
 // layers. Settings and the sources are main pages (SourcePage).
 export function HomeOverlays({
@@ -75,7 +83,6 @@ export function HomeOverlays({
   const {
     open,
     hide,
-    search,
     setSearch,
     setAllRecent,
     setMediaServers,
@@ -95,8 +102,9 @@ export function HomeOverlays({
       <DrawerMenu
         open={open.drawer}
         onClose={() => hide('drawer')}
-        at={search ? search.service || 'tunein' : undefined}
+        at={drawerAt(layers)}
         onRecent={() => {
+          hide('settings');
           setSearch(null);
           setAllRecent(false);
           setMediaServers(false);

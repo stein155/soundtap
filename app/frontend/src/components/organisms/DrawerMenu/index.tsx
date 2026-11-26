@@ -40,11 +40,14 @@ function Row({
 // The drawer's exit animation (home.css).
 const DRAWER_EXIT_MS = 200;
 
+// The main pages the menu goes to, besides the start page (Just for You).
+export type DrawerPage = 'spotify' | 'tunein' | 'mediaservers' | 'settings';
+
 interface Props {
   open: boolean;
   onClose: () => void;
-  // The main page showing: the start page unless a source is open.
-  at?: 'spotify' | 'tunein' | undefined;
+  // The main page showing: the start page unless a source or the settings are open.
+  at?: DrawerPage | undefined;
   onRecent: () => void;
   onSpotify: () => void;
   onTuneIn: () => void;
@@ -102,11 +105,15 @@ export function DrawerMenu({
         >
           TuneIn
         </Row>
-        <Row icon={<Icon.folder />} onPress={() => go(onMediaServers)}>
+        <Row
+          icon={<Icon.folder />}
+          active={at === 'mediaservers'}
+          onPress={() => go(onMediaServers)}
+        >
           {t('page_mediaservers')}
         </Row>
         <hr />
-        <Row icon={<Icon.settings />} onPress={() => go(onSettings)}>
+        <Row icon={<Icon.settings />} active={at === 'settings'} onPress={() => go(onSettings)}>
           {t('settings')}
         </Row>
       </nav>

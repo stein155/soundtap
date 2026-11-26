@@ -34,4 +34,25 @@ describe('DrawerMenu', () => {
     expect(on.onSpotify).toHaveBeenCalledTimes(1);
     vi.useRealTimers();
   });
+
+  it('marks the row of the page on screen, Settings and the media servers included', () => {
+    const on = {
+      onRecent: vi.fn(),
+      onSpotify: vi.fn(),
+      onTuneIn: vi.fn(),
+      onMediaServers: vi.fn(),
+      onSettings: vi.fn(),
+    };
+    const current = (view: ReturnType<typeof renderWithI18n>) =>
+      view
+        .getAllByRole('button')
+        .filter((b) => b.getAttribute('aria-current') === 'page')
+        .map((b) => b.textContent);
+    const view = renderWithI18n(<DrawerMenu open onClose={vi.fn()} at="settings" {...on} />);
+    expect(current(view)).toEqual(['Settings']);
+    view.rerender(<DrawerMenu open onClose={vi.fn()} at="mediaservers" {...on} />);
+    expect(current(view)).toEqual(['Media servers']);
+    view.rerender(<DrawerMenu open onClose={vi.fn()} {...on} />);
+    expect(current(view)).toEqual(['Just for You']);
+  });
 });
