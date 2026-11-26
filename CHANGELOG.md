@@ -10,9 +10,36 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
 
 ## [Unreleased]
 
+## [app-v0.1.0-alpha.5] - 2026-11-26
+
+- The SoundTap app that SoundTap Core 0.1.0-alpha.5 carries; what it changes is listed under
+  that release.
+
+## [os-v0.1.0-alpha.5] - 2026-11-26
+
+The fifth alpha of SoundTap Core 0.1.0.
+
+### Added
+
+- **A Sound page for each speaker**: a Sound row at the top of the Speaker group opens the
+  speaker's sound settings: bass and the stereo output, or on the SoundTouch 300 its tone,
+  audio mode, TV settings, extra speakers and ADAPTiQ.
+- **A launch screen**: the app opens on the SoundTap mark while it loads, in light and dark.
+
+### Changed
+
+- **Every speaker serves the same app**: settings no longer single out the speaker you
+  opened the page on as "this speaker".
+
+### Fixed
+
 - **SoundTouch 20: steadier Wi-Fi while streaming**: its network chip no longer stops to write
   diagnostics, it connects to the strongest access point of your network rather than the one it
   heard most often, and leaving a network no longer restarts its Wi-Fi radio.
+- **SoundTouch 20: a dark display in standby with the clock off**, instead of "Connecting…".
+- **The menu marks the page you are on**, Settings and Media servers included.
+- **Quieter logs**: a device on the network that is no media server, and Bluetooth's own
+  messages, are logged once.
 
 ## [app-v0.1.0-alpha.4] - 2026-11-25
 
