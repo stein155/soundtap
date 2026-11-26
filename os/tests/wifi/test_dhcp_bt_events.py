@@ -15,10 +15,22 @@ HOOK = OVERLAY / "usr/share/udhcpc/default.script.d/soundtap-log"
 
 
 def code_lines(path: Path) -> Iterator[str]:
-    """Yield the lines of path that are not comments."""
+    """Yield the lines of path that are not comments, a Go call split over lines as one.
+
+    A line that ends in an open argument list (a trailing comma or parenthesis) is joined
+    with the lines that follow it, so a long exec.Command reads as one call.
+    """
+    pending = ""
     for line in path.read_text().splitlines():
-        if not line.lstrip().startswith(("#", "//")):
-            yield line
+        if line.lstrip().startswith(("#", "//")):
+            continue
+        pending = f"{pending} {line.strip()}" if pending else line
+        if path.suffix == ".go" and pending.rstrip().endswith((",", "(")):
+            continue
+        yield pending
+        pending = ""
+    if pending:
+        yield pending
 
 
 class DhcpTest(unittest.TestCase):

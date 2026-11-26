@@ -6,9 +6,11 @@ package hw
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"time"
 
@@ -50,9 +52,17 @@ const (
 	// "fast blink" and "slow blink" in Bose's own log lines.
 	wlaFastBlinkMS = 350
 	wlaSlowBlinkMS = 700
+	// wlaSolidMS is the length of a solid lamp's one step; it never changes level.
+	wlaSolidMS = 1000
+	// wlaLeastChanging is the fewest steps an animation that changes level has.
+	wlaLeastChanging = 2
+	// wlaLEDMode is the mode a lamp file would be created with; the kernel's files exist.
+	wlaLEDMode = 0o644
+	// wlaLEDDir is the gpio-leds tree.
+	wlaLEDDir = "/sys/class/leds"
 )
 
-func wlaSolid(level int) []wlaStep { return []wlaStep{{ms: 1000, level: level}} }
+func wlaSolid(level int) []wlaStep { return []wlaStep{{ms: wlaSolidMS, level: level}} }
 
 func wlaBlink(ms, level int) []wlaStep {
 	return []wlaStep{{ms: ms, level: level}, {ms: ms, level: 0}}
@@ -61,9 +71,9 @@ func wlaBlink(ms, level int) []wlaStep {
 // wlaLEDPattern is the whole of CLedViewBinkyInterface::SetLed that this box can
 // reach: the Wi-Fi lamp reports the network and the update, the Bluetooth lamp
 // reports the source.
-func wlaLEDPattern(st speakerstate.StatusSnapshot, link Link, booting, updating, confirming bool) wlaLEDs {
+func wlaLEDPattern(snap *speakerstate.StatusSnapshot, link Link, booting, updating, confirming bool) wlaLEDs {
 	level := wlaOnLevel
-	if st.Standby {
+	if snap.Standby {
 		level = wlaStandbyLevel
 	}
 
@@ -95,7 +105,7 @@ func wlaLEDPattern(st speakerstate.StatusSnapshot, link Link, booting, updating,
 	// copy: blue is a plain GPIO here and can only blink. Everything else about the
 	// Bluetooth lamp is stock's: solid white when a device is connected and playing,
 	// dark for every other source.
-	if !st.Standby && st.Source == sourceBluetooth {
+	if !snap.Standby && snap.Source == sourceBluetooth {
 		// A transport key wins for the length of one blink. Every one of stock's
 		// transport states -- play/pause/stop, next/prev, mute, and "that did
 		// nothing" -- builds the same 250 ms dark, 250 ms lit pattern and hands it
@@ -103,10 +113,10 @@ func wlaLEDPattern(st speakerstate.StatusSnapshot, link Link, booting, updating,
 		// steady states use. So it is one blink over the top of whatever the lamp
 		// was showing, and the window in speakerstate is its length.
 		switch {
-		case st.TransportAck:
+		case snap.TransportAck:
 			leds.btBlue = nil
 			leds.btWhite = []wlaStep{{250, 0}, {250, wlaOnLevel}}
-		case st.PlayStatus == playing:
+		case snap.PlayStatus == playing:
 			leds.btWhite = wlaSolid(wlaOnLevel)
 		default:
 			leds.btBlue = wlaBlink(wlaSlowBlinkMS, wlaOnLevel)
@@ -128,13 +138,13 @@ func wlaLevelAt(steps []wlaStep, elapsed time.Duration) int {
 		return 0
 	}
 
-	at := int(elapsed.Milliseconds()) % total
+	into := int(elapsed.Milliseconds()) % total
 	for _, s := range steps {
-		if at < s.ms {
+		if into < s.ms {
 			return s.level
 		}
 
-		at -= s.ms
+		into -= s.ms
 	}
 
 	return 0
@@ -143,7 +153,7 @@ func wlaLevelAt(steps []wlaStep, elapsed time.Duration) int {
 // wlaChannels pairs each field with the gpio-leds label the device tree gives it.
 // Only the Wi-Fi white channel takes a percentage; the other three are plain GPIOs
 // whose brightness file accepts 0 or 1, so any non-zero level is simply "on".
-func wlaChannels(leds wlaLEDs) []struct {
+func wlaChannels(leds *wlaLEDs) []struct {
 	label string
 	steps []wlaStep
 	pwm   bool
@@ -168,22 +178,34 @@ func wlaWriteLevel(ledDir, label string, level int, pwm bool) error {
 		value = strconv.Itoa(level)
 	case level > 0:
 		value = "1"
+	default:
+		// A dark plain GPIO lamp: 0.
 	}
 
-	return os.WriteFile(filepath.Join(ledDir, label, "brightness"), []byte(value), 0o644) //nolint:gosec // G703: /sys/class/leds, or LEDS
+	brightness := filepath.Join(ledDir, label, "brightness")
+
+	err := os.WriteFile(brightness, []byte(value), wlaLEDMode) //nolint:gosec // G703: /sys/class/leds, or LEDS
+	if err != nil {
+		return fmt.Errorf("lamp %s: %w", label, err)
+	}
+
+	return nil
 }
 
 // RunWLALEDs drives the Wireless Link's two lamps from st until ctx ends.
 //
 // It wakes on the step boundaries of whatever is blinking, because the animations are
 // described in milliseconds rather than in blinks (the shortest leg stock uses is 250 ms).
-func RunWLALEDs(ctx context.Context, st LampStatus, log *slog.Logger) {
+func RunWLALEDs(ctx context.Context, status LampStatus, log *slog.Logger) {
 	ledDir := os.Getenv("LEDS")
 	if ledDir == "" {
-		ledDir = "/sys/class/leds"
+		ledDir = wlaLEDDir
 	}
 
-	if _, err := os.Stat(filepath.Join(ledDir, "wla:white:wifi", "brightness")); err != nil { //nolint:gosec // G703: /sys/class/leds, or LEDS
+	brightness := filepath.Join(ledDir, "wla:white:wifi", "brightness")
+
+	_, err := os.Stat(brightness) //nolint:gosec // G703: /sys/class/leds, or LEDS
+	if err != nil {
 		// An older device tree with no LED nodes. Say so once: four silent write
 		// failures per tick is not a diagnosis.
 		log.Info("leds", "dir", ledDir, "note", "no wla lamps in this device tree")
@@ -207,7 +229,7 @@ func RunWLALEDs(ctx context.Context, st LampStatus, log *slog.Logger) {
 		linkAt time.Time
 	)
 
-	changed := st.Changed()
+	changed := status.Changed()
 
 	for {
 		select {
@@ -217,33 +239,35 @@ func RunWLALEDs(ctx context.Context, st LampStatus, log *slog.Logger) {
 		case <-wait.C:
 		}
 
-		changed = st.Changed()
+		changed = status.Changed()
 		// The link probe dials UDP and reads pidfiles; at the 50 ms blink tick that was
 		// real load on the single-core Wireless Link. Once a second is plenty for a lamp.
 		if time.Since(linkAt) >= time.Second {
-			link, linkAt = ReadLink(st.HaveIP), time.Now()
+			link, linkAt = ReadLink(status.HaveIP), time.Now()
 		}
 
-		next := wlaLEDPattern(st.StatusSnapshot(), link, !st.Up(), st.Updating(), st.Confirming())
-		if !haveLast || !sameWLALEDs(next, current) {
+		snapshot := status.StatusSnapshot()
+
+		next := wlaLEDPattern(&snapshot, link, !status.Up(), status.Updating(), status.Confirming())
+		if !haveLast || !sameWLALEDs(&next, &current) {
 			// A new pattern starts at its first step, not wherever the old one was:
 			// otherwise a lamp that has just been told to blink can begin dark for
 			// most of its first period.
 			current, started, haveLast = next, time.Now(), true
 		}
 
-		err := wlaWriteLevels(ledDir, current, time.Since(started), last)
+		err = wlaWriteLevels(ledDir, &current, time.Since(started), last)
 		if err != nil {
 			log.Warn("led write", "dir", ledDir, "err", err)
 		}
 
-		wait.Reset(wlaSleep(current, time.Since(started)))
+		wait.Reset(wlaSleep(&current, time.Since(started)))
 	}
 }
 
 // wlaWriteLevels writes each channel's level elapsed into its animation, where it differs
 // from the level last holds for it.
-func wlaWriteLevels(ledDir string, leds wlaLEDs, elapsed time.Duration, last map[string]int) error {
+func wlaWriteLevels(ledDir string, leds *wlaLEDs, elapsed time.Duration, last map[string]int) error {
 	errs := []error{}
 
 	for _, channel := range wlaChannels(leds) {
@@ -262,7 +286,7 @@ func wlaWriteLevels(ledDir string, leds wlaLEDs, elapsed time.Duration, last map
 // wlaSleep is how long the loop sleeps: until a blinking lamp's next step, a state change,
 // or a second at most. The link, the daemon and an update are not state changes and are
 // polled. A steady pattern used to wake this loop 20 times a second for nothing.
-func wlaSleep(leds wlaLEDs, elapsed time.Duration) time.Duration {
+func wlaSleep(leds *wlaLEDs, elapsed time.Duration) time.Duration {
 	sleep := time.Second
 	for _, channel := range wlaChannels(leds) {
 		if d := wlaNextStep(channel.steps, elapsed); d > 0 && d < sleep {
@@ -276,7 +300,7 @@ func wlaSleep(leds wlaLEDs, elapsed time.Duration) time.Duration {
 // wlaNextStep is how long until a channel's level may change, or 0 when it never does
 // (dark or solid).
 func wlaNextStep(steps []wlaStep, elapsed time.Duration) time.Duration {
-	if len(steps) < 2 {
+	if len(steps) < wlaLeastChanging {
 		return 0
 	}
 
@@ -289,33 +313,23 @@ func wlaNextStep(steps []wlaStep, elapsed time.Duration) time.Duration {
 		return 0
 	}
 
-	at := int(elapsed.Milliseconds()) % total
+	into := int(elapsed.Milliseconds()) % total
 	for _, s := range steps {
-		if at < s.ms {
-			return time.Duration(s.ms-at) * time.Millisecond
+		if into < s.ms {
+			return time.Duration(s.ms-into) * time.Millisecond
 		}
 
-		at -= s.ms
+		into -= s.ms
 	}
 
 	return time.Millisecond
 }
 
-func sameWLALEDs(a, b wlaLEDs) bool {
-	return sameWLASteps(a.wifiWhite, b.wifiWhite) && sameWLASteps(a.wifiAmber, b.wifiAmber) &&
-		sameWLASteps(a.btWhite, b.btWhite) && sameWLASteps(a.btBlue, b.btBlue)
+func sameWLALEDs(left, right *wlaLEDs) bool {
+	return sameWLASteps(left.wifiWhite, right.wifiWhite) && sameWLASteps(left.wifiAmber, right.wifiAmber) &&
+		sameWLASteps(left.btWhite, right.btWhite) && sameWLASteps(left.btBlue, right.btBlue)
 }
 
-func sameWLASteps(a, b []wlaStep) bool {
-	if len(a) != len(b) {
-		return false
-	}
-
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-
-	return true
+func sameWLASteps(left, right []wlaStep) bool {
+	return slices.Equal(left, right)
 }

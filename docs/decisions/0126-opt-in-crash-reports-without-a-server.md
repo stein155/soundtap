@@ -71,6 +71,6 @@ reports on by default with an opt-out (the owner decided against anything leavin
 
 - `app/internal/web/crashreport.go`: `getCrashReport`, `postCrashReport`, `findCrashes` and the
   report text (`crashHead`, `crashIssue`).
-- `app/internal/settings/settings.go:CrashReports`: the opt-in and the handled ids.
+- `app/internal/settings/crashreports.go:CrashReports`: the opt-in and the handled ids.
 - `app/internal/counters`: the daemons' crash loops, recorded by `app/internal/supervise`.
 - `app/frontend/src/components/organisms/settings/CrashReport`: the notice, the preview and the switch.

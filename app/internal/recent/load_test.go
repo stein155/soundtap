@@ -15,16 +15,18 @@ import (
 )
 
 func TestMissingFileStartsEmptyAndWritable(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "recent.json")
 
-	s := recent.Open(path)
+	store := recent.Open(path)
 
-	err := s.LoadErr()
-	if err != nil || len(s.All()) != 0 {
-		t.Fatalf("Open = %v, %v; want empty and no error", s.All(), err)
+	err := store.LoadErr()
+	if err != nil || len(store.All()) != 0 {
+		t.Fatalf("Open = %v, %v; want empty and no error", store.All(), err)
 	}
 
-	err = s.Record(recent.Entry{Source: "TUNEIN", Location: "s1"})
+	err = store.Record(*station("", "s1", ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,6 +39,8 @@ func TestMissingFileStartsEmptyAndWritable(t *testing.T) {
 // recent.json as a directory (EISDIR): the list starts empty, but no write may go
 // through, and the reason is on the store for the support bundle.
 func TestUnreadableDirectoryRefusesWrites(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "recent.json")
 
 	err := os.Mkdir(path, 0o700)
@@ -44,23 +48,24 @@ func TestUnreadableDirectoryRefusesWrites(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := recent.Open(path)
+	store := recent.Open(path)
 
-	err = s.LoadErr()
+	err = store.LoadErr()
 	if !errors.Is(err, atomicjson.ErrUnreadable) {
 		t.Fatalf("LoadErr = %v, want ErrUnreadable", err)
 	}
 
-	err = s.Record(recent.Entry{Source: "TUNEIN", Location: "s1"})
+	err = store.Record(*station("", "s1", ""))
 	if !errors.Is(err, atomicjson.ErrUnreadable) {
 		t.Fatalf("Record = %v, want ErrUnreadable", err)
 	}
 
-	if got := s.All(); len(got) != 0 {
+	if got := store.All(); len(got) != 0 {
 		t.Fatalf("a refused Record changed memory: %v", got)
 	}
 
-	if info, err := os.Stat(path); err != nil || !info.IsDir() {
+	info, err := os.Stat(path)
+	if err != nil || !info.IsDir() {
 		t.Fatalf("recent path = %v, %v; want the directory untouched", info, err)
 	}
 }
@@ -68,6 +73,8 @@ func TestUnreadableDirectoryRefusesWrites(t *testing.T) {
 // The history the daemon could not read (EACCES here, EIO on a failing NAND) is still
 // there once the file reads again: the next stop did not replace it.
 func TestUnreadableFileIsNotOverwritten(t *testing.T) {
+	t.Parallel()
+
 	if os.Geteuid() == 0 {
 		t.Skip("root reads a mode-000 file")
 	}
@@ -81,14 +88,14 @@ func TestUnreadableFileIsNotOverwritten(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := recent.Open(path)
+	store := recent.Open(path)
 
-	err = s.Record(recent.Entry{Source: "TUNEIN", Location: "s2"})
+	err = store.Record(*station("", "s2", ""))
 	if !errors.Is(err, atomicjson.ErrUnreadable) {
 		t.Fatalf("Record = %v, want ErrUnreadable", err)
 	}
 
-	err = s.Remove("TUNEIN", "s1")
+	err = store.Remove("TUNEIN", "s1")
 	if err != nil {
 		t.Fatalf("Remove of an entry not in memory = %v, want a no-op", err)
 	}
@@ -106,6 +113,8 @@ func TestUnreadableFileIsNotOverwritten(t *testing.T) {
 // A malformed list is kept as recent.json.corrupt rather than dropped, and the store
 // starts empty and writable.
 func TestCorruptFileIsPreserved(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "recent.json")
 
 	err := os.WriteFile(path, []byte(`[{"source":"TUNEIN"`), 0o600)
@@ -113,18 +122,19 @@ func TestCorruptFileIsPreserved(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := recent.Open(path)
+	store := recent.Open(path)
 
-	err = s.LoadErr()
+	err = store.LoadErr()
 	if !errors.Is(err, atomicjson.ErrCorrupt) {
 		t.Fatalf("LoadErr = %v, want ErrCorrupt", err)
 	}
 
-	if got, err := os.ReadFile(path + ".corrupt"); err != nil || string(got) != `[{"source":"TUNEIN"` {
-		t.Fatalf("corrupt copy = %q, %v", got, err)
+	got, readErr := os.ReadFile(path + ".corrupt")
+	if readErr != nil || string(got) != `[{"source":"TUNEIN"` {
+		t.Fatalf("corrupt copy = %q, %v", got, readErr)
 	}
 
-	err = s.Record(recent.Entry{Source: "TUNEIN", Location: "s1"})
+	err = store.Record(*station("", "s1", ""))
 	if err != nil {
 		t.Fatalf("Record after quarantine: %v", err)
 	}

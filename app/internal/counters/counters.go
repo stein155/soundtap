@@ -15,6 +15,7 @@ import (
 	"time"
 )
 
+//nolint:gochecknoglobals // process-wide counts: every package adds to them, GET /api/health reads them
 var (
 	// SoundtapdRestarts is how often the init script started soundtapd again in this
 	// boot: soundtapd's starts recorded in /run, less the first.
@@ -43,6 +44,7 @@ type CrashLoop struct {
 	Count  int       // crash loops of this daemon since soundtapd started
 }
 
+//nolint:gochecknoglobals // process-wide state: the supervisor records into it, GET /api/health reads it
 var daemons struct {
 	mu       sync.Mutex
 	restarts map[string]uint64
@@ -75,7 +77,7 @@ func DaemonRestarts() map[string]uint64 {
 
 // DaemonCrashLooped records that name was put to rest after runs short runs in a row, the
 // last ending with err.
-func DaemonCrashLooped(name string, runs int, err string, at time.Time) {
+func DaemonCrashLooped(name string, runs int, err string, restedAt time.Time) {
 	daemons.mu.Lock()
 	defer daemons.mu.Unlock()
 
@@ -84,7 +86,7 @@ func DaemonCrashLooped(name string, runs int, err string, at time.Time) {
 	}
 
 	n := daemons.loops[name].Count + 1
-	daemons.loops[name] = CrashLoop{Daemon: name, Runs: runs, Err: err, At: at, Count: n}
+	daemons.loops[name] = CrashLoop{Daemon: name, Runs: runs, Err: err, At: restedAt, Count: n}
 }
 
 // CrashLoops is the last crash loop of each daemon that had one, a copy.

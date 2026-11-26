@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-package settings
+package settings_test
 
 import (
 	"fmt"
@@ -9,11 +9,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stein155/soundtap/app/internal/settings"
 )
 
 // Crash reports are off unless the owner turns them on: a file from before them reads as
 // off, and a file that never had them on does not grow the field (ADR 0126).
 func TestCrashReportsOffByDefaultAndPersist(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "settings.json")
 
 	err := os.WriteFile(path, []byte(`{"schemaVersion":1,"name":"Kitchen","language":"nl"}`), 0o600)
@@ -21,12 +25,12 @@ func TestCrashReportsOffByDefaultAndPersist(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := Open(path)
-	if c := s.Get().CrashReports; c.Enabled || len(c.Handled) != 0 {
+	store := settings.Open(path)
+	if c := store.Get().CrashReports; c.Enabled || len(c.Handled) != 0 {
 		t.Fatalf("an older file reads crash reports as %+v", c)
 	}
 
-	err = s.SetLanguage("de")
+	err = store.SetLanguage("de")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +39,7 @@ func TestCrashReportsOffByDefaultAndPersist(t *testing.T) {
 		t.Fatalf("a file without the opt-in grew the field:\n%s", b)
 	}
 
-	err = s.Update(func(next *Settings) error {
+	err = store.Update(func(next *settings.Settings) error {
 		next.CrashReports.Enabled = true
 		next.CrashReports.Handle("panic-0123456789ab")
 
@@ -45,34 +49,38 @@ func TestCrashReportsOffByDefaultAndPersist(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	c := Open(path).Get().CrashReports
+	c := settings.Open(path).Get().CrashReports
 	if !c.Enabled || !c.IsHandled("panic-0123456789ab") || c.IsHandled("kernel-0123456789ab") {
 		t.Errorf("after reopening: %+v", c)
 	}
 }
 
 func TestHandleKeepsTheNewestCrashesOnce(t *testing.T) {
-	var c CrashReports
-	for i := range MaxHandledCrashes + 5 {
-		c.Handle(fmt.Sprintf("panic-%012d", i))
+	t.Parallel()
+
+	var reports settings.CrashReports
+	for i := range settings.MaxHandledCrashes + 5 {
+		reports.Handle(fmt.Sprintf("panic-%012d", i))
 	}
 
-	c.Handle(fmt.Sprintf("panic-%012d", MaxHandledCrashes+4)) // already there: not again
+	reports.Handle(fmt.Sprintf("panic-%012d", settings.MaxHandledCrashes+4)) // already there: not again
 
-	if len(c.Handled) != MaxHandledCrashes {
-		t.Fatalf("%d handled ids, want %d", len(c.Handled), MaxHandledCrashes)
+	if len(reports.Handled) != settings.MaxHandledCrashes {
+		t.Fatalf("%d handled ids, want %d", len(reports.Handled), settings.MaxHandledCrashes)
 	}
 
-	if c.IsHandled("panic-000000000004") || !c.IsHandled("panic-000000000005") {
-		t.Errorf("the oldest ids should go first: %v", c.Handled[:2])
+	if reports.IsHandled("panic-000000000004") || !reports.IsHandled("panic-000000000005") {
+		t.Errorf("the oldest ids should go first: %v", reports.Handled[:2])
 	}
 }
 
 // Get hands out a copy: a caller appending to it changes nothing stored.
 func TestGetCopiesHandledCrashes(t *testing.T) {
-	s := Open(filepath.Join(t.TempDir(), "settings.json"))
+	t.Parallel()
 
-	err := s.Update(func(next *Settings) error {
+	store := settings.Open(filepath.Join(t.TempDir(), "settings.json"))
+
+	err := store.Update(func(next *settings.Settings) error {
 		next.CrashReports.Handle("panic-a")
 
 		return nil
@@ -81,10 +89,10 @@ func TestGetCopiesHandledCrashes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := s.Get()
+	got := store.Get()
 
 	got.CrashReports.Handled[0] = "changed"
-	if s.Get().CrashReports.Handled[0] != "panic-a" {
+	if store.Get().CrashReports.Handled[0] != "panic-a" {
 		t.Error("Get shares the handled list with the store")
 	}
 }

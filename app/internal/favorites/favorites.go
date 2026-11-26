@@ -8,6 +8,7 @@ package favorites
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 
@@ -51,43 +52,27 @@ type Store struct {
 // may still be intact on disk. A list longer than Limit (saved before the list offered one,
 // or hand-edited) loads whole and unchanged; the first of it is the favorite.
 func Open(path string) *Store {
-	s := &Store{path: path}
-	s.loadErr = atomicjson.Load(path, &s.entries)
-	atomicjson.LogLoad(slog.Default(), "favorites", path, s.loadErr)
+	store := &Store{mu: sync.Mutex{}, entries: nil, path: path, loadErr: nil}
+	store.loadErr = atomicjson.Load(path, &store.entries)
+	atomicjson.LogLoad(slog.Default(), "favorites", path, store.loadErr)
 
-	return s
+	return store
 }
 
 // LoadErr is what Open found wrong with the file, nil when it loaded or was absent.
 func (s *Store) LoadErr() error { return s.loadErr }
 
-// save persists next, then makes it the list. The caller holds mu.
-func (s *Store) save(next []Entry) error {
-	if errors.Is(s.loadErr, atomicjson.ErrUnreadable) {
-		return s.loadErr
-	}
-
-	err := atomicjson.Write(s.path, next, fileMode)
-	if err != nil {
-		return err
-	}
-
-	s.entries = next
-
-	return nil
-}
-
-// Add makes e the favorite: the list becomes e alone. Entries a longer list kept behind the
-// first, which nothing shows and nothing could remove, go with it.
-func (s *Store) Add(e Entry) error {
+// Add makes entry the favorite: the list becomes entry alone. Entries a longer list kept
+// behind the first, which nothing shows and nothing could remove, go with it.
+func (s *Store) Add(entry Entry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if len(s.entries) == 1 && same(s.entries[0], e) {
+	if len(s.entries) == 1 && same(s.entries[0], entry) {
 		return nil
 	}
 
-	return s.save([]Entry{e})
+	return s.save([]Entry{entry})
 }
 
 // same says whether a and b are one favorite: the same thing from the same source.
@@ -99,7 +84,7 @@ func (s *Store) Remove(source, location string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	gone := Entry{Source: source, Location: location}
+	gone := Entry{Source: source, Name: "", Location: location, Art: ""}
 	if len(s.entries) > 0 && same(s.entries[0], gone) {
 		return s.save([]Entry{})
 	}
@@ -148,4 +133,20 @@ func (s *Store) All() []Entry {
 	copy(out, s.entries)
 
 	return out
+}
+
+// save persists next, then makes it the list. The caller holds mu.
+func (s *Store) save(next []Entry) error {
+	if errors.Is(s.loadErr, atomicjson.ErrUnreadable) {
+		return s.loadErr
+	}
+
+	err := atomicjson.Write(s.path, next, fileMode)
+	if err != nil {
+		return fmt.Errorf("favorites: save: %w", err)
+	}
+
+	s.entries = next
+
+	return nil
 }

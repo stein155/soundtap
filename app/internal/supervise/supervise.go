@@ -32,6 +32,7 @@ type Processes struct {
 // NewProcesses is an empty set of hooks.
 func NewProcesses() *Processes {
 	return &Processes{
+		mu:    sync.Mutex{},
 		stops: make(map[string]func()), wakes: make(map[string]func()),
 		yields: make(map[string]func() bool),
 	}
@@ -118,37 +119,40 @@ type Spec struct {
 
 // Run runs spec for the life of ctx as the process of source in processes, restarting it
 // on exit by restartPolicy. A missing binary is logged once and not retried.
+//
+//nolint:gocritic // hugeParam: every caller passes its Spec by value; Run keeps its own copy
 func Run(ctx context.Context, log *slog.Logger, processes *Processes, source string, spec Spec) {
-	if _, err := exec.LookPath(spec.Bin); err != nil {
+	_, err := exec.LookPath(spec.Bin)
+	if err != nil {
 		log.Warn("not installed, skipping", "bin", spec.Bin)
 
 		return
 	}
 
-	err := childproc.RunAs(exec.CommandContext(ctx, spec.Bin), spec.User)
+	err = childproc.RunAs(exec.CommandContext(ctx, spec.Bin), spec.User)
 	if spec.User != "" && err != nil {
 		log.Error("no system user, not starting", "bin", spec.Name, "user", spec.User, "err", err)
 
 		return
 	}
 
-	s := &supervisor{
-		ctx: ctx, log: log, spec: spec, out: ChildLog(spec.Name),
-		stop: make(chan chan struct{}), wake: make(chan struct{}), restarts: restartPolicy{wait: supervisorBackoff},
+	sup := &supervisor{
+		log: log, spec: spec, out: ChildLog(spec.Name),
+		stop: make(chan chan struct{}), wake: make(chan struct{}), restarts: freshRestarts(),
 	}
 	stopped := make(chan struct{})
 
 	unregister := processes.Register(source, func() {
 		done := make(chan struct{})
 		select {
-		case s.stop <- done:
+		case sup.stop <- done:
 			<-done
 		case <-stopped:
 		case <-ctx.Done():
 		}
 	}, func() {
 		select {
-		case s.wake <- struct{}{}: // taken only while waiting out a backoff
+		case sup.wake <- struct{}{}: // taken only while waiting out a backoff
 		default:
 		}
 	})
@@ -156,12 +160,12 @@ func Run(ctx context.Context, log *slog.Logger, processes *Processes, source str
 	defer close(stopped)
 
 	for ctx.Err() == nil {
-		wait, ok := s.runOnce()
+		wait, ok := sup.runOnce(ctx)
 		if !ok {
 			return
 		}
 
-		if wait >= 0 && !s.rest(wait) {
+		if wait >= 0 && !sup.rest(ctx, wait) {
 			return
 		}
 	}
@@ -170,7 +174,6 @@ func Run(ctx context.Context, log *slog.Logger, processes *Processes, source str
 // supervisor is one Run: the process it runs, the hooks that stop and wake it, and its
 // restart state.
 type supervisor struct {
-	ctx      context.Context
 	log      *slog.Logger
 	spec     Spec
 	out      io.Writer
@@ -181,9 +184,9 @@ type supervisor struct {
 
 // runOnce starts the process and waits for it. It returns how long to rest before the
 // next start, -1 to start again at once, and false once ctx has ended.
-func (s *supervisor) runOnce() (time.Duration, bool) {
+func (s *supervisor) runOnce(ctx context.Context) (time.Duration, bool) {
 	name := s.spec.Name
-	cmd := exec.CommandContext(s.ctx, s.spec.Bin, s.spec.Args()...)
+	cmd := exec.CommandContext(ctx, s.spec.Bin, s.spec.Args()...)
 	cmd.Env = append(os.Environ(), s.spec.Env...)
 	childproc.DieWithParent(cmd)
 
@@ -202,11 +205,12 @@ func (s *supervisor) runOnce() (time.Duration, bool) {
 		// for the rest of the daemon's life — and left preempt unaware of it.
 		// A start that keeps failing counts like a crash, or it was retried forever.
 		wait, again := s.restarts.next(0)
-		s.counted(again, err)
+		s.restarted()
 
 		if again {
 			s.log.Warn("start failed, retrying", "bin", name, "err", err, "in", wait)
 		} else {
+			s.crashLooped(err)
 			s.log.Error("start failed too often in a row, resting", "bin", name, "err", err, "in", wait)
 		}
 
@@ -221,14 +225,17 @@ func (s *supervisor) runOnce() (time.Duration, bool) {
 	select {
 	case err := <-exited:
 		wait, again := s.restarts.next(time.Since(started))
-		if s.ctx.Err() != nil {
+
+		if ctx.Err() != nil {
 			return 0, false
 		}
 
-		s.counted(again, err)
+		s.restarted()
 
 		if !again {
-			s.log.Error("exited too often in a row, resting", "bin", name, "err", err, "short runs", supervisorMaxRapid, "in", wait)
+			s.crashLooped(err)
+			s.log.Error("exited too often in a row, resting",
+				"bin", name, "err", err, "short runs", supervisorMaxRapid, "in", wait)
 		} else if err != nil {
 			s.log.Warn("exited, restarting", "bin", name, "err", err, "in", wait)
 		}
@@ -242,10 +249,10 @@ func (s *supervisor) runOnce() (time.Duration, bool) {
 		s.log.Debug("stopped", "bin", name, "err", <-exited)
 		close(done)
 
-		s.restarts = restartPolicy{wait: supervisorBackoff}
+		s.restarts = freshRestarts()
 
 		return -1, true
-	case <-s.ctx.Done():
+	case <-ctx.Done():
 		_ = cmd.Process.Kill()
 
 		s.log.Debug("stopped", "bin", name, "err", <-exited)
@@ -254,35 +261,37 @@ func (s *supervisor) runOnce() (time.Duration, bool) {
 	}
 }
 
-// counted records an exit or a failed start in the counters /api/health reports (ADR
-// 0127), and a crash loop when the process is put to rest (again false).
-func (s *supervisor) counted(again bool, err error) {
+// restarted records an exit or a failed start in the counters /api/health reports (ADR
+// 0127).
+func (s *supervisor) restarted() {
 	counters.DaemonRestarted(s.spec.Name)
+}
 
-	if !again {
-		why := "exited"
-		if err != nil {
-			why = err.Error()
-		}
-
-		counters.DaemonCrashLooped(s.spec.Name, supervisorMaxRapid, why, time.Now())
+// crashLooped records a crash loop when the process is put to rest, after restarted
+// counted the run that ended it.
+func (s *supervisor) crashLooped(err error) {
+	why := "exited"
+	if err != nil {
+		why = err.Error()
 	}
+
+	counters.DaemonCrashLooped(s.spec.Name, supervisorMaxRapid, why, time.Now())
 }
 
 // rest waits wait before the next start. A stop or a wake ends it early and forgets
 // earlier crashes. It reports false once ctx has ended.
-func (s *supervisor) rest(wait time.Duration) bool {
+func (s *supervisor) rest(ctx context.Context, wait time.Duration) bool {
 	select {
-	case <-s.ctx.Done():
+	case <-ctx.Done():
 		return false
 	case done := <-s.stop:
 		// Nothing runs to stop: the process exited, or its start failed. A preempt must
 		// not end the supervisor either.
 		close(done)
 
-		s.restarts = restartPolicy{wait: supervisorBackoff}
+		s.restarts = freshRestarts()
 	case <-s.wake:
-		s.restarts = restartPolicy{wait: supervisorBackoff}
+		s.restarts = freshRestarts()
 	case <-time.After(wait):
 	}
 
@@ -302,12 +311,19 @@ const (
 	supervisorStableRun  = 30 * time.Second
 	supervisorMaxRapid   = 20
 	supervisorRest       = 10 * time.Minute
+	// supervisorBackoffGrowth multiplies the wait after every short run.
+	supervisorBackoffGrowth = 2
 )
 
 // restartPolicy is the one restart rule for every process soundtapd supervises.
 type restartPolicy struct {
 	wait  time.Duration // before the next start
 	rapid int           // short runs in a row
+}
+
+// freshRestarts is the restart state of a process with no crashes behind it.
+func freshRestarts() restartPolicy {
+	return restartPolicy{wait: supervisorBackoff, rapid: 0}
 }
 
 // next records a run that lasted ran and returns the wait before the next start; false
@@ -320,7 +336,7 @@ func (r *restartPolicy) next(ran time.Duration) (time.Duration, bool) {
 		return r.wait, true
 	}
 
-	r.wait = min(r.wait*2, supervisorBackoffMax)
+	r.wait = min(r.wait*supervisorBackoffGrowth, supervisorBackoffMax)
 
 	r.rapid++
 	if r.rapid >= supervisorMaxRapid {
@@ -336,7 +352,9 @@ func (r *restartPolicy) next(ran time.Duration) (time.Duration, bool) {
 // anew. A poke that finds it false ends run's context; run must then return, and parked
 // is called. A run that returns on its own (a binary that is not installed) is not
 // started again.
-func RunWhileWanted(ctx context.Context, wanted func() bool, poke <-chan struct{}, run func(context.Context), parked func()) {
+func RunWhileWanted(
+	ctx context.Context, wanted func() bool, poke <-chan struct{}, run func(context.Context), parked func(),
+) {
 	for {
 		for !wanted() {
 			select {

@@ -27,7 +27,7 @@ type KeySink interface {
 type KeyEvent func(record []byte) (index int, pressed bool, action string, ok bool)
 
 // KeypadEvent decodes the Bose keypad driver's one ASCII letter per edge.
-func KeypadEvent(km map[int]string, log *slog.Logger) KeyEvent {
+func KeypadEvent(keymap map[int]string, log *slog.Logger) KeyEvent {
 	return func(record []byte) (int, bool, string, bool) {
 		index, pressed, ok := decodeEvent(record[0])
 		if !ok {
@@ -36,7 +36,7 @@ func KeypadEvent(km map[int]string, log *slog.Logger) KeyEvent {
 			return 0, false, "", false
 		}
 
-		action, mapped := km[index]
+		action, mapped := keymap[index]
 		if !mapped {
 			log.Debug("unmapped key index", "index", index, "pressed", pressed)
 		}
@@ -46,10 +46,12 @@ func KeypadEvent(km map[int]string, log *slog.Logger) KeyEvent {
 }
 
 // InputEvent decodes a 32-bit ARM struct input_event from evdev.
+//
+//nolint:revive // function-result-limit: it is a KeyEvent, whose four results are fixed
 func InputEvent(record []byte) (int, bool, string, bool) {
 	code, pressed, ok := decodeInputEvent(record)
 
-	return int(code), pressed, inputKeymap[code], ok
+	return int(code), pressed, inputKeymap()[code], ok
 }
 
 // ReadKeyDevice feeds a key device's events to keys until ctx ends, reopening the
@@ -60,7 +62,7 @@ func ReadKeyDevice(ctx context.Context, path string, recordSize int, decode KeyE
 	record := make([]byte, recordSize)
 
 	for ctx.Err() == nil {
-		f, err := os.Open(path)
+		dev, err := os.Open(path)
 		if err != nil {
 			if !waitToReopen(ctx) {
 				return
@@ -69,10 +71,10 @@ func ReadKeyDevice(ctx context.Context, path string, recordSize int, decode KeyE
 			continue
 		}
 
-		stop := context.AfterFunc(ctx, func() { _ = f.Close() })
+		stop := context.AfterFunc(ctx, func() { _ = dev.Close() })
 
 		for {
-			_, err := io.ReadFull(f, record)
+			_, err := io.ReadFull(dev, record)
 			if err != nil || ctx.Err() != nil {
 				break
 			}
@@ -85,7 +87,7 @@ func ReadKeyDevice(ctx context.Context, path string, recordSize int, decode KeyE
 		keys.Reset() // device closed mid-gesture or shutting down: no release edge is coming
 
 		if stop() {
-			_ = f.Close()
+			_ = dev.Close()
 		}
 		// A node that opens but fails every read (EIO, a stale /dev/input/event*
 		// from the glob fallback) would otherwise reopen with no delay and spin a

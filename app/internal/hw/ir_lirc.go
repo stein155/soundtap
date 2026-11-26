@@ -36,37 +36,48 @@ const (
 	// ir.ko did the same with its 14-jiffy state timer; irSynth's grace absorbs a
 	// release that turns out to be premature.
 	lircReleaseAfter = 200 * time.Millisecond
+
+	// boseFrameBits is a frame's code byte and its complement, one mark and one space each.
+	boseCodeBits       = 8
+	boseFrameBits      = 2 * boseCodeBits
+	boseFrameDurations = 2 * boseFrameBits
+	// boseComplement is a code byte XOR its complement: every bit set.
+	boseComplement = 0xff
+	// boseLongSpace: a space longer than this many times its mark is a 1 bit.
+	boseLongSpace = 2
 )
 
 // decodeBoseFrame returns the first byte of a frame, bits in the order they arrived,
 // least significant first. Which of that byte, its complement or their bit reversals
 // is the code ir.map calls it is resolved against the map -- see irSynth.resolve.
-func decodeBoseFrame(d []uint32) (byte, bool) {
+func decodeBoseFrame(durations []uint32) (byte, bool) {
 	// The frame ends on the stop mark, or on the last bit's space when the receiver
 	// swallowed the stop mark into the gap; try both alignments.
-	for _, end := range []int{len(d) - 1, len(d)} {
-		if end < 32 {
+	for _, end := range []int{len(durations) - 1, len(durations)} {
+		if end < boseFrameDurations {
 			continue
 		}
 
+		start := end - boseFrameDurations
+
 		var bits uint16
 
-		for i := range 16 {
-			mark, space := d[end-32+2*i], d[end-32+2*i+1]
+		for bit := range boseFrameBits {
+			mark, space := durations[start+2*bit], durations[start+2*bit+1]
 			if mark == 0 || space == 0 {
 				bits = 0
 
 				break
 			}
 
-			if space > 2*mark {
-				bits |= 1 << i
+			if space > boseLongSpace*mark {
+				bits |= 1 << bit
 			}
 		}
 
-		a, b := byte(bits), byte(bits>>8)
-		if a^b == 0xff {
-			return a, true
+		code, complement := byte(bits), byte(bits>>boseCodeBits)
+		if code^complement == boseComplement {
+			return code, true
 		}
 	}
 
@@ -83,16 +94,18 @@ type lircFramer struct {
 }
 
 func (f *lircFramer) sample(s uint32, now time.Time) {
-	kind, v := s&lircKindMask, s&lircValueMask
+	kind, value := s&lircKindMask, s&lircValueMask
 	switch {
-	case kind == lircKindTimeout, (kind == lircKindPulse || kind == lircKindSpace) && v > lircGapUS:
+	case kind == lircKindTimeout, (kind == lircKindPulse || kind == lircKindSpace) && value > lircGapUS:
 		f.flush(now)
 	case kind == lircKindPulse || kind == lircKindSpace:
 		if len(f.durs) == lircMaxDurations {
 			f.durs = f.durs[1:]
 		}
 
-		f.durs = append(f.durs, v)
+		f.durs = append(f.durs, value)
+	default:
+		// Another kind of sample (a frequency report, an overflow) carries no edge.
 	}
 }
 
@@ -132,24 +145,29 @@ func (f *lircFramer) pop() (byte, bool) {
 	return c, true
 }
 
-// irTransforms are the four readings of one decoded byte, in the order they are
-// tried. The first that names a key in ir.map is kept for the rest of the run.
-var irTransforms = []struct {
+// irTransform is one reading of a decoded byte.
+type irTransform struct {
 	name string
 	fn   func(byte) byte
-}{
-	{"as-is", func(c byte) byte { return c }},
-	{"reversed", reverseBits},
-	{"complement", func(c byte) byte { return ^c }},
-	{"reversed-complement", func(c byte) byte { return reverseBits(^c) }},
+}
+
+// irTransforms are the four readings of one decoded byte, in the order they are
+// tried. The first that names a key in ir.map is kept for the rest of the run.
+func irTransforms() []irTransform {
+	return []irTransform{
+		{"as-is", func(c byte) byte { return c }},
+		{"reversed", reverseBits},
+		{"complement", func(c byte) byte { return ^c }},
+		{"reversed-complement", func(c byte) byte { return reverseBits(^c) }},
+	}
 }
 
 func reverseBits(c byte) byte {
-	var r byte
+	var reversed byte
 	for range 8 {
-		r = r<<1 | c&1
+		reversed = reversed<<1 | c&1
 		c >>= 1
 	}
 
-	return r
+	return reversed
 }

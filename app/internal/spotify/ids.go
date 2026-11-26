@@ -14,29 +14,38 @@ import (
 
 const b62 = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
+const (
+	// b62Base is the base of a Spotify id: one digit per character of b62.
+	b62Base = int64(len(b62))
+	// b62Len is how many digits a Spotify id has.
+	b62Len = 22
+	// gidBase is the base a gid is written in: hexadecimal.
+	gidBase = 16
+)
+
 // hexID turns a base62 id into the 32-digit hex gid the metadata endpoints use.
 func hexID(id string) string {
-	n := new(big.Int)
-	for _, c := range id {
-		n.Mul(n, big.NewInt(62))
-		n.Add(n, big.NewInt(int64(strings.IndexRune(b62, c))))
+	gid := new(big.Int)
+	for _, digit := range id {
+		gid.Mul(gid, big.NewInt(b62Base))
+		gid.Add(gid, big.NewInt(int64(strings.IndexRune(b62, digit))))
 	}
 
-	return fmt.Sprintf("%032x", n)
+	return fmt.Sprintf("%032x", gid)
 }
 
 // b62ID is the inverse of hexID.
 func b62ID(gid string) string {
-	n, ok := new(big.Int).SetString(gid, 16)
+	value, ok := new(big.Int).SetString(gid, gidBase)
 	if !ok {
 		return ""
 	}
 
-	out := make([]byte, 22)
+	out := make([]byte, b62Len)
 
-	base, mod := big.NewInt(62), new(big.Int)
-	for i := 21; i >= 0; i-- {
-		n.DivMod(n, base, mod)
+	base, mod := big.NewInt(b62Base), new(big.Int)
+	for i := b62Len - 1; i >= 0; i-- {
+		value.DivMod(value, base, mod)
 		out[i] = b62[mod.Int64()]
 	}
 
@@ -72,11 +81,11 @@ func artworkPath(id string) string {
 }
 
 // artworkFromURL accepts only i.scdn.co image URLs; mosaics and anything else are dropped.
-func artworkFromURL(u string) string {
+func artworkFromURL(imageURL string) string {
 	const prefix = "https://i.scdn.co/image/"
-	if !strings.HasPrefix(u, prefix) {
+	if !strings.HasPrefix(imageURL, prefix) {
 		return ""
 	}
 
-	return artworkPath(strings.TrimPrefix(u, prefix))
+	return artworkPath(strings.TrimPrefix(imageURL, prefix))
 }

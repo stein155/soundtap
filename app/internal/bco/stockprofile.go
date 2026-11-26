@@ -37,6 +37,18 @@ const (
 	stockKeySSID       = 0x51bc
 	stockKeySecurity   = 0x519c
 	stockKeyPassphrase = 0x518c
+	// stockHeaderLen is the sector's header before the first record; stockKeyLen a
+	// record's key.
+	stockHeaderLen = 2
+	stockKeyLen    = 2
+	// rdWordLen is one word as rd prints it: "0x" and eight hex digits.
+	rdWordLen = 10
+)
+
+// The settings read's errors; each keeps the text it had before it was a sentinel.
+var (
+	errMemoryDump   = errors.New("BCO memory dump")
+	errStockProfile = errors.New("BCO stock profile")
 )
 
 // StockProfile is the WPA network Bose's BCO app has saved. A Passphrase of 64 hex digits
@@ -47,19 +59,20 @@ type StockProfile struct {
 
 // ReadStockProfile asks Bose's BCO app on device for its saved network.
 func ReadStockProfile(ctx context.Context, device string) (StockProfile, error) {
-	if err := lockSerial(ctx); err != nil {
+	err := lockSerial(ctx)
+	if err != nil {
 		return StockProfile{}, err
 	}
 
 	defer unlockSerial()
 
-	fd, err := openSerial(ctx, device)
+	serialFD, err := openSerial(ctx, device)
 	if err != nil {
 		return StockProfile{}, err
 	}
-	defer syscall.Close(fd)
+	defer syscall.Close(serialFD)
 
-	reply, err := shellCommand(ctx, fd, fmt.Sprintf("rd 0x%08x %d", stockSettingsAddr, stockSettingsWords))
+	reply, err := shellCommand(ctx, serialFD, fmt.Sprintf("rd 0x%08x %d", stockSettingsAddr, stockSettingsWords))
 	if err != nil {
 		return StockProfile{}, err
 	}
@@ -80,19 +93,19 @@ func parseMemoryDump(reply string) ([]byte, error) {
 	for line := range strings.SplitSeq(reply, "\n") {
 		addr, words, ok := strings.Cut(strings.TrimSpace(line), ":")
 
-		at, err := strconv.ParseUint(strings.TrimPrefix(addr, "0x"), 16, 32)
+		lineAddr, err := strconv.ParseUint(strings.TrimPrefix(addr, "0x"), 16, 32)
 		if !ok || err != nil || !strings.HasPrefix(addr, "0x") {
 			continue
 		}
 
-		if due := uint64(stockSettingsAddr) + uint64(len(out)); at != due {
-			return nil, fmt.Errorf("BCO memory dump: line for 0x%08x where 0x%08x was due", at, due)
+		if due := uint64(stockSettingsAddr) + uint64(len(out)); lineAddr != due {
+			return nil, fmt.Errorf("%w: line for 0x%08x where 0x%08x was due", errMemoryDump, lineAddr, due)
 		}
 
 		for w := range strings.FieldsSeq(words) {
 			v, err := strconv.ParseUint(strings.TrimPrefix(w, "0x"), 16, 32)
-			if err != nil || len(w) != 10 {
-				return nil, fmt.Errorf("BCO memory dump: bad word at 0x%08x", at)
+			if err != nil || len(w) != rdWordLen {
+				return nil, fmt.Errorf("%w: bad word at 0x%08x", errMemoryDump, lineAddr)
 			}
 
 			out = binary.LittleEndian.AppendUint32(out, uint32(v))
@@ -100,7 +113,7 @@ func parseMemoryDump(reply string) ([]byte, error) {
 	}
 
 	if len(out) == 0 {
-		return nil, errors.New("BCO memory dump: no data in the reply")
+		return nil, fmt.Errorf("%w: no data in the reply", errMemoryDump)
 	}
 
 	return out, nil
@@ -117,10 +130,10 @@ func parseStockProfile(sector []byte) (StockProfile, error) {
 
 	var recs []record
 
-	for o := 2; o+2 < len(sector); {
-		key := binary.LittleEndian.Uint16(sector[o:])
+	for offset := stockHeaderLen; offset+stockKeyLen < len(sector); {
+		key := binary.LittleEndian.Uint16(sector[offset:])
 
-		end := o + 2
+		end := offset + stockKeyLen
 		for end < len(sector) && sector[end] != 0 {
 			end++
 		}
@@ -129,28 +142,30 @@ func parseStockProfile(sector []byte) (StockProfile, error) {
 			break // the last string runs past what was read
 		}
 
-		recs = append(recs, record{key, string(sector[o+2 : end])})
-		o = end + 1
-		o += o & 1
+		recs = append(recs, record{key, string(sector[offset+stockKeyLen : end])})
+		offset = end + 1
+		offset += offset & 1
 	}
 
-	for i := 0; i+2 < len(recs); i++ {
-		if recs[i].key != stockKeySSID || recs[i+1].key != stockKeySecurity || recs[i+2].key != stockKeyPassphrase {
+	for idx := 0; idx+2 < len(recs); idx++ {
+		name, sec, passRec := recs[idx], recs[idx+1], recs[idx+2]
+		if name.key != stockKeySSID || sec.key != stockKeySecurity || passRec.key != stockKeyPassphrase {
 			continue
 		}
 
-		ssid, security, pass := recs[i].value, strings.ToUpper(recs[i+1].value), recs[i+2].value
-		if ssid == "" || len(ssid) > 32 {
-			return StockProfile{}, errors.New("BCO stock profile: no usable network name")
+		ssid, security, pass := name.value, strings.ToUpper(sec.value), passRec.value
+		if ssid == "" || len(ssid) > maxSSIDLen {
+			return StockProfile{}, fmt.Errorf("%w: no usable network name", errStockProfile)
 		}
 		// Only what was seen on hardware: a WPA network. How the app writes an open
 		// network down is not known, so that one is left to the setup network.
-		if strings.Contains(security, "PSK") && (IsHexPSK(pass) || len(pass) >= 8 && len(pass) <= 63) {
+		if strings.Contains(security, "PSK") &&
+			(IsHexPSK(pass) || len(pass) >= minPassphraseLen && len(pass) <= maxPassphraseLen) {
 			return StockProfile{SSID: ssid, Passphrase: pass}, nil
 		}
 
-		return StockProfile{}, fmt.Errorf("BCO stock profile: security %q is not taken over", recs[i+1].value)
+		return StockProfile{}, fmt.Errorf("%w: security %q is not taken over", errStockProfile, sec.value)
 	}
 
-	return StockProfile{}, errors.New("BCO stock profile: no saved network found")
+	return StockProfile{}, fmt.Errorf("%w: no saved network found", errStockProfile)
 }

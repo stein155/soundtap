@@ -67,4 +67,4 @@ integration per hub (own code and release cycle each, where discovery reaches th
 - `app/internal/mqttbridge/discovery.go`: the discovery entities and the update state.
 - `app/internal/mqttbridge/commands.go`: the command handling and the state cache.
 - `app/internal/mqttbridge/topics.go`: the topic layout.
-- `app/internal/settings/settings.go:MQTT.Validate`: what the settings refuse.
+- `app/internal/settings/mqtt.go:MQTT.Validate`: what the settings refuse.

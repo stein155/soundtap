@@ -11,6 +11,13 @@ import (
 	"os/exec"
 )
 
+// Off Linux there are no system users, groups or capabilities to switch to.
+var (
+	errNoUsers  = errors.New("childproc: no system users off linux")
+	errNoGroups = errors.New("childproc: no system groups off linux")
+	errNoExecAs = errors.New("childproc: exec-as is Linux only")
+)
+
 // DieWithParent is a no-op off Linux: there is no parent-death signal.
 func DieWithParent(*exec.Cmd) {}
 
@@ -18,13 +25,13 @@ func DieWithParent(*exec.Cmd) {}
 func RunAs(*exec.Cmd, string) error { return nil }
 
 // Lookup has no system users to look up off Linux.
-func Lookup(string) (uid, gid uint32, err error) {
-	return 0, 0, errors.New("childproc: no system users off linux")
+func Lookup(string) (uint32, uint32, error) {
+	return 0, 0, errNoUsers
 }
 
 // LookupGroup has no system groups to look up off Linux.
 func LookupGroup(string) (uint32, error) {
-	return 0, errors.New("childproc: no system groups off linux")
+	return 0, errNoGroups
 }
 
 // KeepCaps is a no-op off Linux: there are no ambient capabilities.
@@ -41,6 +48,8 @@ const (
 )
 
 // SoundtapdCaps are soundtapd's capabilities on the speaker (caps_linux.go).
+//
+//nolint:gochecknoglobals // exported for soundtap-root, which hands exactly these to soundtapd
 var SoundtapdCaps = []uintptr{CapKill, CapSetgid, CapSetuid, CapNetBindService, CapNetAdmin, CapNetRaw}
 
 // HasCap is false off Linux.
@@ -54,5 +63,5 @@ func ClearAmbient() error { return nil }
 
 // ExecAs only works on Linux.
 func ExecAs(string, []string, []uintptr, string, []string, []string) error {
-	return errors.New("childproc: exec-as is Linux only")
+	return errNoExecAs
 }

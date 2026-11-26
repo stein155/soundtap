@@ -13,22 +13,57 @@ import (
 )
 
 type plContents struct {
-	Pos       int  `json:"pos"`
-	Truncated bool `json:"truncated"`
-	Items     []struct {
-		URI string `json:"uri"`
-	} `json:"items"`
+	Pos       int      `json:"pos"`
+	Truncated bool     `json:"truncated"`
+	Items     []plItem `json:"items"`
 	MetaItems []plMeta `json:"metaItems"`
 }
 
-type plAttributes struct {
-	Name        string `json:"name"`
-	Picture     string `json:"picture"`
-	PictureSize []struct {
-		TargetName string `json:"targetName"`
-		URL        string `json:"url"`
-	} `json:"pictureSize"`
+type plItem struct {
+	URI string `json:"uri"`
 }
+
+type plAttributes struct {
+	Name        string          `json:"name"`
+	Picture     string          `json:"picture"`
+	PictureSize []plPictureSize `json:"pictureSize"`
+}
+
+type plPictureSize struct {
+	TargetName string `json:"targetName"`
+	URL        string `json:"url"`
+}
+
+// plPage is a playlist with one page of its contents.
+type plPage struct {
+	plMeta
+
+	Contents plContents `json:"contents"`
+}
+
+// plFirst is the contents of a playlist without its attributes.
+type plFirst struct {
+	Contents plContents `json:"contents"`
+}
+
+// plRootlist is the user's own playlist list.
+type plRootlist struct {
+	Length   int        `json:"length"`
+	Contents plContents `json:"contents"`
+}
+
+// plCollection is the user's Liked Songs, as context-resolve answers.
+type plCollection struct {
+	Pages []plCollectionPage `json:"pages"`
+}
+
+// plCollectionPage is one page of Liked Songs.
+type plCollectionPage struct {
+	Tracks []plItem `json:"tracks"`
+}
+
+// pictureBytes is the length of a playlist picture's id, before hex encoding.
+const pictureBytes = 20
 
 type plMeta struct {
 	Length        int          `json:"length"`
@@ -37,25 +72,26 @@ type plMeta struct {
 }
 
 func (a plAttributes) artwork() string {
-	for _, p := range a.PictureSize {
-		if p.TargetName == "default" {
-			if art := artworkFromURL(p.URL); art != "" {
+	for _, size := range a.PictureSize {
+		if size.TargetName == "default" {
+			if art := artworkFromURL(size.URL); art != "" {
 				return art
 			}
 		}
 	}
 
-	if raw, err := base64.StdEncoding.DecodeString(a.Picture); err == nil && len(raw) == 20 {
-		return artworkPath(hex.EncodeToString(raw))
+	raw, err := base64.StdEncoding.DecodeString(a.Picture)
+	if err != nil || len(raw) != pictureBytes {
+		return ""
 	}
 
-	return ""
+	return artworkPath(hex.EncodeToString(raw))
 }
 
-func (m plMeta) norm(uri string) Playlist {
+func (m *plMeta) norm(uri string) Playlist {
 	return Playlist{
 		URI: uri, Name: strings.TrimSpace(m.Attributes.Name), Owner: m.OwnerUsername,
-		Artwork: m.Attributes.artwork(), Total: m.Length,
+		Artwork: m.Attributes.artwork(), Total: m.Length, Tracks: nil,
 	}
 }
 
@@ -68,27 +104,26 @@ func nextOf(offset, got, total int) int {
 }
 
 // Playlist returns a playlist and one page of its tracks, and the offset of the next page.
-func (c *Client) Playlist(ctx context.Context, id string, offset int) (Playlist, int, error) {
-	if !ValidID(id) || offset < 0 {
+func (c *Client) Playlist(ctx context.Context, playlistID string, offset int) (Playlist, int, error) {
+	if !ValidID(playlistID) || offset < 0 {
 		return Playlist{}, 0, ErrInvalid
 	}
 
-	var w struct {
-		plMeta
+	var page plPage
 
-		Contents plContents `json:"contents"`
-	}
+	path := fmt.Sprintf("/playlist/v2/playlist/%s?decorate=attributes,length,owner&from=%d&length=%d",
+		playlistID, offset, pageSize)
 
-	path := fmt.Sprintf("/playlist/v2/playlist/%s?decorate=attributes,length,owner&from=%d&length=%d", id, offset, pageSize)
-	if err := c.spclient(ctx, path, &w); err != nil {
+	err := c.spclient(ctx, path, &page)
+	if err != nil {
 		return Playlist{}, 0, err
 	}
 
-	out := w.norm("spotify:playlist:" + id)
+	out := page.norm("spotify:playlist:" + playlistID)
 
-	uris := make([]string, 0, len(w.Contents.Items))
-	for _, it := range w.Contents.Items {
-		uris = append(uris, it.URI)
+	uris := make([]string, 0, len(page.Contents.Items))
+	for _, item := range page.Contents.Items {
+		uris = append(uris, item.URI)
 	}
 
 	tracks, err := c.tracks(ctx, uris)
@@ -101,38 +136,38 @@ func (c *Client) Playlist(ctx context.Context, id string, offset int) (Playlist,
 		out.Artwork = tracks[0].Artwork
 	}
 
-	return out, nextOf(offset, len(w.Contents.Items), w.Length), nil
+	return out, nextOf(offset, len(page.Contents.Items), page.Length), nil
 }
 
 // firstCover is the album cover of a playlist's first track: the mixes and radios Spotify
 // makes per listener carry no picture of their own.
-func (c *Client) firstCover(ctx context.Context, id string) string {
-	if v, ok := c.cache.get("c:" + id); ok {
-		if cover, ok := v.(string); ok {
+func (c *Client) firstCover(ctx context.Context, playlistID string) string {
+	if cached, ok := c.cache.get("c:" + playlistID); ok {
+		if cover, ok := cached.(string); ok {
 			return cover
 		}
 	}
 
-	var w struct {
-		Contents plContents `json:"contents"`
-	}
-	if err := c.spclient(ctx, "/playlist/v2/playlist/"+id+"?decorate=length&from=0&length=1", &w); err != nil || len(w.Contents.Items) == 0 {
+	var first plFirst
+
+	err := c.spclient(ctx, "/playlist/v2/playlist/"+playlistID+"?decorate=length&from=0&length=1", &first)
+	if err != nil || len(first.Contents.Items) == 0 {
 		return ""
 	}
 
-	kind, track, _ := ParseURI(w.Contents.Items[0].URI)
+	kind, trackID, _ := ParseURI(first.Contents.Items[0].URI)
 	if kind != kindTrack {
 		return ""
 	}
 
-	t, err := c.track(ctx, track)
+	track, err := c.track(ctx, trackID)
 	if err != nil {
 		return ""
 	}
 
-	c.cache.put("c:"+id, t.Artwork)
+	c.cache.put("c:"+playlistID, track.Artwork)
 
-	return t.Artwork
+	return track.Artwork
 }
 
 // withCovers fills in the playlists that have no picture.
@@ -142,15 +177,15 @@ func (c *Client) withCovers(ctx context.Context, lists []Playlist) {
 		ids     []string
 	)
 
-	for i, p := range lists {
-		if _, id, ok := ParseURI(p.URI); ok && p.Artwork == "" {
+	for i := range lists {
+		if _, id, ok := ParseURI(lists[i].URI); ok && lists[i].Artwork == "" {
 			missing = append(missing, i)
 			ids = append(ids, id)
 		}
 	}
 
-	covers, _ := each(ctx, ids, func(ctx context.Context, id string) (string, error) {
-		return c.firstCover(ctx, id), nil
+	covers, _ := each(ctx, ids, func(ctx context.Context, playlistID string) (string, error) {
+		return c.firstCover(ctx, playlistID), nil
 	})
 	for k, cover := range covers {
 		lists[missing[k]].Artwork = cover
@@ -163,29 +198,31 @@ func (c *Client) MyPlaylists(ctx context.Context, offset int) (Page[Playlist], e
 		return Page[Playlist]{}, ErrInvalid
 	}
 
-	st, err := c.ctlStatus(ctx)
-	if err != nil || st.Username == "" {
+	status, err := c.ctlStatus(ctx)
+	if err != nil || status.Username == "" {
 		return Page[Playlist]{}, ErrNotConnected
 	}
 
-	var w struct {
-		Length   int        `json:"length"`
-		Contents plContents `json:"contents"`
-	}
+	var root plRootlist
 
-	path := fmt.Sprintf("/playlist/v2/user/%s/rootlist?decorate=revision,length,attributes,timestamp,owner&from=%d&length=%d",
-		url.PathEscape(st.Username), offset, pageSize)
-	if err := c.spclient(ctx, path, &w); err != nil {
+	path := fmt.Sprintf(
+		"/playlist/v2/user/%s/rootlist?decorate=revision,length,attributes,timestamp,owner&from=%d&length=%d",
+		url.PathEscape(status.Username), offset, pageSize)
+
+	err = c.spclient(ctx, path, &root)
+	if err != nil {
 		return Page[Playlist]{}, err
 	}
 
-	out := Page[Playlist]{Items: []Playlist{}, Total: w.Length, Next: nextOf(offset, len(w.Contents.Items), w.Length)}
-	for i, it := range w.Contents.Items {
-		if kind, _, ok := ParseURI(it.URI); !ok || kind != kindPlaylist || i >= len(w.Contents.MetaItems) {
+	out := Page[Playlist]{
+		Items: []Playlist{}, Total: root.Length, Next: nextOf(offset, len(root.Contents.Items), root.Length),
+	}
+	for i, item := range root.Contents.Items {
+		if kind, _, ok := ParseURI(item.URI); !ok || kind != kindPlaylist || i >= len(root.Contents.MetaItems) {
 			continue // folder markers and anything we cannot name
 		}
 
-		out.Items = append(out.Items, w.Contents.MetaItems[i].norm(it.URI))
+		out.Items = append(out.Items, root.Contents.MetaItems[i].norm(item.URI))
 	}
 
 	c.withCovers(ctx, out.Items)
@@ -199,27 +236,23 @@ func (c *Client) LikedTracks(ctx context.Context, offset int) (Page[Track], erro
 		return Page[Track]{}, ErrInvalid
 	}
 
-	st, err := c.ctlStatus(ctx)
-	if err != nil || st.Username == "" {
+	status, err := c.ctlStatus(ctx)
+	if err != nil || status.Username == "" {
 		return Page[Track]{}, ErrNotConnected
 	}
 
-	var w struct {
-		Pages []struct {
-			Tracks []struct {
-				URI string `json:"uri"`
-			} `json:"tracks"`
-		} `json:"pages"`
-	}
-	if err := c.spclient(ctx, "/context-resolve/v1/spotify:user:"+st.Username+":collection", &w); err != nil {
+	var liked plCollection
+
+	err = c.spclient(ctx, "/context-resolve/v1/spotify:user:"+status.Username+":collection", &liked)
+	if err != nil {
 		return Page[Track]{}, err
 	}
 
 	var uris []string
 
-	for _, p := range w.Pages {
-		for _, t := range p.Tracks {
-			uris = append(uris, t.URI)
+	for _, page := range liked.Pages {
+		for _, track := range page.Tracks {
+			uris = append(uris, track.URI)
 		}
 	}
 

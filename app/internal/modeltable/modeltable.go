@@ -49,7 +49,9 @@ func ModelNamed(name string) (Model, bool) {
 		}
 	}
 
-	return Model{}, false
+	var none Model
+
+	return none, false
 }
 
 // VariantNamed is the variant a board calls name, matched exactly.
@@ -60,7 +62,9 @@ func VariantNamed(name string) (Variant, bool) {
 		}
 	}
 
-	return Variant{}, false
+	var none Variant
+
+	return none, false
 }
 
 // IsModuleSuffix reports whether suffix names a model's modules or boot chain, which makes

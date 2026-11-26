@@ -14,6 +14,8 @@ import (
 )
 
 // gpioRoot is the sysfs GPIO tree; a variable so tests can point at a fake one.
+//
+//nolint:gochecknoglobals // tests point it at a fake sysfs tree
 var gpioRoot = "/sys/class/gpio"
 
 // gpioLine is one exported GPIO. An interface so the scan logic can be tested against
@@ -22,7 +24,7 @@ type gpioLine interface {
 	num() int
 	read() (int, error)
 	write(v int) error
-	direction(string) error
+	direction(value string) error
 	Close() error
 }
 
@@ -37,6 +39,33 @@ type sysfsGPIO struct {
 	buf [8]byte
 }
 
+// errEmptyRead is a value attribute that read as nothing.
+var errEmptyRead = errors.New("empty read")
+
+// errNoGPIOChip is a GPIO bank that sysfs does not show.
+var errNoGPIOChip = errors.New("no gpiochip")
+
+const (
+	// gpioWriteOnly is the mode of a sysfs attribute only written, should the write
+	// create it: export and direction.
+	gpioWriteOnly = 0o200
+	// gpioAttrRetries and gpioAttrRetry bound the wait for udev to create a new line's
+	// attributes.
+	gpioAttrRetries = 20
+	gpioAttrRetry   = 10 * time.Millisecond
+)
+
+func (g *sysfsGPIO) Close() error {
+	_ = g.dir.Close()
+
+	err := g.f.Close()
+	if err != nil {
+		return fmt.Errorf("gpio%d value: %w", g.n, err)
+	}
+
+	return nil
+}
+
 func (g *sysfsGPIO) num() int { return g.n }
 
 func (g *sysfsGPIO) read() (int, error) {
@@ -46,7 +75,7 @@ func (g *sysfsGPIO) read() (int, error) {
 	n, err := g.f.ReadAt(g.buf[:], 0)
 	if n == 0 {
 		if err == nil {
-			err = errors.New("empty read")
+			err = errEmptyRead
 		}
 
 		return 0, fmt.Errorf("gpio%d value: %w", g.n, err)
@@ -65,7 +94,8 @@ func (g *sysfsGPIO) write(v int) error {
 		b[0] = '1'
 	}
 
-	if _, err := g.f.WriteAt(b, 0); err != nil {
+	_, err := g.f.WriteAt(b, 0)
+	if err != nil {
 		return fmt.Errorf("gpio%d value: %w", g.n, err)
 	}
 
@@ -73,25 +103,20 @@ func (g *sysfsGPIO) write(v int) error {
 }
 
 func (g *sysfsGPIO) direction(v string) error {
-	if _, err := g.dir.WriteAt([]byte(v), 0); err != nil {
+	_, err := g.dir.WriteAt([]byte(v), 0)
+	if err != nil {
 		return fmt.Errorf("gpio%d direction: %w", g.n, err)
 	}
 
 	return nil
 }
 
-func (g *sysfsGPIO) Close() error {
-	_ = g.dir.Close()
-
-	return g.f.Close()
-}
-
 // gpioBankBase resolves the sysfs numbering base of the GPIO bank at the given physical
 // address.
 func gpioBankBase(addr string) (int, error) {
 	chips, _ := filepath.Glob(filepath.Join(gpioRoot, "gpiochip*"))
-	for _, c := range chips {
-		target, err := filepath.EvalSymlinks(c)
+	for _, chip := range chips {
+		target, err := filepath.EvalSymlinks(chip)
 		if err != nil {
 			continue
 		}
@@ -100,7 +125,7 @@ func gpioBankBase(addr string) (int, error) {
 			continue
 		}
 
-		base, err := strconv.Atoi(strings.TrimPrefix(filepath.Base(c), "gpiochip"))
+		base, err := strconv.Atoi(strings.TrimPrefix(filepath.Base(chip), "gpiochip"))
 		if err != nil {
 			continue
 		}
@@ -108,36 +133,39 @@ func gpioBankBase(addr string) (int, error) {
 		return base, nil
 	}
 
-	return 0, fmt.Errorf("no gpiochip at %s", addr)
+	return 0, fmt.Errorf("%w at %s", errNoGPIOChip, addr)
 }
 
 // ExportGPIO, when set, exports sysfs GPIO n and makes its attributes this process's:
 // soundtapd sets it to soundtap-root's gpio.export. nil exports here, as root does.
+//
+//nolint:gochecknoglobals // soundtapd replaces it at startup with soundtap-root's route (ADR 0066)
 var ExportGPIO func(n int) error
 
-// exportGPIO exports sysfs GPIO n unless it already is, and returns its directory. The
-// attributes inside may appear a moment later (udev); callers wait or retry.
-func exportGPIO(n int) (string, error) {
-	dir := filepath.Join(gpioRoot, fmt.Sprintf("gpio%d", n))
+// exportGPIO exports sysfs GPIO number unless it already is, and returns its directory.
+// The attributes inside may appear a moment later (udev); callers wait or retry.
+func exportGPIO(number int) (string, error) {
+	dir := filepath.Join(gpioRoot, fmt.Sprintf("gpio%d", number))
 	if ExportGPIO != nil {
 		// soundtapd's user may not export a line, nor write the attributes of one it did:
 		// soundtap-root does both, for the lines soundtapd drives (ADR 0066). Also for a
 		// line init exported, whose attributes are root's.
-		err := ExportGPIO(n)
+		err := ExportGPIO(number)
 		if err != nil {
-			return "", fmt.Errorf("export gpio%d: %w", n, err)
+			return "", fmt.Errorf("export gpio%d: %w", number, err)
 		}
 
 		return dir, nil
 	}
 
-	if _, err := os.Stat(dir); err == nil {
+	_, err := os.Stat(dir)
+	if err == nil {
 		return dir, nil
 	}
 
-	err := os.WriteFile(filepath.Join(gpioRoot, "export"), []byte(strconv.Itoa(n)), 0o200)
+	err = os.WriteFile(filepath.Join(gpioRoot, "export"), []byte(strconv.Itoa(number)), gpioWriteOnly)
 	if err != nil {
-		return "", fmt.Errorf("export gpio%d: %w", n, err)
+		return "", fmt.Errorf("export gpio%d: %w", number, err)
 	}
 
 	return dir, nil
@@ -146,39 +174,39 @@ func exportGPIO(n int) (string, error) {
 // openGPIOLine exports a GPIO if it isn't already and opens its value attribute.
 // direction is passed to sysfs verbatim: "in", or "low"/"high" to set an output and its
 // initial level in one write, so a strobe never glitches high on the way up.
-func openGPIOLine(n int, direction string) (gpioLine, error) {
-	dir, err := exportGPIO(n)
+func openGPIOLine(number int, direction string) (*sysfsGPIO, error) {
+	dir, err := exportGPIO(number)
 	if err != nil {
 		return nil, err
 	}
 	// udev creates the attributes a moment after the directory appears, and on this
 	// box that moment is occasionally long enough to lose the first write.
-	for range 20 {
-		err = os.WriteFile(filepath.Join(dir, "direction"), []byte(direction), 0o200)
+	for range gpioAttrRetries {
+		err = os.WriteFile(filepath.Join(dir, "direction"), []byte(direction), gpioWriteOnly)
 		if err == nil {
 			break
 		}
 
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(gpioAttrRetry)
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("gpio%d direction: %w", n, err)
+		return nil, fmt.Errorf("gpio%d direction: %w", number, err)
 	}
 
-	f, err := os.OpenFile(filepath.Join(dir, "value"), os.O_RDWR, 0)
+	valueFile, err := os.OpenFile(filepath.Join(dir, "value"), os.O_RDWR, 0)
 	if err != nil {
-		return nil, fmt.Errorf("gpio%d value: %w", n, err)
+		return nil, fmt.Errorf("gpio%d value: %w", number, err)
 	}
 
-	d, err := os.OpenFile(filepath.Join(dir, "direction"), os.O_WRONLY, 0)
+	dirFile, err := os.OpenFile(filepath.Join(dir, "direction"), os.O_WRONLY, 0)
 	if err != nil {
-		_ = f.Close()
+		_ = valueFile.Close()
 
-		return nil, fmt.Errorf("gpio%d direction: %w", n, err)
+		return nil, fmt.Errorf("gpio%d direction: %w", number, err)
 	}
 
-	return &sysfsGPIO{n: n, f: f, dir: d}, nil
+	return &sysfsGPIO{n: number, f: valueFile, dir: dirFile, buf: [8]byte{}}, nil
 }
 
 // Line is one GPIO line for a driver outside this package (internal/hw/battery).
@@ -207,4 +235,11 @@ func (l *Line) Read() (int, error) { return l.l.read() }
 func (l *Line) Write(v int) error { return l.l.write(v) }
 
 // Close releases the line's attribute files.
-func (l *Line) Close() error { return l.l.Close() }
+func (l *Line) Close() error {
+	err := l.l.Close()
+	if err != nil {
+		return fmt.Errorf("close gpio%d: %w", l.l.num(), err)
+	}
+
+	return nil
+}

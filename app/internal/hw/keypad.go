@@ -61,11 +61,6 @@ const (
 	gpioBank1Addr = "4804c000" // strobes
 )
 
-var (
-	keypadStrobeOffsets   = []int{28, 12, 13}     // gpio1: gpmc_be1n, gpmc_ad12, gpmc_ad13
-	keypadSwitchinOffsets = []int{23, 26, 22, 27} // gpio0: gpmc_ad9, ad10, ad8, ad11
-)
-
 const (
 	// One whole sweep per tick, so every key is sampled once per tick. The stock driver
 	// runs a strobe per jiffy, a sweep per 30 ms. Driving one strobe per 10 ms tick gave
@@ -82,6 +77,13 @@ const (
 	keypadDebounce = 2
 	// Scancode of the directly wired key, which is not part of the matrix.
 	keypadDirectIndex = 12
+	// keypadScancodeStride is the scancodes per strobe: strobe*4 + switch-in.
+	keypadScancodeStride = 4
+	// keypadReadsPerStep is what one step samples at most: three switch-ins and the
+	// direct key.
+	keypadReadsPerStep = 4
+	// startupChordKeys is how many keys the stock startup chord holds.
+	startupChordKeys = 2
 )
 
 // keypadMatrix is the opened front panel: strobes to drive, switch-ins to sample.
@@ -108,15 +110,15 @@ type GPIOLine struct {
 // KeypadLines are the GPIO lines the keypad matrix of modelName drives and reads: what
 // soundtap-root must let soundtapd export (internal/rootd).
 func KeypadLines(modelName string) []GPIOLine {
-	g := keypadGeometryFor(modelName)
+	geom := keypadGeometryFor(modelName)
 
-	var out []GPIOLine
-	for _, off := range g.strobeOffsets {
-		out = append(out, GPIOLine{g.strobeAddr, off})
+	out := make([]GPIOLine, 0, len(geom.strobeOffsets)+len(geom.switchOffsets))
+	for _, off := range geom.strobeOffsets {
+		out = append(out, GPIOLine{geom.strobeAddr, off})
 	}
 
-	for _, off := range g.switchOffsets {
-		out = append(out, GPIOLine{g.switchAddr, off})
+	for _, off := range geom.switchOffsets {
+		out = append(out, GPIOLine{geom.switchAddr, off})
 	}
 
 	return out
@@ -133,54 +135,60 @@ func keypadGeometryFor(modelName string) keypadGeometry {
 
 	return keypadGeometry{
 		strobeAddr: gpioBank1Addr, switchAddr: gpioBank0Addr,
-		strobeOffsets: keypadStrobeOffsets, switchOffsets: keypadSwitchinOffsets,
-		activeLevel: 1,
+		strobeOffsets: []int{28, 12, 13},     // gpio1: gpmc_be1n, gpmc_ad12, gpmc_ad13
+		switchOffsets: []int{23, 26, 22, 27}, // gpio0: gpmc_ad9, ad10, ad8, ad11
+		activeLevel:   1, releaseToIn: false,
 	}
 }
 
 func openKeypadMatrix(modelName string) (*keypadMatrix, error) {
-	g := keypadGeometryFor(modelName)
+	geom := keypadGeometryFor(modelName)
 
-	strobeBase, err := gpioBankBase(g.strobeAddr)
+	strobeBase, err := gpioBankBase(geom.strobeAddr)
 	if err != nil {
 		return nil, err
 	}
 
-	switchBase, err := gpioBankBase(g.switchAddr)
+	switchBase, err := gpioBankBase(geom.switchAddr)
 	if err != nil {
 		return nil, err
 	}
 
-	m := &keypadMatrix{activeLevel: g.activeLevel, releaseToIn: g.releaseToIn}
+	matrix := &keypadMatrix{
+		strobes:     make([]gpioLine, 0, len(geom.strobeOffsets)),
+		switchins:   make([]gpioLine, 0, len(geom.switchOffsets)),
+		activeLevel: geom.activeLevel,
+		releaseToIn: geom.releaseToIn,
+	}
 
 	initial := "low"
-	if g.releaseToIn {
+	if geom.releaseToIn {
 		initial = "in"
 	}
 
-	for _, off := range g.strobeOffsets {
+	for _, off := range geom.strobeOffsets {
 		line, err := openGPIOLine(strobeBase+off, initial)
 		if err != nil {
-			m.close()
+			matrix.close()
 
 			return nil, err
 		}
 
-		m.strobes = append(m.strobes, line)
+		matrix.strobes = append(matrix.strobes, line)
 	}
 
-	for _, off := range g.switchOffsets {
+	for _, off := range geom.switchOffsets {
 		line, err := openGPIOLine(switchBase+off, "in")
 		if err != nil {
-			m.close()
+			matrix.close()
 
 			return nil, err
 		}
 
-		m.switchins = append(m.switchins, line)
+		matrix.switchins = append(matrix.switchins, line)
 	}
 
-	return m, nil
+	return matrix, nil
 }
 
 func (m *keypadMatrix) release(g gpioLine) error {
@@ -230,15 +238,15 @@ func (m *keypadMatrix) step(strobe int, into []keyRead) ([]keyRead, error) {
 		return nil, drive
 	}
 
-	for j := range len(m.switchins) - 1 {
-		v, err := m.switchins[j].read()
+	for switchIn := range len(m.switchins) - 1 {
+		level, err := m.switchins[switchIn].read()
 		if err != nil {
 			_ = m.release(m.strobes[strobe])
 
 			return nil, err
 		}
 
-		out = append(out, keyRead{index: strobe*4 + j, pressed: v == 0}) // active low
+		out = append(out, keyRead{index: strobe*keypadScancodeStride + switchIn, pressed: level == 0}) // active low
 	}
 
 	err := m.release(m.strobes[strobe])
@@ -290,14 +298,19 @@ const keypadSettleWarn = 100
 func newKeypadScanner(m *keypadMatrix, keys KeySink, km map[int]string, log *slog.Logger) *keypadScanner {
 	return &keypadScanner{
 		m: m, keys: keys, km: km, log: log,
-		state: map[int]bool{},
-		seen:  map[int]int{},
-		reads: make([]keyRead, 0, 4),
+		state:                map[int]bool{},
+		seen:                 map[int]int{},
+		reads:                make([]keyRead, 0, keypadReadsPerStep),
+		next:                 0,
+		settled:              false,
+		held:                 nil,
+		sweeps:               0,
+		startupFactorySweeps: 0,
 	}
 }
 
 func startupFactoryChord(held []int, keymap map[int]string) bool {
-	if len(held) != 2 {
+	if len(held) != startupChordKeys {
 		return false
 	}
 
@@ -321,52 +334,57 @@ func (s *keypadScanner) tick() error {
 	s.next = (s.next + 1) % len(s.m.strobes)
 
 	if !s.settled {
-		s.settle(reads, endOfSweep)
+		// settle watches the panel until it reads idle once, or until the stock startup
+		// chord is held, before tick dispatches anything.
+		s.noteHeld(reads)
+
+		if endOfSweep {
+			s.settleSweep()
+		}
 
 		return nil
 	}
 
-	for _, r := range reads {
-		if s.state[r.index] == r.pressed {
-			s.seen[r.index] = 0
+	for _, read := range reads {
+		if s.state[read.index] == read.pressed {
+			s.seen[read.index] = 0
 
 			continue
 		}
 
-		s.seen[r.index]++
-		if s.seen[r.index] < keypadDebounce {
+		s.seen[read.index]++
+		if s.seen[read.index] < keypadDebounce {
 			continue
 		}
 
-		s.seen[r.index] = 0
-		s.state[r.index] = r.pressed
+		s.seen[read.index] = 0
+		s.state[read.index] = read.pressed
 
-		action, ok := s.km[r.index]
+		action, ok := s.km[read.index]
 		if !ok {
-			s.log.Debug("unmapped key index", "index", r.index, "pressed", r.pressed)
+			s.log.Debug("unmapped key index", "index", read.index, "pressed", read.pressed)
 
 			continue
 		}
 
-		s.keys.Handle(r.index, r.pressed, action)
+		s.keys.Handle(read.index, read.pressed, action)
 	}
 
 	return nil
 }
 
-// settle watches the panel until it reads idle once, or until the stock startup chord
-// is held, before tick dispatches anything.
-func (s *keypadScanner) settle(reads []keyRead, endOfSweep bool) {
-	for _, r := range reads {
-		if r.pressed {
-			s.held = append(s.held, r.index)
+// noteHeld collects the keys down in one step of the sweep in progress.
+func (s *keypadScanner) noteHeld(reads []keyRead) {
+	for _, read := range reads {
+		if read.pressed {
+			s.held = append(s.held, read.index)
 		}
 	}
+}
 
-	if !endOfSweep {
-		return
-	}
-
+// settleSweep judges a whole sweep while the panel has not settled: idle settles it, the
+// debounced startup chord arms it, anything else waits.
+func (s *keypadScanner) settleSweep() {
 	s.sweeps++
 	if startupFactoryChord(s.held, s.km) {
 		s.startupFactorySweeps++
@@ -391,6 +409,8 @@ func (s *keypadScanner) settle(reads []keyRead, endOfSweep bool) {
 	case s.sweeps == keypadSettleWarn:
 		s.log.Warn("keypad never reads idle; ignoring it until it does",
 			"scancodes_down", s.held, "sweeps", s.sweeps)
+	default:
+		// Still not idle: wait for the next sweep.
 	}
 
 	s.held = s.held[:0]
@@ -408,21 +428,25 @@ func KeypadMatrixSupported(modelName string) bool {
 		return false
 	}
 
-	g := keypadGeometryFor(modelName)
-	if _, err := gpioBankBase(g.switchAddr); err != nil {
+	geom := keypadGeometryFor(modelName)
+
+	_, err := gpioBankBase(geom.switchAddr)
+	if err != nil {
 		return false
 	}
 
-	_, err := gpioBankBase(g.strobeAddr)
+	_, err = gpioBankBase(geom.strobeAddr)
 
 	return err == nil
 }
 
 // RunKeypadMatrix polls the model's front panel until ctx ends, handing every debounced
 // edge to keys. standby slows the sweep down.
-func RunKeypadMatrix(ctx context.Context, modelName string, keys KeySink, km map[int]string, standby func() bool, log *slog.Logger) {
+func RunKeypadMatrix(
+	ctx context.Context, modelName string, keys KeySink, keymap map[int]string, standby func() bool, log *slog.Logger,
+) {
 	for ctx.Err() == nil {
-		m, err := openKeypadMatrix(modelName)
+		matrix, err := openKeypadMatrix(modelName)
 		if err != nil {
 			// These are static platform resources. If they are missing now they will
 			// not appear later, so this is a hard stop and not a retry loop.
@@ -431,9 +455,9 @@ func RunKeypadMatrix(ctx context.Context, modelName string, keys KeySink, km map
 			return
 		}
 
-		log.Info("keypad matrix up", "strobes", lineNums(m.strobes), "switchins", lineNums(m.switchins))
-		err = scanKeypad(ctx, m, keys, km, standby, log)
-		m.close()
+		log.Info("keypad matrix up", "strobes", lineNums(matrix.strobes), "switchins", lineNums(matrix.switchins))
+		err = scanKeypad(ctx, matrix, keys, keymap, standby, log)
+		matrix.close()
 		keys.Reset() // a press whose release we will now never see must not leave a ramp running
 
 		if ctx.Err() != nil {
@@ -448,31 +472,35 @@ func RunKeypadMatrix(ctx context.Context, modelName string, keys KeySink, km map
 	}
 }
 
-func scanKeypad(ctx context.Context, m *keypadMatrix, keys KeySink, km map[int]string, standby func() bool, log *slog.Logger) error {
-	s := newKeypadScanner(m, keys, km, log)
+func scanKeypad(
+	ctx context.Context, matrix *keypadMatrix, keys KeySink, keymap map[int]string, standby func() bool,
+	log *slog.Logger,
+) error {
+	scanner := newKeypadScanner(matrix, keys, keymap, log)
 	every := keypadSweepStep
 
-	t := time.NewTicker(every)
-	defer t.Stop()
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-t.C:
+		case <-ticker.C:
 		}
 
-		for range m.strobes {
-			err := s.tick()
+		for range matrix.strobes {
+			err := scanner.tick()
 			if err != nil {
 				return err
 			}
 		}
 
-		retick(t, &every, keypadSweepEvery(standby()))
+		retick(ticker, &every, keypadSweepEvery(standby()))
 	}
 }
 
+//nolint:revive // flag-parameter: standby is the speaker's state, which picks the period
 func keypadSweepEvery(standby bool) time.Duration {
 	if standby {
 		return keypadStandbySweep

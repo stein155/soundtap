@@ -123,7 +123,7 @@ Alternatives that lost:
   `os/package/soundtap-plistutil`: the host `plistutil`.
 - `app/internal/upnp/media.go:MediaURL`: the URL rule (DNS check in `fetchableHost`).
 - `app/internal/player/args.go`: `player.FFmpegProtocols`, `player.FFmpegURL` and the ffmpeg
-  input (`playbackInput`); `app/internal/player/args_test.go:TestPlaybackAudioFilterOnlyUsesBuiltFilters`.
+  input (`playbackInput`); `app/internal/player/args_internal_test.go:TestPlaybackAudioFilterOnlyUsesBuiltFilters`.
 - `app/internal/readahead/readahead.go:Open`: the read-ahead reader, used from
   `app/internal/player/player.go`.
 - `app/internal/speaker/speaker.go:OwnStream`, `app/internal/web/radio.go:validOwnStream` and

@@ -30,6 +30,15 @@ import (
 
 const busName = "org.freedesktop.DBus"
 
+// The RequestName and ReleaseName reply codes of the D-Bus specification.
+const (
+	requestNamePrimaryOwner uint32 = 1
+	requestNameExists       uint32 = 3
+	requestNameAlreadyOwner uint32 = 4
+	releaseNameReleased     uint32 = 1
+	releaseNameNotOwner     uint32 = 3
+)
+
 // Bus is a running test bus. Its zero value is not usable; use New.
 type Bus struct {
 	// Addr is the bus's D-Bus address, for godbus's Connect.
@@ -52,7 +61,7 @@ type peer struct {
 func New(tb testing.TB) *Bus {
 	tb.Helper()
 	// A unix socket path must stay short: t.TempDir under a long test name exceeds it.
-	dir, err := os.MkdirTemp("", "dbus")
+	dir, err := os.MkdirTemp("", "dbus") //nolint:usetesting // t.TempDir makes the socket path too long
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -61,28 +70,31 @@ func New(tb testing.TB) *Bus {
 
 	sock := filepath.Join(dir, "bus")
 
-	ln, err := new(net.ListenConfig).Listen(context.Background(), "unix", sock)
+	listener, err := new(net.ListenConfig).Listen(context.Background(), "unix", sock)
 	if err != nil {
 		tb.Fatal(err)
 	}
 
-	b := &Bus{Addr: "unix:path=" + sock, peers: map[string]*peer{}, owners: map[string]string{}}
+	bus := &Bus{
+		Addr: "unix:path=" + sock,
+		mu:   sync.Mutex{}, next: 0, peers: map[string]*peer{}, owners: map[string]string{},
+	}
 
 	var conns sync.WaitGroup
 
 	tb.Cleanup(func() {
-		_ = ln.Close()
+		_ = listener.Close()
 
-		b.mu.Lock()
-		for _, p := range b.peers {
+		bus.mu.Lock()
+		for _, p := range bus.peers {
 			_ = p.conn.Close()
 		}
-		b.mu.Unlock()
+		bus.mu.Unlock()
 		conns.Wait()
 	})
 	safego.Go("dbustest.accept", func() {
 		for {
-			c, err := ln.Accept()
+			conn, err := listener.Accept()
 			if err != nil {
 				return
 			}
@@ -91,64 +103,65 @@ func New(tb testing.TB) *Bus {
 			safego.Go("dbustest.serve", func() {
 				defer conns.Done()
 
-				b.serve(c)
+				bus.serve(conn)
 			})
 		}
 	})
 
-	return b
+	return bus
 }
 
 // Connect opens a godbus connection to the bus, closed when the test ends.
 func (b *Bus) Connect(tb testing.TB) *dbus.Conn {
 	tb.Helper()
 
-	c, err := dbus.Connect(b.Addr)
+	conn, err := dbus.Connect(b.Addr)
 	if err != nil {
 		tb.Fatal(err)
 	}
 
-	tb.Cleanup(func() { _ = c.Close() })
+	tb.Cleanup(func() { _ = conn.Close() })
 
-	return c
+	return conn
 }
 
-func (b *Bus) serve(c net.Conn) {
-	defer func() { _ = c.Close() }()
+func (b *Bus) serve(conn net.Conn) {
+	defer func() { _ = conn.Close() }()
 
-	r := bufio.NewReader(c)
-	if !authenticate(c, r) {
+	reader := bufio.NewReader(conn)
+	if !authenticate(conn, reader) {
 		return
 	}
 
 	b.mu.Lock()
 	b.next++
-	p := &peer{name: ":1." + strconv.Itoa(b.next), conn: c}
-	b.peers[p.name] = p
+	from := &peer{name: ":1." + strconv.Itoa(b.next), conn: conn, wmu: sync.Mutex{}, rules: nil}
+	b.peers[from.name] = from
 
 	b.mu.Unlock()
-	defer b.leave(p)
+	defer b.leave(from)
 
 	for {
-		m, err := dbus.DecodeMessage(r)
+		msg, err := dbus.DecodeMessage(reader)
 		if err != nil {
 			return
 		}
 
-		m.Headers[dbus.FieldSender] = dbus.MakeVariant(p.name)
-		b.route(p, m)
+		msg.Headers[dbus.FieldSender] = dbus.MakeVariant(from.name)
+		b.route(from, msg)
 	}
 }
 
 // authenticate answers the SASL exchange as dbus-daemon does: EXTERNAL is accepted for
 // anyone, Unix fd passing is declined.
-func authenticate(c net.Conn, r *bufio.Reader) bool {
-	if b, err := r.ReadByte(); err != nil || b != 0 {
+func authenticate(conn net.Conn, reader *bufio.Reader) bool {
+	nul, err := reader.ReadByte()
+	if err != nil || nul != 0 {
 		return false
 	}
 
 	for {
-		line, err := r.ReadString('\n')
+		line, err := reader.ReadString('\n')
 		if err != nil {
 			return false
 		}
@@ -166,21 +179,22 @@ func authenticate(c net.Conn, r *bufio.Reader) bool {
 			reply = "ERROR"
 		}
 
-		if _, err := c.Write([]byte(reply + "\r\n")); err != nil {
+		_, err = conn.Write([]byte(reply + "\r\n"))
+		if err != nil {
 			return false
 		}
 	}
 }
 
 // leave drops a peer's names, telling everyone as NameOwnerChanged.
-func (b *Bus) leave(p *peer) {
+func (b *Bus) leave(left *peer) {
 	b.mu.Lock()
-	delete(b.peers, p.name)
+	delete(b.peers, left.name)
 
 	var gone []string
 
 	for name, owner := range b.owners {
-		if owner == p.name {
+		if owner == left.name {
 			delete(b.owners, name)
 			gone = append(gone, name)
 		}
@@ -188,46 +202,47 @@ func (b *Bus) leave(p *peer) {
 	b.mu.Unlock()
 
 	for _, name := range gone {
-		b.ownerChanged(name, p.name, "")
+		b.ownerChanged(name, left.name, "")
 	}
 
-	b.ownerChanged(p.name, p.name, "")
+	b.ownerChanged(left.name, left.name, "")
 }
 
-func (b *Bus) route(from *peer, m *dbus.Message) {
-	dest, _ := m.Headers[dbus.FieldDestination].Value().(string)
+func (b *Bus) route(from *peer, msg *dbus.Message) {
+	dest, _ := msg.Headers[dbus.FieldDestination].Value().(string)
 	switch {
-	case m.Type == dbus.TypeMethodCall && dest == busName:
-		b.busCall(from, m)
-	case m.Type == dbus.TypeSignal && dest == "":
-		b.broadcast(m)
+	case msg.Type == dbus.TypeMethodCall && dest == busName:
+		b.busCall(from, msg)
+	case msg.Type == dbus.TypeSignal && dest == "":
+		b.broadcast(msg)
 	default:
 		b.mu.Lock()
 
-		to := b.peers[dest]
-		if to == nil {
-			to = b.peers[b.owners[dest]]
+		target := b.peers[dest]
+		if target == nil {
+			target = b.peers[b.owners[dest]]
 		}
 		b.mu.Unlock()
 
-		if to == nil {
-			if m.Type == dbus.TypeMethodCall && m.Flags&dbus.FlagNoReplyExpected == 0 {
-				b.replyError(from, m, "org.freedesktop.DBus.Error.ServiceUnknown", "The name "+dest+" was not provided by any .service files")
+		if target == nil {
+			if msg.Type == dbus.TypeMethodCall && msg.Flags&dbus.FlagNoReplyExpected == 0 {
+				replyError(from, msg, "org.freedesktop.DBus.Error.ServiceUnknown",
+					"The name "+dest+" was not provided by any .service files")
 			}
 
 			return
 		}
 
-		to.send(m)
+		target.send(msg)
 	}
 }
 
-func (b *Bus) busCall(from *peer, m *dbus.Message) {
-	member, _ := m.Headers[dbus.FieldMember].Value().(string)
+func (b *Bus) busCall(from *peer, msg *dbus.Message) {
+	member, _ := msg.Headers[dbus.FieldMember].Value().(string)
 
 	arg := ""
-	if len(m.Body) > 0 {
-		arg, _ = m.Body[0].(string)
+	if len(msg.Body) > 0 {
+		arg, _ = msg.Body[0].(string)
 	}
 
 	handle, ok := map[string]func(*peer, *dbus.Message, string){
@@ -236,32 +251,32 @@ func (b *Bus) busCall(from *peer, m *dbus.Message) {
 		"RemoveMatch":  b.removeMatch,
 		"RequestName":  b.requestName,
 		"ReleaseName":  b.releaseName,
-		"GetNameOwner": b.getNameOwner,
-		"NameHasOwner": func(from *peer, m *dbus.Message, name string) { b.reply(from, m, b.resolve(name) != "") },
+		"GetNameOwner": b.replyNameOwner,
+		"NameHasOwner": func(from *peer, call *dbus.Message, name string) { reply(from, call, b.resolve(name) != "") },
 	}[member]
 	if !ok {
-		b.replyError(from, m, "org.freedesktop.DBus.Error.UnknownMethod", "the test bus has no "+member)
+		replyError(from, msg, "org.freedesktop.DBus.Error.UnknownMethod", "the test bus has no "+member)
 
 		return
 	}
 
-	handle(from, m, arg)
+	handle(from, msg, arg)
 }
 
-func (b *Bus) hello(from *peer, m *dbus.Message, _ string) {
-	b.reply(from, m, from.name)
+func (b *Bus) hello(from *peer, call *dbus.Message, _ string) {
+	reply(from, call, from.name)
 	b.ownerChanged(from.name, "", from.name)
 }
 
-func (b *Bus) addMatch(from *peer, m *dbus.Message, rule string) {
+func (b *Bus) addMatch(from *peer, call *dbus.Message, rule string) {
 	b.mu.Lock()
 
 	from.rules = append(from.rules, parseRule(rule))
 	b.mu.Unlock()
-	b.reply(from, m)
+	reply(from, call)
 }
 
-func (b *Bus) removeMatch(from *peer, m *dbus.Message, rule string) {
+func (b *Bus) removeMatch(from *peer, call *dbus.Message, rule string) {
 	want := fmt.Sprint(parseRule(rule))
 
 	b.mu.Lock()
@@ -273,10 +288,10 @@ func (b *Bus) removeMatch(from *peer, m *dbus.Message, rule string) {
 		}
 	}
 	b.mu.Unlock()
-	b.reply(from, m)
+	reply(from, call)
 }
 
-func (b *Bus) requestName(from *peer, m *dbus.Message, name string) {
+func (b *Bus) requestName(from *peer, call *dbus.Message, name string) {
 	b.mu.Lock()
 
 	owner := b.owners[name]
@@ -287,17 +302,17 @@ func (b *Bus) requestName(from *peer, m *dbus.Message, name string) {
 
 	switch owner {
 	case "":
-		b.reply(from, m, uint32(1)) // primary owner
+		reply(from, call, requestNamePrimaryOwner)
 		b.ownerChanged(name, "", from.name)
-		b.signal(from, "NameAcquired", name)
+		signal(from, "NameAcquired", name)
 	case from.name:
-		b.reply(from, m, uint32(4)) // already the owner
+		reply(from, call, requestNameAlreadyOwner)
 	default:
-		b.reply(from, m, uint32(3)) // exists
+		reply(from, call, requestNameExists)
 	}
 }
 
-func (b *Bus) releaseName(from *peer, m *dbus.Message, name string) {
+func (b *Bus) releaseName(from *peer, call *dbus.Message, name string) {
 	b.mu.Lock()
 
 	mine := b.owners[name] == from.name
@@ -307,23 +322,23 @@ func (b *Bus) releaseName(from *peer, m *dbus.Message, name string) {
 	b.mu.Unlock()
 
 	if !mine {
-		b.reply(from, m, uint32(3)) // not owner
+		reply(from, call, releaseNameNotOwner)
 
 		return
 	}
 
-	b.reply(from, m, uint32(1))
+	reply(from, call, releaseNameReleased)
 	b.ownerChanged(name, from.name, "")
 }
 
-func (b *Bus) getNameOwner(from *peer, m *dbus.Message, name string) {
+func (b *Bus) replyNameOwner(from *peer, call *dbus.Message, name string) {
 	if owner := b.resolve(name); owner != "" {
-		b.reply(from, m, owner)
+		reply(from, call, owner)
 
 		return
 	}
 
-	b.replyError(from, m, "org.freedesktop.DBus.Error.NameHasNoOwner", "no owner for "+name)
+	replyError(from, call, "org.freedesktop.DBus.Error.NameHasNoOwner", "no owner for "+name)
 }
 
 // resolve returns the unique name behind name, a unique or well-known one.
@@ -338,23 +353,23 @@ func (b *Bus) resolve(name string) string {
 	return b.owners[name]
 }
 
-func (b *Bus) reply(to *peer, call *dbus.Message, body ...any) {
-	m := &dbus.Message{Type: dbus.TypeMethodReply, Headers: map[dbus.HeaderField]dbus.Variant{
+func reply(target *peer, call *dbus.Message, body ...any) {
+	msg := &dbus.Message{Type: dbus.TypeMethodReply, Flags: 0, Headers: map[dbus.HeaderField]dbus.Variant{
 		dbus.FieldReplySerial: dbus.MakeVariant(call.Serial()),
-		dbus.FieldDestination: dbus.MakeVariant(to.name),
+		dbus.FieldDestination: dbus.MakeVariant(target.name),
 		dbus.FieldSender:      dbus.MakeVariant(busName),
 	}, Body: body}
 	if len(body) > 0 {
-		m.Headers[dbus.FieldSignature] = dbus.MakeVariant(dbus.SignatureOf(body...))
+		msg.Headers[dbus.FieldSignature] = dbus.MakeVariant(dbus.SignatureOf(body...))
 	}
 
-	to.send(m)
+	target.send(msg)
 }
 
-func (b *Bus) replyError(to *peer, call *dbus.Message, name, text string) {
-	to.send(&dbus.Message{Type: dbus.TypeError, Headers: map[dbus.HeaderField]dbus.Variant{
+func replyError(target *peer, call *dbus.Message, name, text string) {
+	target.send(&dbus.Message{Type: dbus.TypeError, Flags: 0, Headers: map[dbus.HeaderField]dbus.Variant{
 		dbus.FieldReplySerial: dbus.MakeVariant(call.Serial()),
-		dbus.FieldDestination: dbus.MakeVariant(to.name),
+		dbus.FieldDestination: dbus.MakeVariant(target.name),
 		dbus.FieldSender:      dbus.MakeVariant(busName),
 		dbus.FieldErrorName:   dbus.MakeVariant(name),
 		dbus.FieldSignature:   dbus.MakeVariant(dbus.SignatureOf(text)),
@@ -362,12 +377,12 @@ func (b *Bus) replyError(to *peer, call *dbus.Message, name, text string) {
 }
 
 // signal sends the bus's own signal member to one peer.
-func (b *Bus) signal(to *peer, member string, body ...any) {
-	to.send(busSignal(member, to.name, body...))
+func signal(target *peer, member string, body ...any) {
+	target.send(busSignal(member, target.name, body...))
 }
 
 func busSignal(member, dest string, body ...any) *dbus.Message {
-	m := &dbus.Message{Type: dbus.TypeSignal, Headers: map[dbus.HeaderField]dbus.Variant{
+	msg := &dbus.Message{Type: dbus.TypeSignal, Flags: 0, Headers: map[dbus.HeaderField]dbus.Variant{
 		dbus.FieldPath:      dbus.MakeVariant(dbus.ObjectPath("/org/freedesktop/DBus")),
 		dbus.FieldInterface: dbus.MakeVariant(busName),
 		dbus.FieldMember:    dbus.MakeVariant(member),
@@ -375,10 +390,10 @@ func busSignal(member, dest string, body ...any) *dbus.Message {
 		dbus.FieldSignature: dbus.MakeVariant(dbus.SignatureOf(body...)),
 	}, Body: body}
 	if dest != "" {
-		m.Headers[dbus.FieldDestination] = dbus.MakeVariant(dest)
+		msg.Headers[dbus.FieldDestination] = dbus.MakeVariant(dest)
 	}
 
-	return m
+	return msg
 }
 
 func (b *Bus) ownerChanged(name, old, owner string) {
@@ -386,15 +401,15 @@ func (b *Bus) ownerChanged(name, old, owner string) {
 }
 
 // broadcast sends a signal to every peer with a rule it matches.
-func (b *Bus) broadcast(m *dbus.Message) {
+func (b *Bus) broadcast(msg *dbus.Message) {
 	b.mu.Lock()
 
-	var to []*peer
+	var targets []*peer
 
 	for _, p := range b.peers {
 		for _, r := range p.rules {
-			if b.matchLocked(r, m) {
-				to = append(to, p)
+			if b.matchLocked(r, msg) {
+				targets = append(targets, p)
 
 				break
 			}
@@ -402,14 +417,14 @@ func (b *Bus) broadcast(m *dbus.Message) {
 	}
 	b.mu.Unlock()
 
-	for _, p := range to {
-		p.send(m)
+	for _, p := range targets {
+		p.send(msg)
 	}
 }
 
-func (b *Bus) matchLocked(rule map[string]string, m *dbus.Message) bool {
+func (b *Bus) matchLocked(rule map[string]string, msg *dbus.Message) bool {
 	for key, want := range rule {
-		if !b.fieldMatchesLocked(key, want, m) {
+		if !b.fieldMatchesLocked(key, want, msg) {
 			return false
 		}
 	}
@@ -418,17 +433,17 @@ func (b *Bus) matchLocked(rule map[string]string, m *dbus.Message) bool {
 }
 
 // fieldMatchesLocked checks one key='value' of a match rule against a signal.
-func (b *Bus) fieldMatchesLocked(key, want string, m *dbus.Message) bool {
+func (b *Bus) fieldMatchesLocked(key, want string, msg *dbus.Message) bool {
 	str := func(f dbus.HeaderField) string {
-		v, _ := m.Headers[f].Value().(string)
+		v, _ := msg.Headers[f].Value().(string)
 
 		return v
 	}
-	path, _ := m.Headers[dbus.FieldPath].Value().(dbus.ObjectPath)
+	path, _ := msg.Headers[dbus.FieldPath].Value().(dbus.ObjectPath)
 
 	switch key {
 	case "type":
-		return want == "signal" && m.Type == dbus.TypeSignal
+		return want == "signal" && msg.Type == dbus.TypeSignal
 	case "sender":
 		sender := str(dbus.FieldSender)
 
@@ -445,11 +460,11 @@ func (b *Bus) fieldMatchesLocked(key, want string, m *dbus.Message) bool {
 
 	if n, ok := strings.CutPrefix(key, "arg"); ok {
 		i, err := strconv.Atoi(n)
-		if err != nil || i >= len(m.Body) {
+		if err != nil || i >= len(msg.Body) {
 			return false
 		}
 
-		s, _ := m.Body[i].(string)
+		s, _ := msg.Body[i].(string)
 
 		return s == want
 	}
@@ -459,26 +474,26 @@ func (b *Bus) fieldMatchesLocked(key, want string, m *dbus.Message) bool {
 
 // parseRule reads key='value' pairs; the rules godbus and soundtapd write carry no
 // escaped quotes.
-func parseRule(s string) map[string]string {
+func parseRule(text string) map[string]string {
 	rule := map[string]string{}
 
-	for s != "" {
-		key, rest, ok := strings.Cut(s, "='")
+	for text != "" {
+		key, rest, ok := strings.Cut(text, "='")
 		if !ok {
 			break
 		}
 
 		value, rest, _ := strings.Cut(rest, "'")
 		rule[strings.TrimSpace(key)] = value
-		s = strings.TrimPrefix(rest, ",")
+		text = strings.TrimPrefix(rest, ",")
 	}
 
 	return rule
 }
 
-func (p *peer) send(m *dbus.Message) {
+func (p *peer) send(msg *dbus.Message) {
 	p.wmu.Lock()
 	defer p.wmu.Unlock()
 
-	_ = m.EncodeTo(p.conn, binary.LittleEndian)
+	_ = msg.EncodeTo(p.conn, binary.LittleEndian)
 }

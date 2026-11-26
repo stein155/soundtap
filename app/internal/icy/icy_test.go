@@ -1,42 +1,22 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-package icy
+package icy_test
 
 import (
-	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stein155/soundtap/app/internal/icy"
 )
 
-func TestParseStreamTitle(t *testing.T) {
-	tests := []struct {
-		name, meta, want string
-	}{
-		{"typical", "StreamTitle='Charles & Eddie - Would I Lie To You';StreamUrl='';", "Charles & Eddie - Would I Lie To You"},
-		{"trailing nuls trimmed", "StreamTitle='Song';\x00\x00\x00", "Song"},
-		{"no semicolon terminator", "StreamTitle='Song'", "Song"},
-		{"apostrophe, no terminator", "StreamTitle='Guns N Roses - Sweet Child O' Mine'\x00\x00", "Guns N Roses - Sweet Child O' Mine"},
-		{"apostrophe, terminated", "StreamTitle='Sweet Child O' Mine';StreamUrl='';", "Sweet Child O' Mine"},
-		{"empty value", "StreamTitle='';StreamUrl='';", ""},
-		{"absent", "StreamUrl='x';", ""},
-		{"latin-1 é", "StreamTitle='Andr\xe9 Hazes Jr';", "André Hazes Jr"},
-		{"windows-1252 em dash", "StreamTitle='A \x96 B';", "A – B"},
-		{"utf-8 kept as-is", "StreamTitle='André';", "André"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := parseStreamTitle(tt.meta); got != tt.want {
-				t.Errorf("parseStreamTitle(%q) = %q, want %q", tt.meta, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestSplitArtistTitle(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		in, artist, title string
 	}{
@@ -51,7 +31,7 @@ func TestSplitArtistTitle(t *testing.T) {
 		{"", "", ""},
 	}
 	for _, tt := range tests {
-		artist, title := SplitArtistTitle(tt.in)
+		artist, title := icy.SplitArtistTitle(tt.in)
 		if artist != tt.artist || title != tt.title {
 			t.Errorf("SplitArtistTitle(%q) = (%q, %q), want (%q, %q)", tt.in, artist, title, tt.artist, tt.title)
 		}
@@ -69,11 +49,13 @@ func icyBody(metaint int, meta string) []byte {
 }
 
 func TestStreamTitle(t *testing.T) {
+	t.Parallel()
+
 	const metaint = 32
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Icy-Metadata") != "1" {
-			t.Errorf("missing Icy-MetaData header")
+			t.Error("missing Icy-MetaData header")
 		}
 
 		w.Header().Set("Icy-Metaint", strconv.Itoa(metaint))
@@ -81,7 +63,7 @@ func TestStreamTitle(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := StreamTitle(context.Background(), srv.Client(), srv.URL)
+	got, err := icy.StreamTitle(t.Context(), srv.Client(), srv.URL)
 	if err != nil {
 		t.Fatalf("StreamTitle: %v", err)
 	}
@@ -92,9 +74,11 @@ func TestStreamTitle(t *testing.T) {
 }
 
 func TestStreamTitleSkipsEmptyBlock(t *testing.T) {
+	t.Parallel()
+
 	const metaint = 16
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Icy-Metaint", strconv.Itoa(metaint))
 		// First block empty (length 0), second carries the title.
 		body := append([]byte(strings.Repeat("A", metaint)), 0)
@@ -103,7 +87,7 @@ func TestStreamTitleSkipsEmptyBlock(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := StreamTitle(context.Background(), srv.Client(), srv.URL)
+	got, err := icy.StreamTitle(t.Context(), srv.Client(), srv.URL)
 	if err != nil {
 		t.Fatalf("StreamTitle: %v", err)
 	}
@@ -114,34 +98,29 @@ func TestStreamTitleSkipsEmptyBlock(t *testing.T) {
 }
 
 func TestStreamTitleNoMetaint(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("audio"))
 	}))
 	defer srv.Close()
 
-	got, err := StreamTitle(context.Background(), srv.Client(), srv.URL)
+	got, err := icy.StreamTitle(t.Context(), srv.Client(), srv.URL)
 	if err != nil || got != "" {
 		t.Errorf("got (%q, %v), want (\"\", nil)", got, err)
 	}
 }
 
 func TestStreamTitleNon200(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	defer srv.Close()
 
-	if _, err := StreamTitle(context.Background(), srv.Client(), srv.URL); err == nil {
-		t.Error("expected error on non-200")
-	}
-}
-
-func TestParseStreamTitleDropsAdMarker(t *testing.T) {
-	if got := parseStreamTitle("StreamTitle='commercial-in';StreamUrl='';"); got != "" {
-		t.Fatalf("ad marker shown as track: %q", got)
-	}
-
-	if got := parseStreamTitle("StreamTitle='Commercials - The Band';"); got != "Commercials - The Band" {
-		t.Fatalf("real track dropped: %q", got)
+	_, err := icy.StreamTitle(t.Context(), srv.Client(), srv.URL)
+	if !errors.Is(err, icy.ErrStatus) {
+		t.Errorf("err = %v, want ErrStatus on non-200", err)
 	}
 }

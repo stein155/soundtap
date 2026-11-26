@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-package sleeptimer
+package sleeptimer_test
 
 import (
 	"context"
@@ -9,7 +9,11 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/stein155/soundtap/app/internal/sleeptimer"
 )
+
+var errBusy = errors.New("busy")
 
 func waitUntil(t *testing.T, ok func() bool) {
 	t.Helper()
@@ -24,61 +28,67 @@ func waitUntil(t *testing.T, ok func() bool) {
 }
 
 func TestFiresOnceAndClears(t *testing.T) {
+	t.Parallel()
+
 	var (
-		tm    Timer
+		timer sleeptimer.Timer
 		fired atomic.Int32
 	)
 
-	tm.Set(2, time.Millisecond, time.Millisecond, func(context.Context, int) error {
+	timer.Set(2, time.Millisecond, time.Millisecond, func(context.Context, int) error {
 		fired.Add(1)
 
 		return nil
 	})
 
-	if tm.View()["minutes"] != 2 {
-		t.Fatalf("view %v: want the running timer", tm.View())
+	if timer.View()["minutes"] != 2 {
+		t.Fatalf("view %v: want the running timer", timer.View())
 	}
 
-	waitUntil(t, func() bool { return fired.Load() == 1 && tm.View()["minutes"] == 0 })
+	waitUntil(t, func() bool { return fired.Load() == 1 && timer.View()["minutes"] == 0 })
 }
 
 func TestRetriesAFailingFireThenGivesUp(t *testing.T) {
+	t.Parallel()
+
 	var (
-		tm    Timer
+		timer sleeptimer.Timer
 		tries atomic.Int32
 	)
 
-	tm.Set(1, time.Millisecond, time.Millisecond, func(context.Context, int) error {
+	timer.Set(1, time.Millisecond, time.Millisecond, func(context.Context, int) error {
 		tries.Add(1)
 
-		return errors.New("busy")
+		return errBusy
 	})
-	waitUntil(t, func() bool { return tries.Load() == Attempts && tm.View()["minutes"] == 0 })
+	waitUntil(t, func() bool { return tries.Load() == sleeptimer.Attempts && timer.View()["minutes"] == 0 })
 	time.Sleep(10 * time.Millisecond)
 
-	if n := tries.Load(); n != Attempts {
-		t.Fatalf("fired %d times, want %d", n, Attempts)
+	if n := tries.Load(); n != sleeptimer.Attempts {
+		t.Fatalf("fired %d times, want %d", n, sleeptimer.Attempts)
 	}
 }
 
 func TestCancelAndReplaceNeverFireTheOldTimer(t *testing.T) {
+	t.Parallel()
+
 	var (
-		tm  Timer
-		old atomic.Int32
+		timer sleeptimer.Timer
+		old   atomic.Int32
 	)
 
-	tm.Set(5, time.Millisecond, time.Millisecond, func(context.Context, int) error {
+	timer.Set(5, time.Millisecond, time.Millisecond, func(context.Context, int) error {
 		old.Add(1)
 
 		return nil
 	})
-	tm.Cancel()
-	tm.Set(5, time.Millisecond, time.Millisecond, func(context.Context, int) error {
+	timer.Cancel()
+	timer.Set(5, time.Millisecond, time.Millisecond, func(context.Context, int) error {
 		old.Add(1)
 
 		return nil
 	})
-	tm.Set(60, time.Hour, time.Hour, func(context.Context, int) error {
+	timer.Set(60, time.Hour, time.Hour, func(context.Context, int) error {
 		t.Error("the replacement fired")
 
 		return nil
@@ -89,21 +99,23 @@ func TestCancelAndReplaceNeverFireTheOldTimer(t *testing.T) {
 		t.Fatalf("a cancelled or replaced timer fired %d times", n)
 	}
 
-	tm.Cancel()
+	timer.Cancel()
 }
 
 // A fire already running when its timer is replaced sees its context end, and the
 // standby it then causes (CancelFiring) leaves the replacement alone.
 func TestReplaceReachesAFireInProgress(t *testing.T) {
-	var tm Timer
+	t.Parallel()
+
+	var timer sleeptimer.Timer
 
 	started, release, done := make(chan context.Context), make(chan struct{}), make(chan struct{})
 
-	tm.Set(1, time.Millisecond, time.Hour, func(ctx context.Context, _ int) error {
+	timer.Set(1, time.Millisecond, time.Hour, func(ctx context.Context, _ int) error {
 		started <- ctx
 
 		<-release
-		tm.CancelFiring()
+		timer.CancelFiring()
 		close(done)
 
 		return nil
@@ -116,7 +128,7 @@ func TestReplaceReachesAFireInProgress(t *testing.T) {
 		t.Fatal("the timer never fired")
 	}
 
-	tm.Set(60, time.Hour, time.Hour, func(context.Context, int) error {
+	timer.Set(60, time.Hour, time.Hour, func(context.Context, int) error {
 		t.Error("the replacement fired")
 
 		return nil
@@ -129,15 +141,15 @@ func TestReplaceReachesAFireInProgress(t *testing.T) {
 	close(release)
 	<-done
 
-	if m := tm.View()["minutes"]; m != 60 {
+	if m := timer.View()["minutes"]; m != 60 {
 		t.Fatalf("minutes = %v after the old fire's standby, want the replacement's 60", m)
 	}
 	// Once the old fire has returned, an ordinary standby ends the timer. done closes just
 	// before that return, so give the fire's goroutine a moment to clear firing.
 	for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(time.Millisecond) {
-		tm.CancelFiring()
+		timer.CancelFiring()
 
-		if m := tm.View()["minutes"]; m == 0 {
+		if m := timer.View()["minutes"]; m == 0 {
 			break
 		} else if time.Now().After(deadline) {
 			t.Fatalf("minutes = %v after a standby, want 0", m)

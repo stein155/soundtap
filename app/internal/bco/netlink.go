@@ -22,14 +22,25 @@ import (
 	"github.com/stein155/soundtap/app/internal/childproc"
 )
 
+// level2USB is the USB vendor:product of bootloader level 2's link.
+const level2USB = "5432:1235"
+
+// The flash's network waits: for level 2's link, and for the app's LAN link afterwards.
+const (
+	level2LinkPoll = 500 * time.Millisecond
+	lanRestoreWait = 2 * time.Minute
+)
+
 // Flash writes image into the BCO on this SCM: tty is the BCO UART. It holds the UART
 // for the whole run, so Wi-Fi reads wait instead of typing into a bootloader menu.
 func Flash(ctx context.Context, tty string, image []byte, log io.Writer) (string, error) {
-	if _, err := CheckAppImage(image); err != nil {
+	_, err := CheckAppImage(image)
+	if err != nil {
 		return "", err
 	}
 
-	if err := lockSerial(ctx); err != nil {
+	err = lockSerial(ctx)
+	if err != nil {
 		return "", err
 	}
 
@@ -48,15 +59,34 @@ func Flash(ctx context.Context, tty string, image []byte, log io.Writer) (string
 	defer unmap()
 
 	// soundtapd's LAN watch would see the link drop and power-cycle the BCO mid-flash.
-	if release, err := HoldLANWatch(); err != nil {
-		fmt.Fprintf(log, "[bcoflash] could not hold the LAN watch: %v\n", err)
+	release, holdErr := HoldLANWatch()
+	if holdErr != nil {
+		fmt.Fprintf(log, "[bcoflash] could not hold the LAN watch: %v\n", holdErr)
 	} else {
 		defer release()
 	}
 
-	lan := lanLink()
+	// The LAN link is read and put back even when the flash is cancelled.
+	netCtx := context.WithoutCancel(ctx)
+	lan := lanLink(netCtx)
 	fmt.Fprintf(log, "[bcoflash] LAN link before: %+v\n", lan)
-	f := &Flasher{
+	flasher := scmFlasher(port, power, log)
+
+	ver, err := flasher.FlashApp(ctx, image)
+	if errors.Is(err, ErrUpload) && ctx.Err() == nil {
+		fmt.Fprintf(log, "\n[bcoflash] %v; writing the image over XMODEM instead\n", err)
+		ver, err = flasher.XmodemApp(ctx, image)
+	}
+
+	restoreLAN(netCtx, lan, log)
+
+	return ver, err
+}
+
+// scmFlasher is the Flasher on this SCM's UART and supply switch, uploading over level 2's
+// USB link.
+func scmFlasher(port io.ReadWriter, power func(on bool) error, log io.Writer) *Flasher {
+	return &Flasher{
 		Serial: port,
 		Power:  power,
 		Log:    log,
@@ -68,17 +98,8 @@ func Flash(ctx context.Context, tty string, image []byte, log io.Writer) (string
 
 			return UploadTFTP(ctx, image)
 		},
+		Scale: 0,
 	}
-
-	ver, err := f.FlashApp(ctx, image)
-	if errors.Is(err, ErrUpload) && ctx.Err() == nil {
-		fmt.Fprintf(log, "\n[bcoflash] %v; writing the image over XMODEM instead\n", err)
-		ver, err = f.XmodemApp(ctx, image)
-	}
-
-	restoreLAN(lan, log)
-
-	return ver, err
 }
 
 // usbID is the USB vendor:product behind a netdev, "" if it is not USB.
@@ -97,7 +118,7 @@ func usbID(iface string) string {
 func netdevs() []string {
 	ents, _ := os.ReadDir("/sys/class/net")
 
-	var out []string
+	out := make([]string, 0, len(ents))
 	for _, e := range ents {
 		out = append(out, e.Name())
 	}
@@ -105,8 +126,9 @@ func netdevs() []string {
 	return out
 }
 
-func ip(args ...string) (string, error) {
-	cmd := exec.CommandContext(context.Background(), "ip", args...)
+// ip runs ip(8) with args and returns its combined output.
+func ip(ctx context.Context, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "ip", args...)
 	childproc.NetTool(cmd)
 	out, err := cmd.CombinedOutput()
 
@@ -115,15 +137,18 @@ func ip(args ...string) (string, error) {
 
 // addressLevel2 waits for bootloader level 2's USB link and gives it 192.168.1.101/24.
 func addressLevel2(ctx context.Context, log io.Writer) error {
+	// The address goes on even when the upload's ctx ends meanwhile.
+	ipCtx := context.WithoutCancel(ctx)
+
 	for {
-		for _, n := range netdevs() {
-			if usbID(n) != "5432:1235" {
+		for _, netdev := range netdevs() {
+			if usbID(netdev) != level2USB {
 				continue
 			}
 
-			ip("link", "set", n, "up")
-			ip("addr", "add", "192.168.1.101/24", "dev", n) // "exists" is fine
-			fmt.Fprintf(log, "\n[bcoflash] level-2 link %s = 192.168.1.101/24\n", n)
+			_, _ = ip(ipCtx, "link", "set", netdev, "up")
+			_, _ = ip(ipCtx, "addr", "add", "192.168.1.101/24", "dev", netdev) // "exists" is fine
+			fmt.Fprintf(log, "\n[bcoflash] level-2 link %s = 192.168.1.101/24\n", netdev)
 
 			return nil
 		}
@@ -131,7 +156,7 @@ func addressLevel2(ctx context.Context, log io.Writer) error {
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("bootloader level 2 never showed its USB link: %w", ctx.Err())
-		case <-time.After(500 * time.Millisecond):
+		case <-time.After(level2LinkPoll):
 		}
 	}
 }
@@ -143,62 +168,63 @@ type link struct {
 }
 
 // lanLink records the app's LAN link: the USB netdev that is not level 2 and has an IPv4.
-func lanLink() link {
-	for _, n := range netdevs() {
-		if id := usbID(n); id == ":" || id == "" || id == "5432:1235" {
+func lanLink(ctx context.Context) link {
+	for _, netdev := range netdevs() {
+		if id := usbID(netdev); id == ":" || id == "" || id == level2USB {
 			continue
 		}
 
-		mac, _ := os.ReadFile("/sys/class/net/" + n + "/address")
-		l := link{MAC: strings.TrimSpace(string(mac))}
+		mac, _ := os.ReadFile("/sys/class/net/" + netdev + "/address")
+		lan := link{MAC: strings.TrimSpace(string(mac)), Addrs: nil, GW: ""}
 
-		out, _ := ip("-4", "-o", "addr", "show", "dev", n)
+		out, _ := ip(ctx, "-4", "-o", "addr", "show", "dev", netdev)
 		for f := range strings.SplitSeq(out, "\n") {
 			fs := strings.Fields(f)
 			for i := range fs {
 				if fs[i] == "inet" && i+1 < len(fs) {
-					l.Addrs = append(l.Addrs, fs[i+1])
+					lan.Addrs = append(lan.Addrs, fs[i+1])
 				}
 			}
 		}
 
-		if out, _ := ip("route", "show", "default", "dev", n); strings.HasPrefix(out, "default via ") {
-			l.GW = strings.Fields(out)[2]
+		if out, _ := ip(ctx, "route", "show", "default", "dev", netdev); strings.HasPrefix(out, "default via ") {
+			lan.GW = strings.Fields(out)[2]
 		}
 
-		if len(l.Addrs) > 0 {
-			return l
+		if len(lan.Addrs) > 0 {
+			return lan
 		}
 	}
 
-	return link{}
+	return link{MAC: "", Addrs: nil, GW: ""}
 }
 
 // restoreLAN waits for the app's link (same MAC) to come back and re-applies what it had.
-func restoreLAN(l link, log io.Writer) {
-	if l.MAC == "" {
+func restoreLAN(ctx context.Context, saved link, log io.Writer) {
+	if saved.MAC == "" {
 		return
 	}
 
-	deadline := time.Now().Add(2 * time.Minute)
+	deadline := time.Now().Add(lanRestoreWait)
 	for time.Now().Before(deadline) {
-		for _, n := range netdevs() {
-			mac, _ := os.ReadFile("/sys/class/net/" + n + "/address")
-			if strings.TrimSpace(string(mac)) != l.MAC {
+		for _, netdev := range netdevs() {
+			mac, _ := os.ReadFile("/sys/class/net/" + netdev + "/address")
+			if strings.TrimSpace(string(mac)) != saved.MAC {
 				continue
 			}
 
-			ip("link", "set", n, "up")
+			// Best effort, step by step: a step that fails is not retried.
+			_, _ = ip(ctx, "link", "set", netdev, "up")
 
-			for _, a := range l.Addrs {
-				ip("addr", "add", a, "dev", n)
+			for _, a := range saved.Addrs {
+				_, _ = ip(ctx, "addr", "add", a, "dev", netdev)
 			}
 
-			if l.GW != "" {
-				ip("route", "replace", "default", "via", l.GW, "dev", n)
+			if saved.GW != "" {
+				_, _ = ip(ctx, "route", "replace", "default", "via", saved.GW, "dev", netdev)
 			}
 
-			fmt.Fprintf(log, "\n[bcoflash] LAN link %s restored: %v via %s\n", n, l.Addrs, l.GW)
+			fmt.Fprintf(log, "\n[bcoflash] LAN link %s restored: %v via %s\n", netdev, saved.Addrs, saved.GW)
 
 			return
 		}
@@ -206,5 +232,5 @@ func restoreLAN(l link, log io.Writer) {
 		time.Sleep(time.Second)
 	}
 
-	fmt.Fprintf(log, "\n[bcoflash] LAN link %s did not come back within 2 minutes\n", l.MAC)
+	fmt.Fprintf(log, "\n[bcoflash] LAN link %s did not come back within 2 minutes\n", saved.MAC)
 }

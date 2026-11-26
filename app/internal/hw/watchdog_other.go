@@ -11,4 +11,7 @@ import (
 	"time"
 )
 
-func setWatchdogTimeout(*os.File, time.Duration) error { return errors.New("not linux") }
+// errNotLinux is the watchdog ioctl on a machine that is not the speaker.
+var errNotLinux = errors.New("not linux")
+
+func setWatchdogTimeout(*os.File, time.Duration) error { return errNotLinux }

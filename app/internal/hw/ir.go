@@ -87,62 +87,83 @@ const (
 	irUnknownQuiet = 5 * time.Minute
 )
 
-// irActions are the speakerstate keys an ir.map entry may name. NEXT_TRACK and
-// PREV_TRACK only do something on a source that carries a control channel (today
-// Bluetooth AVRCP); on radio or AUX they are accepted and ignored, because a remote
-// that has the buttons should not fail to load its map over them.
-var irActions = map[string]bool{
-	"POWER": true, "VOLUME_UP": true, "VOLUME_DOWN": true, "MUTE": true, //nolint:goconst // key names
-	"PLAY": true, "PAUSE": true, "PLAY_PAUSE": true, "STOP": true,
-	"NEXT_TRACK": true, "PREV_TRACK": true,
-	"AUX_INPUT": true, KeySourceToggle: true, keyBluetooth: true,
-	"PRESET_1": true, "PRESET_2": true, "PRESET_3": true, //nolint:goconst // key names
-	"PRESET_4": true, "PRESET_5": true, "PRESET_6": true, //nolint:goconst // key names
+// isIRAction reports whether action is a speakerstate key an ir.map entry may name.
+// NEXT_TRACK and PREV_TRACK only do something on a source that carries a control channel
+// (today Bluetooth AVRCP); on radio or AUX they are accepted and ignored, because a
+// remote that has the buttons should not fail to load its map over them.
+func isIRAction(action string) bool {
+	switch action {
+	case "POWER", "VOLUME_UP", "VOLUME_DOWN", "MUTE", //nolint:goconst // key names
+		"PLAY", "PAUSE", "PLAY_PAUSE", "STOP",
+		"NEXT_TRACK", "PREV_TRACK",
+		"AUX_INPUT", KeySourceToggle, keyBluetooth,
+		"PRESET_1", "PRESET_2", "PRESET_3", //nolint:goconst // key names
+		"PRESET_4", "PRESET_5", "PRESET_6": //nolint:goconst // key names
+		return true
+	default:
+		return false
+	}
 }
+
+// errIRCodeRange is an ir.map code that is not a byte.
+var errIRCodeRange = errors.New("is not a 1..255 value")
+
+// errIRReleaseCode is an ir.map code of 0x00.
+var errIRReleaseCode = errors.New("code 0x00 is the release marker, not a key")
+
+const (
+	// irCodeHexPrefix marks a hexadecimal ir.map code.
+	irCodeHexPrefix = "0x"
+	irCodeHexBase   = 16
+	irCodeDecBase   = 10
+	irCodeBits      = 8
+)
 
 // LoadIRKeymap parses `<code> = <ACTION>` lines, where code is decimal or 0x-hex.
 // Unparsable lines and unknown actions are reported and skipped rather than
 // silently dropped: a typo in a hand-written map on a headless speaker is
 // otherwise invisible.
 func LoadIRKeymap(path string, log *slog.Logger) map[byte]string {
-	m := map[byte]string{}
+	keymap := map[byte]string{}
 
 	b, err := os.ReadFile(path) //nolint:gosec // G703: IR_MAP, or the speaker's own map
 	if err != nil {
-		return m
+		return keymap
 	}
 
-	for n, line := range strings.Split(string(b), "\n") {
+	for index, line := range strings.Split(string(b), "\n") {
+		lineNo := index + 1
+
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 
-		k, v, ok := strings.Cut(line, "=")
+		codeText, actionText, ok := strings.Cut(line, "=")
 		if !ok {
-			log.Warn("ir.map: not a code=action line", "file", path, "line", n+1)
+			log.Warn("ir.map: not a code=action line", "file", path, "line", lineNo)
 
 			continue
 		}
 
-		code, err := parseIRCode(strings.TrimSpace(k))
+		code, err := parseIRCode(strings.TrimSpace(codeText))
 		if err != nil {
-			log.Warn("ir.map: bad code", "file", path, "line", n+1, "err", err)
+			log.Warn("ir.map: bad code", "file", path, "line", lineNo, "err", err)
 
 			continue
 		}
 
-		action := strings.ToUpper(strings.TrimSpace(v))
-		if !irActions[action] {
-			log.Warn("ir.map: unknown action", "file", path, "line", n+1, "action", action)
+		action := strings.ToUpper(strings.TrimSpace(actionText))
+		if !isIRAction(action) {
+			log.Warn("ir.map: unknown action", "file", path, "line", lineNo, "action", action)
 
 			continue
 		}
 
-		m[code] = action
+		keymap[code] = action
 	}
 
-	return m
+	return keymap
 }
 
 func irMapPath(configured, persistent, stock string) string {
@@ -150,7 +171,8 @@ func irMapPath(configured, persistent, stock string) string {
 		return configured
 	}
 
-	if _, err := os.Stat(persistent); !os.IsNotExist(err) {
+	_, err := os.Stat(persistent)
+	if !os.IsNotExist(err) {
 		return persistent
 	}
 
@@ -158,24 +180,24 @@ func irMapPath(configured, persistent, stock string) string {
 }
 
 // parseIRCode accepts 0x1a, 1A (hex only with the prefix) and 26.
-func parseIRCode(s string) (byte, error) {
-	base := 10
-	if l := strings.ToLower(s); strings.HasPrefix(l, "0x") {
-		s, base = s[2:], 16
+func parseIRCode(text string) (byte, error) {
+	base := irCodeDecBase
+	if strings.HasPrefix(strings.ToLower(text), irCodeHexPrefix) {
+		text, base = text[len(irCodeHexPrefix):], irCodeHexBase
 	}
 
-	v, err := strconv.ParseUint(s, base, 8)
+	value, err := strconv.ParseUint(text, base, irCodeBits)
 	if err != nil {
-		return 0, fmt.Errorf("code %q is not a 1..255 value", s)
+		return 0, fmt.Errorf("code %q %w", text, errIRCodeRange)
 	}
 
-	if v == 0 {
+	if value == 0 {
 		// The driver reserves it for the release marker and can never deliver it as
 		// a key, so a 0x00 line is a misreading of a capture, not a binding.
-		return 0, errors.New("code 0x00 is the release marker, not a key")
+		return 0, errIRReleaseCode
 	}
 
-	return byte(v), nil
+	return byte(value), nil
 }
 
 // irSource is one open receiver. It exists so the edge synthesis can be tested
@@ -216,31 +238,35 @@ type irSynth struct {
 func newIRSynth(keys KeySink, km map[byte]string, grace time.Duration, learn bool, log *slog.Logger) *irSynth {
 	return &irSynth{
 		keys: keys, km: km, log: log, grace: grace, learn: learn,
-		now:     time.Now,
-		unknown: map[byte]time.Time{},
-		order:   -1,
+		now:       time.Now,
+		held:      0,
+		heldName:  "",
+		pending:   false,
+		releaseAt: time.Time{},
+		unknown:   map[byte]time.Time{},
+		order:     -1,
 	}
 }
 
 // code handles one byte from the receiver.
-func (s *irSynth) code(c byte) {
+func (s *irSynth) code(received byte) {
 	now := s.now()
 	if s.learn {
 		// The capture path: say what arrived and what it is currently bound to,
 		// and drive nothing. The 0x00 markers are reported too — where they fall
 		// is exactly what says whether this remote's holds survive.
-		if c == irReleaseCode {
-			s.log.Info("ir learn", "code", hexCode(c), "meaning", "release")
+		if received == irReleaseCode {
+			s.log.Info("ir learn", "code", hexCode(received), "meaning", "release")
 
 			return
 		}
 
-		s.log.Info("ir learn", "code", hexCode(c), "decimal", c, "mapped", s.km[c])
+		s.log.Info("ir learn", "code", hexCode(received), "decimal", received, "mapped", s.km[received])
 
 		return
 	}
 
-	if c == irReleaseCode {
+	if received == irReleaseCode {
 		if s.heldName != "" && !s.pending {
 			s.pending, s.releaseAt = true, now.Add(s.grace)
 		}
@@ -248,16 +274,16 @@ func (s *irSynth) code(c byte) {
 		return
 	}
 
-	c = s.resolve(c)
+	received = s.resolve(received)
 
-	action, mapped := s.km[c]
+	action, mapped := s.km[received]
 	if !mapped {
-		s.reportUnknown(c, now)
+		s.reportUnknown(received, now)
 
 		return
 	}
 
-	if s.heldName != "" && s.held == c {
+	if s.heldName != "" && s.held == received {
 		// The same key again: the driver only re-sends a latched code after it
 		// reset itself, so this is a hold whose 0x00 was premature. Withdraw the
 		// release instead of replaying the press.
@@ -273,8 +299,8 @@ func (s *irSynth) code(c byte) {
 		s.release()
 	}
 
-	s.heldName, s.held, s.pending = action, c, false
-	s.keys.Handle(int(c), true, action)
+	s.heldName, s.held, s.pending = action, received, false
+	s.keys.Handle(int(received), true, action)
 }
 
 // resolve reads a code the way ir.map spells it. ir.ko hands over exactly that byte, so
@@ -282,22 +308,22 @@ func (s *irSynth) code(c byte) {
 // codes are its byte, the complement or either one bit-reversed, so the first press of
 // a mapped key settles it and the choice is logged. No two keys of the stock map
 // collide under any one reading, which is what makes trying all four safe.
-func (s *irSynth) resolve(c byte) byte {
+func (s *irSynth) resolve(raw byte) byte {
 	if s.order >= 0 {
-		return irTransforms[s.order].fn(c)
+		return irTransforms()[s.order].fn(raw)
 	}
 
-	for i, t := range irTransforms {
-		v := t.fn(c)
+	for i, t := range irTransforms() {
+		v := t.fn(raw)
 		if _, ok := s.km[v]; ok && v != irReleaseCode {
 			s.order = i
-			s.log.Info("ir code reading settled", "reading", t.name, "raw", hexCode(c), "code", hexCode(v))
+			s.log.Info("ir code reading settled", "reading", t.name, "raw", hexCode(raw), "code", hexCode(v))
 
 			return v
 		}
 	}
 
-	return c
+	return raw
 }
 
 // tick fires a release whose grace period has run out.
@@ -323,16 +349,16 @@ func (s *irSynth) reset() {
 	s.keys.Reset()
 }
 
-func (s *irSynth) reportUnknown(c byte, now time.Time) {
-	if last, seen := s.unknown[c]; seen && now.Sub(last) < irUnknownQuiet {
+func (s *irSynth) reportUnknown(code byte, now time.Time) {
+	if last, seen := s.unknown[code]; seen && now.Sub(last) < irUnknownQuiet {
 		return
 	}
 
-	s.unknown[c] = now
+	s.unknown[code] = now
 	// Info, not Debug: on a speaker with no ir.map yet this line IS the
 	// documentation of the user's remote. The quiet window above keeps a
 	// neighbouring remote from turning that into a flood.
-	s.log.Info("unmapped ir code", "code", hexCode(c), "decimal", c)
+	s.log.Info("unmapped ir code", "code", hexCode(code), "decimal", code)
 }
 
 func hexCode(c byte) string { return fmt.Sprintf("0x%02x", c) }
@@ -379,8 +405,14 @@ func IRDevice(configured string) string {
 	}
 	// ir.ko's /dev/ir only exists on the stock kernel. The mainline one drives the same
 	// receiver through gpio-ir-receiver and rc-core, and its raw timings are on lirc0.
-	if _, err := os.Stat(dev); err != nil && dev == "/dev/ir" { //nolint:gosec // G703: IR_DEVICE, or the model's receiver
-		if _, err := os.Stat("/dev/lirc0"); err == nil {
+	if dev != "/dev/ir" {
+		return dev
+	}
+
+	_, err := os.Stat(dev) //nolint:gosec // G703: IR_DEVICE, or the model's receiver
+	if err != nil {
+		_, lircErr := os.Stat("/dev/lirc0")
+		if lircErr == nil {
 			return "/dev/lirc0"
 		}
 	}
@@ -392,27 +424,29 @@ func IRDevice(configured string) string {
 // map is IR_MAP, else userMap when it exists, else the rootfs's stock map.
 func RunIR(ctx context.Context, dev, userMap string, keys KeySink, log *slog.Logger) {
 	mapPath := irMapPath(os.Getenv("IR_MAP"), userMap, "/etc/soundtap/ir.map")
-	km := LoadIRKeymap(mapPath, log)
+	keymap := LoadIRKeymap(mapPath, log)
 	learn := os.Getenv("IR_LEARN") == "1"
 
 	grace := irReleaseGrace
-	if ms, err := strconv.Atoi(os.Getenv("IR_RELEASE_GRACE_MS")); err == nil && ms >= 0 {
+
+	ms, err := strconv.Atoi(os.Getenv("IR_RELEASE_GRACE_MS"))
+	if err == nil && ms >= 0 {
 		grace = time.Duration(ms) * time.Millisecond
 	}
 
 	switch {
 	case learn:
 		log.Info("ir learn mode: codes are reported, no actions are taken", "device", dev)
-	case len(km) == 0:
+	case len(keymap) == 0:
 		// Not an error: no remote has been captured yet. Codes still get logged
 		// once each by reportUnknown, which is what fills in ir.map.
 		log.Info("no ir keymap; press remote keys and read the logged codes",
 			"map", mapPath, "device", dev)
 	default:
-		log.Info("ir keymap loaded", "map", mapPath, "keys", len(km), "device", dev)
+		log.Info("ir keymap loaded", "map", mapPath, "keys", len(keymap), "device", dev)
 	}
 
-	s := newIRSynth(keys, km, grace, learn, log)
+	synth := newIRSynth(keys, keymap, grace, learn, log)
 	// The node is created by devtmpfs when init.d modprobes `ir`, which happens well
 	// before soundtapd starts — so a few retries cover a slow module load, and
 	// anything longer means this kernel has no Bose IR driver (the mainline image, or
@@ -421,7 +455,7 @@ func RunIR(ctx context.Context, dev, userMap string, keys KeySink, log *slog.Log
 	const openAttempts = 15 // ~30 s at the 2 s retry below
 
 	for attempt := 0; ctx.Err() == nil; {
-		d, err := openIRDevice(dev)
+		device, err := openIRDevice(dev)
 		if err != nil {
 			attempt++
 			if attempt >= openAttempts {
@@ -439,10 +473,10 @@ func RunIR(ctx context.Context, dev, userMap string, keys KeySink, log *slog.Log
 
 		attempt = 0
 
-		s.run(ctx, d)
-		s.reset() // device closed mid-press: no repeat is coming
+		synth.run(ctx, device)
+		synth.reset() // device closed mid-press: no repeat is coming
 
-		_ = d.Close()
+		_ = device.Close()
 
 		if !waitToReopen(ctx) { // see ReadKeyDevice: no hot reopen loop
 			return

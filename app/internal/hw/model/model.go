@@ -36,10 +36,10 @@ type Model struct {
 	AmpPowerGPIO  string // amp enable line (1=powered; empty when not runtime-controlled)
 	// AmpFaultGPIO is the sysfs GPIO number of the amplifier fault input, on the stock
 	// kernel's flat numbering; the init script passes the mainline number as
-	// AMP_FAULT_GPIO. The line is active low: stock's idle ST20 reads 1. 0 means this model has no fault line backed by hardware evidence, and
-	// the monitor stays off: a guessed pin either reads nothing useful or latches a
-	// permanent mute on an unrelated signal, and silent audio is worse than no fault
-	// detection. Numbering is per-model — see MuteGPIO, 72 on ST10 vs 49 on ST20.
+	// AMP_FAULT_GPIO. The line is active low: stock's idle ST20 reads 1. 0 means this model
+	// has no fault line backed by hardware evidence, and the monitor stays off: a guessed pin
+	// either reads nothing useful or latches a permanent mute on an unrelated signal, and
+	// silent audio is worse than no fault detection. Numbering is per-model — see MuteGPIO, 72 on ST10 vs 49 on ST20.
 	AmpFaultGPIO int
 	LEDDir       string // dir holding the LED byte files (uledy/uledw)
 	OLED         string // the front panel over spidev, as oled.NewFramebuffer takes it; "" for none
@@ -89,6 +89,25 @@ type Model struct {
 	AuxCapture string
 }
 
+// Stock's numbers for the ST10, which the profiles derived from it inherit.
+const (
+	rhinoChimeVolume = 41 // APConfig-rhino.xml
+	// thresholdHigh and thresholdLow in BoseApp-rhino.xml, and in BoseApp-spotty.xml for the ST20.
+	rhinoDefaultVolume = 50
+	rhinoWakeVolumeMax = 70
+	rhinoWakeVolumeMin = 10
+	// APConfig-rhino.xml, and APConfig-spotty.xml for the ST20: about -8 dB.
+	rhinoWifiAttenuation = 0.39810699
+)
+
+// ledClassDir is the mainline gpio-leds tree.
+const ledClassDir = "/sys/class/leds"
+
+// st20Prebuffer is the ST20's Mixer prebuffer: our own BCO Wi-Fi has no 802.11 ACK/retry
+// yet, so a lost frame waits for a TCP timeout, and 2 s of slack made radio rebuffer often
+// (2026-10-19).
+const st20Prebuffer = 6 * time.Second
+
 // st10 (rhino sm2) — the confirmed profile; see docs/hardware/st10/hardware-contract.md.
 func st10() Model {
 	return Model{
@@ -102,23 +121,29 @@ func st10() Model {
 		AICConfigFile: "/sys/class/sound/snd_aic3256/configuredFile",
 		AICConfig:     "rhino_sm2_normal.cfg",
 		MuteGPIO:      "/sys/class/gpio/gpio72/value",
+		AmpPowerGPIO:  "",
 		// No amp fault pin is documented for the ST10: docs/hardware/st10/hardware-contract.md
 		// records mute 72 and amp power 75 only, and the analysis of the stock audio modules
 		// found the fault input read by stock scmmond over sysfs without saying which GPIO
 		// it is. Left off until a live probe names it.
-		AmpFaultGPIO: 0,
-		LEDDir:       "/dev/shelby-leds",
-		KeypadDev:    "/dev/shelby-keypad",
-		IRDev:        "/dev/ir", // stock ir.ko, chardev name "ir"; rhino_sm2.dtb has bose,shelby-ir
-		BTUart:       "/dev/ttyO2",
-		ChimeVolume:  41, // APConfig-rhino.xml
-		AuxCapture:   "/dev/snd/pcmC0D0c",
-		// thresholdHigh and thresholdLow in BoseApp-rhino.xml, and in BoseApp-spotty.xml for the ST20.
-		DefaultVolume: 50,
-		WakeVolumeMax: 70,
-		WakeVolumeMin: 10,
-		// APConfig-rhino.xml, and APConfig-spotty.xml for the ST20: about -8 dB.
-		WifiAttenuation: 0.39810699,
+		AmpFaultGPIO:    0,
+		LEDDir:          "/dev/shelby-leds",
+		OLED:            "",
+		KeypadDev:       "/dev/shelby-keypad",
+		IRDev:           "/dev/ir", // stock ir.ko, chardev name "ir"; rhino_sm2.dtb has bose,shelby-ir
+		BTUart:          "/dev/ttyO2",
+		Battery:         false,
+		STM32Amp:        false,
+		HostLink:        false,
+		HostLinkDev:     "",
+		Prebuffer:       0,
+		ChimeVolume:     rhinoChimeVolume,
+		NoBass:          false,
+		AuxCapture:      "/dev/snd/pcmC0D0c",
+		DefaultVolume:   rhinoDefaultVolume,
+		WakeVolumeMax:   rhinoWakeVolumeMax,
+		WakeVolumeMin:   rhinoWakeVolumeMin,
+		WifiAttenuation: rhinoWifiAttenuation,
 		AuxAttenuation:  1,
 	}
 }
@@ -130,31 +155,29 @@ func st10() Model {
 // USB (ADR 0031), so the LAN reaches soundtapd on :80 as on the ST10 (ADR 0001).
 // GPIO/keypad wiring comes from the stock spotty DTB and shelby-keypad driver.
 func st20() Model {
-	m := st10()
-	m.Name = ST20
-	m.Type = "SoundTouch 20"
-	m.AICConfig = "spotty_scm_normal.cfg"
-	m.MuteGPIO = "/sys/class/gpio/gpio49/value"
-	m.AmpPowerGPIO = "/sys/class/gpio/gpio55/value"
+	profile := st10()
+	profile.Name = ST20
+	profile.Type = "SoundTouch 20"
+	profile.AICConfig = "spotty_scm_normal.cfg"
+	profile.MuteGPIO = "/sys/class/gpio/gpio49/value"
+	profile.AmpPowerGPIO = "/sys/class/gpio/gpio55/value"
 	// From the live probe in os/tests/fixtures/st20-stock/hardware-facts.md:
 	// "mute 49, amp standby 55, amp fault 56". The mute number in that same line
 	// matches MuteGPIO above and docs/hardware/st20/hardware-contract.md (safe mute gpio1_17), which is what
 	// makes 56 trustworthy enough to poll.
 	// Mainline: gpio1_24, resolved by the init script into AMP_FAULT_GPIO.
-	m.AmpFaultGPIO = 56
-	m.BTUart = "" // ST20 controller transport is not proven; never inherit ST10 ttyO2.
+	profile.AmpFaultGPIO = 56
+	profile.BTUart = "" // ST20 controller transport is not proven; never inherit ST10 ttyO2.
 	// One lamp: the Wi-Fi lamp above the OLED, white and amber PWM channels with the
 	// ST10's labels (stock spotty_scm uledw/uledy). The ST10's other channels have
 	// no brightness file here and are skipped; the rest of the panel is the display.
-	m.LEDDir = "/sys/class/leds"
-	m.OLED = "spidev:/dev/spidev1.0"
-	// Our own BCO Wi-Fi has no 802.11 ACK/retry yet: a lost frame waits for a TCP
-	// timeout, and 2 s of slack made radio rebuffer often (2026-10-19).
-	m.Prebuffer = 6 * time.Second
-	m.ChimeVolume = 40 // APConfig-spotty.xml
-	m.DefaultVolume = 30
+	profile.LEDDir = ledClassDir
+	profile.OLED = "spidev:/dev/spidev1.0"
+	profile.Prebuffer = st20Prebuffer
+	profile.ChimeVolume = 40 // APConfig-spotty.xml
+	profile.DefaultVolume = 30
 
-	return m
+	return profile
 }
 
 // wla is the SoundTouch Wireless Link Adapter. Stock firmware identifies it as
@@ -184,43 +207,43 @@ const (
 const listenAddr = ":80"
 
 func wla() Model {
-	m := st10()
-	m.Name = WLA
-	m.NoBass = true // APConfig-binky.xml
+	profile := st10()
+	profile.Name = WLA
+	profile.NoBass = true // APConfig-binky.xml
 	// BoseApp-binky.xml: thresholdLow 10, thresholdHigh 100 -- a line out has no ceiling.
-	m.WakeVolumeMax, m.WakeVolumeMin = 100, 10
-	m.WifiAttenuation, m.AuxAttenuation = 1, 1.22 // APConfig-binky.xml
-	m.Type = "SoundTouch Wireless Link Adapter"
-	m.AudioDev = "alsa:plughw:0,0"
-	m.ShelbySource = ""
-	m.AICConfigured = ""
-	m.AICConfigFile = ""
-	m.AICConfig = ""
-	m.MuteGPIO = ""
-	m.AmpPowerGPIO = ""
-	m.AmpFaultGPIO = 0
-	m.LEDDir = ""
-	m.KeypadDev = ""
-	m.IRDev = ""
-	m.BTUart = ""
+	profile.WakeVolumeMax, profile.WakeVolumeMin = 100, 10
+	profile.WifiAttenuation, profile.AuxAttenuation = 1, 1.22 // APConfig-binky.xml
+	profile.Type = "SoundTouch Wireless Link Adapter"
+	profile.AudioDev = "alsa:plughw:0,0"
+	profile.ShelbySource = ""
+	profile.AICConfigured = ""
+	profile.AICConfigFile = ""
+	profile.AICConfig = ""
+	profile.MuteGPIO = ""
+	profile.AmpPowerGPIO = ""
+	profile.AmpFaultGPIO = 0
+	profile.LEDDir = ""
+	profile.KeypadDev = ""
+	profile.IRDev = ""
+	profile.BTUart = ""
 	// Stock binky's chimeVolume has not been read off a rootfs yet; 40 is what every
 	// model used before the per-model value.
-	m.ChimeVolume = 40
+	profile.ChimeVolume = 40
 
-	return m
+	return profile
 }
 
 // st30 is the SoundTouch 30 Series I (mojo/scm): the ST20's board in a bigger box. Stock's
 // mojo_scm and spotty_scm device trees differ only in the codec script's name and the
 // sync-out timer, so it is the ST20 everywhere but its name and its own codec script.
 func st30() Model {
-	m := st20()
-	m.Type = "SoundTouch 30"
-	m.AICConfig = "mojo_scm_normal.cfg"
-	m.ChimeVolume = 28 // APConfig-mojo.xml
-	m.DefaultVolume = 30
+	profile := st20()
+	profile.Type = "SoundTouch 30"
+	profile.AICConfig = "mojo_scm_normal.cfg"
+	profile.ChimeVolume = 28 // APConfig-mojo.xml
+	profile.DefaultVolume = 30
 
-	return m
+	return profile
 }
 
 // seriesIII is the SoundTouch 20 or 30 Series III (spotty3 or mojo3 on SoundTap, spotty or
@@ -229,18 +252,20 @@ func st30() Model {
 // on the ST10's wifi-white and wifi-amber channels; the ST10's other lamp pads drive the
 // ST20's OLED panel here, on the same SPI bus and chip select with its own GPIOs.
 func seriesIII(variant string) Model {
-	m := st10()
-	m.DefaultVolume = 30
-	m.LEDDir = "/sys/class/leds"
+	profile := st10()
+	profile.DefaultVolume = 30
+	profile.LEDDir = ledClassDir
 
-	m.OLED = "spidev:/dev/spidev1.0?ce=gpio0_12&reset=gpio2_9&dc=gpio2_12"
+	profile.OLED = "spidev:/dev/spidev1.0?ce=gpio0_12&reset=gpio2_9&dc=gpio2_12"
 	if variant == "mojo3" {
-		m.Type, m.AICConfig, m.ChimeVolume = "SoundTouch 30", "mojo_sm2_normal.cfg", 28 // APConfig-mojo.xml
+		profile.Type, profile.AICConfig = "SoundTouch 30", "mojo_sm2_normal.cfg"
+		profile.ChimeVolume = 28 // APConfig-mojo.xml
 	} else {
-		m.Type, m.AICConfig, m.ChimeVolume = "SoundTouch 20", "spotty_sm2_normal.cfg", 40 // APConfig-spotty.xml
+		profile.Type, profile.AICConfig = "SoundTouch 20", "spotty_sm2_normal.cfg"
+		profile.ChimeVolume = 40 // APConfig-spotty.xml
 	}
 
-	return m
+	return profile
 }
 
 // sa5 is the SoundTouch SA-5 amplifier (burns/sm2): the ST10's module on an amplifier board
@@ -250,14 +275,14 @@ func seriesIII(variant string) Model {
 // reports the amplifier's state, faults and a thermal gain the host applies (APConfig-burns
 // AUDIO_DEVICE_TYPE_SHELBY_STM32, PowerAmpWithStatus). Chime 25 is stock's.
 func sa5() Model {
-	m := st10()
-	m.Type = "SoundTouch SA-5"
-	m.AICConfig = "burns_sm2_normal.cfg"
-	m.LEDDir = "/sys/class/leds"
-	m.STM32Amp = true
-	m.ChimeVolume = 25 // APConfig-burns.xml
+	profile := st10()
+	profile.Type = "SoundTouch SA-5"
+	profile.AICConfig = "burns_sm2_normal.cfg"
+	profile.LEDDir = ledClassDir
+	profile.STM32Amp = true
+	profile.ChimeVolume = 25 // APConfig-burns.xml
 
-	return m
+	return profile
 }
 
 // adapter is the SoundTouch adapter on the Shelby 2 module (lisa2 under SoundTap, lisa/sm2 to stock): the ST10's module
@@ -268,17 +293,17 @@ func sa5() Model {
 // There is no amplifier, IR receiver or panel, and the mute is the host's (ABLMute): the
 // device tree holds the converter enabled and mute_out where stock leaves it.
 func adapter() Model {
-	m := st10()
-	m.Type = "SoundTouch adapter"
-	m.AICConfigured, m.AICConfigFile, m.AICConfig = "", "", ""
-	m.MuteGPIO = ""
-	m.AmpPowerGPIO = ""
-	m.AmpFaultGPIO = 0
-	m.IRDev = ""
-	m.LEDDir = "/sys/class/leds"
-	m.HostLink, m.HostLinkDev = true, "/dev/ttyS0"
+	profile := st10()
+	profile.Type = "SoundTouch adapter"
+	profile.AICConfigured, profile.AICConfigFile, profile.AICConfig = "", "", ""
+	profile.MuteGPIO = ""
+	profile.AmpPowerGPIO = ""
+	profile.AmpFaultGPIO = 0
+	profile.IRDev = ""
+	profile.LEDDir = ledClassDir
+	profile.HostLink, profile.HostLinkDev = true, "/dev/ttyS0"
 
-	return m
+	return profile
 }
 
 // adapterSCM is the SoundTouch adapter on the Shelby Common Module (lisa/scm): the ST20's
@@ -286,18 +311,18 @@ func adapter() Model {
 // the codec (APConfig-<host> on scm: hasAIC=true, lisa_scm_normal.cfg); the host still applies
 // the volume, so the codec runs at unity once the host is known. No amplifier, IR or panel.
 func adapterSCM() Model {
-	m := st20()
-	m.Type = "SoundTouch adapter"
-	m.AICConfig = "lisa_scm_normal.cfg"
-	m.AmpPowerGPIO = ""
-	m.AmpFaultGPIO = 0
-	m.IRDev = ""
-	m.OLED = ""
+	profile := st20()
+	profile.Type = "SoundTouch adapter"
+	profile.AICConfig = "lisa_scm_normal.cfg"
+	profile.AmpPowerGPIO = ""
+	profile.AmpFaultGPIO = 0
+	profile.IRDev = ""
+	profile.OLED = ""
 	// ttyS0 is the BCO's UART on every SCM tree (the ST20's serial0 alias); the adapter's
 	// tree names UART0 serial1.
-	m.HostLink, m.HostLinkDev = true, "/dev/ttyS1"
+	profile.HostLink, profile.HostLinkDev = true, "/dev/ttyS1"
 
-	return m
+	return profile
 }
 
 // portable is the SoundTouch Portable (taigan/scm): the ST20's board with a battery. Stock's
@@ -306,15 +331,15 @@ func adapterSCM() Model {
 // has no PowerAmp object, so the amplifiers are never put in standby (the device tree holds
 // ampstby high) and a stereo pair is possible; volume 50 and chime 50 are stock's.
 func portable() Model {
-	m := st20()
-	m.Type = "SoundTouch Portable"
-	m.AICConfig = "taigan_scm_normal.cfg"
-	m.AmpPowerGPIO = ""
-	m.Battery = true
-	m.ChimeVolume = 50 // APConfig-taigan.xml
-	m.DefaultVolume = 50
+	profile := st20()
+	profile.Type = "SoundTouch Portable"
+	profile.AICConfig = "taigan_scm_normal.cfg"
+	profile.AmpPowerGPIO = ""
+	profile.Battery = true
+	profile.ChimeVolume = 50 // APConfig-taigan.xml
+	profile.DefaultVolume = 50
 
-	return m
+	return profile
 }
 
 // st300 is the SoundTouch 300 (ginger/sm2): the Wireless Link's module inside a
@@ -323,15 +348,15 @@ func portable() Model {
 // soundbar processor behind UART0, which internal/lpm selects SoundTap's input on and hands
 // the volume to. Its user sources, TV, HDMI and Bluetooth, are the processor's inputs.
 func st300() Model {
-	m := wla()
-	m.Name = ST300
-	m.Type = "SoundTouch 300"
-	m.UserSources = []string{sourceTV, sourceHDMI, sourceBluetooth} // picked over the LPM
-	m.WakeVolumeMax = 70                                            // BoseApp-ginger.xml thresholdHigh
-	m.DefaultVolume = 30
-	m.WifiAttenuation, m.AuxAttenuation = 1, 1 // APConfig-ginger.xml
+	profile := wla()
+	profile.Name = ST300
+	profile.Type = "SoundTouch 300"
+	profile.UserSources = []string{sourceTV, sourceHDMI, sourceBluetooth} // picked over the LPM
+	profile.WakeVolumeMax = 70                                            // BoseApp-ginger.xml thresholdHigh
+	profile.DefaultVolume = 30
+	profile.WifiAttenuation, profile.AuxAttenuation = 1, 1 // APConfig-ginger.xml
 
-	return m
+	return profile
 }
 
 // lifestyle650 is the Lifestyle 600/650's SoundTouch module (bardeen/sm2): the ST300's
@@ -340,24 +365,29 @@ func st300() Model {
 // (device type 8 there, 9 on the ST300), with the same source list, so it runs as the ST300
 // under its own name. BoseApp-bardeen.xml keeps the ST300's thresholdHigh.
 func lifestyle650() Model {
-	m := st300()
-	m.Type = "Lifestyle 650"
+	profile := st300()
+	profile.Type = "Lifestyle 650"
 
-	return m
+	return profile
 }
 
 // profiles builds each supported model's profile by its MODEL name.
-var profiles = map[string]func() Model{
-	ST10:  st10,
-	ST20:  st20,
-	WLA:   wla,
-	ST300: st300,
+func profiles() map[string]func() Model {
+	return map[string]func() Model{
+		ST10:  st10,
+		ST20:  st20,
+		WLA:   wla,
+		ST300: st300,
+	}
 }
+
+// errUnknownModel is a box no profile could be picked for.
+var errUnknownModel = errors.New("hardware model unknown")
 
 // Named is the profile of the supported model name, or Unknown for any other name.
 func Named(name string) Model {
-	if p, ok := profiles[name]; ok {
-		return p()
+	if build, ok := profiles()[name]; ok {
+		return build()
 	}
 
 	return Unknown()
@@ -365,22 +395,59 @@ func Named(name string) Model {
 
 // SourceGain is the Mixer's fixed input gain for source: stock applies auxAttenuation
 // to AUX and wifiAttenuation to everything else, chosen at the source change.
+//
+//nolint:gocritic // hugeParam: a value receiver, because callers use it on the Model values Named and Current return
 func (m Model) SourceGain(source string) float64 {
-	g := m.WifiAttenuation
+	gain := m.WifiAttenuation
 	if source == sourceAux {
-		g = m.AuxAttenuation
+		gain = m.AuxAttenuation
 	}
 
-	if g == 0 {
+	if gain == 0 {
 		return 1
 	}
 
-	return g
+	return gain
 }
+
+// unknownChimeVolume is the preset-stored tone's level on a box with no profile, as every
+// model had before the per-model value.
+const unknownChimeVolume = 40
 
 // Unknown is the profile of a box that could not be identified: no hardware at all.
 func Unknown() Model {
-	return Model{Name: "unknown", Type: "Unknown SoundTouch hardware", ListenAddr: listenAddr, ChimeVolume: 40}
+	return Model{
+		Name:            "unknown",
+		Type:            "Unknown SoundTouch hardware",
+		ListenAddr:      listenAddr,
+		AudioDev:        "",
+		ShelbySource:    "",
+		AICConfigured:   "",
+		AICConfigFile:   "",
+		AICConfig:       "",
+		MuteGPIO:        "",
+		AmpPowerGPIO:    "",
+		AmpFaultGPIO:    0,
+		LEDDir:          "",
+		OLED:            "",
+		KeypadDev:       "",
+		IRDev:           "",
+		BTUart:          "",
+		Battery:         false,
+		STM32Amp:        false,
+		HostLink:        false,
+		HostLinkDev:     "",
+		UserSources:     nil,
+		Prebuffer:       0,
+		ChimeVolume:     unknownChimeVolume,
+		NoBass:          false,
+		DefaultVolume:   0,
+		WakeVolumeMax:   0,
+		WakeVolumeMin:   0,
+		WifiAttenuation: 0,
+		AuxAttenuation:  0,
+		AuxCapture:      "",
+	}
 }
 
 // currentModel prefers immutable kernel hardware identity over environment settings.
@@ -392,15 +459,15 @@ func currentModel() (Model, error) {
 	}
 
 	name := strings.ToLower(strings.TrimSpace(os.Getenv("MODEL")))
-	if p, ok := profiles[name]; ok {
-		return p(), nil
+	if build, ok := profiles()[name]; ok {
+		return build(), nil
 	}
 
 	if name == "" {
-		return Unknown(), errors.New("hardware model unknown: no kernel variant and MODEL is not set")
+		return Unknown(), fmt.Errorf("%w: no kernel variant and MODEL is not set", errUnknownModel)
 	}
 
-	return Unknown(), fmt.Errorf("hardware model unknown: MODEL=%q is not a supported model", name)
+	return Unknown(), fmt.Errorf("%w: MODEL=%q is not a supported model", errUnknownModel, name)
 }
 
 // ForVariant is the profile of a board whose kernel names variant, as Current finds it:
@@ -451,20 +518,22 @@ func forVariants(variants []string) (Model, error) {
 // Current is this box's profile, without an AUX input nothing routes. The error says why
 // the model could not be identified, and then the profile is Unknown.
 func Current() (Model, error) {
-	m, err := currentModel()
+	profile, err := currentModel()
 
-	return withoutUnroutedAux(m), err
+	return withoutUnroutedAux(&profile), err
 }
 
 // withoutUnroutedAux drops AUX when nothing routes the analogue input to the amplifier:
 // neither stock snd-shelby2's source node nor a capture node for aux.go is there.
 // Selectable but silent reads as a broken speaker.
-func withoutUnroutedAux(m Model) Model {
-	if !exists(m.ShelbySource) && !exists(m.AuxCapture) {
-		m.UserSources = slices.DeleteFunc(slices.Clone(m.UserSources), func(s string) bool { return s == sourceAux })
+func withoutUnroutedAux(profile *Model) Model {
+	routed := *profile
+	if !exists(routed.ShelbySource) && !exists(routed.AuxCapture) {
+		isAux := func(source string) bool { return source == sourceAux }
+		routed.UserSources = slices.DeleteFunc(slices.Clone(routed.UserSources), isAux)
 	}
 
-	return m
+	return routed
 }
 
 func exists(path string) bool {
@@ -487,6 +556,8 @@ func exists(path string) bool {
 // display is deliberately absent here: whether a panel is present is a runtime question
 // (the ST20 has one only if the SPI device is there), so it comes from the settings API,
 // which already answers it as hasDisplay.
+//
+//nolint:gocritic // hugeParam: a value receiver, because callers use it on the Model values Named and Current return
 func (m Model) Capabilities() []string {
 	caps := []string{}
 	if slices.Contains(m.UserSources, sourceBluetooth) {

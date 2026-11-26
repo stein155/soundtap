@@ -1,76 +1,23 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-package safehttp
+package safehttp_test
 
 import (
-	"context"
-	"crypto/x509"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sync/atomic"
 	"testing"
-	"time"
+
+	"github.com/stein155/soundtap/app/internal/safehttp"
 )
 
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
-
-func TestDoRetriesCertificateErrorAfterClockBecomesSane(t *testing.T) {
-	oldNow, oldPoll, oldLimit := now, clockPollInterval, clockWaitLimit
-
-	t.Cleanup(func() {
-		now, clockPollInterval, clockWaitLimit = oldNow, oldPoll, oldLimit
-	})
-
-	var clockReads atomic.Int32
-
-	now = func() time.Time {
-		if clockReads.Add(1) > 1 {
-			return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-		}
-
-		return time.Unix(0, 0)
-	}
-	clockPollInterval, clockWaitLimit = time.Millisecond, time.Second
-
-	var requests int
-
-	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-		requests++
-		if requests == 1 {
-			return nil, x509.CertificateInvalidError{
-				Cert:   &x509.Certificate{NotBefore: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
-				Reason: x509.Expired,
-			}
-		}
-
-		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
-	})}
-
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.test", http.NoBody)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	resp, err := Do(context.Background(), client, req)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_ = resp.Body.Close()
-
-	if requests != 2 {
-		t.Fatalf("requests = %d, want 2", requests)
-	}
-}
-
 func TestDownloadAndGetJSON(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/bin":
 			_, _ = w.Write([]byte("BINARY"))
@@ -80,11 +27,11 @@ func TestDownloadAndGetJSON(t *testing.T) {
 			http.Error(w, "no", http.StatusNotFound)
 		}
 	}))
-	defer ts.Close()
+	defer server.Close()
 
 	dst := filepath.Join(t.TempDir(), "out")
 
-	err := Download(context.Background(), ts.Client(), "test", ts.URL+"/bin", dst, 0o755)
+	err := safehttp.Download(t.Context(), server.Client(), "test", server.URL+"/bin", dst, 0o755)
 	if err != nil {
 		t.Fatalf("Download: %v", err)
 	}
@@ -93,7 +40,7 @@ func TestDownloadAndGetJSON(t *testing.T) {
 		t.Fatalf("downloaded %q, want BINARY", b)
 	}
 
-	err = Download(context.Background(), ts.Client(), "test", ts.URL+"/nope", dst, 0o755)
+	err = safehttp.Download(t.Context(), server.Client(), "test", server.URL+"/nope", dst, 0o755)
 	if err == nil {
 		t.Fatal("Download of a 404 should fail")
 	}
@@ -102,7 +49,7 @@ func TestDownloadAndGetJSON(t *testing.T) {
 		TagName string `json:"tag_name"`
 	}
 
-	err = GetJSON(context.Background(), ts.Client(), "test", ts.URL+"/json", &rel)
+	err = safehttp.GetJSON(t.Context(), server.Client(), "test", server.URL+"/json", &rel)
 	if err != nil {
 		t.Fatalf("GetJSON: %v", err)
 	}
@@ -115,17 +62,19 @@ func TestDownloadAndGetJSON(t *testing.T) {
 // DownloadWatched reports what is in the file so far against the announced size: once
 // before the first byte, then after every write, ending at the whole.
 func TestDownloadWatchedReportsBytes(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Length", "6")
 		_, _ = w.Write([]byte("BINARY"))
 	}))
-	defer ts.Close()
+	defer server.Close()
 
 	var seen [][2]int64
 
 	dst := filepath.Join(t.TempDir(), "out")
 
-	err := DownloadWatched(context.Background(), ts.Client(), "test", ts.URL, dst, 0o644,
+	err := safehttp.DownloadWatched(t.Context(), server.Client(), "test", server.URL, dst, 0o644,
 		func(done, total int64) { seen = append(seen, [2]int64{done, total}) })
 	if err != nil {
 		t.Fatal(err)
@@ -137,27 +86,32 @@ func TestDownloadWatchedReportsBytes(t *testing.T) {
 }
 
 func TestDownloadRemovesPartialFile(t *testing.T) {
+	t.Parallel()
+
 	// An upstream that dies mid-body (Content-Length says 10, sends 5) must not
 	// leave a truncated file behind.
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Length", "10")
 		_, _ = w.Write([]byte("short"))
 	}))
-	defer ts.Close()
+	defer server.Close()
 
 	dst := filepath.Join(t.TempDir(), "out")
 
-	err := Download(context.Background(), ts.Client(), "test", ts.URL, dst, 0o755)
+	err := safehttp.Download(t.Context(), server.Client(), "test", server.URL, dst, 0o755)
 	if err == nil {
 		t.Fatal("Download succeeded, want error")
 	}
 
-	if _, err := os.Stat(dst); !os.IsNotExist(err) {
+	_, err = os.Stat(dst)
+	if !os.IsNotExist(err) {
 		t.Fatalf("partial file exists after failed download: %v", err)
 	}
 }
 
 func TestPublicIP(t *testing.T) {
+	t.Parallel()
+
 	for addr, want := range map[string]bool{
 		"1.1.1.1": true, "8.8.8.8": true, "2606:4700:4700::1111": true, "192.0.0.9": true,
 		"2001:4:112::1": true, "100.63.255.255": true, "100.128.0.0": true,
@@ -168,7 +122,7 @@ func TestPublicIP(t *testing.T) {
 		"169.254.1.1": false, "::1": false, "fd00::1": false, "fe80::1": false,
 		"2001:db8::1": false, "3fff::1": false, "64:ff9b:1::1": false, "100::1": false,
 	} {
-		if got := PublicIP(net.ParseIP(addr)); got != want {
+		if got := safehttp.PublicIP(net.ParseIP(addr)); got != want {
 			t.Errorf("PublicIP(%s) = %v, want %v", addr, got, want)
 		}
 	}

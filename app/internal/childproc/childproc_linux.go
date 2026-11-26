@@ -7,6 +7,7 @@
 package childproc
 
 import (
+	"fmt"
 	"os/exec"
 	"os/user"
 	"strconv"
@@ -41,33 +42,33 @@ func RunAs(cmd *exec.Cmd, name string) error {
 }
 
 // Lookup returns the uid and primary gid of the system user name.
-func Lookup(name string) (uid, gid uint32, err error) {
-	u, err := user.Lookup(name)
+func Lookup(name string) (uint32, uint32, error) {
+	account, err := user.Lookup(name)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, fmt.Errorf("look up user %s: %w", name, err)
 	}
 
-	id, err := strconv.ParseUint(u.Uid, 10, 32)
+	uid, err := strconv.ParseUint(account.Uid, 10, 32)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, fmt.Errorf("uid of %s: %w", name, err)
 	}
 
-	g, err := strconv.ParseUint(u.Gid, 10, 32)
+	gid, err := strconv.ParseUint(account.Gid, 10, 32)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, fmt.Errorf("gid of %s: %w", name, err)
 	}
 
-	return uint32(id), uint32(g), nil
+	return uint32(uid), uint32(gid), nil
 }
 
 // LookupGroup returns the gid of the system group name.
 func LookupGroup(name string) (uint32, error) {
-	g, err := user.LookupGroup(name)
+	group, err := user.LookupGroup(name)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("look up group %s: %w", name, err)
 	}
 
-	n, err := strconv.ParseUint(g.Gid, 10, 32)
+	n, err := strconv.ParseUint(group.Gid, 10, 32)
 
 	return uint32(n), err
 }

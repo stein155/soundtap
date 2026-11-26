@@ -1,15 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-package speaker
+package speaker_test
 
 import (
 	"strings"
 	"testing"
+
+	"github.com/stein155/soundtap/app/internal/speaker"
 )
 
 func TestCheckPreset(t *testing.T) {
-	err := CheckPreset("Radio 538", "https://cdn-profiles.tunein.com/s6712/images/logoq.png")
+	t.Parallel()
+
+	err := speaker.CheckPreset("Radio 538", "https://cdn-profiles.tunein.com/s6712/images/logoq.png")
 	if err != nil {
 		t.Fatalf("ordinary preset refused: %v", err)
 	}
@@ -22,7 +26,7 @@ func TestCheckPreset(t *testing.T) {
 		{"ok", "https://x/\x00"},
 		{"\xff", ""},
 	} {
-		if CheckPreset(bad.name, bad.logo) == nil {
+		if speaker.CheckPreset(bad.name, bad.logo) == nil {
 			t.Errorf("CheckPreset(%q, %d-byte logo) accepted", bad.name, len(bad.logo))
 		}
 	}

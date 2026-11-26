@@ -13,12 +13,14 @@ import (
 )
 
 func TestRecordAndAll(t *testing.T) {
-	s := recent.Open(filepath.Join(t.TempDir(), "recent.json"))
+	t.Parallel()
 
-	s.Record(recent.Entry{Source: "TUNEIN", Name: "Radio 1", Location: "/v1/playback/station/s1", Art: "http://art1"})
-	s.Record(recent.Entry{Source: "TUNEIN", Name: "Radio 2", Location: "/v1/playback/station/s2", Art: ""})
+	store := recent.Open(filepath.Join(t.TempDir(), "recent.json"))
 
-	all := s.All()
+	record(t, store, station("Radio 1", "/v1/playback/station/s1", "http://art1"))
+	record(t, store, station("Radio 2", "/v1/playback/station/s2", ""))
+
+	all := store.All()
 	if len(all) != 2 {
 		t.Fatalf("want 2 entries, got %d", len(all))
 	}
@@ -29,14 +31,16 @@ func TestRecordAndAll(t *testing.T) {
 }
 
 func TestDeduplication(t *testing.T) {
-	s := recent.Open(filepath.Join(t.TempDir(), "recent.json"))
+	t.Parallel()
 
-	s.Record(recent.Entry{Source: "TUNEIN", Name: "Radio 1", Location: "/v1/playback/station/s1"})
-	s.Record(recent.Entry{Source: "TUNEIN", Name: "Radio 2", Location: "/v1/playback/station/s2"})
+	store := recent.Open(filepath.Join(t.TempDir(), "recent.json"))
+
+	record(t, store, station("Radio 1", "/v1/playback/station/s1", ""))
+	record(t, store, station("Radio 2", "/v1/playback/station/s2", ""))
 	// Playing Radio 1 again should move it to the front, not duplicate.
-	s.Record(recent.Entry{Source: "TUNEIN", Name: "Radio 1", Location: "/v1/playback/station/s1"})
+	record(t, store, station("Radio 1", "/v1/playback/station/s1", ""))
 
-	all := s.All()
+	all := store.All()
 	if len(all) != 2 {
 		t.Fatalf("want 2 after dedup, got %d", len(all))
 	}
@@ -47,91 +51,109 @@ func TestDeduplication(t *testing.T) {
 }
 
 func TestBoundedAt50(t *testing.T) {
-	s := recent.Open(filepath.Join(t.TempDir(), "recent.json"))
+	t.Parallel()
+
+	store := recent.Open(filepath.Join(t.TempDir(), "recent.json"))
 	for i := range 55 {
-		s.Record(recent.Entry{Source: "TUNEIN", Name: "s", Location: string(rune('A' + i))})
+		record(t, store, station("s", string(rune('A'+i)), ""))
 	}
 
-	if len(s.All()) != 50 {
-		t.Fatalf("want 50, got %d", len(s.All()))
+	if len(store.All()) != 50 {
+		t.Fatalf("want 50, got %d", len(store.All()))
 	}
 }
 
 func TestIgnoresStandby(t *testing.T) {
-	s := recent.Open(filepath.Join(t.TempDir(), "recent.json"))
-	s.Record(recent.Entry{Source: "STANDBY"})
-	s.Record(recent.Entry{Source: ""})
+	t.Parallel()
 
-	if len(s.All()) != 0 {
+	store := recent.Open(filepath.Join(t.TempDir(), "recent.json"))
+	record(t, store, &recent.Entry{Source: "STANDBY", Name: "", Location: "", Art: "", StoppedAt: time.Time{}})
+	record(t, store, &recent.Entry{Source: "", Name: "", Location: "", Art: "", StoppedAt: time.Time{}})
+
+	if len(store.All()) != 0 {
 		t.Fatal("should not record STANDBY or empty source")
 	}
 }
 
 func TestPersistAndReload(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "recent.json")
 
-	s1 := recent.Open(path)
-	s1.Record(recent.Entry{Source: "AIRPLAY", Name: "Song", Location: "", StoppedAt: time.Now()})
+	first := recent.Open(path)
+	record(t, first, &recent.Entry{Source: "AIRPLAY", Name: "Song", Location: "", Art: "", StoppedAt: time.Now()})
 
-	s2 := recent.Open(path)
+	second := recent.Open(path)
 
-	all := s2.All()
+	all := second.All()
 	if len(all) != 1 || all[0].Source != "AIRPLAY" {
 		t.Fatalf("reload failed, got %v", all)
 	}
 }
 
 func TestCorruptFileStartsFresh(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "recent.json")
 	_ = os.WriteFile(path, []byte("not json"), 0o644)
 
-	s := recent.Open(path)
-	if len(s.All()) != 0 {
+	store := recent.Open(path)
+	if len(store.All()) != 0 {
 		t.Fatal("corrupt file should start fresh")
 	}
 }
 
 func TestFailedRecordDoesNotMutateMemory(t *testing.T) {
-	s := recent.Open(filepath.Join(t.TempDir(), "missing", "recent.json"))
+	t.Parallel()
 
-	err := s.Record(recent.Entry{Source: "TUNEIN", Location: "station"})
+	store := recent.Open(filepath.Join(t.TempDir(), "missing", "recent.json"))
+
+	err := store.Record(*station("", "station", ""))
 	if err == nil {
 		t.Fatal("Record succeeded with missing parent directory")
 	}
 
-	if got := s.All(); len(got) != 0 {
+	if got := store.All(); len(got) != 0 {
 		t.Fatalf("entries after failed write = %v, want empty", got)
 	}
 }
 
 func TestLastStationSkipsExternalSources(t *testing.T) {
-	s := recent.Open(filepath.Join(t.TempDir(), "recent.json"))
-	if _, ok := s.LastStation(); ok {
+	t.Parallel()
+
+	store := recent.Open(filepath.Join(t.TempDir(), "recent.json"))
+	if _, ok := store.LastStation(); ok {
 		t.Fatal("empty list has no station")
 	}
 
-	s.Record(recent.Entry{Source: "TUNEIN", Name: "Radio 1", Location: "/v1/playback/station/s1"})
-	s.Record(recent.Entry{Source: "UPNP", Name: "quiet", Location: "http://nas/quiet.mp3"})
-	s.Record(recent.Entry{Source: "MULTIROOM", Name: "MULTIROOM"})
+	record(t, store, station("Radio 1", "/v1/playback/station/s1", ""))
+	record(t, store, &recent.Entry{
+		Source: "UPNP", Name: "quiet", Location: "http://nas/quiet.mp3", Art: "", StoppedAt: time.Time{},
+	})
+	record(t, store, &recent.Entry{
+		Source: "MULTIROOM", Name: "MULTIROOM", Location: "", Art: "", StoppedAt: time.Time{},
+	})
 
-	if e, ok := s.LastStation(); !ok || e.Name != "Radio 1" {
+	if e, ok := store.LastStation(); !ok || e.Name != "Radio 1" {
 		t.Fatalf("LastStation = %+v, %v; want Radio 1", e, ok)
 	}
 }
 
 func TestRemoveSurvivesReopen(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "recent.json")
-	s := recent.Open(path)
-	s.Record(recent.Entry{Source: "TUNEIN", Name: "Radio 1", Location: "/v1/playback/station/s1"})
-	s.Record(recent.Entry{Source: "TUNEIN", Name: "Radio 2", Location: "/v1/playback/station/s2"})
+	t.Parallel()
 
-	err := s.Remove("TUNEIN", "/v1/playback/station/s1")
+	path := filepath.Join(t.TempDir(), "recent.json")
+	store := recent.Open(path)
+	record(t, store, station("Radio 1", "/v1/playback/station/s1", ""))
+	record(t, store, station("Radio 2", "/v1/playback/station/s2", ""))
+
+	err := store.Remove("TUNEIN", "/v1/playback/station/s1")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = s.Remove("TUNEIN", "/v1/playback/station/none")
+	err = store.Remove("TUNEIN", "/v1/playback/station/none")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,25 +165,20 @@ func TestRemoveSurvivesReopen(t *testing.T) {
 }
 
 func TestSetArtFillsOnlyAnEmptyEntry(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "recent.json")
 
-	s := recent.Open(path)
-	for _, e := range []recent.Entry{
-		{Source: "TUNEIN", Name: "Old", Location: "/v1/playback/station/s1", Art: "http://kept"},
-		{Source: "TUNEIN", Name: "New", Location: "/v1/playback/station/s2"},
-	} {
-		err := s.Record(e)
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
+	store := recent.Open(path)
+	record(t, store, station("Old", "/v1/playback/station/s1", "http://kept"))
+	record(t, store, station("New", "/v1/playback/station/s2", ""))
 
-	err := s.SetArt("TUNEIN", "/v1/playback/station/s2", "https://logo2")
+	err := store.SetArt("TUNEIN", "/v1/playback/station/s2", "https://logo2")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = s.SetArt("TUNEIN", "/v1/playback/station/s1", "https://other")
+	err = store.SetArt("TUNEIN", "/v1/playback/station/s1", "https://other")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,17 +190,34 @@ func TestSetArtFillsOnlyAnEmptyEntry(t *testing.T) {
 }
 
 func TestReplayWithoutArtKeepsTheLogo(t *testing.T) {
-	s := recent.Open(filepath.Join(t.TempDir(), "recent.json"))
+	t.Parallel()
+
+	store := recent.Open(filepath.Join(t.TempDir(), "recent.json"))
 
 	loc := "/v1/playback/station/s1"
 	for _, art := range []string{"https://logo/s1.png", ""} {
-		err := s.Record(recent.Entry{Source: "TUNEIN", Name: "Radio 1", Location: loc, Art: art})
+		err := store.Record(*station("Radio 1", loc, art))
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	if got := s.All()[0].Art; got != "https://logo/s1.png" {
+	if got := store.All()[0].Art; got != "https://logo/s1.png" {
 		t.Fatalf("art = %q, want the earlier logo", got)
+	}
+}
+
+// station is a TuneIn entry with no stop time.
+func station(name, location, art string) *recent.Entry {
+	return &recent.Entry{Source: "TUNEIN", Name: name, Location: location, Art: art, StoppedAt: time.Time{}}
+}
+
+// record records entry and fails the test when that does not persist.
+func record(t *testing.T, store *recent.Store, entry *recent.Entry) {
+	t.Helper()
+
+	err := store.Record(*entry)
+	if err != nil {
+		t.Fatal(err)
 	}
 }

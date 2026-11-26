@@ -278,13 +278,14 @@ class UsbRecoveryContract(unittest.TestCase):
     def test_keys(self) -> None:
         """The recovery chord is Volume Down + Preset 4 by defaultKeymap's indices."""
         keymap = {v: int(k) for k, v in re.findall(r'(\d+): "([A-Z_0-9]+)"',
-                                                         BUTTONS.split("var defaultKeymap")[1].split("}")[0])}
+                                                         BUTTONS.split("func defaultKeymap")[1].split("\n}")[0])}
         self.assertIn(f"RT_KEY({keymap['VOLUME_DOWN']}) | RT_KEY({keymap['PRESET_4']})", PATCH)
 
     def test_keypad_gpios(self) -> None:
-        """The patch scans the ST10 keypad on keypad.go's strobe and switch-in GPIOs."""
-        strobes = re.search(r"keypadStrobeOffsets\s+= \[\]int\{([^}]*)\}", KEYPAD).group(1)
-        ins = re.search(r"keypadSwitchinOffsets\s+= \[\]int\{([^}]*)\}", KEYPAD).group(1)
+        """The patch scans the ST10 keypad on keypadGeometryFor's strobe and switch-in GPIOs."""
+        # keypadGeometryFor's ST10 entry: one field per line (the ST20's is on one line).
+        strobes = re.search(r"^\s*strobeOffsets: \[\]int\{([^}]*)\},\s*//", KEYPAD, re.MULTILINE).group(1)
+        ins = re.search(r"^\s*switchOffsets: \[\]int\{([^}]*)\},\s*//", KEYPAD, re.MULTILINE).group(1)
         want_s = ", ".join(f'"gpio@4804c000_{n.strip()}"' for n in strobes.split(","))
         want_i = ", ".join(f'"gpio@44e07000_{n.strip()}"' for n in ins.split(","))
         self.assertIn(want_s, PATCH)

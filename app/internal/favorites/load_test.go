@@ -18,16 +18,18 @@ import (
 )
 
 func TestMissingFileStartsEmptyAndWritable(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "favorites.json")
 
-	s := favorites.Open(path)
+	store := favorites.Open(path)
 
-	err := s.LoadErr()
-	if err != nil || len(s.All()) != 0 {
-		t.Fatalf("Open = %v, %v; want empty and no error", s.All(), err)
+	err := store.LoadErr()
+	if err != nil || len(store.All()) != 0 {
+		t.Fatalf("Open = %v, %v; want empty and no error", store.All(), err)
 	}
 
-	err = s.Add(favorites.Entry{Source: "TUNEIN", Location: "s1"})
+	err = store.Add(favorites.Entry{Source: "TUNEIN", Name: "", Location: "s1", Art: ""})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,6 +38,8 @@ func TestMissingFileStartsEmptyAndWritable(t *testing.T) {
 // favorites.json as a directory (EISDIR): nothing may be written over it, a restored
 // backup included.
 func TestUnreadableDirectoryRefusesWrites(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "favorites.json")
 
 	err := os.Mkdir(path, 0o700)
@@ -43,29 +47,31 @@ func TestUnreadableDirectoryRefusesWrites(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := favorites.Open(path)
+	store := favorites.Open(path)
 
-	err = s.LoadErr()
+	err = store.LoadErr()
 	if !errors.Is(err, atomicjson.ErrUnreadable) {
 		t.Fatalf("LoadErr = %v, want ErrUnreadable", err)
 	}
 
-	err = s.Add(favorites.Entry{Source: "TUNEIN", Location: "s1"})
+	err = store.Add(favorites.Entry{Source: "TUNEIN", Name: "", Location: "s1", Art: ""})
 	if !errors.Is(err, atomicjson.ErrUnreadable) {
 		t.Fatalf("Add = %v, want ErrUnreadable", err)
 	}
 
-	err = s.Replace([]favorites.Entry{{Source: "TUNEIN", Location: "s1"}})
+	err = store.Replace([]favorites.Entry{{Source: "TUNEIN", Name: "", Location: "s1", Art: ""}})
 	if !errors.Is(err, atomicjson.ErrUnreadable) {
 		t.Fatalf("Replace = %v, want ErrUnreadable", err)
 	}
 
-	if got := s.All(); len(got) != 0 {
+	if got := store.All(); len(got) != 0 {
 		t.Fatalf("a refused write changed memory: %v", got)
 	}
 }
 
 func TestUnreadableFileIsNotOverwritten(t *testing.T) {
+	t.Parallel()
+
 	if os.Geteuid() == 0 {
 		t.Skip("root reads a mode-000 file")
 	}
@@ -79,9 +85,9 @@ func TestUnreadableFileIsNotOverwritten(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := favorites.Open(path)
+	store := favorites.Open(path)
 
-	err = s.Add(favorites.Entry{Source: "TUNEIN", Location: "s2"})
+	err = store.Add(favorites.Entry{Source: "TUNEIN", Name: "", Location: "s2", Art: ""})
 	if !errors.Is(err, atomicjson.ErrUnreadable) {
 		t.Fatalf("Add = %v, want ErrUnreadable", err)
 	}
@@ -97,6 +103,8 @@ func TestUnreadableFileIsNotOverwritten(t *testing.T) {
 }
 
 func TestCorruptFileIsPreserved(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "favorites.json")
 
 	err := os.WriteFile(path, []byte("not json"), 0o600)
@@ -104,18 +112,19 @@ func TestCorruptFileIsPreserved(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := favorites.Open(path)
+	store := favorites.Open(path)
 
-	err = s.LoadErr()
+	err = store.LoadErr()
 	if !errors.Is(err, atomicjson.ErrCorrupt) {
 		t.Fatalf("LoadErr = %v, want ErrCorrupt", err)
 	}
 
-	if got, err := os.ReadFile(path + ".corrupt"); err != nil || string(got) != "not json" {
-		t.Fatalf("corrupt copy = %q, %v", got, err)
+	got, readErr := os.ReadFile(path + ".corrupt")
+	if readErr != nil || string(got) != "not json" {
+		t.Fatalf("corrupt copy = %q, %v", got, readErr)
 	}
 
-	err = s.Add(favorites.Entry{Source: "TUNEIN", Location: "s1"})
+	err = store.Add(favorites.Entry{Source: "TUNEIN", Name: "", Location: "s1", Art: ""})
 	if err != nil {
 		t.Fatalf("Add after quarantine: %v", err)
 	}
@@ -124,14 +133,16 @@ func TestCorruptFileIsPreserved(t *testing.T) {
 // A list longer than Limit (saved before the list offered one, or hand-edited) loads whole.
 // Setting a favorite leaves that one alone, so nothing stays behind out of sight.
 func TestOverLimitFileLoadsWholeAndAddLeavesOne(t *testing.T) {
+	t.Parallel()
+
 	path := overLimitFile(t)
 
-	s := favorites.Open(path)
-	if got := len(s.All()); got != favorites.Limit+3 {
+	store := favorites.Open(path)
+	if got := len(store.All()); got != favorites.Limit+3 {
 		t.Fatalf("loaded %d favorites, want %d", got, favorites.Limit+3)
 	}
 
-	err := s.Add(favorites.Entry{Source: "TUNEIN", Location: "s2"})
+	err := store.Add(favorites.Entry{Source: "TUNEIN", Name: "", Location: "s2", Art: ""})
 	if err != nil {
 		t.Fatalf("Add = %v", err)
 	}
@@ -143,11 +154,13 @@ func TestOverLimitFileLoadsWholeAndAddLeavesOne(t *testing.T) {
 
 // Removing the favorite of a longer list empties it; removing one behind it drops only that.
 func TestOverLimitFileRemoveTheFavoriteEmptiesIt(t *testing.T) {
+	t.Parallel()
+
 	path := overLimitFile(t)
 
-	s := favorites.Open(path)
+	store := favorites.Open(path)
 
-	err := s.Remove("TUNEIN", "s2")
+	err := store.Remove("TUNEIN", "s2")
 	if err != nil {
 		t.Fatalf("Remove = %v", err)
 	}
@@ -156,7 +169,7 @@ func TestOverLimitFileRemoveTheFavoriteEmptiesIt(t *testing.T) {
 		t.Fatalf("after removing one behind the favorite: %q", got)
 	}
 
-	err = s.Remove("TUNEIN", "s0")
+	err = store.Remove("TUNEIN", "s0")
 	if err != nil {
 		t.Fatalf("Remove = %v", err)
 	}
@@ -173,12 +186,15 @@ func overLimitFile(t *testing.T) string {
 
 	list := make([]favorites.Entry, favorites.Limit+3)
 	for i := range list {
-		list[i] = favorites.Entry{Source: "TUNEIN", Location: fmt.Sprintf("s%d", i)}
+		list[i] = favorites.Entry{Source: "TUNEIN", Name: "", Location: fmt.Sprintf("s%d", i), Art: ""}
 	}
 
-	data, _ := json.Marshal(list)
+	data, err := json.Marshal(list)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	err := os.WriteFile(path, data, 0o600)
+	err = os.WriteFile(path, data, 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}

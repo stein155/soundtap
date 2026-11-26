@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-package safego
+package safego_test
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -24,13 +25,13 @@ func goStatements(t *testing.T, root string, allowed map[string]bool) []string {
 
 	fset := token.NewFileSet()
 
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 
-		if d.IsDir() {
-			if d.Name() == "testdata" || d.Name() == "dist" {
+		if entry.IsDir() {
+			if entry.Name() == "testdata" || entry.Name() == "dist" {
 				return filepath.SkipDir
 			}
 
@@ -43,7 +44,7 @@ func goStatements(t *testing.T, root string, allowed map[string]bool) []string {
 
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
-			return err
+			return fmt.Errorf("relative path of %s: %w", path, err)
 		}
 
 		if allowed[filepath.ToSlash(rel)] {
@@ -52,7 +53,7 @@ func goStatements(t *testing.T, root string, allowed map[string]bool) []string {
 
 		file, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
 		if err != nil {
-			return err
+			return fmt.Errorf("parse %s: %w", path, err)
 		}
 
 		ast.Inspect(file, func(n ast.Node) bool {
@@ -75,6 +76,8 @@ func goStatements(t *testing.T, root string, allowed map[string]bool) []string {
 // Every goroutine in internal/ starts through Go, so its panic reaches panic.log
 // (ADR 0052). A bare go statement is a goroutine whose crash leaves no trace.
 func TestNoBareGoStatements(t *testing.T) {
+	t.Parallel()
+
 	if found := goStatements(t, "..", map[string]bool{"safego/safego.go": true}); len(found) > 0 {
 		t.Fatalf("bare go statements; start them with safego.Go:\n%s", strings.Join(found, "\n"))
 	}
@@ -82,6 +85,8 @@ func TestNoBareGoStatements(t *testing.T) {
 
 // The check finds go statements wherever they sit, and only outside tests.
 func TestGoStatementsFindsEveryForm(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	write := func(name, src string) {
 		err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o600)
@@ -89,7 +94,8 @@ func TestGoStatementsFindsEveryForm(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("a.go", "package a\nfunc f(ch chan int) {\n\tgo f(ch)\n\tif true { go func() {}() }\n\tdefer func() { go f(ch) }()\n}\n")
+	write("a.go", "package a\nfunc f(ch chan int) {\n\tgo f(ch)\n"+
+		"\tif true { go func() {}() }\n\tdefer func() { go f(ch) }()\n}\n")
 	write("a_test.go", "package a\nfunc g() { go g() }\n")
 	write("ok.go", "package a\nfunc h() { go h() }\n")
 

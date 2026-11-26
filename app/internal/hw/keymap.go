@@ -22,29 +22,35 @@ const keyBluetooth = "BLUETOOTH"
 const pressIsLower = true
 
 // defaultKeymap is the stock ST10 Rhino jump table. /mnt/nv/buttons.map overrides it.
-var defaultKeymap = map[int]string{
-	0: "VOLUME_UP", 1: "PRESET_3", 2: "POWER", //nolint:goconst // key table
-	4: "VOLUME_DOWN", 5: "PRESET_2", 6: "PRESET_1", //nolint:goconst // key table
-	8: "PRESET_6", 9: "PRESET_5", 10: "PRESET_4", //nolint:goconst // key table
-	12: KeySourceToggle,
+func defaultKeymap() map[int]string {
+	return map[int]string{
+		0: "VOLUME_UP", 1: "PRESET_3", 2: "POWER", //nolint:goconst // key table
+		4: "VOLUME_DOWN", 5: "PRESET_2", 6: "PRESET_1", //nolint:goconst // key table
+		8: "PRESET_6", 9: "PRESET_5", 10: "PRESET_4", //nolint:goconst // key table
+		12: KeySourceToggle,
+	}
 }
 
-var inputKeymap = map[uint16]string{
-	2: "PRESET_1", 3: "PRESET_2", 4: "PRESET_3",
-	5: "PRESET_4", 6: "PRESET_5", 7: "PRESET_6",
-	114: "VOLUME_DOWN", 115: "VOLUME_UP", 116: "POWER",
-	390: KeySourceToggle, // KEY_AUX
-	237: keyBluetooth,    // KEY_BLUETOOTH, the Wireless Link's button
+// inputKeymap is the evdev key code -> key map.
+func inputKeymap() map[uint16]string {
+	return map[uint16]string{
+		2: "PRESET_1", 3: "PRESET_2", 4: "PRESET_3",
+		5: "PRESET_4", 6: "PRESET_5", 7: "PRESET_6",
+		114: "VOLUME_DOWN", 115: "VOLUME_UP", 116: "POWER",
+		390: KeySourceToggle, // KEY_AUX
+		237: keyBluetooth,    // KEY_BLUETOOTH, the Wireless Link's button
+	}
 }
 
-func decodeInputEvent(event []byte) (code uint16, pressed, ok bool) {
+func decodeInputEvent(event []byte) (uint16, bool, bool) {
 	if len(event) != 16 || binary.LittleEndian.Uint16(event[8:10]) != 1 {
 		return 0, false, false
 	}
 
-	code = binary.LittleEndian.Uint16(event[10:12])
-	value := int32(binary.LittleEndian.Uint32(event[12:16])) //nolint:gosec // G115: the kernel event value is -1, 0 or 1
-	_, mapped := inputKeymap[code]
+	code := binary.LittleEndian.Uint16(event[10:12])
+	raw := binary.LittleEndian.Uint32(event[12:16])
+	value := int32(raw) //nolint:gosec // G115: the kernel event value is -1, 0 or 1
+	_, mapped := inputKeymap()[code]
 
 	return code, value == 1, mapped && (value == 0 || value == 1)
 }
@@ -68,7 +74,7 @@ func decodeInputEvent(event []byte) (code uint16, pressed, ok bool) {
 // soundtapd, because the driver emits only press/release edges.
 //
 // decodeEvent maps one keypad byte to (matrix index, pressed?). ok=false for non-letters.
-func decodeEvent(b byte) (index int, pressed, ok bool) {
+func decodeEvent(b byte) (int, bool, bool) {
 	switch {
 	case b >= 'a' && b <= 'z':
 		return int(b - 'a'), pressIsLower, true
@@ -82,28 +88,32 @@ func decodeEvent(b byte) (index int, pressed, ok bool) {
 // LoadKeymap is the keypad's scancode -> key map: the stock table with the lines of path
 // (`<scancode> = <KEY>`) over it.
 func LoadKeymap(path string) map[int]string {
-	m := map[int]string{}
-	maps.Copy(m, defaultKeymap)
+	keymap := map[int]string{}
+	maps.Copy(keymap, defaultKeymap())
 
-	f, err := os.Open(path)
+	file, err := os.Open(path)
 	if err != nil {
-		return m
+		return keymap
 	}
-	defer f.Close()
+	defer file.Close()
 
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(file)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 
-		if k, v, ok := strings.Cut(line, "="); ok {
-			if idx, err := strconv.Atoi(strings.TrimSpace(k)); err == nil {
-				m[idx] = strings.TrimSpace(v)
-			}
+		scancode, key, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+
+		idx, err := strconv.Atoi(strings.TrimSpace(scancode))
+		if err == nil {
+			keymap[idx] = strings.TrimSpace(key)
 		}
 	}
 
-	return m
+	return keymap
 }

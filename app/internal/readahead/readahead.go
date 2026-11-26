@@ -38,14 +38,6 @@ var ErrNotDirect = errors.New("readahead: not a plain audio stream")
 // errIdle ends a session that received nothing for IdleTimeout.
 var errIdle = errors.New("no data")
 
-// directTypes are the content types read here. Everything else, HLS and playlist
-// types above all (audio/mpegurl, application/vnd.apple.mpegurl, audio/x-scpls), is
-// ffmpeg's to open: it follows the playlist, which this package does not.
-var directTypes = map[string]bool{
-	"audio/mpeg": true, "audio/mp3": true, "audio/aac": true, "audio/aacp": true,
-	"audio/ogg": true, "application/ogg": true,
-}
-
 // Config holds the bounds. Zero values take the defaults below.
 type Config struct {
 	Client      *http.Client  // nil: the shared client, which keeps TLS sessions between stations
@@ -66,6 +58,27 @@ const (
 	// already received. Compressed audio does not repeat 4 KiB by accident, except in
 	// digital silence, where a wrong match is harmless.
 	tailLen = 4 << 10
+	// minScanTail is how much of the tail a reconnect needs before its burst is scanned.
+	minScanTail = tailLen / 4
+	// framesBuffered is how many chunks the socket reader may run ahead of the session.
+	framesBuffered = 2
+	// backoffFactor multiplies the wait between failed reconnects, up to BackoffMax.
+	backoffFactor = 2
+	// headerTimeout bounds the wait for a station's response headers.
+	headerTimeout = 10 * time.Second
+	// sessionCacheSize is how many stations' TLS sessions the shared client keeps.
+	sessionCacheSize = 32
+)
+
+// The defaults of Config.
+const (
+	defaultLimit       = 1 << 20
+	defaultIdleTimeout = 15 * time.Second
+	defaultMaxOutage   = 60 * time.Second
+	defaultBackoffMin  = 250 * time.Millisecond
+	defaultBackoffMax  = 5 * time.Second
+	defaultScanWait    = 500 * time.Millisecond
+	defaultScanMax     = 2 * time.Second
 )
 
 func (c *Config) defaults() {
@@ -77,45 +90,47 @@ func (c *Config) defaults() {
 		c.Log = slog.Default().With("comp", "player")
 	}
 
-	for _, d := range []struct {
-		v *time.Duration
-		d time.Duration
+	for _, field := range []struct {
+		value    *time.Duration
+		fallback time.Duration
 	}{
-		{&c.IdleTimeout, 15 * time.Second},
-		{&c.MaxOutage, 60 * time.Second},
-		{&c.BackoffMin, 250 * time.Millisecond},
-		{&c.BackoffMax, 5 * time.Second},
-		{&c.ScanWait, 500 * time.Millisecond},
-		{&c.ScanMax, 2 * time.Second},
+		{&c.IdleTimeout, defaultIdleTimeout},
+		{&c.MaxOutage, defaultMaxOutage},
+		{&c.BackoffMin, defaultBackoffMin},
+		{&c.BackoffMax, defaultBackoffMax},
+		{&c.ScanWait, defaultScanWait},
+		{&c.ScanMax, defaultScanMax},
 	} {
-		if *d.v <= 0 {
-			*d.v = d.d
+		if *field.value <= 0 {
+			*field.value = field.fallback
 		}
 	}
 
 	if c.Limit <= 0 {
-		c.Limit = 1 << 20
+		c.Limit = defaultLimit
 	}
 }
 
 // NewClient is the production client: public addresses only (safehttp), a bound on the
 // response headers, and no overall timeout, because the body is a stream that never ends.
 func NewClient() *http.Client {
-	return newClient(nil)
+	return clientWith(nil)
 }
 
-func newClient(tlsCfg *tls.Config) *http.Client {
-	tr := safehttp.SafeTransport()
-	tr.ResponseHeaderTimeout = 10 * time.Second
-	tr.TLSClientConfig = tlsCfg
+func clientWith(tlsCfg *tls.Config) *http.Client {
+	transport := safehttp.SafeTransport()
+	transport.ResponseHeaderTimeout = headerTimeout
+	transport.TLSClientConfig = tlsCfg
 
-	return &http.Client{Transport: tr}
+	return &http.Client{Transport: transport}
 }
 
 // sharedClient resumes TLS sessions across connects: the ARMv7 handshake is the costly part
 // of opening an https station, and a station's connection never goes back to the pool
 // because its body does not end, so only the session cache carries over.
-var sharedClient = newClient(&tls.Config{ClientSessionCache: tls.NewLRUClientSessionCache(32)})
+//
+//nolint:gochecknoglobals // process-wide state: one TLS session cache for every station connect
+var sharedClient = clientWith(&tls.Config{ClientSessionCache: tls.NewLRUClientSessionCache(sessionCacheSize)})
 
 // Warm opens and drops one https connection to url, so its TLS session is cached for the
 // next Open. Anything else is left alone.
@@ -124,8 +139,16 @@ func Warm(ctx context.Context, url string) {
 		return
 	}
 
-	s := &Stream{cfg: Config{Client: sharedClient}, url: url}
-	if resp, err := s.connect(ctx); err == nil {
+	stream := &Stream{
+		cfg: Config{
+			Client: sharedClient, Trace: nil, Log: nil, Limit: 0, IdleTimeout: 0, MaxOutage: 0,
+			BackoffMin: 0, BackoffMax: 0, ScanWait: 0, ScanMax: 0,
+		},
+		url: url, cancel: nil, q: nil, tail: nil,
+	}
+
+	resp, err := stream.connect(ctx)
+	if err == nil {
 		_ = resp.Body.Close()
 	}
 }
@@ -158,7 +181,6 @@ func (t *Timing) trace() *httptrace.ClientTrace {
 type Stream struct {
 	cfg    Config
 	url    string
-	ctx    context.Context
 	cancel context.CancelFunc
 	q      *queue
 	tail   []byte // last bytes handed to the queue, only touched by the fetch goroutine
@@ -168,18 +190,19 @@ type Stream struct {
 // error) without starting anything when the stream is not one to read ahead; the caller
 // then gives the URL to ffmpeg unchanged. ctx ends the stream like Close; dial only
 // aborts the first connect (the player cancels it when the selection moves on), and is
-// ignored once Open has returned.
-func Open(ctx, dial context.Context, cfg Config, url string) (*Stream, error) {
-	cfg.defaults()
+// ignored once Open has returned. cfg is copied: the caller's is left as it is.
+func Open(ctx, dial context.Context, cfg *Config, url string) (*Stream, error) {
+	conf := *cfg
+	conf.defaults()
 
-	sctx, cancel := context.WithCancel(ctx)
-	s := &Stream{cfg: cfg, url: url, ctx: sctx, cancel: cancel, q: newQueue(cfg.Limit)}
+	streamCtx, cancel := context.WithCancel(ctx)
+	stream := &Stream{cfg: conf, url: url, cancel: cancel, q: newQueue(conf.Limit), tail: nil}
 	stop := context.AfterFunc(dial, cancel)
 
-	resp, err := s.connect(sctx)
+	resp, err := stream.connect(streamCtx)
 	if !stop() && err == nil { // dial ended first and took the stream down with it
 		_ = resp.Body.Close()
-		err = dial.Err()
+		err = fmt.Errorf("readahead: connect: %w", dial.Err())
 	}
 
 	if err != nil {
@@ -188,54 +211,34 @@ func Open(ctx, dial context.Context, cfg Config, url string) (*Stream, error) {
 		return nil, err
 	}
 
-	safego.Go("readahead.run", func() { s.run(resp) })
+	safego.Go("readahead.run", func() { stream.run(streamCtx, resp) })
 
-	return s, nil
+	return stream, nil
 }
 
-// connect issues the GET and accepts only a plain audio stream. No Icy-MetaData header
-// is sent, so the body is pure audio; now-playing titles come from their own connection
-// (internal/icy).
-func (s *Stream) connect(ctx context.Context) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.url, http.NoBody)
+func directType(contentType string) bool {
+	mediaType, _, err := mime.ParseMediaType(contentType)
 	if err != nil {
-		return nil, err
+		return false
 	}
-
-	req.Header.Set("User-Agent", "SoundTap/1.0")
-
-	if s.cfg.Trace != nil {
-		req = req.WithContext(httptrace.WithClientTrace(ctx, s.cfg.Trace.trace()))
+	// The content types read here. Everything else, HLS and playlist types above all
+	// (audio/mpegurl, application/vnd.apple.mpegurl, audio/x-scpls), is ffmpeg's to open:
+	// it follows the playlist, which this package does not.
+	switch strings.ToLower(mediaType) {
+	case "audio/mpeg", "audio/mp3", "audio/aac", "audio/aacp", "audio/ogg", "application/ogg":
+		return true
+	default:
+		return false
 	}
-
-	resp, err := safehttp.Do(ctx, s.cfg.Client, req)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp.StatusCode != http.StatusOK || resp.ContentLength >= 0 || !directType(resp.Header.Get("Content-Type")) {
-		_ = resp.Body.Close()
-
-		return nil, fmt.Errorf("%w: status %d, type %q, length %d", ErrNotDirect,
-			resp.StatusCode, resp.Header.Get("Content-Type"), resp.ContentLength)
-	}
-
-	return resp, nil
 }
 
-func directType(ct string) bool {
-	mt, _, err := mime.ParseMediaType(ct)
-
-	return err == nil && directTypes[strings.ToLower(mt)]
-}
-
-// WriteTo copies the buffered stream to w (ffmpeg's stdin) until the stream ends, is
+// WriteTo copies the buffered stream to dst (ffmpeg's stdin) until the stream ends, is
 // closed, or a write fails. It returns nil at the end of the stream.
-func (s *Stream) WriteTo(w io.Writer) (int64, error) {
+func (s *Stream) WriteTo(dst io.Writer) (int64, error) {
 	var total int64
 
 	for {
-		b, err := s.q.get()
+		chunk, err := s.q.get()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				err = nil
@@ -244,11 +247,11 @@ func (s *Stream) WriteTo(w io.Writer) (int64, error) {
 			return total, err
 		}
 
-		n, err := w.Write(b)
+		written, err := dst.Write(chunk)
 
-		total += int64(n)
+		total += int64(written)
 		if err != nil {
-			return total, err
+			return total, fmt.Errorf("readahead: write: %w", err)
 		}
 	}
 }
@@ -262,10 +265,40 @@ func (s *Stream) Close() {
 // Buffered reports the queued bytes (for tests and logs).
 func (s *Stream) Buffered() int { return s.q.len() }
 
+// connect issues the GET and accepts only a plain audio stream. No Icy-MetaData header
+// is sent, so the body is pure audio; now-playing titles come from their own connection
+// (internal/icy).
+func (s *Stream) connect(ctx context.Context) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.url, http.NoBody)
+	if err != nil {
+		return nil, fmt.Errorf("readahead: build request: %w", err)
+	}
+
+	req.Header.Set("User-Agent", "SoundTap/1.0")
+
+	if s.cfg.Trace != nil {
+		req = req.WithContext(httptrace.WithClientTrace(ctx, s.cfg.Trace.trace()))
+	}
+
+	resp, err := safehttp.Do(ctx, s.cfg.Client, req)
+	if err != nil {
+		return nil, fmt.Errorf("readahead: connect: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK || resp.ContentLength >= 0 || !directType(resp.Header.Get("Content-Type")) {
+		_ = resp.Body.Close()
+
+		return nil, fmt.Errorf("%w: status %d, type %q, length %d", ErrNotDirect,
+			resp.StatusCode, resp.Header.Get("Content-Type"), resp.ContentLength)
+	}
+
+	return resp, nil
+}
+
 // run keeps one connection after the other until the stream is closed or has been silent
 // for MaxOutage, then ends the queue so the decoder sees EOF, exits, and the player's
 // own supervisor starts over (which also resolves the station URL again).
-func (s *Stream) run(resp *http.Response) {
+func (s *Stream) run(ctx context.Context, resp *http.Response) {
 	defer s.cancel()
 
 	backoff := s.cfg.BackoffMin
@@ -273,17 +306,16 @@ func (s *Stream) run(resp *http.Response) {
 
 	for {
 		if resp != nil {
-			n, err := s.session(resp)
+			queued, err := s.session(ctx, resp)
 			_ = resp.Body.Close()
-			resp = nil
 
-			if s.ctx.Err() != nil {
+			if ctx.Err() != nil {
 				s.q.finish(nil)
 
 				return
 			}
 
-			s.cfg.Log.Warn("radio read-ahead: connection lost", "bytes", n, "buffered", s.q.len(), "err", err)
+			s.cfg.Log.Warn("radio read-ahead: connection lost", "bytes", queued, "buffered", s.q.len(), "err", err)
 			// Silent for IdleTimeout with nothing left to play: the listener already
 			// hears silence, while the player still says PLAY_STATE. End the stream now
 			// so the player shows buffering and starts over, instead of a minute later.
@@ -294,45 +326,157 @@ func (s *Stream) run(resp *http.Response) {
 				return
 			}
 
-			if n > 0 {
+			if queued > 0 {
 				lastData = time.Now()
 				backoff = s.cfg.BackoffMin
 			}
 		}
 
-		for resp == nil {
-			if time.Since(lastData) > s.cfg.MaxOutage {
-				s.cfg.Log.Warn("radio read-ahead: giving up", "outage", s.cfg.MaxOutage)
-				s.q.finish(io.ErrUnexpectedEOF)
-
-				return
-			}
-
-			if !sleep(s.ctx, backoff) {
-				s.q.finish(nil)
-
-				return
-			}
-
-			var err error
-			if resp, err = s.connect(s.ctx); err != nil {
-				s.cfg.Log.Warn("radio read-ahead: reconnect failed", "err", err, "retry_in", backoff)
-				backoff = min(backoff*2, s.cfg.BackoffMax)
-			}
+		resp = s.reconnect(ctx, lastData, &backoff)
+		if resp == nil {
+			return
 		}
 	}
 }
 
-func sleep(ctx context.Context, d time.Duration) bool {
-	t := time.NewTimer(d)
-	defer t.Stop()
+// reconnect connects again, backing off between failures. It returns nil when the stream
+// is closed or has been silent for MaxOutage, after it ended the queue.
+func (s *Stream) reconnect(ctx context.Context, lastData time.Time, backoff *time.Duration) *http.Response {
+	for {
+		if time.Since(lastData) > s.cfg.MaxOutage {
+			s.cfg.Log.Warn("radio read-ahead: giving up", "outage", s.cfg.MaxOutage)
+			s.q.finish(io.ErrUnexpectedEOF)
+
+			return nil
+		}
+
+		if !sleep(ctx, *backoff) {
+			s.q.finish(nil)
+
+			return nil
+		}
+
+		resp, err := s.connect(ctx)
+		if err == nil {
+			return resp
+		}
+
+		s.cfg.Log.Warn("radio read-ahead: reconnect failed", "err", err, "retry_in", *backoff)
+		*backoff = min(*backoff*backoffFactor, s.cfg.BackoffMax)
+	}
+}
+
+func sleep(ctx context.Context, wait time.Duration) bool {
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
 
 	select {
 	case <-ctx.Done():
 		return false
-	case <-t.C:
+	case <-timer.C:
 		return true
 	}
+}
+
+// frame is one read from the socket: bytes, or the error that ended it.
+type frame struct {
+	data []byte
+	err  error
+}
+
+// readBody reads the socket into frames until it fails or ctx ends, then closes frames.
+func readBody(ctx context.Context, body io.Reader, frames chan<- frame) {
+	defer close(frames)
+
+	buf := make([]byte, chunkSize)
+	for {
+		read, err := body.Read(buf)
+		if read > 0 {
+			select {
+			case frames <- frame{data: bytes.Clone(buf[:read]), err: nil}:
+			case <-ctx.Done():
+				return
+			}
+		}
+
+		if err != nil {
+			select {
+			case frames <- frame{data: nil, err: err}:
+			case <-ctx.Done():
+			}
+
+			return
+		}
+	}
+}
+
+// burst holds back the first bytes of a reconnect until they show where the server's
+// burst overlaps what was already received.
+type burst struct {
+	scan     []byte    // bytes held back so far
+	tail     []byte    // the last bytes the previous connection delivered
+	scanning bool      // still looking for tail
+	end      time.Time // when the scan gives up: ScanMax after the connect
+}
+
+// take adds chunk to the scan. It returns what to queue and true once the scan is over,
+// or false while the scan goes on.
+func (b *burst) take(chunk []byte, limit int, log *slog.Logger) ([]byte, bool) {
+	if !b.scanning {
+		return chunk, true
+	}
+
+	from := max(len(b.scan)-len(b.tail)+1, 0)
+	b.scan = append(b.scan, chunk...)
+
+	index := bytes.Index(b.scan[from:], b.tail)
+	switch {
+	case index >= 0:
+		skip := from + index + len(b.tail)
+		log.Info("radio read-ahead: skipped the repeated burst", "bytes", skip)
+
+		rest := bytes.Clone(b.scan[skip:])
+		b.scanning, b.scan = false, nil
+
+		return rest, true
+	case len(b.scan) >= limit || time.Now().After(b.end):
+		return b.stop(), true
+	default:
+		return nil, false
+	}
+}
+
+// stop ends the scan and returns what it held back, to be queued unchanged.
+func (b *burst) stop() []byte {
+	held := b.scan
+	b.scanning, b.scan = false, nil
+
+	return held
+}
+
+// intake counts what a session queues.
+type intake struct {
+	stream *Stream
+	queued int
+}
+
+// push records chunk as the stream's latest bytes and queues it; false once the queue
+// takes no more.
+func (in *intake) push(chunk []byte) bool {
+	if len(chunk) == 0 {
+		return true
+	}
+
+	in.queued += len(chunk)
+
+	stream := in.stream
+
+	stream.tail = append(stream.tail, chunk...)
+	if len(stream.tail) > tailLen {
+		stream.tail = bytes.Clone(stream.tail[len(stream.tail)-tailLen:])
+	}
+
+	return stream.q.put(chunk)
 }
 
 // session reads one connection into the queue and returns the bytes queued from it. A
@@ -349,132 +493,89 @@ func sleep(ctx context.Context, d time.Duration) bool {
 // that never goes quiet: a burst comes at link speed, so it is in well within 2 s, while
 // waiting for Limit at the stream's own rate held the audio back for a minute (WLA,
 // 2026-11-15).
-func (s *Stream) session(resp *http.Response) (int, error) {
-	type frame struct {
-		b   []byte
-		err error
-	}
-
-	cctx, cancel := context.WithCancel(s.ctx)
+func (s *Stream) session(ctx context.Context, resp *http.Response) (int, error) {
+	readCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	ch := make(chan frame, 2)
+	frames := make(chan frame, framesBuffered)
 
-	safego.Go("readahead.read", func() {
-		defer close(ch)
-
-		buf := make([]byte, chunkSize)
-		for {
-			n, err := resp.Body.Read(buf)
-			if n > 0 {
-				select {
-				case ch <- frame{b: bytes.Clone(buf[:n])}:
-				case <-cctx.Done():
-					return
-				}
-			}
-
-			if err != nil {
-				select {
-				case ch <- frame{err: err}:
-				case <-cctx.Done():
-				}
-
-				return
-			}
-		}
-	})
+	safego.Go("readahead.read", func() { readBody(readCtx, resp.Body, frames) })
 	// cancel() above stops the goroutine at its next send; closing the body (the caller
 	// does it right after) unblocks a Read that is waiting on the socket.
 
-	queued := 0
-	push := func(b []byte) bool {
-		if len(b) == 0 {
-			return true
-		}
-
-		queued += len(b)
-
-		s.tail = append(s.tail, b...)
-		if len(s.tail) > tailLen {
-			s.tail = bytes.Clone(s.tail[len(s.tail)-tailLen:])
-		}
-
-		return s.q.put(b)
+	fed := &intake{stream: s, queued: 0}
+	scan := &burst{
+		scan:     nil,
+		tail:     bytes.Clone(s.tail),
+		scanning: len(s.tail) >= minScanTail,
+		end:      time.Now().Add(s.cfg.ScanMax),
 	}
-
-	var scan []byte
-
-	scanning := len(s.tail) >= tailLen/4
-	tail := bytes.Clone(s.tail)
-	scanEnd := time.Now().Add(s.cfg.ScanMax)
 
 	timer := time.NewTimer(s.cfg.IdleTimeout)
 	defer timer.Stop()
 
 	for {
 		select {
-		case <-cctx.Done():
-			return queued, cctx.Err()
+		case <-readCtx.Done():
+			return fed.queued, fmt.Errorf("readahead: session: %w", readCtx.Err())
 		case <-timer.C:
-			if scanning { // burst over without a match: queue it as it is
-				scanning = false
-
-				if !push(scan) {
-					return queued, context.Canceled
-				}
-
-				scan = nil
-
-				timer.Reset(s.cfg.IdleTimeout)
-
-				continue
-			}
-
-			return queued, fmt.Errorf("%w for %s", errIdle, s.cfg.IdleTimeout)
-		case f, ok := <-ch:
-			if !ok {
-				return queued, io.EOF
-			}
-
-			if f.err != nil {
-				if scanning {
-					push(scan)
-				}
-
-				return queued, f.err
-			}
-
-			b := f.b
-
-			if scanning {
-				from := max(len(scan)-len(tail)+1, 0)
-				scan = append(scan, b...)
-
-				i := bytes.Index(scan[from:], tail)
-				switch {
-				case i >= 0:
-					skip := from + i + len(tail)
-					s.cfg.Log.Info("radio read-ahead: skipped the repeated burst", "bytes", skip)
-					b, scanning = bytes.Clone(scan[skip:]), false
-					scan = nil
-				case len(scan) >= s.cfg.Limit || time.Now().After(scanEnd):
-					b, scanning = scan, false
-					scan = nil
-				default:
-					timer.Reset(s.cfg.ScanWait)
-
-					continue
-				}
-			}
-
-			if !push(b) {
-				return queued, context.Canceled
+			err := fed.quiet(scan, s.cfg.IdleTimeout)
+			if err != nil {
+				return fed.queued, err
 			}
 
 			timer.Reset(s.cfg.IdleTimeout)
+		case got, open := <-frames:
+			if !open {
+				return fed.queued, io.EOF
+			}
+
+			wait, err := fed.receive(got, scan, &s.cfg)
+			if err != nil {
+				return fed.queued, err
+			}
+
+			timer.Reset(wait)
 		}
 	}
+}
+
+// quiet handles a connection that sent nothing for the timer's wait. A scan still
+// running ends there, without a match, and what it held back is queued as it is; a
+// connection that is not scanning has been idle for idle and ends with errIdle.
+func (in *intake) quiet(scan *burst, idle time.Duration) error {
+	if !scan.scanning {
+		return fmt.Errorf("%w for %s", errIdle, idle)
+	}
+
+	if !in.push(scan.stop()) {
+		return context.Canceled
+	}
+
+	return nil
+}
+
+// receive handles one read from the socket. It returns how long the next read may take,
+// or the error that ends the session.
+func (in *intake) receive(got frame, scan *burst, cfg *Config) (time.Duration, error) {
+	if got.err != nil {
+		if scan.scanning {
+			in.push(scan.stop())
+		}
+
+		return 0, got.err
+	}
+
+	chunk, ready := scan.take(got.data, cfg.Limit, cfg.Log)
+	if !ready {
+		return cfg.ScanWait, nil
+	}
+
+	if !in.push(chunk) {
+		return 0, context.Canceled
+	}
+
+	return cfg.IdleTimeout, nil
 }
 
 // queue is a FIFO of chunks bounded in bytes. put blocks while it is full (an oversized
@@ -491,17 +592,19 @@ type queue struct {
 }
 
 func newQueue(limit int) *queue {
-	q := &queue{limit: limit}
+	q := &queue{
+		mu: sync.Mutex{}, cv: nil, chunks: nil, size: 0, limit: limit, done: false, err: nil, dead: false,
+	}
 	q.cv = sync.NewCond(&q.mu)
 
 	return q
 }
 
-func (q *queue) put(b []byte) bool {
+func (q *queue) put(chunk []byte) bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	for !q.dead && !q.done && q.size > 0 && q.size+len(b) > q.limit {
+	for !q.dead && !q.done && q.size > 0 && q.size+len(chunk) > q.limit {
 		q.cv.Wait()
 	}
 
@@ -509,8 +612,8 @@ func (q *queue) put(b []byte) bool {
 		return false
 	}
 
-	q.chunks = append(q.chunks, b)
-	q.size += len(b)
+	q.chunks = append(q.chunks, chunk)
+	q.size += len(chunk)
 	q.cv.Broadcast()
 
 	return true
@@ -536,13 +639,13 @@ func (q *queue) get() ([]byte, error) {
 		return nil, io.EOF
 	}
 
-	b := q.chunks[0]
+	chunk := q.chunks[0]
 	q.chunks[0] = nil
 	q.chunks = q.chunks[1:]
-	q.size -= len(b)
+	q.size -= len(chunk)
 	q.cv.Broadcast()
 
-	return b, nil
+	return chunk, nil
 }
 
 // finish ends the queue after what is queued has been read.

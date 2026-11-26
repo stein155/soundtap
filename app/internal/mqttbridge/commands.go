@@ -5,6 +5,7 @@ package mqttbridge
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,19 +24,41 @@ type stateCache struct {
 	last map[string]string
 }
 
-func newStateCache() *stateCache { return &stateCache{last: map[string]string{}} }
+const (
+	// speakerReadTimeout bounds the speaker reads of one poll or one preset list.
+	speakerReadTimeout = 6 * time.Second
+	// commandTimeout bounds the speaker calls of one command.
+	commandTimeout = 12 * time.Second
+	// maxVolume is the top of the speaker's volume scale, 0..100.
+	maxVolume = 100
+)
 
-// publish sends value retained on topic. Unless always is set, a value equal to the
-// last one sent is skipped; a topic not sent on this connection yet always goes out,
-// empty values too: the broker may still retain an old song or station.
-func (s *stateCache) publish(client *mqtt.Client, topic, value string, always bool) {
+func newStateCache() *stateCache { return &stateCache{mu: sync.Mutex{}, last: map[string]string{}} }
+
+// publish sends value retained on topic, unless it equals the last one sent; a topic not
+// sent on this connection yet always goes out, empty values too: the broker may still
+// retain an old song or station.
+func (s *stateCache) publish(client *mqtt.Client, topic, value string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if last, ok := s.last[topic]; ok && last == value && !always {
+	if last, ok := s.last[topic]; ok && last == value {
 		return
 	}
 
+	s.sendLocked(client, topic, value)
+}
+
+// publishAlways sends value retained on topic, also when it equals the last one sent.
+func (s *stateCache) publishAlways(client *mqtt.Client, topic, value string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.sendLocked(client, topic, value)
+}
+
+// sendLocked sends value retained on topic and remembers it once sent; s.mu is held.
+func (s *stateCache) sendLocked(client *mqtt.Client, topic, value string) {
 	err := client.Publish(topic, []byte(value), true)
 	if err == nil {
 		s.last[topic] = value
@@ -52,33 +75,34 @@ func (s *stateCache) forget() {
 
 // refresh reads the speaker's current state and publishes any values that changed
 // since the last poll (retained, so clients see them on reconnect).
-func (b *Bridge) refresh(ctx context.Context, client *mqtt.Client, tp topics, cache *stateCache) {
-	c, cancel := context.WithTimeout(ctx, 6*time.Second)
+func (b *Bridge) refresh(ctx context.Context, client *mqtt.Client, topics topicTree, cache *stateCache) {
+	readCtx, cancel := context.WithTimeout(ctx, speakerReadTimeout)
 	defer cancel()
 
-	send := func(topic, value string) { cache.publish(client, topic, value, false) }
+	send := func(topic, value string) { cache.publish(client, topic, value) }
 
-	if vol, err := b.sp.Volume(c); err == nil {
-		send(tp.volumeState(), itoa(vol))
+	vol, err := b.sp.Volume(readCtx)
+	if err == nil {
+		send(topics.volumeState(), itoa(vol))
 	}
 
-	if m, ok := b.sp.(muter); ok {
-		send(tp.muteState(), onOff(m.Muted()))
+	if mute, ok := b.sp.(muter); ok {
+		send(topics.muteState(), muteState(mute))
 	}
 
-	np, err := b.readNowPlaying(c)
+	playing, err := b.readNowPlaying(readCtx)
 	if err != nil {
 		return
 	}
 
-	send(tp.powerState(), powerState(np.Source))
-	send(tp.station(), np.Station)
-	send(tp.track(), np.Track)
-	send(tp.artist(), np.Artist)
-	send(tp.status(), prettyStatus(np.PlayStatus))
+	send(topics.powerState(), powerState(playing.Source))
+	send(topics.station(), playing.Station)
+	send(topics.track(), playing.Track)
+	send(topics.artist(), playing.Artist)
+	send(topics.status(), prettyStatus(playing.PlayStatus))
 	// The preset select reflects the current station, so it shows as "selected"
 	// on the hub when the speaker is playing one of the preset stations.
-	send(tp.presetState(), np.Station)
+	send(topics.presetState(), playing.Station)
 }
 
 // readNowPlaying prefers the enriched now-playing (live track/artist) and falls
@@ -88,48 +112,43 @@ func (b *Bridge) readNowPlaying(ctx context.Context) (*speaker.NowPlaying, error
 		return b.nowPlaying(ctx)
 	}
 
-	return b.sp.NowPlaying(ctx)
+	playing, err := b.sp.NowPlaying(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read now playing: %w", err)
+	}
+
+	return playing, nil
 }
 
 // handle routes one inbound command message to the speaker. It runs on the session's
 // command worker (see serve), in the order the broker sent the commands.
-func (b *Bridge) handle(ctx context.Context, client *mqtt.Client, cache *stateCache, tp topics, disc string, info *speaker.Info, topic, payload string) {
-	c, cancel := context.WithTimeout(ctx, 12*time.Second)
+func (b *Bridge) handle(
+	ctx context.Context, client *mqtt.Client, cache *stateCache, topics topicTree, disc string, info *speaker.Info,
+	topic, payload string,
+) {
+	callCtx, cancel := context.WithTimeout(ctx, commandTimeout)
 	defer cancel()
 
 	switch {
-	case topic == tp.volumeSet():
-		level, err := strconv.Atoi(strings.TrimSpace(payload))
-		if err != nil {
-			b.log.Warn("mqtt bad volume", "payload", payload)
+	case topic == topics.volumeSet():
+		b.setVolume(callCtx, client, cache, topics, payload)
 
-			return
-		}
-
-		if err := b.sp.SetVolume(c, level); err != nil {
-			b.log.Warn("mqtt set volume", "err", err)
-
-			return
-		}
-
-		cache.publish(client, tp.volumeState(), itoa(clampVol(level)), true)
-
-	case topic == tp.powerSet():
+	case topic == topics.powerSet():
 		// Only ON and OFF: anything else read as OFF put a playing speaker in standby.
-		switch p := strings.ToUpper(strings.TrimSpace(payload)); p {
+		switch want := strings.ToUpper(strings.TrimSpace(payload)); want {
 		case powerOn, powerOff:
-			b.setPower(c, client, cache, tp, p == powerOn)
+			b.setPower(callCtx, client, cache, topics, want)
 		default:
 			b.log.Warn("mqtt bad power", "payload", payload)
 		}
 
-	case topic == tp.muteSet():
-		b.setMute(c, client, cache, tp, strings.ToUpper(strings.TrimSpace(payload)))
+	case topic == topics.muteSet():
+		b.setMute(callCtx, client, cache, topics, strings.ToUpper(strings.TrimSpace(payload)))
 
-	case topic == tp.presetSet():
-		b.selectPreset(c, client, cache, tp, strings.TrimSpace(payload))
+	case topic == topics.presetSet():
+		b.selectPreset(callCtx, client, cache, topics, strings.TrimSpace(payload))
 
-	case topic == tp.updateInstall():
+	case topic == topics.updateInstall():
 		// The hub's update entity asks us to install (payload defaults to "install").
 		if b.updater == nil {
 			return
@@ -144,45 +163,73 @@ func (b *Bridge) handle(ctx context.Context, client *mqtt.Client, cache *stateCa
 		// The discovering hub restarted; re-publish discovery and refresh state so the
 		// device reappears without waiting for the next reconnect.
 		if strings.EqualFold(strings.TrimSpace(payload), availabilityOnline) {
-			b.announce(ctx, client, tp, disc, info)
+			b.announce(ctx, client, topics, disc, info)
 			cache.forget()
-			b.refresh(ctx, client, tp, cache)
-			b.publishUpdateState(ctx, client, tp)
+			b.refresh(ctx, client, topics, cache)
+			b.publishUpdateState(ctx, client, topics)
 		}
 
 	default:
-		// Transport buttons: <base>/transport/<key>/set.
-		for _, tb := range transportButtons {
-			if topic == tp.transportSet(tb.key) {
-				err := b.sp.Key(c, tb.speakerKey)
-				if err != nil {
-					b.log.Warn("mqtt transport", "key", tb.speakerKey, "err", err)
-				}
+		b.pressTransport(callCtx, topics, topic)
+	}
+}
 
-				return
+// setVolume sets the volume a volume/set payload asks for.
+func (b *Bridge) setVolume(
+	ctx context.Context, client *mqtt.Client, cache *stateCache, topics topicTree, payload string,
+) {
+	level, err := strconv.Atoi(strings.TrimSpace(payload))
+	if err != nil {
+		b.log.Warn("mqtt bad volume", "payload", payload)
+
+		return
+	}
+
+	err = b.sp.SetVolume(ctx, level)
+	if err != nil {
+		b.log.Warn("mqtt set volume", "err", err)
+
+		return
+	}
+
+	cache.publishAlways(client, topics.volumeState(), itoa(clampVol(level)))
+}
+
+// pressTransport presses the key of the transport button topic is the command topic of,
+// if any: <base>/transport/<key>/set.
+func (b *Bridge) pressTransport(ctx context.Context, topics topicTree, topic string) {
+	for _, button := range transportButtons() {
+		if topic == topics.transportSet(button.key) {
+			err := b.sp.Key(ctx, button.speakerKey)
+			if err != nil {
+				b.log.Warn("mqtt transport", "key", button.speakerKey, "err", err)
 			}
+
+			return
 		}
 	}
 }
 
-// setPower turns the speaker on (wake from standby) or off (into standby), only
-// acting when the current state differs so the switch is idempotent. POWER toggles, so
-// the read and the key press are one step: two OFFs that both read "on" would switch
-// the speaker off and on again.
-func (b *Bridge) setPower(ctx context.Context, client *mqtt.Client, cache *stateCache, tp topics, on bool) {
+// setPower turns the speaker on (wake from standby) or off (into standby) as want, ON or
+// OFF, asks, only acting when the current state differs so the switch is idempotent. POWER
+// toggles, so the read and the key press are one step: two OFFs that both read "on" would
+// switch the speaker off and on again.
+func (b *Bridge) setPower(ctx context.Context, client *mqtt.Client, cache *stateCache, topics topicTree, want string) {
 	b.power.Lock()
 	defer b.power.Unlock()
 
-	np, err := b.sp.NowPlaying(ctx)
+	playing, err := b.sp.NowPlaying(ctx)
 	if err != nil {
 		b.log.Warn("mqtt power: read state", "err", err)
 
 		return
 	}
 
-	standby := isStandby(np.Source)
+	wantOn := want == powerOn
+	standby := isStandby(playing.Source)
+
 	switch {
-	case on && standby:
+	case wantOn && standby:
 		// The power key, not a bare wake: it resumes what played last.
 		err := b.sp.Key(ctx, "POWER")
 		if err != nil {
@@ -190,20 +237,23 @@ func (b *Bridge) setPower(ctx context.Context, client *mqtt.Client, cache *state
 
 			return
 		}
-	case !on && !standby:
+	case !wantOn && !standby:
 		err := b.sp.Key(ctx, "POWER")
 		if err != nil {
 			b.log.Warn("mqtt power off", "err", err)
 
 			return
 		}
+	default: // already as asked
 	}
 
-	cache.publish(client, tp.powerState(), boolOnOff(on), true)
+	cache.publishAlways(client, topics.powerState(), want)
 }
 
 // selectPreset plays the native preset whose name matches the chosen option.
-func (b *Bridge) selectPreset(ctx context.Context, client *mqtt.Client, cache *stateCache, tp topics, name string) {
+func (b *Bridge) selectPreset(
+	ctx context.Context, client *mqtt.Client, cache *stateCache, topics topicTree, name string,
+) {
 	if name == "" || name == presetPlaceholder {
 		return
 	}
@@ -224,7 +274,7 @@ func (b *Bridge) selectPreset(ctx context.Context, client *mqtt.Client, cache *s
 				return
 			}
 
-			cache.publish(client, tp.presetState(), name, true)
+			cache.publishAlways(client, topics.presetState(), name)
 
 			return
 		}
@@ -251,33 +301,25 @@ func powerState(source string) string {
 	return powerOn
 }
 
-func boolOnOff(on bool) string {
-	if on {
-		return powerOn
-	}
-
-	return powerOff
-}
-
-func clampVol(v int) int {
-	if v < 0 {
+func clampVol(level int) int {
+	if level < 0 {
 		return 0
 	}
 
-	if v > 100 {
-		return 100
+	if level > maxVolume {
+		return maxVolume
 	}
 
-	return v
+	return level
 }
 
 // prettyStatus turns the firmware's play-state token (e.g. "PLAY_STATE") into a
 // short lower-case word for the sensor.
-func prettyStatus(s string) string {
-	s = strings.TrimSpace(s)
+func prettyStatus(token string) string {
+	token = strings.TrimSpace(token)
 
-	s = strings.TrimSuffix(strings.ToUpper(s), "_STATE")
-	switch s {
+	token = strings.TrimSuffix(strings.ToUpper(token), "_STATE")
+	switch token {
 	case "PLAY":
 		return "playing"
 	case "PAUSE":
@@ -289,22 +331,23 @@ func prettyStatus(s string) string {
 	case "":
 		return ""
 	default:
-		return strings.ToLower(s)
+		return strings.ToLower(token)
 	}
 }
 
 // setMute presses the MUTE toggle only when the speaker is not already as asked, so the
 // switch is idempotent like power. Anything but ON and OFF is ignored.
-func (b *Bridge) setMute(ctx context.Context, client *mqtt.Client, cache *stateCache, tp topics, payload string) {
-	m, ok := b.sp.(muter)
+func (b *Bridge) setMute(
+	ctx context.Context, client *mqtt.Client, cache *stateCache, topics topicTree, payload string,
+) {
+	mute, ok := b.sp.(muter)
 	if !ok || (payload != powerOn && payload != powerOff) {
 		b.log.Warn("mqtt bad mute", "payload", payload)
 
 		return
 	}
 
-	want := payload == powerOn
-	if m.Muted() != want {
+	if muteState(mute) != payload {
 		err := b.sp.Key(ctx, "MUTE")
 		if err != nil {
 			b.log.Warn("mqtt mute", "err", err)
@@ -313,11 +356,12 @@ func (b *Bridge) setMute(ctx context.Context, client *mqtt.Client, cache *stateC
 		}
 	}
 
-	cache.publish(client, tp.muteState(), onOff(want), false)
+	cache.publish(client, topics.muteState(), payload)
 }
 
-func onOff(on bool) string {
-	if on {
+// muteState is the mute switch's state payload: ON when the speaker is muted.
+func muteState(mute muter) string {
+	if mute.Muted() {
 		return powerOn
 	}
 

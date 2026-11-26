@@ -16,6 +16,7 @@ import (
 // writes it to <home>/panic.log, which GET /api/debug shows.
 type Recorder func(name string, r any, stack []byte)
 
+//nolint:gochecknoglobals // process-wide state: one recorder for every goroutine Go starts
 var recorder atomic.Pointer[Recorder]
 
 // SetRecorder installs where a panic is recorded; nil records it in the log only.
@@ -43,18 +44,18 @@ func Go(name string, fn func()) {
 // Recover records a panic in progress and raises it again. It must be deferred
 // directly, as recover only works there: `defer safego.Recover("main")`.
 func Recover(name string) {
-	r := recover()
-	if r == nil {
+	recovered := recover() //nolint:revive // Recover is the deferred function: callers defer it directly
+	if recovered == nil {
 		return
 	}
 
 	stack := debug.Stack()
 
-	slog.Error("goroutine panicked", "goroutine", name, "panic", r)
+	slog.Error("goroutine panicked", "goroutine", name, "panic", recovered)
 
 	if rec := recorder.Load(); rec != nil {
-		(*rec)(name, r, stack)
+		(*rec)(name, recovered, stack)
 	}
 
-	panic(r)
+	panic(recovered)
 }

@@ -72,7 +72,7 @@ alone); absolute volume sync (followers would lose their own balance against the
 - `app/internal/sleeptimer`: the timer; `app/internal/web/sleep.go`: `postSleep`, `power`,
   `WatchStandby` and `standbyEntered`.
 - `app/internal/web/alarm.go`: `runAlarm`, `checkAlarm` and `alarmDue`;
-  `app/internal/settings/settings.go:Alarm`.
+  `app/internal/settings/alarm.go:Alarm`.
 - `app/internal/web/groupprefs.go`: `volumeSyncWanted` and `volumeSyncHeader`;
   `app/internal/multiroom/followers.go`: `Group.SyncFollowerVolume` and `Group.ReleaseFollowers`;
   `app/internal/settings/settings.go:Multiroom`.

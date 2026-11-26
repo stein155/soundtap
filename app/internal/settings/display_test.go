@@ -1,50 +1,56 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-package settings
+package settings_test
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stein155/soundtap/app/internal/settings"
 )
 
 func TestDisplayDefaultsToDarkUntilAZoneIsKnown(t *testing.T) {
-	st := Open(filepath.Join(t.TempDir(), "s.json"))
+	t.Parallel()
 
-	d := st.Get().Display
+	store := settings.Open(filepath.Join(t.TempDir(), "s.json"))
+
+	d := store.Get().Display
 	if d.ClockOn() || d.Hour12 {
 		t.Errorf("default display = %+v, want dark, 24-hour", d)
 	}
 }
 
 func TestSetDisplayNeedsAZone(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "s.json")
-	st := Open(path)
+	t.Parallel()
 
-	err := st.SetDisplay(Display{})
+	path := filepath.Join(t.TempDir(), "s.json")
+	store := settings.Open(path)
+
+	err := store.SetDisplay(settings.Display{ClockOff: false, Hour12: false, Timezone: ""})
 	if err == nil {
 		t.Error("clock turned on without a timezone")
 	}
 
-	err = st.SetDisplay(Display{Timezone: "Mars/Olympus"})
+	err = store.SetDisplay(settings.Display{ClockOff: false, Hour12: false, Timezone: "Mars/Olympus"})
 	if err == nil {
 		t.Error("unknown timezone accepted")
 	}
 
-	err = st.SetDisplay(Display{ClockOff: true})
+	err = store.SetDisplay(settings.Display{ClockOff: true, Hour12: false, Timezone: ""})
 	if err != nil {
 		t.Errorf("clock off without a zone refused: %v", err)
 	}
 
-	amsterdam := Display{Timezone: "Europe/Amsterdam", Hour12: true}
+	amsterdam := settings.Display{ClockOff: false, Hour12: true, Timezone: "Europe/Amsterdam"}
 
-	err = st.SetDisplay(amsterdam)
+	err = store.SetDisplay(amsterdam)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if got := Open(path).Get().Display; got != amsterdam || !got.ClockOn() {
+	if got := settings.Open(path).Get().Display; got != amsterdam || !got.ClockOn() {
 		t.Fatalf("reloaded display = %+v", got)
 	}
 }
@@ -53,17 +59,20 @@ func TestSetDisplayNeedsAZone(t *testing.T) {
 // loads: its town, location, weather switch and brightness are ignored and the clock keeps
 // its zone.
 func TestDisplayIgnoresTheOldWeatherFields(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "s.json")
 
-	old := `{"display":{"clockOff":false,"hour12":true,"city":"Utrecht, Nederland","lat":52.09,"lon":5.12,"timezone":"Europe/Amsterdam","weatherOn":true,"brightness":50}}`
+	old := `{"display":{"clockOff":false,"hour12":true,"city":"Utrecht, Nederland","lat":52.09,"lon":5.12,` +
+		`"timezone":"Europe/Amsterdam","weatherOn":true,"brightness":50}}`
 
 	err := os.WriteFile(path, []byte(old), 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	got := Open(path).Get().Display
-	if got != (Display{Hour12: true, Timezone: "Europe/Amsterdam"}) || !got.ClockOn() {
+	got := settings.Open(path).Get().Display
+	if got != (settings.Display{ClockOff: false, Hour12: true, Timezone: "Europe/Amsterdam"}) || !got.ClockOn() {
 		t.Fatalf("display from an old file = %+v", got)
 	}
 }

@@ -29,36 +29,64 @@ import (
 // checksum is only verified after the whole file is written).
 const maxArtifact = 64 << 20
 
+// maxJSON caps a JSON document GetJSON decodes.
+const maxJSON = 4 << 20
+
+// The transport SafeTransport builds.
+const (
+	dialTimeout         = 10 * time.Second
+	maxIdleConns        = 10
+	idleConnTimeout     = 30 * time.Second
+	tlsHandshakeTimeout = 10 * time.Second
+)
+
+// The clock Do waits on; tests replace them.
+//
+//nolint:gochecknoglobals // test seams: a test fakes the clock and shortens the waits
 var (
 	now               = time.Now
 	clockPollInterval = 250 * time.Millisecond
 	clockWaitLimit    = 30 * time.Second
 )
 
+// errTooLarge: a download went past maxArtifact.
+var errTooLarge = errors.New("artifact exceeds size limit")
+
+// errNotPublic: the dialer refused an address that is not globally reachable.
+var errNotPublic = errors.New("refusing to connect to non-public address")
+
 // Do retries one HTTPS request after an invalid wall clock becomes credible.
 // Speakers have no working RTC, so certificate validation can race boot-time NTP.
 func Do(ctx context.Context, client *http.Client, req *http.Request) (*http.Response, error) {
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) //nolint:gosec // G704: fetching the caller's URL is the point; SafeTransport guards it
+	if err == nil {
+		return resp, nil
+	}
 
 	notBefore, behind := certificateNotYetValid(err)
-	if err == nil || req.URL.Scheme != "https" || !behind || !waitForClock(ctx, notBefore) {
-		return resp, err
+	if req.URL.Scheme != "https" || !behind || !waitForClock(ctx, notBefore) {
+		return resp, fmt.Errorf("request: %w", err)
 	}
 
 	retry := req.Clone(ctx)
 	// http.NoBody carries no GetBody, but there is nothing to replay.
 	if req.Body != nil && req.Body != http.NoBody {
 		if req.GetBody == nil {
-			return resp, err
+			return resp, fmt.Errorf("request: %w", err)
 		}
 
 		retry.Body, err = req.GetBody()
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("replay the request body: %w", err)
 		}
 	}
 
-	return client.Do(retry)
+	resp, err = client.Do(retry) //nolint:gosec // G704: the same request again, through the same client
+	if err != nil {
+		return resp, fmt.Errorf("request after the clock caught up: %w", err)
+	}
+
+	return resp, nil
 }
 
 func clockSane(notBefore time.Time) bool {
@@ -98,14 +126,14 @@ func waitForClock(ctx context.Context, notBefore time.Time) bool {
 }
 
 // GetJSON fetches url with client and decodes the (bounded) JSON body into out.
-// ua sets the User-Agent so GitHub doesn't reject the request.
-func GetJSON(ctx context.Context, client *http.Client, ua, url string, out any) error {
+// userAgent sets the User-Agent so GitHub doesn't reject the request.
+func GetJSON(ctx context.Context, client *http.Client, userAgent, url string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
-		return err
+		return fmt.Errorf("new request: %w", err)
 	}
 
-	req.Header.Set("User-Agent", ua)
+	req.Header.Set("User-Agent", userAgent)
 
 	resp, err := Do(ctx, client, req)
 	if err != nil {
@@ -118,27 +146,32 @@ func GetJSON(ctx context.Context, client *http.Client, ua, url string, out any) 
 		return HTTPStatusError{URL: url, Status: resp.StatusCode}
 	}
 
-	return json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(out)
+	err = json.NewDecoder(io.LimitReader(resp.Body, maxJSON)).Decode(out)
+	if err != nil {
+		return fmt.Errorf("decode %s: %w", url, err)
+	}
+
+	return nil
 }
 
 // Download fetches url into dst with the given file mode, using client. A partial
 // download is removed rather than left behind.
-func Download(ctx context.Context, client *http.Client, ua, url, dst string, mode fs.FileMode) error {
-	return DownloadWatched(ctx, client, ua, url, dst, mode, nil)
+func Download(ctx context.Context, client *http.Client, userAgent, url, dst string, mode fs.FileMode) error {
+	return DownloadWatched(ctx, client, userAgent, url, dst, mode, nil)
 }
 
 // DownloadWatched is Download that tells seen, when not nil, how many bytes are in dst so
 // far and how many the server announced (-1 when it did not say): once before the first
 // byte and after every write.
-func DownloadWatched(ctx context.Context, client *http.Client, ua, url, dst string, mode fs.FileMode,
+func DownloadWatched(ctx context.Context, client *http.Client, userAgent, url, dst string, mode fs.FileMode,
 	seen func(done, total int64),
 ) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
-		return err
+		return fmt.Errorf("new request: %w", err)
 	}
 
-	req.Header.Set("User-Agent", ua)
+	req.Header.Set("User-Agent", userAgent)
 
 	resp, err := Do(ctx, client, req)
 	if err != nil {
@@ -151,24 +184,24 @@ func DownloadWatched(ctx context.Context, client *http.Client, ua, url, dst stri
 		return HTTPStatusError{URL: url, Status: resp.StatusCode}
 	}
 
-	f, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	file, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
 	if err != nil {
-		return err
+		return fmt.Errorf("download: %w", err)
 	}
 
-	var w io.Writer = f
+	var out io.Writer = file
 
 	if seen != nil {
 		seen(0, resp.ContentLength)
-		w = &watchedWriter{w: f, total: resp.ContentLength, seen: seen}
+		out = &watchedWriter{w: file, done: 0, total: resp.ContentLength, seen: seen}
 	}
 
-	n, copyErr := io.Copy(w, io.LimitReader(resp.Body, maxArtifact+1))
+	n, copyErr := io.Copy(out, io.LimitReader(resp.Body, maxArtifact+1))
 	if copyErr == nil && n > maxArtifact {
-		copyErr = errors.New(url + ": artifact exceeds size limit")
+		copyErr = fmt.Errorf("%s: %w", url, errTooLarge)
 	}
 
-	closeErr := f.Close()
+	closeErr := file.Close()
 
 	if copyErr != nil {
 		_ = os.Remove(dst)
@@ -178,9 +211,11 @@ func DownloadWatched(ctx context.Context, client *http.Client, ua, url, dst stri
 
 	if closeErr != nil {
 		_ = os.Remove(dst)
+
+		return fmt.Errorf("download: %w", closeErr)
 	}
 
-	return closeErr
+	return nil
 }
 
 // watchedWriter counts what reaches w for DownloadWatched.
@@ -191,11 +226,15 @@ type watchedWriter struct {
 }
 
 func (c *watchedWriter) Write(b []byte) (int, error) {
-	n, err := c.w.Write(b)
-	c.done += int64(n)
+	written, err := c.w.Write(b)
+	c.done += int64(written)
 	c.seen(c.done, c.total)
 
-	return n, err
+	if err != nil {
+		return written, fmt.Errorf("write: %w", err)
+	}
+
+	return written, nil
 }
 
 // SafeTransport returns a transport whose dialer refuses any non-public address,
@@ -206,24 +245,24 @@ func SafeTransport() *http.Transport {
 	return &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
-			Timeout: 10 * time.Second,
+			Timeout: dialTimeout,
 			Control: func(_, address string, _ syscall.RawConn) error {
 				host, _, err := net.SplitHostPort(address)
 				if err != nil {
-					return err
+					return fmt.Errorf("dial address: %w", err)
 				}
 
 				if ip := net.ParseIP(host); ip == nil || !PublicIP(ip) {
-					return fmt.Errorf("refusing to connect to non-public address %s", address)
+					return fmt.Errorf("%w %s", errNotPublic, address)
 				}
 
 				return nil
 			},
 		}).DialContext,
 		ForceAttemptHTTP2:   true,
-		MaxIdleConns:        10,
-		IdleConnTimeout:     30 * time.Second,
-		TLSHandshakeTimeout: 10 * time.Second,
+		MaxIdleConns:        maxIdleConns,
+		IdleConnTimeout:     idleConnTimeout,
+		TLSHandshakeTimeout: tlsHandshakeTimeout,
 	}
 }
 
@@ -232,25 +271,25 @@ func SafeTransport() *http.Transport {
 // are not globally reachable (shared CGNAT space, documentation, benchmarking...).
 // TEST-NET-3 matters here: the ST20 USB TAP lives in 203.0.113.0/30.
 func PublicIP(a net.IP) bool {
-	ip, ok := netip.AddrFromSlice(a)
+	addr, ok := netip.AddrFromSlice(a)
 	if !ok {
 		return false
 	}
 
-	ip = ip.Unmap()
-	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
+	addr = addr.Unmap()
+	if addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast() ||
+		addr.IsLinkLocalMulticast() || addr.IsMulticast() || addr.IsUnspecified() {
 		return false
 	}
 
-	for _, p := range globalExceptions {
-		if p.Contains(ip) {
+	for _, p := range globalExceptions() {
+		if p.Contains(addr) {
 			return true
 		}
 	}
 
-	for _, p := range notGlobal {
-		if p.Contains(ip) {
+	for _, p := range notGlobal() {
+		if p.Contains(addr) {
 			return false
 		}
 	}
@@ -260,17 +299,21 @@ func PublicIP(a net.IP) bool {
 
 // From the IANA IPv4 and IPv6 special-purpose address registries ("Globally
 // Reachable: False"), minus what the checks above already cover.
-var notGlobal = prefixes(
-	"0.0.0.0/8", "100.64.0.0/10", "192.0.0.0/24", "192.0.2.0/24", "198.18.0.0/15",
-	"198.51.100.0/24", "203.0.113.0/24", "240.0.0.0/4",
-	"64:ff9b:1::/48", "100::/64", "2001::/23", "2001:db8::/32", "3fff::/20", "5f00::/16",
-)
+func notGlobal() []netip.Prefix {
+	return prefixes(
+		"0.0.0.0/8", "100.64.0.0/10", "192.0.0.0/24", "192.0.2.0/24", "198.18.0.0/15",
+		"198.51.100.0/24", "203.0.113.0/24", "240.0.0.0/4",
+		"64:ff9b:1::/48", "100::/64", "2001::/23", "2001:db8::/32", "3fff::/20", "5f00::/16",
+	)
+}
 
 // Blocks inside notGlobal that the registries mark globally reachable.
-var globalExceptions = prefixes(
-	"192.0.0.9/32", "192.0.0.10/32",
-	"2001:1::1/128", "2001:1::2/128", "2001:3::/32", "2001:4:112::/48", "2001:20::/28", "2001:30::/28",
-)
+func globalExceptions() []netip.Prefix {
+	return prefixes(
+		"192.0.0.9/32", "192.0.0.10/32",
+		"2001:1::1/128", "2001:1::2/128", "2001:3::/32", "2001:4:112::/48", "2001:20::/28", "2001:30::/28",
+	)
+}
 
 func prefixes(ss ...string) []netip.Prefix {
 	ps := make([]netip.Prefix, len(ss))

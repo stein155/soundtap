@@ -80,5 +80,5 @@ Alternatives that lost:
   `app/internal/bluez/linklost.go`.
 - `app/internal/btctl/btctl.go`: `btctl.Paired` and `btctl.Remove`.
 - `app/cmd/soundtapd/bluetooth.go:bluetoothAgent`: the model gate and start.
-- `app/internal/dbustest`: the test bus; `app/internal/bluez/agent_test.go`.
+- `app/internal/dbustest`: the test bus; `app/internal/bluez/agent_internal_test.go`.
 - `os/overlay/opt/soundtap/bt.sh`: the stack and its watchers.

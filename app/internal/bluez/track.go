@@ -22,6 +22,9 @@ const (
 // Track is what a connected phone says is playing, over AVRCP. Zero when nothing says so.
 type Track struct{ Title, Artist, Album string }
 
+// empty reports whether nothing is known about the track.
+func (t Track) empty() bool { return t.Title == "" && t.Artist == "" && t.Album == "" }
+
 // OnTrack hands the connected phone's name and its track to set whenever they are read: on
 // each change BlueZ signals and on the agent's tick, so a phone that was already playing shows
 // too. want keeps the bus quiet while Bluetooth is not the source.
@@ -32,7 +35,7 @@ func (a *Agent) OnTrack(want func() bool, set func(phone string, t Track)) {
 	a.wantTrack, a.setTrack = want, set
 }
 
-func (a *Agent) followTrack(ctx context.Context, c *sysbus.Conn) {
+func (a *Agent) followTrack(ctx context.Context, conn *sysbus.Conn) {
 	a.mu.Lock()
 	want, set := a.wantTrack, a.setTrack
 	a.mu.Unlock()
@@ -41,7 +44,7 @@ func (a *Agent) followTrack(ctx context.Context, c *sysbus.Conn) {
 		return
 	}
 
-	objs, err := getManagedObjects(ctx, c)
+	objs, err := getManagedObjects(ctx, conn)
 	if err != nil {
 		return // keeps what it has: the next tick tries again
 	}
@@ -51,14 +54,14 @@ func (a *Agent) followTrack(ctx context.Context, c *sysbus.Conn) {
 
 // eachOnAdapter calls f, in path order, with the path and properties of every object of
 // our adapter in a GetManagedObjects answer that has the interface.
-func eachOnAdapter(objs managedObjects, iface string, f func(path dbus.ObjectPath, props map[string]dbus.Variant)) {
+func eachOnAdapter(objs managedObjects, iface string, visit func(path dbus.ObjectPath, props map[string]dbus.Variant)) {
 	for _, path := range slices.Sorted(maps.Keys(objs)) {
 		if !strings.HasPrefix(string(path), string(adapterPath)+"/") {
 			continue
 		}
 
 		if props, ok := objs[path][iface]; ok {
-			f(path, props)
+			visit(path, props)
 		}
 	}
 }
@@ -76,7 +79,8 @@ func connectedPhone(objs managedObjects) string {
 	name := ""
 
 	eachOnAdapter(objs, deviceIface, func(path dbus.ObjectPath, props map[string]dbus.Variant) {
-		if on, _ := props["Connected"].Value().(bool); on && (name == "" || strings.HasPrefix(string(playing), string(path)+"/")) {
+		on, _ := props["Connected"].Value().(bool)
+		if on && (name == "" || strings.HasPrefix(string(playing), string(path)+"/")) {
 			name, _ = props["Alias"].Value().(string)
 		}
 	})
@@ -90,17 +94,17 @@ func playingTrack(objs managedObjects) Track {
 	var first, playing Track
 
 	eachOnAdapter(objs, playerIface, func(_ dbus.ObjectPath, props map[string]dbus.Variant) {
-		t := trackOf(props)
-		if props["Status"].Value() == "playing" && t != (Track{}) && playing == (Track{}) {
-			playing = t
+		track := trackOf(props)
+		if props["Status"].Value() == "playing" && !track.empty() && playing.empty() {
+			playing = track
 		}
 
-		if first == (Track{}) {
-			first = t
+		if first.empty() {
+			first = track
 		}
 	})
 
-	if playing != (Track{}) {
+	if !playing.empty() {
 		return playing
 	}
 
@@ -113,5 +117,5 @@ func trackOf(player map[string]dbus.Variant) Track {
 	artist, _ := fields["Artist"].Value().(string)
 	album, _ := fields["Album"].Value().(string)
 
-	return Track{title, artist, album}
+	return Track{Title: title, Artist: artist, Album: album}
 }

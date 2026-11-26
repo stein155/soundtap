@@ -24,19 +24,19 @@ func (a *Agent) OnLinkLost(f func()) {
 }
 
 // deviceDisconnected handles Device1.Disconnected(reason, message), BlueZ 5.68 and later.
-func (a *Agent) deviceDisconnected(s *dbus.Signal) {
-	if len(s.Body) == 0 || s.Body[0] != reasonTimeout {
+func (a *Agent) deviceDisconnected(sig *dbus.Signal) {
+	if len(sig.Body) == 0 || sig.Body[0] != reasonTimeout {
 		return
 	}
 
 	a.mu.Lock()
-	f := a.linkLost
+	lost := a.linkLost
 	a.mu.Unlock()
 
-	if f == nil {
+	if lost == nil {
 		return
 	}
 
-	a.log.Info("bluetooth link lost", "device", s.Path)
-	safego.Go("bluez.linkLost", func() { f() })
+	a.log.Info("bluetooth link lost", "device", sig.Path)
+	safego.Go("bluez.linkLost", func() { lost() })
 }

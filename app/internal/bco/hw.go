@@ -44,7 +44,8 @@ func MemPower() (func(on bool) error, func(), error) {
 		return nil, nil, fmt.Errorf("open /dev/mem: %w", err)
 	}
 
-	regs, err := syscall.Mmap(int(mem.Fd()), gpio0Base, gpio0Size, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED)
+	regs, err := syscall.Mmap(int(mem.Fd()), gpio0Base, gpio0Size,
+		syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED)
 	// The mapping stays valid without the descriptor, and nothing was written through it.
 	_ = mem.Close()
 

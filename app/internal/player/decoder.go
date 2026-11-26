@@ -23,6 +23,8 @@ const DecoderNice = "5"
 
 // decoderCommand is the decoder process Run starts, run as user at DecoderNice. A variable
 // so a test can start a stand-in instead of ffmpeg and drive the loop.
+//
+//nolint:gochecknoglobals // a variable so tests can replace it
 var decoderCommand = func(ctx context.Context, user, name string, args ...string) (*exec.Cmd, error) {
 	cmd := exec.CommandContext(ctx, "nice", decoderArgs(name, args)...)
 
@@ -46,10 +48,18 @@ const tailMax = 30 * time.Second
 // on the ST20 the 2 s linear fade could not be heard (2026-10-07).
 const radioFadeIn = 3 * time.Second
 
-func playbackAudioFilter(gain float64, fadeIn bool) string {
+// legacyConfirmAfter is how long ffmpeg must survive on the legacy path, where no PCM
+// telemetry exists, before the station counts as playing.
+const legacyConfirmAfter = 2 * time.Second
+
+// confirmPoll is how often confirmPlayback looks at the PCM flow.
+const confirmPoll = 250 * time.Millisecond
+
+// playbackAudioFilter is ffmpeg's -af: the gain, and a fade-in over fade unless it is 0.
+func playbackAudioFilter(gain float64, fade time.Duration) string {
 	filter := fmt.Sprintf("volume=%.2f", gain)
-	if fadeIn {
-		filter += fmt.Sprintf(",afade=t=in:d=%g:curve=cub", radioFadeIn.Seconds())
+	if fade > 0 {
+		filter += fmt.Sprintf(",afade=t=in:d=%g:curve=cub", fade.Seconds())
 	}
 
 	return filter
@@ -59,7 +69,9 @@ func playbackAudioFilter(gain float64, fadeIn bool) string {
 // playing once audio genuinely reaches the DAC — a running ffmpeg only proves a socket
 // was opened. If nothing arrives before bufferDeadline the attempt is reported as
 // failed, so the UI can never spin forever.
-func confirmPlayback(ctx context.Context, sp *speakerstate.Speaker, health func() audio.Health, playGen uint64, deadlineAfter time.Duration, failed chan<- uint64, log *slog.Logger) {
+func confirmPlayback(ctx context.Context, speakerState *speakerstate.Speaker, health func() audio.Health,
+	playGen uint64, deadlineAfter time.Duration, failed chan<- uint64, log *slog.Logger,
+) {
 	if playGen == 0 {
 		return // the source already changed hands; nothing to confirm
 	}
@@ -70,8 +82,8 @@ func confirmPlayback(ctx context.Context, sp *speakerstate.Speaker, health func(
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(2 * time.Second):
-			sp.ConfirmPlaying(playGen)
+		case <-time.After(legacyConfirmAfter):
+			speakerState.ConfirmPlaying(playGen)
 		}
 
 		return
@@ -82,7 +94,7 @@ func confirmPlayback(ctx context.Context, sp *speakerstate.Speaker, health func(
 	deadline := time.NewTimer(deadlineAfter)
 	defer deadline.Stop()
 
-	tick := time.NewTicker(250 * time.Millisecond)
+	tick := time.NewTicker(confirmPoll)
 	defer tick.Stop()
 
 	for {
@@ -91,7 +103,7 @@ func confirmPlayback(ctx context.Context, sp *speakerstate.Speaker, health func(
 			return
 		case <-deadline.C:
 			// Standby or another selection superseded this attempt; nothing failed.
-			if !sp.StillBuffering(playGen) {
+			if !speakerState.StillBuffering(playGen) {
 				return
 			}
 
@@ -100,17 +112,17 @@ func confirmPlayback(ctx context.Context, sp *speakerstate.Speaker, health func(
 			select {
 			case failed <- playGen:
 			default:
-				sp.FailPlayback(playGen)
+				speakerState.FailPlayback(playGen)
 			}
 
 			return
 		case <-tick.C:
-			if !sp.StillBuffering(playGen) {
+			if !speakerState.StillBuffering(playGen) {
 				return
 			}
 
 			if health().SourceNonzeroBlocks-base >= confirmBlocks {
-				sp.ConfirmPlaying(playGen)
+				speakerState.ConfirmPlaying(playGen)
 
 				return
 			}

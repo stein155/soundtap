@@ -8,6 +8,7 @@ package hw
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"strings"
 	"syscall"
 	"time"
@@ -28,26 +29,41 @@ type irDevice struct{ fd int }
 // hard-coded per GOARCH.
 const fdSetBits = 1024
 
+// errFDTooHigh is a descriptor select(2) cannot express.
+var errFDTooHigh = errors.New("ir: fd too high for select")
+
+// openIRDevice opens ir.ko's /dev/ir, or rc-core's lirc device when path names one.
+//
+//nolint:ireturn // the two receivers are different types behind the one irSource
 func openIRDevice(path string) (irSource, error) {
 	if strings.Contains(path, "lirc") {
 		return openLircDevice(path)
 	}
 	// O_NONBLOCK on open: a char device whose driver is loaded but whose IRQ never
 	// fires must not be able to wedge startup in open(2).
-	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NONBLOCK, 0)
+	devFD, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("ir: open %s: %w", path, err)
 	}
 
-	if fd >= fdSetBits {
+	if devFD >= fdSetBits {
 		// select(2) cannot express this fd. soundtapd opens nowhere near 1024
 		// files, so this is a corruption canary rather than a real limit.
-		_ = syscall.Close(fd)
+		_ = syscall.Close(devFD)
 
-		return nil, errors.New("ir: fd too high for select")
+		return nil, errFDTooHigh
 	}
 
-	return &irDevice{fd: fd}, nil
+	return &irDevice{fd: devFD}, nil
+}
+
+func (d *irDevice) Close() error {
+	err := syscall.Close(d.fd)
+	if err != nil {
+		return fmt.Errorf("ir: close: %w", err)
+	}
+
+	return nil
 }
 
 func (d *irDevice) next(timeout time.Duration) (byte, bool, error) {
@@ -63,16 +79,16 @@ func (d *irDevice) next(timeout time.Duration) (byte, bool, error) {
 	// (int32 on ARM, int64 on amd64, mixed on darwin).
 	tv := syscall.NsecToTimeval(int64(timeout))
 
-	n, err := syscall.Select(d.fd+1, &set, nil, nil, &tv)
+	ready, err := syscall.Select(d.fd+1, &set, nil, nil, &tv)
 	if err != nil {
 		if errors.Is(err, syscall.EINTR) {
 			return 0, false, nil // a signal, not a device failure
 		}
 
-		return 0, false, err
+		return 0, false, fmt.Errorf("ir: select: %w", err)
 	}
 
-	if n == 0 {
+	if ready == 0 {
 		return 0, false, nil
 	}
 
@@ -84,7 +100,7 @@ func (d *irDevice) next(timeout time.Duration) (byte, bool, error) {
 			return 0, false, nil
 		}
 
-		return 0, false, err
+		return 0, false, fmt.Errorf("ir: read: %w", err)
 	}
 
 	if got == 0 {
@@ -95,8 +111,6 @@ func (d *irDevice) next(timeout time.Duration) (byte, bool, error) {
 
 	return buf[0], true, nil
 }
-
-func (d *irDevice) Close() error { return syscall.Close(d.fd) }
 
 // lircDevice is rc-core's /dev/lircN in MODE2, fed through lircFramer.
 type lircDevice struct {
@@ -110,29 +124,44 @@ const (
 	lircModeMode2  = 0x00000004
 	// lircQuiet is how long the line may stay silent before a pending frame is closed.
 	lircQuiet = 50 * time.Millisecond
+	// lircSampleSize is one MODE2 sample, a uint32.
+	lircSampleSize = 4
 )
 
-func openLircDevice(path string) (irSource, error) {
-	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NONBLOCK, 0)
+func openLircDevice(path string) (*lircDevice, error) {
+	devFD, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("ir: open %s: %w", path, err)
 	}
 
-	if fd >= fdSetBits {
-		_ = syscall.Close(fd)
+	if devFD >= fdSetBits {
+		_ = syscall.Close(devFD)
 
-		return nil, errors.New("ir: fd too high for select")
+		return nil, errFDTooHigh
 	}
 
 	mode := uint32(lircModeMode2)
-	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), lircSetRecMode,
-		uintptr(unsafe.Pointer(&mode))); errno != 0 {
-		_ = syscall.Close(fd)
 
-		return nil, errno
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(devFD), lircSetRecMode, uintptr(unsafe.Pointer(&mode)))
+	if errno != 0 {
+		_ = syscall.Close(devFD)
+
+		return nil, fmt.Errorf("ir: LIRC_SET_REC_MODE on %s: %w", path, errno)
 	}
 
-	return &lircDevice{fd: fd}, nil
+	return &lircDevice{
+		fd: devFD,
+		f:  lircFramer{durs: nil, queue: nil, down: false, lastFrame: time.Time{}},
+	}, nil
+}
+
+func (d *lircDevice) Close() error {
+	err := syscall.Close(d.fd)
+	if err != nil {
+		return fmt.Errorf("ir: close: %w", err)
+	}
+
+	return nil
 }
 
 func (d *lircDevice) next(timeout time.Duration) (byte, bool, error) {
@@ -159,16 +188,16 @@ func (d *lircDevice) next(timeout time.Duration) (byte, bool, error) {
 
 	var buf [256]byte
 
-	n, err := syscall.Read(d.fd, buf[:])
+	count, err := syscall.Read(d.fd, buf[:])
 	if err != nil {
 		if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EINTR) {
 			return 0, false, nil
 		}
 
-		return 0, false, err
+		return 0, false, fmt.Errorf("ir: read: %w", err)
 	}
 
-	for i := 0; i+4 <= n; i += 4 {
+	for i := 0; i+lircSampleSize <= count; i += lircSampleSize {
 		d.f.sample(binary.NativeEndian.Uint32(buf[i:]), now)
 	}
 
@@ -177,13 +206,11 @@ func (d *lircDevice) next(timeout time.Duration) (byte, bool, error) {
 	return c, ok, nil
 }
 
-func (d *lircDevice) Close() error { return syscall.Close(d.fd) }
-
-func selectRead(fd int, timeout time.Duration) (bool, error) {
+func selectRead(devFD int, timeout time.Duration) (bool, error) {
 	var set syscall.FdSet
 
 	word := fdSetBits / len(set.Bits)
-	set.Bits[fd/word] |= 1 << uint(fd%word)
+	set.Bits[devFD/word] |= 1 << uint(devFD%word)
 
 	if timeout < 0 {
 		timeout = 0
@@ -191,14 +218,14 @@ func selectRead(fd int, timeout time.Duration) (bool, error) {
 
 	tv := syscall.NsecToTimeval(int64(timeout))
 
-	n, err := syscall.Select(fd+1, &set, nil, nil, &tv)
+	ready, err := syscall.Select(devFD+1, &set, nil, nil, &tv)
 	if err != nil {
 		if errors.Is(err, syscall.EINTR) {
 			return false, nil
 		}
 
-		return false, err
+		return false, fmt.Errorf("ir: select: %w", err)
 	}
 
-	return n > 0, nil
+	return ready > 0, nil
 }

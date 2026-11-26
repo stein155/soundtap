@@ -6,6 +6,7 @@ package bco
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -58,17 +59,26 @@ const FlashHold = "/run/soundtap/bco-flash"
 // full app takes about 6 minutes.
 const flashHoldMax = 15 * time.Minute
 
+// The modes of /run/soundtap and of the files the watch writes there and in /etc.
+const (
+	runDirMode  = 0o755
+	runFileMode = 0o644
+)
+
 // HoldLANWatch creates FlashHold and returns the function that removes it.
-func HoldLANWatch() (release func(), err error) {
-	if err := os.MkdirAll("/run/soundtap", 0o755); err != nil {
-		return nil, err
+func HoldLANWatch() (func(), error) {
+	err := os.MkdirAll("/run/soundtap", runDirMode)
+	if err != nil {
+		return nil, fmt.Errorf("hold the LAN watch: %w", err)
 	}
 
-	if err := os.WriteFile(FlashHold, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o644); err != nil {
-		return nil, err
+	err = os.WriteFile(FlashHold, []byte(strconv.Itoa(os.Getpid())+"\n"), runFileMode)
+	if err != nil {
+		return nil, fmt.Errorf("hold the LAN watch: %w", err)
 	}
 
-	return func() { os.Remove(FlashHold) }, nil
+	// A hold that cannot be removed expires after flashHoldMax.
+	return func() { _ = os.Remove(FlashHold) }, nil
 }
 
 // Flashing reports a BCO flash in progress, for the front panel.
@@ -81,23 +91,51 @@ func flashHeld(path string, now time.Time) bool {
 	return err == nil && now.Sub(fi.ModTime()) < flashHoldMax
 }
 
-// holdOff waits while a flash holds the BCO, so a cycle never lands in the middle of one.
-func (w LANWatch) holdOff(ctx context.Context) {
-	logged := false
-	for w.Held != nil && w.Held() && ctx.Err() == nil {
-		if !logged {
-			w.Log.Info("BCO flash in progress; not power-cycling the BCO")
-
-			logged = true
-		}
-
-		w.sleep(ctx)
+// NewLANWatch is LANWatch on this SCM: gpio0_14 for the supply and init.d/soundtap's
+// st20-eth0 file ("ADDR/PREFIX GATEWAY DNS") under home, else under /run, for the address.
+func NewLANWatch(home string, log *slog.Logger) LANWatch {
+	return LANWatch{
+		Link:  lanNetdev,
+		Cycle: cyclePower,
+		Apply: func(n string) error {
+			return applyStatic(n, filepath.Join(home, "st20-eth0"), "/run/soundtap/st20-eth0")
+		},
+		Wait:   lanWait,
+		Tries:  lanTries,
+		Poll:   time.Second,
+		UpPoll: lanUpPoll,
+		Log:    log,
+		Held:   func() bool { return flashHeld(FlashHold, time.Now()) },
+		// A check every 20 s, cycle after 3 misses: a wedged BCO is back within ~2 min.
+		Radio:      radioCheck(lanAnswers, lanRxPackets),
+		Evidence:   wedgeEvidence,
+		RadioPolls: lanRadioPolls,
+		RadioMiss:  lanRadioMiss,
 	}
 }
 
+// NewLANWatch's settings on this SCM. A cycle that does not bring the radio back doubles
+// the misses before the next one, up to radioMissMax.
+const (
+	lanWait         = 45 * time.Second
+	lanTries        = 2
+	lanUpPoll       = 5 * time.Second
+	lanRadioPolls   = 4
+	lanRadioMiss    = 3
+	radioMissGrowth = 2
+	radioMissMax    = 32
+)
+
 // Run keeps the link up for as long as ctx lives. The BCO also drops off after the boot: on a
 // warm reboot (2026-09-28) it disconnected at 118 s and never enumerated again by itself.
-func (w LANWatch) Run(ctx context.Context) {
+//
+//nolint:gocritic // hugeParam: a value receiver, because soundtapd calls Run on the LANWatch NewLANWatch returns
+func (w LANWatch) Run(ctx context.Context) { (*lanRun)(&w).run(ctx) }
+
+// lanRun is a LANWatch while it runs; its steps take it by pointer.
+type lanRun LANWatch
+
+func (w *lanRun) run(ctx context.Context) {
 	miss := max(w.RadioMiss, 1)
 	for ctx.Err() == nil {
 		if !w.up(ctx) {
@@ -123,14 +161,28 @@ func (w LANWatch) Run(ctx context.Context) {
 	}
 }
 
+// holdOff waits while a flash holds the BCO, so a cycle never lands in the middle of one.
+func (w *lanRun) holdOff(ctx context.Context) {
+	logged := false
+	for w.Held != nil && w.Held() && ctx.Err() == nil {
+		if !logged {
+			w.Log.Info("BCO flash in progress; not power-cycling the BCO")
+
+			logged = true
+		}
+
+		w.sleep(ctx)
+	}
+}
+
 // watchRadio waits while the link is there, and power-cycles the BCO when Radio fails
 // *miss checks in a row. It returns true after such a cycle. A LAN that stays dead (the
 // router, not the BCO) doubles *miss each time, so it is not cycled every minute.
-func (w LANWatch) watchRadio(ctx context.Context, miss *int) bool {
+func (w *lanRun) watchRadio(ctx context.Context, miss *int) bool {
 	failed := 0
 
 	for polls := 1; ctx.Err() == nil && w.Link() != ""; polls++ {
-		w.sleepFor(ctx, cmp.Or(w.UpPoll, w.Poll))
+		sleepFor(ctx, cmp.Or(w.UpPoll, w.Poll))
 
 		if w.Radio == nil || polls%max(w.RadioPolls, 1) != 0 {
 			continue
@@ -142,7 +194,8 @@ func (w LANWatch) watchRadio(ctx context.Context, miss *int) bool {
 			continue
 		}
 
-		if failed++; failed < *miss || w.Held != nil && w.Held() {
+		failed++
+		if failed < *miss || w.Held != nil && w.Held() {
 			continue
 		}
 
@@ -157,7 +210,7 @@ func (w LANWatch) watchRadio(ctx context.Context, miss *int) bool {
 			w.Log.Error("BCO power cycle failed", "err", err)
 		}
 
-		*miss = min(*miss*2, 32)
+		*miss = min(*miss*radioMissGrowth, radioMissMax)
 
 		return true
 	}
@@ -167,7 +220,7 @@ func (w LANWatch) watchRadio(ctx context.Context, miss *int) bool {
 
 // up returns true once the link is there and addressed, false after Tries power cycles
 // without one.
-func (w LANWatch) up(ctx context.Context) bool {
+func (w *lanRun) up(ctx context.Context) bool {
 	// Applied even when the link is there: after a warm reboot the BCO enumerates only at
 	// ~13 s, after init.d/soundtap already tried to address an eth0 that did not exist yet.
 	if n := w.wait(ctx); n != "" {
@@ -215,7 +268,7 @@ func (w LANWatch) up(ctx context.Context) bool {
 	return false
 }
 
-func (w LANWatch) wait(ctx context.Context) string {
+func (w *lanRun) wait(ctx context.Context) string {
 	for end := time.Now().Add(w.Wait); ; {
 		if n := w.Link(); n != "" {
 			return n
@@ -229,35 +282,13 @@ func (w LANWatch) wait(ctx context.Context) string {
 	}
 }
 
-func (w LANWatch) sleep(ctx context.Context) { w.sleepFor(ctx, w.Poll) }
+func (w *lanRun) sleep(ctx context.Context) { sleepFor(ctx, w.Poll) }
 
-func (w LANWatch) sleepFor(ctx context.Context, d time.Duration) {
+// sleepFor waits for d or until ctx ends, whichever is first.
+func sleepFor(ctx context.Context, d time.Duration) {
 	select {
 	case <-ctx.Done():
 	case <-time.After(d):
-	}
-}
-
-// NewLANWatch is LANWatch on this SCM: gpio0_14 for the supply and init.d/soundtap's
-// st20-eth0 file ("ADDR/PREFIX GATEWAY DNS") under home, else under /run, for the address.
-func NewLANWatch(home string, log *slog.Logger) LANWatch {
-	return LANWatch{
-		Link:  lanNetdev,
-		Cycle: cyclePower,
-		Apply: func(n string) error {
-			return applyStatic(n, filepath.Join(home, "st20-eth0"), "/run/soundtap/st20-eth0")
-		},
-		Wait:   45 * time.Second,
-		Tries:  2,
-		Poll:   time.Second,
-		UpPoll: 5 * time.Second,
-		Log:    log,
-		Held:   func() bool { return flashHeld(FlashHold, time.Now()) },
-		// A check every 20 s, cycle after 3 misses: a wedged BCO is back within ~2 min.
-		Radio:      radioCheck(lanAnswers, lanRxPackets),
-		Evidence:   wedgeEvidence,
-		RadioPolls: 4,
-		RadioMiss:  3,
 	}
 }
 
@@ -268,23 +299,23 @@ func NewLANWatch(home string, log *slog.Logger) LANWatch {
 // receives ARP, mDNS and broadcast traffic, and the failed ping's own ARP request is
 // answered; a wedged radio receives no frames at all. rx reports false when there is
 // no counter to read, which counts as no evidence either way.
-func radioCheck(ping func() bool, rx func() (uint64, bool)) func() bool {
+func radioCheck(ping func() bool, rxCount func() (uint64, bool)) func() bool {
 	var (
 		last uint64
 		seen bool
 	)
 
 	return func() bool {
-		n, ok := rx()
-		grew := ok && seen && n != last
-		last, seen = n, ok
+		count, counted := rxCount()
+		grew := counted && seen && count != last
+		last, seen = count, counted
 
 		if ping() {
 			return true
 		}
 		// Read again after the ping: its ARP exchange is evidence too.
-		if n2, ok2 := rx(); ok2 && ok && n2 != n {
-			last, grew = n2, true
+		if after, countedAfter := rxCount(); countedAfter && counted && after != count {
+			last, grew = after, true
 		}
 
 		return grew
@@ -308,6 +339,9 @@ func lanRxPackets() (uint64, bool) {
 	return v, err == nil
 }
 
+// pingTimeout bounds lanAnswers' ping, whose own reply wait is 3 s (-W3).
+const pingTimeout = 5 * time.Second
+
 // lanAnswers pings the default gateway when the own BCO link carries it. No gateway (setup
 // AP, no lease yet, stock BCO) is not a failure: there is nothing to judge.
 func lanAnswers() bool {
@@ -316,15 +350,15 @@ func lanAnswers() bool {
 		return true
 	}
 
-	gw := defaultGateway("/proc/net/route")
-	if gw == "" {
+	gateway := defaultGateway("/proc/net/route")
+	if gateway == "" {
 		return true
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "ping", "-c1", "-W3", gw)
+	cmd := exec.CommandContext(ctx, "ping", "-c1", "-W3", gateway)
 	childproc.NetTool(cmd) // a raw ICMP socket
 
 	return cmd.Run() == nil
@@ -334,40 +368,53 @@ func lanAnswers() bool {
 // LAN netdev's counters moved meanwhile: frames still arriving point at the host side,
 // none at the radio. It holds the UART for those seconds, like any other BCO command.
 func wedgeEvidence(ctx context.Context) string {
-	n := lanNetdev()
-	before := netdevCounters(n)
+	netdev := lanNetdev()
+	before := netdevCounters(netdev)
 	uart := "uart busy"
-	lctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	lctx, cancel := context.WithTimeout(ctx, evidenceLockWait)
 	err := lockSerial(lctx)
 
 	cancel()
 
 	if err == nil {
-		uart = readUART(ctx, 7*time.Second)
+		uart = readUART(ctx, evidenceUARTTime)
 
 		unlockSerial()
 	}
 
-	return fmt.Sprintf("netdev %s before [%s] after [%s]; uart: %s", n, before, netdevCounters(n), uart)
+	return fmt.Sprintf("netdev %s before [%s] after [%s]; uart: %s", netdev, before, netdevCounters(netdev), uart)
 }
 
-func netdevCounters(n string) string {
-	if n == "" {
+// wedgeEvidence's waits: for the UART, and how long it listens (two 3 s heartbeats).
+const (
+	evidenceLockWait = 2 * time.Second
+	evidenceUARTTime = 7 * time.Second
+)
+
+func netdevCounters(netdev string) string {
+	if netdev == "" {
 		return "none"
 	}
 
 	var out []string
 
 	for _, c := range []string{"rx_packets", "tx_packets", "rx_errors", "tx_errors", "tx_dropped"} {
-		b, _ := os.ReadFile("/sys/class/net/" + n + "/statistics/" + c)
+		b, _ := os.ReadFile("/sys/class/net/" + netdev + "/statistics/" + c)
 		out = append(out, c+"="+strings.TrimSpace(string(b)))
 	}
 
 	return strings.Join(out, " ")
 }
 
-// readUART collects the BCO UART's non-empty lines for d, at most 2 KB.
-func readUART(ctx context.Context, d time.Duration) string {
+// readUART's read size and output bound, and its pause when the UART has nothing.
+const (
+	uartChunk = 256
+	uartMax   = 2048
+	uartIdle  = 50 * time.Millisecond
+)
+
+// readUART collects the BCO UART's non-empty lines for window, at most 2 KB.
+func readUART(ctx context.Context, window time.Duration) string {
 	port, err := SerialPort(ctx, os.Getenv("SOUNDTAP_BCO_TTY"))
 	if err != nil {
 		return err.Error()
@@ -376,20 +423,20 @@ func readUART(ctx context.Context, d time.Duration) string {
 
 	var raw []byte
 
-	buf := make([]byte, 256)
-	for end := time.Now().Add(d); time.Now().Before(end) && ctx.Err() == nil && len(raw) < 2048; {
-		k, err := port.Read(buf)
+	buf := make([]byte, uartChunk)
+	for end := time.Now().Add(window); time.Now().Before(end) && ctx.Err() == nil && len(raw) < uartMax; {
+		count, err := port.Read(buf)
 		if err != nil {
 			break
 		}
 
-		if k == 0 {
-			time.Sleep(50 * time.Millisecond)
+		if count == 0 {
+			time.Sleep(uartIdle)
 
 			continue
 		}
 
-		raw = append(raw, buf[:k]...)
+		raw = append(raw, buf[:count]...)
 	}
 
 	return uartLines(raw)
@@ -407,6 +454,13 @@ func uartLines(raw []byte) string {
 	return strings.Join(lines, " | ")
 }
 
+// An IPv4 address in /proc/net/route: 32 bits, lowest octet first.
+const (
+	ipv4Bits  = 32
+	octetBits = 8
+	octet     = 0xff
+)
+
 // defaultGateway is the IPv4 gateway of the first default route in a /proc/net/route file.
 func defaultGateway(path string) string {
 	b, _ := os.ReadFile(path)
@@ -416,12 +470,17 @@ func defaultGateway(path string) string {
 			continue
 		}
 
-		v, err := strconv.ParseUint(f[2], 16, 32)
-		if err != nil || v == 0 {
+		addr, err := strconv.ParseUint(f[2], 16, 32)
+		if err != nil || addr == 0 {
 			continue
 		}
 
-		return fmt.Sprintf("%d.%d.%d.%d", v&0xff, v>>8&0xff, v>>16&0xff, v>>24)
+		octets := make([]string, 0, ipv4Bits/octetBits)
+		for shift := 0; shift < ipv4Bits; shift += octetBits {
+			octets = append(octets, strconv.FormatUint(addr>>shift&octet, 10))
+		}
+
+		return strings.Join(octets, ".")
 	}
 
 	return ""
@@ -429,7 +488,7 @@ func defaultGateway(path string) string {
 
 func lanNetdev() string {
 	for _, n := range netdevs() {
-		if id := usbID(n); id != "" && id != ":" && id != "5432:1235" {
+		if id := usbID(n); id != "" && id != ":" && id != level2USB {
 			return n
 		}
 	}
@@ -444,7 +503,8 @@ func cyclePower() error {
 	}
 	defer unmap()
 
-	if err := power(false); err != nil {
+	err = power(false)
+	if err != nil {
 		return err
 	}
 
@@ -461,16 +521,28 @@ const ownLink = "1209:0001"
 // dhcpPid is the pidfile of wlan0's udhcpc, as the Wi-Fi manager starts it.
 const dhcpPid = "/run/soundtap-udhcpc.pid"
 
+// The st20-eth0 file's fields: "ADDR/PREFIX GATEWAY", then an optional DNS server.
+const (
+	staticGatewayFields = 2
+	staticDNSFields     = 3
+)
+
+// applyStatic's errors; each keeps the text it had before it was a sentinel.
+var (
+	errLinkUp       = errors.New("link up")
+	errDefaultRoute = errors.New("default route")
+)
+
 // applyStatic mirrors st20_eth0 in init.d/soundtap, for the stock BCO's ethernet gadget.
 // The first of files that holds an address wins.
-func applyStatic(n string, files ...string) error {
-	if usbID(n) == ownLink {
+func applyStatic(netdev string, files ...string) error {
+	if usbID(netdev) == ownLink {
 		// eth0 is the init script's eth0 watcher's (its own udhcpc and pidfile);
 		// dhcpPid is wlan0's, so a redhcp("eth0") here killed wlan0's lease keeper.
 		return redhcp("wlan0")
 	}
 
-	addr, gw, dns := "192.168.1.101/24", "192.168.1.100", "192.168.1.100"
+	addr, gateway, dns := "192.168.1.101/24", "192.168.1.100", "192.168.1.100"
 
 	for _, f := range files {
 		b, err := os.ReadFile(f)
@@ -478,9 +550,9 @@ func applyStatic(n string, files ...string) error {
 			continue
 		}
 
-		if fs := strings.Fields(string(b)); len(fs) >= 2 && strings.Contains(fs[0], "/") {
-			addr, gw, dns = fs[0], fs[1], fs[1]
-			if len(fs) >= 3 {
+		if fs := strings.Fields(string(b)); len(fs) >= staticGatewayFields && strings.Contains(fs[0], "/") {
+			addr, gateway, dns = fs[0], fs[1], fs[1]
+			if len(fs) >= staticDNSFields {
 				dns = fs[2]
 			}
 
@@ -488,17 +560,27 @@ func applyStatic(n string, files ...string) error {
 		}
 	}
 
-	if out, err := ip("link", "set", n, "up"); err != nil {
-		return fmt.Errorf("link up: %s", strings.TrimSpace(out))
+	ctx := context.Background()
+
+	out, err := ip(ctx, "link", "set", netdev, "up")
+	if err != nil {
+		return fmt.Errorf("%w: %s", errLinkUp, strings.TrimSpace(out))
 	}
 
-	ip("addr", "add", addr, "dev", n) // "exists" is fine; a real failure fails the route below
+	_, _ = ip(ctx, "addr", "add", addr, "dev", netdev) // "exists" is fine; a real failure fails the route below
 
-	if out, err := ip("route", "replace", "default", "via", gw, "dev", n); err != nil {
-		return fmt.Errorf("default route: %s", strings.TrimSpace(out))
+	out, err = ip(ctx, "route", "replace", "default", "via", gateway, "dev", netdev)
+	if err != nil {
+		return fmt.Errorf("%w: %s", errDefaultRoute, strings.TrimSpace(out))
 	}
 
-	return os.WriteFile("/etc/resolv.conf", []byte("nameserver "+dns+"\n"), 0o644)
+	//nolint:gosec // G703: the path is the constant /etc/resolv.conf; only its content comes from the files
+	err = os.WriteFile("/etc/resolv.conf", []byte("nameserver "+dns+"\n"), runFileMode)
+	if err != nil {
+		return fmt.Errorf("write resolv.conf: %w", err)
+	}
+
+	return nil
 }
 
 // redhcp asks for a lease again when the BCO came back as a new wlan0 or eth0. udhcpc runs
@@ -506,8 +588,8 @@ func applyStatic(n string, files ...string) error {
 // before, bound to the netdev the BCO took away: it would wait for its renewal time before
 // asking again. Without an address on n, it is replaced by a fresh one. After a BCO reflash
 // on 2026-10-07 the ST20 stayed off the LAN for want of exactly this.
-func redhcp(n string) error {
-	addr, _ := ip("-4", "addr", "show", "dev", n)
+func redhcp(netdev string) error {
+	addr, _ := ip(context.Background(), "-4", "addr", "show", "dev", netdev)
 	if strings.Contains(addr, "inet ") {
 		return nil
 	}
@@ -526,10 +608,16 @@ func redhcp(n string) error {
 	defer cancel()
 
 	host, _ := os.Hostname()
-	cmd := exec.CommandContext(ctx, "udhcpc", "-i", n, "-p", dhcpPid, "-b", "-A", "3", "-O", "ntpsrv", "-x", "hostname:"+host)
+	cmd := exec.CommandContext(ctx, "udhcpc",
+		"-i", netdev, "-p", dhcpPid, "-b", "-A", "3", "-O", "ntpsrv", "-x", "hostname:"+host)
 	childproc.NetTool(cmd)
 
-	return cmd.Run()
+	err := cmd.Run()
+	if err != nil {
+		return fmt.Errorf("udhcpc on %s: %w", netdev, err)
+	}
+
+	return nil
 }
 
 // udhcpcPid is the pid in pidfile when that process is still a udhcpc, else 0. A stale

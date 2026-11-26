@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-package settings
+package settings_test
 
 import (
 	"errors"
@@ -9,11 +9,15 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+
+	"github.com/stein155/soundtap/app/internal/settings"
 )
 
 // A settings file from before the alarm and the group preferences existed must read as
 // their defaults, not as their zero values: keepGroups on, alarm 07:00 on preset 1.
 func TestOlderFileYieldsAlarmAndMultiroomDefaults(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "settings.json")
 
 	err := os.WriteFile(path, []byte(`{"name":"Keuken","language":"nl"}`), 0o600)
@@ -21,9 +25,9 @@ func TestOlderFileYieldsAlarmAndMultiroomDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := Open(path).Get()
-	if a := got.AlarmConfig(); a != DefaultAlarm {
-		t.Fatalf("alarm = %+v, want %+v", a, DefaultAlarm)
+	got := settings.Open(path).Get()
+	if a := got.AlarmConfig(); a != settings.DefaultAlarm {
+		t.Fatalf("alarm = %+v, want %+v", a, settings.DefaultAlarm)
 	}
 
 	if !got.Multiroom.KeepGroups() || got.Multiroom.SyncVolume {
@@ -31,45 +35,54 @@ func TestOlderFileYieldsAlarmAndMultiroomDefaults(t *testing.T) {
 	}
 }
 
+// alarmAt is a disabled alarm at hhmm on preset slot.
+func alarmAt(hhmm string, slot int) settings.Alarm {
+	return settings.Alarm{Enabled: false, Time: hhmm, Slot: slot, Timezone: ""}
+}
+
 func TestSetAlarmValidatesAndPersists(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "settings.json")
-	s := Open(path)
+	store := settings.Open(path)
 
-	want := Alarm{Enabled: true, Time: "06:45", Slot: 3}
+	want := settings.Alarm{Enabled: true, Time: "06:45", Slot: 3, Timezone: ""}
 
-	err := s.SetAlarm(want)
+	err := store.SetAlarm(want)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if got := Open(path).Get().AlarmConfig(); got != want {
+	if got := settings.Open(path).Get().AlarmConfig(); got != want {
 		t.Fatalf("reopened alarm = %+v, want %+v", got, want)
 	}
 
-	for _, bad := range []Alarm{
-		{Time: "24:00", Slot: 1},
-		{Time: "07:60", Slot: 1},
-		{Time: "7:00", Slot: 1},
-		{Time: "07:00:00", Slot: 1},
-		{Time: "ab:cd", Slot: 1},
-		{Time: "", Slot: 1},
-		{Time: "07:00", Slot: 0},
-		{Time: "07:00", Slot: 7},
+	for _, bad := range []settings.Alarm{
+		alarmAt("24:00", 1),
+		alarmAt("07:60", 1),
+		alarmAt("7:00", 1),
+		alarmAt("07:00:00", 1),
+		alarmAt("ab:cd", 1),
+		alarmAt("", 1),
+		alarmAt("07:00", 0),
+		alarmAt("07:00", 7),
 	} {
-		err := s.SetAlarm(bad)
+		err := store.SetAlarm(bad)
 		if err == nil {
 			t.Errorf("SetAlarm(%+v) succeeded", bad)
 		}
 	}
 
-	if got := s.Get().AlarmConfig(); got != want {
+	if got := store.Get().AlarmConfig(); got != want {
 		t.Fatalf("alarm after rejected writes = %+v", got)
 	}
 }
 
 func TestParseAlarmTimeBounds(t *testing.T) {
+	t.Parallel()
+
 	for in, want := range map[string][2]int{"00:00": {0, 0}, "23:59": {23, 59}, "07:05": {7, 5}} {
-		h, m, err := ParseAlarmTime(in)
+		h, m, err := settings.ParseAlarmTime(in)
 		if err != nil || h != want[0] || m != want[1] {
 			t.Errorf("ParseAlarmTime(%q) = %d, %d, %v", in, h, m, err)
 		}
@@ -77,70 +90,72 @@ func TestParseAlarmTimeBounds(t *testing.T) {
 }
 
 func TestSetMultiroomPersists(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "settings.json")
 
-	s := Open(path)
+	store := settings.Open(path)
 
-	err := s.SetMultiroom(Multiroom{DissolveGroups: true, SyncVolume: true})
+	err := store.SetMultiroom(settings.Multiroom{DissolveGroups: true, SyncVolume: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	got := Open(path).Get().Multiroom
+	got := settings.Open(path).Get().Multiroom
 	if got.KeepGroups() || !got.SyncVolume {
 		t.Fatalf("reopened multiroom = %+v", got)
 	}
 }
 
+// errRefused is a patch that refuses to apply.
+var errRefused = errors.New("no")
+
 // Update is one atomic read-modify-write: concurrent patches to different fields all
 // land, a refused patch stores nothing, and a failed disk write leaves memory alone.
 func TestUpdateIsAtomic(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "settings.json")
-	s := Open(path)
+	store := settings.Open(path)
 
 	var wg sync.WaitGroup
 	for range 20 {
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-
-			_ = s.Update(func(st *Settings) error {
-				st.Alarm.Slot++
+		wg.Go(func() {
+			_ = store.Update(func(next *settings.Settings) error {
+				next.Alarm.Slot++
 
 				return nil
 			})
-		}()
-		go func() {
-			defer wg.Done()
-
-			_ = s.Update(func(st *Settings) error {
-				st.Audio.Volume++
+		})
+		wg.Go(func() {
+			_ = store.Update(func(next *settings.Settings) error {
+				next.Audio.Volume++
 
 				return nil
 			})
-		}()
+		})
 	}
 
 	wg.Wait()
 
-	if got := s.Get(); got.Alarm.Slot != 20 || got.Audio.Volume != 20 {
+	if got := store.Get(); got.Alarm.Slot != 20 || got.Audio.Volume != 20 {
 		t.Fatalf("lost updates: slot %d, volume %d", got.Alarm.Slot, got.Audio.Volume)
 	}
 
-	if got := Open(path).Get(); got.Alarm.Slot != 20 || got.Audio.Volume != 20 {
+	if got := settings.Open(path).Get(); got.Alarm.Slot != 20 || got.Audio.Volume != 20 {
 		t.Fatalf("disk lost updates: %+v", got)
 	}
 
-	err := s.Update(func(st *Settings) error {
-		st.Language = "nl"
+	err := store.Update(func(next *settings.Settings) error {
+		next.Language = "nl"
 
-		return errors.New("no")
+		return errRefused
 	})
 	if err == nil {
 		t.Fatal("a refused patch reported success")
 	}
 
-	if s.Get().Language != "en" {
+	if store.Get().Language != "en" {
 		t.Fatal("a refused patch changed memory")
 	}
 
@@ -152,10 +167,10 @@ func TestUpdateIsAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	broken := Open(filepath.Join(blocker, "settings.json"))
+	broken := settings.Open(filepath.Join(blocker, "settings.json"))
 
-	err = broken.Update(func(st *Settings) error {
-		st.Language = "nl"
+	err = broken.Update(func(next *settings.Settings) error {
+		next.Language = "nl"
 
 		return nil
 	})

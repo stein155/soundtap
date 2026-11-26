@@ -28,12 +28,34 @@ type Recent struct {
 }
 
 func (c *Client) username(ctx context.Context) (string, error) {
-	st, err := c.ctlStatus(ctx)
-	if err != nil || st.Username == "" {
+	status, err := c.ctlStatus(ctx)
+	if err != nil || status.Username == "" {
 		return "", ErrNotConnected
 	}
 
-	return url.PathEscape(st.Username), nil
+	return url.PathEscape(status.Username), nil
+}
+
+// following is the answer of user-profile-view's following list.
+type following struct {
+	Profiles []followedProfile `json:"profiles"`
+}
+
+// followedProfile is one profile the user follows.
+type followedProfile struct {
+	URI      string `json:"uri"`
+	Name     string `json:"name"`
+	ImageURL string `json:"image_url"`
+}
+
+// recentlyPlayed is the answer of recently-played.
+type recentlyPlayed struct {
+	PlayContexts []playContext `json:"playContexts"`
+}
+
+// playContext is one context the user played.
+type playContext struct {
+	URI string `json:"uri"`
 }
 
 // FollowedArtists returns the artists the user follows.
@@ -43,21 +65,17 @@ func (c *Client) FollowedArtists(ctx context.Context) ([]Artist, error) {
 		return nil, err
 	}
 
-	var w struct {
-		Profiles []struct {
-			URI      string `json:"uri"`
-			Name     string `json:"name"`
-			ImageURL string `json:"image_url"`
-		} `json:"profiles"`
-	}
-	if err := c.spclient(ctx, "/user-profile-view/v3/profile/"+user+"/following?market=from_token", &w); err != nil {
+	var followed following
+
+	err = c.spclient(ctx, "/user-profile-view/v3/profile/"+user+"/following?market=from_token", &followed)
+	if err != nil {
 		return nil, err
 	}
 
-	out := make([]Artist, 0, len(w.Profiles))
-	for _, p := range w.Profiles {
-		if kind, _, ok := ParseURI(p.URI); ok && kind == kindArtist {
-			out = append(out, Artist{URI: p.URI, Name: p.Name, Artwork: artworkFromURL(p.ImageURL)})
+	out := make([]Artist, 0, len(followed.Profiles))
+	for _, profile := range followed.Profiles {
+		if kind, _, ok := ParseURI(profile.URI); ok && kind == kindArtist {
+			out = append(out, Artist{URI: profile.URI, Name: profile.Name, Artwork: artworkFromURL(profile.ImageURL)})
 		}
 	}
 
@@ -72,60 +90,60 @@ func (c *Client) RecentlyPlayed(ctx context.Context) ([]Recent, error) {
 		return nil, err
 	}
 
-	var w struct {
-		PlayContexts []struct {
-			URI string `json:"uri"`
-		} `json:"playContexts"`
-	}
+	var played recentlyPlayed
 
-	path := fmt.Sprintf("/recently-played/v3/user/%s/recently-played?format=json&offset=0&limit=%d&filter=default", user, recentSize)
-	if err := c.spclient(ctx, path, &w); err != nil {
+	path := fmt.Sprintf("/recently-played/v3/user/%s/recently-played?format=json&offset=0&limit=%d&filter=default",
+		user, recentSize)
+
+	err = c.spclient(ctx, path, &played)
+	if err != nil {
 		return nil, err
 	}
 
-	uris := make([]string, 0, len(w.PlayContexts))
-	for _, p := range w.PlayContexts {
-		uris = append(uris, p.URI)
+	uris := make([]string, 0, len(played.PlayContexts))
+	for _, entry := range played.PlayContexts {
+		uris = append(uris, entry.URI)
 	}
 
 	return each(ctx, uris, c.recent)
 }
 
 func (c *Client) recent(ctx context.Context, uri string) (Recent, error) {
-	kind, id, _ := ParseURI(uri)
+	kind, itemID, _ := ParseURI(uri)
 
-	out := Recent{Kind: kind, URI: uri}
+	out := Recent{Kind: kind, URI: uri, Name: "", Artwork: ""}
 	switch kind {
 	case kindAlbum:
-		m, err := c.albumMeta(ctx, id)
+		meta, err := c.albumMeta(ctx, itemID)
 		if err != nil {
 			return Recent{}, err
 		}
 
-		a := m.norm()
-		out.Name, out.Artwork = a.Name, a.Artwork
+		album := meta.norm()
+		out.Name, out.Artwork = album.Name, album.Artwork
 	case kindArtist:
-		var m mArtist
+		var meta mArtist
 
-		err := c.spclient(ctx, "/metadata/4/artist/"+hexID(id), &m)
+		err := c.spclient(ctx, "/metadata/4/artist/"+hexID(itemID), &meta)
 		if err != nil {
 			return Recent{}, err
 		}
 
-		out.Name, out.Artwork = m.Name, m.Portrait.artwork()
+		out.Name, out.Artwork = meta.Name, meta.Portrait.artwork()
 	case kindPlaylist:
-		var m plMeta
+		var meta plMeta
 		// One track is the smallest answer that still carries the name and picture.
-		err := c.spclient(ctx, "/playlist/v2/playlist/"+id+"?decorate=attributes,length,owner&from=0&length=1", &m)
+		err := c.spclient(ctx,
+			"/playlist/v2/playlist/"+itemID+"?decorate=attributes,length,owner&from=0&length=1", &meta)
 		if err != nil {
 			return Recent{}, err
 		}
 
-		p := m.norm(uri)
+		playlist := meta.norm(uri)
 
-		out.Name, out.Artwork = p.Name, p.Artwork
+		out.Name, out.Artwork = playlist.Name, playlist.Artwork
 		if out.Artwork == "" {
-			out.Artwork = c.firstCover(ctx, id)
+			out.Artwork = c.firstCover(ctx, itemID)
 		}
 	default:
 		return Recent{}, ErrUnavailable

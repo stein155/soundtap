@@ -5,6 +5,7 @@ package hw
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"time"
@@ -25,29 +26,41 @@ const (
 	watchdogStrikes = 3
 )
 
-var watchdogPaths = []string{"/dev/watchdog", "/dev/watchdog0"}
+// The watchdog device, under its legacy name and its numbered one.
+const (
+	watchdogDev  = "/dev/watchdog"
+	watchdogDev0 = "/dev/watchdog0"
+)
 
-// RunWatchdog feeds the hardware watchdog while healthy reports nil, until ctx ends.
-func RunWatchdog(ctx context.Context, healthy func(context.Context) error, log *slog.Logger) {
-	var (
-		f   *os.File
-		err error
-	)
-	for _, p := range watchdogPaths {
-		if f, err = os.OpenFile(p, os.O_WRONLY, 0); err == nil {
-			break
+// openWatchdog opens the first watchdog device that opens, or reports the last failure.
+func openWatchdog() (*os.File, error) {
+	var err error
+
+	for _, path := range []string{watchdogDev, watchdogDev0} {
+		var dev *os.File
+
+		dev, err = os.OpenFile(path, os.O_WRONLY, 0)
+		if err == nil {
+			return dev, nil
 		}
 	}
 
-	if f == nil {
+	return nil, fmt.Errorf("open watchdog: %w", err)
+}
+
+// RunWatchdog feeds the hardware watchdog while healthy reports nil, until ctx ends.
+func RunWatchdog(ctx context.Context, healthy func(context.Context) error, log *slog.Logger) {
+	dev, err := openWatchdog()
+	if err != nil {
 		log.Info("hardware watchdog unavailable", "err", err)
 
 		return
 	}
 	// Closed without 'V' on purpose: see above.
-	defer f.Close()
+	defer dev.Close()
 
-	if err := setWatchdogTimeout(f, watchdogTimeout); err != nil {
+	err = setWatchdogTimeout(dev, watchdogTimeout)
+	if err != nil {
 		log.Warn("watchdog timeout not set; the driver's default applies", "err", err)
 	}
 
@@ -55,11 +68,11 @@ func RunWatchdog(ctx context.Context, healthy func(context.Context) error, log *
 
 	strikes := 0
 
-	t := time.NewTicker(watchdogPet)
-	defer t.Stop()
+	ticker := time.NewTicker(watchdogPet)
+	defer ticker.Stop()
 
 	for {
-		err := healthy(ctx)
+		err = healthy(ctx)
 		if err != nil {
 			strikes++
 			log.Warn("health check failed", "strike", strikes, "of", watchdogStrikes, "err", err)
@@ -68,8 +81,9 @@ func RunWatchdog(ctx context.Context, healthy func(context.Context) error, log *
 		}
 
 		if strikes < watchdogStrikes {
-			if _, err := f.Write([]byte{0}); err != nil {
-				log.Warn("watchdog write", "err", err)
+			_, writeErr := dev.Write([]byte{0})
+			if writeErr != nil {
+				log.Warn("watchdog write", "err", writeErr)
 			}
 		} else if strikes == watchdogStrikes {
 			log.Error("not feeding the watchdog; the speaker resets unless health returns", "within", watchdogTimeout)
@@ -78,7 +92,7 @@ func RunWatchdog(ctx context.Context, healthy func(context.Context) error, log *
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-ticker.C:
 		}
 	}
 }

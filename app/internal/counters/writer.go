@@ -6,6 +6,7 @@ package counters
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -14,6 +15,13 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+)
+
+const (
+	// runDirMode and startsFileMode are the permissions of /run's directory and the count
+	// file: world-readable, written by root.
+	runDirMode     = 0o755
+	startsFileMode = 0o644
 )
 
 // matchWriter passes everything to w and adds one to c for each needle in it.
@@ -28,13 +36,13 @@ type matchWriter struct {
 // Matches returns a writer that passes everything to w and counts each needle in it on c:
 // aplay's "underrun!!!" lines on their way to the log, for example.
 func Matches(w io.Writer, needle string, c *atomic.Uint64) io.Writer {
-	return &matchWriter{w: w, needle: []byte(needle), c: c}
+	return &matchWriter{mu: sync.Mutex{}, w: w, needle: []byte(needle), c: c, tail: nil}
 }
 
-func (m *matchWriter) Write(p []byte) (int, error) {
+func (m *matchWriter) Write(chunk []byte) (int, error) {
 	m.mu.Lock()
 
-	buf := append(append([]byte(nil), m.tail...), p...)
+	buf := append(append([]byte(nil), m.tail...), chunk...)
 	if n := bytes.Count(buf, m.needle); n > 0 {
 		m.c.Add(uint64(n))
 		// What follows the last match can still begin the next one, nothing before it.
@@ -45,7 +53,12 @@ func (m *matchWriter) Write(p []byte) (int, error) {
 	m.tail = append([]byte(nil), buf[len(buf)-keep:]...)
 	m.mu.Unlock()
 
-	return m.w.Write(p)
+	n, err := m.w.Write(chunk)
+	if err != nil {
+		return n, fmt.Errorf("counting writer: %w", err)
+	}
+
+	return n, nil
 }
 
 // CountStart records one start of soundtapd in path, a file in /run that a reboot clears,
@@ -53,13 +66,20 @@ func (m *matchWriter) Write(p []byte) (int, error) {
 func CountStart(path string) (uint64, error) {
 	b, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return 0, err
+		return 0, fmt.Errorf("read start count: %w", err)
 	}
 
 	before, _ := strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64) // missing or garbled: the first
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return before, err
+
+	err = os.MkdirAll(filepath.Dir(path), runDirMode)
+	if err != nil {
+		return before, fmt.Errorf("create start count directory: %w", err)
 	}
 
-	return before, os.WriteFile(path, []byte(strconv.FormatUint(before+1, 10)+"\n"), 0o644)
+	err = os.WriteFile(path, []byte(strconv.FormatUint(before+1, 10)+"\n"), startsFileMode)
+	if err != nil {
+		return before, fmt.Errorf("write start count: %w", err)
+	}
+
+	return before, nil
 }

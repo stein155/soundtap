@@ -75,6 +75,26 @@ type Client struct {
 	err       error
 }
 
+// Errors the client reports in its own words; the text is what GET /api/settings shows as the
+// bridge's lastError.
+var (
+	errConnectionLost      = errors.New("connection lost")
+	errPublishTimeout      = errors.New("publish timed out")
+	errClosedBeforeSubAck  = errors.New("connection closed before SUBACK")
+	errNoSubAck            = errors.New("no SUBACK from broker")
+	errNoSubAckResult      = errors.New("no SUBACK result from the client")
+	errSubscriptionRefused = errors.New("broker refused subscription")
+)
+
+const (
+	// defaultKeepAlive is the keep-alive when Options leave it 0.
+	defaultKeepAlive = 60 * time.Second
+	// defaultDialTimeout bounds the dial and the handshake when Options leave it 0.
+	defaultDialTimeout = 10 * time.Second
+	// protocolMQTT311 is the CONNECT protocol level of MQTT 3.1.1 (§3.1.2.2).
+	protocolMQTT311 = 4
+)
+
 // writeWait bounds a Publish, as the write deadline did before Paho.
 const writeWait = 10 * time.Second
 
@@ -87,13 +107,15 @@ const disconnectWait = 250 // milliseconds, Paho's unit
 
 // Connect dials the broker, performs the MQTT handshake, and returns a Client ready for
 // Publish/Subscribe. ctx bounds only the dial and handshake, not the connection lifetime.
+//
+//nolint:gocritic // hugeParam: opts is taken by value so the defaults below fill Connect's own copy
 func Connect(ctx context.Context, opts Options) (*Client, error) {
 	if opts.KeepAlive <= 0 {
-		opts.KeepAlive = 60 * time.Second
+		opts.KeepAlive = defaultKeepAlive
 	}
 
 	if opts.DialTimeout <= 0 {
-		opts.DialTimeout = 10 * time.Second
+		opts.DialTimeout = defaultDialTimeout
 	}
 
 	hsTimeout := opts.DialTimeout
@@ -101,7 +123,7 @@ func Connect(ctx context.Context, opts Options) (*Client, error) {
 		hsTimeout = max(time.Until(dl), time.Millisecond)
 	}
 
-	c := &Client{done: make(chan struct{})}
+	client := &Client{pc: nil, done: make(chan struct{}), closeOnce: sync.Once{}, errMu: sync.Mutex{}, err: nil}
 
 	// The dial is ours rather than Paho's: it honours ctx, and the connection it returns
 	// is closed when ctx ends during the handshake, so a broker that takes the TCP
@@ -112,16 +134,16 @@ func Connect(ctx context.Context, opts Options) (*Client, error) {
 	)
 
 	dial := func(*url.URL, paho.ClientOptions) (net.Conn, error) {
-		d := net.Dialer{Timeout: opts.DialTimeout}
+		dialer := net.Dialer{Timeout: opts.DialTimeout}
 
 		var (
-			nc  net.Conn
-			err error
+			netConn net.Conn
+			err     error
 		)
 		if opts.TLS {
-			nc, err = (&tls.Dialer{NetDialer: &d, Config: opts.TLSConfig}).DialContext(ctx, "tcp", opts.Addr)
+			netConn, err = (&tls.Dialer{NetDialer: &dialer, Config: opts.TLSConfig}).DialContext(ctx, "tcp", opts.Addr)
 		} else {
-			nc, err = d.DialContext(ctx, "tcp", opts.Addr)
+			netConn, err = dialer.DialContext(ctx, "tcp", opts.Addr)
 		}
 
 		if err != nil {
@@ -129,10 +151,10 @@ func Connect(ctx context.Context, opts Options) (*Client, error) {
 		}
 
 		connMu.Lock()
-		conn = nc
+		conn = netConn
 		connMu.Unlock()
 
-		return nc, nil
+		return netConn, nil
 	}
 	stopCancel := context.AfterFunc(ctx, func() {
 		connMu.Lock()
@@ -143,11 +165,39 @@ func Connect(ctx context.Context, opts Options) (*Client, error) {
 		}
 	})
 
-	po := paho.NewClientOptions().
+	client.pc = paho.NewClient(pahoOptions(client, &opts, dial, hsTimeout))
+	tok := client.pc.Connect()
+	<-tok.Done() // Paho bounds it with the connect timeout; ctx closes the connection
+	err := tok.Error()
+
+	if !stopCancel() {
+		// ctx ended during or right after the handshake: the connection is closed.
+		client.pc.Disconnect(0)
+
+		return nil, fmt.Errorf("mqtt connect: %w", ctx.Err())
+	}
+
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("mqtt connect: %w", ctx.Err())
+		}
+
+		return nil, err //nolint:wrapcheck // Paho's text is lastError in GET /api/settings, unchanged
+	}
+
+	return client, nil
+}
+
+// pahoOptions is how the speaker uses Paho: MQTT 3.1.1 over dial, a clean session, no
+// reconnect of Paho's own, and the connection's end reported to client.
+func pahoOptions(
+	client *Client, opts *Options, dial paho.OpenConnectionFunc, hsTimeout time.Duration,
+) *paho.ClientOptions {
+	pahoOpts := paho.NewClientOptions().
 		AddBroker("tcp://" + opts.Addr). // the scheme is not used: dial connects
 		SetCustomOpenConnectionFn(dial).
 		SetClientID(opts.ClientID).
-		SetProtocolVersion(4). // MQTT 3.1.1, never the 3.1 fallback
+		SetProtocolVersion(protocolMQTT311). // never the 3.1 fallback
 		SetCleanSession(true).
 		SetResumeSubs(false).
 		SetAutoReconnect(false).
@@ -158,47 +208,27 @@ func Connect(ctx context.Context, opts Options) (*Client, error) {
 		SetOrderMatters(true).
 		SetConnectionLostHandler(func(_ paho.Client, err error) {
 			if err == nil {
-				err = errors.New("connection lost")
+				err = errConnectionLost
 			}
 
-			c.close(err)
+			client.close(err)
 		})
 	if opts.Username != "" {
-		po.SetUsername(opts.Username)
-		po.SetPassword(opts.Password) // Paho sends it only with a username
+		pahoOpts.SetUsername(opts.Username)
+		pahoOpts.SetPassword(opts.Password) // Paho sends it only with a username
 	}
 
 	if opts.Will != nil {
-		po.SetBinaryWill(opts.Will.Topic, opts.Will.Payload, 0, opts.Will.Retain)
+		pahoOpts.SetBinaryWill(opts.Will.Topic, opts.Will.Payload, 0, opts.Will.Retain)
 	}
 
 	if h := opts.Handler; h != nil {
-		po.SetDefaultPublishHandler(func(_ paho.Client, m paho.Message) {
-			h(c, Message{Topic: m.Topic(), Payload: m.Payload(), Retain: m.Retained()})
+		pahoOpts.SetDefaultPublishHandler(func(_ paho.Client, m paho.Message) {
+			h(client, Message{Topic: m.Topic(), Payload: m.Payload(), Retain: m.Retained()})
 		})
 	}
 
-	c.pc = paho.NewClient(po)
-	tok := c.pc.Connect()
-	<-tok.Done() // Paho bounds it with the connect timeout; ctx closes the connection
-	err := tok.Error()
-
-	if !stopCancel() {
-		// ctx ended during or right after the handshake: the connection is closed.
-		c.pc.Disconnect(0)
-
-		return nil, ctx.Err()
-	}
-
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-
-		return nil, err
-	}
-
-	return c, nil
+	return pahoOpts
 }
 
 // Done is closed when the connection is lost or Disconnect is called. Err reports
@@ -214,23 +244,14 @@ func (c *Client) Err() error {
 	return c.err
 }
 
-func (c *Client) close(err error) {
-	c.closeOnce.Do(func() {
-		c.errMu.Lock()
-		c.err = err
-		c.errMu.Unlock()
-		close(c.done)
-	})
-}
-
 // Publish sends an application message at QoS 0 and waits until it is written.
 func (c *Client) Publish(topic string, payload []byte, retain bool) error {
 	tok := c.pc.Publish(topic, 0, retain, payload)
 	if !tok.WaitTimeout(writeWait) {
-		return errors.New("publish timed out")
+		return errPublishTimeout
 	}
 
-	return tok.Error()
+	return tok.Error() //nolint:wrapcheck // Paho's text is lastError in GET /api/settings, unchanged
 }
 
 // Subscribe registers interest in one or more topic filters at QoS 0 and waits for
@@ -243,14 +264,14 @@ func (c *Client) Subscribe(topics ...string) error {
 	}
 
 	filters := make(map[string]byte, len(topics))
-	for _, t := range topics {
-		filters[t] = 0
+	for _, topic := range topics {
+		filters[topic] = 0
 	}
 
 	tok := c.pc.SubscribeMultiple(filters, nil)
 
-	t := time.NewTimer(subAckWait)
-	defer t.Stop()
+	timer := time.NewTimer(subAckWait)
+	defer timer.Stop()
 
 	select {
 	case <-tok.Done():
@@ -260,25 +281,25 @@ func (c *Client) Subscribe(topics ...string) error {
 			return err
 		}
 
-		return errors.New("connection closed before SUBACK")
-	case <-t.C:
-		return errors.New("no SUBACK from broker")
+		return errClosedBeforeSubAck
+	case <-timer.C:
+		return errNoSubAck
 	}
 
 	err := tok.Error()
 	if err != nil {
-		return err
+		return err //nolint:wrapcheck // Paho's text is lastError in GET /api/settings, unchanged
 	}
 
 	st, ok := tok.(*paho.SubscribeToken)
 	if !ok {
-		return errors.New("no SUBACK result from the client")
+		return errNoSubAckResult
 	}
 
 	granted := st.Result()
 	for _, topic := range topics {
 		if code, ok := granted[topic]; !ok || code&0x80 != 0 {
-			return fmt.Errorf("broker refused subscription to %q", topic)
+			return fmt.Errorf("%w to %q", errSubscriptionRefused, topic)
 		}
 	}
 
@@ -289,4 +310,13 @@ func (c *Client) Subscribe(topics ...string) error {
 func (c *Client) Disconnect() {
 	c.pc.Disconnect(disconnectWait)
 	c.close(nil)
+}
+
+func (c *Client) close(err error) {
+	c.closeOnce.Do(func() {
+		c.errMu.Lock()
+		c.err = err
+		c.errMu.Unlock()
+		close(c.done)
+	})
 }

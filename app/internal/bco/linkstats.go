@@ -37,7 +37,7 @@ type LinkStats struct {
 func ReadLinkStats(netDir string) (LinkStats, bool) {
 	ents, err := os.ReadDir(netDir)
 	if err != nil {
-		return LinkStats{}, false
+		return noLinkStats(), false
 	}
 
 	for _, e := range ents {
@@ -46,34 +46,44 @@ func ReadLinkStats(netDir string) (LinkStats, bool) {
 		}
 
 		dir := filepath.Join(netDir, e.Name(), "bco")
-		if _, err := os.Stat(dir); err != nil {
+
+		_, err = os.Stat(dir)
+		if err != nil {
 			continue
 		}
 
-		return readLinkStats(dir)
+		return readLinkCounters(dir)
 	}
 
-	return LinkStats{}, false
+	return noLinkStats(), false
 }
 
-func readLinkStats(dir string) (LinkStats, bool) {
-	ok := true
+// noLinkStats is LinkStats with nothing read.
+func noLinkStats() LinkStats {
+	return LinkStats{
+		TxOK: 0, TxFailed: 0, TxDropped: 0, LinkDropped: 0, TxFrames: 0, FlowControl: false, FlowStops: 0,
+	}
+}
+
+// readLinkCounters reads the counter files in dir; false when any of them cannot be read.
+func readLinkCounters(dir string) (LinkStats, bool) {
+	complete := true
 	num := func(name string) uint64 {
-		b, err := os.ReadFile(filepath.Join(dir, name))
+		raw, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
-			ok = false
+			complete = false
 
 			return 0
 		}
 
-		v, err := strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64)
+		v, err := strconv.ParseUint(strings.TrimSpace(string(raw)), 10, 64)
 		if err != nil {
-			ok = false
+			complete = false
 		}
 
 		return v
 	}
-	s := LinkStats{
+	stats := LinkStats{
 		TxOK:        num("tx_ok"),
 		TxFailed:    num("tx_failed"),
 		TxDropped:   num("tx_dropped"),
@@ -83,5 +93,5 @@ func readLinkStats(dir string) (LinkStats, bool) {
 		FlowStops:   num("flow_stops"),
 	}
 
-	return s, ok
+	return stats, complete
 }

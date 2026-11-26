@@ -63,6 +63,34 @@ func (t *Timer) Set(minutes int, unit, retry time.Duration, fire func(ctx contex
 	t.scheduleLocked(ctx, t.gen, d, retry, fire, 1)
 }
 
+// Cancel stops a running timer, if there is one.
+func (t *Timer) Cancel() { t.Set(0, 0, 0, nil) }
+
+// CancelFiring is Cancel for a standby, which may be the one a firing timer caused:
+// while a fire runs it stops only that fire's timer, so one set meanwhile is left
+// alone. A standby from elsewhere landing during a fire is taken for the fire's own.
+func (t *Timer) CancelFiring() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.firing == 0 || t.firing == t.gen {
+		t.stopLocked()
+	}
+}
+
+// View is the API shape: {"minutes": 0, "endsAt": ""} when nothing is running.
+func (t *Timer) View() map[string]any {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	ends := ""
+	if t.minutes > 0 {
+		ends = t.endsAt.UTC().Format(time.RFC3339)
+	}
+
+	return map[string]any{"minutes": t.minutes, "endsAt": ends}
+}
+
 // stopLocked clears the timer and moves gen on. Caller holds t.mu.
 func (t *Timer) stopLocked() {
 	if t.timer != nil {
@@ -79,7 +107,9 @@ func (t *Timer) stopLocked() {
 
 // scheduleLocked arms attempt number attempt of timer gen after d. Caller holds t.mu,
 // which the callback also takes first, so it cannot see t.timer before it is recorded.
-func (t *Timer) scheduleLocked(ctx context.Context, gen uint64, d, retry time.Duration, fire func(context.Context, int) error, attempt int) {
+func (t *Timer) scheduleLocked(
+	ctx context.Context, gen uint64, d, retry time.Duration, fire func(context.Context, int) error, attempt int,
+) {
 	t.timer = time.AfterFunc(d, func() {
 		t.mu.Lock()
 
@@ -112,32 +142,4 @@ func (t *Timer) scheduleLocked(ctx context.Context, gen uint64, d, retry time.Du
 		t.endsAt = time.Now().Add(retry)
 		t.scheduleLocked(ctx, gen, retry, retry, fire, attempt+1)
 	})
-}
-
-// Cancel stops a running timer, if there is one.
-func (t *Timer) Cancel() { t.Set(0, 0, 0, nil) }
-
-// CancelFiring is Cancel for a standby, which may be the one a firing timer caused:
-// while a fire runs it stops only that fire's timer, so one set meanwhile is left
-// alone. A standby from elsewhere landing during a fire is taken for the fire's own.
-func (t *Timer) CancelFiring() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	if t.firing == 0 || t.firing == t.gen {
-		t.stopLocked()
-	}
-}
-
-// View is the API shape: {"minutes": 0, "endsAt": ""} when nothing is running.
-func (t *Timer) View() map[string]any {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	ends := ""
-	if t.minutes > 0 {
-		ends = t.endsAt.UTC().Format(time.RFC3339)
-	}
-
-	return map[string]any{"minutes": t.minutes, "endsAt": ends}
 }

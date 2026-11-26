@@ -6,6 +6,7 @@ package tunein
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +18,9 @@ import (
 // maxPlaylist bounds a playlist read. A real one is a few lines.
 const maxPlaylist = 64 << 10
 
+// errPlaylistStatus is a playlist URL answering with a status other than 200.
+var errPlaylistStatus = errors.New("HTTP")
+
 // PlaylistStreams returns the streams behind a URL the user gave: the URL itself, or what
 // a .pls or plain .m3u file lists, because that is what a station's site tends to offer and
 // ffmpeg opens neither. An .m3u that lists nothing absolute is left to ffmpeg, which reads
@@ -24,7 +28,7 @@ const maxPlaylist = 64 << 10
 func PlaylistStreams(ctx context.Context, client *http.Client, raw string) ([]string, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("playlist: %w", err)
 	}
 
 	ext := strings.ToLower(path.Ext(u.Path))
@@ -34,17 +38,17 @@ func PlaylistStreams(ctx context.Context, client *http.Client, raw string) ([]st
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, http.NoBody)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("playlist: %w", err)
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("playlist: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("playlist %s: HTTP %d", raw, resp.StatusCode)
+		return nil, fmt.Errorf("playlist %s: %w %d", raw, errPlaylistStatus, resp.StatusCode)
 	}
 
 	listed, err := playlistEntries(io.LimitReader(resp.Body, maxPlaylist))
@@ -64,9 +68,9 @@ func PlaylistStreams(ctx context.Context, client *http.Client, raw string) ([]st
 func playlistEntries(r io.Reader) ([]string, error) {
 	var urls []string
 
-	sc := bufio.NewScanner(r)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
 		if key, value, ok := strings.Cut(line, "="); ok && strings.HasPrefix(strings.ToLower(key), "file") {
 			line = strings.TrimSpace(value)
 		}
@@ -76,5 +80,10 @@ func playlistEntries(r io.Reader) ([]string, error) {
 		}
 	}
 
-	return urls, sc.Err()
+	err := scanner.Err()
+	if err != nil {
+		return urls, fmt.Errorf("playlist: read: %w", err)
+	}
+
+	return urls, nil
 }

@@ -1,44 +1,48 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-package readahead
+package readahead_test
 
 import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/stein155/soundtap/app/internal/readahead"
 )
 
 // gen is the station: byte i of the endless stream, the same for every listener.
 func gen(from, to int) []byte {
-	b := make([]byte, to-from)
-	for i := range b {
+	out := make([]byte, to-from)
+	for i := range out {
 		x := uint32(from+i) * 2654435761
-		b[i] = byte(x>>13 ^ x>>21)
+		out[i] = byte(x>>13 ^ x>>21)
 	}
 
-	return b
+	return out
 }
 
-func testCfg() Config {
-	return Config{
-		Limit: 64 << 10, IdleTimeout: 200 * time.Millisecond, ScanWait: 100 * time.Millisecond,
-		BackoffMin: 10 * time.Millisecond, BackoffMax: 50 * time.Millisecond, MaxOutage: 5 * time.Second,
-		Client: &http.Client{},
+func testCfg() *readahead.Config {
+	return &readahead.Config{
+		Client: &http.Client{}, Trace: nil, Log: nil,
+		Limit: 64 << 10, IdleTimeout: 200 * time.Millisecond, MaxOutage: 5 * time.Second,
+		BackoffMin: 10 * time.Millisecond, BackoffMax: 50 * time.Millisecond,
+		ScanWait: 100 * time.Millisecond, ScanMax: 0,
 	}
 }
 
-func send(w http.ResponseWriter, b []byte) {
-	for len(b) > 0 {
-		n := min(len(b), 4096)
-		_, _ = w.Write(b[:n])
-		b = b[n:]
+func send(w http.ResponseWriter, data []byte) {
+	for len(data) > 0 {
+		n := min(len(data), 4096)
+		_, _ = w.Write(data[:n])
+		data = data[n:]
 	}
 
 	w.(http.Flusher).Flush()
@@ -49,6 +53,8 @@ func send(w http.ResponseWriter, b []byte) {
 // last 80000 bytes, 30000 of them already received. The output must be the station's
 // bytes 0..200000 once each, in order.
 func TestStallDropReconnectIsContinuous(t *testing.T) {
+	t.Parallel()
+
 	var conns atomic.Int32
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -74,18 +80,18 @@ func TestStallDropReconnectIsContinuous(t *testing.T) {
 	cfg := testCfg()
 	cfg.Limit = 1 << 20
 
-	s, err := Open(context.Background(), context.Background(), cfg, srv.URL)
+	stream, err := readahead.Open(t.Context(), t.Context(), cfg, srv.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer stream.Close()
 
 	var out syncBuf
 
 	go func() {
 		time.Sleep(2 * cfg.IdleTimeout)
 
-		_, _ = s.WriteTo(&out)
+		_, _ = stream.WriteTo(&out)
 	}()
 
 	want := gen(0, 200000)
@@ -105,6 +111,8 @@ func TestStallDropReconnectIsContinuous(t *testing.T) {
 // A server that does not repeat anything on reconnect (no burst) loses nothing and
 // repeats nothing either: the scan ends on its own and the live bytes are queued.
 func TestReconnectWithoutBurst(t *testing.T) {
+	t.Parallel()
+
 	var conns atomic.Int32
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -121,14 +129,14 @@ func TestReconnectWithoutBurst(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s, err := Open(context.Background(), context.Background(), testCfg(), srv.URL)
+	stream, err := readahead.Open(t.Context(), t.Context(), testCfg(), srv.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer stream.Close()
 
 	var out syncBuf
-	go func() { _, _ = s.WriteTo(&out) }()
+	go func() { _, _ = stream.WriteTo(&out) }()
 
 	want := append(gen(0, 50000), gen(60000, 90000)...)
 
@@ -142,6 +150,8 @@ func TestReconnectWithoutBurst(t *testing.T) {
 // A live station with no repeat that never goes quiet: the scan must give up after
 // ScanMax, not hold the audio until Limit bytes have come in at the stream's own rate.
 func TestScanEndsOnAStationThatNeverGoesQuiet(t *testing.T) {
+	t.Parallel()
+
 	var conns atomic.Int32
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -163,14 +173,14 @@ func TestScanEndsOnAStationThatNeverGoesQuiet(t *testing.T) {
 	cfg := testCfg()
 	cfg.ScanWait, cfg.ScanMax = time.Second, 300*time.Millisecond
 
-	s, err := Open(context.Background(), context.Background(), cfg, srv.URL)
+	stream, err := readahead.Open(t.Context(), t.Context(), cfg, srv.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer stream.Close()
 
 	var out syncBuf
-	go func() { _, _ = s.WriteTo(&out) }()
+	go func() { _, _ = stream.WriteTo(&out) }()
 
 	waitFor(t, 5*time.Second, func() bool { return conns.Load() >= 2 })
 
@@ -185,6 +195,8 @@ func TestScanEndsOnAStationThatNeverGoesQuiet(t *testing.T) {
 
 // With nobody reading, the queue stops at Limit and the server is held back by TCP.
 func TestBufferIsBounded(t *testing.T) {
+	t.Parallel()
+
 	var sent atomic.Int64
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -192,7 +204,8 @@ func TestBufferIsBounded(t *testing.T) {
 
 		chunk := gen(0, 16<<10)
 		for r.Context().Err() == nil && sent.Load() < 256<<20 {
-			if _, err := w.Write(chunk); err != nil {
+			_, err := w.Write(chunk)
+			if err != nil {
 				return
 			}
 
@@ -204,16 +217,16 @@ func TestBufferIsBounded(t *testing.T) {
 	cfg := testCfg()
 	cfg.IdleTimeout = 5 * time.Second
 
-	s, err := Open(context.Background(), context.Background(), cfg, srv.URL)
+	stream, err := readahead.Open(t.Context(), t.Context(), cfg, srv.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer stream.Close()
 
-	waitFor(t, 5*time.Second, func() bool { return s.Buffered() >= cfg.Limit-(16<<10) })
+	waitFor(t, 5*time.Second, func() bool { return stream.Buffered() >= cfg.Limit-(16<<10) })
 	time.Sleep(300 * time.Millisecond)
 
-	if n := s.Buffered(); n > cfg.Limit {
+	if n := stream.Buffered(); n > cfg.Limit {
 		t.Fatalf("buffered %d bytes, limit %d", n, cfg.Limit)
 	}
 
@@ -223,38 +236,42 @@ func TestBufferIsBounded(t *testing.T) {
 }
 
 func TestNotDirectStreamsAreDeclined(t *testing.T) {
-	for name, h := range map[string]http.HandlerFunc{
-		"hls": func(w http.ResponseWriter, r *http.Request) {
+	t.Parallel()
+
+	for name, handler := range map[string]http.HandlerFunc{
+		"hls": func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 			_, _ = w.Write([]byte("#EXTM3U\n"))
 		},
-		"m3u": func(w http.ResponseWriter, r *http.Request) {
+		"m3u": func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "audio/mpegurl")
 			send(w, []byte("x"))
 		},
-		"pls": func(w http.ResponseWriter, r *http.Request) {
+		"pls": func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "audio/x-scpls")
 			send(w, []byte("x"))
 		},
-		"no type": func(w http.ResponseWriter, r *http.Request) { send(w, []byte("x")) },
+		"no type": func(w http.ResponseWriter, _ *http.Request) { send(w, []byte("x")) },
 		"missing": func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) },
-		"a file": func(w http.ResponseWriter, r *http.Request) {
+		"a file": func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "audio/mpeg")
 			w.Header().Set("Content-Length", "1")
 			_, _ = w.Write([]byte("x"))
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			srv := httptest.NewServer(h)
+			t.Parallel()
+
+			srv := httptest.NewServer(handler)
 			defer srv.Close()
 
-			s, err := Open(context.Background(), context.Background(), testCfg(), srv.URL)
+			stream, err := readahead.Open(t.Context(), t.Context(), testCfg(), srv.URL)
 			if err == nil {
-				s.Close()
+				stream.Close()
 				t.Fatal("opened a stream that ffmpeg must open itself")
 			}
 
-			if name != "missing" && !errors.Is(err, ErrNotDirect) {
+			if name != "missing" && !errors.Is(err, readahead.ErrNotDirect) {
 				t.Fatalf("err = %v, want ErrNotDirect", err)
 			}
 		})
@@ -264,9 +281,11 @@ func TestNotDirectStreamsAreDeclined(t *testing.T) {
 // A stream that stays dead for MaxOutage ends with EOF after the buffered bytes, so the
 // decoder exits and the player's supervisor starts over.
 func TestGivesUpAfterMaxOutage(t *testing.T) {
+	t.Parallel()
+
 	var conns atomic.Int32
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if conns.Add(1) > 1 {
 			http.Error(w, "gone", http.StatusServiceUnavailable)
 
@@ -281,20 +300,26 @@ func TestGivesUpAfterMaxOutage(t *testing.T) {
 	cfg := testCfg()
 	cfg.MaxOutage = 300 * time.Millisecond
 
-	s, err := Open(context.Background(), context.Background(), cfg, srv.URL)
+	stream, err := readahead.Open(t.Context(), t.Context(), cfg, srv.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer stream.Close()
 
 	var out syncBuf
 
 	done := make(chan error, 1)
 
-	go func() { _, err := s.WriteTo(&out); done <- err }()
+	go func() {
+		_, err := stream.WriteTo(&out)
+		done <- err
+	}()
 
 	select {
-	case <-done:
+	case err := <-done:
+		if !errors.Is(err, io.ErrUnexpectedEOF) {
+			t.Fatalf("WriteTo = %v, want io.ErrUnexpectedEOF after the outage", err)
+		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("WriteTo did not end after the outage limit")
 	}
@@ -307,6 +332,8 @@ func TestGivesUpAfterMaxOutage(t *testing.T) {
 // A stall that finds nothing queued ends the stream at the idle timeout, not after
 // MaxOutage: the listener already hears silence, and the player should say so.
 func TestStallWithEmptyQueueEndsAtOnce(t *testing.T) {
+	t.Parallel()
+
 	var conns atomic.Int32
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -319,17 +346,17 @@ func TestStallWithEmptyQueueEndsAtOnce(t *testing.T) {
 
 	cfg := testCfg() // MaxOutage 5 s, IdleTimeout 200 ms
 
-	s, err := Open(context.Background(), context.Background(), cfg, srv.URL)
+	stream, err := readahead.Open(t.Context(), t.Context(), cfg, srv.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer stream.Close()
 
 	var out syncBuf
 
 	done := make(chan struct{})
 
-	go func() { _, _ = s.WriteTo(&out); close(done) }()
+	go func() { _, _ = stream.WriteTo(&out); close(done) }()
 
 	select {
 	case <-done:
@@ -348,6 +375,8 @@ func TestStallWithEmptyQueueEndsAtOnce(t *testing.T) {
 
 // Close, and the context, stop both the fetching and a blocked WriteTo at once.
 func TestCloseStopsEverything(t *testing.T) {
+	t.Parallel()
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "audio/ogg")
 		send(w, gen(0, 1000))
@@ -355,10 +384,10 @@ func TestCloseStopsEverything(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	s, err := Open(ctx, context.Background(), testCfg(), srv.URL)
+	stream, err := readahead.Open(ctx, t.Context(), testCfg(), srv.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,7 +396,7 @@ func TestCloseStopsEverything(t *testing.T) {
 
 	done := make(chan struct{})
 
-	go func() { _, _ = s.WriteTo(&out); close(done) }()
+	go func() { _, _ = stream.WriteTo(&out); close(done) }()
 
 	waitFor(t, 5*time.Second, func() bool { return out.Len() == 1000 })
 	cancel()
@@ -380,9 +409,11 @@ func TestCloseStopsEverything(t *testing.T) {
 }
 
 func TestDialCancelAbortsFirstConnect(t *testing.T) {
+	t.Parallel()
+
 	release := make(chan struct{})
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		select {
 		case <-release:
 		case <-r.Context().Done():
@@ -391,12 +422,13 @@ func TestDialCancelAbortsFirstConnect(t *testing.T) {
 	defer srv.Close()
 	defer close(release)
 
-	dial, cancel := context.WithCancel(context.Background())
+	dial, cancel := context.WithCancel(t.Context())
 	time.AfterFunc(100*time.Millisecond, cancel)
 
 	start := time.Now()
 
-	if _, err := Open(context.Background(), dial, testCfg(), srv.URL); err == nil {
+	_, err := readahead.Open(t.Context(), dial, testCfg(), srv.URL)
+	if err == nil {
 		t.Fatal("Open succeeded after its dial context ended")
 	}
 
@@ -406,29 +438,31 @@ func TestDialCancelAbortsFirstConnect(t *testing.T) {
 }
 
 type syncBuf struct {
-	mu sync.Mutex
-	b  bytes.Buffer
+	mu  sync.Mutex
+	buf bytes.Buffer
 }
 
 func (s *syncBuf) Write(p []byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.b.Write(p)
+	written, _ := s.buf.Write(p) // a bytes.Buffer write always returns a nil error
+
+	return written, nil
 }
 
 func (s *syncBuf) Len() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.b.Len()
+	return s.buf.Len()
 }
 
 func (s *syncBuf) Bytes() []byte {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return bytes.Clone(s.b.Bytes())
+	return bytes.Clone(s.buf.Bytes())
 }
 
 func waitFor(t *testing.T, d time.Duration, cond func() bool) {

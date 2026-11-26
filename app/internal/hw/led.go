@@ -73,7 +73,7 @@ type ledState struct {
 	// lamp, and Bose's own pinmux leaves gpio2_16 in LCD mode on a board with no LCD.
 }
 
-// linkState is what the front panel needs to know about the network. It is
+// Link is what the front panel needs to know about the network. It is
 // derived from facts the daemon can observe for itself — a live wpa_supplicant,
 // a live hostapd, a routable address — rather than from a marker file that a
 // shell script has to remember to write and, more importantly, to remove.
@@ -107,14 +107,15 @@ func bootChase(step int) ledState {
 		func(s *ledState) { s.auxWhite = true },
 		func(s *ledState) { s.btWhite = true },
 	}
-	st := ledState{}
-	lamps[((step%len(lamps))+len(lamps))%len(lamps)](&st)
 
-	return st
+	var lit ledState
+	lamps[((step%len(lamps))+len(lamps))%len(lamps)](&lit)
+
+	return lit
 }
 
-func ledPattern(st speakerstate.StatusSnapshot, link Link, blink bool) ledState {
-	next := ledState{}
+func ledPattern(snap *speakerstate.StatusSnapshot, link Link, blink bool) ledState {
+	var next ledState
 	// The Wi-Fi lamp reports the network regardless of what is playing, so a user
 	// staring at a silent speaker can tell "still connecting" from "come set me up".
 	switch link {
@@ -127,12 +128,14 @@ func ledPattern(st speakerstate.StatusSnapshot, link Link, blink bool) ledState 
 	case LinkDown:
 		// Slow amber blink as stock: solid amber means setup mode, come and configure me.
 		next.wifiAmber = blink
+	default:
+		// No other link state: the Wi-Fi lamp stays dark.
 	}
 
 	// Empty-preset feedback: blink stAmber for ~2 s after pressing an empty slot.
 	// Stock gives the same one-tap amber blink. Shown even in standby so the user
 	// can feel the button responded; returns early so WiFi state is still visible.
-	if st.EmptyPreset {
+	if snap.EmptyPreset {
 		next.stAmber = blink
 
 		return next
@@ -146,39 +149,44 @@ func ledPattern(st speakerstate.StatusSnapshot, link Link, blink bool) ledState 
 	// playback source. A healthy speaker shows only the Wi-Fi lamp, dimmed, which is what
 	// stock does; lighting the SoundTouch lamp here kept it at full brightness on a board
 	// whose gpio-leds cannot dim, so standby looked like "on".
-	if st.Standby {
+	if snap.Standby {
 		return ledState{
 			wifiAmber: link == LinkSetupAP,
 			wifiWhite: link == LinkConnecting && blink,
+			btWhite:   false,
+			stWhite:   false,
+			stAmber:   false,
+			btBlue:    false,
+			auxWhite:  false,
 			// Dim on linkUp only; linkDown stays dark (no network = off state)
 			wifiDim: link == LinkUp,
 		}
 	}
 
-	if st.Notification {
+	if snap.Notification {
 		next.stAmber, next.stWhite = blink, blink
 
 		return next
 	}
 
-	return sourceLamps(next, st, blink)
+	return sourceLamps(next, snap, blink)
 }
 
 // sourceLamps lights the lamp of the playing source over next, which holds the Wi-Fi lamp.
-func sourceLamps(next ledState, st speakerstate.StatusSnapshot, blink bool) ledState {
+func sourceLamps(next ledState, snap *speakerstate.StatusSnapshot, blink bool) ledState {
 	// AUX is a line-in: it is live whenever it is selected, and it has no transport
 	// to be buffering or paused, so it is decided before any play-status branch.
-	if st.Source == sourceAux {
+	if snap.Source == sourceAux {
 		next.auxWhite = true
 
 		return next
 	}
 
-	if st.Source == sourceBluetooth {
+	if snap.Source == sourceBluetooth {
 		// Blue blinking is "discoverable, waiting for a phone"; white is a device
 		// actually playing. Selecting Bluetooth and seeing nothing at all was
 		// indistinguishable from a dead source.
-		if st.PlayStatus == playing {
+		if snap.PlayStatus == playing {
 			next.btWhite = true
 		} else {
 			next.btBlue = blink
@@ -187,19 +195,19 @@ func sourceLamps(next ledState, st speakerstate.StatusSnapshot, blink bool) ledS
 		return next
 	}
 
-	if st.PlayStatus == "BUFFERING_STATE" {
+	if snap.PlayStatus == "BUFFERING_STATE" {
 		next.stWhite = blink
 
 		return next
 	}
 
-	if st.PlayStatus != playing {
+	if snap.PlayStatus != playing {
 		next.stAmber = true
 
 		return next
 	}
 
-	switch st.Source {
+	switch snap.Source {
 	case sourceTuneIn, sourceAirPlay, sourceSpotify, sourceUPnP, sourceMultiroom:
 		next.stWhite = true
 	default:
@@ -248,7 +256,7 @@ func linkFromFacts(haveIP, hostapd, wpa bool) Link {
 // ledChannels pairs each lamp with the file that drives it on either kernel. The stock
 // rledN name and the mainline label must always name the same GPIO; that pairing, not the
 // name, is what makes the two paths agree.
-func ledChannels(st ledState) []struct {
+func ledChannels(lamps ledState) []struct {
 	mainline string
 	stock    string
 	on       bool
@@ -258,13 +266,13 @@ func ledChannels(st ledState) []struct {
 		stock    string
 		on       bool
 	}{
-		{"wifi-white", "uledw", st.wifiWhite},
-		{"wifi-amber", "uledy", st.wifiAmber},
-		{"bt-white", "rled3", st.btWhite},
-		{"soundtouch-white", "rled4", st.stWhite},
-		{"soundtouch-amber", "rled5", st.stAmber},
-		{"bt-blue", "rled6", st.btBlue},
-		{"aux-white", "rled7", st.auxWhite},
+		{"wifi-white", "uledw", lamps.wifiWhite},
+		{"wifi-amber", "uledy", lamps.wifiAmber},
+		{"bt-white", "rled3", lamps.btWhite},
+		{"soundtouch-white", "rled4", lamps.stWhite},
+		{"soundtouch-amber", "rled5", lamps.stAmber},
+		{"bt-blue", "rled6", lamps.btBlue},
+		{"aux-white", "rled7", lamps.auxWhite},
 	}
 }
 
@@ -279,8 +287,13 @@ func ledChannels(st ledState) []struct {
 // knows is a mainline tree; lamps it does not name are lamps this board does not have, and
 // applyLEDState already skips a channel with no brightness file.
 func gpioLEDs(ledDir string) bool {
-	for _, channel := range ledChannels(ledState{}) {
-		if _, err := os.Stat(filepath.Join(ledDir, channel.mainline, "brightness")); err == nil { //nolint:gosec // G703: the model's lamp directory, or LEDS
+	var dark ledState
+
+	for _, channel := range ledChannels(dark) {
+		brightness := filepath.Join(ledDir, channel.mainline, "brightness")
+
+		_, err := os.Stat(brightness) //nolint:gosec // G703: the model's lamp directory, or LEDS
+		if err == nil {
 			return true
 		}
 	}
@@ -296,8 +309,11 @@ const ledDimByte = 6
 // lamp with max-brightness 255 (16 ≈ 6%). Tune both by eye against a stock speaker.
 const ledDimBrightness = "16"
 
-func applyLEDState(ledDir string, st ledState) error {
-	channels := ledChannels(st)
+// ledFileMode is the mode a lamp file would be created with; the kernel's files exist.
+const ledFileMode = 0o644
+
+func applyLEDState(ledDir string, lamps ledState) error {
+	channels := ledChannels(lamps)
 
 	errs := make([]error, 0, len(channels))
 	if gpioLEDs(ledDir) {
@@ -310,7 +326,10 @@ func applyLEDState(ledDir string, st ledState) error {
 			// A lamp the tree does not name is a lamp this board does not have, not a
 			// failure: the panels differ per model and a missing one must not turn
 			// every write into a logged error four times a second.
-			err := os.WriteFile(filepath.Join(ledDir, channel.mainline, "brightness"), value, 0o644) //nolint:gosec // G703: the model's lamp directory, or LEDS
+			brightness := filepath.Join(ledDir, channel.mainline, "brightness")
+
+			//nolint:gosec // G703: the model's lamp directory, or LEDS
+			err := os.WriteFile(brightness, value, ledFileMode)
 			if os.IsNotExist(err) {
 				continue
 			}
@@ -318,24 +337,29 @@ func applyLEDState(ledDir string, st ledState) error {
 			errs = append(errs, err)
 		}
 		// wifiDim overwrites the 0 the regular pass just wrote to wifi-white.
-		if st.wifiDim {
-			errs = append(errs, os.WriteFile(filepath.Join(ledDir, "wifi-white", "brightness"), []byte(ledDimBrightness), 0o644)) //nolint:gosec // G703: as above
+		if lamps.wifiDim {
+			brightness := filepath.Join(ledDir, "wifi-white", "brightness")
+			err := os.WriteFile(brightness, []byte(ledDimBrightness), ledFileMode) //nolint:gosec // G703: as above
+			errs = append(errs, err)
 		}
 
 		return errors.Join(errs...)
 	}
 
 	for _, channel := range channels {
-		b := []byte{0x00}
+		duty := []byte{0x00}
 		if channel.on {
-			b = []byte{0xff}
+			duty = []byte{0xff}
 		}
 
-		errs = append(errs, os.WriteFile(filepath.Join(ledDir, channel.stock), b, 0o644)) //nolint:gosec // G703: as above
+		err := os.WriteFile(filepath.Join(ledDir, channel.stock), duty, ledFileMode) //nolint:gosec // G703: as above
+		errs = append(errs, err)
 	}
 	// wifiDim overwrites the 0x00 the regular pass just wrote to uledw.
-	if st.wifiDim {
-		errs = append(errs, os.WriteFile(filepath.Join(ledDir, "uledw"), []byte{ledDimByte}, 0o644)) //nolint:gosec // G703: as above
+	if lamps.wifiDim {
+		uledw := filepath.Join(ledDir, "uledw")
+		err := os.WriteFile(uledw, []byte{ledDimByte}, ledFileMode) //nolint:gosec // G703: as above
+		errs = append(errs, err)
 	}
 
 	return errors.Join(errs...)
@@ -344,13 +368,16 @@ func applyLEDState(ledDir string, st ledState) error {
 // linkEveryTicks: the LED loop reads the network state every sixth 350 ms tick (~2 s).
 const linkEveryTicks = 6
 
+// ledTick is the LED loop's period: the blink, and the boot chase's step.
+const ledTick = 350 * time.Millisecond
+
 // RunLEDs drives the front LEDs from st until ctx ends. modelDir is the model's lamp
 // directory (model.Model.LEDDir). Stock hardware uses
 // /dev/shelby-leds/{uledw,uledy,rled3..rled7}; mainline uses gpio-leds. LEDS env
 // overrides the device dir for tests.
 //
 // A model with no LEDs at all (the WLA, whose lamps RunWLALEDs drives) returns early.
-func RunLEDs(ctx context.Context, modelDir string, st LampStatus, log *slog.Logger) {
+func RunLEDs(ctx context.Context, modelDir string, status LampStatus, log *slog.Logger) {
 	ledDir := os.Getenv("LEDS")
 	if ledDir == "" {
 		if modelDir == "" {
@@ -373,15 +400,17 @@ func RunLEDs(ctx context.Context, modelDir string, st LampStatus, log *slog.Logg
 	// rather than leaving nine silent write failures to be inferred.
 	log.Info("leds", "dir", ledDir)
 
-	err := applyLEDState(ledDir, ledState{})
+	var dark ledState
+
+	err := applyLEDState(ledDir, dark)
 	if err != nil {
 		log.Warn("led startup clear", "dir", ledDir, "err", err)
 	}
 
-	tick := time.NewTicker(350 * time.Millisecond)
+	tick := time.NewTicker(ledTick)
 	defer tick.Stop()
 
-	lamps := lampWriter{dir: ledDir, log: log}
+	lamps := lampWriter{dir: ledDir, log: log, last: dark, have: false}
 	blink := false
 	step := 0
 
@@ -400,27 +429,34 @@ func RunLEDs(ctx context.Context, modelDir string, st LampStatus, log *slog.Logg
 		step++
 
 		switch {
-		case !st.Up():
+		case !status.Up():
 			// Still coming up: run the wave instead of the state pattern, which at this
 			// point would only be reporting a speaker that has not finished starting.
 			lamps.show(bootChase(step))
-		case st.Confirming():
+		case status.Confirming():
 			// A request waits for a key press, or a held chord counts down: the
 			// source lamps blink together, a look no state of the speaker has.
-			lamps.show(ledState{stWhite: blink, btWhite: blink, auxWhite: blink})
-		case st.Updating():
+			lamps.show(ledState{
+				wifiWhite: false, wifiAmber: false, btWhite: blink, stWhite: blink,
+				stAmber: false, btBlue: false, auxWhite: blink, wifiDim: false,
+			})
+		case status.Updating():
 			// Firmware is writing to NAND: blink both ST lamps (amber solid, white
 			// blinking) so the panel is visibly "busy" and distinct from standby or
 			// a source state. Stock shows a similar cycling pattern during an update.
-			lamps.show(ledState{stAmber: true, stWhite: blink})
+			lamps.show(ledState{
+				wifiWhite: false, wifiAmber: false, btWhite: false, stWhite: blink,
+				stAmber: true, btBlue: false, auxWhite: false, wifiDim: false,
+			})
 		default:
 			// The link moves in seconds, the blink in 350 ms: sampling it every tick (a UDP
 			// socket plus two pidfiles) was most of soundtapd's standby CPU on the ST10.
 			if step%linkEveryTicks == 1 || !linkRead {
-				link, linkRead = ReadLink(st.HaveIP), true
+				link, linkRead = ReadLink(status.HaveIP), true
 			}
 
-			if next := ledPattern(st.StatusSnapshot(), link, blink); lamps.show(next) {
+			snapshot := status.StatusSnapshot()
+			if next := ledPattern(&snapshot, link, blink); lamps.show(next) {
 				// Debug, not Info: every blink of every blinking pattern is a change,
 				// so at Info this alone writes a line every 350 ms forever.
 				log.Debug("leds", "state", next, "link", link)

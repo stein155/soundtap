@@ -34,10 +34,13 @@ type capWriter struct {
 }
 
 func newCapWriter(w io.Writer, name string, budget int) *capWriter {
-	return &capWriter{w: w, name: name, budget: budget, now: time.Now}
+	return &capWriter{
+		mu: sync.Mutex{}, w: w, name: name, budget: budget,
+		left: 0, window: time.Time{}, dropped: 0, now: time.Now,
+	}
 }
 
-func (c *capWriter) Write(p []byte) (int, error) {
+func (c *capWriter) Write(data []byte) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -49,16 +52,17 @@ func (c *capWriter) Write(p []byte) (int, error) {
 		c.window, c.left, c.dropped = t, c.budget, 0
 	}
 
-	n := min(len(p), c.left)
-	if n > 0 {
-		if _, err := c.w.Write(p[:n]); err != nil {
-			return 0, err
+	kept := min(len(data), c.left)
+	if kept > 0 {
+		_, err := c.w.Write(data[:kept])
+		if err != nil {
+			return 0, fmt.Errorf("%s output: %w", c.name, err)
 		}
 
-		c.left -= n
+		c.left -= kept
 	}
 
-	c.dropped += len(p) - n
+	c.dropped += len(data) - kept
 
-	return len(p), nil // the child must never block or fail on its log
+	return len(data), nil // the child must never block or fail on its log
 }

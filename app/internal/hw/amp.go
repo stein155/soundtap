@@ -30,27 +30,54 @@ type Amp struct {
 	powerMu    sync.Mutex
 }
 
+// The cached states of muteState and powerState; 0, the zero value, is unknown.
+const (
+	muteOn   int32 = 1
+	muteOff  int32 = 2
+	powerOff int32 = 1
+	powerOn  int32 = 2
+)
+
+// The ST20's amplifier lines, as offsets into GPIO bank 1.
+const (
+	st20MuteOffset  = 17
+	st20PowerOffset = 23
+)
+
+// sysfsAttrMode is the mode os.WriteFile would give an attribute it created; sysfs
+// attributes already exist, so it only matters for the test trees.
+const sysfsAttrMode = 0o644
+
 // NewAmp drives the mute and power value files of the model named modelName; "" is a
 // line the model does not have. The ST20's lines are found by bank at run time unless
 // MUTE_GPIO or AMP_POWER_GPIO names them.
 func NewAmp(modelName, mute, power string) *Amp {
-	return &Amp{modelName: modelName, mute: mute, power: power}
+	return &Amp{
+		modelName:  modelName,
+		mute:       mute,
+		power:      power,
+		muteState:  atomic.Int32{},
+		powerState: atomic.Int32{},
+		powerMu:    sync.Mutex{},
+	}
 }
 
 // HasPower reports whether the amplifier's power is runtime-controlled.
 func (a *Amp) HasPower() bool { return a.power != "" }
 
 // SetMute mutes or unmutes the amplifier, writing only a change.
+//
+//nolint:revive // flag-parameter: soundtapd's exported call, muted is the state to set
 func (a *Amp) SetMute(muted bool, log *slog.Logger) {
 	if os.Getenv("AUDIO_NOINIT") == "1" || a.mute == "" {
 		return
 	}
 
-	want := int32(2)
+	want := muteOff
 
-	v := "1"
+	level := "1"
 	if muted {
-		want, v = 1, "0"
+		want, level = muteOn, "0"
 	}
 	// Write first, record afterwards. Swapping the cache before the write meant a failed
 	// write still left the cache claiming the line was set: the next identical call short
@@ -65,7 +92,7 @@ func (a *Amp) SetMute(muted bool, log *slog.Logger) {
 		return
 	}
 
-	err := SysfsWrite(a.MuteLine(), v, log)
+	err := SysfsWrite(a.MuteLine(), level, log)
 	if err != nil {
 		// Leave the cache alone. It still holds whatever was last written successfully,
 		// which is the truth, and the next call will try again.
@@ -78,34 +105,22 @@ func (a *Amp) SetMute(muted bool, log *slog.Logger) {
 }
 
 // MuteLine is the value file of the mute line.
-func (a *Amp) MuteLine() string { return a.resolveST20Line("MUTE_GPIO", a.mute, 17) }
-
-// resolveST20Line is the value file of an ST20 amplifier line, bank 1 pin offset, numbered
-// from the bank's sysfs base at run time; elsewhere, or when env overrides it, fallback.
-func (a *Amp) resolveST20Line(env, fallback string, offset int) string {
-	if os.Getenv(env) != "" || a.modelName != model.ST20 {
-		return fallback
-	}
-
-	if base, err := gpioBankBase(gpioBank1Addr); err == nil {
-		return filepath.Join(gpioRoot, fmt.Sprintf("gpio%d/value", base+offset))
-	}
-
-	return fallback
-}
+func (a *Amp) MuteLine() string { return a.resolveST20Line("MUTE_GPIO", a.mute, st20MuteOffset) }
 
 // SetPowered switches the amplifier on or off, writing only a change. It reports whether
 // the line is in that state now; a model without the line always is.
+//
+//nolint:revive // flag-parameter: soundtapd's exported call, powered is the state to set
 func (a *Amp) SetPowered(powered bool, log *slog.Logger) bool {
 	if os.Getenv("AUDIO_NOINIT") == "1" || a.power == "" {
 		return a.power == ""
 	}
 
-	want := int32(1)
+	want := powerOff
 
-	v := "0"
+	level := "0"
 	if powered {
-		want, v = 2, "1"
+		want, level = powerOn, "1"
 	}
 
 	a.powerMu.Lock()
@@ -115,7 +130,7 @@ func (a *Amp) SetPowered(powered bool, log *slog.Logger) bool {
 		return true
 	}
 
-	err := SysfsWrite(a.PowerLine(), v, log)
+	err := SysfsWrite(a.PowerLine(), level, log)
 	if err == nil {
 		a.powerState.Store(want)
 		log.Info("amp power", "on", powered)
@@ -127,26 +142,46 @@ func (a *Amp) SetPowered(powered bool, log *slog.Logger) bool {
 }
 
 // PowerLine is the value file of the amp enable line.
-func (a *Amp) PowerLine() string { return a.resolveST20Line("AMP_POWER_GPIO", a.power, 23) }
+func (a *Amp) PowerLine() string {
+	return a.resolveST20Line("AMP_POWER_GPIO", a.power, st20PowerOffset)
+}
 
+// resolveST20Line is the value file of an ST20 amplifier line, bank 1 pin offset, numbered
+// from the bank's sysfs base at run time; elsewhere, or when env overrides it, fallback.
+func (a *Amp) resolveST20Line(env, fallback string, offset int) string {
+	if os.Getenv(env) != "" || a.modelName != model.ST20 {
+		return fallback
+	}
+
+	base, err := gpioBankBase(gpioBank1Addr)
+	if err == nil {
+		return filepath.Join(gpioRoot, fmt.Sprintf("gpio%d/value", base+offset))
+	}
+
+	return fallback
+}
+
+// unavailableSysfs remembers the attributes already said to be missing.
+//
+//nolint:gochecknoglobals // SysfsWrite is a free function: the once-per-path memory is per process
 var unavailableSysfs sync.Map
 
 // SysfsWrite writes val to a sysfs attribute. A missing attribute is said once per path
 // at Info, any other failure at Warn every time.
 func SysfsWrite(path, val string, log *slog.Logger) error {
-	err := os.WriteFile(path, []byte(val), 0o644)
+	err := os.WriteFile(path, []byte(val), sysfsAttrMode)
 	if err != nil {
 		if os.IsNotExist(err) {
 			if _, loaded := unavailableSysfs.LoadOrStore(path, struct{}{}); !loaded {
 				log.Info("sysfs unavailable", "path", path)
 			}
 
-			return err
+			return fmt.Errorf("sysfs write: %w", err)
 		}
 
 		log.Warn("sysfs write", "path", path, "val", val, "err", err)
 
-		return err
+		return fmt.Errorf("sysfs write: %w", err)
 	}
 
 	return nil

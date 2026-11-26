@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"time"
 )
@@ -16,38 +17,98 @@ import (
 // BCO's side of the internal link. The SCM must hold 192.168.1.101 on that link.
 const BootloaderTFTP = "192.168.1.100:69"
 
+// TFTP (RFC 1350): opcodes, the header before a block's data, and the block size.
+const (
+	tftpOpWRQ   = 2
+	tftpOpData  = 3
+	tftpOpAck   = 4
+	tftpOpError = 5
+	tftpHeader  = 4
+	tftpBlock   = 512
+	// tftpMaxTries is how often one block is sent before the upload gives up.
+	tftpMaxTries = 8
+	// tftpAckWait is how long one try waits for its ACK.
+	tftpAckWait = 2 * time.Second
+)
+
+// The upload's errors; each keeps the text it had before it was a sentinel.
+var (
+	errTFTPNoAck  = errors.New("no ACK after")
+	errTFTPRemote = errors.New("TFTP error")
+	// errTFTPTooLarge is data with more blocks than a 16-bit block number counts.
+	errTFTPTooLarge = errors.New("TFTP upload too large")
+)
+
 // tftpPut writes data as name to a TFTP server (RFC 1350, octet mode, 512-byte blocks:
 // what stock's curl upload used against the same bootloader). It waits for the server
 // to appear, because level 2 needs a few seconds after its menu to bring its link up.
 func tftpPut(ctx context.Context, server, name string, data []byte) error {
 	raddr, err := net.ResolveUDPAddr("udp4", server)
 	if err != nil {
-		return err
+		return fmt.Errorf("TFTP server %s: %w", server, err)
 	}
 
 	conn, err := net.ListenUDP("udp4", nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("TFTP socket: %w", err)
 	}
 	defer conn.Close()
-	// Cancelling wakes a pending read at once instead of after its 2 s timeout.
-	stop := context.AfterFunc(ctx, func() { conn.SetReadDeadline(time.Now()) })
+	// Cancelling wakes a pending read at once instead of after its 2 s timeout. A deadline
+	// that cannot be set means a closed socket, whose read fails by itself.
+	stop := context.AfterFunc(ctx, func() { _ = conn.SetReadDeadline(time.Now()) })
 	defer stop()
 
-	wrq := append([]byte{0, 2}, name...)
+	peer, err := tftpRequest(ctx, conn, raddr, server, name)
+	if err != nil {
+		return err
+	}
+
+	blocks := len(data)/tftpBlock + 1 // a final short (possibly empty) block ends the transfer
+	if blocks > math.MaxUint16 {
+		// RFC 1350 numbers blocks in 16 bits; an app image needs about 10,600.
+		return fmt.Errorf("%w: %d bytes", errTFTPTooLarge, len(data))
+	}
+
+	last := uint16(blocks)
+
+	for block := uint16(1); ; block++ {
+		lo := int(block-1) * tftpBlock
+		hi := min(lo+tftpBlock, len(data))
+		pkt := make([]byte, tftpHeader, tftpHeader+hi-lo)
+		binary.BigEndian.PutUint16(pkt[0:], tftpOpData)
+		binary.BigEndian.PutUint16(pkt[2:], block)
+		pkt = append(pkt, data[lo:hi]...)
+
+		err = tftpSendBlock(ctx, conn, peer, pkt, block)
+		if err != nil {
+			return err
+		}
+
+		if block == last {
+			return nil
+		}
+	}
+}
+
+// tftpRequest sends the write request until the server answers or ctx ends, and returns
+// the address of the transfer's port.
+func tftpRequest(
+	ctx context.Context, conn *net.UDPConn, raddr *net.UDPAddr, server, name string,
+) (*net.UDPAddr, error) {
+	wrq := append([]byte{0, tftpOpWRQ}, name...)
 	wrq = append(wrq, 0)
 	wrq = append(wrq, "octet"...)
 	wrq = append(wrq, 0)
 
-	// Request, retried until the server answers or ctx ends.
 	var peer *net.UDPAddr
 	for peer == nil {
 		err := ctx.Err()
 		if err != nil {
-			return fmt.Errorf("TFTP server %s never answered: %w", server, err)
+			return nil, fmt.Errorf("TFTP server %s never answered: %w", server, err)
 		}
 
-		if _, err := conn.WriteToUDP(wrq, raddr); err != nil {
+		_, err = conn.WriteToUDP(wrq, raddr)
+		if err != nil {
 			// The link may not have the address yet; keep trying until ctx ends.
 			select {
 			case <-ctx.Done():
@@ -57,99 +118,115 @@ func tftpPut(ctx context.Context, server, name string, data []byte) error {
 			continue
 		}
 
-		peer, err = tftpAck(ctx, conn, &net.UDPAddr{IP: raddr.IP}, 0, 2*time.Second)
+		peer, err = tftpAck(ctx, conn, &net.UDPAddr{IP: raddr.IP, Port: 0, Zone: ""}, 0, tftpAckWait)
 		if err != nil && !isTimeout(err) {
+			return nil, err
+		}
+	}
+
+	return peer, nil
+}
+
+// tftpSendBlock sends one DATA packet until its ACK arrives.
+func tftpSendBlock(ctx context.Context, conn *net.UDPConn, peer *net.UDPAddr, pkt []byte, block uint16) error {
+	for try := 0; ; try++ {
+		// A cancelled upload stops sending firmware, between blocks and between retries.
+		err := ctx.Err()
+		if err != nil {
+			return fmt.Errorf("TFTP block %d: %w", block, err)
+		}
+
+		if try == tftpMaxTries {
+			return fmt.Errorf("TFTP block %d: %w %d tries", block, errTFTPNoAck, try)
+		}
+
+		_, err = conn.WriteToUDP(pkt, peer)
+		if err != nil {
+			return fmt.Errorf("TFTP block %d: %w", block, err)
+		}
+
+		_, err = tftpAck(ctx, conn, peer, block, tftpAckWait)
+		if err == nil {
+			return nil
+		}
+
+		if !isTimeout(err) {
 			return err
 		}
 	}
-
-	blocks := len(data)/512 + 1 // a final short (possibly empty) block ends the transfer
-	for b := 1; b <= blocks; b++ {
-		lo := (b - 1) * 512
-		hi := min(lo+512, len(data))
-		pkt := make([]byte, 4, 4+hi-lo)
-		binary.BigEndian.PutUint16(pkt[0:], 3)
-		binary.BigEndian.PutUint16(pkt[2:], uint16(b))
-		pkt = append(pkt, data[lo:hi]...)
-
-		for try := 0; ; try++ {
-			// A cancelled upload stops sending firmware, between blocks and between retries.
-			err := ctx.Err()
-			if err != nil {
-				return fmt.Errorf("TFTP block %d: %w", b, err)
-			}
-
-			if try == 8 {
-				return fmt.Errorf("TFTP block %d: no ACK after %d tries", b, try)
-			}
-
-			if _, err := conn.WriteToUDP(pkt, peer); err != nil {
-				return err
-			}
-
-			if _, err := tftpAck(ctx, conn, peer, uint16(b), 2*time.Second); err == nil {
-				break
-			} else if !isTimeout(err) {
-				return err
-			}
-		}
-	}
-
-	return nil
 }
 
 // tftpAck waits for the ACK of block from peer and returns the port it came from. Port 0
 // takes any port, for the answer to the request; after that the transfer's port is its ID
 // (RFC 1350) and packets from any other port are ignored.
-func tftpAck(ctx context.Context, conn *net.UDPConn, peer *net.UDPAddr, block uint16, wait time.Duration) (*net.UDPAddr, error) {
+func tftpAck(
+	ctx context.Context, conn *net.UDPConn, peer *net.UDPAddr, block uint16, wait time.Duration,
+) (*net.UDPAddr, error) {
 	deadline := time.Now().Add(wait)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 		deadline = d
 	}
 
-	conn.SetReadDeadline(deadline)
+	err := conn.SetReadDeadline(deadline)
+	if err != nil {
+		return nil, fmt.Errorf("TFTP read deadline: %w", err)
+	}
 	// A cancel that landed before the line above had its "now" deadline overwritten:
 	// check again, or this read waits out the full retry.
-	err := ctx.Err()
+	err = ctx.Err()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("TFTP ACK: %w", err)
 	}
 
-	buf := make([]byte, 516)
+	buf := make([]byte, tftpHeader+tftpBlock)
 	for {
-		n, from, err := conn.ReadFromUDP(buf)
+		count, from, err := conn.ReadFromUDP(buf)
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil, ctx.Err()
+				return nil, fmt.Errorf("TFTP ACK: %w", ctx.Err())
 			}
 
-			return nil, err
+			return nil, fmt.Errorf("TFTP ACK: %w", err)
 		}
 
-		if !from.IP.Equal(peer.IP) || peer.Port != 0 && from.Port != peer.Port || n < 4 {
+		if !from.IP.Equal(peer.IP) || peer.Port != 0 && from.Port != peer.Port || count < tftpHeader {
 			continue
 		}
 
-		switch binary.BigEndian.Uint16(buf) {
-		case 4:
-			if binary.BigEndian.Uint16(buf[2:]) == block {
-				return from, nil
-			}
-			// A duplicate ACK of an earlier block: keep waiting for ours.
-		case 5:
-			return nil, fmt.Errorf("TFTP error %d from %s: %s", binary.BigEndian.Uint16(buf[2:]), from, cstr(buf[4:n]))
+		acked, err := tftpAnswer(buf[:count], from, block)
+		if err != nil {
+			return nil, err
+		}
+
+		if acked {
+			return from, nil
 		}
 	}
 }
 
-func cstr(b []byte) string {
-	for i, c := range b {
+// tftpAnswer reads one packet from the transfer's peer: true for the ACK of block, an
+// error for a TFTP ERROR, and false for anything else (a duplicate ACK of an earlier
+// block), which keeps the wait going.
+func tftpAnswer(pkt []byte, from *net.UDPAddr, block uint16) (bool, error) {
+	switch binary.BigEndian.Uint16(pkt) {
+	case tftpOpAck:
+		return binary.BigEndian.Uint16(pkt[2:]) == block, nil
+	case tftpOpError:
+		return false, fmt.Errorf("%w %d from %s: %s",
+			errTFTPRemote, binary.BigEndian.Uint16(pkt[2:]), from, cstr(pkt[tftpHeader:]))
+	default:
+		return false, nil // not an answer to a write
+	}
+}
+
+func cstr(raw []byte) string {
+	for i, c := range raw {
 		if c == 0 {
-			return string(b[:i])
+			return string(raw[:i])
 		}
 	}
 
-	return string(b)
+	return string(raw)
 }
 
 func isTimeout(err error) bool {

@@ -6,6 +6,7 @@ package player
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -56,6 +57,21 @@ const (
 	prewarmEvery          = time.Minute
 	prewarmRefresh        = 10 * time.Hour
 	prewarmRefreshStandby = 24 * time.Hour
+
+	// resolveTimeout bounds one resolve of a station's streams.
+	resolveTimeout = 10 * time.Second
+
+	// streamsFileMode keeps the stream lists the owner's: they say what was listened to.
+	streamsFileMode = 0o600
+
+	// playlistTimeout bounds a fetch of the user's own playlist.
+	playlistTimeout = 8 * time.Second
+)
+
+// Errors of a stream URL the user gave; the text after them names the URL.
+var (
+	errStreamNotMedia = errors.New("not a media URL")
+	errNoMediaIn      = errors.New("no media URL in")
 )
 
 // CachedStreams is one station's resolved stream list and when it was resolved.
@@ -105,15 +121,15 @@ func (c *StreamCache) All() map[string]CachedStreams {
 
 func (c *StreamCache) get(loc string) (CachedStreams, bool) {
 	if c == nil {
-		return CachedStreams{}, false
+		return CachedStreams{URLs: nil, At: time.Time{}}, false
 	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	e, ok := c.m[loc]
+	cached, ok := c.m[loc]
 
-	return e, ok
+	return cached, ok
 }
 
 func (c *StreamCache) put(loc string, urls []string) {
@@ -130,7 +146,7 @@ func (c *StreamCache) put(loc string, urls []string) {
 
 	old, had := c.m[loc]
 
-	c.m[loc] = CachedStreams{urls, time.Now()}
+	c.m[loc] = CachedStreams{URLs: urls, At: time.Now()}
 	if c.path == "" || had && slices.Equal(old.URLs, urls) {
 		return
 	}
@@ -141,15 +157,7 @@ func (c *StreamCache) put(loc string, urls []string) {
 		}
 	}
 
-	_ = atomicjson.Write(c.path, c.m, 0o600) // a failed write keeps the list in RAM only
-}
-
-func (c *StreamCache) drop(loc string) {
-	if c != nil {
-		c.mu.Lock()
-		delete(c.m, loc)
-		c.mu.Unlock()
-	}
+	_ = atomicjson.Write(c.path, c.m, streamsFileMode) // a failed write keeps the list in RAM only
 }
 
 // Resolver is the slice of tunein.Client that streamCandidates needs, so the walk
@@ -158,23 +166,15 @@ type Resolver interface {
 	StreamURLs(ctx context.Context, stationID string) ([]string, error)
 }
 
-// url returns the stream to try for loc. Pass retry=true after an attempt that produced
-// no audio, to move past whatever just failed.
-func (s *streamCandidates) url(ctx context.Context, tc Resolver, loc string, retry bool) (string, error) {
-	sid := loc[strings.LastIndex(loc, "/")+1:]
-	switch {
-	case loc != s.loc || len(s.urls) == 0:
-		if c, ok := s.cache.get(loc); ok && time.Since(c.At) < streamCacheTTL && !retry {
-			s.loc, s.urls, s.i, s.cached = loc, c.URLs, 0, true
+// url returns the stream to try first for loc: the one the walk is at, a list the cache
+// keeps fresh, or the first of a new resolve.
+func (s *streamCandidates) url(ctx context.Context, resolver Resolver, loc string) (string, error) {
+	if loc != s.loc || len(s.urls) == 0 {
+		cached, ok := s.cache.get(loc)
+		if ok && time.Since(cached.At) < streamCacheTTL {
+			s.loc, s.urls, s.i, s.cached = loc, cached.URLs, 0, true
 		} else {
-			err := s.resolve(ctx, tc, loc, sid)
-			if err != nil {
-				return "", err
-			}
-		}
-	case retry:
-		if s.i++; s.cached || s.i >= len(s.urls) {
-			err := s.resolve(ctx, tc, loc, sid)
+			err := s.resolve(ctx, resolver, loc, stationID(loc))
 			if err != nil {
 				return "", err
 			}
@@ -184,8 +184,37 @@ func (s *streamCandidates) url(ctx context.Context, tc Resolver, loc string, ret
 	return s.urls[s.i], nil
 }
 
-func (s *streamCandidates) resolve(ctx context.Context, tc Resolver, loc, sid string) error {
-	rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+// retry returns the stream to try for loc after an attempt that produced no audio: it
+// moves past whatever just failed, and resolves afresh when the walk began from the cache
+// or has run out.
+func (s *streamCandidates) retry(ctx context.Context, resolver Resolver, loc string) (string, error) {
+	if loc != s.loc || len(s.urls) == 0 {
+		err := s.resolve(ctx, resolver, loc, stationID(loc))
+		if err != nil {
+			return "", err
+		}
+
+		return s.urls[s.i], nil
+	}
+
+	s.i++
+	if s.cached || s.i >= len(s.urls) {
+		err := s.resolve(ctx, resolver, loc, stationID(loc))
+		if err != nil {
+			return "", err
+		}
+	}
+
+	return s.urls[s.i], nil
+}
+
+// stationID is the TuneIn guide id at the end of a station location.
+func stationID(loc string) string {
+	return loc[strings.LastIndex(loc, "/")+1:]
+}
+
+func (s *streamCandidates) resolve(ctx context.Context, resolver Resolver, loc, sid string) error {
+	resolveCtx, cancel := context.WithTimeout(ctx, resolveTimeout)
 	defer cancel()
 
 	var (
@@ -193,21 +222,25 @@ func (s *streamCandidates) resolve(ctx context.Context, tc Resolver, loc, sid st
 		err  error
 	)
 	if speaker.OwnStream(loc) {
-		urls, err = ownStreamURLs(rctx, loc)
+		urls, err = ownStreamURLs(resolveCtx, loc)
 	} else {
-		urls, err = tc.StreamURLs(rctx, sid)
+		urls, err = resolver.StreamURLs(resolveCtx, sid)
+		if err != nil {
+			err = fmt.Errorf("resolve %s: %w", sid, err)
+		}
 	}
 
 	if err != nil {
 		// TuneIn did not answer: walk the last list this station had, however old, rather
 		// than go silent. Its streams usually outlive the directory's answer.
-		if c, ok := s.cache.get(loc); ok && !speaker.OwnStream(loc) && len(c.URLs) > 0 {
+		cached, ok := s.cache.get(loc)
+		if ok && !speaker.OwnStream(loc) && len(cached.URLs) > 0 {
 			// A retry already moved past the stream that failed; go on from there.
-			if s.loc != loc || !slices.Equal(s.urls, c.URLs) || s.i >= len(c.URLs) {
+			if s.loc != loc || !slices.Equal(s.urls, cached.URLs) || s.i >= len(cached.URLs) {
 				s.i = 0
 			}
 
-			s.loc, s.urls, s.cached = loc, c.URLs, false
+			s.loc, s.urls, s.cached = loc, cached.URLs, false
 
 			return nil
 		}
@@ -228,9 +261,11 @@ func (s *streamCandidates) resolve(ctx context.Context, tc Resolver, loc, sid st
 // Prewarm keeps the cache filled for the TuneIn presets, so a press is warm even
 // right after boot or a long standby. It runs one resolve at a time; a preset saved
 // meanwhile is picked up on the next tick. Failures (network not up yet) just retry then.
-func Prewarm(ctx context.Context, tc Resolver, presets func(context.Context) ([]speaker.Preset, error), cache *StreamCache, standby func() bool, log *slog.Logger) {
-	t := time.NewTicker(prewarmEvery)
-	defer t.Stop()
+func Prewarm(ctx context.Context, resolver Resolver, presets func(context.Context) ([]speaker.Preset, error),
+	cache *StreamCache, standby func() bool, log *slog.Logger,
+) {
+	ticker := time.NewTicker(prewarmEvery)
+	defer ticker.Stop()
 
 	for {
 		refresh := prewarmRefresh
@@ -238,43 +273,46 @@ func Prewarm(ctx context.Context, tc Resolver, presets func(context.Context) ([]
 			refresh = prewarmRefreshStandby
 		}
 
-		prewarmOnce(ctx, tc, presets, cache, refresh, log)
+		prewarmOnce(ctx, resolver, presets, cache, refresh, log)
 
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-ticker.C:
 		}
 	}
 }
 
-func prewarmOnce(ctx context.Context, tc Resolver, presets func(context.Context) ([]speaker.Preset, error), cache *StreamCache, refresh time.Duration, log *slog.Logger) {
-	ps, err := presets(ctx)
+func prewarmOnce(ctx context.Context, resolver Resolver, presets func(context.Context) ([]speaker.Preset, error),
+	cache *StreamCache, refresh time.Duration, log *slog.Logger,
+) {
+	saved, err := presets(ctx)
 	if err != nil {
 		return
 	}
 
-	for _, p := range ps {
-		if p.Source != sourceTuneIn || p.Location == "" || speaker.OwnStream(p.Location) {
+	for index := range saved {
+		preset := &saved[index]
+		if preset.Source != sourceTuneIn || preset.Location == "" || speaker.OwnStream(preset.Location) {
 			continue
 		}
 
-		if e, ok := cache.get(p.Location); ok && time.Since(e.At) < refresh {
+		if cached, ok := cache.get(preset.Location); ok && time.Since(cached.At) < refresh {
 			continue
 		}
 
-		rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		urls, err := tc.StreamURLs(rctx, p.Location[strings.LastIndex(p.Location, "/")+1:])
+		resolveCtx, cancel := context.WithTimeout(ctx, resolveTimeout)
+		urls, err := resolver.StreamURLs(resolveCtx, stationID(preset.Location))
 
 		cancel()
 
 		if err != nil {
-			log.Debug("preset prewarm failed", "slot", p.Slot, "err", err)
+			log.Debug("preset prewarm failed", "slot", preset.Slot, "err", err)
 
 			continue
 		}
 
-		cache.put(p.Location, urls)
+		cache.put(preset.Location, urls)
 
 		if len(urls) > 0 { // seeds the TLS session the press will resume
 			readahead.Warm(ctx, urls[0])
@@ -287,24 +325,24 @@ func prewarmOnce(ctx context.Context, tc Resolver, presets func(context.Context)
 // names.
 func ownStreamURLs(ctx context.Context, loc string) ([]string, error) {
 	if !upnp.MediaURL(ctx, loc) {
-		return nil, fmt.Errorf("not a media URL: %s", loc)
+		return nil, fmt.Errorf("%w: %s", errStreamNotMedia, loc)
 	}
 
 	listed, err := tunein.PlaylistStreams(ctx, playlistClient, loc)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open %s: %w", loc, err)
 	}
 
 	var urls []string
 
-	for _, u := range listed {
-		if upnp.MediaURL(ctx, u) {
-			urls = append(urls, u)
+	for _, listedURL := range listed {
+		if upnp.MediaURL(ctx, listedURL) {
+			urls = append(urls, listedURL)
 		}
 	}
 
 	if len(urls) == 0 {
-		return nil, fmt.Errorf("no media URL in %s", loc)
+		return nil, fmt.Errorf("%w %s", errNoMediaIn, loc)
 	}
 
 	return urls, nil
@@ -312,4 +350,6 @@ func ownStreamURLs(ctx context.Context, loc string) ([]string, error) {
 
 // playlistClient fetches a playlist of the user's own, which may live on the home network:
 // not safehttp, which refuses that, but held to MediaURL on every hop and dial.
-var playlistClient = upnp.MediaClient(8 * time.Second)
+//
+//nolint:gochecknoglobals // a variable so tests can replace it
+var playlistClient = upnp.MediaClient(playlistTimeout)

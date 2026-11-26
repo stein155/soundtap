@@ -11,6 +11,13 @@ import (
 	"time"
 )
 
+// Why a language or display setting is refused; the text is what the web UI shows.
+var (
+	errNotLanguage     = errors.New("is not a language code")
+	errClockNeedsZone  = errors.New("the standby clock needs a timezone")
+	errUnknownTimezone = errors.New("unknown timezone")
+)
+
 var languageRe = regexp.MustCompile(`^[a-z]{2}(-[A-Za-z]{2,4})?$`)
 
 // ValidLanguage reports whether code is a UI language code ("en", "nl", "pt-BR").
@@ -20,7 +27,7 @@ func ValidLanguage(code string) bool { return languageRe.MatchString(code) }
 // SetLanguage updates the UI language and persists.
 func (s *Store) SetLanguage(code string) error {
 	if code != "" && !ValidLanguage(code) {
-		return fmt.Errorf("language %q is not a language code", code)
+		return fmt.Errorf("language %q %w", code, errNotLanguage)
 	}
 
 	s.mu.Lock()
@@ -30,7 +37,7 @@ func (s *Store) SetLanguage(code string) error {
 		next := s.s
 		next.Language = code
 
-		return s.replaceLocked(next)
+		return s.replaceLocked(&next)
 	}
 
 	return nil
@@ -49,21 +56,21 @@ func (s *Store) SetName(name string) error {
 	next := s.s
 	next.Name = name
 
-	return s.replaceLocked(next)
+	return s.replaceLocked(&next)
 }
 
 // SetAudio persists the current volume and tone. Called from a coalescing loop, not
 // from the volume path itself: a held volume key steps every 160 ms and this lands on
 // NAND, which is worth exactly one write once the user has stopped turning the knob.
-func (s *Store) SetAudio(a Audio) error {
+func (s *Store) SetAudio(audio Audio) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	next := s.s
-	a.AutoOff = next.Audio.AutoOff // owned by SetAutoOff, not by the audio sampler
-	next.Audio = a
+	audio.AutoOff = next.Audio.AutoOff // owned by SetAutoOff, not by the audio sampler
+	next.Audio = audio
 
-	return s.replaceLocked(next)
+	return s.replaceLocked(&next)
 }
 
 // SetAutoOff sets the idle-standby timeout in minutes: 0 restores the default,
@@ -77,7 +84,7 @@ func (s *Store) SetAutoOff(minutes int) error {
 	next := s.s
 	next.Audio.AutoOff = minutes
 
-	return s.replaceLocked(next)
+	return s.replaceLocked(&next)
 }
 
 // SetChannel persists the channel this speaker plays (Settings.Channel).
@@ -88,36 +95,37 @@ func (s *Store) SetChannel(channel string) error {
 	next := s.s
 	next.Channel = channel
 
-	return s.replaceLocked(next)
+	return s.replaceLocked(&next)
 }
 
 // SetMQTT replaces the MQTT bridge config and persists it.
-func (s *Store) SetMQTT(cfg MQTT) error {
+func (s *Store) SetMQTT(cfg *MQTT) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	next := s.s
-	next.MQTT = cfg
+	next.MQTT = *cfg
 
-	return s.replaceLocked(next)
+	return s.replaceLocked(&next)
 }
 
 // NormalizeDisplay validates a standby-screen configuration and returns it in the
 // form it is stored in.
-func NormalizeDisplay(d Display) (Display, error) {
-	if d.Timezone == "" {
-		if !d.ClockOff {
-			return d, errors.New("the standby clock needs a timezone")
+func NormalizeDisplay(display Display) (Display, error) {
+	if display.Timezone == "" {
+		if !display.ClockOff {
+			return display, errClockNeedsZone
 		}
 
-		return d, nil
+		return display, nil
 	}
 
-	if _, err := time.LoadLocation(d.Timezone); err != nil {
-		return d, fmt.Errorf("unknown timezone %q", d.Timezone)
+	_, err := time.LoadLocation(display.Timezone)
+	if err != nil {
+		return display, fmt.Errorf("%w %q", errUnknownTimezone, display.Timezone)
 	}
 
-	return d, nil
+	return display, nil
 }
 
 // MaxAutoOff is the longest idle-standby timeout: a week, in minutes. Far longer would
@@ -135,8 +143,8 @@ func NormalizeAutoOff(minutes int) int {
 }
 
 // SetDisplay persists the standby-screen configuration.
-func (s *Store) SetDisplay(d Display) error {
-	d, err := NormalizeDisplay(d)
+func (s *Store) SetDisplay(display Display) error {
+	display, err := NormalizeDisplay(display)
 	if err != nil {
 		return err
 	}
@@ -145,14 +153,14 @@ func (s *Store) SetDisplay(d Display) error {
 	defer s.mu.Unlock()
 
 	next := s.s
-	next.Display = d
+	next.Display = display
 
-	return s.replaceLocked(next)
+	return s.replaceLocked(&next)
 }
 
 // SetAlarm validates and persists the wake-up alarm.
-func (s *Store) SetAlarm(a Alarm) error {
-	err := a.Validate()
+func (s *Store) SetAlarm(alarm Alarm) error {
+	err := alarm.Validate()
 	if err != nil {
 		return err
 	}
@@ -161,9 +169,9 @@ func (s *Store) SetAlarm(a Alarm) error {
 	defer s.mu.Unlock()
 
 	next := s.s
-	next.Alarm = a
+	next.Alarm = alarm
 
-	return s.replaceLocked(next)
+	return s.replaceLocked(&next)
 }
 
 // SetMultiroom persists the group preferences.
@@ -174,15 +182,15 @@ func (s *Store) SetMultiroom(m Multiroom) error {
 	next := s.s
 	next.Multiroom = m
 
-	return s.replaceLocked(next)
+	return s.replaceLocked(&next)
 }
 
-// Update applies fn to a copy of the current settings and persists the result as one
+// Update applies edit to a copy of the current settings and persists the result as one
 // atomic write, all under the store lock: a concurrent writer cannot interleave between
 // the read and the write, so two patches to different fields cannot lose each other.
-// When fn returns an error nothing is written; when the write fails memory keeps the old
-// settings. fn must not call back into the store.
-func (s *Store) Update(fn func(*Settings) error) error {
+// When edit returns an error nothing is written; when the write fails memory keeps the
+// old settings. edit must not call back into the store.
+func (s *Store) Update(edit func(*Settings) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -191,10 +199,10 @@ func (s *Store) Update(fn func(*Settings) error) error {
 
 	next.CrashReports.Handled = slices.Clone(s.s.CrashReports.Handled)
 
-	err := fn(&next)
+	err := edit(&next)
 	if err != nil {
 		return err
 	}
 
-	return s.replaceLocked(next)
+	return s.replaceLocked(&next)
 }

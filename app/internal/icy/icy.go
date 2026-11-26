@@ -11,6 +11,7 @@ package icy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -32,29 +33,36 @@ const maxMetaInt = 512 << 10 // 512 KiB
 // one is normally enough; a couple more cover the rare empty-first-block case.
 const maxBlocks = 3
 
+// metaUnit is the size of the metadata length byte's unit: the block is that many
+// 16-byte units long.
+const metaUnit = 16
+
+// ErrStatus is returned when the stream answers with a status other than 200.
+var ErrStatus = errors.New("icy: status")
+
 // StreamTitle opens streamURL with ICY metadata enabled and returns the first
 // non-empty StreamTitle it sees (e.g. "Artist - Title"). It returns "" with a
 // nil error when the stream carries no metadata — that is an expected outcome,
-// not a failure. hc must follow redirects (streamtheworld and friends 302 to a
-// real edge); http.DefaultClient does.
-func StreamTitle(ctx context.Context, hc *http.Client, streamURL string) (string, error) {
+// not a failure. client must follow redirects (streamtheworld and friends 302 to
+// a real edge); http.DefaultClient does.
+func StreamTitle(ctx context.Context, client *http.Client, streamURL string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, streamURL, http.NoBody)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("icy: build request: %w", err)
 	}
 
 	req.Header.Set("Icy-Metadata", "1")
 	req.Header.Set("User-Agent", "SoundTap/1.0")
 
-	resp, err := safehttp.Do(ctx, hc, req)
+	resp, err := safehttp.Do(ctx, client, req)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("icy: open stream: %w", err)
 	}
 
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("icy: status %d", resp.StatusCode)
+		return "", fmt.Errorf("%w %d", ErrStatus, resp.StatusCode)
 	}
 
 	metaint, err := strconv.Atoi(strings.TrimSpace(resp.Header.Get("Icy-Metaint")))
@@ -66,22 +74,26 @@ func StreamTitle(ctx context.Context, hc *http.Client, streamURL string) (string
 
 	for range maxBlocks {
 		// Skip the audio bytes up to the next metadata block.
-		if _, err := io.CopyN(io.Discard, resp.Body, int64(metaint)); err != nil {
-			return "", err
+		_, err = io.CopyN(io.Discard, resp.Body, int64(metaint))
+		if err != nil {
+			return "", fmt.Errorf("icy: skip audio: %w", err)
 		}
 		// One length byte in 16-byte units, then that many bytes of metadata.
-		if _, err := io.ReadFull(resp.Body, lenBuf[:]); err != nil {
-			return "", err
+		_, err = io.ReadFull(resp.Body, lenBuf[:])
+		if err != nil {
+			return "", fmt.Errorf("icy: read metadata length: %w", err)
 		}
 
-		n := int(lenBuf[0]) * 16
-		if n == 0 {
+		size := int(lenBuf[0]) * metaUnit
+		if size == 0 {
 			continue // no metadata in this block; try the next
 		}
 
-		meta := make([]byte, n)
-		if _, err := io.ReadFull(resp.Body, meta); err != nil {
-			return "", err
+		meta := make([]byte, size)
+
+		_, err = io.ReadFull(resp.Body, meta)
+		if err != nil {
+			return "", fmt.Errorf("icy: read metadata: %w", err)
 		}
 
 		if title := parseStreamTitle(string(meta)); title != "" {
@@ -129,29 +141,31 @@ func parseStreamTitle(meta string) string {
 // Latin-1), so a byte like 0xE9 ("é") would otherwise be invalid UTF-8 and
 // render as the replacement character. Valid UTF-8 is returned untouched;
 // anything else is decoded byte-for-byte through Windows-1252.
-func decodeText(s string) string {
-	if utf8.ValidString(s) {
-		return s
+func decodeText(text string) string {
+	if utf8.ValidString(text) {
+		return text
 	}
 
-	var b strings.Builder
-	b.Grow(len(s))
+	var out strings.Builder
+	out.Grow(len(text))
 
-	for i := range len(s) {
-		if r, ok := win1252[s[i]]; ok {
-			b.WriteRune(r)
+	for index := range len(text) {
+		if r, ok := win1252[text[index]]; ok {
+			out.WriteRune(r)
 		} else {
 			// Bytes outside the 0x80–0x9F block map straight to the matching
 			// Unicode code point (Latin-1 == the low Unicode range).
-			b.WriteRune(rune(s[i]))
+			out.WriteRune(rune(text[index]))
 		}
 	}
 
-	return b.String()
+	return out.String()
 }
 
 // win1252 holds the Windows-1252 code points that differ from Latin-1, all in
 // the 0x80–0x9F range (curly quotes, dashes, the euro sign, and friends).
+//
+//nolint:gochecknoglobals // a read-only lookup table: the code page itself, built once
 var win1252 = map[byte]rune{
 	0x80: '€', 0x82: '‚', 0x83: 'ƒ', 0x84: '„', 0x85: '…', 0x86: '†', 0x87: '‡',
 	0x88: 'ˆ', 0x89: '‰', 0x8A: 'Š', 0x8B: '‹', 0x8C: 'Œ', 0x8E: 'Ž', 0x91: '‘',
@@ -167,30 +181,32 @@ var win1252 = map[byte]rune{
 // an all-caps second half after a mixed-case first half is read as the artist.
 // guesses wrong on "Artist - CAPS TITLE" (Kendrick Lamar - HUMBLE.);
 // a per-station order is the upgrade if that shows up.
-func SplitArtistTitle(streamTitle string) (artist, title string) {
-	s := strings.TrimSpace(streamTitle)
-	if before, after, ok := strings.Cut(s, " - "); ok {
-		a, t := strings.TrimSpace(before), strings.TrimSpace(after)
-		if shouting(t) && a != strings.ToUpper(a) {
-			return t, a
-		}
+func SplitArtistTitle(streamTitle string) (string, string) {
+	trimmed := strings.TrimSpace(streamTitle)
 
-		return a, t
+	before, after, ok := strings.Cut(trimmed, " - ")
+	if !ok {
+		return "", trimmed
 	}
 
-	return "", s
+	first, second := strings.TrimSpace(before), strings.TrimSpace(after)
+	if shouting(second) && first != strings.ToUpper(first) {
+		return second, first
+	}
+
+	return first, second
 }
 
-// shouting reports whether s has a word in capitals and no lower case. Two letters in a
+// shouting reports whether text has a word in capitals and no lower case. Two letters in a
 // row make the word: an initialism like "S.O.S." is a song title as often as an artist.
-func shouting(s string) bool {
-	if s != strings.ToUpper(s) {
+func shouting(text string) bool {
+	if text != strings.ToUpper(text) {
 		return false
 	}
 
 	prev := false
 
-	for _, r := range s {
+	for _, r := range text {
 		letter := unicode.IsLetter(r)
 		if letter && prev {
 			return true

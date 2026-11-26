@@ -13,6 +13,7 @@ package sysbus
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/godbus/dbus/v5"
@@ -40,7 +41,9 @@ func (c *Conn) Signals() <-chan *dbus.Signal { return c.signals }
 func (c *Conn) Done() <-chan struct{} { return c.Context().Done() }
 
 // Call calls iface.member on dest's object at path and returns the reply's values.
-func (c *Conn) Call(ctx context.Context, dest string, path dbus.ObjectPath, iface, member string, args ...any) ([]any, error) {
+func (c *Conn) Call(
+	ctx context.Context, dest string, path dbus.ObjectPath, iface, member string, args ...any,
+) ([]any, error) {
 	call := c.Object(dest, path).CallWithContext(ctx, iface+"."+member, 0, args...)
 
 	return call.Body, call.Err
@@ -66,9 +69,9 @@ var ErrTimeout = errors.New("dbus: no answer from the bus")
 func Dial(ctx context.Context, addr string, timeout time.Duration) (*Conn, error) {
 	life, cancel := context.WithCancel(ctx)
 	timer := time.AfterFunc(timeout, cancel) // closes the connection a stalled handshake holds
-	q := make(queue, signalBuffer)
+	signals := make(queue, signalBuffer)
 
-	conn, err := dbus.Connect(addr, dbus.WithContext(life), dbus.WithSignalHandler(q))
+	conn, err := dbus.Connect(addr, dbus.WithContext(life), dbus.WithSignalHandler(signals))
 	if !timer.Stop() {
 		if conn != nil {
 			_ = conn.Close()
@@ -77,7 +80,7 @@ func Dial(ctx context.Context, addr string, timeout time.Duration) (*Conn, error
 		cancel()
 
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return nil, fmt.Errorf("dial %s: %w", addr, ctx.Err())
 		}
 
 		return nil, ErrTimeout
@@ -86,12 +89,14 @@ func Dial(ctx context.Context, addr string, timeout time.Duration) (*Conn, error
 	if err != nil {
 		cancel()
 
-		return nil, err
+		return nil, fmt.Errorf("dial %s: %w", addr, err)
 	}
 
-	context.AfterFunc(conn.Context(), cancel) // a closed connection releases life
+	// A closed connection releases life. conn's context is life's own child, so it ends
+	// with ctx too.
+	context.AfterFunc(conn.Context(), cancel) //nolint:contextcheck // conn.Context derives from life, from ctx
 
-	return &Conn{Conn: conn, signals: q}, nil
+	return &Conn{Conn: conn, signals: signals}, nil
 }
 
 // HasName reports whether name has an owner on the bus.

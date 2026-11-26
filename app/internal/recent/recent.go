@@ -10,6 +10,7 @@ package recent
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"sync"
@@ -49,46 +50,31 @@ type Store struct {
 // that cannot be read leaves the list empty and read-only, so the next stop cannot
 // replace a history that may still be intact on disk.
 func Open(path string) *Store {
-	s := &Store{path: path}
+	store := &Store{mu: sync.Mutex{}, entries: nil, path: path, loadErr: nil}
 
 	var loaded []Entry
 
-	s.loadErr = atomicjson.Load(path, &loaded)
-	atomicjson.LogLoad(slog.Default(), "recent list", path, s.loadErr)
+	store.loadErr = atomicjson.Load(path, &loaded)
+	atomicjson.LogLoad(slog.Default(), "recent list", path, store.loadErr)
 
 	if len(loaded) > maxEntries {
 		loaded = loaded[:maxEntries]
 	}
 
-	s.entries = loaded
+	store.entries = loaded
 
-	return s
+	return store
 }
 
 // LoadErr is what Open found wrong with the file, nil when it loaded or was absent.
 func (s *Store) LoadErr() error { return s.loadErr }
 
-// write persists next and makes it the list. The caller holds mu.
-func (s *Store) write(next []Entry) error {
-	if errors.Is(s.loadErr, atomicjson.ErrUnreadable) {
-		return s.loadErr
-	}
-	// atomicjson fsyncs before the rename: a speaker's normal "off" is a power cut,
-	// and a plain tmp+rename can leave a zero-length file behind one.
-	err := atomicjson.Write(s.path, next, fileMode)
-	if err != nil {
-		return err
-	}
-
-	s.entries = next
-
-	return nil
-}
-
-// Record adds e to the front of the list, deduplicating by (source, location) and
+// Record adds entry to the front of the list, deduplicating by (source, location) and
 // capping at maxEntries, then persists it.
-func (s *Store) Record(e Entry) error {
-	if e.Source == "" || e.Source == "STANDBY" {
+//
+//nolint:gocritic // hugeParam: the store keeps its own copy of the entry, so a pointer would only be copied from
+func (s *Store) Record(entry Entry) error {
+	if entry.Source == "" || entry.Source == "STANDBY" {
 		return nil
 	}
 
@@ -99,23 +85,23 @@ func (s *Store) Record(e Entry) error {
 	// station cannot fill the list.
 	next := make([]Entry, 0, min(len(s.entries)+1, maxEntries))
 
-	next = append(next, e)
-	for _, x := range s.entries {
+	next = append(next, entry)
+	for _, earlier := range s.entries {
 		if len(next) == maxEntries {
 			break
 		}
 
-		if x.Source == e.Source && x.Location == e.Location {
+		if earlier.Source == entry.Source && earlier.Location == entry.Location {
 			// A replay that reports no picture keeps the one looked up before: that
 			// lookup runs once per station, so a lost logo would not come back.
 			if next[0].Art == "" {
-				next[0].Art = x.Art
+				next[0].Art = earlier.Art
 			}
 
 			continue
 		}
 
-		next = append(next, x)
+		next = append(next, earlier)
 	}
 
 	return s.write(next)
@@ -127,15 +113,15 @@ func (s *Store) SetArt(source, location, art string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	i := slices.IndexFunc(s.entries, func(x Entry) bool {
+	index := slices.IndexFunc(s.entries, func(x Entry) bool {
 		return x.Source == source && x.Location == location && x.Art == ""
 	})
-	if i < 0 {
+	if index < 0 {
 		return nil
 	}
 
 	next := slices.Clone(s.entries)
-	next[i].Art = art
+	next[index].Art = art
 
 	return s.write(next)
 }
@@ -171,7 +157,7 @@ func (s *Store) LastStation() (Entry, bool) {
 		}
 	}
 
-	return Entry{}, false
+	return Entry{Source: "", Name: "", Location: "", Art: "", StoppedAt: time.Time{}}, false
 }
 
 // All returns a copy of the list, newest first.
@@ -183,4 +169,21 @@ func (s *Store) All() []Entry {
 	copy(out, s.entries)
 
 	return out
+}
+
+// write persists next and makes it the list. The caller holds mu.
+func (s *Store) write(next []Entry) error {
+	if errors.Is(s.loadErr, atomicjson.ErrUnreadable) {
+		return s.loadErr
+	}
+	// atomicjson fsyncs before the rename: a speaker's normal "off" is a power cut,
+	// and a plain tmp+rename can leave a zero-length file behind one.
+	err := atomicjson.Write(s.path, next, fileMode)
+	if err != nil {
+		return fmt.Errorf("recent: save: %w", err)
+	}
+
+	s.entries = next
+
+	return nil
 }

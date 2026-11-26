@@ -24,9 +24,22 @@ import (
 	"github.com/stein155/soundtap/app/internal/safehttp"
 )
 
-// base is the TuneIn OPML API root. It is a var (not a const) only so in-package
-// tests can point the client at a local httptest server; production never sets it.
-var base = "https://opml.radiotime.com"
+// base is the TuneIn OPML API root. A Client keeps its own copy, so in-package tests
+// can point one at a local httptest server.
+const base = "https://opml.radiotime.com"
+
+// timeout bounds every TuneIn request.
+const timeout = 10 * time.Second
+
+// maxBody caps how much of a TuneIn answer is read.
+const maxBody = 256 * 1024
+
+// Errors a request can end in; the text after them names the station or status.
+var (
+	errNoPlayable  = errors.New("tunein: no playable stream")
+	errForeignHost = errors.New("refusing non-TuneIn host")
+	errStatus      = errors.New("tunein status")
+)
 
 // formats is the codec list we ask TuneIn for. Some stations answer only with HLS.
 const formats = "mp3,aac,hls"
@@ -41,55 +54,95 @@ type Station struct {
 }
 
 // Client talks to the TuneIn OPML API.
-type Client struct{ http *http.Client }
+type Client struct {
+	http *http.Client
+	root string // the API root: base, or a test server
+}
 
 // New returns a Client with a sane timeout.
 func New() *Client {
-	return &Client{http: &http.Client{Timeout: 10 * time.Second, Transport: safehttp.SafeTransport()}}
+	return &Client{
+		http: &http.Client{Timeout: timeout, Transport: safehttp.SafeTransport()},
+		root: base,
+	}
 }
 
 // searchResp mirrors the Search.ashx render=json shape (all fields are strings).
 type searchResp struct {
-	Body []struct {
-		Element string `json:"element"`
-		Type    string `json:"type"`
-		Item    string `json:"item"`
-		Text    string `json:"text"`
-		GuideID string `json:"guide_id"`
-		Image   string `json:"image"`
-		Bitrate string `json:"bitrate"`
-		Subtext string `json:"subtext"`
-	} `json:"body"`
+	Body []searchItem `json:"body"`
+}
+
+// searchItem is one outline of a search answer.
+type searchItem struct {
+	Element string `json:"element"`
+	Type    string `json:"type"`
+	Item    string `json:"item"`
+	Text    string `json:"text"`
+	GuideID string `json:"guide_id"`
+	Image   string `json:"image"`
+	Bitrate string `json:"bitrate"`
+	Subtext string `json:"subtext"`
+}
+
+// describeResp mirrors the parts of the Describe.ashx render=json shape Describe reads.
+type describeResp struct {
+	Body []describeItem `json:"body"`
+}
+
+// describeItem is a station as Describe.ashx names it.
+type describeItem struct {
+	Name string `json:"name"`
+	Logo string `json:"logo"`
+}
+
+// nowPlayingResp mirrors the parts of the Describe.ashx render=json shape NowPlaying reads.
+type nowPlayingResp struct {
+	Body []nowPlayingItem `json:"body"`
+}
+
+// nowPlayingItem is a station's current track as Describe.ashx reports it.
+type nowPlayingItem struct {
+	IsMusic     boolish `json:"is_music"`
+	HasSong     boolish `json:"has_song"`
+	Logo        string  `json:"logo"`
+	CurrentSong string  `json:"current_song"`
+	Artist      string  `json:"current_artist"`
+	Album       string  `json:"current_album"`
+	AlbumArt    string  `json:"current_album_art"`
+	ArtistArt   string  `json:"current_artist_art"`
 }
 
 // Search returns matching radio stations for a free-text query.
 func (c *Client) Search(ctx context.Context, query string) ([]Station, error) {
 	u := fmt.Sprintf("%s/Search.ashx?query=%s&types=station&formats=%s&render=json",
-		base, url.QueryEscape(query), formats)
+		c.root, url.QueryEscape(query), formats)
 
 	body, err := c.get(ctx, u)
 	if err != nil {
 		return nil, err
 	}
 
-	var sr searchResp
-	if err := json.Unmarshal(body, &sr); err != nil {
+	var result searchResp
+
+	err = json.Unmarshal(body, &result)
+	if err != nil {
 		return nil, fmt.Errorf("tunein search decode: %w", err)
 	}
 
-	out := make([]Station, 0, len(sr.Body))
-	for _, o := range sr.Body {
+	out := make([]Station, 0, len(result.Body))
+	for index := range result.Body {
+		item := &result.Body[index]
 		// Keep only playable stations (skip "link" browse categories).
-		if o.Item != "station" || !strings.HasPrefix(o.GuideID, "s") {
+		if item.Item != "station" || !strings.HasPrefix(item.GuideID, "s") {
 			continue
 		}
 
 		out = append(out, Station{
-			ID:         o.GuideID,
-			Name:       o.Text,
-			Logo:       o.Image,
-			Bitrate:    o.Bitrate,
-			NowPlaying: o.Subtext,
+			ID:         item.GuideID,
+			Name:       item.Text,
+			Logo:       item.Image,
+			Bitrate:    item.Bitrate,
+			NowPlaying: item.Subtext,
 		})
 	}
 
@@ -98,25 +151,22 @@ func (c *Client) Search(ctx context.Context, query string) ([]Station, error) {
 
 // Describe returns a station's display name and logo URL for a guide id, via
 // Describe.ashx. Best-effort: returns empty strings (no error) when unavailable.
-func (c *Client) Describe(ctx context.Context, stationID string) (name, logo string) {
-	u := fmt.Sprintf("%s/Describe.ashx?id=%s&render=json", base, url.QueryEscape(stationID))
+func (c *Client) Describe(ctx context.Context, stationID string) (string, string) {
+	u := fmt.Sprintf("%s/Describe.ashx?id=%s&render=json", c.root, url.QueryEscape(stationID))
 
 	body, err := c.get(ctx, u)
 	if err != nil {
 		return "", ""
 	}
 
-	var dr struct {
-		Body []struct {
-			Name string `json:"name"`
-			Logo string `json:"logo"`
-		} `json:"body"`
-	}
-	if err := json.Unmarshal(body, &dr); err != nil || len(dr.Body) == 0 {
+	var described describeResp
+
+	err = json.Unmarshal(body, &described)
+	if err != nil || len(described.Body) == 0 {
 		return "", ""
 	}
 
-	return dr.Body[0].Name, dr.Body[0].Logo
+	return described.Body[0].Name, described.Body[0].Logo
 }
 
 // boolish decodes a TuneIn flag that may arrive as a JSON bool (is_music) or a
@@ -124,8 +174,8 @@ func (c *Client) Describe(ctx context.Context, stationID string) (name, logo str
 type boolish bool
 
 func (b *boolish) UnmarshalJSON(data []byte) error {
-	s := strings.Trim(strings.TrimSpace(string(data)), `"`)
-	*b = boolish(s == "true" || s == "1")
+	text := strings.Trim(strings.TrimSpace(string(data)), `"`)
+	*b = boolish(text == "true" || text == "1")
 
 	return nil
 }
@@ -146,49 +196,52 @@ type Track struct {
 // carry no in-stream metadata, and TuneIn sometimes still knows the song.
 // Best-effort: returns a zero Track (no error) when nothing is available.
 func (c *Client) NowPlaying(ctx context.Context, stationID string) (Track, error) {
-	u := fmt.Sprintf("%s/Describe.ashx?id=%s&render=json", base, url.QueryEscape(stationID))
+	u := fmt.Sprintf("%s/Describe.ashx?id=%s&render=json", c.root, url.QueryEscape(stationID))
 
 	body, err := c.get(ctx, u)
 	if err != nil {
 		return Track{}, err
 	}
 
-	var dr struct {
-		Body []struct {
-			IsMusic     boolish `json:"is_music"`
-			HasSong     boolish `json:"has_song"`
-			Logo        string  `json:"logo"`
-			CurrentSong string  `json:"current_song"`
-			Artist      string  `json:"current_artist"`
-			Album       string  `json:"current_album"`
-			AlbumArt    string  `json:"current_album_art"`
-			ArtistArt   string  `json:"current_artist_art"`
-		} `json:"body"`
-	}
-	if err := json.Unmarshal(body, &dr); err != nil || len(dr.Body) == 0 {
-		return Track{}, nil
+	current, ok := decodeNowPlaying(body)
+	if !ok {
+		return Track{Song: "", Artist: "", Album: "", Art: "", Logo: "", IsLive: false}, nil
 	}
 
-	b := dr.Body[0]
-
-	art := b.AlbumArt
+	art := current.AlbumArt
 	if art == "" {
-		art = b.ArtistArt
+		art = current.ArtistArt
 	}
 
 	return Track{
-		Song:   strings.TrimSpace(b.CurrentSong),
-		Artist: strings.TrimSpace(b.Artist),
-		Album:  strings.TrimSpace(b.Album),
+		Song:   strings.TrimSpace(current.CurrentSong),
+		Artist: strings.TrimSpace(current.Artist),
+		Album:  strings.TrimSpace(current.Album),
 		Art:    art,
-		Logo:   b.Logo,
-		IsLive: bool(b.IsMusic) || bool(b.HasSong),
+		Logo:   current.Logo,
+		IsLive: bool(current.IsMusic) || bool(current.HasSong),
 	}, nil
+}
+
+// decodeNowPlaying reads the station of a Describe.ashx answer; false when the answer
+// is malformed or names no station.
+func decodeNowPlaying(body []byte) (nowPlayingItem, bool) {
+	var described nowPlayingResp
+
+	err := json.Unmarshal(body, &described)
+	if err != nil || len(described.Body) == 0 {
+		return nowPlayingItem{
+			IsMusic: false, HasSong: false, Logo: "", CurrentSong: "", Artist: "", Album: "",
+			AlbumArt: "", ArtistArt: "",
+		}, false
+	}
+
+	return described.Body[0], true
 }
 
 // Resolve returns the stream URLs for a station id, in TuneIn's order.
 func (c *Client) Resolve(ctx context.Context, stationID string) ([]string, error) {
-	u := fmt.Sprintf("%s/Tune.ashx?id=%s&formats=%s", base, url.QueryEscape(stationID), formats)
+	u := fmt.Sprintf("%s/Tune.ashx?id=%s&formats=%s", c.root, url.QueryEscape(stationID), formats)
 
 	body, err := c.get(ctx, u)
 	if err != nil {
@@ -197,15 +250,16 @@ func (c *Client) Resolve(ctx context.Context, stationID string) ([]string, error
 
 	var urls []string
 
-	sc := bufio.NewScanner(bytes.NewReader(body))
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
+	scanner := bufio.NewScanner(bytes.NewReader(body))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
 		if strings.HasPrefix(line, "http://") || strings.HasPrefix(line, "https://") {
 			urls = append(urls, line)
 		}
 	}
 
-	if err := sc.Err(); err != nil {
+	err = scanner.Err()
+	if err != nil {
 		return nil, fmt.Errorf("tunein: read streams for %s: %w", stationID, err)
 	}
 
@@ -255,12 +309,12 @@ func PlayableURLs(urls []string) []string {
 	out := make([]string, 0, len(urls))
 
 	for _, mp3 := range []bool{true, false} {
-		for _, http := range []bool{true, false} {
+		for _, plain := range []bool{true, false} {
 			for _, u := range urls {
 				isMP3 := strings.Contains(strings.ToLower(u), "mp3")
 
 				isHTTP := strings.HasPrefix(u, "http://")
-				if isMP3 == mp3 && isHTTP == http {
+				if isMP3 == mp3 && isHTTP == plain {
 					out = append(out, u)
 				}
 			}
@@ -279,34 +333,39 @@ func (c *Client) StreamURLs(ctx context.Context, stationID string) ([]string, er
 
 	out := PlayableURLs(urls)
 	if len(out) == 0 {
-		return nil, fmt.Errorf("tunein: no playable stream for %s", stationID)
+		return nil, fmt.Errorf("%w for %s", errNoPlayable, stationID)
 	}
 
 	return out, nil
 }
 
 func (c *Client) get(ctx context.Context, u string) ([]byte, error) {
-	if !strings.HasPrefix(u, base+"/") {
-		return nil, fmt.Errorf("refusing non-TuneIn host: %s", u)
+	if !strings.HasPrefix(u, c.root+"/") {
+		return nil, fmt.Errorf("%w: %s", errForeignHost, u)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("tunein: build request: %w", err)
 	}
 
 	req.Header.Set("User-Agent", "SoundTap/1.0")
 
 	resp, err := safehttp.Do(ctx, c.http, req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("tunein: request: %w", err)
 	}
 
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("tunein status %d", resp.StatusCode)
+		return nil, fmt.Errorf("%w %d", errStatus, resp.StatusCode)
 	}
 
-	return io.ReadAll(io.LimitReader(resp.Body, 256*1024))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
+	if err != nil {
+		return nil, fmt.Errorf("tunein: read answer: %w", err)
+	}
+
+	return body, nil
 }

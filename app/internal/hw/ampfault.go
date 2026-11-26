@@ -23,12 +23,19 @@ type AmpFault struct {
 // NewAmpFault watches fault input gpio (model.Model.AmpFaultGPIO), or the line the init
 // script resolved into AMP_FAULT_GPIO.
 func NewAmpFault(gpio int) *AmpFault {
-	if n, err := strconv.Atoi(os.Getenv("AMP_FAULT_GPIO")); err == nil {
-		gpio = n
+	resolved, err := strconv.Atoi(os.Getenv("AMP_FAULT_GPIO"))
+	if err == nil {
+		gpio = resolved
 	}
 
-	return &AmpFault{gpio: gpio, every: 500 * time.Millisecond}
+	return &AmpFault{gpio: gpio, every: ampFaultPoll, active: atomic.Bool{}}
 }
+
+// ampFaultPoll is how often the fault input is read.
+const ampFaultPoll = 500 * time.Millisecond
+
+// ampFaultSettle is how long a line exported just now is given to grow its attributes.
+const ampFaultSettle = 50 * time.Millisecond
 
 // ampFaultReadFailLimit is how many consecutive read failures are tolerated before
 // the monitor gives up. Without a limit, a model that does not wire this GPIO logs a
@@ -43,6 +50,8 @@ const ampFaultClearReads = 4
 
 // ampFaultLatch asserts on the first faulted read and releases only after
 // ampFaultClearReads healthy reads in a row. healthy is the running healthy count.
+//
+//nolint:revive // flag-parameter: fault is the line's reading, the data the latch folds in
 func ampFaultLatch(was, fault bool, healthy int) (bool, int) {
 	if fault {
 		return true, 0
@@ -85,13 +94,13 @@ func (f *AmpFault) Run(ctx context.Context, modelName string, mute func(), log *
 	select {
 	case <-ctx.Done():
 		return
-	case <-time.After(50 * time.Millisecond):
+	case <-time.After(ampFaultSettle):
 	}
 
 	valuePath := filepath.Join(gpioDir, "value")
 
-	t := time.NewTicker(f.every)
-	defer t.Stop()
+	ticker := time.NewTicker(f.every)
+	defer ticker.Stop()
 
 	fails, healthy := 0, 0
 
@@ -99,7 +108,7 @@ func (f *AmpFault) Run(ctx context.Context, modelName string, mute func(), log *
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-ticker.C:
 		}
 
 		raw, err := os.ReadFile(valuePath)
@@ -118,23 +127,33 @@ func (f *AmpFault) Run(ctx context.Context, modelName string, mute func(), log *
 		}
 
 		fails = 0
-		// Active low: a healthy amplifier holds the line high, as stock's idle ST20 shows.
-		was := f.active.Load()
-
-		var fault bool
-
-		fault, healthy = ampFaultLatch(was, len(raw) > 0 && raw[0] == '0', healthy)
-		f.active.Store(fault)
-
-		switch {
-		case fault && !was:
-			// Mute now for latency; trackOwnership keeps it muted while the latch is set.
-			log.Error("amp fault asserted: muting output")
-			mute()
-		case !fault && was:
-			// Leave the unmute to trackOwnership, which knows whether a source is
-			// playing and whether PCM is actually flowing.
-			log.Warn("amp fault cleared")
-		}
+		healthy = f.fold(raw, healthy, mute, log)
 	}
+}
+
+// fold folds one reading of the fault line into the latch and acts on its edges, and
+// returns the running healthy count.
+func (f *AmpFault) fold(raw []byte, healthy int, mute func(), log *slog.Logger) int {
+	// Active low: a healthy amplifier holds the line high, as stock's idle ST20 shows.
+	was := f.active.Load()
+
+	var fault bool
+
+	fault, healthy = ampFaultLatch(was, len(raw) > 0 && raw[0] == '0', healthy)
+	f.active.Store(fault)
+
+	switch {
+	case fault && !was:
+		// Mute now for latency; trackOwnership keeps it muted while the latch is set.
+		log.Error("amp fault asserted: muting output")
+		mute()
+	case !fault && was:
+		// Leave the unmute to trackOwnership, which knows whether a source is
+		// playing and whether PCM is actually flowing.
+		log.Warn("amp fault cleared")
+	default:
+		// No edge: the latch holds its state.
+	}
+
+	return healthy
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-package counters
+package counters_test
 
 import (
 	"bytes"
@@ -11,15 +11,19 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/stein155/soundtap/app/internal/counters"
 )
 
 func TestMatchesCountsNeedlesAcrossWrites(t *testing.T) {
+	t.Parallel()
+
 	var (
-		out bytes.Buffer
-		c   atomic.Uint64
+		out   bytes.Buffer
+		count atomic.Uint64
 	)
 
-	w := Matches(&out, "underrun!!!", &c)
+	writer := counters.Matches(&out, "underrun!!!", &count)
 
 	parts := []string{
 		"underrun!!! (at least 3.1 ms long)\n",
@@ -27,12 +31,13 @@ func TestMatchesCountsNeedlesAcrossWrites(t *testing.T) {
 		"overrun!!! is not one\n", "underrun", "!", "!!\n",
 	}
 	for _, part := range parts {
-		if _, err := w.Write([]byte(part)); err != nil {
+		_, err := writer.Write([]byte(part))
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	if got := c.Load(); got != 5 {
+	if got := count.Load(); got != 5 {
 		t.Errorf("counted %d underruns, want 5", got)
 	}
 
@@ -47,9 +52,11 @@ func TestMatchesCountsNeedlesAcrossWrites(t *testing.T) {
 }
 
 func TestCountStartCountsPerBoot(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "run", "soundtapd-starts")
 	for want := range uint64(3) {
-		got, err := CountStart(path)
+		got, err := counters.CountStart(path)
 		if err != nil || got != want {
 			t.Fatalf("start %d: %d restarts, err %v", want+1, got, err)
 		}
@@ -60,45 +67,47 @@ func TestCountStartCountsPerBoot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got, err := CountStart(path); err != nil || got != 0 {
+	got, err := counters.CountStart(path)
+	if err != nil || got != 0 {
 		t.Errorf("after a garbled file: %d, %v", got, err)
 	}
 }
 
+//nolint:paralleltest // resets and reads the process-wide counts other tests could move
 func TestDaemonCountsAndSnapshot(t *testing.T) {
-	Reset()
-	t.Cleanup(Reset)
+	counters.Reset()
+	t.Cleanup(counters.Reset)
 
 	var wg sync.WaitGroup
 	for range 50 {
-		wg.Go(func() { DaemonRestarted("librespot") })
+		wg.Go(func() { counters.DaemonRestarted("librespot") })
 	}
 
 	wg.Wait()
-	DaemonRestarted("shairport-sync")
+	counters.DaemonRestarted("shairport-sync")
 
-	at := time.Date(2026, 11, 21, 10, 0, 0, 0, time.UTC)
-	DaemonCrashLooped("librespot", 20, "exit status 1", at)
-	DaemonCrashLooped("librespot", 20, "exit status 2", at.Add(time.Minute))
-	BufferUnderruns.Add(2)
-	BCOFlashFailures.Add(1)
+	restedAt := time.Date(2026, 11, 21, 10, 0, 0, 0, time.UTC)
+	counters.DaemonCrashLooped("librespot", 20, "exit status 1", restedAt)
+	counters.DaemonCrashLooped("librespot", 20, "exit status 2", restedAt.Add(time.Minute))
+	counters.BufferUnderruns.Add(2)
+	counters.BCOFlashFailures.Add(1)
 
-	s := Take()
-	if s.DaemonRestarts["librespot"] != 50 || s.DaemonRestarts["shairport-sync"] != 1 {
-		t.Errorf("daemon restarts %v", s.DaemonRestarts)
+	snap := counters.Take()
+	if snap.DaemonRestarts["librespot"] != 50 || snap.DaemonRestarts["shairport-sync"] != 1 {
+		t.Errorf("daemon restarts %v", snap.DaemonRestarts)
 	}
 
-	if s.BufferUnderruns != 2 || s.BCOFlashFailures != 1 || s.ALSAUnderruns != 0 {
-		t.Errorf("snapshot %+v", s)
+	if snap.BufferUnderruns != 2 || snap.BCOFlashFailures != 1 || snap.ALSAUnderruns != 0 {
+		t.Errorf("snapshot %+v", snap)
 	}
 
-	loop := CrashLoops()["librespot"]
-	if loop.Count != 2 || loop.Err != "exit status 2" || loop.Runs != 20 || !loop.At.Equal(at.Add(time.Minute)) {
+	loop := counters.CrashLoops()["librespot"]
+	if loop.Count != 2 || loop.Err != "exit status 2" || loop.Runs != 20 || !loop.At.Equal(restedAt.Add(time.Minute)) {
 		t.Errorf("crash loop %+v", loop)
 	}
 	// The maps handed out are copies: a caller cannot change the counts.
-	s.DaemonRestarts["librespot"] = 0
-	if DaemonRestarts()["librespot"] != 50 {
+	snap.DaemonRestarts["librespot"] = 0
+	if counters.DaemonRestarts()["librespot"] != 50 {
 		t.Error("the snapshot shares its map with the counters")
 	}
 }

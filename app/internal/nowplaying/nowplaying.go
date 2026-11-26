@@ -13,6 +13,7 @@ package nowplaying
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -41,6 +42,21 @@ const shownFor = 2 * ttl
 // streamURLTTL is how long a resolved stream URL is reused before re-resolving.
 const streamURLTTL = 5 * time.Minute
 
+// clientTimeout bounds every artwork lookup and stream read.
+const clientTimeout = 12 * time.Second
+
+// Each lookup of a refresh gets its own budget. One shared 12 s context let a slow ICY
+// read use it all up, so the TuneIn fallback never ran.
+const (
+	icyBudget     = 6 * time.Second
+	tuneinBudget  = 4 * time.Second
+	artworkBudget = 4 * time.Second
+)
+
+// maxCached is how many stations the now-playing cache holds before expired entries
+// are dropped: about the stations currently on screen.
+const maxCached = 64
+
 // entry is a now-playing lookup cached briefly so the UI's poll (every few
 // seconds) doesn't re-read the stream for the same station. fetching guards
 // against launching a second background refresh while one is already in flight.
@@ -60,29 +76,33 @@ type urlEntry struct {
 // Enricher fills in live track metadata for playing stations. Create with New;
 // safe for concurrent use.
 type Enricher struct {
-	speaker interface {
-		NowPlaying(ctx context.Context) (*speaker.NowPlaying, error)
-	}
-	tunein *tunein.Client
-	proxy  *http.Client // artwork lookups (public hosts only)
-	stream *http.Client // reads ICY metadata off the audio stream
+	speaker nowPlayer
+	tunein  *tunein.Client
+	proxy   *http.Client // artwork lookups (public hosts only)
+	stream  *http.Client // reads ICY metadata off the audio stream
 
 	mu         sync.Mutex
 	cache      map[string]entry    // now-playing, keyed by station id
 	streamURLs map[string]urlEntry // resolved stream URL, keyed by station id
 }
 
+// nowPlayer is the speaker's now-playing source.
+type nowPlayer interface {
+	NowPlaying(ctx context.Context) (*speaker.NowPlaying, error)
+}
+
 // New builds an Enricher. The outbound clients only dial public addresses
 // (safehttp.SafeTransport), since stream and artwork URLs come from third parties.
-func New(sp interface {
+func New(source interface {
 	NowPlaying(ctx context.Context) (*speaker.NowPlaying, error)
-}, tc *tunein.Client,
+}, client *tunein.Client,
 ) *Enricher {
 	return &Enricher{
-		speaker:    sp,
-		tunein:     tc,
-		proxy:      &http.Client{Timeout: 12 * time.Second, Transport: safehttp.SafeTransport()},
-		stream:     &http.Client{Timeout: 12 * time.Second, Transport: safehttp.SafeTransport()},
+		speaker:    source,
+		tunein:     client,
+		proxy:      &http.Client{Timeout: clientTimeout, Transport: safehttp.SafeTransport()},
+		stream:     &http.Client{Timeout: clientTimeout, Transport: safehttp.SafeTransport()},
+		mu:         sync.Mutex{},
 		cache:      map[string]entry{},
 		streamURLs: map[string]urlEntry{},
 	}
@@ -92,14 +112,14 @@ func New(sp interface {
 // the web UI shows. The MQTT bridge uses it so clients see the track,
 // not just the station name.
 func (e *Enricher) NowPlaying(ctx context.Context) (*speaker.NowPlaying, error) {
-	np, err := e.speaker.NowPlaying(ctx)
+	playing, err := e.speaker.NowPlaying(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("nowplaying: %w", err)
 	}
 
-	e.Enrich(np)
+	e.Enrich(playing) //nolint:contextcheck // the metadata refresh runs on its own, past this request
 
-	return np, nil
+	return playing, nil
 }
 
 // Track returns the live "now playing" line for a TuneIn station id — "Artist -
@@ -108,27 +128,18 @@ func (e *Enricher) NowPlaying(ctx context.Context) (*speaker.NowPlaying, error) 
 // background refresh when stale, so it stays fast; it returns ("", false) until
 // the first lookup lands. Used to drive the track onto the speaker's own display
 // via marge (the firmware only shows what the cloud playback doc carries).
-func (e *Enricher) Track(id string) (string, bool) {
-	if !strings.HasPrefix(id, "s") {
+func (e *Enricher) Track(stationID string) (string, bool) {
+	if !strings.HasPrefix(stationID, "s") {
 		return "", false
 	}
 
-	e.mu.Lock()
-
-	ent, ok := e.cache[id]
-	if (!ok || time.Since(ent.at) >= ttl) && !ent.fetching {
-		ent.fetching = true
-		e.cache[id] = ent
-
-		safego.Go("nowplaying.refresh", func() { e.refresh(id) })
-	}
-	e.mu.Unlock()
-
+	ent, ok := e.cached(stationID)
 	if !ok || ent.song == "" || time.Since(ent.at) >= shownFor {
 		return "", false
 	}
 
-	if artist := strings.TrimSpace(ent.artist); artist != "" && !strings.EqualFold(artist, strings.TrimSpace(ent.song)) {
+	artist := strings.TrimSpace(ent.artist)
+	if artist != "" && !strings.EqualFold(artist, strings.TrimSpace(ent.song)) {
 		return artist + " - " + ent.song, true
 	}
 
@@ -140,70 +151,84 @@ func (e *Enricher) Track(id string) (string, bool) {
 // whatever is cached and kicks off a refresh when the entry is stale.
 // Best-effort: with nothing cached yet the UI just shows the station until the
 // next poll fills it in.
-func (e *Enricher) Enrich(np *speaker.NowPlaying) {
-	if np == nil {
+func (e *Enricher) Enrich(playing *speaker.NowPlaying) {
+	if playing == nil {
 		return
 	}
 
-	if np.Art == speaker.InternetRadioIcon {
-		np.Art = ""
+	if playing.Art == speaker.InternetRadioIcon {
+		playing.Art = ""
 	}
 
-	if !strings.HasPrefix(np.StationID, "s") && !speaker.OwnStream(np.StationID) {
+	if !strings.HasPrefix(playing.StationID, "s") && !speaker.OwnStream(playing.StationID) {
 		return
 	}
 
-	if np.PlayStatus != "" && np.PlayStatus != "PLAY_STATE" && np.PlayStatus != "BUFFERING_STATE" {
+	if playing.PlayStatus != "" && playing.PlayStatus != "PLAY_STATE" && playing.PlayStatus != "BUFFERING_STATE" {
 		return // nothing is playing — don't show a stale song
 	}
 
-	id := np.StationID
-
-	e.mu.Lock()
-
-	ent, ok := e.cache[id]
-	if (!ok || time.Since(ent.at) >= ttl) && !ent.fetching {
-		ent.fetching = true
-		e.cache[id] = ent
-
-		safego.Go("nowplaying.refresh", func() { e.refresh(id) })
-	}
-	e.mu.Unlock()
-
+	ent, ok := e.cached(playing.StationID)
 	if !ok || time.Since(ent.at) >= shownFor {
 		return
 	}
+
+	apply(playing, &ent)
+}
+
+// cached returns the cache entry for a station and whether there is one, and starts a
+// background refresh when the entry is stale and none is in flight.
+func (e *Enricher) cached(stationID string) (entry, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	ent, ok := e.cache[stationID]
+	if (!ok || time.Since(ent.at) >= ttl) && !ent.fetching {
+		ent.fetching = true
+		e.cache[stationID] = ent
+
+		safego.Go("nowplaying.refresh", func() { e.refresh(stationID) })
+	}
+
+	return ent, ok
+}
+
+// apply puts a cached lookup on the speaker's now-playing.
+func apply(playing *speaker.NowPlaying, ent *entry) {
 	// The speaker fills Track with the station name as a placeholder and never
 	// knows the artist, so the stream's live song wins whenever it has one.
-	if ent.song != "" {
-		np.Track = ent.song
-		np.Artist = ent.artist
-		// Some streams (e.g. NPO) put the programme name where the artist goes;
-		// when that just repeats the station, drop it rather than show it twice.
-		if strings.EqualFold(strings.TrimSpace(np.Artist), strings.TrimSpace(np.Station)) {
-			np.Artist = ""
+	if ent.song == "" {
+		if playing.Art == "" && ent.art != "" {
+			playing.Art = ent.art
 		}
-		// The speaker's own art is the generic station logo; our track cover is
-		// more specific, so it takes priority when we have one.
-		if ent.art != "" {
-			np.Art = ent.art
-		}
-	} else if np.Art == "" && ent.art != "" {
-		np.Art = ent.art
+
+		return
 	}
+
+	playing.Track = ent.song
+	playing.Artist = ent.artist
+	// Some streams (e.g. NPO) put the programme name where the artist goes;
+	// when that just repeats the station, drop it rather than show it twice.
+	if strings.EqualFold(strings.TrimSpace(playing.Artist), strings.TrimSpace(playing.Station)) {
+		playing.Artist = ""
+	}
+	// The speaker's own art is the generic station logo; our track cover is
+	// more specific, so it takes priority when we have one.
+	if ent.art != "" {
+		playing.Art = ent.art
+	}
+}
+
+// step is the budget of one lookup of a refresh.
+func step(budget time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), budget)
 }
 
 // refresh reads the current track off the station's stream and looks up cover
 // art, then stores the result. Runs in its own goroutine off a fresh context
 // (the request that triggered it has already returned). Any failure caches an
 // empty entry so the poll doesn't retry until the TTL lapses.
-func (e *Enricher) refresh(id string) {
-	// Each lookup gets its own budget. One shared 12 s context let a slow ICY read use
-	// it all up, so the TuneIn fallback never ran.
-	step := func(d time.Duration) (context.Context, context.CancelFunc) {
-		return context.WithTimeout(context.Background(), d)
-	}
-
+func (e *Enricher) refresh(stationID string) {
 	// This goroutine parses untrusted stream/ICY/artwork data. If any of that
 	// panics, clear the entry's `fetching` flag so the station isn't wedged
 	// forever — the Enrich/Track guard skips a station while fetching is true, so
@@ -212,49 +237,28 @@ func (e *Enricher) refresh(id string) {
 	defer func() {
 		if r := recover(); r != nil {
 			e.mu.Lock()
-			e.cache[id] = entry{at: time.Now()}
+			e.cache[stationID] = entry{song: "", artist: "", art: "", at: time.Now(), fetching: false}
 			e.mu.Unlock()
 		}
 	}()
 
-	var ent entry
 	// Primary: the standard ICY metadata in the stream itself.
-	ctx, cancel := step(6 * time.Second)
-	if url := e.streamURL(ctx, id); url != "" {
-		if title, err := icy.StreamTitle(ctx, e.stream, url); err != nil {
-			if !errors.Is(err, context.DeadlineExceeded) {
-				e.invalidateStreamURL(id) // stale URL / expired token — re-resolve next time
-			}
-		} else {
-			ent.artist, ent.song = icy.SplitArtistTitle(title)
-		}
-	}
-
-	cancel()
+	ent := e.streamTrack(stationID)
 	// TuneIn's Describe fills in when the stream carried no track metadata, and
 	// settles the order when it did: "Artist - Title" is only a convention, and
 	// some stations (Qmusic) send "Title - ARTIST".
-	if !speaker.OwnStream(id) {
-		ctx, cancel = step(4 * time.Second)
-		t, err := e.tunein.NowPlaying(ctx, id)
-
-		cancel()
-
-		if err == nil && t.Song != "" {
-			if ent.song == "" {
-				ent.song, ent.artist, ent.art = t.Song, t.Artist, t.Art
-			} else {
-				ent.artist, ent.song = orderLike(ent.artist, ent.song, t)
-			}
-		}
+	if !speaker.OwnStream(stationID) {
+		e.tuneinTrack(stationID, &ent)
 	}
 	// Cover art for whatever we found: look it up generically when we don't
 	// already have one (ICY carries none; TuneIn sometimes does).
 	if ent.song != "" && ent.art == "" {
 		term := strings.TrimSpace(ent.artist + " " + ent.song)
 
-		ctx, cancel := step(4 * time.Second)
-		if art, err := artwork.Search(ctx, e.proxy, term); err == nil {
+		ctx, cancel := step(artworkBudget)
+
+		art, err := artwork.Search(ctx, e.proxy, term)
+		if err == nil {
 			ent.art = art
 		}
 
@@ -263,25 +267,75 @@ func (e *Enricher) refresh(id string) {
 
 	ent.at = time.Now()
 
+	e.store(stationID, &ent)
+}
+
+// streamTrack reads the artist and song off the station's own stream.
+func (e *Enricher) streamTrack(stationID string) entry {
+	var ent entry
+
+	ctx, cancel := step(icyBudget)
+	defer cancel()
+
+	streamURL := e.streamURL(ctx, stationID)
+	if streamURL == "" {
+		return ent
+	}
+
+	title, err := icy.StreamTitle(ctx, e.stream, streamURL)
+	if err != nil {
+		if !errors.Is(err, context.DeadlineExceeded) {
+			e.invalidateStreamURL(stationID) // stale URL / expired token — re-resolve next time
+		}
+
+		return ent
+	}
+
+	ent.artist, ent.song = icy.SplitArtistTitle(title)
+
+	return ent
+}
+
+// tuneinTrack fills ent from TuneIn's Describe when the stream named no song, and
+// orders the stream's pair like TuneIn's when it did.
+func (e *Enricher) tuneinTrack(stationID string, ent *entry) {
+	ctx, cancel := step(tuneinBudget)
+	track, err := e.tunein.NowPlaying(ctx, stationID)
+
+	cancel()
+
+	if err != nil || track.Song == "" {
+		return
+	}
+
+	if ent.song == "" {
+		ent.song, ent.artist, ent.art = track.Song, track.Artist, track.Art
+	} else {
+		ent.artist, ent.song = orderLike(ent.artist, ent.song, &track)
+	}
+}
+
+// store caches a station's lookup.
+func (e *Enricher) store(stationID string, ent *entry) {
 	e.mu.Lock()
+	defer e.mu.Unlock()
 	// The cache only needs the stations currently on screen; drop expired
 	// entries once it grows past that so it can't accumulate for months.
-	if len(e.cache) > 64 {
+	if len(e.cache) > maxCached {
 		for k, v := range e.cache {
-			if k != id && time.Since(v.at) >= ttl && !v.fetching {
+			if k != stationID && time.Since(v.at) >= ttl && !v.fetching {
 				delete(e.cache, k)
 			}
 		}
 	}
 
-	e.cache[id] = ent
-	e.mu.Unlock()
+	e.cache[stationID] = *ent
 }
 
 // orderLike swaps an ICY artist/title pair when TuneIn names the same track the
 // other way round.
-func orderLike(artist, song string, t tunein.Track) (string, string) {
-	if strings.EqualFold(artist, t.Song) && strings.EqualFold(song, t.Artist) {
+func orderLike(artist, song string, track *tunein.Track) (string, string) {
+	if strings.EqualFold(artist, track.Song) && strings.EqualFold(song, track.Artist) {
 		return song, artist
 	}
 
@@ -290,35 +344,35 @@ func orderLike(artist, song string, t tunein.Track) (string, string) {
 
 // streamURL returns the station's playable stream URL, resolved via TuneIn and
 // cached so each poll doesn't re-resolve. Empty on failure.
-func (e *Enricher) streamURL(ctx context.Context, id string) string {
-	if speaker.OwnStream(id) {
-		return id
+func (e *Enricher) streamURL(ctx context.Context, stationID string) string {
+	if speaker.OwnStream(stationID) {
+		return stationID
 	}
 
 	e.mu.Lock()
-	if u, ok := e.streamURLs[id]; ok && time.Since(u.at) < streamURLTTL {
+	if cachedURL, ok := e.streamURLs[stationID]; ok && time.Since(cachedURL.at) < streamURLTTL {
 		e.mu.Unlock()
 
-		return u.url
+		return cachedURL.url
 	}
 	e.mu.Unlock()
 
-	urls, err := e.tunein.Resolve(ctx, id)
+	urls, err := e.tunein.Resolve(ctx, stationID)
 	if err != nil {
 		return ""
 	}
 
-	u := tunein.PlayableURL(urls)
-	if u == "" {
+	playable := tunein.PlayableURL(urls)
+	if playable == "" {
 		return ""
 	}
 
 	e.mu.Lock()
 	e.pruneStreamURLsLocked()
-	e.streamURLs[id] = urlEntry{url: u, at: time.Now()}
+	e.streamURLs[stationID] = urlEntry{url: playable, at: time.Now()}
 	e.mu.Unlock()
 
-	return u
+	return playable
 }
 
 // pruneStreamURLsLocked drops expired stream URLs as new ones come in, so station churn
@@ -333,8 +387,8 @@ func (e *Enricher) pruneStreamURLsLocked() {
 }
 
 // invalidateStreamURL drops a cached stream URL so it is re-resolved next time.
-func (e *Enricher) invalidateStreamURL(id string) {
+func (e *Enricher) invalidateStreamURL(stationID string) {
 	e.mu.Lock()
-	delete(e.streamURLs, id)
+	delete(e.streamURLs, stationID)
 	e.mu.Unlock()
 }

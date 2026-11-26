@@ -39,9 +39,9 @@ func (g *mImageGroup) artwork() string {
 		return ""
 	}
 
-	for _, im := range g.Image {
-		if im.Size == "DEFAULT" {
-			return artworkPath(im.FileID)
+	for _, image := range g.Image {
+		if image.Size == "DEFAULT" {
+			return artworkPath(image.FileID)
 		}
 	}
 
@@ -66,49 +66,67 @@ type mAlbum struct {
 	Name   string       `json:"name"`
 	Artist []mRef       `json:"artist"`
 	Cover  *mImageGroup `json:"cover_group"`
-	Date   *struct {
-		Year int `json:"year"`
-	} `json:"date"`
-	Disc []struct {
-		Track []mRef `json:"track"`
-	} `json:"disc"`
+	Date   *mDate       `json:"date"`
+	Disc   []mDisc      `json:"disc"`
+}
+
+type mDate struct {
+	Year int `json:"year"`
+}
+
+type mDisc struct {
+	Track []mRef `json:"track"`
 }
 
 type mArtist struct {
-	GID      string       `json:"gid"`
-	Name     string       `json:"name"`
-	Portrait *mImageGroup `json:"portrait_group"`
-	TopTrack []struct {
-		Country string `json:"country"`
-		Track   []mRef `json:"track"`
-	} `json:"top_track"`
-	AlbumGroup  []struct{ Album []mRef } `json:"album_group"`
-	SingleGroup []struct{ Album []mRef } `json:"single_group"`
-	Compilation []struct{ Album []mRef } `json:"compilation_group"`
-	AppearsOn   []struct{ Album []mRef } `json:"appears_on_group"`
+	GID         string       `json:"gid"`
+	Name        string       `json:"name"`
+	Portrait    *mImageGroup `json:"portrait_group"`
+	TopTrack    []mTopTrack  `json:"top_track"`
+	AlbumGroup  []mRelease   `json:"album_group"`
+	SingleGroup []mRelease   `json:"single_group"`
+	Compilation []mRelease   `json:"compilation_group"`
+	AppearsOn   []mRelease   `json:"appears_on_group"`
+}
+
+type mTopTrack struct {
+	Country string `json:"country"`
+	Track   []mRef `json:"track"`
+}
+
+// mRelease is one release of an artist, in its regional variants. Its key has no tag of
+// its own on the wire: encoding/json matches "Album" without regard to case.
+type mRelease struct {
+	Album []mRef `json:"Album"`
 }
 
 func mRefs(kind string, in []mRef) []Ref {
 	out := make([]Ref, 0, len(in))
-	for _, r := range in {
-		out = append(out, Ref{URI: uriOf(kind, r.GID), Name: r.Name})
+	for _, ref := range in {
+		out = append(out, Ref{URI: uriOf(kind, ref.GID), Name: ref.Name})
 	}
 
 	return out
 }
 
-func (t mTrack) norm() Track {
-	out := Track{URI: uriOf("track", t.GID), Name: t.Name, Artists: mRefs("artist", t.Artist), DurationMs: t.Duration}
+func (t *mTrack) norm() Track {
+	out := Track{
+		URI: uriOf(kindTrack, t.GID), Name: t.Name, Artists: mRefs(kindArtist, t.Artist),
+		Album: nil, Artwork: "", DurationMs: t.Duration,
+	}
 	if t.Album != nil {
-		out.Album = &Ref{URI: uriOf("album", t.Album.GID), Name: t.Album.Name}
+		out.Album = &Ref{URI: uriOf(kindAlbum, t.Album.GID), Name: t.Album.Name}
 		out.Artwork = t.Album.Cover.artwork()
 	}
 
 	return out
 }
 
-func (a mAlbum) norm() Album {
-	out := Album{URI: uriOf("album", a.GID), Name: a.Name, Artists: mRefs("artist", a.Artist), Artwork: a.Cover.artwork()}
+func (a *mAlbum) norm() Album {
+	out := Album{
+		URI: uriOf(kindAlbum, a.GID), Name: a.Name, Artists: mRefs(kindArtist, a.Artist), Artwork: a.Cover.artwork(),
+		ReleaseDate: "", Group: "", Total: 0, Tracks: nil,
+	}
 	if a.Date != nil && a.Date.Year > 0 {
 		out.ReleaseDate = strconv.Itoa(a.Date.Year)
 	}
@@ -119,13 +137,14 @@ func (a mAlbum) norm() Album {
 // ---- fetching -----------------------------------------------------------------------
 
 // spclient GETs a path on Spotify's client API through librespot and decodes the JSON.
-func (c *Client) spclient(ctx context.Context, path string, v any) error {
+func (c *Client) spclient(ctx context.Context, path string, into any) error {
 	body, err := c.ctl(ctx, http.MethodGet, "/spclient", url.Values{"path": {path}})
 	if err != nil {
 		return err
 	}
 
-	if err := json.Unmarshal(body, v); err != nil {
+	err = json.Unmarshal(body, into)
+	if err != nil {
 		return fmt.Errorf("spclient %s: %w", path, err)
 	}
 
@@ -151,13 +170,16 @@ func (m *metaCache) get(key string) (any, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if el, ok := m.byKey[key]; ok {
-		m.order.MoveToFront(el)
-
-		return el.Value.(cacheEntry).val, true
+	element, ok := m.byKey[key]
+	if !ok {
+		return nil, false
 	}
 
-	return nil, false
+	m.order.MoveToFront(element)
+
+	entry, ok := element.Value.(cacheEntry)
+
+	return entry.val, ok
 }
 
 func (m *metaCache) put(key string, val any) {
@@ -168,54 +190,61 @@ func (m *metaCache) put(key string, val any) {
 		m.byKey, m.order = map[string]*list.Element{}, list.New()
 	}
 
-	if el, ok := m.byKey[key]; ok {
-		el.Value = cacheEntry{key, val}
-		m.order.MoveToFront(el)
+	if element, ok := m.byKey[key]; ok {
+		element.Value = cacheEntry{key: key, val: val}
+		m.order.MoveToFront(element)
 
 		return
 	}
 
-	m.byKey[key] = m.order.PushFront(cacheEntry{key, val})
+	m.byKey[key] = m.order.PushFront(cacheEntry{key: key, val: val})
 	for m.order.Len() > metaCacheEntries {
 		old := m.order.Back()
 		m.order.Remove(old)
-		delete(m.byKey, old.Value.(cacheEntry).key)
+
+		if entry, ok := old.Value.(cacheEntry); ok {
+			delete(m.byKey, entry.key)
+		}
 	}
 }
 
-func (c *Client) track(ctx context.Context, id string) (Track, error) {
-	if v, ok := c.cache.get("t:" + id); ok {
-		return v.(Track), nil
+func (c *Client) track(ctx context.Context, trackID string) (Track, error) {
+	if cached, ok := c.cache.get("t:" + trackID); ok {
+		if track, isTrack := cached.(Track); isTrack {
+			return track, nil
+		}
 	}
 
-	var m mTrack
+	var meta mTrack
 
-	err := c.spclient(ctx, "/metadata/4/track/"+hexID(id), &m)
+	err := c.spclient(ctx, "/metadata/4/track/"+hexID(trackID), &meta)
 	if err != nil {
 		return Track{}, err
 	}
 
-	t := m.norm()
-	c.cache.put("t:"+id, t)
+	track := meta.norm()
+	c.cache.put("t:"+trackID, track)
 
-	return t, nil
+	return track, nil
 }
 
-func (c *Client) albumMeta(ctx context.Context, id string) (mAlbum, error) {
-	if v, ok := c.cache.get("a:" + id); ok {
-		return v.(mAlbum), nil
+func (c *Client) albumMeta(ctx context.Context, albumID string) (mAlbum, error) {
+	if cached, ok := c.cache.get("a:" + albumID); ok {
+		if meta, isAlbum := cached.(mAlbum); isAlbum {
+			return meta, nil
+		}
 	}
 
-	var m mAlbum
+	var meta mAlbum
 
-	err := c.spclient(ctx, "/metadata/4/album/"+hexID(id), &m)
+	err := c.spclient(ctx, "/metadata/4/album/"+hexID(albumID), &meta)
 	if err != nil {
 		return mAlbum{}, err
 	}
 
-	c.cache.put("a:"+id, m)
+	c.cache.put("a:"+albumID, meta)
 
-	return m, nil
+	return meta, nil
 }
 
 // fetchParallel is how many metadata requests run at once: enough to fill a list in
@@ -224,7 +253,7 @@ const fetchParallel = 8
 
 // each runs fn for every id, fetchParallel at a time, and keeps the results in order.
 // Items that fail are left out: one track Spotify withdrew must not blank a playlist.
-func each[T any](ctx context.Context, ids []string, fn func(context.Context, string) (T, error)) ([]T, error) {
+func each[T any](ctx context.Context, ids []string, fetch func(context.Context, string) (T, error)) ([]T, error) {
 	type res struct {
 		v  T
 		ok bool
@@ -239,7 +268,7 @@ func each[T any](ctx context.Context, ids []string, fn func(context.Context, str
 		firstErr error
 	)
 
-	for i, id := range ids {
+	for index, itemID := range ids {
 		wg.Add(1)
 
 		sem <- struct{}{}
@@ -248,7 +277,7 @@ func each[T any](ctx context.Context, ids []string, fn func(context.Context, str
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			v, err := fn(ctx, id)
+			value, err := fetch(ctx, itemID)
 			if err != nil {
 				mu.Lock()
 				if firstErr == nil {
@@ -259,32 +288,32 @@ func each[T any](ctx context.Context, ids []string, fn func(context.Context, str
 				return
 			}
 
-			out[i] = res{v, true}
+			out[index] = res{v: value, ok: true}
 		})
 	}
 
 	wg.Wait()
 
-	list := make([]T, 0, len(ids))
+	kept := make([]T, 0, len(ids))
 
 	for _, r := range out {
 		if r.ok {
-			list = append(list, r.v)
+			kept = append(kept, r.v)
 		}
 	}
 	// Only a total failure is an error: then the session is likely the problem.
-	if len(list) == 0 && firstErr != nil && !errors.Is(firstErr, ErrUnavailable) {
+	if len(kept) == 0 && firstErr != nil && !errors.Is(firstErr, ErrUnavailable) {
 		return nil, firstErr
 	}
 
-	return list, nil
+	return kept, nil
 }
 
 // trackIDs keeps the track ids from a list of URIs; episodes and local files drop out.
 func trackIDs(uris []string) []string {
 	ids := make([]string, 0, len(uris))
-	for _, u := range uris {
-		if kind, id, ok := ParseURI(u); ok && kind == "track" {
+	for _, uri := range uris {
+		if kind, id, ok := ParseURI(uri); ok && kind == kindTrack {
 			ids = append(ids, id)
 		}
 	}
@@ -302,23 +331,23 @@ func (c *Client) tracks(ctx context.Context, uris []string) ([]Track, error) {
 const pageSize = 50
 
 // Album returns an album and one page of its tracks, and the offset of the next page.
-func (c *Client) Album(ctx context.Context, id string, offset int) (Album, int, error) {
-	if !ValidID(id) || offset < 0 {
+func (c *Client) Album(ctx context.Context, albumID string, offset int) (Album, int, error) {
+	if !ValidID(albumID) || offset < 0 {
 		return Album{}, 0, ErrInvalid
 	}
 
-	m, err := c.albumMeta(ctx, id)
+	meta, err := c.albumMeta(ctx, albumID)
 	if err != nil {
 		return Album{}, 0, err
 	}
 
-	out := m.norm()
+	out := meta.norm()
 
 	var uris []string
 
-	for _, d := range m.Disc {
-		for _, t := range d.Track {
-			uris = append(uris, uriOf("track", t.GID))
+	for _, disc := range meta.Disc {
+		for _, track := range disc.Track {
+			uris = append(uris, uriOf(kindTrack, track.GID))
 		}
 	}
 
@@ -328,85 +357,59 @@ func (c *Client) Album(ctx context.Context, id string, offset int) (Album, int, 
 	offset = min(offset, len(uris))
 
 	page := uris[offset:min(offset+pageSize, len(uris))]
-	if out.Tracks, err = c.tracks(ctx, page); err != nil {
+
+	out.Tracks, err = c.tracks(ctx, page)
+	if err != nil {
 		return Album{}, 0, err
 	}
 
 	return out, nextOf(offset, len(page), len(uris)), nil
 }
 
+// How many of an artist's top tracks and of each kind of release the page shows.
+const (
+	maxTopTracks      = 10
+	albumsShown       = 20
+	singlesShown      = 10
+	compilationsShown = 5
+	appearancesShown  = 5
+)
+
 // Artist returns an artist, their top tracks and their releases, each marked with its group.
-func (c *Client) Artist(ctx context.Context, id string) (ArtistPage, error) {
-	if !ValidID(id) {
+func (c *Client) Artist(ctx context.Context, artistID string) (ArtistPage, error) {
+	if !ValidID(artistID) {
 		return ArtistPage{}, ErrInvalid
 	}
 
-	st, _ := c.ctlStatus(ctx)
-	country := st.Country
+	status, _ := c.ctlStatus(ctx)
 
-	var m mArtist
+	var meta mArtist
 
-	err := c.spclient(ctx, "/metadata/4/artist/"+hexID(id), &m)
+	err := c.spclient(ctx, "/metadata/4/artist/"+hexID(artistID), &meta)
 	if err != nil {
 		return ArtistPage{}, err
 	}
 
 	page := ArtistPage{
-		Artist:    Artist{URI: uriOf("artist", m.GID), Name: m.Name, Artwork: m.Portrait.artwork()},
+		Artist:    Artist{URI: uriOf(kindArtist, meta.GID), Name: meta.Name, Artwork: meta.Portrait.artwork()},
 		TopTracks: []Track{},
 		Albums:    []Album{},
 	}
 
-	var top []string
-	for _, tt := range m.TopTrack {
-		if tt.Country == country || (top == nil && len(tt.Track) > 0) {
-			top = top[:0]
-			for _, t := range tt.Track {
-				top = append(top, uriOf("track", t.GID))
-			}
-
-			if tt.Country == country {
-				break
-			}
-		}
-	}
-
-	if len(top) > 10 {
-		top = top[:10]
-	}
-
-	var albumIDs []string
-
-	group := map[string]string{}
-
-	for _, g := range []struct {
-		name   string
-		limit  int
-		groups []struct{ Album []mRef }
-	}{
-		{kindAlbum, 20, m.AlbumGroup},
-		{"single", 10, m.SingleGroup},
-		{"compilation", 5, m.Compilation},
-		{"appears_on", 5, m.AppearsOn},
-	} {
-		for i, rel := range g.groups {
-			// A group lists one release in its regional variants; the first will do.
-			if i < g.limit && len(rel.Album) > 0 {
-				albumIDs = append(albumIDs, b62ID(rel.Album[0].GID))
-				group[uriOf("album", rel.Album[0].GID)] = g.name
-			}
-		}
-	}
+	top := topTrackURIs(meta.TopTrack, status.Country)
+	albumIDs, group := releases(&meta)
 	// The lists are extras: an artist page without them is still an artist page.
-	if t, err := c.tracks(ctx, top); err == nil {
-		page.TopTracks = t
+	tracks, err := c.tracks(ctx, top)
+	if err == nil {
+		page.TopTracks = tracks
 	}
 
-	if albums, err := each(ctx, albumIDs, func(ctx context.Context, id string) (Album, error) {
-		m, err := c.albumMeta(ctx, id)
+	albums, err := each(ctx, albumIDs, func(ctx context.Context, albumID string) (Album, error) {
+		album, fetchErr := c.albumMeta(ctx, albumID)
 
-		return m.norm(), err
-	}); err == nil {
+		return album.norm(), fetchErr
+	})
+	if err == nil {
 		for i := range albums {
 			albums[i].Group = group[albums[i].URI]
 		}
@@ -415,4 +418,61 @@ func (c *Client) Artist(ctx context.Context, id string) (ArtistPage, error) {
 	}
 
 	return page, nil
+}
+
+// topTrackURIs picks the top tracks for country, or the first non-empty list when the
+// artist has none for it, at most maxTopTracks.
+func topTrackURIs(lists []mTopTrack, country string) []string {
+	var top []string
+
+	for _, ranked := range lists {
+		if ranked.Country == country || (top == nil && len(ranked.Track) > 0) {
+			top = top[:0]
+			for _, track := range ranked.Track {
+				top = append(top, uriOf(kindTrack, track.GID))
+			}
+
+			if ranked.Country == country {
+				break
+			}
+		}
+	}
+
+	if len(top) > maxTopTracks {
+		top = top[:maxTopTracks]
+	}
+
+	return top
+}
+
+// releaseGroup is one kind of release on an artist page, and how many of it to show.
+type releaseGroup struct {
+	name     string
+	limit    int
+	releases []mRelease
+}
+
+// releases lists the ids of the releases an artist page shows, and each one's group by
+// album URI.
+func releases(meta *mArtist) ([]string, map[string]string) {
+	var albumIDs []string
+
+	group := map[string]string{}
+
+	for _, kind := range []releaseGroup{
+		{name: kindAlbum, limit: albumsShown, releases: meta.AlbumGroup},
+		{name: "single", limit: singlesShown, releases: meta.SingleGroup},
+		{name: "compilation", limit: compilationsShown, releases: meta.Compilation},
+		{name: "appears_on", limit: appearancesShown, releases: meta.AppearsOn},
+	} {
+		for i, release := range kind.releases {
+			// A group lists one release in its regional variants; the first will do.
+			if i < kind.limit && len(release.Album) > 0 {
+				albumIDs = append(albumIDs, b62ID(release.Album[0].GID))
+				group[uriOf(kindAlbum, release.Album[0].GID)] = kind.name
+			}
+		}
+	}
+
+	return albumIDs, group
 }

@@ -11,11 +11,13 @@ import (
 )
 
 func TestAddReplacesTheFavoriteAndSurvivesReopen(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "favorites.json")
 
-	s := favorites.Open(path)
+	store := favorites.Open(path)
 	for _, loc := range []string{"s1", "s2", "s2"} {
-		err := s.Add(favorites.Entry{Source: "TUNEIN", Name: loc, Location: loc})
+		err := store.Add(favorites.Entry{Source: "TUNEIN", Name: loc, Location: loc, Art: ""})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -28,36 +30,43 @@ func TestAddReplacesTheFavoriteAndSurvivesReopen(t *testing.T) {
 }
 
 func TestReplaceDropsDuplicates(t *testing.T) {
-	s := favorites.Open(filepath.Join(t.TempDir(), "favorites.json"))
+	t.Parallel()
 
-	e := favorites.Entry{Source: "TUNEIN", Location: "s1"}
+	store := favorites.Open(filepath.Join(t.TempDir(), "favorites.json"))
 
-	err := s.Replace([]favorites.Entry{e, e})
+	entry := favorites.Entry{Source: "TUNEIN", Name: "", Location: "s1", Art: ""}
+
+	err := store.Replace([]favorites.Entry{entry, entry})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if got := len(s.All()); got != 1 {
+	if got := len(store.All()); got != 1 {
 		t.Fatalf("got %d entries", got)
 	}
 }
 
 func TestRemoveMatchesSourceAndLocation(t *testing.T) {
-	s := favorites.Open(filepath.Join(t.TempDir(), "favorites.json"))
+	t.Parallel()
 
-	both := []favorites.Entry{{Source: "TUNEIN", Location: "s1"}, {Source: "SPOTIFY", Location: "s1"}}
+	store := favorites.Open(filepath.Join(t.TempDir(), "favorites.json"))
 
-	err := s.Replace(both)
+	both := []favorites.Entry{
+		{Source: "TUNEIN", Name: "", Location: "s1", Art: ""},
+		{Source: "SPOTIFY", Name: "", Location: "s1", Art: ""},
+	}
+
+	err := store.Replace(both)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = s.Remove("SPOTIFY", "s1")
+	err = store.Remove("SPOTIFY", "s1")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	all := s.All()
+	all := store.All()
 	if len(all) != 1 || all[0].Source != "TUNEIN" {
 		t.Fatalf("got %+v", all)
 	}

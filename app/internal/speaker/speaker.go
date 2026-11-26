@@ -2,6 +2,8 @@
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
 // Package speaker holds the SoundTouch speaker types the web API and speakerstate share.
+//
+//nolint:revive // max-public-structs: this package exists to hold the shared API types
 package speaker
 
 import (
@@ -73,6 +75,21 @@ func StationLocation(station string) string {
 	return "/v1/playback/station/" + station
 }
 
+// The bounds CheckPreset holds a preset's name and logo to.
+const (
+	maxPresetNameRunes = 64   // characters in a preset name, as for the speaker name
+	maxPresetLogoBytes = 2048 // bytes in a preset logo URL
+)
+
+// The reasons CheckPreset refuses a preset; the messages reach the client as they are.
+var (
+	ErrPresetNameEmpty   = errors.New("preset name is empty")
+	ErrPresetNotUTF8     = errors.New("preset name or logo is not valid UTF-8")
+	ErrPresetNameTooLong = errors.New("preset name must be at most 64 characters")
+	ErrPresetLogoTooLong = errors.New("preset logo must be at most 2048 bytes")
+	ErrPresetControlChar = errors.New("preset name or logo contains a control character")
+)
+
 // PresetSlots is how many presets a speaker holds, on slots 1..PresetSlots: one per
 // preset key.
 const PresetSlots = 6
@@ -84,22 +101,23 @@ func CheckPreset(name, logo string) error {
 	name = strings.TrimSpace(name)
 	switch {
 	case name == "":
-		return errors.New("preset name is empty")
+		return ErrPresetNameEmpty
 	case !utf8.ValidString(name) || !utf8.ValidString(logo):
-		return errors.New("preset name or logo is not valid UTF-8")
-	case utf8.RuneCountInString(name) > 64:
-		return errors.New("preset name must be at most 64 characters")
-	case len(logo) > 2048:
-		return errors.New("preset logo must be at most 2048 bytes")
+		return ErrPresetNotUTF8
+	case utf8.RuneCountInString(name) > maxPresetNameRunes:
+		return ErrPresetNameTooLong
+	case len(logo) > maxPresetLogoBytes:
+		return ErrPresetLogoTooLong
 	case strings.IndexFunc(name+logo, unicode.IsControl) >= 0:
-		return errors.New("preset name or logo contains a control character")
+		return ErrPresetControlChar
 	}
 
 	return nil
 }
 
-// Notification is an audio notification: a short clip that interrupts whatever is playing (or wakes the speaker from standby)
-// and then resumes the previous source. Only URL is required.
+// Notification is an audio notification: a short clip that interrupts whatever is playing
+// (or wakes the speaker from standby) and then resumes the previous source. Only URL is
+// required.
 type Notification struct {
 	URL    string // http(s) URL of the clip; MP3/AAC/WMA/etc. Required.
 	Volume int    // playback level of the clip, on the music's curve; 0 plays it at the current volume
