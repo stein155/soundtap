@@ -115,7 +115,11 @@ type Registry struct {
 	// Without it every search round refetched and logged them again. A device that only
 	// failed to answer is not held here; see errNoAnswer.
 	rejected map[string]time.Time
-	client   *http.Client
+	// told is what the log last said about a rejected device (its LOCATION and the
+	// reason), so a device that is refetched each time its advert expires and fails the
+	// same way is logged once, not every half hour all day.
+	told   map[string]string
+	client *http.Client
 	// rounds lets one search run at a time; lastRound is when the last one ended.
 	rounds    chan struct{}
 	browses   chan struct{} // admits one Browse at a time
@@ -130,6 +134,7 @@ func NewRegistry() *Registry {
 		browses:  make(chan struct{}, 1),
 		servers:  map[string]*MediaServer{},
 		rejected: map[string]time.Time{},
+		told:     map[string]string{},
 		// LAN media servers are private addresses, which SafeTransport refuses.
 		// No redirects: a device description must not bounce soundtapd to another host.
 		client: &http.Client{Timeout: descTimeout, CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -332,10 +337,18 @@ func (r *Registry) describe(ctx context.Context, reply advert, log func(string, 
 	switch {
 	case err == nil:
 		r.store(srv, time.Now())
+		delete(r.told, reply.usn)
 
 		return
 	case !errors.Is(err, errNoAnswer):
 		r.reject(reply.usn, time.Now().Add(reply.ttl))
+
+		said := reply.location + " " + err.Error()
+		if r.told[reply.usn] == said {
+			return
+		}
+
+		r.told[reply.usn] = said
 	default:
 		// No answer says nothing about the device: the next round asks again.
 	}

@@ -539,6 +539,38 @@ func TestOnlyADeviceThatAnsweredIsRejected(t *testing.T) {
 	}
 }
 
+// A device that is no media server is fetched again each time its advert expires; the log
+// says so once, not every half hour, until the answer changes.
+func TestARejectedDeviceIsLoggedOnce(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `<root><device><friendlyName>Sonos</friendlyName></device></root>`)
+	}))
+	defer srv.Close()
+
+	var lines []string
+
+	logged := func(msg string, _ ...any) { lines = append(lines, msg) }
+	reg := NewRegistry()
+	sonos := advert{usn: "uuid:sonos", location: srv.URL + "/sonos.xml", ttl: time.Hour}
+
+	for range 3 {
+		reg.describe(context.Background(), sonos, logged)
+	}
+
+	if len(lines) != 1 {
+		t.Fatalf("logged %d times, want once: %v", len(lines), lines)
+	}
+
+	moved := advert{usn: "uuid:sonos", location: srv.URL + "/sonos.xml?moved", ttl: time.Hour}
+	reg.describe(context.Background(), moved, logged)
+
+	if len(lines) != 2 {
+		t.Fatalf("a new LOCATION is not logged: %v", lines)
+	}
+}
+
 // Requests that queue behind a round take its result instead of each running their own.
 func TestSearchSharesTheRoundItWaitedFor(t *testing.T) {
 	t.Parallel()
