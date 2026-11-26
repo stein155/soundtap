@@ -258,8 +258,11 @@ func (m *Manager) step(ctx context.Context) {
 	}
 
 	if want == nil {
+		// Nothing to show (standby with the clock off): a dark panel. There is no
+		// screen of anyone else's under ours to put back, and the framebuffer's
+		// snapshot is a frame of our own, such as the boot screen's "Connecting…".
 		if shown != nil {
-			err := m.fb.Restore()
+			err := m.fb.Draw(make([]byte, oled.Width*oled.Height))
 			if err == nil {
 				m.setShown(nil)
 			}

@@ -180,8 +180,8 @@ func TestNativeScreens(t *testing.T) {
 	mgr.step(context.Background())
 
 	got, _ = os.ReadFile(path)
-	if !bytes.Equal(got, blank) {
-		t.Fatal("panel not restored after now-playing cleared")
+	if !bytes.Equal(got, make([]byte, oled.Width*oled.Height)) {
+		t.Fatal("panel not dark after now-playing cleared")
 	}
 }
 
@@ -213,5 +213,28 @@ func TestUnchangedFrameRepaintsOnlyAfterRepaintEvery(t *testing.T) {
 
 	if got, _ := os.ReadFile(path); !bytes.Equal(got, mgr.standbyFrame) {
 		t.Fatal("unchanged frame not written again after repaintEvery")
+	}
+}
+
+// With the standby clock off nothing is wanted in standby: the panel goes dark rather
+// than back to a frame of ours from before, such as the boot screen's "Connecting…".
+func TestStandbyWithoutClockGoesDark(t *testing.T) {
+	t.Parallel()
+
+	mgr, path := newTestManager(t, true)
+	connecting := bytes.Repeat([]byte{3}, oled.Width*oled.Height)
+	mgr.SetOverlay(Content{Frame: connecting})
+	mgr.step(context.Background())
+	mgr.ClearOverlay()
+	mgr.SetNowPlaying(Content{Frame: bytes.Repeat([]byte{5}, oled.Width*oled.Height)})
+	mgr.standby = func(context.Context) bool { return false }
+	mgr.step(context.Background())
+
+	mgr.standby = func(context.Context) bool { return true }
+	mgr.step(context.Background())
+
+	got, _ := os.ReadFile(path)
+	if !bytes.Equal(got, make([]byte, oled.Width*oled.Height)) {
+		t.Fatalf("standby without a clock left %v on the panel, want it dark", got[:4])
 	}
 }
