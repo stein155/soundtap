@@ -12,7 +12,7 @@ export const LONG_LOST_MS = 15000;
 export function useLongLost(unreachable: boolean, after = LONG_LOST_MS): boolean {
   const [long, setLong] = useState(false);
   useEffect(() => {
-    if (!unreachable) return;
+    if (!unreachable) return undefined;
     const timer = setTimeout(() => setLong(true), after);
     // Back in reach: the next loss starts counting from nothing.
     return () => {

@@ -10,7 +10,7 @@ type ModelKey = 'st10' | 'st20' | 'st300' | 'wla';
 // ("SoundTouch Wireless Link Adapter") or its short name ("WLA", "ST300"). Unknown models
 // get the ST10's.
 export function modelKey(model = ''): ModelKey {
-  if (/Wireless Link|^WLA$/i.test(model)) return 'wla';
+  if (/Wireless Link|^WLA$/iu.test(model)) return 'wla';
   if (model.includes('300')) return 'st300';
   if (model.includes('20')) return 'st20';
   return 'st10';
@@ -18,9 +18,9 @@ export function modelKey(model = ''): ModelKey {
 
 // Our own drawings of the speakers seen from the front, for the speaker bar and card.
 // They fill the box they are put in.
-export function ModelArt({ model }: { model?: string | undefined }): ReactElement {
+export function ModelArt({ model }: { readonly model?: string | undefined }): ReactElement {
   const k = modelKey(model);
-  const id = useId().replace(/:/g, '');
+  const id = useId().replace(/:/gu, '');
   const fill = (name: string) => `url(#${id}${name})`;
   return (
     <svg viewBox="0 0 100 100" aria-hidden="true">

@@ -50,7 +50,7 @@ describe('BluetoothSettings', () => {
       <BluetoothSettings speaker="Kitchen" initial={two} />
     );
     expect(getByText('Connected')).toBeTruthy();
-    expect(queryByText(/forget all/i)).toBeNull();
+    expect(queryByText(/forget all/iu)).toBeNull();
     await act(async () => fireEvent.click(getByRole('button', { name: 'Forget Tablet' })));
     expect(api.forgetBluetoothDevice).toHaveBeenCalledWith('AA:BB:CC:DD:EE:FF', 'Kitchen');
     expect(await findByText('Phone')).toBeTruthy();
@@ -64,7 +64,7 @@ describe('BluetoothSettings', () => {
       <BluetoothSettings speaker="" initial={two} />
     );
     await act(async () => fireEvent.click(getByRole('button', { name: 'Forget Phone' })));
-    expect(await findByText('Could not forget Phone')).toBeTruthy();
+    expect(await findByText('Couldn’t forget Phone')).toBeTruthy();
   });
 
   it('keeps a forgotten device gone when an older poll answers late', async () => {
@@ -72,7 +72,11 @@ describe('BluetoothSettings', () => {
     const phone = status({ devices: [{ address: 'aa', name: 'Phone', connected: false }] });
     let late: (s: BluetoothStatus) => void = vi.fn();
     vi.mocked(api.getBluetooth)
-      .mockReturnValueOnce(new Promise((r) => (late = r)))
+      .mockReturnValueOnce(
+        new Promise((r) => {
+          late = r;
+        })
+      )
       .mockResolvedValue(status());
     const { getByRole, queryByText } = renderWithI18n(
       <BluetoothSettings speaker="" initial={phone} />

@@ -35,6 +35,40 @@ describe('DrawerMenu', () => {
     vi.useRealTimers();
   });
 
+  // The pick waits for the drawer's exit (--dur-exit), and not at all with less motion.
+  it('waits as long as the drawer takes to leave', () => {
+    vi.useFakeTimers();
+    const root = document.documentElement;
+    root.style.setProperty('--dur-exit', '220ms');
+    const on = {
+      onRecent: vi.fn(),
+      onSpotify: vi.fn(),
+      onTuneIn: vi.fn(),
+      onMediaServers: vi.fn(),
+      onSettings: vi.fn(),
+    };
+    const view = renderWithI18n(<DrawerMenu open onClose={vi.fn()} {...on} />);
+    fireEvent.click(view.getByText('Settings'));
+    act(() => {
+      vi.advanceTimersByTime(219);
+    });
+    expect(on.onSettings).not.toHaveBeenCalled();
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(on.onSettings).toHaveBeenCalledTimes(1);
+
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query.includes('reduce') }));
+    fireEvent.click(view.getByText('Spotify'));
+    act(() => {
+      vi.advanceTimersByTime(0);
+    });
+    expect(on.onSpotify).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+    root.style.removeProperty('--dur-exit');
+    vi.useRealTimers();
+  });
+
   it('marks the row of the page on screen, Settings and the media servers included', () => {
     const on = {
       onRecent: vi.fn(),

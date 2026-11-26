@@ -7,24 +7,24 @@ import { uploadFirmware } from './firmware';
 
 // A stand-in XMLHttpRequest that answers at once with a report.
 class FakeXHR {
-  upload = { onprogress: null as unknown };
-  status = 200;
-  responseText = JSON.stringify({
+  public upload = { onprogress: null as unknown };
+  public status = 200;
+  public responseText = JSON.stringify({
     size: 1,
     modules: [],
     kernel: 'mainline',
     models: [],
     installable: true,
   });
-  timeout = 0;
-  withCredentials = false;
-  onload: (() => void) | null = null;
-  onerror: (() => void) | null = null;
-  onabort: (() => void) | null = null;
-  ontimeout: (() => void) | null = null;
-  open = vi.fn();
-  setRequestHeader = vi.fn();
-  send() {
+  public timeout = 0;
+  public withCredentials = false;
+  public onload: (() => void) | null = null;
+  public onerror: (() => void) | null = null;
+  public onabort: (() => void) | null = null;
+  public ontimeout: (() => void) | null = null;
+  public open = vi.fn();
+  public setRequestHeader = vi.fn();
+  public send() {
     queueMicrotask(() => this.onload?.());
   }
 }

@@ -18,8 +18,10 @@ function Levels() {
     >
       {level === 'list' ? (
         <>
-          <button>Sound</button>
-          <button onClick={() => setLevel('language')}>Language</button>
+          <button type="button">Sound</button>
+          <button type="button" onClick={() => setLevel('language')}>
+            Language
+          </button>
         </>
       ) : (
         <p>English</p>

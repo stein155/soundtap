@@ -32,6 +32,7 @@ export interface LoadedPage {
   next?: number | undefined;
 }
 
+// eslint-disable-next-line @typescript-eslint/consistent-return -- the switch covers every kind, which TypeScript checks (noImplicitReturns)
 async function loadPage(page: LibraryPage, offset = 0): Promise<LoadedPage> {
   switch (page.kind) {
     case 'liked': {
@@ -90,8 +91,8 @@ function usePageCache(opened: boolean) {
   useEffect(() => {
     if (opened) return;
     loadedRef.current.clear();
-    generationRef.current++;
-    openingRef.current++;
+    generationRef.current += 1;
+    openingRef.current += 1;
   }, [opened]);
   return { loadedRef, generationRef, openingRef };
 }
@@ -124,7 +125,8 @@ export function useLibraryPages(opened: boolean, { setError, showError }: Errors
   const { loadedRef, generationRef, openingRef } = usePageCache(opened);
 
   const show = (next: LibraryPage[]) => {
-    const gen = ++generationRef.current;
+    generationRef.current += 1;
+    const gen = generationRef.current;
     // A "more" still running belongs to the page left behind, not to this one.
     setLoadingMore(false);
     const open = openingRef.current;

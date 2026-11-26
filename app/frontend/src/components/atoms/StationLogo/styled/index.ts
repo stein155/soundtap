@@ -27,5 +27,5 @@ export const Image = styled.img<{ $loaded: boolean; $square: boolean }>`
   object-fit: ${({ $square }) => ($square ? 'cover' : 'contain')};
   padding: ${({ $square }) => ($square ? '0' : '12%')};
   opacity: ${({ $loaded }) => ($loaded ? 1 : 0)};
-  transition: opacity 260ms ease;
+  transition: opacity var(--dur-base) var(--ease);
 `;

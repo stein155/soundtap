@@ -10,8 +10,8 @@ export function SheetGroup({
   title,
   children,
 }: {
-  title?: string;
-  children: ReactNode;
+  readonly title?: string;
+  readonly children: ReactNode;
 }): ReactElement {
   return (
     <Group>

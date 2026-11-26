@@ -7,15 +7,15 @@ import { useI18n } from '../../../lib/i18n';
 import type { ReactElement } from 'react';
 
 interface Props {
-  value: number;
-  onChange: (volume: number) => void;
-  label: string;
+  readonly value: number;
+  readonly onChange: (volume: number) => void;
+  readonly label: string;
   // Taps on the speaker icon; without it the icon is only a picture.
-  onMute?: (() => void) | undefined;
+  readonly onMute?: (() => void) | undefined;
   // Drawn on a dark picture (now playing) instead of a card.
-  light?: boolean | undefined;
+  readonly light?: boolean | undefined;
   // The level as a number at the slider's end, as on now playing.
-  showValue?: boolean;
+  readonly showValue?: boolean;
 }
 
 // A volume slider with the speaker icon at its start, which mutes and unmutes.

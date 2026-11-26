@@ -46,7 +46,7 @@ export function stationColor(key?: string | null): string {
 // Two letters for a lettermark, from the first letters of its words: "NPO Radio 2" -> "NR",
 // "Studio Brussel" -> "SB", "kink" -> "KI".
 export function initials(name: string): string {
-  const [first = name, second] = name.match(/[A-Za-z]\w*/g) ?? [];
+  const [first = name, second] = name.match(/[A-Za-z]\w*/gu) ?? [];
   if (second) return (first.charAt(0) + second.charAt(0)).toUpperCase();
   return first.slice(0, 2).toUpperCase() || '?';
 }
@@ -62,7 +62,7 @@ export function logoURL(
   speaker?: string
 ): string | null {
   // Only something a browser can fetch: a file:// display icon would only 400.
-  const logo = /^(https?:\/\/|\/api\/)/.test(station.logo || '') ? station.logo : '';
+  const logo = /^(?:https?:\/\/|\/api\/)/u.test(station.logo || '') ? station.logo : '';
   const absolute =
     logo ||
     (station.tuneInId && !station.tuneInId.includes('://')

@@ -38,9 +38,7 @@ export const playbackIcons = {
   play: {
     svg: solid,
     body: (
-      <>
-        <path d="M7 5.5v13a.5.5 0 0 0 .77.42l10.5-6.5a.5.5 0 0 0 0-.84L7.77 5.08A.5.5 0 0 0 7 5.5Z" />
-      </>
+      <path d="M7 5.5v13a.5.5 0 0 0 .77.42l10.5-6.5a.5.5 0 0 0 0-.84L7.77 5.08A.5.5 0 0 0 7 5.5Z" />
     ),
   },
   pause: {
@@ -54,11 +52,7 @@ export const playbackIcons = {
   },
   stop: {
     svg: solid,
-    body: (
-      <>
-        <rect x="6" y="6" width="12" height="12" rx="1.5" />
-      </>
-    ),
+    body: <rect x="6" y="6" width="12" height="12" rx="1.5" />,
   },
   heart: {
     svg: {
@@ -69,9 +63,7 @@ export const playbackIcons = {
       strokeLinejoin: 'round',
     },
     body: (
-      <>
-        <path d="M12 20s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.2a4.3 4.3 0 0 1 7.5 2.6C19.500 15.400 12 20 12 20z" />
-      </>
+      <path d="M12 20s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.2a4.3 4.3 0 0 1 7.5 2.6C19.500 15.400 12 20 12 20z" />
     ),
   },
   more: {
@@ -120,11 +112,7 @@ export const playbackIcons = {
       strokeWidth: '1.5',
       strokeLinejoin: 'round',
     },
-    body: (
-      <>
-        <path d="M6 5v14M18 5.5v13L8.5 12Z" />
-      </>
-    ),
+    body: <path d="M6 5v14M18 5.5v13L8.5 12Z" />,
   },
   skipNext: {
     svg: {
@@ -134,10 +122,6 @@ export const playbackIcons = {
       strokeWidth: '1.5',
       strokeLinejoin: 'round',
     },
-    body: (
-      <>
-        <path d="M18 5v14M6 5.5v13L15.5 12Z" />
-      </>
-    ),
+    body: <path d="M18 5v14M6 5.5v13L15.5 12Z" />,
   },
 } satisfies Record<string, IconSpec>;

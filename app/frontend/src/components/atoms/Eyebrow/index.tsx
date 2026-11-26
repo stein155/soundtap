@@ -5,6 +5,6 @@ import type { ReactNode, ReactElement } from 'react';
 import { Small } from './styled';
 
 // The small line above a headline: what the headline is about ("for Kitchen").
-export function Eyebrow({ children }: { children: ReactNode }): ReactElement {
+export function Eyebrow({ children }: { readonly children: ReactNode }): ReactElement {
   return <Small>{children}</Small>;
 }

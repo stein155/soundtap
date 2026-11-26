@@ -12,10 +12,10 @@ export function LabeledField({
   error,
   children,
 }: {
-  id: string;
-  label: string;
-  error?: string | null;
-  children: ReactNode;
+  readonly id: string;
+  readonly label: string;
+  readonly error?: string | null;
+  readonly children: ReactNode;
 }): ReactElement {
   return (
     <Field>

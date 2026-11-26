@@ -24,9 +24,9 @@ function NothingFound({
   onRefresh,
   onManual,
 }: {
-  failed: boolean;
-  onRefresh?: (() => void) | undefined;
-  onManual: () => void;
+  readonly failed: boolean;
+  readonly onRefresh?: (() => void) | undefined;
+  readonly onManual: () => void;
 }) {
   const { t } = useI18n();
   return (
@@ -52,12 +52,12 @@ function NothingFound({
 }
 
 interface FormProps {
-  join: WifiJoin;
-  onSwitch: () => void;
+  readonly join: WifiJoin;
+  readonly onSwitch: () => void;
   // The first-run page's layout: Connect docked at the bottom, the eye in the password
   // field, and how the join goes above Connect.
-  docked?: boolean | undefined;
-  status?: ReactNode;
+  readonly docked?: boolean | undefined;
+  readonly status?: ReactNode;
 }
 
 // The row after the networks that opens the form for one that does not show up; no SSID
@@ -73,11 +73,11 @@ function NetworkList({
   onOther,
   disabled,
 }: {
-  networks: WifiNetwork[];
-  chosen: WifiNetwork;
-  onPick: (ssid: string) => void;
-  onOther: () => void;
-  disabled: boolean;
+  readonly networks: WifiNetwork[];
+  readonly chosen: WifiNetwork;
+  readonly onPick: (ssid: string) => void;
+  readonly onOther: () => void;
+  readonly disabled: boolean;
 }) {
   const { t } = useI18n();
   return (
@@ -116,10 +116,10 @@ function SurveyForm({
   docked,
   status,
 }: FormProps & {
-  networks: WifiNetwork[];
-  survey: ReturnType<typeof useWifiSurvey>;
-  fixedSurvey?: boolean | undefined;
-  notice?: ReactNode;
+  readonly networks: WifiNetwork[];
+  readonly survey: ReturnType<typeof useWifiSurvey>;
+  readonly fixedSurvey?: boolean | undefined;
+  readonly notice?: ReactNode;
 }) {
   const { t } = useI18n();
   const [picked, setPicked] = useState('');
@@ -210,22 +210,22 @@ function ManualForm({ join, onSwitch, docked, status }: FormProps) {
 }
 
 interface PickerProps {
-  network: NetworkInfo | null;
-  speaker?: string | undefined;
+  readonly network: NetworkInfo | null;
+  readonly speaker?: string | undefined;
   // Runs before the switch (the first-run page saves the name first); a rejection
   // stops the switch and shows its message.
-  beforeConnect?: () => Promise<unknown>;
+  readonly beforeConnect?: () => Promise<unknown>;
   // The setup AP answers with the survey taken before it came up; asking again returns
   // the same list, so the first-run page offers no Refresh.
-  fixedSurvey?: boolean | undefined;
+  readonly fixedSurvey?: boolean | undefined;
   // The speaker's own .local name, for the first-run page's next steps; many Android and
   // Windows devices cannot open it, so the router's device list is named too.
-  host?: string | undefined;
+  readonly host?: string | undefined;
   // What to know before Connect, above it.
-  notice?: ReactNode;
+  readonly notice?: ReactNode;
   // The first-run page's layout: Connect at the bottom of the screen with how the join
   // goes above it, and an eye in the password field.
-  docked?: boolean | undefined;
+  readonly docked?: boolean | undefined;
 }
 
 // Join a Wi-Fi network the way Stockholm's setup does: one form with the surveyed networks

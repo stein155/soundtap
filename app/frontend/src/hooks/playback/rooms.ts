@@ -32,13 +32,13 @@ export function useSourcePicks(
     if (!lead) return;
     // Leaving an input for the network sources means stopping the input.
     if (source === 'wifi' && sourceOf(lead.now) === 'wifi' && picksWaiting.current === 0) return;
-    picksWaiting.current++;
+    picksWaiting.current += 1;
     const pick = sourcePicks.current.then(async () =>
       source === 'wifi' ? stop() : selectUserSource(SOURCE_NAME[source], speaker).catch(leadFailed)
     );
     sourcePicks.current = pick;
     await pick;
-    picksWaiting.current--;
+    picksWaiting.current -= 1;
     if (source !== 'wifi') live.nudge();
   };
 }

@@ -6,8 +6,8 @@ import { formatBytes } from './format';
 
 describe('formatBytes', () => {
   it('writes the decimals the way the language does (1,5 MiB in Dutch)', () => {
-    expect(formatBytes(1.5 * (1 << 20), 'nl')).toBe('1,5 MiB');
-    expect(formatBytes(1.5 * (1 << 20), 'en')).toBe('1.5 MiB');
+    expect(formatBytes(1.5 * 2 ** 20, 'nl')).toBe('1,5 MiB');
+    expect(formatBytes(1.5 * 2 ** 20, 'en')).toBe('1.5 MiB');
     expect(formatBytes(12, 'nl')).toBe('12 B');
   });
 });

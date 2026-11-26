@@ -10,9 +10,9 @@ export function Stack({
   offset = 0,
   children,
 }: {
-  gap?: number;
-  offset?: number;
-  children: ReactNode;
+  readonly gap?: number;
+  readonly offset?: number;
+  readonly children: ReactNode;
 }): ReactElement {
   return (
     <Column $gap={gap} $offset={offset}>

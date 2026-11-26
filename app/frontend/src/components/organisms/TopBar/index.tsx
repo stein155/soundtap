@@ -7,16 +7,16 @@ import { Icon } from '../../atoms/Icon';
 import { useI18n } from '../../../lib/i18n';
 
 interface Props {
-  onMenu: () => void;
-  onPresets: () => void;
+  readonly onMenu: () => void;
+  readonly onPresets: () => void;
   // What the page shows; left out, the start page.
-  icon?: ReactNode | undefined;
-  title?: string | undefined;
+  readonly icon?: ReactNode | undefined;
+  readonly title?: string | undefined;
   // One level up, in place of the menu.
-  onBack?: (() => void) | undefined;
+  readonly onBack?: (() => void) | undefined;
   // A search field in a strip under the bar; the back chevron then leaves the search.
-  field?: ReactNode | undefined;
-  onCloseField?: () => void;
+  readonly field?: ReactNode | undefined;
+  readonly onCloseField?: () => void;
 }
 
 // The bar above every main page, as in Stockholm: the menu, what the page shows, the presets.

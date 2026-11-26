@@ -12,7 +12,7 @@ function putBack(slot: number, prev: Preset, speaker: string): (() => Promise<un
   if (prev.source === 'SPOTIFY') {
     return async () => storeSpotifyPreset(slot, { ...prev, uri: prev.location }, speaker);
   }
-  const tuneInId = prev.tuneInId;
+  const { tuneInId } = prev;
   if (!tuneInId) return null;
   return async () => storePreset(slot, { tuneInId, name: prev.name, logo: prev.logo }, speaker);
 }
@@ -61,7 +61,9 @@ export function presetStores({
       }
       await live.refreshPresets();
     };
-    return () => void undo();
+    return () => {
+      void undo();
+    };
   };
 
   const storeCurrent = async (slot: number) => {

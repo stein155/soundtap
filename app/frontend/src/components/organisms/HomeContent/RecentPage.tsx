@@ -10,13 +10,13 @@ import type { RecentItem } from '../../../lib/recent';
 import { RecentList } from './RecentList';
 
 interface Props {
-  recent: RecentItem[];
-  speaker: string;
-  onBack: () => void;
-  onPresets: () => void;
-  onPlayRecent: (item: RecentItem) => void;
-  onRemoveRecent: (item: RecentItem) => void;
-  onHoldRecent?: ((item: RecentItem) => void) | undefined;
+  readonly recent: RecentItem[];
+  readonly speaker: string;
+  readonly onBack: () => void;
+  readonly onPresets: () => void;
+  readonly onPlayRecent: (item: RecentItem) => void;
+  readonly onRemoveRecent: (item: RecentItem) => void;
+  readonly onHoldRecent?: ((item: RecentItem) => void) | undefined;
 }
 
 // See All under the start page's Recently Played: a main page, with the bars staying.

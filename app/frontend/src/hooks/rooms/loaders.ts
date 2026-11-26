@@ -44,10 +44,12 @@ async function selfWithoutRegistry(): Promise<SpeakerDevice> {
 // older one without a registry, the only room.
 async function discoverSpeakers(known: SpeakerDevice[]): Promise<SpeakerDevice[] | null> {
   const list = await getDevices().catch(() => null);
-  if (!list && known.length) return null;
+  if (!list && known.length > 0) return null;
   const all =
     list?.some((d) => d.self) === true ? list : [await selfWithoutRegistry(), ...(list ?? [])];
-  return all.sort((a, b) => Number(b.self) - Number(a.self) || a.name.localeCompare(b.name));
+  return all.sort((a, b) =>
+    a.self === b.self ? a.name.localeCompare(b.name) : Number(b.self) - Number(a.self)
+  );
 }
 
 // Each online speaker's now-playing and volume; null where a read failed.
@@ -119,7 +121,8 @@ export function useRoomLoaders(householdRef: HouseholdRef, set: RoomSetters): Ro
   const { setDevices, setLoaded, setState, setLeaders } = set;
 
   const loadDevices = useCallback(async () => {
-    const seq = ++householdRef.current.devicesSeq;
+    householdRef.current.devicesSeq += 1;
+    const seq = householdRef.current.devicesSeq;
     const want = householdRef.current.devicesWant;
     const list = await discoverSpeakers(householdRef.current.devices);
     // A failed read keeps the last list and the revision unconfirmed, so the poll retries.
@@ -134,12 +137,13 @@ export function useRoomLoaders(householdRef: HouseholdRef, set: RoomSetters): Ro
   }, [householdRef, setDevices, setLoaded]);
 
   const loadState = useCallback(async () => {
-    const seq = ++householdRef.current.stateSeq;
+    householdRef.current.stateSeq += 1;
+    const seq = householdRef.current.stateSeq;
     const { live, pushed, skip } = householdRef.current;
     const list = householdRef.current.devices.filter(
       (d) => d.online && d.id !== skip && !(live && pushed.has(d.id))
     );
-    if (!list.length) return;
+    if (list.length === 0) return;
     const read = await readState(list);
     if (seq !== householdRef.current.stateSeq) return;
     setState((prev: RoomStates) => {
@@ -153,7 +157,8 @@ export function useRoomLoaders(householdRef: HouseholdRef, set: RoomSetters): Ro
 
   const loadGroups = useCallback(
     async (from: GroupsFrom = 'poll') => {
-      const seq = ++householdRef.current.groupsSeq;
+      householdRef.current.groupsSeq += 1;
+      const seq = householdRef.current.groupsSeq;
       // A lone speaker can lead nobody: skip the round trip.
       const online = householdRef.current.devices.filter((d) => d.online);
       const list = online.length < 2 ? [] : online;

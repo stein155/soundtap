@@ -15,7 +15,9 @@ import { GlobalStyle } from './theme/GlobalStyle';
 
 // A chunk that hangs must not keep the app away: past this the page opens in the fallback.
 const LANG_WAIT_MS = 3000;
-const langWait = new Promise((resolve) => setTimeout(resolve, LANG_WAIT_MS));
+const langWait = new Promise((resolve) => {
+  setTimeout(resolve, LANG_WAIT_MS);
+});
 
 // index.html's launch screen stays until the app's first render is on the screen.
 function LaunchDone(): null {

@@ -35,9 +35,9 @@ export function ErrorPage({
   message,
   onClose,
 }: {
-  open: boolean;
-  message: string;
-  onClose: () => void;
+  readonly open: boolean;
+  readonly message: string;
+  readonly onClose: () => void;
 }): ReactElement {
   const { t } = useI18n();
   return (

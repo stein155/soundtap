@@ -3,14 +3,18 @@
 
 // Display formats shared across the settings pages.
 
+const KIB = 2 ** 10;
+const MIB = 2 ** 20;
+const GIB = 2 ** 30;
+
 // Binary units, the same ones the support bundle prints, so a screenshot and a pasted
 // bundle agree. Decimals follow the language of the page: 1,5 MiB in Dutch.
 export function formatBytes(bytes: number, lang?: string): string {
   const one = (n: number) =>
     new Intl.NumberFormat(lang, { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(n);
-  if (bytes >= 1 << 30) return `${one(bytes / (1 << 30))} GiB`;
-  if (bytes >= 1 << 20) return `${one(bytes / (1 << 20))} MiB`;
-  if (bytes >= 1 << 10) return `${one(bytes / (1 << 10))} KiB`;
+  if (bytes >= GIB) return `${one(bytes / GIB)} GiB`;
+  if (bytes >= MIB) return `${one(bytes / MIB)} MiB`;
+  if (bytes >= KIB) return `${one(bytes / KIB)} KiB`;
   return `${bytes} B`;
 }
 
@@ -27,10 +31,10 @@ export const modelLabel = (model?: string): string => (model ? `Bose ${model}` :
 // The line drawing of a speaker's model, for lists of speakers; any other model gets the
 // generic speaker.
 export const modelIcon = (model?: string): 'st10' | 'st20' | 'st300' | 'wla' | 'speaker' => {
-  if (/Wireless Link/i.test(model || '')) return 'wla';
-  if (/\b300\b/.test(model || '')) return 'st300';
+  if (/Wireless Link/iu.test(model || '')) return 'wla';
+  if (/\b300\b/u.test(model || '')) return 'st300';
   // The SoundTouch 30 is the ST20's board in a bigger box, and looks like it.
-  if (/\b(20|30)\b/.test(model || '')) return 'st20';
-  if (/\b10\b/.test(model || '')) return 'st10';
+  if (/\b(?:20|30)\b/u.test(model || '')) return 'st20';
+  if (/\b10\b/u.test(model || '')) return 'st10';
   return 'speaker';
 };

@@ -17,10 +17,10 @@ export function ManualFields({
   security,
   onSecurity,
 }: {
-  ssid: string;
-  onSsid: (ssid: string) => void;
-  security: Security;
-  onSecurity: (security: Security) => void;
+  readonly ssid: string;
+  readonly onSsid: (ssid: string) => void;
+  readonly security: Security;
+  readonly onSecurity: (security: Security) => void;
 }): ReactElement {
   const { t } = useI18n();
   return (
@@ -66,11 +66,11 @@ export function PasswordField({
   label,
   eye = false,
 }: {
-  value: string;
-  onChange: (password: string) => void;
-  tooShort: boolean;
-  label?: string;
-  eye?: boolean | undefined;
+  readonly value: string;
+  readonly onChange: (password: string) => void;
+  readonly tooShort: boolean;
+  readonly label?: string;
+  readonly eye?: boolean | undefined;
 }): ReactElement {
   const { t } = useI18n();
   const [shown, setShown] = useState(!eye);

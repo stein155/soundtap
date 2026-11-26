@@ -39,7 +39,10 @@ export function transports(c: PlaybackContext): Transports {
   // The selected group's transport button: pause/resume Spotify, otherwise stop.
   const transport = async () => {
     const station = stationOf(lead?.now ?? null);
-    if (station?.spotify !== true) return stop();
+    if (station?.spotify !== true) {
+      await stop();
+      return;
+    }
     // The glyph follows the room's state, so flip it at once (the stop below does the
     // same) and ignore a repeat tap until the request settles.
     const key = `${speaker}|transport`;

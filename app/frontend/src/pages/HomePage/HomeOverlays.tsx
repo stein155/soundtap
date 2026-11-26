@@ -15,11 +15,11 @@ import { useI18n } from '../../lib/i18n';
 import type { Layers } from './useLayers';
 
 interface HomeOverlaysProps {
-  layers: Layers;
-  selected: SelectedRoom;
-  errors: ReturnType<typeof useErrorReporter>;
+  readonly layers: Layers;
+  readonly selected: SelectedRoom;
+  readonly errors: ReturnType<typeof useErrorReporter>;
   // The layers of the selected room's player.
-  children: ReactNode;
+  readonly children: ReactNode;
 }
 
 // The banner when the speaker is out of reach, the full page once it stays away, and the
@@ -30,10 +30,10 @@ function Notices({
   layers,
   errors,
 }: {
-  lead: SelectedRoom['lead'];
-  lost: boolean;
-  layers: Layers;
-  errors: ReturnType<typeof useErrorReporter>;
+  readonly lead: SelectedRoom['lead'];
+  readonly lost: boolean;
+  readonly layers: Layers;
+  readonly errors: ReturnType<typeof useErrorReporter>;
 }) {
   const { t } = useI18n();
   const longLost = useLongLost(lost);

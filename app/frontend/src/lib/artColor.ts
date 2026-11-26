@@ -13,6 +13,9 @@ export type RGB = [number, number, number];
 
 // The commonest colour of RGBA pixels, in coarse buckets. Near-black and near-white
 // count only when nothing else is there: they say little about a picture.
+// Which of 8 bins a 0-255 channel falls in.
+const bin = (channel: number) => Math.floor(channel / 32);
+
 export function mainColor(rgba: ArrayLike<number>): RGB | null {
   const buckets = new Map<number, { n: number; sum: RGB }>();
   let fallback: RGB | null = null;
@@ -22,9 +25,9 @@ export function mainColor(rgba: ArrayLike<number>): RGB | null {
     fallback ??= rgb;
     const high = Math.max(...rgb);
     if (high < 24 || Math.min(...rgb) > 232) continue;
-    const key = (rgb[0] >> 5) * 64 + (rgb[1] >> 5) * 8 + (rgb[2] >> 5);
+    const key = bin(rgb[0]) * 64 + bin(rgb[1]) * 8 + bin(rgb[2]);
     const bucket = buckets.get(key) ?? { n: 0, sum: [0, 0, 0] };
-    bucket.n++;
+    bucket.n += 1;
     bucket.sum = [bucket.sum[0] + rgb[0], bucket.sum[1] + rgb[1], bucket.sum[2] + rgb[2]];
     buckets.set(key, bucket);
   }
@@ -55,7 +58,8 @@ export async function artColor(src: string): Promise<RGB | null> {
     img.onload = () => {
       try {
         const canvas = document.createElement('canvas');
-        canvas.width = canvas.height = SIZE;
+        canvas.width = SIZE;
+        canvas.height = SIZE;
         const ctx = canvas.getContext('2d');
         ctx?.drawImage(img, 0, 0, SIZE, SIZE);
         resolve(ctx ? mainColor(ctx.getImageData(0, 0, SIZE, SIZE).data) : null);

@@ -7,22 +7,24 @@ import { Button } from '../../atoms/Button';
 import { ConfirmSheet } from '../ConfirmSheet';
 
 interface Props {
-  label: string;
+  readonly label: string;
   // The dialog's question; the label when left out.
-  title?: string;
+  readonly title?: string;
   // What the action does, in the dialog, and the button there that commits it.
-  warning: ReactNode;
-  confirmLabel: ReactNode;
-  onConfirm: () => Promise<void> | void;
+  readonly warning: ReactNode;
+  readonly confirmLabel: ReactNode;
+  readonly onConfirm: () => Promise<void> | void;
   // An action that erases something reads as destructive at both steps.
-  destructive?: boolean;
-  disabled?: boolean;
+  readonly destructive?: boolean;
+  readonly disabled?: boolean;
   // Draws the first step itself (a row or a link rather than a button); call `ask` to go on.
-  trigger?: (ask: () => void) => ReactNode;
+  readonly trigger?: (ask: () => void) => ReactNode;
 }
 
 // An action that touches NAND, drops playback or erases something: the press only asks,
 // in a dialog, and its confirm commits. The button stays busy while the action runs.
+// onConfirm says how a failure went itself; one it lets through ends here, not as an
+// unhandled rejection.
 export function ConfirmAction({
   label,
   title,
@@ -40,6 +42,8 @@ export function ConfirmAction({
     setBusy(true);
     try {
       await onConfirm();
+    } catch {
+      // Already the action's own to report: the button comes back for another try.
     } finally {
       setBusy(false);
     }
@@ -65,7 +69,9 @@ export function ConfirmAction({
         body={warning}
         confirmLabel={confirmLabel}
         destructive={destructive}
-        onConfirm={() => void confirm()}
+        onConfirm={() => {
+          void confirm();
+        }}
         onClose={() => setAsking(false)}
       />
     </>

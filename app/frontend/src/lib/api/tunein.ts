@@ -143,8 +143,8 @@ function isShowLink(item: Outline): boolean {
   return (
     item.item === 'show' ||
     item.key === 'nextShows' ||
-    /^[pt]\d/.test(text(item.guide_id)) ||
-    /Tune\.ashx|[?&]c=(pbrowse|podcast)\b/i.test(url)
+    /^[pt]\d/u.test(text(item.guide_id)) ||
+    /Tune\.ashx|[?&]c=(?:pbrowse|podcast)\b/iu.test(url)
   );
 }
 

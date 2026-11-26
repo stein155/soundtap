@@ -44,9 +44,9 @@ export function pairCandidates(room: Room, rooms: Room[]): Room[] {
 }
 
 interface Props {
-  room: Room;
-  rooms: Room[];
-  onChanged: () => void;
+  readonly room: Room;
+  readonly rooms: Room[];
+  readonly onChanged: () => void;
 }
 
 // Two speakers as one stereo speaker, of any model: this one leads, the partner follows
@@ -59,9 +59,16 @@ function useStereoPair(room: Room, rooms: Room[], side: Side, onChanged: () => v
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => {
+    // An answer for the speaker before, or after leaving, does not count.
+    let alive = true;
     void getChannel(speaker)
-      .then(setOwn)
+      .then((got) => {
+        if (alive) setOwn(got);
+      })
       .catch(() => null); // no answer: the section stays hidden, as for a speaker without channels
+    return () => {
+      alive = false;
+    };
   }, [speaker]);
 
   const partner = pairPartner(room, rooms);
@@ -117,10 +124,10 @@ function SidePicker({
   side,
   onChange,
 }: {
-  name: string;
-  partner: string;
-  side: Side;
-  onChange: (side: Side) => void;
+  readonly name: string;
+  readonly partner: string;
+  readonly side: Side;
+  readonly onChange: (side: Side) => void;
 }) {
   const { t } = useI18n();
   const sides: Side[] = ['left', 'right'];
@@ -224,17 +231,29 @@ export function StereoPair({ room, rooms, onChanged }: Props): ReactElement | nu
   );
 }
 
-function PairButton(props: {
-  label: string;
-  busy: boolean;
-  error: string;
-  onClick: () => Promise<void>;
+function PairButton({
+  label,
+  busy,
+  error,
+  onClick,
+}: {
+  readonly label: string;
+  readonly busy: boolean;
+  readonly error: string;
+  readonly onClick: () => Promise<void>;
 }) {
   return (
     <Footer>
-      {props.error && <Hint error>{props.error}</Hint>}
-      <Button wide variant="stockholm" disabled={props.busy} onClick={() => void props.onClick()}>
-        {props.label}
+      {error && <Hint error>{error}</Hint>}
+      <Button
+        wide
+        variant="stockholm"
+        disabled={busy}
+        onClick={() => {
+          void onClick();
+        }}
+      >
+        {label}
       </Button>
     </Footer>
   );

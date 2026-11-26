@@ -19,7 +19,7 @@ describe('failureText', () => {
       code: 'not_confirmed',
     });
     expect(failureText(err, 'Kon niet verbinden.', makeT('nl'))).toBe(
-      'Kon niet verbinden. (niemand hield op tijd een knop van de speaker vast)'
+      'Kon niet verbinden. (niemand hield op tijd een knop van de luidspreker ingedrukt)'
     );
     expect(failureText(err, 'Couldn’t save', makeT('en'))).toBe(
       'Couldn’t save (nobody held a button on the speaker in time)'
@@ -29,16 +29,16 @@ describe('failureText', () => {
   it('says busy, validation, not found and unavailable in the page language', () => {
     const t = makeT('nl');
     expect(failureText(answer(409, { error: 'x', code: 'busy' }), 'Mislukt.', t)).toBe(
-      'Mislukt. (de speaker is bezig met een andere taak)'
+      'Mislukt. (de luidspreker is bezig met een andere taak)'
     );
     expect(failureText(answer(400, { error: 'x', code: 'invalid_request' }), 'Mislukt.', t)).toBe(
-      'Mislukt. (de speaker accepteerde wat er is ingevuld niet)'
+      'Mislukt. (de luidspreker accepteerde wat er is ingevuld niet)'
     );
     expect(failureText(answer(404, { error: 'x', code: 'not_found' }), 'Mislukt.', t)).toBe(
-      'Mislukt. (de speaker kon het niet vinden)'
+      'Mislukt. (de luidspreker kon het niet vinden)'
     );
     expect(failureText(answer(503, { error: 'x', code: 'unavailable' }), 'Mislukt.', t)).toBe(
-      'Mislukt. (nu niet beschikbaar op de speaker)'
+      'Mislukt. (nu niet beschikbaar op de luidspreker)'
     );
   });
 

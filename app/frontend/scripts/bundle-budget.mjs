@@ -37,7 +37,9 @@ export function measure(dist) {
     });
   const html = readFileSync(join(dist, 'index.html'), 'utf8');
   const first = new Set(
-    [...html.matchAll(/(?:src|href)="\.?\/?assets\/([^"]+\.js)"/g)].map((m) => m[1])
+    [...html.matchAll(/(?:src|href)="\.?\/?assets\/(?<file>[^"]+\.js)"/gu)].map(
+      (m) => m.groups.file
+    )
   );
   const initial = chunks.filter((c) => first.has(c.file));
   if (initial.length !== first.size) throw new Error(`index.html names a script not in ${assets}`);
@@ -66,10 +68,10 @@ function main() {
   const largest = chunks.reduce((a, b) => (b.size > a.size ? b : a));
   const raw = initial.reduce((sum, c) => sum + c.size, 0);
   const gzip = initial.reduce((sum, c) => sum + c.gzip, 0);
-  console.log(
+  process.stdout.write(
     `bundle budget: the first page loads ${initial.length} scripts, ${kB(raw)} (${kB(gzip)} gzip, ` +
       `limit ${kB(LIMITS.initialGzip)}); largest script ${largest.file} ${kB(largest.size)} ` +
-      `(limit ${kB(LIMITS.chunk)})`
+      `(limit ${kB(LIMITS.chunk)})\n`
   );
   const over = check(measured);
   for (const line of over) console.error(`bundle budget: ${line}`);

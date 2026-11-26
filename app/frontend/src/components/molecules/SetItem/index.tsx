@@ -31,13 +31,13 @@ function SettingLabel({
   strong = false,
   disc = false,
 }: {
-  icon?: IconName | undefined;
-  label: string;
-  meta?: string | undefined;
-  desc?: string | undefined;
-  art?: ReactNode | undefined;
-  strong?: boolean | undefined;
-  disc?: boolean | undefined;
+  readonly icon?: IconName | undefined;
+  readonly label: string;
+  readonly meta?: string | undefined;
+  readonly desc?: string | undefined;
+  readonly art?: ReactNode | undefined;
+  readonly strong?: boolean | undefined;
+  readonly disc?: boolean | undefined;
 }) {
   const Glyph = icon && Icon[icon];
   const hasArt = Boolean(art);
@@ -73,17 +73,17 @@ export function SetItem({
   disc = false,
   onClick,
 }: {
-  icon?: IconName | undefined;
-  label: string;
-  meta?: string | undefined;
-  desc?: string | undefined;
-  art?: ReactNode | undefined;
-  badge?: string | undefined;
+  readonly icon?: IconName | undefined;
+  readonly label: string;
+  readonly meta?: string | undefined;
+  readonly desc?: string | undefined;
+  readonly art?: ReactNode | undefined;
+  readonly badge?: string | undefined;
   // The badge in ink instead of amber.
-  inkBadge?: boolean;
-  danger?: boolean;
-  disc?: boolean | undefined;
-  onClick: () => void;
+  readonly inkBadge?: boolean;
+  readonly danger?: boolean;
+  readonly disc?: boolean | undefined;
+  readonly onClick: () => void;
 }): ReactElement {
   return (
     <Row type="button" onClick={onClick} $danger={danger}>
@@ -116,12 +116,12 @@ export function SetSwitch({
   disabled,
   onToggle,
 }: {
-  icon?: IconName | undefined;
-  label: string;
-  desc?: string | undefined;
-  on: boolean;
-  disabled?: boolean;
-  onToggle: () => void;
+  readonly icon?: IconName | undefined;
+  readonly label: string;
+  readonly desc?: string | undefined;
+  readonly on: boolean;
+  readonly disabled?: boolean;
+  readonly onToggle: () => void;
 }): ReactElement {
   return (
     <Row

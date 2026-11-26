@@ -52,6 +52,7 @@ export async function loadLanguage(lang: string): Promise<void> {
   if (loaded[lang]) return;
   const load = LOADERS[`./messages/${lang}.ts`];
   if (!load) throw new Error(`no messages for ${lang}`);
+  // eslint-disable-next-line require-atomic-updates -- two loads of one language store the same messages
   loaded[lang] = (await load()).default;
 }
 
@@ -75,7 +76,7 @@ function langOfTag(tag: string): string {
 // The browser's preferred language when it is one we have, else English.
 export function detectInitialLang(): string {
   const candidates =
-    typeof navigator !== 'undefined' ? [...navigator.languages, navigator.language] : [];
+    typeof navigator === 'undefined' ? [] : [...navigator.languages, navigator.language];
   for (const candidate of candidates) {
     const lang = langOfTag(candidate || '');
     if (isSupportedLang(lang)) return lang;
@@ -85,7 +86,7 @@ export function detectInitialLang(): string {
 
 const interpolate = (text: string, vars?: Vars) =>
   vars
-    ? text.replace(/\{(\w+)\}/g, (match, name: string) =>
+    ? text.replace(/\{(?<name>\w+)\}/gu, (match, name: string) =>
         name in vars ? String(vars[name]) : match
       )
     : text;

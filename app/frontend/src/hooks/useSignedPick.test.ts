@@ -51,7 +51,10 @@ describe('useSignedPick', () => {
     const { result } = renderHook(() => useSignedPick(onPick, onError));
     let release: (s: string) => void = vi.fn();
     const oldSig = new File(['s'], 'old.bin.sig');
-    oldSig.text = async () => new Promise((r) => (release = r));
+    oldSig.text = async () =>
+      new Promise((r) => {
+        release = r;
+      });
     let older: Promise<void> = Promise.resolve();
     act(() => {
       older = result.current.onChange(change([new File(['a'], 'old.bin'), oldSig]));

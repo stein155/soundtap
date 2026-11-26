@@ -28,16 +28,16 @@ export interface SearchMode {
 }
 
 interface Props {
-  mode: SearchMode;
-  speaker: string;
-  onMenu: () => void;
-  onPresets: () => void;
-  onClose: () => void;
-  onPick: (station: Station) => void;
-  onHoldStation?: ((station: Station) => void) | undefined;
-  onHoldSpotify?:
+  readonly mode: SearchMode;
+  readonly speaker: string;
+  readonly onMenu: () => void;
+  readonly onPresets: () => void;
+  readonly onClose: () => void;
+  readonly onPick: (station: Station) => void;
+  readonly onHoldStation?: ((station: Station) => void) | undefined;
+  readonly onHoldSpotify?:
     ((item: { uri: string; name: string; artwork?: string | undefined }) => void) | undefined;
-  onSpotifyPlayed: () => void;
+  readonly onSpotifyPlayed: () => void;
 }
 
 const serviceOf = (mode: SearchMode): Service => mode.service ?? 'tunein';
@@ -73,9 +73,9 @@ function SearchField({
   query,
   setQuery,
 }: {
-  input: React.RefObject<HTMLInputElement | null>;
-  query: string;
-  setQuery: (query: string) => void;
+  readonly input: React.RefObject<HTMLInputElement | null>;
+  readonly query: string;
+  readonly setQuery: (query: string) => void;
 }) {
   const { t } = useI18n();
   return (
@@ -150,10 +150,10 @@ function CustomStationPage({
   onLeave,
   onPick,
 }: {
-  open: boolean;
-  onBack: () => void;
-  onLeave: () => void;
-  onPick: (station: Station) => void;
+  readonly open: boolean;
+  readonly onBack: () => void;
+  readonly onLeave: () => void;
+  readonly onPick: (station: Station) => void;
 }) {
   const { t } = useI18n();
   return (
@@ -181,7 +181,7 @@ function CustomStationPage({
 }
 
 // The way out of a search that found nothing to play: the station's own stream.
-function PlayFromLinkRow({ onPress }: { onPress: () => void }) {
+function PlayFromLinkRow({ onPress }: { readonly onPress: () => void }) {
   const { t } = useI18n();
   return (
     <LinkRow type="button" onClick={onPress}>
@@ -206,14 +206,14 @@ function TuneInPage({
   onHold,
   onLeave,
 }: {
-  tunein: ReturnType<typeof useTuneInBrowser>;
-  inSearch: boolean;
+  readonly tunein: ReturnType<typeof useTuneInBrowser>;
+  readonly inSearch: boolean;
   // Opens the search field; takeFocus when the field just went away while focused.
-  search: { open: () => void; takeFocus: boolean };
-  speaker: string;
-  onPick: (station: Station) => void;
-  onHold?: ((station: Station) => void) | undefined;
-  onLeave: () => void;
+  readonly search: { open: () => void; takeFocus: boolean };
+  readonly speaker: string;
+  readonly onPick: (station: Station) => void;
+  readonly onHold?: ((station: Station) => void) | undefined;
+  readonly onLeave: () => void;
 }) {
   const { t } = useI18n();
   const atTop = !inSearch && !tunein.canGoUp;

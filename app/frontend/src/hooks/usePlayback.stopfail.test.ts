@@ -36,7 +36,10 @@ describe('usePlayback stop failure', () => {
   it('ignores a repeat tap on a room card until the first has settled', async () => {
     let finish: () => void = vi.fn();
     vi.mocked(api.stopPlayback).mockImplementation(
-      async () => new Promise<void>((resolve) => (finish = resolve))
+      async () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        })
     );
     const now = nowPlaying({ source: 'TUNEIN', stationName: 'Jazz', playStatus: 'PLAY_STATE' });
     const other = room({ id: 'office', name: 'Office', now });

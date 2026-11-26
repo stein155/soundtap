@@ -14,19 +14,19 @@ import { groupName, roomOn } from '../../../lib/rooms';
 import { speakerArg, type Room } from '../../../hooks/useRooms';
 
 interface Props {
-  lead: Room;
-  members: Room[];
-  starting: boolean;
+  readonly lead: Room;
+  readonly members: Room[];
+  readonly starting: boolean;
   // The speaker stopped answering: what it last said it played is no longer known.
-  unreachable: boolean;
-  onTransport: () => void;
+  readonly unreachable: boolean;
+  readonly onTransport: () => void;
   // The player, full screen.
-  onPlayer: () => void;
+  readonly onPlayer: () => void;
   // The presets, to pick something to play.
-  onChoose: () => void;
+  readonly onChoose: () => void;
   // The speaker's card.
-  onSpeaker: () => void;
-  onVolume: () => void;
+  readonly onSpeaker: () => void;
+  readonly onVolume: () => void;
 }
 
 // What the selected room plays, as a bar (tap for the full player) with its transport
@@ -102,11 +102,11 @@ export function SpeakerBar({
   onPress,
   onVolume,
 }: {
-  lead: Room;
-  members: Room[];
-  onPress: () => void;
+  readonly lead: Room;
+  readonly members: Room[];
+  readonly onPress: () => void;
   // Opens the volume panel from the icon; without it the icon only shows the state.
-  onVolume?: () => void;
+  readonly onVolume?: () => void;
 }): ReactElement {
   const { t } = useI18n();
   const view = describePlayback(lead.now, t, speakerArg(lead));

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState, type ReactElement } from 'rea
 import { Slider, SliderThumb, SliderTrack } from 'react-aria-components';
 import { useI18n } from '../../../lib/i18n';
 import { seekTrack, trackPosition, type TrackPosition } from '../../../lib/api/playback';
+import { usePageVisible } from '../../../hooks/usePageVisible';
 
 const POLL_MS = 5000;
 const TICK_MS = 1000;
@@ -19,10 +20,10 @@ export function clock(ms: number): string {
 }
 
 interface Props {
-  speaker?: string | undefined;
-  playing: boolean;
+  readonly speaker?: string | undefined;
+  readonly playing: boolean;
   // Changes with the track and the play status, to read the position again at once.
-  nowKey: string;
+  readonly nowKey: string;
 }
 
 // How far the track is, for what has an end: a stream shows nothing. The knob only shows
@@ -31,8 +32,19 @@ export function TrackTime({ speaker, playing, nowKey }: Props): ReactElement | n
   const { t } = useI18n();
   const [time, setTime] = useState<TrackPosition | null>(null);
   const [dragged, setDragged] = useState<number | null>(null);
+  // Another track: the last one's length and place no longer hold, so show nothing until
+  // the speaker tells the new ones (a pause or play keeps them).
+  const track = nowKey.split('|')[0];
+  const [shownTrack, setShownTrack] = useState(track);
+  if (track !== shownTrack) {
+    setShownTrack(track);
+    setTime(null);
+    setDragged(null);
+  }
   // A seek moves this on: an answer that left before it must not put the old place back.
   const seeks = useRef(0);
+  // A hidden page does not ask; shown again, it reads the place at once.
+  const visible = usePageVisible();
   const load = useCallback(() => {
     const seeksThen = seeks.current;
     trackPosition(speaker).then(
@@ -43,11 +55,12 @@ export function TrackTime({ speaker, playing, nowKey }: Props): ReactElement | n
     );
   }, [speaker]);
   useEffect(() => {
-    seeks.current++; // an answer for the speaker or track before does not count either
+    if (!visible) return undefined;
+    seeks.current += 1; // an answer for the speaker or track before does not count either
     load();
     const id = setInterval(load, POLL_MS);
     return () => clearInterval(id);
-  }, [load, nowKey]);
+  }, [load, nowKey, visible]);
   useEffect(() => {
     if (!playing) return undefined;
     const id = setInterval(() => {
@@ -58,7 +71,7 @@ export function TrackTime({ speaker, playing, nowKey }: Props): ReactElement | n
   // No track length (or none yet): nothing to show a position on.
   if (time === null || time.durationMs === 0 || Number.isNaN(time.durationMs)) return null;
   const seek = (positionMs: number) => {
-    seeks.current++;
+    seeks.current += 1;
     setDragged(null);
     setTime({ ...time, positionMs });
     seekTrack(positionMs, speaker).then(load, load);

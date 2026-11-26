@@ -9,7 +9,12 @@ import { ConfirmAction } from '.';
 describe('ConfirmAction', () => {
   it('asks in a dialog and keeps the button busy while the action runs', async () => {
     let finish: () => void = vi.fn();
-    const onConfirm = vi.fn(async () => new Promise<void>((r) => (finish = r)));
+    const onConfirm = vi.fn(
+      async () =>
+        new Promise<void>((r) => {
+          finish = r;
+        })
+    );
     const { getByRole, findByRole } = renderWithI18n(
       <ConfirmAction label="Start" warning="Sure?" confirmLabel="Commit" onConfirm={onConfirm} />
     );
@@ -21,6 +26,21 @@ describe('ConfirmAction', () => {
     expect(onConfirm).toHaveBeenCalledOnce();
     expect(getByRole('button', { name: 'Start' })).toHaveProperty('disabled', true);
     await act(async () => finish());
+    expect(getByRole('button', { name: 'Start' })).toHaveProperty('disabled', false);
+  });
+
+  it('gives the button back when the action fails', async () => {
+    const onConfirm = vi.fn(async () => Promise.reject(new Error('refused')));
+    const { getByRole, findByRole } = renderWithI18n(
+      <ConfirmAction label="Start" warning="Sure?" confirmLabel="Commit" onConfirm={onConfirm} />
+    );
+    fireEvent.click(getByRole('button', { name: 'Start' }));
+    await findByRole('dialog');
+    await act(async () => {
+      fireEvent.click(getByRole('button', { name: 'Commit' }));
+      await Promise.resolve();
+    });
+    expect(onConfirm).toHaveBeenCalledOnce();
     expect(getByRole('button', { name: 'Start' })).toHaveProperty('disabled', false);
   });
 

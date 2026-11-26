@@ -55,8 +55,10 @@ export function starters({
   };
 
   const playRecent = async (item: RecentItem) => {
-    if (item.tuneInId)
-      return playStation({ tuneInId: item.tuneInId, name: item.name, logo: item.art });
+    if (item.tuneInId) {
+      await playStation({ tuneInId: item.tuneInId, name: item.name, logo: item.art });
+      return;
+    }
     if (item.spotifyUri) {
       // Like a station: shown as starting at once, and a repeat is ignored until settled.
       const key = `${speaker}|spotify:${item.spotifyUri}`;

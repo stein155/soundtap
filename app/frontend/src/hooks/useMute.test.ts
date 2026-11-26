@@ -46,7 +46,11 @@ describe('useMute', () => {
 
   it('drops a late unmute level after a newer slider move', async () => {
     let resolve: (v: number) => void = vi.fn();
-    vi.mocked(getMutedLevel).mockReturnValueOnce(new Promise((r) => (resolve = r)));
+    vi.mocked(getMutedLevel).mockReturnValueOnce(
+      new Promise((r) => {
+        resolve = r;
+      })
+    );
     let stamp = 0;
     const setVolume = vi.fn();
     const { result } = renderHook(() => useMute(setVolume, () => stamp));
@@ -54,7 +58,7 @@ describe('useMute', () => {
     act(() => {
       pending = result.current(room('a', 0));
     });
-    stamp++; // the slider moved to 50 while the level was being read
+    stamp += 1; // the slider moved to 50 while the level was being read
     await act(async () => {
       resolve(20);
       await pending;

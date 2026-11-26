@@ -15,11 +15,11 @@ import type { useGrouping } from '../../../hooks/useGrouping';
 import type { useRoomVolume } from '../../../hooks/useRoomVolume';
 
 interface Props {
-  open: boolean;
-  onClose: () => void;
-  selected: SelectedRoom;
-  grouping: ReturnType<typeof useGrouping>;
-  volume: ReturnType<typeof useRoomVolume>;
+  readonly open: boolean;
+  readonly onClose: () => void;
+  readonly selected: SelectedRoom;
+  readonly grouping: ReturnType<typeof useGrouping>;
+  readonly volume: ReturnType<typeof useRoomVolume>;
 }
 
 const average = (rooms: Room[]) =>
@@ -33,10 +33,10 @@ function Member({
   onToggle,
   onVolume,
 }: {
-  room: Room;
-  member: boolean;
-  onToggle: () => void;
-  onVolume: (v: number) => void;
+  readonly room: Room;
+  readonly member: boolean;
+  readonly onToggle: () => void;
+  readonly onVolume: (v: number) => void;
 }) {
   const { t } = useI18n();
   return (
@@ -63,6 +63,44 @@ function Member({
             showValue
           />
         </div>
+      )}
+    </div>
+  );
+}
+
+// One button for all of them: join every free speaker, or end the group.
+function GroupActions({
+  grouping,
+  joinable,
+  joined,
+}: {
+  readonly grouping: Props['grouping'];
+  readonly joinable: Room[];
+  readonly joined: Room[];
+}): ReactElement {
+  const { t } = useI18n();
+  return (
+    <div className="spks-actions">
+      {joinable.length > 0 ? (
+        <Button
+          className="spks-primary"
+          onPress={() => {
+            void grouping.linkMany(joinable);
+          }}
+        >
+          {t('playOnAll')}
+        </Button>
+      ) : (
+        joined.length > 0 && (
+          <Button
+            className="spks-power"
+            onPress={() => {
+              void grouping.unlinkMany(joined);
+            }}
+          >
+            {t('stopPlayOnAll')}
+          </Button>
+        )
       )}
     </div>
   );
@@ -119,26 +157,14 @@ export function GroupSheet({
                   key={r.id}
                   room={r}
                   member={r.linkedTo === lead.id}
-                  onToggle={() =>
-                    void (r.linkedTo === lead.id ? grouping.unlink(r) : grouping.link(r))
-                  }
+                  onToggle={() => {
+                    void (r.linkedTo === lead.id ? grouping.unlink(r) : grouping.link(r));
+                  }}
                   onVolume={(v) => volume.setRoomVolume(r, v)}
                 />
               ))}
             </SetMenu>
-            <div className="spks-actions">
-              {joinable.length > 0 ? (
-                <Button className="spks-primary" onPress={() => void grouping.linkMany(joinable)}>
-                  {t('playOnAll')}
-                </Button>
-              ) : (
-                joined.length > 0 && (
-                  <Button className="spks-power" onPress={() => void grouping.unlinkMany(joined)}>
-                    {t('stopPlayOnAll')}
-                  </Button>
-                )
-              )}
-            </div>
+            <GroupActions grouping={grouping} joinable={joinable} joined={joined} />
           </div>
         </>
       )}

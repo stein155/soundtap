@@ -5,14 +5,17 @@ import styled from 'styled-components';
 import { Text as HintText } from '../../../atoms/Hint/styled';
 import { Paragraph } from '../../../atoms/Note/styled';
 import { Field } from '../../LabeledField/styled';
+import { pushIn } from '../../../../theme/keyframes';
 
 // A row's own page: its fields and cards straight on the sheet, like any other page.
 // A note that opens the page says what it is for: it joins the page's title above it,
-// on white under the headline.
+// on white under the headline. It slides in as it opens, as iOS pushes a page; less
+// motion asked for ends that at once (theme/GlobalStyle.ts).
 export const Body = styled.div`
   display: flex;
   flex-direction: column;
   gap: 12px;
+  animation: ${pushIn} var(--dur-base) var(--ease-enter);
 
   /* A group under a grey bar follows straight on: the bar is the separation. */
   & > * + section:has(> h2:first-child),

@@ -42,7 +42,7 @@ describe('useSpeakerSettings save', () => {
     await waitFor(() => expect(result.current.form?.alarm.time).toBe('07:00'));
     act(() => result.current.set('alarm', { enabled: true, time: '06:45', slot: 1 }));
     await act(async () => result.current.save());
-    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const zone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
     expect(api.saveSettings).toHaveBeenLastCalledWith(
       { alarm: { enabled: true, time: '06:45', slot: 1, timezone: zone } },
       'Kitchen'
@@ -51,7 +51,7 @@ describe('useSpeakerSettings save', () => {
 
   // Like stock, the ST20 clock shows without a town: a panel with no zone gets the browser's.
   it('gives a standby clock without a town the browser zone', async () => {
-    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const zone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
     const panel = settingsFixture({ name: 'Hall', bass: BASS, hasDisplay: true });
     vi.mocked(api.getSettings).mockResolvedValueOnce(panel);
     vi.mocked(api.saveSettings).mockClear();
@@ -114,15 +114,22 @@ describe('useSpeakerSettings save', () => {
     vi.mocked(api.saveSettings).mockClear();
     const done: (() => void)[] = [];
     vi.mocked(api.saveSettings).mockImplementation(
-      async () => new Promise<undefined>((r) => done.push(() => r(undefined)))
+      async () =>
+        new Promise<undefined>((r) => {
+          done.push(() => r(undefined));
+        })
     );
     act(() => result.current.set('bass', 2));
     let first: Promise<boolean> = Promise.resolve(false);
-    await act(async () => void (first = result.current.save()));
+    await act(async () => {
+      void (first = result.current.save());
+    });
     act(() => result.current.set('bass', 0));
     act(() => result.current.set('name', 'Dining'));
     let second: Promise<boolean> = Promise.resolve(false);
-    await act(async () => void (second = result.current.save()));
+    await act(async () => {
+      void (second = result.current.save());
+    });
     expect(api.saveSettings).toHaveBeenCalledTimes(1); // the second waits for the speaker
     await act(async () => {
       must(done[0], 'the first save')();
@@ -145,10 +152,14 @@ describe('useSpeakerSettings save', () => {
       .mockRejectedValueOnce(new Error('refused'));
     act(() => result.current.set('bass', 2));
     let first: Promise<boolean> = Promise.resolve(false);
-    act(() => void (first = result.current.save()));
+    act(() => {
+      void (first = result.current.save());
+    });
     act(() => result.current.set('bass', 4));
     let second: Promise<boolean> = Promise.resolve(false);
-    act(() => void (second = result.current.save()));
+    act(() => {
+      void (second = result.current.save());
+    });
     await act(async () => {
       await first;
       await second.catch(() => false);

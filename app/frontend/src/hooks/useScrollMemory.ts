@@ -20,11 +20,11 @@ export function useScrollMemory(
   }, []);
   useLayoutEffect(() => {
     const el = ref.current;
-    if (!el || key === current.current) return;
+    if (!el || key === current.current) return undefined;
     current.current = key;
     const target = key === undefined ? 0 : (saved.current.get(key) ?? 0);
     el.scrollTop = target;
-    if (el.scrollTop >= target) return;
+    if (el.scrollTop >= target) return undefined;
     const until = Date.now() + RESTORE_FOR_MS;
     const retry = new MutationObserver(() => {
       el.scrollTop = target;

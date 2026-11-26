@@ -6,6 +6,12 @@ import type { ReactElement } from 'react';
 
 // An indeterminate progress ring. `small` fits a preset tile's status line, `big` stands in
 // for a whole list, as Stockholm's loader does.
-export function Spinner({ small, big }: { small?: boolean; big?: boolean }): ReactElement {
+export function Spinner({
+  small,
+  big,
+}: {
+  readonly small?: boolean;
+  readonly big?: boolean;
+}): ReactElement {
   return <Ring $small={small} $big={big} aria-hidden="true" />;
 }

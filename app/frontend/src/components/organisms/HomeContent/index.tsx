@@ -16,17 +16,17 @@ import { RecentActions, serviceName } from './RecentActions';
 const RAIL_ITEMS = 10;
 
 interface Props {
-  recent: RecentItem[];
-  speaker: string;
+  readonly recent: RecentItem[];
+  readonly speaker: string;
   // The room's name, for the "pick it in the Spotify app" hint.
-  speakerName: string;
-  spotifyReady: boolean;
-  onPlayRecent: (item: RecentItem) => void;
-  onRemoveRecent: (item: RecentItem) => void;
+  readonly speakerName: string;
+  readonly spotifyReady: boolean;
+  readonly onPlayRecent: (item: RecentItem) => void;
+  readonly onRemoveRecent: (item: RecentItem) => void;
   // Puts an entry on a preset; left out while there is no room to store it on.
-  onHoldRecent?: ((item: RecentItem) => void) | undefined;
-  onAllRecent: () => void;
-  onSearch: (mode: SearchMode) => void;
+  readonly onHoldRecent?: ((item: RecentItem) => void) | undefined;
+  readonly onAllRecent: () => void;
+  readonly onSearch: (mode: SearchMode) => void;
 }
 
 // The two music services, each a way into its page.
@@ -83,10 +83,10 @@ function RecentCard({
   onPlay,
   onMore,
 }: {
-  item: RecentItem;
-  speaker: string;
-  onPlay: () => void;
-  onMore: () => void;
+  readonly item: RecentItem;
+  readonly speaker: string;
+  readonly onPlay: () => void;
+  readonly onMore: () => void;
 }) {
   const { t } = useI18n();
   const press = useLongPress(onMore, onPlay);

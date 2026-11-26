@@ -74,7 +74,9 @@ describe('useGrouping.linkMany', () => {
     (sel as { rooms: Room[] }).rooms = [...sel.rooms, c, e];
     let released: () => void = vi.fn();
     vi.mocked(api.followSpeaker).mockReturnValueOnce(
-      new Promise((resolve) => (released = () => resolve(undefined)))
+      new Promise((resolve) => {
+        released = () => resolve(undefined);
+      })
     );
     const grouping = useGrouping(
       sel,
@@ -92,7 +94,9 @@ describe('useGrouping.linkMany', () => {
     const c = room('c', 40, 'a');
     let released: () => void = vi.fn();
     vi.mocked(api.followSpeaker).mockReturnValueOnce(
-      new Promise((resolve) => (released = () => resolve(undefined)))
+      new Promise((resolve) => {
+        released = () => resolve(undefined);
+      })
     );
     const grouping = useGrouping(
       sel,

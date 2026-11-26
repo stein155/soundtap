@@ -10,8 +10,8 @@ export function FormSection({
   children,
   spaced,
 }: {
-  children: ReactNode;
-  spaced?: boolean;
+  readonly children: ReactNode;
+  readonly spaced?: boolean;
 }): ReactElement {
   return <Heading $spaced={spaced}>{children}</Heading>;
 }

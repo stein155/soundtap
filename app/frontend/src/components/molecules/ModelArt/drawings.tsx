@@ -5,12 +5,12 @@ import type { ReactElement } from 'react';
 
 // fill names one of the gradients or patterns in Defs, for this drawing instance.
 export interface DrawingProps {
-  fill: (name: string) => string;
+  readonly fill: (name: string) => string;
 }
 
 // The gradients and grille the drawings fill with, named per instance: several drawings
 // are on screen at once.
-export function Defs({ id }: { id: string }): ReactElement {
+export function Defs({ id }: { readonly id: string }): ReactElement {
   return (
     <defs>
       <linearGradient id={`${id}gb`} x1="0" y1="0" x2="0" y2="1">

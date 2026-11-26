@@ -33,13 +33,19 @@ type TextField = 'host' | 'port' | 'username' | 'discoveryPrefix';
 // A port is a whole number from 1 to 65535; empty means the default.
 function portOK(raw: string): boolean {
   const port = raw.trim();
-  return port === '' || (/^\d+$/.test(port) && Number(port) >= 1 && Number(port) <= 65535);
+  return port === '' || (/^\d+$/u.test(port) && Number(port) >= 1 && Number(port) <= 65535);
 }
 
 type Household = ReturnType<typeof useHouseholdMqtt>;
 
 // Each online speaker's connection to the broker.
-function BrokerLinks({ rooms, links }: { rooms: Room[]; links: Household['links'] }) {
+function BrokerLinks({
+  rooms,
+  links,
+}: {
+  readonly rooms: Room[];
+  readonly links: Household['links'];
+}) {
   const { t } = useI18n();
   return (
     <FieldCard spaced>
@@ -75,9 +81,9 @@ function MoreOptions({
   set,
   textRow,
 }: {
-  form: MqttForm;
-  set: <K extends keyof MqttForm>(field: K, value: MqttForm[K]) => void;
-  textRow: Row;
+  readonly form: MqttForm;
+  readonly set: <K extends keyof MqttForm>(field: K, value: MqttForm[K]) => void;
+  readonly textRow: Row;
 }) {
   const { t } = useI18n();
   return (
@@ -101,9 +107,9 @@ function MqttFooter({
   form,
   badPort,
 }: {
-  mqtt: Household;
-  form: MqttForm;
-  badPort: boolean;
+  readonly mqtt: Household;
+  readonly form: MqttForm;
+  readonly badPort: boolean;
 }) {
   const { t } = useI18n();
   return (
@@ -128,8 +134,8 @@ export function Mqtt({
   rooms,
   onDirty,
 }: {
-  rooms: Room[];
-  onDirty?: (dirty: boolean) => void;
+  readonly rooms: Room[];
+  readonly onDirty?: (dirty: boolean) => void;
 }): ReactElement {
   const { t } = useI18n();
   const mqtt = useHouseholdMqtt(rooms);

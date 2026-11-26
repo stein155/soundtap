@@ -88,7 +88,8 @@ export function useCoreUpdate(speaker: string, target: string): CoreUpdate {
 
   const install = async () => {
     if (phase === 'busy' || phase === 'updated') return;
-    const run = ++generation.current;
+    generation.current += 1;
+    const run = generation.current;
     report('busy', '', 'download');
     try {
       const res = await startCoreUpdate(speaker);

@@ -66,6 +66,15 @@ export interface SelfUpdate {
   install: () => Promise<void>;
 }
 
+// Once the new version answers, the page reloads into it.
+function useReloadWhenUpdated(phase: UpdatePhase): void {
+  useEffect(() => {
+    if (phase !== 'updated') return undefined;
+    const id = setTimeout(() => window.location.reload(), RELOAD_MS);
+    return () => clearTimeout(id);
+  }, [phase]);
+}
+
 // Self-update of soundtapd to the latest stable release.
 export function useSelfUpdate(speaker: string, version: VersionInfo | null): SelfUpdate {
   const { t } = useI18n();
@@ -79,20 +88,17 @@ export function useSelfUpdate(speaker: string, version: VersionInfo | null): Sel
   const pollTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   // A switch to another speaker drops the update the previous one was still running.
-  useEffect(() => {
-    return () => {
+  useEffect(
+    () => () => {
       pollGeneration.current += 1;
       clearTimeout(pollTimer.current);
       setPhase('idle');
       setText('');
-    };
-  }, [speaker]);
+    },
+    [speaker]
+  );
 
-  useEffect(() => {
-    if (phase !== 'updated') return undefined;
-    const id = setTimeout(() => window.location.reload(), RELOAD_MS);
-    return () => clearTimeout(id);
-  }, [phase]);
+  useReloadWhenUpdated(phase);
 
   // A clock NTP has not set yet is the one reason worth naming: it passes on its own.
   const unavailableText = () =>
@@ -105,7 +111,8 @@ export function useSelfUpdate(speaker: string, version: VersionInfo | null): Sel
 
   const waitForVersion = (target: string | null) => {
     const from = version?.version;
-    const generation = ++pollGeneration.current;
+    pollGeneration.current += 1;
+    const generation = pollGeneration.current;
     let polls = 0;
     setStage('download');
     const tick = async () => {

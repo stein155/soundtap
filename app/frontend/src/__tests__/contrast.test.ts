@@ -19,7 +19,7 @@ function tokens(block: string): (name: string) => string {
   if (start < 0) throw new Error(`no ${block} block in GlobalStyle`);
   const body = css.slice(start, css.indexOf('}', start));
   const out = new Map<string, string>();
-  for (const [, name, value] of body.matchAll(/--([\w-]+):\s*(#[0-9a-f]{6});/gi)) {
+  for (const [, name, value] of body.matchAll(/--(?<name>[\w-]+):\s*(?<value>#[0-9a-f]{6});/giu)) {
     if (name && value) out.set(name, value);
   }
   return (name) => {
@@ -93,5 +93,5 @@ it('dark slider thumb stands out from the card and the rail', () => {
 
 // Fixed black text vanishes on the dark theme: the drawer's rows read at 1.1:1. Text takes an ink token.
 it('home.css sets no translucent black text', () => {
-  expect(homeCss).not.toMatch(/(^|[\s;{])color:\s*rgba\(0,\s*0,\s*0/m);
+  expect(homeCss).not.toMatch(/(?:^|[\s;{])color:\s*rgba\(0,\s*0,\s*0/mu);
 });

@@ -6,7 +6,7 @@ import type { Messages } from './en';
 const de: Messages = {
   bluetooth: 'Bluetooth',
   bluetoothHint:
-    'Koppeln Sie Ihr Telefon über Bluetooth, um Musik davon auf diesem Lautsprecher abzuspielen. Er ist nur fünf Minuten lang sichtbar, nachdem Sie auf „Koppeln“ getippt haben.',
+    'Koppeln Sie Ihr Smartphone über Bluetooth, um Musik davon auf diesem Lautsprecher abzuspielen. Der Lautsprecher ist nur fünf Minuten lang sichtbar, nachdem Sie auf „Koppeln“ getippt haben.',
   bluetoothPair: 'Gerät koppeln',
   bluetoothPairError: 'Koppeln konnte nicht gestartet werden',
   bluetoothConnected: 'Verbunden',
@@ -16,19 +16,19 @@ const de: Messages = {
   bluetoothForgetFailed: '{name} konnte nicht entfernt werden',
   bluetoothFindable: 'Jetzt sichtbar',
   bluetoothFindableHint:
-    'Fünf Minuten lang sichtbar: Koppeln Sie jetzt von Ihrem Telefon aus und wählen Sie {name}.',
+    'Fünf Minuten lang sichtbar: Koppeln Sie jetzt von Ihrem Smartphone aus und wählen Sie {name}.',
   whatsNew: 'Was ist neu',
   updateVerified:
     'Der Download wird geprüft, bevor etwas ersetzt wird, und nie von selbst installiert.',
   offline: 'Offline',
   offlineHelpPower:
-    'Prüfen Sie, ob der Lautsprecher Strom hat und ob dieses Telefon oder dieser Computer im selben WLAN ist.',
+    'Prüfen Sie, ob der Lautsprecher Strom hat und ob dieses Smartphone oder dieser Computer im selben WLAN ist.',
   offlineHelpReplug:
     'Ziehen Sie den Stecker, warten Sie zehn Sekunden und stecken Sie ihn wieder ein. Nach etwa einer Minute ist der Lautsprecher wieder da.',
   offlineHelpAmber:
-    'Eine orangefarbene WLAN-Anzeige (SoundTouch 10) bedeutet, dass er kein WLAN hat. Wenn sein Einrichtungsnetzwerk erscheint, verbinden Sie sich damit, um das WLAN neu einzurichten.',
+    'Eine orangefarbene WLAN-Anzeige (SoundTouch 10) bedeutet, dass der Lautsprecher kein WLAN hat. Wenn sein Einrichtungsnetzwerk erscheint, verbinden Sie sich damit, um das WLAN neu einzurichten.',
   offlineHelpBlink:
-    'Eine weiß blinkende Anzeige bedeutet, dass er sich noch verbindet. Warten Sie eine Minute.',
+    'Eine weiß blinkende Anzeige bedeutet, dass der Lautsprecher noch eine Verbindung herstellt. Warten Sie eine Minute.',
   display: 'Display',
   standbyClock: 'Uhr im Standby',
   clockFormat: 'Uhrzeit anzeigen als',
@@ -66,11 +66,11 @@ const de: Messages = {
   settings: 'Einstellungen',
   stateOn: 'Ein',
   spotifyHint:
-    'Lässt die Spotify-App auf Ihren Lautsprechern spielen. Aus: Die Lautsprecher erscheinen nicht mehr in Spotify.',
+    'Lässt die Spotify-App auf Ihren Lautsprechern spielen. Ausgeschaltet erscheinen die Lautsprecher nicht mehr in Spotify.',
   airplayHint:
-    'Lässt iPhone, iPad und Mac auf Ihren Lautsprechern spielen. Aus: Die Lautsprecher erscheinen nicht mehr in der AirPlay-Liste.',
+    'Lässt iPhone, iPad und Mac auf Ihren Lautsprechern spielen. Ausgeschaltet erscheinen die Lautsprecher nicht mehr in der AirPlay-Liste.',
   appleHomeHint:
-    'Die Home-App findet Ihre Lautsprecher über AirPlay. Dieser Schalter ist deshalb derselbe wie bei AirPlay: Aus schaltet beides aus.',
+    'Die Home-App findet Ihre Lautsprecher über AirPlay. Dieser Schalter ist deshalb derselbe wie bei AirPlay: Ausschalten schaltet beides aus.',
   integrationsMore: 'Smart Home',
   integrations: 'Integrationen',
   household: 'Haushalt',
@@ -126,7 +126,7 @@ const de: Messages = {
   powerOffName: '{name} ausschalten',
   powerOnName: '{name} einschalten',
   updatesIntro:
-    'Ein Update kommt neben die Version, die jetzt läuft. Der Lautsprecher behält es erst, wenn es richtig gestartet ist; sonst macht er mit der bisherigen Version weiter.',
+    'Ein Update wird neben der aktuellen Version installiert. Der Lautsprecher behält es erst, wenn es richtig gestartet ist; sonst läuft er mit der bisherigen Version weiter.',
   updatesOther: 'Andere Wege',
   updatesUpload: 'Datei hochladen',
   updatesUploadSummary:
@@ -144,7 +144,7 @@ const de: Messages = {
   updatesSigned: 'signiert',
   updateInstall: 'Aktualisieren',
   updateConfirmBody:
-    'Die Aktualisierung dauert ein paar Minuten. Der Lautsprecher startet neu und ist danach von selbst zurück. Jetzt starten?',
+    'Die Aktualisierung dauert ein paar Minuten. Der Lautsprecher startet neu und ist danach von selbst wieder da. Jetzt starten?',
   offlineTitle: 'Der Lautsprecher antwortet nicht',
   offlineRetrying:
     'Diese Seite versucht es alle paar Sekunden erneut. Sobald der Lautsprecher wieder da ist, machen Sie dort weiter, wo Sie waren.',
@@ -152,10 +152,10 @@ const de: Messages = {
   offlineRetry: 'Erneut versuchen',
   offlineOther: 'Anderen Lautsprecher wählen',
   offlineTipPower:
-    'Ist er eingesteckt? Ein Lautsprecher, der gerade aktualisiert wird, ist ein paar Minuten weg.',
-  offlineTipWifi: 'Ist Ihr Telefon im selben WLAN wie der Lautsprecher?',
+    'Hat der Lautsprecher Strom? Ein Lautsprecher, der gerade aktualisiert wird, ist ein paar Minuten weg.',
+  offlineTipWifi: 'Ist Ihr Smartphone im selben WLAN wie der Lautsprecher?',
   offlineTipRouter:
-    'Immer noch weg? Suchen Sie ihn in Ihrem Router oder öffnen Sie sein eigenes Einrichtungsnetzwerk.',
+    'Immer noch weg? Suchen Sie den Lautsprecher in Ihrem Router oder verbinden Sie sich mit seinem Einrichtungsnetzwerk.',
   presetEmptyTitle: 'Dieses Preset ist noch frei',
   presetEmptyHint:
     'Hier ist noch nichts gespeichert. Halten Sie ein freies Preset gedrückt, um zu speichern, was gerade läuft.',
@@ -188,13 +188,14 @@ const de: Messages = {
   customHelpGeoWhy: 'Der Sender lässt diesen Stream in Ihrem Land möglicherweise nicht zu.',
   liveShort: 'Live',
   groupOf: 'Gruppe {name}',
-  playOnAll: 'Alle abspielen',
+  playOnAll: 'Überall abspielen',
   stopPlayOnAll: 'Gruppe auflösen',
   searchPlaceholder: 'Sender, Genres, Länder…',
   searchSpotifyApp: 'In der Spotify-App suchen',
   noStations: 'Keine Sender gefunden.',
   clear: 'Löschen',
   close: 'Schließen',
+  ok: 'OK',
   stop: 'Stopp',
   mute: 'Stumm',
   on: 'auf',
@@ -209,17 +210,17 @@ const de: Messages = {
   updatesOnSpeaker: 'Updates sind nur am Lautsprecher selbst möglich.',
   multiroom: 'Multiroom',
   network: 'Netzwerk',
-  wifiNetwork: 'Drahtloses Netzwerk',
+  wifiNetwork: 'WLAN-Netzwerk',
   ipAddress: 'IP-Adresse',
   wifiSetupHint:
-    'Wählen Sie das Netzwerk, das dieser Lautsprecher nutzen soll. Beim Wechsel können der Lautsprecher und diese App kurz die Verbindung verlieren; danach verbinden sie sich im neuen Netzwerk.',
+    'Wählen Sie das Netzwerk, das dieser Lautsprecher nutzen soll. Beim Wechsel können der Lautsprecher und diese App kurz die Verbindung verlieren.',
   wifiNoNetworks: 'Keine Netzwerke gefunden',
   wifiScanFailed:
     'Die Netzwerksuche ist fehlgeschlagen. Versuchen Sie es erneut oder geben Sie den Namen selbst ein.',
   wifiPassword: 'Passwort eingeben',
   wifiConnect: 'Verbinden',
   wifiPleaseWait:
-    'Bitte warten. Dies kann ein bis zwei Minuten dauern. Die WLAN-Anzeige Ihres Lautsprechers zeigt, was gerade passiert.',
+    'Bitte warten, das kann ein bis zwei Minuten dauern. An der WLAN-Anzeige des Lautsprechers sehen Sie, wie es läuft.',
   wifiSecurityNone: 'Keine',
   wifiSecurityType: 'Sicherheitstyp',
   wifiSearching: 'WLAN-Netzwerke werden gesucht',
@@ -248,7 +249,7 @@ const de: Messages = {
   mqttHost: 'Host',
   mqttPort: 'Port',
   mqttPasswordSet: 'Gespeichert. Leer lassen, um es zu behalten.',
-  mqttDiscoveryPrefix: 'Discovery‑Präfix',
+  mqttDiscoveryPrefix: 'Discovery-Präfix',
   mqttTls: 'TLS verwenden',
   mqttConnected: 'Mit dem Broker verbunden',
   mqttDisconnected: 'Nicht verbunden',
@@ -263,7 +264,7 @@ const de: Messages = {
     'Es wurde nichts installiert. Wählen Sie eine andere Datei oder laden Sie sie erneut hoch.',
   firmwareInstallFailed: 'Firmware-Installation fehlgeschlagen.',
   firmwareInstallFailedHint:
-    'Starten Sie nicht neu. Die bisherige Firmware läuft weiter. Wiederholen Sie die Prüfung oder nutzen Sie die USB-Wiederherstellung, falls der Lautsprecher nicht mehr erreichbar ist.',
+    'Starten Sie den Lautsprecher nicht neu: Die bisherige Firmware läuft noch. Wiederholen Sie die Prüfung oder nutzen Sie den USB-Stick, falls der Lautsprecher nicht mehr erreichbar ist.',
   firmwareUploading: 'Wird hochgeladen',
   firmwareKernel: 'Kernel',
   firmwareModels: 'Modelle',
@@ -275,7 +276,7 @@ const de: Messages = {
   firmwareNotInstallable:
     'Dieser Lautsprecher kann keine Firmware schreiben. Nutzen Sie den USB-Stick aus der Installationsanleitung.',
   firmwareInstallWarn:
-    'Die neue Version kommt neben die Version, die jetzt läuft. Ziehen Sie nicht den Stecker.',
+    'Die neue Version wird neben der aktuellen installiert. Ziehen Sie nicht den Stecker.',
   firmwareInstallConfirm: 'Ja, installieren',
   firmwareDowngradeWarn:
     'Das ist SoundTap {version}, älter als die Version auf dem Lautsprecher. Mit der älteren Version können Fehler zurückkehren, die eine neuere behoben hat. Ziehen Sie nicht den Stecker.',
@@ -312,7 +313,7 @@ const de: Messages = {
   mqttPortInvalid: 'Geben Sie einen Port von 1 bis 65535 ein oder lassen Sie das Feld leer.',
   undo: 'Rückgängig',
   presetStored: 'Auf #{slot} gespeichert',
-  presetChanged: '#{slot} wurde inzwischen geändert und bleibt, wie es ist',
+  presetChanged: '#{slot} wurde inzwischen geändert und deshalb nicht überschrieben',
   noOtherSpeakers: 'Keine anderen SoundTap-Lautsprecher in diesem Netzwerk gefunden.',
   actionRefused: '{name} hat das abgelehnt',
   pressToConfirm:
@@ -320,9 +321,9 @@ const de: Messages = {
   loading: 'Wird geladen…',
   spUnavailableTitle: 'Spotify ist nicht verfügbar',
   resetNextSteps:
-    'Zurückgesetzt. Der Lautsprecher startet im Einrichtungsmodus neu: Verbinden Sie Ihr Telefon mit dem WLAN „SoundTap …“, um ihn neu einzurichten.',
+    'Zurückgesetzt. Der Lautsprecher startet im Einrichtungsmodus neu: Verbinden Sie Ihr Smartphone mit dem WLAN „SoundTap …“, um ihn neu einzurichten.',
   setupNextSteps:
-    'Verbinden Sie Ihr Telefon jetzt wieder mit Ihrem WLAN zu Hause und öffnen Sie http://{host}.',
+    'Verbinden Sie Ihr Smartphone jetzt wieder mit Ihrem WLAN zu Hause und öffnen Sie http://{host}.',
   setupRouterHint:
     'Öffnet sich die Seite nicht, suchen Sie {device} in der Geräteliste Ihres Routers und öffnen Sie seine IP-Adresse.',
   wifiFailNotFound:
@@ -355,7 +356,7 @@ const de: Messages = {
   alarmTime: 'Uhrzeit',
   alarmPreset: 'Preset',
   alarmIntro:
-    'Der Wecker ist im Lautsprecher selbst gespeichert. Er klingelt auch, wenn Ihr Telefon aus ist.',
+    'Der Wecker ist im Lautsprecher selbst gespeichert. Er klingelt auch, wenn Ihr Smartphone aus ist.',
   alarmWhen: 'Wann und womit',
   mqttEnableDesc:
     'Gibt den Zustand Ihrer Lautsprecher über MQTT weiter und lässt jedes MQTT-Programm sie steuern.',
@@ -369,6 +370,7 @@ const de: Messages = {
   msNone: 'Keine Medienserver gefunden',
   msSearch: 'Erneut suchen',
   msFound: 'In Ihrem Netzwerk gefunden',
+  msUnreachable: '{name} ist nicht erreichbar. Versuchen Sie es erneut.',
   msFolders: 'Ordner',
   btNone: 'Keine Geräte gekoppelt',
   upModel: 'Modell',
@@ -427,14 +429,14 @@ const de: Messages = {
   saveFailedOn: 'Nicht gespeichert auf:',
   stations: 'Sender',
   openPlayer: 'Player öffnen: {name}',
-  tuneinError: 'TuneIn ist nicht erreichbar — versuchen Sie es erneut',
+  tuneinError: 'TuneIn ist nicht erreichbar. Versuchen Sie es erneut.',
   sleepMinutes: '{n} Min.',
   mqttPassword: 'Passwort',
   reloadNow: 'Jetzt neu laden',
-  actionFailed: '{name} antwortet nicht',
+  actionFailed: '{name} ist nicht erreichbar',
   stereoPair: 'Stereopaar',
   stereoPairHint:
-    'Zwei Lautsprecher spielen zusammen wie einer: einer links, der andere rechts. Jedes Modell geht. Lautstärke, Presets und Ein/Aus gelten dann für beide.',
+    'Zwei Lautsprecher spielen zusammen wie einer: einer links, der andere rechts. Jedes Modell ist möglich. Lautstärke, Presets und Ein/Aus gelten dann für beide.',
   stereoPairPartner: 'Koppeln mit',
   stereoPairThis: '{name} spielt',
   stereoPairStart: 'Koppeln',
@@ -449,7 +451,7 @@ const de: Messages = {
   wifiFellBack:
     'Das neue Netzwerk hat nicht funktioniert, deshalb ist der Lautsprecher zu seinem bisherigen Netzwerk zurückgekehrt.',
   soundbarBass: 'Bassmodul',
-  soundbarRears: 'Rücklautsprecher',
+  soundbarRears: 'Surround-Lautsprecher',
   soundbarConnected: 'Verbunden',
   soundbarOff: 'Nicht verbunden',
   soundbarUnpaired: 'Nicht gekoppelt',
@@ -459,7 +461,7 @@ const de: Messages = {
   adaptiqStart: 'Starten',
   treble: 'Höhen',
   soundbarCentre: 'Center-Lautsprecher',
-  soundTone: 'Klang',
+  soundTone: 'Klangregelung',
   soundTv: 'TV',
   soundOutput: 'Ausgang',
   soundExtras: 'Zusätzliche Lautsprecher',
@@ -496,7 +498,7 @@ const de: Messages = {
   crashReportsSetting: 'Absturzberichte anbieten',
   crashReportsSettingHint:
     'Nach einem Absturz bietet dieser Lautsprecher einen fertigen Bericht für GitHub an, den Sie selbst lesen und absenden. Es wird nichts automatisch gesendet.',
-  crashReportsSettingFailed: 'Absturzberichte konnten nicht umgeschaltet werden',
+  crashReportsSettingFailed: 'Die Einstellung für Absturzberichte konnte nicht geändert werden',
   crashReportFound:
     'Dieser Lautsprecher ist abgestürzt. Wenn Sie es melden, kann der Fehler behoben werden.',
   crashReportAction: 'Diesen Absturz melden',
@@ -519,20 +521,22 @@ const de: Messages = {
   setupOtherNetwork: 'Anderes Netzwerk…',
   setupPasswordOf: 'Passwort für {name}',
   setupPhoneLoses:
-    'Ihr Telefon verliert gleich die Verbindung zum Lautsprecher. Wechseln Sie zurück in Ihr eigenes WLAN und öffnen Sie {host}.',
+    'Ihr Smartphone verliert gleich die Verbindung zum Lautsprecher. Wechseln Sie zurück in Ihr eigenes WLAN und öffnen Sie {host}.',
   updatingEyebrow: 'Update · {name}',
   updatingTitle: 'Der Lautsprecher aktualisiert sich',
-  updatingBody: 'Die Musik stoppt kurz. In ein paar Minuten ist er mit der neuen Version zurück.',
+  updatingBody:
+    'Die Musik stoppt kurz. In ein paar Minuten ist der Lautsprecher mit der neuen Version wieder da.',
   updatingSteps: 'Fortschritt',
-  updatingProgress: '{percent} % fertig',
+  updatingProgress: '{percent} % fertig',
   updatingDownloaded: 'Heruntergeladen und geprüft',
   updatingInstall: 'Update wird installiert',
   updatingRestart: 'Neustart',
   updatingCheck: 'Prüfen, ob alles funktioniert',
-  updatingPower: 'Lassen Sie ihn am Strom.',
+  updatingPower: 'Ziehen Sie nicht den Stecker.',
   updatingSt300:
     'Beim SoundTouch 300 kann der letzte Schritt etwas dauern; lassen Sie ihn eingeschaltet.',
-  updatingFallback: 'Klappt es nicht, macht er einfach mit der vorherigen Version weiter.',
+  updatingFallback:
+    'Klappt es nicht, läuft der Lautsprecher einfach mit der vorherigen Version weiter.',
   volumeLevel: 'Lautstärke {n}',
   playingWhat: 'Spielt {name}',
   crashReportsTitle: 'Absturzberichte',

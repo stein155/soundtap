@@ -22,7 +22,7 @@ export function sameStation(a?: string | null, b?: string | null): boolean {
 
 // Containment counts only on word boundaries, so "radio 1" matches
 // "npo radio 1" but never "radio 10".
-const alnum = /[a-z0-9]/;
+const alnum = /[a-z0-9]/u;
 function containsWord(long: string, short: string): boolean {
   for (let i = long.indexOf(short); i !== -1; i = long.indexOf(short, i + 1)) {
     const okBefore = i === 0 || !alnum.test(long.charAt(i - 1));

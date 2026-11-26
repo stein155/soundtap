@@ -32,7 +32,8 @@ function useFolder(server: UPnPServer, speaker: string) {
   // Only the newest browse may land; an older answer would jump back to where it was sent.
   const seq = useRef(0);
   const browse = async (next: Folder[]) => {
-    const mine = ++seq.current;
+    seq.current += 1;
+    const mine = seq.current;
     setBusy(true);
     const found = await browseUPnP(server.usn, next.at(-1)?.id ?? ROOT_FOLDER, speaker);
     if (mine !== seq.current) return;
@@ -63,7 +64,7 @@ function useFolder(server: UPnPServer, speaker: string) {
 }
 
 // The folder's contents: its folders under one bar, its tracks under another.
-function FolderBody({ folder }: { folder: ReturnType<typeof useFolder> }) {
+function FolderBody({ folder }: { readonly folder: ReturnType<typeof useFolder> }) {
   const { t } = useI18n();
   const { items, busy } = folder;
   const folders = items?.filter(isUPnPContainer) ?? [];
@@ -95,7 +96,9 @@ function FolderBody({ folder }: { folder: ReturnType<typeof useFolder> }) {
               type="button"
               disabled={busy}
               $playing={folder.playing === item.id}
-              onClick={() => void folder.play(item)}
+              onClick={() => {
+                void folder.play(item);
+              }}
             >
               <TrackGlyph aria-hidden="true">
                 {folder.playing === item.id ? (
@@ -122,10 +125,10 @@ export function FolderPage({
   onBack,
   onExit,
 }: {
-  server: UPnPServer;
-  speaker: string;
-  onBack: () => void;
-  onExit: () => void;
+  readonly server: UPnPServer;
+  readonly speaker: string;
+  readonly onBack: () => void;
+  readonly onExit: () => void;
 }): ReactElement {
   const folder = useFolder(server, speaker);
   const { trail } = folder;
@@ -138,7 +141,13 @@ export function FolderPage({
   const title = trail.at(-1)?.title ?? server.friendlyName;
   return (
     <Sheet
-      onBack={trail.length ? () => void folder.browse(trail.slice(0, -1)) : onBack}
+      onBack={
+        trail.length > 0
+          ? () => {
+              void folder.browse(trail.slice(0, -1));
+            }
+          : onBack
+      }
       onExit={onExit}
       eyebrow={server.friendlyName}
       ownHero

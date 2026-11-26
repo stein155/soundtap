@@ -16,7 +16,13 @@ import { Glyph, PickRow, Searching, Text, Trail } from './styled';
 import { useWifiSurvey } from './useWifiSurvey';
 
 // One network nearby: its signal, its name, a lock when it has a password.
-function NetworkRow({ network, onPick }: { network: WifiNetwork; onPick: () => void }) {
+function NetworkRow({
+  network,
+  onPick,
+}: {
+  readonly network: WifiNetwork;
+  readonly onPick: () => void;
+}) {
   const { t } = useI18n();
   return (
     <PickRow onClick={onPick}>
@@ -39,12 +45,12 @@ function Nearby({
   survey,
   onPick,
 }: {
-  survey: ReturnType<typeof useWifiSurvey>;
-  onPick: (network: WifiNetwork) => void;
+  readonly survey: ReturnType<typeof useWifiSurvey>;
+  readonly onPick: (network: WifiNetwork) => void;
 }) {
   const { t } = useI18n();
   const networks = survey.networks ?? [];
-  if (survey.scanning && !networks.length)
+  if (survey.scanning && networks.length === 0)
     return (
       <Searching role="status">
         <Spinner />
@@ -54,7 +60,7 @@ function Nearby({
   return (
     <>
       {survey.failed && <Hint>{t('wifiScanFailed')}</Hint>}
-      {networks.length ? (
+      {networks.length > 0 ? (
         <SetMenu title={t('wifiNearby')}>
           {networks.map((n) => (
             <NetworkRow key={n.ssid} network={n} onPick={() => onPick(n)} />
@@ -74,10 +80,10 @@ export function WifiSearch({
   current,
   onBack,
 }: {
-  speaker: string;
+  readonly speaker: string;
   // The network in use, left out of the list.
-  current?: string | undefined;
-  onBack: () => void;
+  readonly current?: string | undefined;
+  readonly onBack: () => void;
 }): ReactElement {
   const { t } = useI18n();
   const survey = useWifiSurvey(speaker);

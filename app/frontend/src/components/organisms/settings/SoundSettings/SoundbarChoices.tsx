@@ -44,10 +44,10 @@ function SoundbarChoiceCard({
   title,
   options,
 }: {
-  speaker?: string | undefined;
-  choice: SoundbarChoice;
-  title: I18nKey;
-  options: readonly (readonly [string, I18nKey | null])[];
+  readonly speaker?: string | undefined;
+  readonly choice: SoundbarChoice;
+  readonly title: I18nKey;
+  readonly options: readonly (readonly [string, I18nKey | null])[];
 }) {
   const { t } = useI18n();
   const [mode, setOwn] = useState<string | null>(null);
@@ -63,7 +63,8 @@ function SoundbarChoiceCard({
   if (mode === null) return null;
   const choose = async (next: string) => {
     const was = mode;
-    const mine = ++latest.current;
+    latest.current += 1;
+    const mine = latest.current;
     setOwn(next);
     setError('');
     try {
@@ -83,7 +84,9 @@ function SoundbarChoiceCard({
         label={t(title)}
         value={mode}
         options={options.map(([value, label]) => ({ value, label: label ? t(label) : value }))}
-        onChange={(m) => void choose(m)}
+        onChange={(m) => {
+          void choose(m);
+        }}
       />
       {error && <Hint error>{error}</Hint>}
     </Card>
@@ -91,7 +94,11 @@ function SoundbarChoiceCard({
 }
 
 // The soundbar's audio mode, hidden until the bar has reported it.
-export function AudioModeChoice({ speaker }: { speaker?: string | undefined }): ReactElement {
+export function AudioModeChoice({
+  speaker,
+}: {
+  readonly speaker?: string | undefined;
+}): ReactElement {
   return (
     <SoundbarChoiceCard
       speaker={speaker}
@@ -103,7 +110,7 @@ export function AudioModeChoice({ speaker }: { speaker?: string | undefined }): 
 }
 
 // The soundbar's HDMI-CEC mode and HDMI input button, each hidden until the bar has reported it.
-export function TvChoices({ speaker }: { speaker?: string | undefined }): ReactElement {
+export function TvChoices({ speaker }: { readonly speaker?: string | undefined }): ReactElement {
   return (
     <>
       <SoundbarChoiceCard speaker={speaker} choice="cec-mode" title="cecMode" options={CEC_MODES} />

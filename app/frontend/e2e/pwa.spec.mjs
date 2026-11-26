@@ -28,20 +28,20 @@ async function settings(page) {
 
 async function speakerPage(page) {
   await settings(page);
-  await button(page, /^Woonkamer /).click();
+  await button(page, /^Woonkamer /u).click();
   await expect(page.getByRole('heading', { name: 'Connection and maintenance' })).toBeVisible();
 }
 
 async function wifiSearch(page) {
   await speakerPage(page);
-  await button(page, /^Wi-Fi/).click();
+  await button(page, /^Wi-Fi/u).click();
   await button(page, 'Find a network').click();
   await expect(page.getByText('HomeNet').first()).toBeVisible();
 }
 
 async function nowPlaying(page) {
   await openHome(page);
-  await button(page, /^Open player/).click();
+  await button(page, /^Open player/u).click();
 }
 
 // A long press on a recently played station opens what can be done with it.
@@ -85,7 +85,7 @@ const SCREENS = {
   },
   search: async (page) => {
     await openHome(page);
-    await page.getByRole('option', { name: /^TuneIn/ }).click();
+    await page.getByRole('option', { name: /^TuneIn/u }).click();
     await button(page, 'Search TuneIn').click();
     await page.keyboard.type('jazz');
     await expect(page.getByText('Jazz24').first()).toBeVisible();
@@ -101,11 +101,11 @@ const SCREENS = {
   'Wi-Fi password sheet': async (page) => {
     await wifiSearch(page);
     await page.getByText('HomeNet').first().click();
-    await expect(page.getByLabel(/Password/).first()).toBeVisible();
+    await expect(page.getByLabel(/Password/u).first()).toBeVisible();
   },
   updates: async (page) => {
     await speakerPage(page);
-    await button(page, /^Updates/).click();
+    await button(page, /^Updates/u).click();
   },
   'speaker gone': async (page, request) => {
     await openHome(page);
@@ -118,7 +118,7 @@ const SCREENS = {
   'setup, Wi-Fi': async (page) => {
     await setup(page);
     await button(page, 'Next').click();
-    await expect(page.getByRole('radio', { name: /HomeNet/ })).toBeChecked();
+    await expect(page.getByRole('radio', { name: /HomeNet/u })).toBeChecked();
   },
 };
 
@@ -141,8 +141,14 @@ for (const [name, open] of Object.entries(SCREENS)) {
     await expect.poll(() => leftoverInsets(page)).toEqual([]);
     await expect.poll(() => pastSides(page)).toEqual([]);
     await expect.poll(() => inBand(page, 'top')).toEqual([]);
-    for (const bar of await speakerBars(page))
-      expect(bar).toEqual({ pad: Math.max(0, ins.bottom - 16), gap: 0, content: 64 });
+    // Polled as the checks above: a bar inside a layer that just slid in can still be a
+    // pixel or two from its place on a slow runner.
+    const docked = { pad: Math.max(0, ins.bottom - 16), gap: 0, content: 64 };
+    await expect
+      .poll(async () =>
+        (await speakerBars(page)).filter((bar) => JSON.stringify(bar) !== JSON.stringify(docked))
+      )
+      .toEqual([]);
     await expect.poll(() => inBand(page, 'bottom')).toEqual([]);
   });
 }

@@ -48,7 +48,7 @@ export interface PlaybackView {
 // The speaker reports the name given to its AUX input in place of "AUX".
 // A soundbar input reports which one (HDMI 1, Optical 1, ...) the same way.
 function inputName(now: NowPlaying | null, source: Exclude<Source, 'wifi'>) {
-  if (source === 'aux') return now?.stationName !== 'AUX' ? now?.stationName : '';
+  if (source === 'aux') return now?.stationName === 'AUX' ? '' : now?.stationName;
   return source === 'tv' || source === 'hdmi' ? now?.stationName : '';
 }
 

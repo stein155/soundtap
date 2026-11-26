@@ -14,6 +14,12 @@ export const popIn = keyframes`
   to { opacity: 1; transform: translateY(0) scale(1); }
 `;
 
+// A page pushed in over the list it came from, as iOS pushes a settings page: a short
+// way in from the right, fading up. Only transform and opacity, so no layout runs.
+export const pushIn = keyframes`
+  from { opacity: 0; transform: translateX(var(--page-gutter, 16px)); }
+`;
+
 // Turns an animation off for people who asked their system for less motion.
 export const reducedMotion = css`
   @media (prefers-reduced-motion: reduce) {

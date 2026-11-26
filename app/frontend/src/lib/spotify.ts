@@ -80,8 +80,11 @@ export const LIKED_CONTEXT = 'spotify:collection';
 export const SPOTIFY_SEARCH_URL = 'https://open.spotify.com/search';
 
 export class SpotifyError extends Error {
-  constructor(public code: string) {
+  public code: string;
+
+  public constructor(code: string) {
     super(code);
+    this.code = code;
   }
 }
 

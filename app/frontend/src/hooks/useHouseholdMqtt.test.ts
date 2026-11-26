@@ -41,7 +41,10 @@ describe('useHouseholdMqtt', () => {
     const rooms = [room('a', 'Kitchen', true)];
     let finish: () => void = vi.fn();
     vi.mocked(api.saveSettings).mockImplementation(
-      async () => new Promise((r) => (finish = () => r(undefined)))
+      async () =>
+        new Promise((r) => {
+          finish = () => r(undefined);
+        })
     );
     const { result } = renderHook(() => useHouseholdMqtt(rooms));
     await waitFor(() => expect(result.current.form).not.toBeNull());
@@ -106,5 +109,30 @@ describe('useHouseholdMqtt', () => {
     act(() => result.current.setForm({ ...must(result.current.form, 'the form'), host: 'other' }));
     await act(async () => result.current.save());
     expect(result.current.hasPassword).toBe(false);
+  });
+
+  it('stops polling the broker links while the page is hidden', async () => {
+    vi.useFakeTimers();
+    let state: DocumentVisibilityState = 'visible';
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state });
+    try {
+      vi.mocked(api.getMqttStatus).mockClear();
+      renderHook(() => useHouseholdMqtt([room('a', 'Kitchen', true)]));
+      expect(api.getMqttStatus).toHaveBeenCalledOnce();
+      act(() => {
+        state = 'hidden';
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await act(async () => vi.advanceTimersByTimeAsync(20000));
+      expect(api.getMqttStatus).toHaveBeenCalledOnce();
+      act(() => {
+        state = 'visible';
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      expect(api.getMqttStatus).toHaveBeenCalledTimes(2);
+    } finally {
+      state = 'visible';
+      vi.useRealTimers();
+    }
   });
 });

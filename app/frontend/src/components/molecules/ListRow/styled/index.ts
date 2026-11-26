@@ -35,7 +35,7 @@ export const Row = styled.button<{ $small?: boolean | undefined; $folder?: boole
   }
 
   @media (hover: hover) {
-    transition: background 160ms ease;
+    transition: background var(--dur-fast) var(--ease);
 
     &:hover {
       background: var(--surface-2);

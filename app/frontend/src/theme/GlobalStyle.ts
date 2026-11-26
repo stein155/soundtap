@@ -38,8 +38,18 @@ export const GlobalStyle = createGlobalStyle`
     --logo-plate: #f1efec;
     --shimmer: rgba(255, 255, 255, 0.55);
     --tracking-title: -0.018em;
-    /* Stockholm's one curve, for pages, the drawer, the tray and now playing. */
+    /* Motion. --ease is Stockholm's curve for small changes: a press, a fade, a switch.
+       A layer (sheet, drawer, dialog) enters on --ease-enter, iOS's sheet curve, which
+       starts fast and settles long, and leaves sooner than it came on --ease-exit, which
+       starts slow and speeds away. Exits run forward keyframes of their own: a reversed
+       animation would run its curve backwards too. */
     --ease: cubic-bezier(0, 0.4, 0.4, 1);
+    --ease-enter: cubic-bezier(0.32, 0.72, 0, 1);
+    --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+    --dur-fast: 150ms; /* a press, a colour, a switch */
+    --dur-base: 250ms; /* content fading in, a page, a spring back */
+    --dur-enter: 350ms; /* a layer coming in */
+    --dur-exit: 220ms; /* a layer leaving */
     --bg-grey: #f2f2f2;
     --section-bar: #ebebeb;
     --danger: #b90000;
@@ -60,9 +70,11 @@ export const GlobalStyle = createGlobalStyle`
     --shadow-lg: 0 22px 50px -16px rgba(31, 24, 20, 0.2);
   }
 
+  /* As wide as a tablet held sideways (1024 px), which a narrower column left with a
+     sliver of backdrop either side. */
   @media ${desktop} {
     :root {
-      --shell-max: 1000px;
+      --shell-max: 1024px;
     }
   }
 
@@ -175,5 +187,19 @@ export const GlobalStyle = createGlobalStyle`
   ::selection {
     background: var(--accent);
     color: var(--on-accent);
+  }
+
+  /* Less motion asked for: every animation and transition ends at once, inline ones and
+     pseudo-elements too. A near-zero duration (not none) still fires the end events the
+     code waits for (a layer's exit); a delay stays, so a loader still waits before it
+     shows. Loops that would flicker turn themselves off (theme/keyframes.ts
+     reducedMotion). */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 `;

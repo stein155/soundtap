@@ -32,14 +32,16 @@ export function usePolling(
   { loadDevices, loadState, loadGroups }: Loaders
 ): void {
   useEffect(() => {
-    if (!visible) return;
+    if (!visible) return undefined;
     void refresh();
     const a = setInterval(() => {
       const { live, devicesRev, devicesWant } = householdRef.current;
       if (!live || devicesRev === undefined || devicesRev !== devicesWant) void loadDevices();
     }, DEVICES_MS);
     const b = setInterval(loadState, STATE_MS);
-    const c = setInterval(() => void loadGroups(), GROUPS_MS);
+    const c = setInterval(() => {
+      void loadGroups();
+    }, GROUPS_MS);
     const pending = householdRef.current.timers;
     return () => {
       clearInterval(a);
@@ -60,7 +62,7 @@ export function useHouseholdStream(
   setState: RoomSetters['setState']
 ): void {
   useEffect(() => {
-    if (!visible) return;
+    if (!visible) return undefined;
     // One record for the whole run; only its fields change.
     const household = householdRef.current;
     const close = subscribeHousehold({

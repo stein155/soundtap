@@ -5,11 +5,11 @@ import { useState, type ReactElement } from 'react';
 import { Image, Letters } from './styled';
 
 interface Props {
-  src: string | null;
+  readonly src: string | null;
   // The lettermark shown until (and unless) the image loads.
-  initials: string;
+  readonly initials: string;
   // The lettermark's size relative to its 14px base, for larger artwork squares.
-  scale?: number;
+  readonly scale?: number;
 }
 
 // A station's logo: the lettermark, with the image laid over it once it has loaded.

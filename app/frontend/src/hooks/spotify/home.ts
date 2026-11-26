@@ -31,7 +31,8 @@ function usePlaylists(ready: boolean) {
     let offset: number | undefined = 0;
     let page = 0;
     const load = async () => {
-      for (; offset !== undefined && page < MAX_PLAYLIST_PAGES; page++) {
+      while (offset !== undefined && page < MAX_PLAYLIST_PAGES) {
+        // eslint-disable-next-line no-await-in-loop -- each page starts where the last one ended
         const r: SpotifyPage<SpotifyPlaylist> | null = await spotifyMyPlaylists(offset).catch(
           () => null
         );
@@ -40,13 +41,17 @@ function usePlaylists(ready: boolean) {
         if (!r) {
           // A failed page is tried again, keeping the ones before it; nothing would ask for
           // it otherwise.
-          if (!page) setPlaylists([]);
-          retry = setTimeout(() => void load(), ROOTLIST_RETRY_MS);
+          if (page === 0) setPlaylists([]);
+          retry = setTimeout(() => {
+            void load();
+          }, ROOTLIST_RETRY_MS);
           return;
         }
         all = [...all, ...r.items];
         setPlaylists(all);
+        // eslint-disable-next-line require-atomic-updates -- one load runs at a time: a retry starts after it returned
         offset = r.next !== undefined && r.next > offset ? r.next : undefined;
+        page += 1;
       }
     };
     void load();

@@ -4,12 +4,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, waitFor } from '@testing-library/react';
 import { renderWithI18n } from '../../../../test/render';
+import type { Tone } from '../../../../lib/types';
 import { SoundSettings } from '.';
 
 const api = vi.hoisted(() => ({
   getSoundbarChoice: vi.fn(),
   setSoundbarChoice: vi.fn(),
-  getTone: vi.fn(async () => null),
+  getTone: vi.fn(async (): Promise<Tone | null> => null),
   setTone: vi.fn(),
   startAdaptiq: vi.fn(),
   getLipSync: vi.fn(async (): Promise<{ ms: number | null; max: number } | null> => null),
@@ -62,7 +63,12 @@ describe('SoundSettings audio mode', () => {
     );
     let failFirst: (e: Error) => void = vi.fn();
     api.setSoundbarChoice
-      .mockImplementationOnce(async () => new Promise((_, reject) => (failFirst = reject)))
+      .mockImplementationOnce(
+        async () =>
+          new Promise((_, reject) => {
+            failFirst = reject;
+          })
+      )
       .mockResolvedValueOnce(undefined);
     const view = render();
     await view.findByRole('radiogroup', { name: 'Audio mode' });
@@ -70,7 +76,9 @@ describe('SoundSettings audio mode', () => {
     fireEvent.click(view.getByRole('radio', { name: 'Night' }));
     await waitFor(() => expect(api.setSoundbarChoice).toHaveBeenCalledTimes(2));
     failFirst(new Error('late'));
-    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => {
+      setTimeout(r, 0);
+    });
     expect(view.getByRole('radio', { name: 'Night' })).toBeChecked();
   });
 
@@ -132,12 +140,51 @@ describe('SoundSettings lip-sync', () => {
     await waitFor(() => expect(api.setLipSync).toHaveBeenCalledWith(50, undefined));
   });
 
+  it('still sends a move made just before the page closes', async () => {
+    api.getSoundbarChoice.mockResolvedValue(null);
+    api.getLipSync.mockResolvedValue({ ms: 40, max: 300 });
+    api.setLipSync.mockResolvedValue(undefined);
+    const view = render();
+    const slider = await view.findByRole('slider', { name: 'Lip sync (sound delay)' });
+    fireEvent.keyDown(slider, { key: 'ArrowRight' });
+    expect(api.setLipSync).not.toHaveBeenCalled();
+    view.unmount();
+    expect(api.setLipSync).toHaveBeenCalledExactlyOnceWith(50, undefined);
+  });
+
   it('is not shown on a speaker without one', async () => {
     api.getSoundbarChoice.mockResolvedValue(null);
     api.getLipSync.mockResolvedValue(null);
     const view = render();
     await waitFor(() => expect(api.getLipSync).toHaveBeenCalled());
     expect(view.queryByRole('slider', { name: 'Lip sync (sound delay)' })).toBeNull();
+  });
+});
+
+describe('SoundSettings ADAPTiQ', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const start = async (view: ReturnType<typeof renderWithI18n>) => {
+    fireEvent.click(view.getByRole('button', { name: 'Run ADAPTiQ' }));
+    await view.findByRole('dialog');
+    fireEvent.click(view.getByRole('button', { name: 'Start' }));
+    return view.findByRole('alert');
+  };
+
+  it('says the bar did not answer when the start never reached it', async () => {
+    api.getSoundbarChoice.mockResolvedValue(null);
+    api.startAdaptiq.mockRejectedValue(new TypeError('Failed to fetch'));
+    const view = renderWithI18n(<SoundSettings {...props} speaker="TV" name="TV" />);
+    expect((await start(view)).textContent).toBe('Couldn’t reach TV');
+  });
+
+  it('says the bar refused, and why, when it said no', async () => {
+    api.getSoundbarChoice.mockResolvedValue(null);
+    api.startAdaptiq.mockRejectedValue(
+      Object.assign(new Error('busy'), { status: 409, code: 'busy' })
+    );
+    const view = renderWithI18n(<SoundSettings {...props} speaker="TV" name="TV" />);
+    expect((await start(view)).textContent).toMatch(/^TV refused that \(.+\)$/u);
   });
 });
 
@@ -158,6 +205,26 @@ describe('SoundSettings switching soundbars', () => {
     view.rerender(<SoundSettings {...props} speaker="B" />);
     expect(view.queryByRole('slider', { name: 'Lip sync (sound delay)' })).toBeNull();
     expect(view.queryByRole('radio', { name: 'Dialogue' })).toBeNull();
+  });
+
+  it("sends a tone move to the bar it was made on, and does not show A's tone on B", async () => {
+    const level = (value: number) => ({ value, min: -10, max: 10, step: 1 });
+    api.getSoundbarChoice.mockResolvedValue(null);
+    api.getTone.mockImplementation(async (sp?: string) =>
+      sp === 'A'
+        ? { bass: level(0), treble: level(0), centre: level(0), rear: level(0) }
+        : new Promise(vi.fn())
+    );
+    api.setTone.mockResolvedValue(undefined);
+    const view = renderWithI18n(<SoundSettings {...props} speaker="A" />);
+    const treble = await view.findByRole('slider', { name: 'Treble' });
+    fireEvent.keyDown(treble, { key: 'ArrowRight' });
+    view.rerender(<SoundSettings {...props} speaker="B" />);
+    expect(api.setTone).toHaveBeenCalledExactlyOnceWith(
+      { bass: 0, treble: 1, centre: 0, rear: 0 },
+      'A'
+    );
+    expect(view.queryByRole('slider', { name: 'Treble' })).toBeNull();
   });
 });
 

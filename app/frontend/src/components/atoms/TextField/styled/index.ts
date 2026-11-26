@@ -17,7 +17,7 @@ const field = css<{ $shadow: string }>`
   font-size: 16px; /* no iOS focus zoom */
   font-weight: 400;
   box-shadow: inset 0 0 0 1px var(--border-strong);
-  transition: box-shadow 160ms ease;
+  transition: box-shadow var(--dur-fast) var(--ease);
 
   &::placeholder {
     color: var(--ink-3);

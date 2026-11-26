@@ -6,10 +6,10 @@ import { Segment, Track } from './styled';
 import type { ReactElement } from 'react';
 
 interface Props<V> {
-  label: string;
-  value: V;
-  options: { value: V; label: string }[];
-  onChange: (value: V) => void;
+  readonly label: string;
+  readonly value: V;
+  readonly options: { value: V; label: string }[];
+  readonly onChange: (value: V) => void;
 }
 
 // A small inline choice between a few values (12h / 24h).

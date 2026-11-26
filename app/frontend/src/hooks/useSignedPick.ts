@@ -23,7 +23,8 @@ export function useSignedPick(
   const picks = useRef(0);
 
   const onChange = async (e: ChangeEvent<HTMLInputElement>) => {
-    const pick = ++picks.current;
+    picks.current += 1;
+    const pick = picks.current;
     const reading = splitSignature(e.target.files);
     e.target.value = '';
     try {

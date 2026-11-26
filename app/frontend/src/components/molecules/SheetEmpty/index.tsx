@@ -12,8 +12,8 @@ export function SheetEmpty({
   query,
   children,
 }: {
-  query?: string;
-  children: ReactNode;
+  readonly query?: string;
+  readonly children: ReactNode;
 }): ReactElement {
   return (
     <Message>

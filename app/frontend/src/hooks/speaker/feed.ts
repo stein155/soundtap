@@ -49,7 +49,7 @@ function usePoll(
     statusRef.current = status;
   }, [status]);
   useEffect(() => {
-    if (!visible) return;
+    if (!visible) return undefined;
     let timer: Timer;
     let cancelled = false;
     // One read at a time, and one timer: stream errors can come in a row, and each used to
@@ -123,7 +123,7 @@ export function useSpeakerFeed({
   // Live push: the server streams now-playing + volume the instant they change.
   useEffect(() => {
     // A hidden page holds no stream open; it reopens, and replays, when shown.
-    if (!visible) return;
+    if (!visible) return undefined;
     // The presets revision last seen. A different one means a slot changed somewhere
     // else (the speaker's buttons, another phone, MQTT clients): read them again.
     // The stream replays the current revision on reconnect, so a change made while it

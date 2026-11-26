@@ -70,7 +70,7 @@ beforeEach(() => {
 describe('HomePage', () => {
   it('opens the presets from the idle bar and plays the tapped slot', async () => {
     render(<App />);
-    await userEvent.click(await screen.findByRole('button', { name: /Pick something to play/ }));
+    await userEvent.click(await screen.findByRole('button', { name: /Pick something to play/u }));
     const presets = await screen.findByRole('dialog', { name: 'Presets & favorites' });
     await userEvent.click(await screen.findByText('Radio Foo'));
     await waitFor(() => expect(api.playPreset).toHaveBeenCalledTimes(1));
@@ -83,19 +83,19 @@ describe('HomePage', () => {
     api.getNowPlaying.mockResolvedValue(PLAYING);
     render(<App />);
     expect(await screen.findByRole('button', { name: 'Open player: Radio Foo' })).toBeVisible();
-    await userEvent.click(await screen.findByRole('button', { name: /^Stop · / }));
+    await userEvent.click(await screen.findByRole('button', { name: /^Stop · /u }));
     await waitFor(() => expect(api.stopPlayback).toHaveBeenCalled());
   }, 30000);
 
   it('powers the speaker and switches its source from the speakers sheet', async () => {
     api.getNowPlaying.mockResolvedValue(PLAYING);
     render(<App />);
-    await userEvent.click(await screen.findByRole('button', { name: /^Speaker: / }));
+    await userEvent.click(await screen.findByRole('button', { name: /^Speaker: /u }));
     const sheet = await screen.findByRole('dialog', { name: 'Speakers' });
-    await userEvent.click(within(sheet).getByRole('button', { name: /^Source/ }));
+    await userEvent.click(within(sheet).getByRole('button', { name: /^Source/u }));
     await userEvent.click(await screen.findByRole('radio', { name: 'AUX' }));
     await waitFor(() => expect(api.selectUserSource).toHaveBeenCalledWith('AUX', ''));
-    await userEvent.click(within(sheet).getByRole('button', { name: /^Turn .* off$/ }));
+    await userEvent.click(within(sheet).getByRole('button', { name: /^Turn .* off$/u }));
     await waitFor(() => expect(api.setPower).toHaveBeenCalledWith(false, ''));
   }, 30000);
 
@@ -124,9 +124,9 @@ describe('HomePage', () => {
 
   it('the volume icon on the speaker bar opens the volume panel, not the speakers', async () => {
     render(<App />);
-    await userEvent.click(await screen.findByRole('button', { name: /^Volume / }));
-    const panel = await screen.findByRole('dialog', { name: /^Volume / });
+    await userEvent.click(await screen.findByRole('button', { name: /^Volume /u }));
+    const panel = await screen.findByRole('dialog', { name: /^Volume /u });
     expect(panel.querySelector('input[type="range"]')).not.toBeNull();
-    expect(screen.queryByRole('button', { name: /^Power/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Power/u })).toBeNull();
   });
 });

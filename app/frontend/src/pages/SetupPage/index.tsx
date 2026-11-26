@@ -31,7 +31,7 @@ const JOIN_FAILED: Record<string, I18nKey> = {
 const STEPS = 2;
 
 // The bar over both steps: which step this is, the language, and a line per step.
-function StepBar({ step }: { step: number }) {
+function StepBar({ step }: { readonly step: number }) {
   const { t, lang, setLang } = useI18n();
   return (
     <>
@@ -59,7 +59,7 @@ function StepBar({ step }: { step: number }) {
 }
 
 // What to know before Connect: the phone loses the speaker, and where to find it after.
-function PhoneNotice({ host }: { host: string }) {
+function PhoneNotice({ host }: { readonly host: string }) {
   const { t } = useI18n();
   const [before, after] = t('setupPhoneLoses').split('{host}');
   return (
@@ -116,7 +116,7 @@ function useSetupSpeaker() {
 type Speaker = ReturnType<typeof useSetupSpeaker>;
 
 // Step 1: the speaker, and its name.
-function NameStep({ speaker, onNext }: { speaker: Speaker; onNext: () => void }) {
+function NameStep({ speaker, onNext }: { readonly speaker: Speaker; readonly onNext: () => void }) {
   const { t } = useI18n();
   return (
     <>
@@ -152,7 +152,7 @@ function NameStep({ speaker, onNext }: { speaker: Speaker; onNext: () => void })
 }
 
 // Step 2: the home network. Nothing here may need the internet.
-function WifiStep({ speaker }: { speaker: Speaker }) {
+function WifiStep({ speaker }: { readonly speaker: Speaker }) {
   const { t } = useI18n();
   const host = speaker.host || 'soundtap.local';
   return (

@@ -12,18 +12,18 @@ import type { RecentItem } from '../../../lib/recent';
 export interface FavoriteActions {
   // The speaker's list; the first is the favorite, anything after it is from before the list
   // offered one and stays out of sight.
-  items: RecentItem[];
+  readonly items: RecentItem[];
   // Saves what is held, or else what plays, in place of the favorite.
-  onAdd: () => void;
-  onPlay: (item: RecentItem) => void;
-  onRemove: (item: RecentItem) => void;
+  readonly onAdd: () => void;
+  readonly onPlay: (item: RecentItem) => void;
+  readonly onRemove: (item: RecentItem) => void;
 }
 
 interface Props extends FavoriteActions {
-  speaker: string;
-  canAdd: boolean;
-  saving: boolean;
-  close: () => void;
+  readonly speaker: string;
+  readonly canAdd: boolean;
+  readonly saving: boolean;
+  readonly close: () => void;
 }
 
 // The one favorite beside the six presets. A tap plays it; a long press saves what plays in

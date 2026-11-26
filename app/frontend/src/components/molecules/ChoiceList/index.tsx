@@ -19,18 +19,18 @@ export interface ChoiceOption<V extends string> {
 }
 
 interface Props<V extends string> {
-  label: string;
-  value: V;
-  options: ChoiceOption<V>[];
-  onChange: (value: V) => void;
+  readonly label: string;
+  readonly value: V;
+  readonly options: ChoiceOption<V>[];
+  readonly onChange: (value: V) => void;
   // The grey bar above the rows.
-  title?: string | undefined;
+  readonly title?: string | undefined;
   // The chosen row marked as a pick of things (a partner, a network): a bar at its edge
   // and a filled tick; without it a plain tick, as a setting's value (a language).
-  marked?: boolean;
-  disabled?: boolean;
+  readonly marked?: boolean;
+  readonly disabled?: boolean;
   // Rows a little taller than a settings row (the first-run page's networks).
-  tall?: boolean;
+  readonly tall?: boolean;
 }
 
 // A pick-one list as a page of rows, the chosen one ticked (Sonos and iOS style), in place

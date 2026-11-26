@@ -14,10 +14,10 @@ export function SetMenu({
   apart,
   children,
 }: {
-  title?: string | undefined;
-  note?: ReactNode;
-  apart?: boolean;
-  children: ReactNode;
+  readonly title?: string | undefined;
+  readonly note?: ReactNode;
+  readonly apart?: boolean;
+  readonly children: ReactNode;
 }): ReactElement {
   return (
     <Group aria-label={title}>

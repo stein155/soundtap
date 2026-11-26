@@ -24,14 +24,21 @@ describe('usePlayback Spotify recent item', () => {
   it('shows it starting at once and ignores a repeat until the request settles', async () => {
     let release: () => void = vi.fn();
     vi.mocked(spotify.spotifyPlay).mockImplementationOnce(
-      async () => new Promise<{ status: string }>((r) => (release = () => r({ status: 'ok' })))
+      async () =>
+        new Promise<{ status: string }>((r) => {
+          release = () => r({ status: 'ok' });
+        })
     );
     const sel = selectedRoom({ speaker: 'kitchen', lead: room({ name: 'Kitchen' }) });
     const { live } = sel;
     const { result } = renderHook(() => usePlayback(sel, () => vi.fn()));
 
-    act(() => void result.current.playRecent(item));
-    act(() => void result.current.playRecent(item));
+    act(() => {
+      void result.current.playRecent(item);
+    });
+    act(() => {
+      void result.current.playRecent(item);
+    });
     expect(spotify.spotifyPlay).toHaveBeenCalledTimes(1);
     expect(live.playOptimistic).toHaveBeenCalledWith({ name: 'Mix', logo: 'a.jpg' });
 

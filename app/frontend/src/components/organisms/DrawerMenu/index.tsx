@@ -5,6 +5,7 @@ import { useEffect, useRef, type ReactNode, type ReactElement } from 'react';
 import { Button } from 'react-aria-components';
 import { Icon } from '../../atoms/Icon';
 import { SheetModal } from '../../molecules/SheetModal';
+import { exitDuration } from '../../molecules/SheetModal/motion';
 import { useI18n } from '../../../lib/i18n';
 
 function Row({
@@ -14,12 +15,12 @@ function Row({
   onPress,
   children,
 }: {
-  icon: ReactNode;
+  readonly icon: ReactNode;
   // A source's own colour, for the bar of the active row.
-  color?: string;
-  active?: boolean;
-  onPress: () => void;
-  children: string;
+  readonly color?: string;
+  readonly active?: boolean;
+  readonly onPress: () => void;
+  readonly children: string;
 }) {
   return (
     <Button
@@ -37,23 +38,20 @@ function Row({
   );
 }
 
-// The drawer's exit animation (home.css).
-const DRAWER_EXIT_MS = 200;
-
 // The main pages the menu goes to, besides the start page (Just for You).
 export type DrawerPage = 'spotify' | 'tunein' | 'mediaservers' | 'settings';
 
 interface Props {
-  open: boolean;
-  onClose: () => void;
+  readonly open: boolean;
+  readonly onClose: () => void;
   // The main page showing: the start page unless a source or the settings are open.
-  at?: DrawerPage | undefined;
-  onRecent: () => void;
-  onSpotify: () => void;
-  onTuneIn: () => void;
+  readonly at?: DrawerPage | undefined;
+  readonly onRecent: () => void;
+  readonly onSpotify: () => void;
+  readonly onTuneIn: () => void;
   // The DLNA/UPnP servers on the network, a source like the others.
-  onMediaServers: () => void;
-  onSettings: () => void;
+  readonly onMediaServers: () => void;
+  readonly onSettings: () => void;
 }
 
 // The menu from the left: where else the app goes. Each row closes the menu, then goes; the
@@ -81,7 +79,8 @@ export function DrawerMenu({
   const go = (action: () => void) => {
     onClose();
     clearTimeout(pending.current);
-    pending.current = setTimeout(action, DRAWER_EXIT_MS);
+    // As long as the drawer's exit (--dur-exit), and no wait with less motion.
+    pending.current = setTimeout(action, exitDuration());
   };
   return (
     <SheetModal open={open} onClose={onClose} label={t('menu')} variant="drawer">

@@ -47,7 +47,7 @@ describe('WifiPicker', () => {
     const { findByRole, getByLabelText, getByRole } = renderWithI18n(
       <WifiPicker network={null} speaker="Kitchen" />
     );
-    fireEvent.click(await findByRole('radio', { name: /NetB/ }));
+    fireEvent.click(await findByRole('radio', { name: /NetB/u }));
     fireEvent.change(getByLabelText('Password for NetB'), { target: { value: 'abcdefgh' } });
     fireEvent.click(getByRole('button', { name: 'Connect' }));
     await waitFor(() =>
@@ -69,7 +69,7 @@ describe('WifiPicker', () => {
     });
     vi.mocked(scanWifi).mockResolvedValue([{ ssid: 'Other', secure: true, signal: 'good' }]);
     fireEvent.click(getByRole('button', { name: 'Refresh' }));
-    await waitFor(() => expect(getByRole('radio', { name: /Other/, checked: true })).toBeTruthy());
+    await waitFor(() => expect(getByRole('radio', { name: /Other/u, checked: true })).toBeTruthy());
     expect(getByLabelText('Password for Other')).toHaveProperty('value', '');
     expect(getByRole('button', { name: 'Connect' })).toHaveProperty('disabled', true);
   });
@@ -110,6 +110,7 @@ describe('WifiPicker', () => {
     fireEvent.click(connect);
     const saved = await findByText('Network saved. The speaker is switching over.');
     expect(saved.closest('form')).toBe(connect.closest('form'));
+    // eslint-disable-next-line no-bitwise -- compareDocumentPosition answers with a bit mask
     expect(saved.compareDocumentPosition(connect) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
@@ -156,7 +157,7 @@ describe('WifiPicker', () => {
     const { findByRole, getByLabelText } = renderWithI18n(
       <WifiPicker network={null} fixedSurvey />
     );
-    fireEvent.click(await findByRole('radio', { name: 'Other network…' }));
+    fireEvent.click(await findByRole('radio', { name: 'Other network' }));
     expect(getByLabelText('Wireless Network')).toBeTruthy();
   });
 
@@ -179,8 +180,8 @@ describe('WifiPicker', () => {
       <WifiPicker network={null} fixedSurvey host="soundtap-st10-a1b2c3.local" />
     );
     fireEvent.click(await findByRole('button', { name: 'Connect' }));
-    expect(await findByText(/open http:\/\/soundtap-st10-a1b2c3\.local\./)).toBeTruthy();
-    expect(await findByText(/look for soundtap-st10-a1b2c3 in your router/)).toBeTruthy();
+    expect(await findByText(/open http:\/\/soundtap-st10-a1b2c3\.local\./u)).toBeTruthy();
+    expect(await findByText(/look for soundtap-st10-a1b2c3 in your router/u)).toBeTruthy();
   });
 
   // A survey that times out is not an empty one: say it failed and offer to retry.
@@ -189,10 +190,10 @@ describe('WifiPicker', () => {
     const { findByText, getByRole, findByRole } = renderWithI18n(
       <WifiPicker network={null} speaker="Kitchen" />
     );
-    expect(await findByText(/Couldn.t search for networks/)).toBeTruthy();
+    expect(await findByText(/Couldn.t search for networks/u)).toBeTruthy();
     vi.mocked(scanWifi).mockResolvedValue([{ ssid: 'Home', secure: true, signal: 'good' }]);
     fireEvent.click(getByRole('button', { name: 'Refresh' }));
-    expect(await findByRole('radio', { name: /Home/, checked: true })).toBeTruthy();
+    expect(await findByRole('radio', { name: /Home/u, checked: true })).toBeTruthy();
   });
 
   // WPA needs 8..63 bytes: say so before the speaker refuses it; and no autocorrect.
@@ -224,9 +225,11 @@ describe('WifiPicker', () => {
     fireEvent.submit(
       must(getByRole('button', { name: 'Connect' }).closest('form'), 'the join form')
     );
-    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => {
+      setTimeout(r, 0);
+    });
     expect(setWifi).toHaveBeenCalledTimes(1);
-    expect(getByRole('radio', { name: /NetB/ })).toBeDisabled();
+    expect(getByRole('radio', { name: /NetB/u })).toBeDisabled();
   });
 });
 
@@ -299,8 +302,8 @@ describe('finding a network', () => {
       <NetworkSettings network={net} speaker="Kitchen" speakerName="Kitchen" />
     );
     fireEvent.click(getByRole('button', { name: 'Find a network' }));
-    fireEvent.click(await findByRole('button', { name: /Guest/ }));
-    expect(queryByRole('button', { name: /^Home/ })).toBeNull();
+    fireEvent.click(await findByRole('button', { name: /Guest/u }));
+    expect(queryByRole('button', { name: /^Home/u })).toBeNull();
     const dialog = await findByRole('dialog', { name: 'Connect to Guest' });
     expect(dialog).toBeInTheDocument();
     fireEvent.change(await findByLabelText('Password'), { target: { value: 'abcdefgh' } });

@@ -20,6 +20,7 @@ export function createLatestSender<T>(
       while (next) {
         const { value: current } = next;
         next = null;
+        // eslint-disable-next-line no-await-in-loop -- one request in flight at a time is the point
         await send(current).catch(() => onError?.(current));
       }
       inflight = false;

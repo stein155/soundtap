@@ -6,12 +6,12 @@ import { AppShell } from '../../components/templates/AppShell';
 import { HomeContent } from '../../components/organisms/HomeContent';
 import { SheetLoading } from '../../components/molecules/SheetLoading';
 import { TopBar } from '../../components/organisms/TopBar';
-import { useSelectedRoom } from '../../hooks/useSelectedRoom';
+import { useSelectedRoom, type SelectedRoom } from '../../hooks/useSelectedRoom';
 import { useFailedPlay } from '../../hooks/useFailedPlay';
 import { useSpeakerLanguage } from '../../hooks/useSpeakerLanguage';
 import { usePlayback } from '../../hooks/usePlayback';
 import { useGrouping } from '../../hooks/useGrouping';
-import { useRoomVolume } from '../../hooks/useRoomVolume';
+import { useRoomVolume, type RoomVolume } from '../../hooks/useRoomVolume';
 import { useMute } from '../../hooks/useMute';
 import { useSleepTimer } from '../../hooks/useSleepTimer';
 import { useFavorites } from '../../hooks/useFavorites';
@@ -19,10 +19,10 @@ import { useRecent } from '../../hooks/useRecent';
 import type { RecentItem } from '../../lib/recent';
 import { useSpeakerInfo } from '../../hooks/useSpeakerInfo';
 import { useDocumentTitle } from '../../hooks/useDocumentTitle';
-import { useErrorReporter } from '../../hooks/useErrorReporter';
+import { useErrorReporter, type ReportFailure } from '../../hooks/useErrorReporter';
 import { useI18n } from '../../lib/i18n';
 import { describePlayback } from '../../lib/playback';
-import { speakerArg } from '../../hooks/useRooms';
+import { speakerArg, type Room } from '../../hooks/useRooms';
 import { HomeOverlays } from './HomeOverlays';
 import { PlayerDock } from './PlayerDock';
 import { PlayerLayers } from './PlayerLayers';
@@ -52,7 +52,7 @@ function MainPage({
   reloadInfo,
   ...props
 }: Omit<ComponentProps<typeof SourcePage>, 'onRenamed'> & {
-  reloadInfo: () => void;
+  readonly reloadInfo: () => void;
 }): ReactElement {
   return (
     <Suspense fallback={<SheetLoading />}>
@@ -67,6 +67,22 @@ function MainPage({
   );
 }
 
+// The room volumes, and the mute buttons' toggle, which reports its own failures.
+function useVolumeAndMute(
+  selected: SelectedRoom,
+  syncVolume: boolean,
+  failed: ReportFailure
+): { volume: RoomVolume; onMute: (room: Room) => void } {
+  const volume = useRoomVolume(selected, syncVolume, failed);
+  const toggleMute = useMute(volume.setRoomVolume, volume.volumeStamp);
+  return {
+    volume,
+    onMute: (room) => {
+      void toggleMute(room);
+    },
+  };
+}
+
 export function HomePage(): ReactElement {
   const { t } = useI18n();
   const selected = useSelectedRoom();
@@ -77,12 +93,11 @@ export function HomePage(): ReactElement {
   const info = useSpeakerInfo(speaker);
   const playback = usePlayback(selected, errors.failed, errors.notify, errors.block);
   const grouping = useGrouping(selected, errors.failed);
-  const volume = useRoomVolume(
+  const { volume, onMute } = useVolumeAndMute(
     selected,
     info.settings?.multiroom.syncVolume === true,
     errors.failed
   );
-  const toggleMute = useMute(volume.setRoomVolume, volume.volumeStamp);
   const layers = useLayers();
   const { open, show } = layers;
   const leadName = lead?.name || '';
@@ -102,7 +117,9 @@ export function HomePage(): ReactElement {
   const view = lead ? describePlayback(lead.now, t, speakerArg(lead)) : null;
   const ctx = { layers, selected, playback };
   const ready = !!view;
-  const onRemoveRecent = (item: RecentItem) => void removeRecent(item);
+  const onRemoveRecent = (item: RecentItem) => {
+    void removeRecent(item);
+  };
   const main = { recent, onRemoveRecent, canHold: ready, reloadInfo: info.reload };
 
   return (
@@ -115,9 +132,7 @@ export function HomePage(): ReactElement {
         ) : null
       }
       header={<TopBar onMenu={() => show('drawer')} onPresets={() => show('presets')} />}
-      footer={
-        lead && <PlayerDock {...ctx} starting={starting} volume={volume} onMute={toggleMute} />
-      }
+      footer={lead && <PlayerDock {...ctx} starting={starting} volume={volume} onMute={onMute} />}
       overlays={
         <HomeOverlays {...ctx} errors={errors}>
           {ready && (
@@ -128,7 +143,7 @@ export function HomePage(): ReactElement {
               sleep={sleep}
               favorites={favorites}
               starting={starting}
-              onMute={toggleMute}
+              onMute={onMute}
             />
           )}
         </HomeOverlays>
@@ -138,7 +153,9 @@ export function HomePage(): ReactElement {
         recent={recent}
         speaker={speaker}
         speakerName={leadName}
-        onPlayRecent={(item) => void playback.playRecent(item)}
+        onPlayRecent={(item) => {
+          void playback.playRecent(item);
+        }}
         onRemoveRecent={onRemoveRecent}
         onHoldRecent={ready ? (item) => holdRecent(layers, playback, item) : undefined}
         spotifyReady={info.spotifyReady}

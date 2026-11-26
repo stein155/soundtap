@@ -52,14 +52,14 @@ export function ConfirmSheet({
   onConfirm,
   onClose,
 }: {
-  open: boolean;
-  title: string;
-  body: ReactNode;
-  confirmLabel: ReactNode;
+  readonly open: boolean;
+  readonly title: string;
+  readonly body: ReactNode;
+  readonly confirmLabel: ReactNode;
   // An action that erases something: its button in the danger colour.
-  destructive?: boolean;
-  onConfirm: () => void;
-  onClose: () => void;
+  readonly destructive?: boolean;
+  readonly onConfirm: () => void;
+  readonly onClose: () => void;
 }): ReactElement {
   const { t } = useI18n();
   return (

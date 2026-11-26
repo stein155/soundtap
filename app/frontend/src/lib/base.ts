@@ -55,10 +55,10 @@ function requestID(): string {
 const PRESS_ROUTES = [
   // Updates the speaker fetches are signed and need no press, an older release included;
   // every install upload needs one, signed or not (ADR 0048).
-  /^POST \/api\/(factory-reset|restore|reboot|wifi|setup|soundtapd|bco\/firmware|bluetooth\/(clear|forget))$/,
-  /^POST \/api\/firmware\?(.*&)?install=1(&|$)/,
-  /^DELETE \/api\/soundtapd$/,
-  /^GET \/api\/debug(\/|\?|$)/,
+  /^POST \/api\/(?:factory-reset|restore|reboot|wifi|setup|soundtapd|bco\/firmware|bluetooth\/(?:clear|forget))$/u,
+  /^POST \/api\/firmware\?(?:.*&)?install=1(?:&|$)/u,
+  /^DELETE \/api\/soundtapd$/u,
+  /^GET \/api\/debug(?:\/|\?|$)/u,
 ];
 
 // How long the speaker waits for that press (web.ConfirmWindow), and how long a request
@@ -67,7 +67,7 @@ export const PRESS_WINDOW_MS = 60000;
 export const PRESS_TIMEOUT_MS = PRESS_WINDOW_MS + 15000;
 
 export function needsPress(method: string, url: string): boolean {
-  const path = url.replace(/^\/api\/devices\/[^/]+(?=\/api\/)/, '');
+  const path = url.replace(/^\/api\/devices\/[^/]+(?=\/api\/)/u, '');
   return PRESS_ROUTES.some((re) => re.test(`${method.toUpperCase()} ${path}`));
 }
 
@@ -96,10 +96,10 @@ export async function whilePress<T>(
   const close = () => {
     if (!open) return;
     open = false;
-    pressWaits--;
+    pressWaits -= 1;
     notify();
   };
-  pressWaits++;
+  pressWaits += 1;
   notify();
   const timer = setTimeout(close, PRESS_WINDOW_MS);
   try {

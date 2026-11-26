@@ -55,7 +55,11 @@ describe('useCoreUpdate', () => {
   it('shows how far the speaker says it is while it downloads and writes the release', async () => {
     vi.useFakeTimers();
     let answer: (r: Awaited<ReturnType<typeof api.startCoreUpdate>>) => void = vi.fn();
-    vi.mocked(api.startCoreUpdate).mockReturnValueOnce(new Promise((r) => (answer = r)));
+    vi.mocked(api.startCoreUpdate).mockReturnValueOnce(
+      new Promise((r) => {
+        answer = r;
+      })
+    );
     vi.mocked(api.getVersion)
       .mockResolvedValueOnce(version({ version: '0.1.0', os: '0.1.0', updateProgress: 62 }))
       .mockResolvedValueOnce(core('0.1.0'));

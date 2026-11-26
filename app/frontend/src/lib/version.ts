@@ -8,7 +8,7 @@ import type { VersionInfo } from './types';
 export function versionLabel(v: VersionInfo | null | undefined): string {
   if (!v) return '';
   const parts = [v.os && `SoundTap Core ${v.os}`, v.app && `app ${v.app}`].filter(Boolean);
-  return parts.length ? parts.join(' · ') : v.version || '';
+  return parts.length > 0 ? parts.join(' · ') : v.version || '';
 }
 
 // "0.1.0 · app 0.1.0": the same, short, where the line already says it is SoundTap (the
@@ -16,14 +16,19 @@ export function versionLabel(v: VersionInfo | null | undefined): string {
 export function shortVersionLabel(v: VersionInfo | null | undefined): string {
   if (!v) return '';
   const parts = [v.os, v.app && `app ${v.app}`].filter(Boolean);
-  return parts.length ? parts.join(' · ') : v.version || '';
+  return parts.length > 0 ? parts.join(' · ') : v.version || '';
 }
 
 // The numbers of "app-v1.2.3" (or "1.2.3"), with a fourth that orders an alpha
 // ("1.2.3-alpha.4", ADR 0035) before its release; null for a dev, beta or other build.
 const appNumbers = (tag: string): number[] | null => {
-  const m = /^(?:app-v)?(\d+)\.(\d+)\.(\d+)(?:-alpha\.([1-9]\d*))?$/.exec(tag.trim());
-  return m ? [...m.slice(1, 4).map(Number), m[4] ? Number(m[4]) : Infinity] : null;
+  const v =
+    /^(?:app-v)?(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)(?:-alpha\.(?<alpha>[1-9]\d*))?$/u.exec(
+      tag.trim()
+    )?.groups;
+  if (!v) return null;
+  const { major, minor, patch, alpha } = v;
+  return [Number(major), Number(minor), Number(patch), alpha ? Number(alpha) : Infinity];
 };
 
 // Whether the release the speaker is offered ("stable" in /api/releases: a release, or on

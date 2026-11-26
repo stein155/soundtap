@@ -9,7 +9,10 @@ const pop = () => {
   window.history.replaceState(null, '');
   window.dispatchEvent(new PopStateEvent('popstate'));
 };
-const tick = async () => new Promise((r) => setTimeout(r, 0));
+const tick = async () =>
+  new Promise((r) => {
+    setTimeout(r, 0);
+  });
 
 // The device's back closes the top overlay instead of leaving the app.
 describe('useEscape and the back button', () => {

@@ -30,7 +30,7 @@ const FitSheet = createGlobalStyle`
 export type SheetTarget = { network: WifiNetwork } | { other: true };
 
 // What joining says while and after it runs.
-function JoinStatus({ join }: { join: WifiJoin }) {
+function JoinStatus({ join }: { readonly join: WifiJoin }) {
   const { t } = useI18n();
   const { kind, text } = join.phase;
   return (
@@ -46,7 +46,13 @@ function JoinStatus({ join }: { join: WifiJoin }) {
 }
 
 // A surveyed network: its password when it has one, and Connect.
-function NetworkForm({ network, join }: { network: WifiNetwork; join: WifiJoin }) {
+function NetworkForm({
+  network,
+  join,
+}: {
+  readonly network: WifiNetwork;
+  readonly join: WifiJoin;
+}) {
   const { t } = useI18n();
   const [password, setPassword] = useState('');
   return (
@@ -64,7 +70,7 @@ function NetworkForm({ network, join }: { network: WifiNetwork; join: WifiJoin }
 }
 
 // A network that does not show up (a hidden one): its name, security and password.
-function OtherForm({ join }: { join: WifiJoin }) {
+function OtherForm({ join }: { readonly join: WifiJoin }) {
   const { t } = useI18n();
   const [ssid, setSsid] = useState('');
   const [security, setSecurity] = useState<Security>('wpa_or_wpa2');
@@ -87,7 +93,7 @@ function OtherForm({ join }: { join: WifiJoin }) {
 
 // The sheet over the search page: titled with the network, its password, and Connect.
 // Tied to one target: another network starts with an empty form.
-function JoinBody({ target, speaker }: { target: SheetTarget; speaker: string }) {
+function JoinBody({ target, speaker }: { readonly target: SheetTarget; readonly speaker: string }) {
   const join = useWifiJoin(speaker);
   return (
     <SheetBody>
@@ -106,9 +112,9 @@ export function JoinSheet({
   speaker,
   onClose,
 }: {
-  target: SheetTarget | null;
-  speaker: string;
-  onClose: () => void;
+  readonly target: SheetTarget | null;
+  readonly speaker: string;
+  readonly onClose: () => void;
 }): ReactElement {
   const { t } = useI18n();
   const title = target && 'network' in target ? target.network.ssid : t('wifiOther');

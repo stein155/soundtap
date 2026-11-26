@@ -8,14 +8,14 @@ import { Art, Chevron, Row, Subtitle, Text, Title } from './styled';
 
 interface Props {
   // Left of the title: a logo or cover. Folders have none.
-  art?: ReactNode;
-  title: string;
-  subtitle?: string;
-  onClick: () => void;
+  readonly art?: ReactNode;
+  readonly title: string;
+  readonly subtitle?: string;
+  readonly onClick: () => void;
   // What a long press does: save it on a preset, as a drag onto a preset in Stockholm.
-  onHold?: (() => void) | undefined;
+  readonly onHold?: (() => void) | undefined;
   // A track: the smaller cover.
-  small?: boolean;
+  readonly small?: boolean;
 }
 
 // A row in a browse list: a station, a category, a playlist, a track. A row without a

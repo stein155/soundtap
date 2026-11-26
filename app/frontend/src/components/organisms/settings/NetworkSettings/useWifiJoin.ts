@@ -22,7 +22,7 @@ const IDLE: Phase = { kind: 'idle', text: '' };
 // WPA passphrases are 8 to 63 bytes, or the raw key as 64 hex digits; the speaker refuses
 // anything else.
 export function badPassword(password: string): boolean {
-  if (/^[0-9a-fA-F]{64}$/.test(password)) return false;
+  if (/^[0-9a-fA-F]{64}$/u.test(password)) return false;
   const bytes = new TextEncoder().encode(password).length;
   return !!password && (bytes < 8 || bytes > 63);
 }

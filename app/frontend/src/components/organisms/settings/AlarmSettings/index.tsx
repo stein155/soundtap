@@ -14,10 +14,10 @@ import type { AlarmConfig, Preset } from '../../../../lib/types';
 import { Fields } from './styled';
 
 interface Props {
-  alarm: AlarmConfig;
-  presets: (Preset | null)[];
-  speakerName: string;
-  onChange: (alarm: AlarmConfig) => void;
+  readonly alarm: AlarmConfig;
+  readonly presets: (Preset | null)[];
+  readonly speakerName: string;
+  readonly onChange: (alarm: AlarmConfig) => void;
 }
 
 // The services a preset can hold besides radio, named after the preset so a playlist
@@ -53,11 +53,11 @@ export function AlarmSettings({ alarm, presets, speakerName, onChange }: Props):
           desc={t('alarmDesc', { name: speakerName })}
           // Without presets it can't be switched on, but one that is on must always be able
           // to go off: the speaker then wakes with its fallback tone.
-          disabled={!stored.length && !alarm.enabled}
+          disabled={stored.length === 0 && !alarm.enabled}
           onToggle={() => onChange({ ...shown, enabled: !alarm.enabled })}
         />
       </SetMenu>
-      {!stored.length && <Hint>{t('alarmNeedsPreset')}</Hint>}
+      {stored.length === 0 && <Hint>{t('alarmNeedsPreset')}</Hint>}
       {alarm.enabled && slot !== undefined && (
         <SetMenu title={t('alarmWhen')}>
           <Fields>
@@ -66,7 +66,9 @@ export function AlarmSettings({ alarm, presets, speakerName, onChange }: Props):
                 id="alarm-time"
                 type="time"
                 value={alarm.time}
-                onChange={(e) => e.target.value && onChange({ ...shown, time: e.target.value })}
+                onChange={(e) => {
+                  if (e.target.value) onChange({ ...shown, time: e.target.value });
+                }}
               />
             </LabeledField>
             <LabeledField id="alarm-slot" label={t('alarmPreset')}>

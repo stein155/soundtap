@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useEffect, useRef, useState, type ReactElement } from 'react';
+import { useEffect, useState, type ReactElement } from 'react';
 import { Slider } from '../../../atoms/Slider';
 import { Hint } from '../../../atoms/Hint';
 import { SetSwitch } from '../../../molecules/SetItem';
@@ -11,17 +11,13 @@ import { formatBass } from '../../../../lib/format';
 import { hasBass } from '../../../../lib/summaries';
 import { failureText } from '../../../../lib/failure';
 import { ConfirmAction } from '../../../molecules/ConfirmAction';
-import {
-  getLipSync,
-  getTone,
-  setLipSync,
-  setTone,
-  startAdaptiq,
-} from '../../../../lib/api/settings';
+import { getTone, setTone, startAdaptiq } from '../../../../lib/api/settings';
 import { getChannel, setChannel, type Channel } from '../../../../lib/api/multiroom';
 import type { BassCaps, Soundbar, Tone } from '../../../../lib/types';
 import { Card, Head, Inset, Level, Name, Scale } from './styled';
 import { AudioModeChoice, TvChoices } from './SoundbarChoices';
+import { SoundbarLipSync } from './SoundbarLipSync';
+import { useTrailingSend } from './useTrailingSend';
 
 // Whether a speaker has anything for the Sound page: a soundbar, a bass range or the
 // stereo output switch. Stock's Wireless Link has none of these.
@@ -41,15 +37,18 @@ export function SoundSettings({
   caps,
   soundbar,
   speaker,
+  name = '',
   mono = false,
   onBass,
 }: {
-  bass: number;
-  caps: BassCaps;
-  soundbar?: Soundbar | null | undefined;
-  speaker?: string | undefined;
-  mono?: boolean;
-  onBass: (bass: number) => void;
+  readonly bass: number;
+  readonly caps: BassCaps;
+  readonly soundbar?: Soundbar | null | undefined;
+  readonly speaker?: string | undefined;
+  // The speaker's name, for what a failure says.
+  readonly name?: string;
+  readonly mono?: boolean;
+  readonly onBass: (bass: number) => void;
 }): ReactElement | null {
   const { t } = useI18n();
   const bar = soundbar !== undefined;
@@ -61,7 +60,7 @@ export function SoundSettings({
     return (
       <>
         <SetMenu title={t('soundTone')}>
-          <SoundbarTone speaker={speaker} />
+          <SoundbarTone key={`tone-${key}`} speaker={speaker} />
           <AudioModeChoice key={`mode-${key}`} speaker={speaker} />
         </SetMenu>
         <SetMenu title={t('soundTv')}>
@@ -74,7 +73,7 @@ export function SoundSettings({
           </SetMenu>
         )}
         <SetMenu title="ADAPTiQ">
-          <SoundbarAdaptiq speaker={speaker} />
+          <SoundbarAdaptiq speaker={speaker} name={name} />
         </SetMenu>
       </>
     );
@@ -115,25 +114,49 @@ export function SoundSettings({
 }
 
 // Starts the soundbar's room calibration: the bar runs it itself and returns to its last
-// source, so the app only has to ask.
-function SoundbarAdaptiq({ speaker }: { speaker?: string | undefined }) {
+// source, so the app only has to ask. A start that did not happen says why: the bar said no,
+// or it did not answer.
+function SoundbarAdaptiq({
+  speaker,
+  name,
+}: {
+  readonly speaker?: string | undefined;
+  readonly name: string;
+}) {
   const { t } = useI18n();
+  const [error, setError] = useState('');
+  const start = async () => {
+    setError('');
+    try {
+      await startAdaptiq(speaker);
+    } catch (e) {
+      const status =
+        typeof e === 'object' && e !== null && 'status' in e && typeof e.status === 'number'
+          ? e.status
+          : undefined;
+      const refused = status !== undefined && status >= 400 && status < 500;
+      setError(failureText(e, t(refused ? 'actionRefused' : 'actionFailed', { name }), t));
+    }
+  };
   return (
     <Card>
       <ConfirmAction
         label={t('adaptiqRun')}
         warning={t('adaptiqWarning')}
         confirmLabel={t('adaptiqStart')}
-        onConfirm={async () => {
-          await startAdaptiq(speaker);
-        }}
+        onConfirm={start}
       />
+      {error && (
+        <Hint error role="alert">
+          {error}
+        </Hint>
+      )}
     </Card>
   );
 }
 
 // Whether the soundbar's bass module and rear speakers are paired and connected.
-function SoundbarSpeakers({ bar }: { bar: Soundbar }) {
+function SoundbarSpeakers({ bar }: { readonly bar: Soundbar }) {
   const { t } = useI18n();
   const state = (paired: boolean, connected: boolean) => {
     if (!paired) return t('soundbarUnpaired');
@@ -163,24 +186,26 @@ const TONE_CONTROLS = [
 // The soundbar's bass, treble, centre and rear levels, within the ranges it reports. Sent
 // to the soundbar shortly after the last move, not saved with the form. A control whose
 // range is empty is not shown.
-function SoundbarTone({ speaker }: { speaker?: string | undefined }) {
+function SoundbarTone({ speaker }: { readonly speaker?: string | undefined }) {
   const { t } = useI18n();
   const [tone, setOwn] = useState<Tone | null>(null);
   const [error, setError] = useState('');
-  const timer = useRef<number | undefined>(undefined);
+  const later = useTrailingSend(300);
   useEffect(() => {
     // The first read only wakes the soundbar's answer, so ask again once if it had none.
     let alive = true;
-    const load = (retry: boolean) =>
+    let again: number | undefined;
+    const load = (retry: boolean) => {
       void getTone(speaker).then((got) => {
         if (!alive) return;
         if (got || !retry) setOwn(got);
-        else window.setTimeout(() => load(false), 1500);
+        else again = window.setTimeout(() => load(false), 1500);
       });
+    };
     load(true);
     return () => {
       alive = false;
-      window.clearTimeout(timer.current);
+      window.clearTimeout(again);
     };
   }, [speaker]);
   if (!tone) return null;
@@ -189,8 +214,7 @@ function SoundbarTone({ speaker }: { speaker?: string | undefined }) {
     const snapped = c.step > 1 ? c.min + Math.round((value - c.min) / c.step) * c.step : value;
     const next = { ...tone, [key]: { ...c, value: Math.min(c.max, snapped) } };
     setOwn(next);
-    window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => {
+    later(() => {
       setError('');
       setTone(
         {
@@ -201,7 +225,7 @@ function SoundbarTone({ speaker }: { speaker?: string | undefined }) {
         },
         speaker
       ).catch((e: unknown) => setError(failureText(e, t('saveFailed'), t)));
-    }, 300);
+    });
   };
   return (
     <>
@@ -220,7 +244,7 @@ function SoundbarTone({ speaker }: { speaker?: string | undefined }) {
               label={t(label)}
               min={c.min}
               max={c.max}
-              step={c.step || 1}
+              step={c.step === 0 ? 1 : c.step}
               origin={0}
               valueText={formatBass(c.value)}
             />
@@ -236,65 +260,25 @@ function SoundbarTone({ speaker }: { speaker?: string | undefined }) {
   );
 }
 
-// How long the soundbar's sound waits for the TV picture. Sent shortly after the
-// last move, like the tone levels; 0 until the bar has said.
-function SoundbarLipSync({ speaker }: { speaker?: string | undefined }) {
-  const { t } = useI18n();
-  const [delay, setOwn] = useState<{ ms: number | null; max: number } | null>(null);
-  const [error, setError] = useState('');
-  const timer = useRef<number | undefined>(undefined);
-  useEffect(() => {
-    let alive = true;
-    void getLipSync(speaker).then((got) => alive && setOwn(got));
-    return () => {
-      alive = false;
-      window.clearTimeout(timer.current);
-    };
-  }, [speaker]);
-  if (!delay) return null;
-  const ms = delay.ms ?? 0;
-  const change = (next: number) => {
-    setOwn({ ...delay, ms: next });
-    window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => {
-      setError('');
-      setLipSync(next, speaker).catch((e: unknown) => setError(failureText(e, t('saveFailed'), t)));
-    }, 300);
-  };
-  return (
-    <Card>
-      <Head>
-        <Name>{t('lipSync')}</Name>
-        <Level $changed={ms !== 0}>{ms} ms</Level>
-      </Head>
-      <Slider
-        tall
-        value={ms}
-        onChange={change}
-        label={t('lipSync')}
-        min={0}
-        max={delay.max}
-        step={10}
-        origin={0}
-        valueText={`${ms} ms`}
-      />
-      <Scale>
-        <span>0 ms</span>
-        <span>{delay.max} ms</span>
-      </Scale>
-      {error && <Hint error>{error}</Hint>}
-    </Card>
-  );
-}
-
 // Stereo or mono, saved on the speaker at once like the stereo pair: a row of the Sound
 // group. Half of a pair plays one channel already, so the switch is not shown there.
-export function MonoSwitch({ speaker }: { speaker?: string | undefined }): ReactElement | null {
+export function MonoSwitch({
+  speaker,
+}: {
+  readonly speaker?: string | undefined;
+}): ReactElement | null {
   const { t } = useI18n();
   const [channel, setOwn] = useState<Channel | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
-    void getChannel(speaker).then(setOwn);
+    // An answer for the speaker before, or after leaving, does not count.
+    let alive = true;
+    void getChannel(speaker).then((got) => {
+      if (alive) setOwn(got);
+    });
+    return () => {
+      alive = false;
+    };
   }, [speaker]);
   if (channel !== 'stereo' && channel !== 'mono') return null;
   const toggle = async () => {
@@ -313,7 +297,9 @@ export function MonoSwitch({ speaker }: { speaker?: string | undefined }): React
         label={t('mono')}
         desc={t('monoHint')}
         on={channel === 'stereo'}
-        onToggle={() => void toggle()}
+        onToggle={() => {
+          void toggle();
+        }}
       />
       {error && (
         <Card>

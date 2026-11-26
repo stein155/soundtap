@@ -21,8 +21,8 @@ export interface RecentItem {
 
 function stationOf(location: string): string | null {
   // A favorite holds the bare guide id, whatever its kind; history holds a playback path.
-  if (/^https?:\/\//.test(location) || /^[A-Za-z0-9]+$/.test(location)) return location;
-  return /(?:^|[/=])(s\d+)/.exec(location)?.[1] ?? null;
+  if (/^https?:\/\//u.test(location) || /^[A-Za-z0-9]+$/u.test(location)) return location;
+  return /(?:^|[/=])(?<id>s\d+)/u.exec(location)?.groups?.['id'] ?? null;
 }
 
 export function recentItems(list: RecentEntry[]): RecentItem[] {

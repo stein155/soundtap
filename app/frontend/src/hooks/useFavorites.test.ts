@@ -89,4 +89,20 @@ describe('useFavorites', () => {
     });
     expect(result.current.items).toHaveLength(0);
   });
+
+  it('keeps a slow first read from undoing a favorite added meanwhile', async () => {
+    const first = held();
+    vi.mocked(api.addFavorite).mockResolvedValue(undefined);
+    vi.mocked(api.getFavorites).mockReset();
+    vi.mocked(api.getFavorites)
+      .mockReturnValueOnce(first.read)
+      .mockResolvedValueOnce([recentEntry({ name: 'New' })]);
+    const { result } = renderHook(() => useFavorites('Kitchen', vi.fn()));
+    await act(async () =>
+      result.current.add({ source: 'TUNEIN', location: 's1', name: 'New', art: '' })
+    );
+    expect(result.current.items).toEqual([recentEntry({ name: 'New' })]);
+    await act(async () => first.answer([]));
+    expect(result.current.items).toEqual([recentEntry({ name: 'New' })]);
+  });
 });

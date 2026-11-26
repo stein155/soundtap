@@ -12,9 +12,9 @@ const average = (rooms: Room[]) =>
 
 interface Props {
   // The speaker first, then the ones playing along with it.
-  group: Room[];
-  volume: ReturnType<typeof useRoomVolume>;
-  onMute: (room: Room) => void;
+  readonly group: Room[];
+  readonly volume: ReturnType<typeof useRoomVolume>;
+  readonly onMute: (room: Room) => void;
 }
 
 // One slider for a lone speaker; for a group, one for all of them and one per speaker.

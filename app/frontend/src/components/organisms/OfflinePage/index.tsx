@@ -11,13 +11,13 @@ import { SheetModal } from '../../molecules/SheetModal';
 import { useI18n } from '../../../lib/i18n';
 
 interface Props {
-  open: boolean;
-  name: string;
-  model?: string | undefined;
+  readonly open: boolean;
+  readonly name: string;
+  readonly model?: string | undefined;
   // Away with the page until the speaker is lost again (the banner stays meanwhile).
-  onClose: () => void;
+  readonly onClose: () => void;
   // Another speaker to control instead (the speakers sheet).
-  onOther: () => void;
+  readonly onOther: () => void;
 }
 
 // What to look at, with the line drawing the design gives each.

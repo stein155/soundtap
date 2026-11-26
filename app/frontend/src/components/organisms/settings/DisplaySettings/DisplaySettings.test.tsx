@@ -27,7 +27,7 @@ describe('DisplaySettings', () => {
       <DisplaySettings config={clock()} onChange={vi.fn()} />
     );
     expect(queryByRole('searchbox')).toBeNull();
-    expect(queryByText(/weather/i)).toBeNull();
+    expect(queryByText(/weather/iu)).toBeNull();
   });
 
   it('hides the format while the clock is off, and never offers a brightness', () => {
@@ -37,7 +37,7 @@ describe('DisplaySettings', () => {
     expect(queryByText('Show the time as')).toBeNull();
     rerender(<DisplaySettings config={clock()} onChange={vi.fn()} />);
     expect(queryByText('Show the time as')).toBeTruthy();
-    expect(queryByText(/brightness/i)).toBeNull();
+    expect(queryByText(/brightness/iu)).toBeNull();
   });
 
   it('draws the time as the standby screen does', () => {

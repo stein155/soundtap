@@ -72,10 +72,14 @@ describe('useRecent', () => {
     await act(async () => vi.advanceTimersByTimeAsync(1000));
     rerender({ p: 'b' });
     await act(async () => vi.advanceTimersByTimeAsync(1000)); // the read now in flight
-    act(() => void result.current.remove(jazz));
+    act(() => {
+      void result.current.remove(jazz);
+    });
     await act(async () => late([jazz])); // answered with the entry still in it
     expect(result.current.items).toHaveLength(0);
-    act(() => void result.current.remove(jazz));
+    act(() => {
+      void result.current.remove(jazz);
+    });
     expect(api.removeRecent).toHaveBeenCalledTimes(1);
     vi.useRealTimers();
   });
@@ -89,7 +93,9 @@ describe('useRecent', () => {
       initialProps: { s: 'Kitchen' },
     });
     await act(async () => vi.advanceTimersByTimeAsync(1000));
-    act(() => void result.current.remove(jazz));
+    act(() => {
+      void result.current.remove(jazz);
+    });
     rerender({ s: 'Bedroom' });
     await act(async () => vi.advanceTimersByTimeAsync(1000));
     expect(result.current.items).toHaveLength(1);

@@ -4,6 +4,7 @@
 import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import { saveSettings } from '../lib/api';
 import type { AlarmConfig, DisplayConfig, Preset, Settings, VersionInfo } from '../lib/types';
+import { usePageVisible } from './usePageVisible';
 import { useSpeakerResource } from './speaker/resource';
 import { refreshHeld, refreshResource, type Held } from './speaker/store';
 import type { BluetoothStatus } from '../lib/api';
@@ -28,7 +29,7 @@ const REFRESH_MS = 15000;
 const differs = (a: SpeakerForm, b: SpeakerForm, field: keyof SpeakerForm) =>
   JSON.stringify(a[field]) !== JSON.stringify(b[field]);
 
-const browserZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+const browserZone = () => new Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
 
 // The standby clock shows, as on stock, in this browser's zone. A panel that has no zone
 // yet gets it once, without waiting for a Save.
@@ -79,15 +80,26 @@ function useReads(speaker: string) {
     void refreshResource('presets', speaker);
     void refreshResource('bluetooth', speaker);
     void refreshResource('version', speaker);
-    // Signal and address change while a page sits open. The form stays as the owner left it.
+    return () => {
+      live = false;
+    };
+  }, [speaker]);
+  // Signal and address change while a page sits open, so it reads them again; a hidden page
+  // does not. The form stays as the owner left it.
+  const visible = usePageVisible();
+  useEffect(() => {
+    if (!visible) return undefined;
+    let live = true;
     const id = window.setInterval(() => {
-      void refreshResource('settings', speaker).then((ok) => ok && answered(true));
+      void refreshResource('settings', speaker).then(
+        (ok) => live && ok && setReached({ speaker, state: 'answered' })
+      );
     }, REFRESH_MS);
     return () => {
       live = false;
       window.clearInterval(id);
     };
-  }, [speaker]);
+  }, [speaker, visible]);
   const state = reached.speaker === speaker ? reached.state : 'loading';
   // undefined while loading; null when the speaker did not answer.
   const settings = settingsAs(state, stored);
@@ -170,12 +182,13 @@ export function useSpeakerSettings(speaker: string, fallbackName: string): Speak
     // The standby clock keeps this browser's time, like the alarm.
     if (sent.display && patch.display !== undefined)
       patch.display = { ...sent.display, timezone: browserZone() ?? '' };
-    if (Object.keys(patch).length) {
+    if (Object.keys(patch).length > 0) {
       await saveSettings(patch, speaker);
       refreshHeld('settings', speaker); // the home page's copy and this page's own
     }
     // A blank name was not sent, so the old one stays.
     const accepted = { ...sent, name: sent.name.trim() || base.form.name };
+    // eslint-disable-next-line require-atomic-updates -- saves go out one at a time (queue below)
     baseline.current = { speaker, form: accepted };
     setSaved(accepted);
     setForm((f) => (f === sent ? accepted : f));

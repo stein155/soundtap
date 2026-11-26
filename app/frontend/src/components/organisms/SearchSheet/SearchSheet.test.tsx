@@ -37,7 +37,7 @@ describe('SearchSheet', () => {
   it('plays a station from a link, on a page of its own', async () => {
     const onPick = vi.fn();
     renderSearch(onPick);
-    await userEvent.click(screen.getByRole('button', { name: /^Play from a link/ }));
+    await userEvent.click(screen.getByRole('button', { name: /^Play from a link/u }));
     const page = await screen.findByRole('dialog', { name: 'Play from a link' });
     expect(page).toBeInTheDocument();
     await userEvent.type(
@@ -53,7 +53,7 @@ describe('SearchSheet', () => {
 
   it('folds the help for a stream that does not play away until asked for', async () => {
     renderSearch();
-    await userEvent.click(screen.getByRole('button', { name: /^Play from a link/ }));
+    await userEvent.click(screen.getByRole('button', { name: /^Play from a link/u }));
     const help = (await screen.findByText('Stream not working?')).closest('details');
     expect(help?.open).toBe(false);
     await userEvent.click(screen.getByText('Stream not working?'));

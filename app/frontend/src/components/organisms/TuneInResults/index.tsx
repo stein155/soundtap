@@ -15,11 +15,11 @@ import type { Station } from '../../../lib/types';
 import type { TuneInBrowser } from '../../../hooks/useTuneInBrowser';
 
 interface Props {
-  tunein: TuneInBrowser;
-  speaker: string;
-  onPick: (station: Station) => void;
+  readonly tunein: TuneInBrowser;
+  readonly speaker: string;
+  readonly onPick: (station: Station) => void;
   // Picking stores on a preset instead of playing.
-  onHold?: ((station: Station) => void) | undefined;
+  readonly onHold?: ((station: Station) => void) | undefined;
 }
 
 // The TuneIn tab's body: search results, or the current level of the directory.
@@ -51,10 +51,10 @@ export function TuneInResults({ tunein, speaker, onPick, onHold }: Props): React
       </SheetEmpty>
     );
   if (query.trim()) {
-    if (!results.length) return <SheetEmpty query={query}>{t('noStations')}</SheetEmpty>;
+    if (results.length === 0) return <SheetEmpty query={query}>{t('noStations')}</SheetEmpty>;
     return <SheetGroup>{stationRows(results)}</SheetGroup>;
   }
-  if (!level.categories.length && !level.stations.length)
+  if (level.categories.length === 0 && level.stations.length === 0)
     return <SheetEmpty>{t('noStations')}</SheetEmpty>;
   // Stations first: a genre is opened to find something to play, and TuneIn lists its
   // sub-folders before the stations, which pushed them below the fold.

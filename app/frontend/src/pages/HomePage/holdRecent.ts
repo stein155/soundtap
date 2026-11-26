@@ -22,14 +22,15 @@ export function holdRecent(
       genre: '',
       country: '',
     };
-    layers.holdForPreset(stationEntry(station), (slot) => void playback.pick(station, slot));
+    layers.holdForPreset(stationEntry(station), (slot) => {
+      void playback.pick(station, slot);
+    });
     return;
   }
   if (item.spotifyUri) {
     const spotify = { uri: item.spotifyUri, name: item.name, artwork: item.art };
-    layers.holdForPreset(
-      spotifyEntry(spotify),
-      (slot) => void playback.storeSpotify(slot, spotify)
-    );
+    layers.holdForPreset(spotifyEntry(spotify), (slot) => {
+      void playback.storeSpotify(slot, spotify);
+    });
   }
 }

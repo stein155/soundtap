@@ -13,10 +13,10 @@ export function NameRow({
   placeholder,
   onChange,
 }: {
-  label: string;
-  value: string;
-  placeholder: string;
-  onChange: (name: string) => void;
+  readonly label: string;
+  readonly value: string;
+  readonly placeholder: string;
+  readonly onChange: (name: string) => void;
 }): ReactElement {
   return (
     <LabeledField id="speaker-name" label={label}>

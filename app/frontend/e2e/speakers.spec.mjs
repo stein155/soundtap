@@ -10,7 +10,7 @@ test('switches to another speaker and shows what it plays', async ({ page }) => 
 
   // The speakers sheet: a tap on another speaker makes it the one this page controls.
   await page.getByRole('button', { name: 'Speaker: Woonkamer' }).click();
-  await page.getByRole('radio', { name: /Keuken/ }).click();
+  await page.getByRole('radio', { name: /Keuken/u }).click();
   await page.getByRole('button', { name: 'Volume Keuken' }).click();
   await expect(page.getByRole('slider', { name: 'Volume' }).first()).toHaveValue('18');
   await page.keyboard.press('Escape');
@@ -32,7 +32,9 @@ test('a volume slider sets the speaker’s volume', async ({ page, request }) =>
 
   // By keyboard, a step of 2 at a time.
   await slider.focus();
-  for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
   await expect(slider).toHaveValue('34');
   await expect.poll(async () => (await demoState(request)).volumes.woonkamer).toBe(34);
 

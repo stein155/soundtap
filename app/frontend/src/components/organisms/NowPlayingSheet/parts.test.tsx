@@ -80,7 +80,12 @@ describe('SpotifyModeButtons', () => {
   it('keeps a tap when a poll that left before it answers late', async () => {
     let answer: (modes: { shuffle: boolean; repeat: 'off' }) => void = vi.fn();
     vi.mocked(spotifyModes)
-      .mockImplementationOnce(async () => new Promise((resolve) => (answer = resolve)))
+      .mockImplementationOnce(
+        async () =>
+          new Promise((resolve) => {
+            answer = resolve;
+          })
+      )
       .mockResolvedValue({ shuffle: true, repeat: 'off' });
     vi.mocked(setSpotifyShuffle).mockReturnValueOnce(new Promise(vi.fn()));
     render(<SpotifyModeButtons />);

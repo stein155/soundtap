@@ -18,11 +18,11 @@ export const Underlined = styled.button`
   cursor: pointer;
   position: relative;
 
-  /* The text is 18px tall; a finger needs about 44. Grow the hit area, not the layout. */
+  /* The text is 16px tall; a finger needs 44. Grow the hit area, not the layout. */
   &::before {
     content: '';
     position: absolute;
-    inset: -13px 0;
+    inset: -14px 0;
   }
 
   &:disabled {

@@ -45,7 +45,7 @@ const holdable = (
   library.hold && (() => library.hold?.({ uri: item.uri, name: item.name, artwork: item.artwork }));
 
 // Why the library is not available yet, and what to do about it.
-function NotReady({ view }: { view: Exclude<SpotifyView, 'ready'> }) {
+function NotReady({ view }: { readonly view: Exclude<SpotifyView, 'ready'> }) {
   const { t } = useI18n();
   return (
     <Invitation>
@@ -60,10 +60,10 @@ function NotReady({ view }: { view: Exclude<SpotifyView, 'ready'> }) {
 
 // The artists on a page. Search is closed to the session, so these are the way from a song
 // to more of its artist. An artist's own page lists them no further.
-function PageArtists({ library, page }: { library: Library; page: LoadedPage }) {
+function PageArtists({ library, page }: { readonly library: Library; readonly page: LoadedPage }) {
   const { t } = useI18n();
   const artists = artistsOf(page.tracks).slice(0, MAX_ARTISTS);
-  if (page.context.startsWith('spotify:artist:') || !artists.length) return null;
+  if (page.context.startsWith('spotify:artist:') || artists.length === 0) return null;
   return (
     <SheetGroup title={t('spotifyArtists')}>
       {artists.map((artist) => (
@@ -79,7 +79,13 @@ function PageArtists({ library, page }: { library: Library; page: LoadedPage }) 
 }
 
 // An artist's releases, one sideways row per kind, as Stockholm.
-function Releases({ library, albums }: { library: Library; albums: SpotifyAlbum[] }) {
+function Releases({
+  library,
+  albums,
+}: {
+  readonly library: Library;
+  readonly albums: SpotifyAlbum[];
+}) {
   const { t } = useI18n();
   const groups = [
     ['album', t('spotifyAlbums')],
@@ -104,7 +110,7 @@ function Releases({ library, albums }: { library: Library; albums: SpotifyAlbum[
 }
 
 // A playlist, album, artist or Liked Songs: play it all, or one track.
-function PageView({ library, page }: { library: Library; page: LoadedPage }) {
+function PageView({ library, page }: { readonly library: Library; readonly page: LoadedPage }) {
   const { t } = useI18n();
   const cover = artworkURL(page.artwork);
   return (
@@ -117,13 +123,13 @@ function PageView({ library, page }: { library: Library; page: LoadedPage }) {
           <Button
             variant="primary"
             small
-            onClick={() =>
+            onClick={() => {
               void library.play(undefined, page.context, {
                 uri: page.context,
                 name: page.title,
                 artwork: page.artwork,
-              })
-            }
+              });
+            }}
           >
             <Icon.play width="12" height="12" aria-hidden="true" />
             {t('spotifyPlayAll')}
@@ -142,11 +148,13 @@ function PageView({ library, page }: { library: Library; page: LoadedPage }) {
               // A track starts its list, which then plays on: the list is what is playing and
               // what a held preset key stores. Naming the track kept its title up after it
               // ended.
-              void library.play(track.uri, page.context, {
-                uri: page.context,
-                name: page.title,
-                artwork: page.artwork,
-              })
+              {
+                void library.play(track.uri, page.context, {
+                  uri: page.context,
+                  name: page.title,
+                  artwork: page.artwork,
+                });
+              }
             }
             onHold={holdable(library, track)}
           />
@@ -154,25 +162,27 @@ function PageView({ library, page }: { library: Library; page: LoadedPage }) {
       </SheetGroup>
       <Releases library={library} albums={page.albums ?? []} />
       <PageArtists library={library} page={page} />
-      {(page.next ?? 0) !== 0 ? (
+      {(page.next ?? 0) === 0 ? null : (
         <Button
           variant="dashed"
           disabled={library.loadingMore}
           aria-label={library.loadingMore ? t('loading') : undefined}
-          onClick={() => void library.loadMore()}
+          onClick={() => {
+            void library.loadMore();
+          }}
         >
           {library.loadingMore ? <Spinner /> : t('spotifyMore')}
         </Button>
-      ) : null}
+      )}
     </>
   );
 }
 
 // What the library shows: its home, an opened page, a retry after a failed load, or the
 // spinner while a page loads.
-function LibraryBody({ library }: { library: Library }): ReactElement {
+function LibraryBody({ library }: { readonly library: Library }): ReactElement {
   const { t } = useI18n();
-  if (!library.trail.length) return <Home library={library} />;
+  if (library.trail.length === 0) return <Home library={library} />;
   if (library.page) return <PageView library={library} page={library.page} />;
   // The load failed and is over: offer it again instead of a spinner.
   if (library.error) return <LinkButton onClick={library.retry}>{t('reconnect')}</LinkButton>;
@@ -180,7 +190,7 @@ function LibraryBody({ library }: { library: Library }): ReactElement {
 }
 
 // The Spotify tab's body.
-export function SpotifyLibrary({ library }: { library: Library }): ReactElement {
+export function SpotifyLibrary({ library }: { readonly library: Library }): ReactElement {
   if (!library.statusLoaded) return <SheetLoading />;
   if (library.view !== 'ready') return <NotReady view={library.view} />;
   return (

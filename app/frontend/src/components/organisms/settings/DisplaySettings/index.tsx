@@ -15,7 +15,8 @@ import { Pad, Preview } from './styled';
 // The time as the standby screen draws it: hours and minutes, without AM/PM beside it.
 export function clockText(at: Date, hour12: boolean): string {
   const h = at.getHours();
-  const hour = hour12 ? String(h % 12 || 12) : String(h).padStart(2, '0');
+  // 0 and 12 o'clock both read 12 on a 12-hour clock.
+  const hour = hour12 ? String(h % 12 === 0 ? 12 : h % 12) : String(h).padStart(2, '0');
   return `${hour}:${String(at.getMinutes()).padStart(2, '0')}`;
 }
 
@@ -26,8 +27,8 @@ export function DisplaySettings({
   config,
   onChange,
 }: {
-  config: DisplayConfig;
-  onChange: (patch: Partial<DisplayConfig>) => void;
+  readonly config: DisplayConfig;
+  readonly onChange: (patch: Partial<DisplayConfig>) => void;
 }): ReactElement {
   const { t } = useI18n();
   const clockOn = !config.clockOff;

@@ -24,41 +24,41 @@ import {
 
 interface Props {
   // The X on the right: leaves the whole page.
-  onExit?: (() => void) | undefined;
+  readonly onExit?: (() => void) | undefined;
   // The back chevron on the left, only when there is a level to go up to.
-  onBack?: (() => void) | undefined;
-  backLabel?: string;
+  readonly onBack?: (() => void) | undefined;
+  readonly backLabel?: string;
   // Where the page sits ("Woonkamer"), small in the bar; the headline is then the page's
   // own large title at the top of the body, with intro under it.
-  eyebrow?: ReactNode;
-  headline?: ReactNode;
-  intro?: ReactNode;
+  readonly eyebrow?: ReactNode;
+  readonly headline?: ReactNode;
+  readonly intro?: ReactNode;
   // The page draws its own title (a speaker's name by its picture): no large headline.
-  ownHero?: boolean | undefined;
-  label?: string;
+  readonly ownHero?: boolean | undefined;
+  readonly label?: string;
   // A bar of the page's own in place of this header (the source pages' top bar).
-  bar?: ReactNode;
+  readonly bar?: ReactNode;
   // Takes the place of the title, as Stockholm's search does: the X then steps back.
-  field?: ReactNode | undefined;
+  readonly field?: ReactNode | undefined;
   // Rows between the header and the scrolling body (tabs).
-  toolbar?: ReactNode;
+  readonly toolbar?: ReactNode;
   // A button of the page's own beside the X (Wi-Fi's search again).
-  action?: SubPageAction | undefined;
+  readonly action?: SubPageAction | undefined;
   // Where in a nested list the body is (a browse level). Each one keeps its own scroll
   // position: going back lands where you were, going deeper starts at the top.
-  scrollKey?: string;
-  children: ReactNode;
+  readonly scrollKey?: string;
+  readonly children: ReactNode;
 }
 
 interface HeaderProps {
-  field?: ReactNode | undefined;
-  eyebrow?: ReactNode;
-  ownHero?: boolean | undefined;
-  headline?: ReactNode;
-  back?: (() => void) | undefined;
-  backLabel: string;
-  exit?: (() => void) | undefined;
-  action?: SubPageAction | undefined;
+  readonly field?: ReactNode | undefined;
+  readonly eyebrow?: ReactNode;
+  readonly ownHero?: boolean | undefined;
+  readonly headline?: ReactNode;
+  readonly back?: (() => void) | undefined;
+  readonly backLabel: string;
+  readonly exit?: (() => void) | undefined;
+  readonly action?: SubPageAction | undefined;
 }
 
 // The bar's middle: the page's title, or where it sits when the page has a large title of

@@ -2,8 +2,7 @@
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
 import { describe, it, expect, vi } from 'vitest';
-import { fireEvent } from '@testing-library/react';
-import { renderHook } from '@testing-library/react';
+import { fireEvent, renderHook } from '@testing-library/react';
 import { useEscape } from './useEscape';
 
 describe('useEscape', () => {

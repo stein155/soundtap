@@ -11,7 +11,7 @@ const FOCUSABLE =
 export function useDialogFocus(dialog: RefObject<HTMLElement | null>, open: boolean): void {
   useEffect(() => {
     const root = dialog.current;
-    if (!open || !root) return;
+    if (!open || !root) return undefined;
     const active = document.activeElement;
     // Whatever had focus, a control or a drawing in one, takes it back on close.
     const opener = active instanceof HTMLElement || active instanceof SVGElement ? active : null;

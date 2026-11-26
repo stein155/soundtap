@@ -41,12 +41,12 @@ const openSettings = async () => {
 };
 // The speaker bar opens the speakers sheet: which speaker this page controls.
 const openSpeakers = async () => {
-  await userEvent.click(await screen.findByRole('button', { name: /^Speaker: / }));
+  await userEvent.click(await screen.findByRole('button', { name: /^Speaker: /u }));
   return screen.findByRole('dialog', { name: 'Speakers' });
 };
 // Now playing's Group opens who plays along.
 const openGroup = async () => {
-  await userEvent.click(await screen.findByRole('button', { name: /^Open player/ }));
+  await userEvent.click(await screen.findByRole('button', { name: /^Open player/u }));
   await userEvent.click(await screen.findByRole('button', { name: 'Group' }));
   return screen.findByRole('dialog', { name: 'Group' });
 };
@@ -178,7 +178,7 @@ describe('App integration', () => {
     window.history.replaceState({}, '', '/?setup=wifi');
     render(<App />);
     await userEvent.click(await screen.findByRole('button', { name: 'Next' }));
-    expect(await screen.findByText(/the password was not accepted/)).toBeInTheDocument();
+    expect(await screen.findByText(/the password was not accepted/u)).toBeInTheDocument();
   });
 
   it('saves setup name before switching Wi-Fi', async () => {
@@ -226,14 +226,19 @@ describe('App integration', () => {
     await userEvent.type(await screen.findByLabelText('Password for HomeNet'), 'secret123');
     await userEvent.click(screen.getByRole('button', { name: 'Connect' }));
     await waitFor(() => expect(api.setWifi).toHaveBeenCalled());
-    expect(await screen.findByText(/The name could not be saved here/)).toBeInTheDocument();
+    expect(await screen.findByText(/The name couldn’t be saved here/u)).toBeInTheDocument();
   });
 
   // A name typed while the stored one is still loading is kept.
   it('keeps a setup name typed before the stored one arrives', async () => {
     window.history.replaceState({}, '', '/?setup=wifi');
     let answer: (v: Settings) => void = vi.fn();
-    api.getSettings.mockImplementationOnce(async () => new Promise((r) => (answer = r)));
+    api.getSettings.mockImplementationOnce(
+      async () =>
+        new Promise((r) => {
+          answer = r;
+        })
+    );
     render(<App />);
     const field = await screen.findByLabelText('Name');
     await userEvent.type(field, 'Typed name');
@@ -248,7 +253,7 @@ describe('App integration', () => {
     expect(await screen.findByText('Radio Foo')).toBeInTheDocument();
     expect(screen.getByText('Radio Bar')).toBeInTheDocument();
     // Four open presets and the open favorite.
-    expect((await screen.findAllByText('Open')).length).toBe(5);
+    expect((await screen.findAllByText('Empty')).length).toBe(5);
   }, 30000);
 
   // <html lang> must follow the shown language, or a screen reader reads the whole UI
@@ -272,7 +277,7 @@ describe('App integration', () => {
 
   it('sets the volume from the volume panel', async () => {
     render(<App />);
-    await userEvent.click(await screen.findByRole('button', { name: /^Volume / }));
+    await userEvent.click(await screen.findByRole('button', { name: /^Volume /u }));
     const slider = await screen.findByRole('slider', { name: 'Volume' });
     slider.focus();
     await userEvent.keyboard('{ArrowRight}');
@@ -301,7 +306,7 @@ describe('App integration', () => {
     render(<App />);
     await openTuneIn();
     await openTuneInSearch();
-    await userEvent.click(await screen.findByRole('button', { name: /^Play from a link/ }));
+    await userEvent.click(await screen.findByRole('button', { name: /^Play from a link/u }));
     await userEvent.click(screen.getByRole('button', { name: 'Play station' }));
     expect(screen.getAllByRole('alert').map((a) => a.textContent)).toEqual([
       'Required field',
@@ -311,7 +316,7 @@ describe('App integration', () => {
     await userEvent.type(screen.getByLabelText('Name'), 'My radio');
     await userEvent.click(screen.getByRole('button', { name: 'Play station' }));
     expect(screen.getByRole('alert').textContent).toBe(
-      'Please use URLs that start with http(s)://'
+      'The link must start with http:// or https://'
     );
     expect(api.selectStation).not.toHaveBeenCalled();
     await userEvent.clear(screen.getByLabelText('Link to the stream'));
@@ -331,7 +336,7 @@ describe('App integration', () => {
     render(<App />);
     await openTuneIn();
     await userEvent.click(await screen.findByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(screen.queryByText(/Couldn't reach TuneIn/)).toBeNull());
+    await waitFor(() => expect(screen.queryByText(/Couldn’t reach TuneIn/u)).toBeNull());
     expect(api.browseTuneIn.mock.calls.length).toBeGreaterThanOrEqual(2);
   }, 30000);
 
@@ -339,14 +344,14 @@ describe('App integration', () => {
   it('explains an empty slot when it is tapped', async () => {
     api.getPresets.mockResolvedValue([null, null, null, null, null, null]);
     render(<App />);
-    await userEvent.click(await screen.findByRole('button', { name: /Pick something to play/ }));
+    await userEvent.click(await screen.findByRole('button', { name: /Pick something to play/u }));
     await userEvent.click(
-      must((await screen.findAllByRole('button', { name: /^\d\s?Open$/ }))[0], 'an empty preset')
+      must((await screen.findAllByRole('button', { name: /^\d\s?Empty$/u }))[0], 'an empty preset')
     );
-    expect(await screen.findByText(/Press and hold an empty preset/)).toBeInTheDocument();
-    expect(screen.queryByText(/for slot 1/i)).toBeNull();
+    expect(await screen.findByText(/Press and hold an empty preset/u)).toBeInTheDocument();
+    expect(screen.queryByText(/for slot 1/iu)).toBeNull();
     await userEvent.click(screen.getByRole('button', { name: 'OK' }));
-    await waitFor(() => expect(screen.queryByText(/Press and hold an empty preset/)).toBeNull());
+    await waitFor(() => expect(screen.queryByText(/Press and hold an empty preset/u)).toBeNull());
   }, 30000);
 
   it('opens a service on its own, without a switch to the other', async () => {
@@ -364,14 +369,14 @@ describe('App integration', () => {
     render(<App />);
     await openSettings();
     const sheet = await screen.findByRole('region', { name: 'Settings' });
-    await userEvent.click(within(sheet).getByRole('button', { name: /Kitchen/ }));
+    await userEvent.click(within(sheet).getByRole('button', { name: /Kitchen/u }));
     await userEvent.click(await screen.findByRole('button', { name: section }));
   }
 
   // Installing a file by hand, the way back to Bose included, lives under Updates.
   async function openUpload() {
-    await openSpeakerSection(/^Updates/);
-    await userEvent.click(await screen.findByRole('button', { name: /^Upload a file/ }));
+    await openSpeakerSection(/^Updates/u);
+    await userEvent.click(await screen.findByRole('button', { name: /^Upload a file/u }));
   }
 
   it('offers firmware upload under Updates on a flashed speaker', async () => {
@@ -440,7 +445,7 @@ describe('App integration', () => {
       installed: true,
       restarting: true,
     });
-    await openSpeakerSection(/^Updates/);
+    await openSpeakerSection(/^Updates/u);
     const card = await screen.findByRole('region', { name: 'SoundTap Core 0.2.0' });
     await userEvent.click(within(card).getByRole('button', { name: 'Update' }));
     expect(api.startCoreUpdate).not.toHaveBeenCalled();
@@ -485,8 +490,8 @@ describe('App integration', () => {
     fireEvent.change(must(document.querySelector('input[accept=".stu,.sig"]'), 'the file input'), {
       target: { files: [new File(['broken'], 'broken.stu')] },
     });
-    expect(await screen.findByText(/broken\.stu/)).toBeInTheDocument();
-    expect(await screen.findByText(/Nothing was installed/)).toBeInTheDocument();
+    expect(await screen.findByText(/broken\.stu/u)).toBeInTheDocument();
+    expect(await screen.findByText(/Nothing was installed/u)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Install firmware' })).not.toBeInTheDocument();
   }, 30000);
 
@@ -506,13 +511,13 @@ describe('App integration', () => {
     fireEvent.change(must(document.querySelector('input[accept=".stu,.sig"]'), 'the file input'), {
       target: { files: [new File(['x'], 'st10.stu')] },
     });
-    expect(await screen.findByText(/mainline ST10 package/)).toBeInTheDocument();
+    expect(await screen.findByText(/mainline ST10 package/u)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Install firmware' })).not.toBeInTheDocument();
   }, 30000);
 
   it('saves name, bass and the alarm together with Save', async () => {
-    await openSpeakerSection(/^Alarm/);
-    await userEvent.click(screen.getByRole('switch', { name: /Alarm on/ }));
+    await openSpeakerSection(/^Alarm/u);
+    await userEvent.click(screen.getByRole('switch', { name: /Alarm on/u }));
     fireEvent.change(screen.getByLabelText('Time'), { target: { value: '06:45' } });
     await userEvent.selectOptions(screen.getByLabelText('Preset'), '2');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
@@ -523,7 +528,7 @@ describe('App integration', () => {
             enabled: true,
             time: '06:45',
             slot: 2,
-            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            timezone: new Intl.DateTimeFormat().resolvedOptions().timeZone,
           },
         },
         ''
@@ -545,15 +550,15 @@ describe('App integration', () => {
     render(<App />);
     await openSettings();
     const sheet = await screen.findByRole('region', { name: 'Settings' });
-    await userEvent.click(within(sheet).getByRole('button', { name: /Kitchen/ }));
-    expect(await screen.findByRole('switch', { name: /^Auto-off/ })).toBeInTheDocument();
+    await userEvent.click(within(sheet).getByRole('button', { name: /Kitchen/u }));
+    expect(await screen.findByRole('switch', { name: /^Auto-off/u })).toBeInTheDocument();
     expect(screen.queryByRole('slider', { name: 'Bass' })).not.toBeInTheDocument();
   }, 30000);
 
   // Leaving a page with unsaved edits asks first; cancelling keeps them.
   it('asks before back throws away unsaved settings', async () => {
-    await openSpeakerSection(/^Alarm/);
-    await userEvent.click(screen.getByRole('switch', { name: /Alarm on/ }));
+    await openSpeakerSection(/^Alarm/u);
+    await userEvent.click(screen.getByRole('switch', { name: /Alarm on/u }));
     const sheet = screen.getByRole('region', { name: 'Settings' });
     // Back from the alarm's page returns to the speaker's list: the edit is still there.
     await userEvent.click(within(sheet).getByRole('button', { name: 'Back' }));
@@ -563,7 +568,7 @@ describe('App integration', () => {
     const ask = await screen.findByRole('dialog', { name: 'Discard unsaved changes?' });
     await userEvent.click(within(ask).getByRole('button', { name: 'Cancel' }));
     // Still on the speaker's page, with the edit waiting on the alarm's own Save.
-    await userEvent.click(screen.getByRole('button', { name: /^Alarm/ }));
+    await userEvent.click(screen.getByRole('button', { name: /^Alarm/u }));
     expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
   }, 30000);
 
@@ -571,8 +576,8 @@ describe('App integration', () => {
   // A page below the overview has only Back, as in the design: leaving the speaker's page
   // asks first, and the overview's Close then leaves settings.
   it('asks before Back throws away unsaved settings', async () => {
-    await openSpeakerSection(/^Alarm/);
-    await userEvent.click(screen.getByRole('switch', { name: /Alarm on/ }));
+    await openSpeakerSection(/^Alarm/u);
+    await userEvent.click(screen.getByRole('switch', { name: /Alarm on/u }));
     const sheet = screen.getByRole('region', { name: 'Settings' });
     expect(within(sheet).queryByRole('button', { name: 'Close' })).not.toBeInTheDocument();
     // The alarm's own page goes back to the speaker's without asking: the edit is the page's.
@@ -608,7 +613,7 @@ describe('App integration', () => {
     });
     render(<App />);
     const group = await openGroup();
-    await userEvent.click(within(group).getByRole('switch', { name: /Office/ }));
+    await userEvent.click(within(group).getByRole('switch', { name: /Office/u }));
     await waitFor(() => expect(api.inviteSpeaker).toHaveBeenCalledWith('10.0.0.3', ''));
   }, 30000);
 
@@ -631,11 +636,11 @@ describe('App integration', () => {
     api.getMultiroom.mockResolvedValue([]);
     render(<App />);
     const speakers = await openSpeakers();
-    expect(within(speakers).getByRole('radio', { name: /Kitchen/ })).toHaveAttribute(
+    expect(within(speakers).getByRole('radio', { name: /Kitchen/u })).toHaveAttribute(
       'aria-checked',
       'true'
     );
-    await userEvent.click(within(speakers).getByRole('radio', { name: /Office/ }));
+    await userEvent.click(within(speakers).getByRole('radio', { name: /Office/u }));
     expect(await screen.findByRole('button', { name: 'Speaker: Office' })).toBeInTheDocument();
   }, 30000);
 
@@ -666,7 +671,7 @@ describe('App integration', () => {
       art: '',
     });
     render(<App />);
-    await userEvent.click(await screen.findByRole('button', { name: /^Open player/ }));
+    await userEvent.click(await screen.findByRole('button', { name: /^Open player/u }));
     await userEvent.click(await screen.findByRole('button', { name: 'Next track' }));
     await waitFor(() => expect(api.skipSpotify).toHaveBeenCalledWith('next', ''));
     await userEvent.click(screen.getByRole('button', { name: 'Previous track' }));
@@ -685,7 +690,7 @@ describe('App integration', () => {
       canSkip: true,
     });
     render(<App />);
-    await userEvent.click(await screen.findByRole('button', { name: /^Open player/ }));
+    await userEvent.click(await screen.findByRole('button', { name: /^Open player/u }));
     await userEvent.click(await screen.findByRole('button', { name: 'Next track' }));
     await waitFor(() => expect(api.skipKey).toHaveBeenCalledWith('next', ''));
     expect(api.skipSpotify).not.toHaveBeenCalled();
@@ -707,15 +712,17 @@ describe('App integration', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Sleep timer' }));
     await userEvent.click(await screen.findByRole('menuitemradio', { name: '30 min' }));
     await waitFor(() => expect(api.setSleep).toHaveBeenCalledWith(30, ''));
-    expect(await screen.findByRole('button', { name: 'Sleep timer' })).toHaveTextContent(/\d+ min/);
+    expect(await screen.findByRole('button', { name: 'Sleep timer' })).toHaveTextContent(
+      /\d+ min/u
+    );
   }, 30000);
 
   it('says which version each speaker runs, under About in settings', async () => {
     render(<App />);
     await openSettings();
-    await userEvent.click(await screen.findByRole('button', { name: /About/ }));
+    await userEvent.click(await screen.findByRole('button', { name: /About/u }));
     expect(await screen.findByText('1.2.3')).toBeInTheDocument();
-    expect(screen.getByText(/GPL-3\.0/)).toBeInTheDocument();
+    expect(screen.getByText(/GPL-3\.0/u)).toBeInTheDocument();
   }, 30000);
 
   it('writes MQTT settings to every speaker', async () => {
@@ -731,9 +738,9 @@ describe('App integration', () => {
     );
     render(<App />);
     await openSettings();
-    await userEvent.click(await screen.findByRole('button', { name: /Integrations/ }));
-    await userEvent.click(await screen.findByRole('button', { name: /MQTT/ }));
-    await userEvent.click(await screen.findByRole('switch', { name: /Connect MQTT/ }));
+    await userEvent.click(await screen.findByRole('button', { name: /Integrations/u }));
+    await userEvent.click(await screen.findByRole('button', { name: /MQTT/u }));
+    await userEvent.click(await screen.findByRole('switch', { name: /Connect MQTT/u }));
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(api.saveSettings).toHaveBeenCalledTimes(2));
     expect(api.saveSettings).toHaveBeenCalledWith(
@@ -755,16 +762,16 @@ describe('App integration', () => {
     );
     render(<App />);
     await openSettings();
-    await userEvent.click(await screen.findByRole('button', { name: /Integrations/ }));
-    await userEvent.click(await screen.findByRole('button', { name: /MQTT/ }));
+    await userEvent.click(await screen.findByRole('button', { name: /Integrations/u }));
+    await userEvent.click(await screen.findByRole('button', { name: /MQTT/u }));
     await userEvent.click(await screen.findByRole('button', { name: 'More options' }));
     const port = await screen.findByLabelText('Port');
     await userEvent.clear(port);
     await userEvent.type(port, '70000');
-    expect(screen.getByText(/Enter a port from 1 to 65535/)).toBeInTheDocument();
+    expect(screen.getByText(/Enter a port from 1 to 65535/u)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
     await userEvent.clear(port);
-    expect(screen.queryByText(/Enter a port from 1 to 65535/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Enter a port from 1 to 65535/u)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
   }, 30000);
 
@@ -791,14 +798,14 @@ describe('App integration', () => {
       tuneInId: 's1',
     });
     render(<App />);
-    await userEvent.click(await screen.findByRole('button', { name: /Open player/ }));
-    const playing = await screen.findByRole('dialog', { name: /Playing in/ });
+    await userEvent.click(await screen.findByRole('button', { name: /Open player/u }));
+    const playing = await screen.findByRole('dialog', { name: /Playing in/u });
     await userEvent.click(within(playing).getByRole('button', { name: 'Presets' }));
     await screen.findByRole('dialog', { name: 'Presets & favorites' });
     await userEvent.keyboard('{Escape}');
     await waitFor(() =>
       expect(screen.queryByRole('dialog', { name: 'Presets & favorites' })).not.toBeInTheDocument()
     );
-    expect(screen.getByRole('dialog', { name: /Playing in/ })).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: /Playing in/u })).toBeInTheDocument();
   }, 30000);
 });

@@ -18,13 +18,14 @@ import {
 import { setUPnPRepeat, setUPnPShuffle, upnpModes } from '../../../lib/api/upnp';
 import type { NowPlaying } from '../../../lib/types';
 import { sourceName, type PlaybackView, type Transport } from '../../../lib/playback';
+import { usePageVisible } from '../../../hooks/usePageVisible';
 
 interface TopBarProps {
-  view: PlaybackView;
+  readonly view: PlaybackView;
   // The speaker or group that plays, after the source.
-  name: string;
-  onClose: () => void;
-  onPresets: () => void;
+  readonly name: string;
+  readonly onClose: () => void;
+  readonly onPresets: () => void;
 }
 
 // Close, the source and where it plays, and the way to the presets.
@@ -46,14 +47,14 @@ export function TopBar({ view, name, onClose, onPresets }: TopBarProps): ReactEl
 }
 
 interface TransportProps {
-  action: Transport;
-  label: string;
+  readonly action: Transport;
+  readonly label: string;
   // An input (Bluetooth, AUX) plays from outside: no play or stop.
-  canControl: boolean;
+  readonly canControl: boolean;
   // Spotify's previous and next track.
-  skips: boolean;
-  onPress: () => void;
-  onSkip: (dir: 'previous' | 'next') => void;
+  readonly skips: boolean;
+  readonly onPress: () => void;
+  readonly onSkip: (dir: 'previous' | 'next') => void;
 }
 
 // The big play/stop with the skips beside it, on what can skip.
@@ -101,8 +102,8 @@ function LikeButton({
   speaker,
   track,
 }: {
-  speaker?: string | undefined;
-  track?: string | undefined;
+  readonly speaker?: string | undefined;
+  readonly track?: string | undefined;
 }) {
   const { t } = useI18n();
   const [state, setState] = useState({ available: false, liked: false });
@@ -154,8 +155,8 @@ export function SpotifyModeButtons({
   speaker,
   track,
 }: {
-  speaker?: string | undefined;
-  track?: string | undefined;
+  readonly speaker?: string | undefined;
+  readonly track?: string | undefined;
 }): ReactElement {
   return (
     <ModeButtons speaker={speaker} api={SPOTIFY_MODES}>
@@ -165,7 +166,11 @@ export function SpotifyModeButtons({
 }
 
 // A media-server folder's shuffle and repeat, as stock's queue had them.
-export function FolderModeButtons({ speaker }: { speaker?: string | undefined }): ReactElement {
+export function FolderModeButtons({
+  speaker,
+}: {
+  readonly speaker?: string | undefined;
+}): ReactElement {
   return <ModeButtons speaker={speaker} api={FOLDER_MODES} />;
 }
 
@@ -174,8 +179,8 @@ export function ModeButtonsFor({
   now,
   speaker,
 }: {
-  now?: NowPlaying | null;
-  speaker?: string | undefined;
+  readonly now?: NowPlaying | null;
+  readonly speaker?: string | undefined;
 }): ReactElement | null {
   if (now?.source === 'SPOTIFY') return <SpotifyModeButtons speaker={speaker} track={now.track} />;
   if (now?.source === 'UPNP' && now.canSkip === true)
@@ -189,14 +194,16 @@ function ModeButtons({
   api,
   children,
 }: {
-  speaker?: string | undefined;
-  api: ModesApi;
-  children?: ReactNode;
+  readonly speaker?: string | undefined;
+  readonly api: ModesApi;
+  readonly children?: ReactNode;
 }) {
   const { t } = useI18n();
   const [modes, setModes] = useState<SpotifyModes>({ shuffle: false, repeat: 'off' });
   // A tap moves this on: a poll that left before it must not put the old state back.
   const taps = useRef(0);
+  // Not asked while the page is hidden; read again the moment it shows.
+  const visible = usePageVisible();
   const load = useCallback(() => {
     const tapsThen = taps.current;
     api.read(speaker).then(
@@ -207,23 +214,24 @@ function ModeButtons({
     );
   }, [speaker, api]);
   useEffect(() => {
-    taps.current++; // an answer for the speaker before does not count either
+    if (!visible) return undefined;
+    taps.current += 1; // an answer for the speaker before does not count either
     load();
     const id = setInterval(load, MODES_POLL_MS);
     return () => clearInterval(id);
-  }, [load]);
+  }, [load, visible]);
   const settled = () => {
-    taps.current++;
+    taps.current += 1;
     load();
   };
   const shuffle = (on: boolean) => {
-    taps.current++;
+    taps.current += 1;
     setModes((m) => ({ ...m, shuffle: on }));
     api.shuffle(on, speaker).then(settled, settled);
   };
   const repeat = () => {
     const mode = NEXT_REPEAT[modes.repeat];
-    taps.current++;
+    taps.current += 1;
     setModes((m) => ({ ...m, repeat: mode }));
     api.repeat(mode, speaker).then(settled, settled);
   };

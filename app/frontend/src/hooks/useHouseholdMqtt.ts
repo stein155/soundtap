@@ -11,6 +11,7 @@ import {
 } from 'react';
 import { getMqttStatus, getSettings, saveSettings } from '../lib/api';
 import type { MqttConfig } from '../lib/types';
+import { usePageVisible } from './usePageVisible';
 import { speakerArg, type Room } from './useRooms';
 
 export interface MqttForm {
@@ -62,10 +63,12 @@ interface MqttPatch {
 }
 
 function toPatch(form: MqttForm): MqttPatch {
+  // A port that is not a number goes as 0.
+  const port = Number(form.port);
   const patch: MqttPatch = {
     enabled: form.enabled,
     host: form.host.trim(),
-    port: Number(form.port) || 0,
+    port: Number.isNaN(port) ? 0 : port,
     username: form.username,
     discoveryPrefix: form.discoveryPrefix.trim(),
     tls: form.tls,
@@ -78,14 +81,16 @@ function toPatch(form: MqttForm): MqttPatch {
 const sameBroker = (a: MqttPatch, b: MqttPatch) =>
   a.host === b.host && a.port === b.port && a.tls === b.tls;
 
-// Each online speaker's link to the broker, polled. It restarts when the online set
-// changes (`key`), not on every poll that hands over a new rooms array.
+// Each online speaker's link to the broker, polled while the page is on screen. It restarts
+// when the online set changes (`key`), not on every poll that hands over a new rooms array.
 function useBrokerLinks(online: Room[], key: string) {
   const [links, setLinks] = useState<Partial<Record<string, BrokerLink>>>({});
+  const visible = usePageVisible();
   const readLinks = useEffectEvent(async () =>
     Promise.all(online.map(async (r) => [r.id, await getMqttStatus(speakerArg(r))] as const))
   );
   useEffect(() => {
+    if (!visible) return undefined;
     let live = true;
     const poll = async () => {
       const read = await readLinks();
@@ -100,7 +105,7 @@ function useBrokerLinks(online: Room[], key: string) {
       live = false;
       clearInterval(id);
     };
-  }, [key]);
+  }, [key, visible]);
   return links;
 }
 
@@ -141,7 +146,8 @@ export function useHouseholdMqtt(rooms: Room[]): HouseholdMqtt {
   const loadForm = useEffectEvent(() => {
     const source = online.find((r) => r.self) ?? online.at(0);
     if (!source || form) return;
-    const seq = ++loadSeq.current;
+    loadSeq.current += 1;
+    const seq = loadSeq.current;
     void getSettings(speakerArg(source)).then((settings) => {
       if (seq !== loadSeq.current) return;
       if (!settings) {
@@ -157,7 +163,7 @@ export function useHouseholdMqtt(rooms: Room[]): HouseholdMqtt {
   useEffect(() => loadForm(), [key, retry]);
   // A failed read is tried again until a form is loaded.
   useEffect(() => {
-    if (saved !== null) return;
+    if (saved !== null) return undefined;
     const id = setTimeout(() => setRetry((n) => n + 1), LOAD_RETRY_MS);
     return () => clearTimeout(id);
   }, [saved, retry]);
@@ -187,7 +193,7 @@ export function useHouseholdMqtt(rooms: Room[]): HouseholdMqtt {
     else if (saved && !sameBroker(toPatch(saved), patch)) setHasPassword(false);
     // Until every speaker has it the form stays dirty, password included, so a retry
     // sends the same settings to the ones that missed them.
-    if (failed.length) return;
+    if (failed.length > 0) return;
     // What was sent is now stored. Edits made while the request was out are the
     // newest intent and stay in the form, still dirty.
     const stored = { ...submitted, password: '' };

@@ -7,7 +7,12 @@ import { createLatestSender } from './latestSender';
 describe('createLatestSender', () => {
   it('sends the first value, skips the ones in between and always sends the last', async () => {
     let release: () => void = vi.fn();
-    const send = vi.fn(async () => new Promise<void>((r) => (release = r)));
+    const send = vi.fn(
+      async () =>
+        new Promise<void>((r) => {
+          release = r;
+        })
+    );
     const push = createLatestSender(send);
     push(10);
     push(20);

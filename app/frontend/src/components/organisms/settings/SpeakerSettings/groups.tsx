@@ -52,11 +52,11 @@ export function SpeakerHeader({
   open,
   saveBar,
 }: {
-  page: Page;
-  name: string;
-  model: string;
-  open: ReturnType<Open>;
-  saveBar: ReactNode;
+  readonly page: Page;
+  readonly name: string;
+  readonly model: string;
+  readonly open: ReturnType<Open>;
+  readonly saveBar: ReactNode;
 }): ReactElement {
   const { t } = useI18n();
   return (
@@ -98,6 +98,8 @@ export interface Sound {
   soundbar: Soundbar | null | undefined;
   mono: boolean;
   onBass: (bass: number) => void;
+  // The speaker's name, for what a failure there says.
+  name: string;
 }
 
 // The Sound row: its page, on every speaker that has anything to set there, with the
@@ -108,10 +110,10 @@ function SoundRow({
   speaker,
   open,
 }: {
-  sound: Sound;
-  bass: number;
-  speaker: string | undefined;
-  open: ReturnType<Open>;
+  readonly sound: Sound;
+  readonly bass: number;
+  readonly speaker: string | undefined;
+  readonly open: ReturnType<Open>;
 }): ReactElement | null {
   const { t } = useI18n();
   if (!hasSound(sound.caps, sound.soundbar, sound.mono)) return null;
@@ -126,6 +128,7 @@ function SoundRow({
         caps={sound.caps}
         soundbar={sound.soundbar}
         speaker={speaker}
+        name={sound.name}
         mono={sound.mono}
         onBass={sound.onBass}
       />
@@ -145,19 +148,19 @@ export function SpeakerGroup({
   onRenamed,
   sound,
 }: {
-  page: Page;
-  form: SpeakerForm;
-  room: Room;
-  rooms: Room[];
-  section: Open;
-  commit: Commit;
-  saveBar: ReactNode;
-  onRenamed: () => void;
-  sound: Sound;
+  readonly page: Page;
+  readonly form: SpeakerForm;
+  readonly room: Room;
+  readonly rooms: Room[];
+  readonly section: Open;
+  readonly commit: Commit;
+  readonly saveBar: ReactNode;
+  readonly onRenamed: () => void;
+  readonly sound: Sound;
 }): ReactElement {
   const { t } = useI18n();
   const speaker = speakerArg(room);
-  const display = form.display;
+  const { display } = form;
   return (
     <SetMenu title={t('speaker')}>
       <SoundRow sound={sound} bass={form.bass} speaker={speaker} open={section('sound')} />
@@ -224,48 +227,46 @@ export function SystemGroups({
   crashReports,
   onCrashReports,
 }: {
-  page: Page;
-  room: Room;
-  model: string;
-  network: NetworkInfo | null;
-  section: Open;
-  crashReports: boolean;
-  onCrashReports: (on: boolean) => void;
+  readonly page: Page;
+  readonly room: Room;
+  readonly model: string;
+  readonly network: NetworkInfo | null;
+  readonly section: Open;
+  readonly crashReports: boolean;
+  readonly onCrashReports: (on: boolean) => void;
 }): ReactElement {
   const { t } = useI18n();
   const speaker = speakerArg(room);
   const newer = useUpdateAvailable(speaker, page.version);
   return (
-    <>
-      <SetMenu title={t('connectionMaintenance')}>
-        <Accordion
-          {...section('wifi')}
-          icon="wifi"
-          title={t('wifiLabel')}
-          summary={networkSummary(network, t)}
-        >
-          <NetworkSettings network={network} speaker={speaker} speakerName={room.name} />
-        </Accordion>
-        <Accordion
-          {...section('updates')}
-          icon="refresh"
-          title={t('page_updates')}
-          summary={newer ? undefined : versionLabel(page.version)}
-          badge={newer ? t('updatesNewBadge') : undefined}
-        >
-          <UpdateSettings speaker={speaker} name={room.name} model={model} version={page.version} />
-        </Accordion>
-        <Accordion {...section('support')} icon="help" title={t('helpSupport')}>
-          <SupportSettings speaker={speaker} />
-        </Accordion>
-        <Accordion {...section('developer')} icon="code" title={t('forDevelopers')}>
-          <DeveloperSettings
-            speaker={speaker}
-            crashReports={crashReports}
-            onCrashReports={onCrashReports}
-          />
-        </Accordion>
-      </SetMenu>
-    </>
+    <SetMenu title={t('connectionMaintenance')}>
+      <Accordion
+        {...section('wifi')}
+        icon="wifi"
+        title={t('wifiLabel')}
+        summary={networkSummary(network, t)}
+      >
+        <NetworkSettings network={network} speaker={speaker} speakerName={room.name} />
+      </Accordion>
+      <Accordion
+        {...section('updates')}
+        icon="refresh"
+        title={t('page_updates')}
+        summary={newer ? undefined : versionLabel(page.version)}
+        badge={newer ? t('updatesNewBadge') : undefined}
+      >
+        <UpdateSettings speaker={speaker} name={room.name} model={model} version={page.version} />
+      </Accordion>
+      <Accordion {...section('support')} icon="help" title={t('helpSupport')}>
+        <SupportSettings speaker={speaker} />
+      </Accordion>
+      <Accordion {...section('developer')} icon="code" title={t('forDevelopers')}>
+        <DeveloperSettings
+          speaker={speaker}
+          crashReports={crashReports}
+          onCrashReports={onCrashReports}
+        />
+      </Accordion>
+    </SetMenu>
   );
 }

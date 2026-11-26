@@ -21,13 +21,13 @@ export const serviceName = (item: RecentItem): string => SERVICE[item.source] ??
 
 export interface RecentActionsProps {
   // The entry the sheet is for; null closes it.
-  item: RecentItem | null;
-  speaker: string;
-  onClose: () => void;
-  onPlay: (item: RecentItem) => void;
+  readonly item: RecentItem | null;
+  readonly speaker: string;
+  readonly onClose: () => void;
+  readonly onPlay: (item: RecentItem) => void;
   // Holds the entry on its way to a preset; left out while there is no room to store it on.
-  onHold?: ((item: RecentItem) => void) | undefined;
-  onRemove: (item: RecentItem) => void;
+  readonly onHold?: ((item: RecentItem) => void) | undefined;
+  readonly onRemove: (item: RecentItem) => void;
 }
 
 function Action({
@@ -37,11 +37,11 @@ function Action({
   onPress,
   children,
 }: {
-  icon: ReactNode;
-  danger?: boolean;
-  more?: boolean;
-  onPress: () => void;
-  children: string;
+  readonly icon: ReactNode;
+  readonly danger?: boolean;
+  readonly more?: boolean;
+  readonly onPress: () => void;
+  readonly children: string;
 }) {
   return (
     <Button className={`ract-row${danger === true ? ' danger' : ''}`} onPress={onPress}>

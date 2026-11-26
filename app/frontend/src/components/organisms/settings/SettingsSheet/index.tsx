@@ -19,16 +19,16 @@ import type { Room } from '../../../../hooks/useRooms';
 import { SubPageContext, type SubPage } from '../../../../hooks/useSubPage';
 
 interface Props {
-  rooms: Room[];
-  onRenamed: () => void;
-  onExit: () => void;
+  readonly rooms: Room[];
+  readonly onRenamed: () => void;
+  readonly onExit: () => void;
   // Open at this speaker's page instead of the overview.
-  speakerId?: string | null;
+  readonly speakerId?: string | null;
   // Whether the page on screen holds unsaved edits, for whatever closes the sheet.
-  onDirty?: (dirty: boolean) => void;
+  readonly onDirty?: (dirty: boolean) => void;
   // The app's own top bar over the overview, when Settings is a main page: the menu and the
   // presets, as on every other page, instead of a Close.
-  bar?: ReactNode;
+  readonly bar?: ReactNode;
 }
 
 type Page = 'integrations' | 'mqtt' | Receiver;

@@ -11,14 +11,14 @@ import type { Room } from '../../../hooks/useRooms';
 import type { useRoomVolume } from '../../../hooks/useRoomVolume';
 
 interface Props {
-  open: boolean;
-  onClose: () => void;
+  readonly open: boolean;
+  readonly onClose: () => void;
   // The name above the sliders: the speaker's, or its group's.
-  name: string;
+  readonly name: string;
   // The speaker first, then the ones playing along with it.
-  group: Room[];
-  volume: ReturnType<typeof useRoomVolume>;
-  onMute: (room: Room) => void;
+  readonly group: Room[];
+  readonly volume: ReturnType<typeof useRoomVolume>;
+  readonly onMute: (room: Room) => void;
 }
 
 // Volume without leaving the page, as Stockholm's panel behind the speaker bar's volume icon:

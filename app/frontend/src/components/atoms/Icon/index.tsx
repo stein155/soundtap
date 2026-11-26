@@ -25,11 +25,13 @@ export type IconName = keyof typeof specs;
 type IconComponent = (p: SvgAttrs) => ReactElement;
 
 function draw({ svg, body }: IconSpec): IconComponent {
-  return (p) => (
-    <svg {...svg} {...p}>
-      {body}
-    </svg>
-  );
+  return function Icon(p) {
+    return (
+      <svg {...svg} {...p}>
+        {body}
+      </svg>
+    );
+  };
 }
 
 // Whether every icon of the set was drawn.
@@ -43,7 +45,7 @@ function drewAll<K extends string>(
 // Every spec of a set as a component, under the same names.
 function drawAll<K extends string>(all: Record<K, IconSpec>): Record<K, IconComponent> {
   const drawn: Partial<Record<K, IconComponent>> = {};
-  for (const name in all) drawn[name] = draw(all[name]);
+  for (const name in all) if (Object.hasOwn(all, name)) drawn[name] = draw(all[name]);
   if (!drewAll(all, drawn)) throw new Error('an icon was not drawn');
   return drawn;
 }

@@ -7,15 +7,15 @@ import { cardShadow, useSurface } from '../../../hooks/useSurface';
 import { Chevron, Select, Trail, Wrap } from './styled';
 
 interface Props<V extends string> {
-  label: string;
-  value: V;
-  options: { value: V; label: string }[];
-  onChange: (value: V) => void;
-  disabled?: boolean;
+  readonly label: string;
+  readonly value: V;
+  readonly options: { value: V; label: string }[];
+  readonly onChange: (value: V) => void;
+  readonly disabled?: boolean;
   // Ties the select to a visible label, which then replaces aria-label.
-  id?: string;
+  readonly id?: string;
   // What a native option cannot show about the chosen one: Wi-Fi's lock and signal.
-  trail?: ReactNode;
+  readonly trail?: ReactNode;
 }
 
 // A full-width native select in the design's field style.

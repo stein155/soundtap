@@ -16,13 +16,13 @@ export function dismissLaunchScreen(doc: Document = document): void {
     return;
   }
   // Two frames: the first one paints the app under the launch screen, the second fades it.
-  win.requestAnimationFrame(() =>
+  win.requestAnimationFrame(() => {
     win.requestAnimationFrame(() => {
       launch.classList.add('launch-out');
       const gone = () => launch.remove();
       launch.addEventListener('transitionend', gone, { once: true });
       // No transitionend when the page is hidden or the fade is skipped.
       win.setTimeout(gone, LAUNCH_FADE_MS + 100);
-    })
-  );
+    });
+  });
 }

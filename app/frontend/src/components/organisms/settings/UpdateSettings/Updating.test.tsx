@@ -30,7 +30,7 @@ describe('Updating', () => {
     const { queryByText, getByText, rerender } = renderWithI18n(
       <Updating name="Kitchen" model="SoundTouch 10" stage="download" done={false} />
     );
-    expect(queryByText(/% done/)).toBeNull();
+    expect(queryByText(/% done/u)).toBeNull();
     rerender(
       <Updating name="Kitchen" model="SoundTouch 10" stage="download" done={false} progress={62} />
     );

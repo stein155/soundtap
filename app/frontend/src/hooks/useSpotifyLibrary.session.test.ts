@@ -40,11 +40,11 @@ describe('useSpotifyLibrary session', () => {
   });
 
   it('polls the session again after a play finds it lost, until it is back', async () => {
-    const S = spotifyStatus;
+    const status = spotifyStatus;
     vi.mocked(spotify.spotifyStatus)
-      .mockResolvedValueOnce(S({ available: true, connected: true }))
-      .mockResolvedValueOnce(S({ available: true, authenticated: true }))
-      .mockResolvedValue(S({ available: true, authenticated: true, connected: true }));
+      .mockResolvedValueOnce(status({ available: true, connected: true }))
+      .mockResolvedValueOnce(status({ available: true, authenticated: true }))
+      .mockResolvedValue(status({ available: true, authenticated: true, connected: true }));
     vi.mocked(spotify.spotifyPlay).mockRejectedValueOnce(
       new spotify.SpotifyError('spotify_not_connected')
     );
@@ -58,7 +58,10 @@ describe('useSpotifyLibrary session', () => {
   it('ignores a play that finishes after the sheet was closed and reopened', async () => {
     let release: () => void = vi.fn();
     vi.mocked(spotify.spotifyPlay).mockImplementationOnce(
-      async () => new Promise((r) => (release = () => r({ status: 'ok' })))
+      async () =>
+        new Promise((r) => {
+          release = () => r({ status: 'ok' });
+        })
     );
     const onPlayed = vi.fn();
     const { result, rerender } = renderHook(({ o }) => useSpotifyLibrary(o, undefined, onPlayed), {

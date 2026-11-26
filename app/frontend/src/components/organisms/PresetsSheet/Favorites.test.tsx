@@ -47,7 +47,7 @@ describe('Favorites', () => {
   it('removes the favorite and stays on the page', () => {
     const p = props();
     render(<Favorites {...p} />);
-    fireEvent.click(screen.getByRole('button', { name: /Radio 1$/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Radio 1$/u }));
     expect(p.onRemove).toHaveBeenCalledWith(item);
     expect(p.close).not.toHaveBeenCalled();
   });
@@ -64,8 +64,8 @@ describe('Favorites', () => {
   it('shows an empty slot while there is no favorite', () => {
     const p = { ...props(), items: [] };
     render(<Favorites {...p} />);
-    expect(screen.getByText('Open')).toBeInTheDocument();
-    fireEvent.click(screen.getByText('Open'));
+    expect(screen.getByText('Empty')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Empty'));
     expect(p.onPlay).not.toHaveBeenCalled();
   });
 });

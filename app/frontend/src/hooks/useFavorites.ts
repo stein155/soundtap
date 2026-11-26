@@ -25,20 +25,24 @@ export function useFavorites(speaker: string, failed: () => void): Favorites {
   // or the list of the speaker selected before this one.
   const newest = useRef(0);
   const load = useCallback(async () => {
-    const ticket = ++newest.current;
+    newest.current += 1;
+    const ticket = newest.current;
     const list = await getFavorites(speaker);
     if (list && ticket === newest.current) setRead({ speaker, items: recentItems(list) });
   }, [speaker]);
   useEffect(() => {
-    newest.current++;
     let live = true;
     let id: ReturnType<typeof setTimeout> | undefined;
-    const fetchList = () =>
+    const fetchList = () => {
+      // A read of its own: a change made meanwhile (add, remove) reads the list after it.
+      newest.current += 1;
+      const ticket = newest.current;
       void getFavorites(speaker).then((list) => {
-        if (!live) return;
+        if (!live || ticket !== newest.current) return;
         if (list) setRead({ speaker, items: recentItems(list) });
         else id = setTimeout(fetchList, RETRY_MS);
       });
+    };
     fetchList();
     return () => {
       live = false;

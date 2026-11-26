@@ -27,7 +27,7 @@ function useServers(speaker: string) {
   const [round, setRound] = useState(0);
   useEffect(() => {
     let current = true;
-    const find = round ? searchUPnPServers : getUPnPServers;
+    const find = round > 0 ? searchUPnPServers : getUPnPServers;
     void find(speaker).then((found) => current && setServers(found));
     return () => {
       current = false;
@@ -62,19 +62,25 @@ function useRootFolders(speaker: string, servers: UPnPServer[] | null | undefine
 }
 
 // Media servers (UPnP/DLNA, a NAS) on the network, as a list: a tap opens a server on a page
-// of its own, where folders open deeper and tracks play on this speaker. onExit leaves the
-// media servers altogether.
+// of its own, where folders open deeper and tracks play on this speaker. speakerName names
+// the speaker when it does not answer. onExit leaves the media servers altogether.
 export function MediaServers({
   speaker,
+  speakerName,
   onExit,
 }: {
-  speaker: string;
-  onExit?: () => void;
+  readonly speaker: string;
+  readonly speakerName: string;
+  readonly onExit?: () => void;
 }): ReactElement {
   const { t } = useI18n();
   const { servers, search } = useServers(speaker);
   const folders = useRootFolders(speaker, servers);
   const [opened, setOpened] = useState<UPnPServer | null>(null);
+  // While there is no list: still searching, the speaker did not answer, or it found none.
+  let status = t('msNone');
+  if (servers === undefined) status = t('msSearching');
+  else if (servers === null) status = t('msUnreachable', { name: speakerName });
   return (
     <>
       <Intro>{t('msDesc')}</Intro>
@@ -92,10 +98,11 @@ export function MediaServers({
         </SetMenu>
       ) : (
         <StatusCard busy={servers === undefined} icon={<Icon.search width="22" height="22" />}>
-          {servers === undefined ? t('msSearching') : t('msNone')}
+          {status}
         </StatusCard>
       )}
-      {/* A NAS that comes online later must be findable without leaving the page. */}
+      {/* A NAS that comes online later must be findable without leaving the page, and a
+          speaker that did not answer is asked again by the same button. */}
       <SearchAgain>
         <Button variant="ghost" wide disabled={servers === undefined} onClick={search}>
           <Icon.search width="16" height="16" aria-hidden="true" />

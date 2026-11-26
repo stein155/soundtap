@@ -35,7 +35,7 @@ export const Summary = styled.summary`
 
   & > svg:last-child {
     color: var(--ink-3);
-    transition: transform 180ms ease;
+    transition: transform var(--dur-fast) var(--ease);
   }
 
   details[open] > & > svg:last-child {

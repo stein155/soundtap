@@ -13,19 +13,19 @@ import type { RecentItem } from '../../../lib/recent';
 import { RecentActions, recentLine } from './RecentActions';
 
 interface Props {
-  recent: RecentItem[];
-  speaker: string;
-  onPlayRecent: (item: RecentItem) => void;
-  onRemoveRecent: (item: RecentItem) => void;
+  readonly recent: RecentItem[];
+  readonly speaker: string;
+  readonly onPlayRecent: (item: RecentItem) => void;
+  readonly onRemoveRecent: (item: RecentItem) => void;
   // Puts an entry on a preset; left out while there is no room to store it on.
-  onHoldRecent?: ((item: RecentItem) => void) | undefined;
+  readonly onHoldRecent?: ((item: RecentItem) => void) | undefined;
 }
 
 interface RowProps {
-  item: RecentItem;
-  speaker: string;
-  onPlay: () => void;
-  onMore: () => void;
+  readonly item: RecentItem;
+  readonly speaker: string;
+  readonly onPlay: () => void;
+  readonly onMore: () => void;
 }
 
 // One entry: a tap plays it again, a long press or the ⋯ opens what else can be done.
@@ -67,7 +67,7 @@ export function RecentList({
 }: Props): ReactElement {
   const { t } = useI18n();
   const [actionsFor, setActionsFor] = useState<RecentItem | null>(null);
-  if (!recent.length) return <SheetEmpty>{t('recentlyPlayedEmpty')}</SheetEmpty>;
+  if (recent.length === 0) return <SheetEmpty>{t('recentlyPlayedEmpty')}</SheetEmpty>;
   return (
     <>
       <ul className="recent" aria-label={t('recentlyPlayed')}>

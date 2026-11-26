@@ -11,8 +11,12 @@ function Nested() {
   const [open, setOpen] = useState(true);
   return (
     <SubPage open onBack={vi.fn()} title="Network">
-      <button onClick={() => setOpen(false)}>close</button>
-      <SubPage open={open} onBack={vi.fn()} title="Join" children={null} />
+      <button type="button" onClick={() => setOpen(false)}>
+        close
+      </button>
+      <SubPage open={open} onBack={vi.fn()} title="Join">
+        {null}
+      </SubPage>
     </SubPage>
   );
 }

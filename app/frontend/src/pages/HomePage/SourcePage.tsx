@@ -8,6 +8,7 @@ import { SettingsSheet } from '../../components/organisms/settings/SettingsSheet
 import { useDiscardConfirm } from '../../components/molecules/ConfirmSheet';
 import { useState } from 'react';
 import { TopBar } from '../../components/organisms/TopBar';
+import { Icon } from '../../components/atoms/Icon';
 import { useEscape } from '../../hooks/useEscape';
 import { useI18n } from '../../lib/i18n';
 import { RecentPage } from '../../components/organisms/HomeContent/RecentPage';
@@ -20,19 +21,27 @@ import { holdRecent } from './holdRecent';
 import type { Layers } from './useLayers';
 
 interface SourcePageProps {
-  layers: Layers;
-  selected: SelectedRoom;
-  playback: ReturnType<typeof usePlayback>;
-  recent: RecentItem[];
-  onRemoveRecent: (item: RecentItem) => void;
+  readonly layers: Layers;
+  readonly selected: SelectedRoom;
+  readonly playback: ReturnType<typeof usePlayback>;
+  readonly recent: RecentItem[];
+  readonly onRemoveRecent: (item: RecentItem) => void;
   // Whether a long press can hold a result for a preset: there is a room to store it on.
-  canHold: boolean;
+  readonly canHold: boolean;
   // A speaker was renamed in Settings: the lists and the page's own name read again.
-  onRenamed: () => void;
+  readonly onRenamed: () => void;
 }
 
 // The media servers as a main page, as Spotify and TuneIn are: the bars stay below it.
-function MediaServersPage({ layers, speaker }: { layers: Layers; speaker: string }): ReactElement {
+function MediaServersPage({
+  layers,
+  speaker,
+  speakerName,
+}: {
+  readonly layers: Layers;
+  readonly speaker: string;
+  readonly speakerName: string;
+}): ReactElement {
   const { t } = useI18n();
   const back = () => layers.setMediaServers(false);
   useEscape(true, back);
@@ -44,11 +53,12 @@ function MediaServersPage({ layers, speaker }: { layers: Layers; speaker: string
           onMenu={() => layers.show('drawer')}
           onBack={back}
           onPresets={() => layers.show('presets')}
+          icon={<Icon.folder />}
           title={t('page_mediaservers')}
         />
       }
     >
-      <MediaServers speaker={speaker} onExit={back} />
+      <MediaServers speaker={speaker} speakerName={speakerName} onExit={back} />
     </Sheet>
   );
 }
@@ -59,9 +69,9 @@ function SettingsPage({
   selected,
   onRenamed,
 }: {
-  layers: Layers;
-  selected: SelectedRoom;
-  onRenamed: () => void;
+  readonly layers: Layers;
+  readonly selected: SelectedRoom;
+  readonly onRenamed: () => void;
 }): ReactElement {
   const { t } = useI18n();
   const [dirty, setDirty] = useState(false);
@@ -85,6 +95,7 @@ function SettingsPage({
           <TopBar
             onMenu={() => layers.show('drawer')}
             onPresets={() => layers.show('presets')}
+            icon={<Icon.settings />}
             title={t('settings')}
           />
         }
@@ -109,13 +120,22 @@ export function SourcePage({
   const { search, allRecent, show, setAllRecent, setSearch, holdForPreset } = layers;
   if (layers.open.settings)
     return <SettingsPage layers={layers} selected={selected} onRenamed={onRenamed} />;
-  if (layers.mediaServers) return <MediaServersPage layers={layers} speaker={speaker} />;
+  if (layers.mediaServers)
+    return (
+      <MediaServersPage
+        layers={layers}
+        speaker={speaker}
+        speakerName={selected.lead?.name || 'SoundTap'}
+      />
+    );
   if (allRecent) {
     return (
       <RecentPage
         recent={recent}
         speaker={speaker}
-        onPlayRecent={(item) => void playback.playRecent(item)}
+        onPlayRecent={(item) => {
+          void playback.playRecent(item);
+        }}
         onRemoveRecent={onRemoveRecent}
         onHoldRecent={canHold ? (item) => holdRecent(layers, playback, item) : undefined}
         onBack={() => setAllRecent(false)}
@@ -140,13 +160,17 @@ export function SourcePage({
       onHoldStation={
         canHold
           ? (station) =>
-              holdForPreset(stationEntry(station), (slot) => void playback.pick(station, slot))
+              holdForPreset(stationEntry(station), (slot) => {
+                void playback.pick(station, slot);
+              })
           : undefined
       }
       onHoldSpotify={
         canHold
           ? (item) =>
-              holdForPreset(spotifyEntry(item), (slot) => void playback.storeSpotify(slot, item))
+              holdForPreset(spotifyEntry(item), (slot) => {
+                void playback.storeSpotify(slot, item);
+              })
           : undefined
       }
       onSpotifyPlayed={() => {

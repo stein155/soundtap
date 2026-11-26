@@ -29,12 +29,12 @@ describe('SystemSettings support bundle', () => {
     vi.stubGlobal(
       'URL',
       class extends URL {
-        static override createObjectURL = createObjectURL;
-        static override revokeObjectURL = vi.fn();
+        public static override createObjectURL = createObjectURL;
+        public static override revokeObjectURL = vi.fn();
       }
     );
     const saved: { href: string; download: string }[] = [];
-    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function click(
       this: HTMLAnchorElement
     ) {
       saved.push({ href: this.href, download: this.download });
@@ -61,7 +61,7 @@ describe('SystemSettings support bundle', () => {
     fireEvent.click(button);
 
     const alert = await findByRole('alert');
-    expect(alert.textContent).toContain('The support bundle could not be downloaded.');
+    expect(alert.textContent).toContain('The support bundle couldn’t be downloaded.');
     expect(button.hasAttribute('disabled')).toBe(false);
   });
 });

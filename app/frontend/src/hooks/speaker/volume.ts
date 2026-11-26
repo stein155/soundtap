@@ -34,7 +34,8 @@ export function useSpeakerVolume(speaker: string): SpeakerVolume {
   // Bumped when a volume change fails: the page reports it, and the slider goes back to
   // what the speaker says at once rather than when the hold runs out.
   // Counted per room: a late failure from the room left behind says nothing about this
-  // one's hold.
+  // one's hold. A room switched to starts at none, also one switched back to: its failure
+  // was said when it happened.
   const [failed, setFailed] = useState({ speaker, count: 0 });
   const volumeFailures = failed.speaker === speaker ? failed.count : 0;
   // Dragging the slider fires an onChange per pixel. Sending a POST for each one
@@ -76,6 +77,9 @@ export function useSpeakerVolume(speaker: string): SpeakerVolume {
   const releaseHold = useCallback(() => {
     volumeHoldRef.current = null;
   }, []);
-  const resetVolume = useCallback(() => setVolumeState(20), []);
+  const resetVolume = useCallback(() => {
+    setVolumeState(20);
+    setFailed({ speaker, count: 0 });
+  }, [speaker]);
   return { volume, volumeFailures, changeVolume, applyVolume, releaseHold, resetVolume };
 }

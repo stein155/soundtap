@@ -59,10 +59,10 @@ export function pendingOutcome(
 ): { failed: boolean; clear: boolean } {
   const elapsed = now - p.since;
   const playing = !np.standby && np.playStatus === 'PLAY_STATE';
-  // Clear the hold only once the box actually plays our station, OR has
-  // moved off the previous one onto something new — never while it still
-  // reports the station we switched away from (that brief PLAY_STATE of the
-  // old station during a switch is exactly what used to flicker through).
+  // Clear the hold once the box plays our station or has moved off the previous one
+  // onto something new; never while it still reports the station we switched away from
+  // (that brief PLAY_STATE of the old station during a switch is what used to flicker
+  // through).
   const onOurs = sameStation(np.stationName, p.name);
   const stillPrev = sameStation(np.stationName, p.prevName);
   const settled = playing && (onOurs || !stillPrev);

@@ -41,10 +41,10 @@ const bassCapsOf = (s: { bass?: BassCaps }): BassCaps => s.bass ?? UNKNOWN_BASS;
 const BASS_SEND_MS = 400;
 
 interface Props {
-  room: Room;
-  rooms: Room[];
-  onRenamed: () => void;
-  onDirty?: (dirty: boolean) => void;
+  readonly room: Room;
+  readonly rooms: Room[];
+  readonly onRenamed: () => void;
+  readonly onDirty?: (dirty: boolean) => void;
 }
 
 // A speaker that did not answer: what to try.
@@ -143,6 +143,7 @@ export function SpeakerSettings({ room, rooms, onRenamed, onDirty }: Props): Rea
           soundbar: settings.soundbar,
           mono: model === 'SoundTouch 10',
           onBass,
+          name: room.name,
         }}
       />
       <SystemGroups

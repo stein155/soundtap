@@ -28,11 +28,11 @@ function Tile({
   onOpen,
   onHold,
 }: {
-  item: TileItem;
-  sub?: string | undefined;
-  round?: boolean | undefined;
-  onOpen: () => void;
-  onHold?: (() => void) | undefined;
+  readonly item: TileItem;
+  readonly sub?: string | undefined;
+  readonly round?: boolean | undefined;
+  readonly onOpen: () => void;
+  readonly onHold?: (() => void) | undefined;
 }) {
   const press = useLongPress(onHold ?? null, onOpen);
   return (
@@ -59,15 +59,15 @@ export function Ribbon<T extends TileItem>({
   onOpen,
   onHold,
 }: {
-  title: string;
-  items: T[];
-  sub?: (item: T) => string | undefined;
+  readonly title: string;
+  readonly items: T[];
+  readonly sub?: (item: T) => string | undefined;
   // Round tiles, as an artist's.
-  round?: boolean | undefined;
-  onOpen: (item: T) => void;
-  onHold?: ((item: T) => void) | undefined;
+  readonly round?: boolean | undefined;
+  readonly onOpen: (item: T) => void;
+  readonly onHold?: ((item: T) => void) | undefined;
 }): ReactElement | null {
-  if (!items.length) return null;
+  if (items.length === 0) return null;
   return (
     <section className="ribbon">
       <h2 className="h-row">{title}</h2>
@@ -90,7 +90,7 @@ export function Ribbon<T extends TileItem>({
 // The library's top level, laid out as Stockholm's: the search bar, a ribbon per part, the
 // songs as a row under them. Stockholm's featured, genre and chart ribbons need Spotify's
 // catalogue, which this session cannot read.
-export function Home({ library }: { library: Library }): ReactElement {
+export function Home({ library }: { readonly library: Library }): ReactElement {
   const { t } = useI18n();
   const hold = (item: TileItem) =>
     library.hold?.({ uri: item.uri, name: item.name, artwork: item.artwork });

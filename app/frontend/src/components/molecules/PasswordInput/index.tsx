@@ -8,11 +8,11 @@ import { useI18n } from '../../../lib/i18n';
 import { Toggle, Wrap } from './styled';
 
 interface Props {
-  id: string;
-  value: string;
-  onChange: (value: string) => void;
-  placeholder?: string;
-  autoComplete?: string;
+  readonly id: string;
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+  readonly placeholder?: string;
+  readonly autoComplete?: string;
 }
 
 // A password field with a show/hide toggle, for use inside a FieldRow.

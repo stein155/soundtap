@@ -7,11 +7,11 @@ import { ButtonEl, LinkEl, type ButtonVariant } from './styled';
 export type { ButtonVariant } from './styled';
 
 interface Look {
-  variant?: ButtonVariant;
+  readonly variant?: ButtonVariant;
   // Full width, with the gap the design leaves above a stand-alone action.
-  wide?: boolean;
+  readonly wide?: boolean;
   // The smaller size that fits beside other content (a playlist's header).
-  small?: boolean;
+  readonly small?: boolean;
 }
 
 export function Button({
@@ -30,6 +30,6 @@ export function ButtonLink({
   wide,
   small,
   ...rest
-}: Look & AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }): ReactElement {
+}: Look & AnchorHTMLAttributes<HTMLAnchorElement> & { readonly href: string }): ReactElement {
   return <LinkEl $variant={variant} $wide={wide} $small={small} {...rest} />;
 }

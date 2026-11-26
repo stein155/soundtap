@@ -27,15 +27,24 @@ describe('usePlayback duplicate-tap guard', () => {
   it('drops a repeat tap on the same speaker but not the same preset on another speaker', async () => {
     let release: () => void = vi.fn();
     vi.mocked(api.playPreset)
-      .mockImplementationOnce(async () => new Promise<void>((r) => (release = r)))
+      .mockImplementationOnce(
+        async () =>
+          new Promise<void>((r) => {
+            release = r;
+          })
+      )
       .mockResolvedValue(undefined);
 
     const { result, rerender } = renderHook(({ sel }) => usePlayback(sel, () => vi.fn()), {
       initialProps: { sel: room('kitchen') },
     });
 
-    act(() => void result.current.playSlot(1));
-    act(() => void result.current.playSlot(1)); // double tap while pending: ignored
+    act(() => {
+      void result.current.playSlot(1);
+    });
+    act(() => {
+      void result.current.playSlot(1);
+    }); // double tap while pending: ignored
     expect(api.playPreset).toHaveBeenCalledTimes(1);
 
     rerender({ sel: room('bedroom') });

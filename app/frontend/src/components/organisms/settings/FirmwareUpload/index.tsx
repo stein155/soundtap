@@ -14,7 +14,7 @@ import { useFirmwareUpload } from './useFirmwareUpload';
 
 // Install a firmware image on a flashed speaker: pick a .stu, let the speaker check it,
 // install into the inactive slot, then reboot into it. Install and reboot each ask first.
-export function FirmwareUpload({ speaker }: { speaker: string }): ReactElement {
+export function FirmwareUpload({ speaker }: { readonly speaker: string }): ReactElement {
   const { t, lang } = useI18n();
   const { file, report, signed, progress, outcome, inputRef, onChange, install, restart } =
     useFirmwareUpload(speaker);
@@ -23,7 +23,16 @@ export function FirmwareUpload({ speaker }: { speaker: string }): ReactElement {
     <>
       <FormSection spaced>{t('firmware')}</FormSection>
       <Note>{t('firmwarePickHint')}</Note>
-      <input ref={inputRef} type="file" accept=".stu,.sig" multiple hidden onChange={onChange} />
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".stu,.sig"
+        multiple
+        hidden
+        onChange={(e) => {
+          void onChange(e);
+        }}
+      />
       <Button
         variant="ghost"
         wide

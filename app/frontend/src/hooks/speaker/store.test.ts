@@ -23,7 +23,10 @@ const named = (name: string): Settings => settingsFixture({ name });
 function later() {
   const answers: ((s: Settings | null) => void)[] = [];
   vi.mocked(api.getSettings).mockImplementation(
-    async () => new Promise<Settings | null>((r) => answers.push(r))
+    async () =>
+      new Promise<Settings | null>((r) => {
+        answers.push(r);
+      })
   );
   return answers;
 }

@@ -17,7 +17,7 @@ test('names the speaker and joins it to the home Wi-Fi', async ({ page, request 
   await page.getByRole('button', { name: 'Next', exact: true }).click();
 
   // The survey's strongest network comes first, and it needs a password.
-  await expect(page.getByRole('radio', { name: /HomeNet/ })).toBeChecked();
+  await expect(page.getByRole('radio', { name: /HomeNet/u })).toBeChecked();
   const connect = page.getByRole('button', { name: 'Connect', exact: true });
   await expect(connect).toBeDisabled();
   await page.getByLabel('Password for HomeNet').fill('short');
@@ -26,7 +26,7 @@ test('names the speaker and joins it to the home Wi-Fi', async ({ page, request 
   await connect.click();
 
   await expect(page.getByText('Network saved. The speaker is switching over.')).toBeVisible();
-  await expect(page.getByText(/open http:\/\/woonkamer\.local/)).toBeVisible();
+  await expect(page.getByText(/open http:\/\/woonkamer\.local/u)).toBeVisible();
   const state = await demoState(request);
   expect(state.names.woonkamer).toBe('Study');
   expect(state.joined).toEqual({ ssid: 'HomeNet', security: 'wpa_or_wpa2' });
@@ -36,7 +36,7 @@ test('joins an open network without a password', async ({ page, request }) => {
   await page.goto('/?setup=wifi');
   await page.getByRole('button', { name: 'Next', exact: true }).click();
   await page.getByRole('radio', { name: 'Café Guest' }).click();
-  await expect(page.getByLabel(/^Password for/)).toHaveCount(0);
+  await expect(page.getByLabel(/^Password for/u)).toHaveCount(0);
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   await expect(page.getByText('Network saved. The speaker is switching over.')).toBeVisible();
   const state = await demoState(request);

@@ -127,6 +127,9 @@ export const Body = styled.div`
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* Clipped as before (auto clips too), but never scrolled sideways: a page pushed in
+     from the right (Accordion's SubPage) passes the gutter for a moment. */
+  overflow-x: hidden;
   padding: 0 var(--page-gutter) calc(32px + env(safe-area-inset-bottom));
   scrollbar-width: thin;
   scrollbar-color: rgba(31, 24, 20, 0.12) transparent;

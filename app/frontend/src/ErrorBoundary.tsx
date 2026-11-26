@@ -11,26 +11,30 @@ const pageLang = () => document.documentElement.lang || DEFAULT_LANG;
 // page in AP mode included. Plain markup on purpose -- theme and the i18n context live
 // inside what just failed -- but in the page's language: the messages it already loaded
 // are read straight from lib/i18n, so the fallback needs nothing that may have broken.
+// React's error boundary contract asks for a class; it re-renders with whatever it wraps.
+// eslint-disable-next-line react/require-optimization -- a boundary must not skip its children's renders
 export class ErrorBoundary extends Component<{ children: ReactNode }, { error?: Error }> {
-  override state: { error?: Error } = {};
+  public override state: { error?: Error } = {};
 
-  static getDerivedStateFromError(error: Error): { error: Error } {
+  public static getDerivedStateFromError(error: Error): { error: Error } {
     return { error };
   }
 
-  override componentDidCatch(error: Error, info: ErrorInfo): void {
+  public override componentDidCatch(error: Error, info: ErrorInfo): void {
     console.error(error, info.componentStack);
   }
 
-  override render(): ReactNode {
-    if (!this.state.error) return this.props.children;
+  public override render(): ReactNode {
+    const { error } = this.state;
+    const { children } = this.props;
+    if (!error) return children;
     const t = makeT(pageLang());
     return (
       <div role="alert" style={{ fontFamily: 'sans-serif', padding: 16, maxWidth: 480 }}>
         <h1 style={{ fontSize: 20 }}>{t('crashTitle')}</h1>
         <p>{t('crashHint')}</p>
         <p>
-          <code>{this.state.error.message}</code>
+          <code>{error.message}</code>
         </p>
         <button type="button" onClick={() => window.location.reload()}>
           {t('reloadNow')}

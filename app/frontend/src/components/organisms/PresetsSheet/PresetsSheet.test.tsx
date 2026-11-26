@@ -38,7 +38,7 @@ describe('PresetsSheet', () => {
   it('shows each preset as one plain row, as in Stockholm', () => {
     renderSheet();
     expect(screen.getByText('Radio 1')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Edit Radio/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Edit Radio/u })).not.toBeInTheDocument();
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 });

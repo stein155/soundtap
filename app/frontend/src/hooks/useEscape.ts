@@ -47,7 +47,7 @@ function onPopState() {
   stack[stack.length - 1]?.run();
   // Something is still open after its effects ran, so it needs an entry for the next "back".
   setTimeout(() => {
-    if (stack.length) guard();
+    if (stack.length > 0) guard();
   }, 0);
 }
 
@@ -57,12 +57,12 @@ function register(run: () => void) {
     listening = true;
     window.addEventListener('popstate', onPopState);
   }
-  if (!stack.length) window.addEventListener('keydown', onKeyDown);
+  if (stack.length === 0) window.addEventListener('keydown', onKeyDown);
   stack.push(entry);
   guard();
   return () => {
     stack.splice(stack.indexOf(entry), 1);
-    if (!stack.length) window.removeEventListener('keydown', onKeyDown);
+    if (stack.length === 0) window.removeEventListener('keydown', onKeyDown);
   };
 }
 
@@ -71,10 +71,6 @@ function register(run: () => void) {
 // they open with it, as effects run children first.
 export function useEscape(active: boolean, onEscape: () => void, layer = false): void {
   const handle = useEffectEvent(onEscape);
-  useLayoutEffect(() => {
-    return active && layer ? register(() => handle()) : undefined;
-  }, [active, layer]);
-  useEffect(() => {
-    return active && !layer ? register(() => handle()) : undefined;
-  }, [active, layer]);
+  useLayoutEffect(() => (active && layer ? register(() => handle()) : undefined), [active, layer]);
+  useEffect(() => (active && !layer ? register(() => handle()) : undefined), [active, layer]);
 }

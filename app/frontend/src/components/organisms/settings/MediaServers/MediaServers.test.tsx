@@ -33,7 +33,9 @@ describe('MediaServers', () => {
       folder('a', 'Audiobooks'),
       track('t', 'Loose track'),
     ]);
-    const { findByText, getByRole } = renderWithI18n(<MediaServers speaker="Kitchen" />);
+    const { findByText, getByRole } = renderWithI18n(
+      <MediaServers speaker="Kitchen" speakerName="Kitchen" />
+    );
     expect(await findByText('Music, Audiobooks')).toBeTruthy();
     expect(api.browseUPnP).toHaveBeenCalledTimes(1);
     expect(api.browseUPnP).toHaveBeenCalledWith('u', '0', 'Kitchen');
@@ -45,7 +47,7 @@ describe('MediaServers', () => {
 
   it('shows no line under a server while its root is read or when that fails', async () => {
     vi.mocked(api.browseUPnP).mockResolvedValue(null);
-    const { findByText } = renderWithI18n(<MediaServers speaker="" />);
+    const { findByText } = renderWithI18n(<MediaServers speaker="" speakerName="Kitchen" />);
     const row = (await findByText('NAS')).closest('button');
     await vi.waitFor(() => expect(api.browseUPnP).toHaveBeenCalledTimes(1));
     expect(row?.textContent).toBe('NAS');
@@ -55,7 +57,9 @@ describe('MediaServers', () => {
     vi.mocked(api.browseUPnP).mockImplementation(async (_usn, id) =>
       id === '0' ? [folder('m', 'Music'), folder('a', 'Audiobooks')] : [track('t', 'So What')]
     );
-    const { findByText, findByRole, queryByText } = renderWithI18n(<MediaServers speaker="" />);
+    const { findByText, findByRole, queryByText } = renderWithI18n(
+      <MediaServers speaker="" speakerName="Kitchen" />
+    );
     fireEvent.click(await findByText('NAS'));
     fireEvent.click(await findByText('Music'));
     expect(await findByText('So What')).toBeTruthy();
@@ -67,18 +71,35 @@ describe('MediaServers', () => {
 
   it('plays a track without a toast to say so', async () => {
     vi.mocked(api.browseUPnP).mockResolvedValue([track('t', 'So What')]);
-    const { findByText, queryByText } = renderWithI18n(<MediaServers speaker="" />);
+    const { findByText, queryByText } = renderWithI18n(
+      <MediaServers speaker="" speakerName="Kitchen" />
+    );
     fireEvent.click(await findByText('NAS'));
     fireEvent.click(await findByText('So What'));
     await vi.waitFor(() => expect(api.playUPnP).toHaveBeenCalledTimes(1));
-    expect(queryByText(/Playing/)).toBeNull();
+    expect(queryByText(/Playing/u)).toBeNull();
   });
 
   it('searches on "search again" instead of rereading the list', async () => {
-    const { findByText, getByRole } = renderWithI18n(<MediaServers speaker="" />);
+    const { findByText, getByRole } = renderWithI18n(
+      <MediaServers speaker="" speakerName="Kitchen" />
+    );
     await findByText('NAS');
     fireEvent.click(getByRole('button', { name: 'Search again' }));
     expect(await findByText('New NAS')).toBeTruthy();
     expect(api.searchUPnPServers).toHaveBeenCalledTimes(1);
+  });
+
+  it('says the speaker did not answer, not that no server was found, and asks again', async () => {
+    vi.mocked(api.getUPnPServers).mockResolvedValueOnce(null);
+    vi.mocked(api.searchUPnPServers).mockResolvedValueOnce([]);
+    const { findByText, getByRole, queryByText } = renderWithI18n(
+      <MediaServers speaker="Kitchen" speakerName="Kitchen" />
+    );
+    expect(await findByText('Couldn’t reach Kitchen. Try again.')).toBeTruthy();
+    expect(queryByText('No media servers found')).toBeNull();
+    fireEvent.click(getByRole('button', { name: 'Search again' }));
+    expect(await findByText('No media servers found')).toBeTruthy();
+    expect(api.searchUPnPServers).toHaveBeenCalledWith('Kitchen');
   });
 });

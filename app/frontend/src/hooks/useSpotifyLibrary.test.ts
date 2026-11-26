@@ -152,7 +152,12 @@ describe('useSpotifyLibrary page cache', () => {
     let finish: (v: spotify.SpotifyPage<spotify.SpotifyTrack>) => void = vi.fn();
     vi.mocked(spotify.spotifyLiked).mockReset();
     vi.mocked(spotify.spotifyLiked)
-      .mockImplementationOnce(async () => new Promise((r) => (finish = r)))
+      .mockImplementationOnce(
+        async () =>
+          new Promise((r) => {
+            finish = r;
+          })
+      )
       .mockResolvedValue({ items: [track('new')], total: 1 });
     const { result, rerender } = renderHook(
       ({ opened }) => useSpotifyLibrary(true, undefined, vi.fn(), opened),

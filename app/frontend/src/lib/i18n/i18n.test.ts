@@ -16,7 +16,7 @@ const files = import.meta.glob<{ default: Record<string, string> }>('./messages/
   eager: true,
 });
 const I18N = new Map(
-  Object.entries(files).map(([path, file]) => [path.replace(/.*\/|\.ts$/g, ''), file.default])
+  Object.entries(files).map(([path, file]) => [path.replace(/.*\/|\.ts$/gu, ''), file.default])
 );
 // One language's messages; a language without a file fails the test.
 const messages = (lang: string): Record<string, string> => {
@@ -219,6 +219,7 @@ describe('translation quality', () => {
     'general',
     'speaker',
     'speakers',
+    'ok',
     'extra speakers', // nl: the Bose app's word
     'n min',
     // Loanwords and cognates in the stock languages.
@@ -248,7 +249,7 @@ describe('translation quality', () => {
         if (!en || en !== value) continue;
         const word = value
           .toLowerCase()
-          .replace(/[^a-z ]/g, '')
+          .replace(/[^a-z ]/gu, '')
           .trim();
         if (shared.has(word)) continue;
         untranslated.push(`${lang}.${key} ("${value}")`);

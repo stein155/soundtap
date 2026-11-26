@@ -38,21 +38,17 @@ export function useRecent(
     let live = true;
     let id: ReturnType<typeof setTimeout>;
     const load = (after: number) => {
-      id = setTimeout(
-        () =>
-          void getRecent(speaker).then((list) => {
-            if (!live) return;
-            if (list)
-              setRead({
-                speaker,
-                items: recentItems(list).filter(
-                  (i) => !removing.current.has(removalOf(speaker, i))
-                ),
-              });
-            else load(RETRY_MS);
-          }),
-        after
-      );
+      id = setTimeout(() => {
+        void getRecent(speaker).then((list) => {
+          if (!live) return;
+          if (list)
+            setRead({
+              speaker,
+              items: recentItems(list).filter((i) => !removing.current.has(removalOf(speaker, i))),
+            });
+          else load(RETRY_MS);
+        });
+      }, after);
     };
     load(RECORD_DELAY_MS);
     return () => {

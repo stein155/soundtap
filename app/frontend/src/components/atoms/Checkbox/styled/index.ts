@@ -15,8 +15,8 @@ export const Box = styled.span<{ $checked: boolean; $strong?: boolean | undefine
   background: var(--bg);
   color: var(--on-accent-fill);
   transition:
-    background 160ms ease,
-    border-color 160ms ease;
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
   ${({ $strong }) =>
     $strong === true &&
     css`

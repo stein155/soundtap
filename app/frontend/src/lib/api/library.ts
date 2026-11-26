@@ -16,12 +16,12 @@ export async function getPresets(speaker?: string): Promise<(Preset | null)[] | 
   try {
     const list = await getJSON<ApiPreset[] | null>('/api/presets', speaker);
     for (const p of list ?? []) {
-      const slot = p.slot;
+      const { slot } = p;
       if (slot >= 1 && slot <= PRESET_COUNT) {
         const source = text(p.source) || 'TUNEIN';
         const tuneInId =
           source === 'TUNEIN'
-            ? p.stationId || /station\/(s\d+)/.exec(text(p.location))?.[1] || null
+            ? p.stationId || /station\/(?<id>s\d+)/u.exec(text(p.location))?.groups?.['id'] || null
             : null;
         slots[slot - 1] = {
           slot,

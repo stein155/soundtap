@@ -22,8 +22,8 @@ export const Toggle = styled.button<{ $visible: boolean }>`
   border-radius: var(--radius);
   color: ${({ $visible }) => ($visible ? 'var(--accent)' : 'var(--ink-3)')};
   transition:
-    color 160ms ease,
-    background 160ms ease;
+    color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease);
 
   &:hover {
     color: var(--ink);

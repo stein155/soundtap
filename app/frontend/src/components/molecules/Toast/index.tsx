@@ -13,11 +13,11 @@ export function Toast({
   onUndo,
   undoLabel,
 }: {
-  message: string;
-  onDismiss: () => void;
-  onUndo?: (() => void) | undefined;
+  readonly message: string;
+  readonly onDismiss: () => void;
+  readonly onUndo?: (() => void) | undefined;
   // The action's name, when it is not "Undo".
-  undoLabel?: string;
+  readonly undoLabel?: string;
 }): ReactElement {
   const { t } = useI18n();
   return (

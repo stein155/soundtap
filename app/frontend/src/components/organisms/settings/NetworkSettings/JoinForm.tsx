@@ -20,12 +20,12 @@ export function JoinForm({
   docked = false,
   status,
 }: {
-  join: WifiJoin;
-  target: JoinTarget;
-  children: ReactNode;
-  after?: ReactNode;
-  docked?: boolean | undefined;
-  status?: ReactNode;
+  readonly join: WifiJoin;
+  readonly target: JoinTarget;
+  readonly children: ReactNode;
+  readonly after?: ReactNode;
+  readonly docked?: boolean | undefined;
+  readonly status?: ReactNode;
 }): ReactElement {
   const { t } = useI18n();
   const { kind } = join.phase;
@@ -67,9 +67,9 @@ export function JoinStatus({
   fixedSurvey = false,
   host,
 }: {
-  join: WifiJoin;
-  fixedSurvey?: boolean | undefined;
-  host: string;
+  readonly join: WifiJoin;
+  readonly fixedSurvey?: boolean | undefined;
+  readonly host: string;
 }): ReactElement {
   const { t } = useI18n();
   const { kind, text } = join.phase;
@@ -84,7 +84,7 @@ export function JoinStatus({
       {kind === 'done' && fixedSurvey && (
         <>
           <Note>{t('setupNextSteps', { host })}</Note>
-          <Note>{t('setupRouterHint', { device: host.replace(/\.local$/, '') })}</Note>
+          <Note>{t('setupRouterHint', { device: host.replace(/\.local$/u, '') })}</Note>
         </>
       )}
     </>

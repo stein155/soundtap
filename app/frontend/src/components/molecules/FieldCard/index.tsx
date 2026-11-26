@@ -10,8 +10,8 @@ export function FieldCard({
   children,
   spaced,
 }: {
-  children: ReactNode;
-  spaced?: boolean;
+  readonly children: ReactNode;
+  readonly spaced?: boolean;
 }): ReactElement {
   return <Card $spaced={spaced}>{children}</Card>;
 }

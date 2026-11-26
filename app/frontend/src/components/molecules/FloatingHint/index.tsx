@@ -13,9 +13,9 @@ export function FloatingHint({
   error,
   role = 'status',
 }: {
-  children: ReactNode;
-  error?: boolean | undefined;
-  role?: 'status' | 'alert';
+  readonly children: ReactNode;
+  readonly error?: boolean | undefined;
+  readonly role?: 'status' | 'alert';
 }): ReactElement {
   return (
     <Float>

@@ -16,30 +16,30 @@ import { activePresetIndex } from '../../../lib/station';
 import type { Player, Preset } from '../../../lib/types';
 
 interface Props {
-  open: boolean;
-  onClose: () => void;
-  presets: (Preset | null)[];
-  player: Player;
-  loading: boolean;
-  speaker: string;
-  canStore: boolean;
-  onPlay: (slot: number) => void;
+  readonly open: boolean;
+  readonly onClose: () => void;
+  readonly presets: (Preset | null)[];
+  readonly player: Player;
+  readonly loading: boolean;
+  readonly speaker: string;
+  readonly canStore: boolean;
+  readonly onPlay: (slot: number) => void;
   // What a long press in a browse list holds: a tap on a slot stores it there.
-  saving: string | null;
-  onSave: (slot: number) => void;
-  onStore: (slot: number) => void;
-  favorites: FavoriteActions;
+  readonly saving: string | null;
+  readonly onSave: (slot: number) => void;
+  readonly onStore: (slot: number) => void;
+  readonly favorites: FavoriteActions;
 }
 
 interface RowProps {
-  slot: number;
-  preset: Preset | null;
-  speaker: string;
-  state: 'idle' | 'starting' | 'playing';
-  canStore: boolean;
-  onPlay: () => void;
-  onEmpty: () => void;
-  onStore: () => void;
+  readonly slot: number;
+  readonly preset: Preset | null;
+  readonly speaker: string;
+  readonly state: 'idle' | 'starting' | 'playing';
+  readonly canStore: boolean;
+  readonly onPlay: () => void;
+  readonly onEmpty: () => void;
+  readonly onStore: () => void;
 }
 
 // One preset: tap plays it (an empty one says how to fill it), a long press stores what
@@ -71,7 +71,7 @@ function PresetRow({ slot, preset, speaker, state, canStore, onPlay, onEmpty, on
 }
 
 // What a tap on an empty preset says, on a page of its own as in Stockholm.
-function EmptyPreset({ open, onClose }: { open: boolean; onClose: () => void }) {
+function EmptyPreset({ open, onClose }: { readonly open: boolean; readonly onClose: () => void }) {
   const { t } = useI18n();
   return (
     <SheetModal open={open} onClose={onClose} label={t('presetEmptyTitle')} variant="page">
@@ -82,7 +82,7 @@ function EmptyPreset({ open, onClose }: { open: boolean; onClose: () => void }) 
         </Heading>
         <p>{t('presetEmptyHint')}</p>
         <Button className="pblank-ok" onPress={onClose}>
-          OK
+          {t('ok')}
         </Button>
       </div>
     </SheetModal>
@@ -90,7 +90,7 @@ function EmptyPreset({ open, onClose }: { open: boolean; onClose: () => void }) 
 }
 
 // The sheet's grip and title, with its X.
-function PageHead({ close }: { close: () => void }) {
+function PageHead({ close }: { readonly close: () => void }) {
   const { t } = useI18n();
   return (
     <>

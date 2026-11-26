@@ -29,7 +29,7 @@ export const Scroll = styled.main<{ $docked: boolean }>`
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  animation: ${pageIn} 0.3s var(--ease);
+  animation: ${pageIn} var(--dur-base) var(--ease);
   padding-bottom: ${({ $docked }) =>
     $docked ? 'calc(158px + max(0px, env(safe-area-inset-bottom) - 16px))' : '32px'};
   scrollbar-width: none;
@@ -45,6 +45,6 @@ export const Main = styled.main<{ $docked: boolean }>`
   min-height: 0;
   display: flex;
   flex-direction: column;
-  animation: ${pageIn} 0.3s var(--ease);
+  animation: ${pageIn} var(--dur-base) var(--ease);
   padding-bottom: ${({ $docked }) => ($docked ? 'calc(128px + max(0px, env(safe-area-inset-bottom) - 16px))' : '0')};
 `;

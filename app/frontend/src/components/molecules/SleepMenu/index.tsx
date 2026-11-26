@@ -11,10 +11,10 @@ const CHOICES = [0, 15, 30, 60, 90];
 
 interface Props {
   // The running timer's length and end (ms since epoch), or null when none runs.
-  timer: { minutes: number; endsAt: number } | null;
-  onChange: (minutes: number) => void;
+  readonly timer: { minutes: number; endsAt: number } | null;
+  readonly onChange: (minutes: number) => void;
   // Drawn on a dark picture (now playing) instead of a card.
-  light?: boolean | undefined;
+  readonly light?: boolean | undefined;
 }
 
 // What the button says: on now playing a chip, "Sleep timer off" or the time left with a
@@ -23,8 +23,8 @@ function TriggerText({
   light = false,
   left,
 }: {
-  light?: boolean | undefined;
-  left: number | null;
+  readonly light?: boolean | undefined;
+  readonly left: number | null;
 }) {
   const { t } = useI18n();
   if (light && left === null) return <span className="sl-l">{t('sleepTimerOff')}</span>;

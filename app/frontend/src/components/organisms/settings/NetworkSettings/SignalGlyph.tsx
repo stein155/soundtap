@@ -6,7 +6,7 @@ import type { ReactElement } from 'react';
 const SIGNAL_BARS: Record<string, number> = { poor: 1, fair: 2, good: 3, excellent: 4 };
 
 // Signal strength as lit and dimmed arcs, so a network reads at a glance.
-export function SignalGlyph({ signal }: { signal: string }): ReactElement {
+export function SignalGlyph({ signal }: { readonly signal: string }): ReactElement {
   const level = SIGNAL_BARS[signal] ?? 0;
   const opacity = (bar: number) => (level >= bar ? 1 : 0.22);
   return (

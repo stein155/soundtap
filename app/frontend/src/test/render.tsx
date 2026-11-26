@@ -13,11 +13,10 @@ export function renderWithI18n(
   { lang = 'en', ...options }: { lang?: string } = {}
 ): RenderResult {
   const t = makeT(lang);
-  const Wrapper = ({ children }: { children: ReactNode }) => (
-    <I18nContext.Provider value={{ t, lang, setLang: vi.fn(), langFailed: false }}>
-      {children}
-    </I18nContext.Provider>
-  );
+  const value = { t, lang, setLang: vi.fn(), langFailed: false };
+  function Wrapper({ children }: { readonly children: ReactNode }) {
+    return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
+  }
   return render(ui, { wrapper: Wrapper, ...options });
 }
 

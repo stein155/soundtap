@@ -21,7 +21,12 @@ describe('useHouseholdPrefs saveMultiroom', () => {
   it('lets only the newest save roll back', async () => {
     let failOld: (e: Error) => void = vi.fn();
     vi.mocked(api.saveSettings)
-      .mockImplementationOnce(async () => new Promise((_, reject) => (failOld = reject)))
+      .mockImplementationOnce(
+        async () =>
+          new Promise((_, reject) => {
+            failOld = reject;
+          })
+      )
       .mockResolvedValueOnce(undefined);
     const { result } = renderHook(() => useHouseholdPrefs(rooms));
     await waitFor(() => expect(result.current.multiroom).not.toBeNull());
@@ -50,8 +55,18 @@ describe('useHouseholdPrefs saveMultiroom', () => {
     let rejectSecond: (e: Error) => void = vi.fn();
     vi.mocked(api.saveSettings).mockReset();
     vi.mocked(api.saveSettings)
-      .mockImplementationOnce(async () => new Promise((_, reject) => (rejectFirst = reject)))
-      .mockImplementationOnce(async () => new Promise((_, reject) => (rejectSecond = reject)));
+      .mockImplementationOnce(
+        async () =>
+          new Promise((_, reject) => {
+            rejectFirst = reject;
+          })
+      )
+      .mockImplementationOnce(
+        async () =>
+          new Promise((_, reject) => {
+            rejectSecond = reject;
+          })
+      );
     const { result } = renderHook(() => useHouseholdPrefs(rooms));
     await waitFor(() => expect(result.current.multiroom).toEqual(stored));
     let first: Promise<void> = Promise.resolve();
@@ -81,7 +96,7 @@ describe('useHouseholdPrefs saveMultiroom', () => {
     const sent: boolean[] = [];
     vi.mocked(api.saveSettings).mockReset();
     vi.mocked(api.saveSettings).mockImplementation(async (body) => {
-      const multiroom = body['multiroom'];
+      const { multiroom } = body;
       if (typeof multiroom === 'object' && multiroom !== null && 'keepGroups' in multiroom)
         sent.push(multiroom.keepGroups === true);
       return Promise.resolve();
@@ -115,7 +130,7 @@ describe('useHouseholdPrefs saveMultiroom', () => {
       await vi.advanceTimersByTimeAsync(5000);
     });
     expect(api.saveSettings).toHaveBeenCalledTimes(3);
-    const calls = vi.mocked(api.saveSettings).mock.calls;
+    const { calls } = vi.mocked(api.saveSettings).mock;
     expect(must(calls[2], 'the retry')[1]).toBe(must(calls[1], 'the save')[1]);
     vi.useRealTimers();
   });

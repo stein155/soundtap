@@ -81,7 +81,10 @@ export function usePlayback(
   // off whatever the room was playing.
   const pick = async (station: Station, slot: number | null) => {
     if (!station.tuneInId) return;
-    if (slot === null) return playStation(station);
+    if (slot === null) {
+      await playStation(station);
+      return;
+    }
     await storePreset(slot, station, speaker).catch((err: unknown) =>
       // The speaker refused the address itself: say so, not "refused that".
       statusOf(err) === 400 && isStreamUrl(station.tuneInId)

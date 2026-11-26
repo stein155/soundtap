@@ -31,8 +31,8 @@ export function useRadioKeys(
     let next: number;
     if (e.key === 'Home') next = 0;
     else if (e.key === 'End') next = count - 1;
-    else if (step !== undefined) next = (stop + step + count) % count;
-    else return;
+    else if (step === undefined) return;
+    else next = (stop + step + count) % count;
     e.preventDefault();
     select(next);
     const group = e.currentTarget.closest('[role="radiogroup"]');

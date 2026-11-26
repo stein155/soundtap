@@ -80,7 +80,8 @@ async function readInto<K extends ResourceKind>(
   e: Entry<SpeakerResources[K]>,
   speaker: string
 ): Promise<boolean> {
-  const seq = ++e.seq;
+  e.seq += 1;
+  const { seq } = e;
   const read = READ[kind](speaker).then(
     (value) => {
       if (seq !== e.seq || held(kind).get(speaker) !== e) return value !== null;
@@ -116,7 +117,7 @@ export async function ensureResource(kind: ResourceKind, speaker: string): Promi
 export function discardResource(kind: ResourceKind, speaker: string): void {
   const e = held(kind).get(speaker);
   if (e) {
-    e.seq++;
+    e.seq += 1;
     e.inflight = null;
   }
 }

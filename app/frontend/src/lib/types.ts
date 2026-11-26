@@ -170,7 +170,7 @@ export interface ApiError extends Error {
 export interface UpdateResult {
   ok: boolean;
   status: number;
-  body: { status?: string; to?: string; error?: string; [k: string]: unknown };
+  body: { [k: string]: unknown; status?: string; to?: string; error?: string };
 }
 
 // UPnP ContentDirectory discovery — /api/upnp/servers and /api/upnp/browse.

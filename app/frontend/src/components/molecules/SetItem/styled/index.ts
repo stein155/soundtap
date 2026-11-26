@@ -84,7 +84,7 @@ export const Row = styled.button<{ $danger?: boolean | undefined; $roomy?: boole
   }
 
   @media (hover: hover) {
-    transition: background 140ms ease;
+    transition: background var(--dur-fast) var(--ease);
 
     &:hover {
       background: var(--surface-2);
@@ -120,7 +120,7 @@ export const Switch = styled.span<{ $on: boolean }>`
   height: 31px;
   border-radius: 999px;
   background: ${({ $on }) => ($on ? 'var(--switch-on)' : 'var(--border-strong)')};
-  transition: background 180ms ease;
+  transition: background var(--dur-fast) var(--ease);
 
   &::after {
     content: '';
@@ -133,7 +133,7 @@ export const Switch = styled.span<{ $on: boolean }>`
     background: #ffffff;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
     transform: translateX(${({ $on }) => ($on ? '20px' : '0')});
-    transition: transform 180ms ease;
+    transition: transform var(--dur-fast) var(--ease);
   }
 `;
 

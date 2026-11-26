@@ -51,7 +51,7 @@ const running: VersionInfo = {
 };
 
 // The card shows where the Updates page shows it: once the speaker names a newer Core.
-function Core({ speaker }: { speaker: string }) {
+function Core({ speaker }: { readonly speaker: string }) {
   const latest = useCoreLatest(speaker);
   return latest ? (
     <CoreUpdate speaker={speaker} name="Kitchen" model="st10" latest={latest} version={running} />
@@ -72,7 +72,7 @@ describe('CoreUpdate', () => {
   });
 
   it('shows nothing for a speaker that predates the Core lane', async () => {
-    const { core: _, ...old } = newer;
+    const { core: _core, ...old } = newer;
     vi.mocked(api.getReleases).mockResolvedValue(old);
     const { container } = renderWithI18n(<Core speaker="" />);
     await waitFor(() => expect(api.getReleases).toHaveBeenCalled());
@@ -92,7 +92,7 @@ describe('CoreUpdate', () => {
     expect(getByText('Now: 0.1.0 · app 0.1.0 · signed')).toBeTruthy();
     // The notes wait behind "What's new".
     expect(queryByText('Kernel fixes')).toBeNull();
-    fireEvent.click(getByRole('button', { name: "What's new" }));
+    fireEvent.click(getByRole('button', { name: 'What’s new' }));
     expect(getByText('Kernel fixes')).toBeTruthy();
     expect(queryByRole('alertdialog')).toBeNull();
     fireEvent.click(getByRole('button', { name: 'Update' }));
@@ -122,7 +122,7 @@ describe('CoreUpdate', () => {
     fireEvent.click(await findByRole('button', { name: 'Update' }));
     fireEvent.click(await findByRole('button', { name: 'Start' }));
     expect((await findByRole('alert')).textContent).toBe(
-      'SoundTap Core could not be installed. (nobody held a button on the speaker in time)'
+      'SoundTap Core couldn’t be installed. (nobody held a button on the speaker in time)'
     );
     expect(queryByRole('alertdialog')).toBeNull();
   });

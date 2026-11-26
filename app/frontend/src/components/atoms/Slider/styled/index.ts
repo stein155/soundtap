@@ -57,7 +57,7 @@ export const Thumb = styled.div`
     0 1px 3px rgba(0, 0, 0, 0.3),
     0 0 0 1px var(--border-strong);
   transform: translate(-50%, -50%);
-  transition: transform 120ms ease;
+  transition: transform var(--dur-fast) var(--ease);
 
   ${Track}:active & {
     transform: translate(-50%, -50%) scale(1.18);

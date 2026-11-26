@@ -24,7 +24,7 @@ const MAX_NAME = 32;
 export function CustomStation({
   onStream,
 }: {
-  onStream: (station: Station) => void;
+  readonly onStream: (station: Station) => void;
 }): ReactElement {
   const { t } = useI18n();
   const [url, setUrl] = useState('');
@@ -36,7 +36,7 @@ export function CustomStation({
   let urlProblem: string | null = null;
   if (!stream) urlProblem = t('requiredField');
   else if (!isStreamUrl(stream))
-    urlProblem = /^https?:\/\//i.test(stream) ? t('customHelpInvalid') : t('urlScheme');
+    urlProblem = /^https?:\/\//iu.test(stream) ? t('customHelpInvalid') : t('urlScheme');
   const nameProblem = station ? null : t('requiredField');
 
   return (

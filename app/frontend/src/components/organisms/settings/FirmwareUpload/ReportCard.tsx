@@ -11,12 +11,12 @@ import { useI18n } from '../../../../lib/i18n';
 import type { FirmwareReport } from '../../../../lib/types';
 
 interface Props {
-  report: FirmwareReport;
+  readonly report: FirmwareReport;
   // The package comes with its .sig; a release the speaker fetches always does.
-  signed?: boolean;
-  busy: boolean;
-  onInstall: () => void;
-  onReboot: () => Promise<void>;
+  readonly signed?: boolean;
+  readonly busy: boolean;
+  readonly onInstall: () => void;
+  readonly onReboot: () => Promise<void>;
 }
 
 // An older release or Bose's firmware says so before it asks.

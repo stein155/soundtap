@@ -5,7 +5,7 @@ import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
 import { useScrollMemory } from './useScrollMemory';
 
-function List({ at }: { at: string }) {
+function List({ at }: { readonly at: string }) {
   const [ref, onScroll] = useScrollMemory(at);
   return <div data-testid="body" ref={ref} onScroll={onScroll} />;
 }

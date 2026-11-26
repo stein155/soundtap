@@ -92,7 +92,9 @@ export function useHouseholdPrefs(rooms: Room[]): HouseholdPrefs {
   const closed = useRef(false); // a closed view must not retry over a reopened one
   useEffect(() => {
     closed.current = false;
-    return () => void (closed.current = true);
+    return () => {
+      void (closed.current = true);
+    };
   }, []);
   // Saves go out one after another, so on every speaker the later choice lands last.
   const queue = useRef<Promise<unknown>>(Promise.resolve());
@@ -103,7 +105,8 @@ export function useHouseholdPrefs(rooms: Room[]): HouseholdPrefs {
     next: Prefs[K],
     show: (v: Prefs[K] | null) => void
   ) => {
-    const mine = (saves.current[key] = (saves.current[key] ?? 0) + 1);
+    const mine = (saves.current[key] ?? 0) + 1;
+    saves.current[key] = mine;
     show(next);
     // A speaker that missed this save while others took it gets it again a little later,
     // as long as no newer value went out, so the household does not drift apart.

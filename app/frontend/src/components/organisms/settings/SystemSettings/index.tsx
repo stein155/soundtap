@@ -39,7 +39,7 @@ function saveBlob(blob: Blob, name: string) {
 
 // The support bundle: one zip for a bug report. A fetch rather than a link, so the page
 // can say that the speaker waits for a press (ADR 0055) and say so when it was refused.
-function SupportBundle({ speaker }: { speaker: string }) {
+function SupportBundle({ speaker }: { readonly speaker: string }) {
   const { t } = useI18n();
   const notify = useNotify();
   const [busy, setBusy] = useState(false);
@@ -60,34 +60,40 @@ function SupportBundle({ speaker }: { speaker: string }) {
     }
   };
   return (
-    <>
-      <SetMenu title={t('supportBundle')}>
-        <Pad>
-          <Button variant="ghost" wide onClick={download} disabled={busy} aria-busy={busy}>
-            <Icon.download width="18" height="18" />
-            {t('supportDownload')}
-          </Button>
-          <Hint>{t('supportContents')}</Hint>
-          <StatusCard icon={<Icon.press width="22" height="22" />}>{t('supportPress')}</StatusCard>
-          {error && (
-            <Hint error role="alert">
-              {error}
-            </Hint>
-          )}
-        </Pad>
-      </SetMenu>
-    </>
+    <SetMenu title={t('supportBundle')}>
+      <Pad>
+        <Button
+          variant="ghost"
+          wide
+          onClick={() => {
+            void download();
+          }}
+          disabled={busy}
+          aria-busy={busy}
+        >
+          <Icon.download width="18" height="18" />
+          {t('supportDownload')}
+        </Button>
+        <Hint>{t('supportContents')}</Hint>
+        <StatusCard icon={<Icon.press width="22" height="22" />}>{t('supportPress')}</StatusCard>
+        {error && (
+          <Hint error role="alert">
+            {error}
+          </Hint>
+        )}
+      </Pad>
+    </SetMenu>
   );
 }
 
 // Help: the support bundle, one zip of logs for a bug report.
-export function SupportSettings({ speaker }: { speaker: string }): ReactElement {
+export function SupportSettings({ speaker }: { readonly speaker: string }): ReactElement {
   return <SupportBundle speaker={speaker} />;
 }
 
 // Factory reset: presets, settings, name, pairings and Wi-Fi go, never the firmware; the
 // speaker restarts into setup mode. Its own red row, apart from everything else.
-export function FactoryReset({ speaker }: { speaker: string }): ReactElement {
+export function FactoryReset({ speaker }: { readonly speaker: string }): ReactElement {
   const { t } = useI18n();
   const [result, setResult] = useState<{ text: string; error: boolean } | null>(null);
   const reset = async () => {

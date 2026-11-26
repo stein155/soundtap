@@ -4,6 +4,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { renderHook, waitFor, act } from '@testing-library/react';
 import { useSpeaker } from './useSpeaker';
+import { setVolume } from '../lib/api';
 
 vi.mock('../lib/api', () => ({
   getNowPlaying: vi.fn(async (s: string) => (s === 'dead' ? null : { standby: true })),
@@ -40,5 +41,18 @@ describe('useSpeaker on a room switch', () => {
     expect(result.current.loading).toBe(false);
     expect(result.current.unreachable).toBe(false);
     vi.useRealTimers();
+  });
+  it('does not count a failed volume change again on coming back to its room', async () => {
+    vi.mocked(setVolume).mockRejectedValueOnce(new Error('offline'));
+    const { result, rerender } = renderHook(({ s }) => useSpeaker(s), {
+      initialProps: { s: 'kitchen' },
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    act(() => result.current.changeVolume(40));
+    await waitFor(() => expect(result.current.volumeFailures).toBe(1));
+    rerender({ s: 'bedroom' });
+    expect(result.current.volumeFailures).toBe(0);
+    rerender({ s: 'kitchen' });
+    expect(result.current.volumeFailures).toBe(0);
   });
 });

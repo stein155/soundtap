@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
 import styled from 'styled-components';
+import { hitArea } from '../../../../theme/hitArea';
 
 export const Invitation = styled.div`
   display: flex;
@@ -89,7 +90,9 @@ export const AccountName = styled.span`
   gap: 8px;
 `;
 
+// Drawn as underlined text, about 31px tall; its target is grown to 44.
 export const LinkButton = styled.button`
+  ${hitArea()}
   padding: 8px 0;
   font-weight: 600;
   color: var(--ink-3);

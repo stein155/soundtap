@@ -64,7 +64,7 @@
   cursor: pointer;
   padding: 0;
   border-radius: 50%;
-  transition: opacity 0.15s;
+  transition: opacity var(--dur-fast) var(--ease);
 }
 
 .top-btn svg {
@@ -118,13 +118,13 @@
   text-overflow: ellipsis;
 }
 
-/* recently played */
 .brand svg {
   flex: none;
   width: 18px;
   height: 18px;
 }
 
+/* recently played */
 .recent {
   list-style: none;
   margin: 0 calc(-1 * var(--page-gutter));
@@ -479,6 +479,7 @@
   height: 180%;
   object-fit: cover;
   filter: blur(28px) saturate(1.1);
+
   /* Its own layer: the blur is drawn once and moved with a sliding sheet, instead of
      being filtered again on every frame of the slide. */
   transform: translateZ(0);
@@ -643,9 +644,11 @@
   align-items: center;
   gap: 12px;
   width: 100%;
+
   /* The phone's home indicator sits in the lowest few pixels of its safe area: clear it,
      without the whole safe area as an empty strip under the bar. */
   --spk-pad: max(0px, calc(env(safe-area-inset-bottom) - 16px));
+
   height: calc(64px + var(--spk-pad));
   padding: 0 12px var(--spk-pad);
   border: 0;
@@ -901,7 +904,7 @@ button.h-row {
   flex: none;
   width: 140px;
   outline: none;
-  transition: transform 0.18s var(--ease);
+  transition: transform var(--dur-fast) var(--ease);
 }
 
 .card:has(.card-play[data-pressed]),
@@ -1037,6 +1040,7 @@ button.h-row {
 .svc.spotify {
   --spotify-disc: #fff;
   --spotify-waves: #1db954;
+
   background: #1db954;
 }
 
@@ -1046,12 +1050,11 @@ button.h-row {
   color: #63d3c6;
 }
 
+/* The logo is a wide word: where other services show a square icon it runs wider. */
 .svc.tunein svg {
   width: 72%;
   height: auto;
 }
-
-/* The logo is a wide word: where other services show a square icon it runs wider. */
 
 /* layers */
 .overlay {
@@ -1061,35 +1064,51 @@ button.h-row {
   display: flex;
   align-items: flex-end;
   justify-content: center;
+}
+
+/* The dim under a layer: a layer of its own that only fades, so no frame repaints the
+   screen. It fades in as the overlay appears and out as it leaves; a finger pulling the
+   layer away lightens it (--pull, SheetModal/swipe.ts), and the exit fades on from there:
+   dim-out has no start of its own. z-index -1 keeps it under the layer, in the overlay's
+   own stacking context. */
+.overlay::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
   background: var(--dim);
+  opacity: var(--pull, 1);
+  animation: dim-in var(--dur-enter) var(--ease-enter);
+  transition: opacity var(--dur-base) var(--ease-enter);
 }
 
-.overlay[data-entering] {
-  animation: dim 0.3s var(--ease);
+.overlay[data-pulling]::before {
+  transition: none;
 }
 
-/* A reversed animation runs its curve backwards too: ease-out here is what makes the
-   exit start slow and speed away. ease-in started fast and crept into the edge. */
-.overlay[data-exiting] {
-  animation: dim 0.3s var(--ease) reverse;
+.overlay[data-exiting]::before {
+  /* dim-in stays listed: one still running when the overlay starts to leave is read and
+     frozen into --pull there (SheetModal/motion.ts settleExit), and one that has ended is
+     not started again. No transition: a frozen --pull must not fade on its own. */
+  animation:
+    dim-in var(--dur-enter) var(--ease-enter),
+    dim-out var(--dur-exit) var(--ease-exit) forwards;
+  transition: none;
 }
 
 .overlay.left {
   justify-content: flex-start;
   align-items: stretch;
-  background: var(--dim);
 }
 
-.overlay.bare,
-.overlay.bare[data-entering],
-.overlay.bare[data-exiting] {
-  background: none;
-  animation-name: none;
+.overlay.bare::before {
+  content: none;
 }
 
 .sheet {
   width: 100%;
   max-width: var(--shell-max);
+
   /* Below the phone's status bar too, in a home-screen app that draws under it. */
   height: calc(100dvh - max(56px, env(safe-area-inset-top) + 8px));
   background: var(--bg);
@@ -1103,25 +1122,44 @@ button.h-row {
   border-radius: 0;
 }
 
+/* A layer comes in on the iOS sheet curve and leaves sooner on a curve of its own. The
+   exits have no start of their own: they run on from where the layer is, which after a
+   swipe is the finger's offset (SheetModal/swipe.ts). Every exit lasts --dur-exit, as long
+   as the dim's: the layers stay mounted until their own exit ends. */
 .sheet[data-entering] {
-  animation: slide 0.3s var(--ease);
+  animation: slide-in var(--dur-enter) var(--ease-enter);
   will-change: transform;
 }
 
 .sheet[data-exiting] {
-  animation: slide 0.3s var(--ease) reverse;
+  animation: slide-out var(--dur-exit) var(--ease-exit) forwards;
   will-change: transform;
 }
 
 /* Settings replaces the app, as in Stockholm: no slide. */
 .sheet.page[data-entering] {
-  animation: fade 0.3s var(--ease);
+  animation: fade-in var(--dur-base) var(--ease);
   will-change: opacity;
 }
 
 .sheet.page[data-exiting] {
-  animation: fade 0.15s var(--ease) reverse;
+  animation: fade-out var(--dur-exit) var(--ease-exit) forwards;
   will-change: opacity;
+}
+
+/* Closed while still coming in: the entrance stays listed into the exit, so the overlay's
+   exit can read where it got to and freeze the layer there (SheetModal/motion.ts
+   settleExit) before the exit runs on from that point. */
+.sheet[data-entering][data-exiting] {
+  animation:
+    slide-in var(--dur-enter) var(--ease-enter),
+    slide-out var(--dur-exit) var(--ease-exit) forwards;
+}
+
+.sheet.page[data-entering][data-exiting] {
+  animation:
+    fade-in var(--dur-base) var(--ease),
+    fade-out var(--dur-exit) var(--ease-exit) forwards;
 }
 
 /* A question in the middle of the screen, as Stockholm asks before it erases something. */
@@ -1140,13 +1178,19 @@ button.h-row {
 }
 
 .sheet.dialog[data-entering] {
-  animation: pop 0.2s var(--ease);
+  animation: pop-in var(--dur-base) var(--ease-enter);
   will-change: transform, opacity;
 }
 
 .sheet.dialog[data-exiting] {
-  animation: pop 0.15s var(--ease) reverse;
+  animation: pop-out var(--dur-exit) var(--ease-exit) forwards;
   will-change: transform, opacity;
+}
+
+.sheet.dialog[data-entering][data-exiting] {
+  animation:
+    pop-in var(--dur-base) var(--ease-enter),
+    pop-out var(--dur-exit) var(--ease-exit) forwards;
 }
 
 .dlg {
@@ -1155,6 +1199,12 @@ button.h-row {
   position: relative;
   display: flex;
   flex-direction: column;
+}
+
+/* The dialog takes the focus itself when it opens from the keyboard; a ring round the whole
+   sheet only showed as a line along its bottom. Its controls keep theirs. */
+.overlay .dlg:focus-visible {
+  outline: none;
 }
 
 .sheet-head {
@@ -1340,7 +1390,7 @@ button.h-row {
   background: none;
   text-align: left;
   color: var(--ink);
-  transition: background 0.15s;
+  transition: background var(--dur-fast) var(--ease);
 }
 
 .pfav-main {
@@ -1453,13 +1503,27 @@ button.h-row {
 }
 
 .drawer[data-entering] {
-  animation: slide-left 0.3s var(--ease);
+  animation: slide-left-in var(--dur-enter) var(--ease-enter);
   will-change: transform;
 }
 
 .drawer[data-exiting] {
-  animation: slide-left 0.3s var(--ease) reverse;
+  animation: slide-left-out var(--dur-exit) var(--ease-exit) forwards;
   will-change: transform;
+}
+
+.drawer[data-entering][data-exiting] {
+  animation:
+    slide-left-in var(--dur-enter) var(--ease-enter),
+    slide-left-out var(--dur-exit) var(--ease-exit) forwards;
+}
+
+/* Let go by a finger: the layer and its dim leave at the finger's speed instead of
+   starting from rest (--ease-fling, SheetModal/swipe.ts). */
+.overlay[data-flung] .sheet[data-exiting],
+.overlay[data-flung] .drawer[data-exiting],
+.overlay[data-flung][data-exiting]::before {
+  animation-timing-function: var(--ease-fling, var(--ease-exit));
 }
 
 .menu {
@@ -1514,6 +1578,7 @@ button.h-row {
   display: grid;
   place-items: center;
   color: var(--ink);
+
   --spotify-disc: #1ed760;
   --spotify-waves: #fff;
 }
@@ -1655,42 +1720,6 @@ button.h-row {
 @media (hover: hover) and (pointer: fine) {
   .spk-arrow {
     display: grid;
-  }
-}
-
-.spk-tip {
-  position: absolute;
-  left: 50%;
-  /* Over the speaker picture, as Stockholm puts it: at the bottom it covered the sleep timer. */
-  top: 30%;
-  margin: 0;
-  padding: 8px 14px;
-  border-radius: 999px;
-  background: rgb(0 0 0 / 70%);
-  color: #fff;
-  font-size: 14px;
-  width: max-content;
-  max-width: calc(100% - 32px);
-  text-align: center;
-  pointer-events: none;
-  transform: translateX(-50%);
-  animation: spk-tip 5s ease forwards;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .spk-tip {
-    animation-timing-function: step-end;
-  }
-}
-
-@keyframes spk-tip {
-  0%,
-  80% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-    visibility: hidden;
   }
 }
 
@@ -1836,8 +1865,8 @@ button.h-row {
   place-items: center;
   cursor: pointer;
   transition:
-    background 0.2s,
-    color 0.2s;
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
 }
 
 .src svg {
@@ -1927,7 +1956,7 @@ span.vol-ico {
   border-radius: 50%;
   background: var(--thumb);
   box-shadow: 0 1px 4px rgb(0 0 0 / 35%);
-  transition: transform 0.15s;
+  transition: transform var(--dur-fast) var(--ease);
 }
 
 .vthumb[data-dragging] {
@@ -1993,14 +2022,14 @@ span.vol-ico {
   height: 40px;
   border-radius: 999px;
   border: 0;
-  background: var(--switch-on);
+  background: var(--accent);
   color: var(--on-accent);
   text-transform: uppercase;
   letter-spacing: 1px;
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
-  transition: opacity 0.15s;
+  transition: opacity var(--dur-fast) var(--ease);
 }
 
 .pill + .pill {
@@ -2386,8 +2415,8 @@ span.vol-ico {
   place-items: center;
   cursor: pointer;
   transition:
-    transform 0.15s var(--ease),
-    background 0.2s;
+    transform var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease);
 }
 
 .big svg {
@@ -2488,7 +2517,7 @@ span.vol-ico {
   background: none;
   color: #fff;
   opacity: 0.6;
-  transition: opacity 0.2s ease-in-out;
+  transition: opacity var(--dur-fast) var(--ease);
 }
 
 .np-mode svg {
@@ -2564,33 +2593,66 @@ span.vol-ico {
   height: 100%;
 }
 
-@keyframes dim {
-  from {
-    background-color: rgb(0 0 0 / 0%);
-  }
-}
-
-@keyframes fade {
+/* Entrances end, and exits start, at the element's own value: a pulled dim or layer
+   leaves from where the finger left it. */
+@keyframes dim-in {
   from {
     opacity: 0;
   }
 }
 
-@keyframes pop {
+@keyframes dim-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes pop-in {
   from {
     opacity: 0;
     transform: scale(0.94);
   }
 }
 
-@keyframes slide {
+@keyframes pop-out {
+  to {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+}
+
+@keyframes slide-in {
   from {
     transform: translateY(100%);
   }
 }
 
-@keyframes slide-left {
+@keyframes slide-out {
+  to {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes slide-left-in {
   from {
+    transform: translateX(-100%);
+  }
+}
+
+@keyframes slide-left-out {
+  to {
     transform: translateX(-100%);
   }
 }
@@ -2609,21 +2671,11 @@ span.vol-ico {
   .sheet.dialog {
     border-radius: 14px;
   }
-}
 
-@media (prefers-reduced-motion: reduce) {
-  .home *,
-  .top *,
-  .dock *,
-  .overlay,
-  .overlay *,
-  .top-layer * {
-    /* stylelint-disable declaration-no-important, time-min-milliseconds --
-       Reduced motion overrides every animation, inline ones too; a near-zero duration
-       (not none) still fires the end events the code waits for. */
-    animation-duration: 0.01ms !important;
-    transition-duration: 0.01ms !important;
-    /* stylelint-enable declaration-no-important, time-min-milliseconds */
+  /* Now playing in the same readable column as the pages (Sheet's Body), so the title and
+     the volume line up under the cover instead of running the whole width. */
+  .np-body {
+    padding-inline: max(24px, calc((100% - 40em) / 2));
   }
 }
 
@@ -2751,6 +2803,15 @@ span.vol-ico {
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
+  position: relative;
+}
+
+/* The chips are drawn 40 px tall; their targets reach 44. */
+.np .sleeprow.on-dark::after,
+.np-pill::after {
+  content: '';
+  position: absolute;
+  inset: -2px 0;
 }
 
 .np-pill svg {
@@ -2772,9 +2833,8 @@ span.vol-ico {
   opacity: 0.8;
 }
 
-/* The speakers sheet: which speaker this page controls and which play along (the design's
-   "Speaker wisselen"). */
-/* The speakers and group sheets: from the bottom, as tall as what they hold. */
+/* The speakers sheet (which speaker this page controls and which play along, the design's
+   "Speaker wisselen") and the group sheet: from the bottom, as tall as what they hold. */
 .sheet.spks-modal {
   display: flex;
   flex-direction: column;
@@ -2786,6 +2846,7 @@ span.vol-ico {
 
 .spks-sheet {
   --page-gutter: 16px;
+
   display: flex;
   flex-direction: column;
   padding: 0 16px calc(28px + env(safe-area-inset-bottom));
@@ -2870,8 +2931,8 @@ span.vol-ico {
   height: 22px;
   flex: none;
   border-radius: 50%;
-  background: var(--switch-on);
-  color: var(--on-accent);
+  background: var(--accent-fill);
+  color: var(--on-accent-fill);
 }
 
 .spks-tick svg {
@@ -2891,7 +2952,7 @@ span.vol-ico {
   min-height: 54px;
   border: 0;
   border-radius: var(--radius);
-  background: var(--switch-on);
+  background: var(--accent);
   color: var(--on-accent);
   font: inherit;
   font-size: 11px;
@@ -2915,8 +2976,10 @@ span.vol-ico {
 /* The speaker is gone: the design's "Speaker weg" page. */
 .off-page {
   --page-gutter: 16px;
+
   display: flex;
   flex-direction: column;
+
   /* The sheet clips: on a short phone, or with the home indicator's inset below the
      buttons, the page scrolls instead of cutting them off. */
   height: 100%;
@@ -3054,7 +3117,7 @@ span.vol-ico {
   min-height: 54px;
   border: 0;
   border-radius: var(--radius);
-  background: var(--switch-on);
+  background: var(--accent);
   color: var(--on-accent);
   font: inherit;
   font-size: 11px;
@@ -3137,7 +3200,7 @@ span.vol-ico {
   height: 31px;
   border-radius: 16px;
   background: var(--border-strong);
-  transition: background 0.18s ease;
+  transition: background var(--dur-fast) var(--ease);
 }
 
 .grp-switch::after {
@@ -3150,7 +3213,7 @@ span.vol-ico {
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 2px 4px rgb(0 0 0 / 20%);
-  transition: transform 0.18s ease;
+  transition: transform var(--dur-fast) var(--ease);
 }
 
 .grp-switch[data-on] {

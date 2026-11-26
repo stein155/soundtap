@@ -120,7 +120,8 @@ export async function getSupportBundle(speaker?: string): Promise<{ blob: Blob; 
   const r = await apiFetch(apiURL(path, speaker), { signal: deadline(PRESS_TIMEOUT_MS) });
   if (!r.ok) throw await apiFailure(r, `GET ${path}`);
   const disposition = r.headers.get('Content-Disposition') ?? '';
-  const name = /filename="([^"]+)"/.exec(disposition)?.[1] ?? 'soundtap-support.zip';
+  const name =
+    /filename="(?<name>[^"]+)"/u.exec(disposition)?.groups?.['name'] ?? 'soundtap-support.zip';
   return { blob: await r.blob(), name };
 }
 

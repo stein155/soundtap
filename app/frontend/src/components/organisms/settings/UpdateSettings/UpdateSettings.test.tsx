@@ -54,7 +54,7 @@ describe('UpdateSettings', () => {
     const card = await findByRole('region', { name: 'SoundTap app 0.2.0' });
     expect(card.textContent).toContain('New version');
     expect(getByText('Now: 0.1.0 · app 0.1.0 · signed')).toBeTruthy();
-    fireEvent.click(getByRole('button', { name: "What's new" }));
+    fireEvent.click(getByRole('button', { name: 'What’s new' }));
     expect(getByText('Faster setup')).toBeTruthy();
     fireEvent.click(getByRole('button', { name: 'Update' }));
     expect(await findByRole('dialog', { name: 'Update' })).toBeTruthy();
@@ -90,8 +90,8 @@ describe('UpdateSettings', () => {
     vi.mocked(api.getReleases).mockResolvedValue(releases(null));
     const { findByRole, getByRole } = page();
     const other = await findByRole('region', { name: 'Other ways' });
-    expect(getByRole('button', { name: /^Upload a file/ }).textContent).toContain('.stu');
-    expect(getByRole('button', { name: /^Back to Bose/ })).toBeTruthy();
+    expect(getByRole('button', { name: /^Upload a file/u }).textContent).toContain('.stu');
+    expect(getByRole('button', { name: /^Back to Bose/u })).toBeTruthy();
     const link = getByRole('link', { name: 'archive on archive.org' });
     expect(link.getAttribute('href')).toContain('archive.org');
     expect(other.textContent).toContain(
@@ -103,7 +103,7 @@ describe('UpdateSettings', () => {
     const { getByRole, queryByRole, getByText } = page({ ...running, updateMode: 'unmanaged' });
     expect(getByRole('region', { name: 'SoundTap Core 0.1.0 · app 0.1.0' })).toBeTruthy();
     expect(getByText('Updates are only available on the speaker itself.')).toBeTruthy();
-    expect(queryByRole('button', { name: /^Upload a file/ })).toBeNull();
+    expect(queryByRole('button', { name: /^Upload a file/u })).toBeNull();
     expect(api.getReleases).not.toHaveBeenCalled();
   });
 });

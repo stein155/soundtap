@@ -39,7 +39,11 @@ describe('useLanguage', () => {
   it('lets the last pick win over a slower earlier one', async () => {
     let german: () => void = vi.fn();
     vi.mocked(loadLanguage)
-      .mockReturnValueOnce(new Promise((r) => (german = r)))
+      .mockReturnValueOnce(
+        new Promise((r) => {
+          german = r;
+        })
+      )
       .mockResolvedValueOnce();
     const { result } = renderHook(() => useLanguage());
     act(() => result.current.setLang('de'));
@@ -52,7 +56,11 @@ describe('useLanguage', () => {
   it('keeps saying so when an earlier pick fails after the last one did', async () => {
     let french: (reason: Error) => void = vi.fn();
     vi.mocked(loadLanguage)
-      .mockReturnValueOnce(new Promise((_, reject) => (french = reject)))
+      .mockReturnValueOnce(
+        new Promise((_, reject) => {
+          french = reject;
+        })
+      )
       .mockRejectedValueOnce(new Error('offline'));
     const { result } = renderHook(() => useLanguage());
     act(() => result.current.setLang('fr'));

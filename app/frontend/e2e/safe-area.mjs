@@ -12,12 +12,12 @@ const ENV =
 
 // In the page, before its scripts: rules inserted later get the insets too.
 function patchStyles({ ins, src }) {
-  const re = new RegExp(src, 'g');
+  const re = new RegExp(src, 'gu');
   const rw = (css) =>
     typeof css === 'string' ? css.replace(re, (_, side) => `${ins[side] ?? 0}px`) : css;
-  const insertRule = CSSStyleSheet.prototype.insertRule;
-  CSSStyleSheet.prototype.insertRule = function (rule, i) {
-    return insertRule.call(this, rw(rule), i);
+  const original = CSSStyleSheet.prototype.insertRule;
+  CSSStyleSheet.prototype.insertRule = function insertRule(rule, i) {
+    return original.call(this, rw(rule), i);
   };
   // Text in <style> elements: styled-components' global styles and its development mode.
   const fix = (node) => {
@@ -33,11 +33,11 @@ function patchStyles({ ins, src }) {
       if (m.target.nodeName === 'STYLE') m.target.childNodes.forEach(fix);
     }
   }).observe(document, { subtree: true, childList: true, characterData: true });
-  window.__insets = ins;
+  window.fakeSafeAreaInsets = ins;
 }
 
 export async function fakeInsets(page, ins) {
-  const re = new RegExp(ENV, 'g');
+  const re = new RegExp(ENV, 'gu');
   await page.route('**/*', async (route) => {
     const req = route.request();
     if (!['document', 'stylesheet'].includes(req.resourceType())) return route.fallback();
@@ -67,16 +67,20 @@ export function leftoverInsets(page) {
 const CONTROLS =
   'button,a[href],input:not([type=hidden]),select,textarea,[role=button],[role=link],[role=slider],[role=switch],[role=radio],[role=checkbox],[role=option],[role=tab]';
 
+const shown = (el) =>
+  el.checkVisibility({ opacityProperty: true, visibilityProperty: true }) &&
+  !el.closest('[aria-hidden="true"],[inert]');
+
 // In the page. band 'top' checks the top inset as the screen opens; 'bottom' first scrolls
 // every scroller to its end, then checks the bottom inset. The docked speaker bar reaches
 // under the home indicator by design and is left to bars().
 function audit(band) {
-  const ins = window.__insets;
+  const ins = window.fakeSafeAreaInsets;
   const H = innerHeight;
   document.documentElement.style.scrollBehavior = 'auto';
   if (band === 'bottom') {
     for (const el of document.querySelectorAll('*')) {
-      if (/(auto|scroll)/.test(getComputedStyle(el).overflowY)) {
+      if (/auto|scroll/u.test(getComputedStyle(el).overflowY)) {
         el.style.scrollBehavior = 'auto';
         el.scrollTop = el.scrollHeight;
       }
@@ -102,10 +106,6 @@ function targets() {
   }
   return out;
 }
-
-const shown = (el) =>
-  el.checkVisibility({ opacityProperty: true, visibilityProperty: true }) &&
-  !el.closest('[aria-hidden="true"],[inert]');
 
 function textBox(el) {
   const range = document.createRange();
@@ -141,7 +141,7 @@ function onTopWithin(el, b, from, to) {
 
 function describe(el) {
   const label = el.getAttribute('aria-label') || el.textContent || '';
-  return `${el.tagName.toLowerCase()} "${label.trim().replace(/\s+/g, ' ').slice(0, 40)}"`;
+  return `${el.tagName.toLowerCase()} "${label.trim().replace(/\s+/gu, ' ').slice(0, 40)}"`;
 }
 
 // Whatever reaches past the sides of the screen, the page's own scroll width included.
@@ -166,7 +166,8 @@ function bars() {
       const r = el.getBoundingClientRect();
       return {
         pad: parseFloat(getComputedStyle(el).paddingBottom),
-        gap: Math.round(innerHeight - r.bottom),
+        // + 0: a bar a fraction of a pixel low rounds to -0, which toEqual tells from 0.
+        gap: Math.round(innerHeight - r.bottom) + 0,
         content: Math.round(r.height - parseFloat(getComputedStyle(el).paddingBottom)),
       };
     });
@@ -180,10 +181,10 @@ export async function installAudit(page) {
     content: `const CONTROLS = ${JSON.stringify(CONTROLS)};
 const shown = ${shown.toString()};
 ${IN_PAGE.join('\n')}
-window.__safeArea = { audit, sides, bars };`,
+window.safeAreaAudit = { audit, sides, bars };`,
   });
 }
 
-export const inBand = (page, band) => page.evaluate((b) => window.__safeArea.audit(b), band);
-export const pastSides = (page) => page.evaluate(() => window.__safeArea.sides());
-export const speakerBars = (page) => page.evaluate(() => window.__safeArea.bars());
+export const inBand = (page, band) => page.evaluate((b) => window.safeAreaAudit.audit(b), band);
+export const pastSides = (page) => page.evaluate(() => window.safeAreaAudit.sides());
+export const speakerBars = (page) => page.evaluate(() => window.safeAreaAudit.bars());

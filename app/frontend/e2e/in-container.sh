@@ -14,7 +14,7 @@ server=$!
 trap 'kill "$server"' EXIT
 # The server is up when it serves the page.
 i=0
-until node -e "fetch('http://localhost:8080/').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"; do
+until node -e "fetch('http://127.0.0.1:8080/').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"; do
 	i=$((i + 1))
 	[ "${i}" -lt 50 ] || { echo 'demo server did not start' >&2; exit 1; }
 	sleep 0.2

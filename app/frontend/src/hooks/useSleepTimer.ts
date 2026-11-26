@@ -76,16 +76,19 @@ export function useSleepTimer(
     if (!visible) return undefined;
     let live = true;
     const untilEnd = timer ? timer.endsAt - Date.now() + 1000 : 0;
-    let wait = misses ? RETRY_MS : REREAD_MS;
+    let wait = misses > 0 ? RETRY_MS : REREAD_MS;
     if (timer) wait = untilEnd > 0 ? Math.min(REREAD_MS, untilEnd) : RETRY_MS;
-    const id = setTimeout(() => void read(() => live), wait);
+    const id = setTimeout(() => {
+      void read(() => live);
+    }, wait);
     return () => {
       live = false;
       clearTimeout(id);
     };
   }, [visible, read, held, timer, misses]);
   const start = async (minutes: number) => {
-    const g = ++gen.current;
+    gen.current += 1;
+    const g = gen.current;
     const target = speaker;
     const state = await setSleep(minutes, target).catch(async () => {
       // Say so, and show what the speaker really has.

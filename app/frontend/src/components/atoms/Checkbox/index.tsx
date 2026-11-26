@@ -12,8 +12,8 @@ export function Checkbox({
   checked,
   strong,
 }: {
-  checked: boolean;
-  strong?: boolean | undefined;
+  readonly checked: boolean;
+  readonly strong?: boolean | undefined;
 }): ReactElement {
   return (
     <Box $checked={checked} $strong={strong} aria-hidden="true">

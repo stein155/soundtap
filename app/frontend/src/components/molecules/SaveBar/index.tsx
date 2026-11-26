@@ -9,9 +9,9 @@ import { Bar } from './styled';
 const SAVED_MS = 2000;
 
 interface Props {
-  dirty: boolean;
+  readonly dirty: boolean;
   // Rejects when the save failed; the caller shows why.
-  onSave: () => Promise<void>;
+  readonly onSave: () => Promise<void>;
 }
 
 // The sticky Save button under a settings form. It says "Saved" for a moment after a
@@ -40,7 +40,13 @@ export function SaveBar({ dirty, onSave }: Props): ReactElement | null {
   if (!dirty && !saved && !busy) return null;
   return (
     <Bar>
-      <Button wide disabled={!dirty || busy} onClick={() => void save()}>
+      <Button
+        wide
+        disabled={!dirty || busy}
+        onClick={() => {
+          void save();
+        }}
+      >
         {saved && !dirty ? t('saved') : t('save')}
       </Button>
     </Bar>

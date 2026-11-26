@@ -30,7 +30,7 @@ describe('PairAlone', () => {
     const { findByText, getByRole, queryByRole } = renderWithI18n(
       <PairAlone room={room} grouped={false} />
     );
-    await findByText(/plays only left/);
+    await findByText(/plays only left/u);
     fireEvent.click(getByRole('button', { name: 'Unpair' }));
     expect(multiroom.setChannel).toHaveBeenCalledWith('stereo', 'Kitchen');
     await waitFor(() => expect(queryByRole('button', { name: 'Unpair' })).toBeNull());
@@ -41,5 +41,17 @@ describe('PairAlone', () => {
     const { container } = renderWithI18n(<PairAlone room={room} grouped={false} />);
     await waitFor(() => expect(multiroom.getChannel).toHaveBeenCalled());
     expect(container.textContent).toBe('');
+  });
+
+  it('says so when the speaker did not take both channels back, and keeps the button', async () => {
+    vi.mocked(multiroom.getChannel).mockResolvedValue('right');
+    vi.mocked(multiroom.setChannel).mockRejectedValue(new Error('offline'));
+    const { findByText, findByRole, getByRole } = renderWithI18n(
+      <PairAlone room={room} grouped={false} />
+    );
+    await findByText(/plays only right/u);
+    fireEvent.click(getByRole('button', { name: 'Unpair' }));
+    expect((await findByRole('alert')).textContent).toBe('Couldn’t reach Kitchen');
+    expect(getByRole('button', { name: 'Unpair' })).toBeTruthy();
   });
 });

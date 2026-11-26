@@ -14,12 +14,12 @@ import type { IconName } from '../../atoms/Icon';
 import { Body } from './styled';
 
 interface PageProps {
-  open: boolean;
-  onBack: () => void;
-  title: string;
+  readonly open: boolean;
+  readonly onBack: () => void;
+  readonly title: string;
   // A button of the page's own in the header, beside the X.
-  action?: SubPageAction | undefined;
-  children: ReactNode;
+  readonly action?: SubPageAction | undefined;
+  readonly children: ReactNode;
 }
 
 // A page of its own, Sonos-style: the list makes way, the header shows the page's title
@@ -47,7 +47,7 @@ export function SubPage({ open, onBack, title, action, children }: PageProps): R
     [title, icon, label, disabled]
   );
   useEffect(() => {
-    if (!open) return;
+    if (!open) return undefined;
     show(self);
     return () => show(null);
   }, [open, self, show]);
@@ -70,18 +70,18 @@ export function SubPage({ open, onBack, title, action, children }: PageProps): R
 }
 
 interface Props {
-  open: boolean;
-  onToggle: () => void;
-  icon?: IconName | undefined;
-  title: string;
+  readonly open: boolean;
+  readonly onToggle: () => void;
+  readonly icon?: IconName | undefined;
+  readonly title: string;
   // One line shown on the row: the current value.
-  summary?: string | undefined;
+  readonly summary?: string | undefined;
   // Or a sentence under the title that says what the page is for, beside its icon on a
   // grey disc (a route to take).
-  desc?: string | undefined;
+  readonly desc?: string | undefined;
   // What waits on the page (a new version), in an ink badge before the chevron.
-  badge?: string | undefined;
-  children: ReactNode;
+  readonly badge?: string | undefined;
+  readonly children: ReactNode;
 }
 
 // A settings row that opens a page of its own.

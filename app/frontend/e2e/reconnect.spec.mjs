@@ -12,7 +12,7 @@ test('says when the speaker is gone and follows it live again when it is back', 
   request,
 }) => {
   await openHome(page);
-  const banner = page.getByText("Can't reach Woonkamer. Reconnecting…");
+  const banner = page.getByText('Can’t reach Woonkamer. Reconnecting…');
   await expect(banner).toHaveCount(0);
 
   await request.post('/api/demo/away');

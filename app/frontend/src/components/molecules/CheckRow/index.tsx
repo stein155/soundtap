@@ -6,13 +6,13 @@ import { Checkbox } from '../../atoms/Checkbox';
 import { Description, Row, Text, Title } from './styled';
 
 interface Props {
-  on: boolean;
-  title: string;
-  desc?: ReactNode;
-  disabled?: boolean;
-  onToggle: () => void;
+  readonly on: boolean;
+  readonly title: string;
+  readonly desc?: ReactNode;
+  readonly disabled?: boolean;
+  readonly onToggle: () => void;
   // The bare row, for a card that adds more below it (the speakers sheet).
-  plain?: boolean;
+  readonly plain?: boolean;
 }
 
 // Something that is on or off: a checkbox, a title and what it means. The whole row is

@@ -41,7 +41,7 @@ const stepState = (i: number, current: number): 'done' | 'now' | 'later' => {
 };
 
 // The steps, each done, under way or still to come.
-function Steps({ current }: { current: number }) {
+function Steps({ current }: { readonly current: number }) {
   const { t } = useI18n();
   return (
     <StepList aria-label={t('updatingSteps')}>
@@ -71,11 +71,11 @@ export function Updating({
   done,
   progress = null,
 }: {
-  name: string;
-  model: string;
-  stage: UpdateStage;
-  done: boolean;
-  progress?: number | null;
+  readonly name: string;
+  readonly model: string;
+  readonly stage: UpdateStage;
+  readonly done: boolean;
+  readonly progress?: number | null;
 }): ReactElement {
   const { t } = useI18n();
   const current = CURRENT[stage];

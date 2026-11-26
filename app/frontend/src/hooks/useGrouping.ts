@@ -44,7 +44,7 @@ export function useGrouping(
   // left following a follower. Several at once change the grouping in one step: one
   // after the other would each start from the grouping as it was.
   const linkMany = async (targets: Room[]) => {
-    if (!lead || !targets.length) return;
+    if (!lead || targets.length === 0) return;
     const request = ask(targets);
     const followers = rooms.filter((r) => targets.some((t) => t.id === r.linkedTo));
     roomsState.regroup({

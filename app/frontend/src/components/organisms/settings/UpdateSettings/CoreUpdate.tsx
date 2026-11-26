@@ -43,17 +43,19 @@ export function CoreUpdate({
   latest,
   version,
 }: {
-  speaker: string;
+  readonly speaker: string;
   // The speaker's name and model, over the page that follows the update.
-  name: string;
-  model: string;
-  latest: ReleaseRef;
-  version: VersionInfo | null;
+  readonly name: string;
+  readonly model: string;
+  readonly latest: ReleaseRef;
+  readonly version: VersionInfo | null;
 }): ReactElement {
   const { t } = useI18n();
-  const number = latest.tag.replace(/^os-v/, '');
+  const number = latest.tag.replace(/^os-v/u, '');
   const update = useCoreUpdate(speaker, number);
-  const confirm = useUpdateConfirm(() => void update.install());
+  const confirm = useUpdateConfirm(() => {
+    void update.install();
+  });
   const now = shortVersionLabel(version);
   const following = update.phase === 'busy' || update.phase === 'updated';
 

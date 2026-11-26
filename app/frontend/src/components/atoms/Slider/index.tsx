@@ -7,20 +7,20 @@ import { clamp, useSliderPointer } from './useSliderPointer';
 import type { ReactElement } from 'react';
 
 interface Props {
-  value: number;
-  onChange: (value: number) => void;
-  label: string;
-  min?: number;
-  max?: number;
+  readonly value: number;
+  readonly onChange: (value: number) => void;
+  readonly label: string;
+  readonly min?: number;
+  readonly max?: number;
   // Where the fill starts. A volume fills from the left; bass fills from the speaker's
   // neutral value, which on a SoundTouch is the top of its range (-9..0).
-  origin?: number;
+  readonly origin?: number;
   // Arrow-key step.
-  step?: number;
+  readonly step?: number;
   // How a screen reader says the value ("+3" rather than "3"), when it is not the number.
-  valueText?: string;
+  readonly valueText?: string;
   // The slightly taller track of a settings card.
-  tall?: boolean;
+  readonly tall?: boolean;
 }
 
 // The design's drag slider, as a real slider: a pointer drag anywhere on the track

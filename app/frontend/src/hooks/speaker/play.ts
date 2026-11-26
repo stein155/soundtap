@@ -53,8 +53,8 @@ export function useOptimisticPlay(): OptimisticPlay {
     );
     return () => clearTimeout(timer);
   }, [pending]);
-  // What's on screen right now (real or pending), so a tap can remember which
-  // station we're switching *away* from.
+  // What is on screen now (real or pending), so a tap can remember which station
+  // it switches away from.
   const shownNameRef = useRef<string>('');
   // Set on Stop: while it holds, ignore the box still reporting the old station
   // as playing (its state transitions lag, just like on start).

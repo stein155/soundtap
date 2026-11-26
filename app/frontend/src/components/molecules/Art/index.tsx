@@ -20,14 +20,14 @@ export function Art({
   name,
   className = '',
 }: {
-  src?: string | null | undefined;
-  name: string;
-  className?: string;
+  readonly src?: string | null | undefined;
+  readonly name: string;
+  readonly className?: string;
 }): ReactElement {
   const [square, setSquare] = useState(true);
   const [failed, setFailed] = useState<string | null>(null);
   useEffect(() => {
-    if (!failed) return;
+    if (!failed) return undefined;
     const retry = setTimeout(() => setFailed(null), ART_RETRY_MS);
     return () => clearTimeout(retry);
   }, [failed]);
@@ -55,7 +55,7 @@ export function Art({
 }
 
 // The artwork blown up and blurred behind a bar or a sheet, for the colour of what plays.
-export function Blur({ src }: { src?: string | null }): ReactElement {
+export function Blur({ src }: { readonly src?: string | null }): ReactElement {
   return (
     <div className="blur" aria-hidden="true">
       {src && <img src={src} alt="" />}
@@ -65,7 +65,7 @@ export function Blur({ src }: { src?: string | null }): ReactElement {
 
 // The now-playing screen's backdrop as in Stockholm: the blurred artwork, darkened and
 // washed with its own main colour. The wash stays black until that colour is known.
-export function WashedBlur({ src }: { src?: string | null }): ReactElement {
+export function WashedBlur({ src }: { readonly src?: string | null }): ReactElement {
   const [wash, setWash] = useState('0 0 0');
   useEffect(() => {
     let stale = false;
@@ -102,9 +102,9 @@ export function PlayArt({
   name,
   className = '',
 }: {
-  artwork: Artwork;
-  name: string;
-  className?: string;
+  readonly artwork: Artwork;
+  readonly name: string;
+  readonly className?: string;
 }): ReactElement {
   if (artwork.kind === 'station')
     return <Art src={artwork.src} name={name} className={className} />;

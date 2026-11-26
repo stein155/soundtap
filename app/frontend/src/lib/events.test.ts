@@ -6,22 +6,24 @@ import { subscribeHousehold, subscribeState } from './events';
 import { must } from '../test/must';
 
 class FakeEventSource {
-  static readonly CONNECTING = 0;
-  static readonly OPEN = 1;
-  static readonly CLOSED = 2;
-  static all: FakeEventSource[] = [];
-  onopen: (() => void) | null = null;
-  onerror: (() => void) | null = null;
-  readyState = FakeEventSource.CONNECTING;
-  closed = false;
-  listeners: Partial<Record<string, (e: MessageEvent) => void>> = {};
-  constructor(public url: string) {
+  public static readonly CONNECTING = 0;
+  public static readonly OPEN = 1;
+  public static readonly CLOSED = 2;
+  public static all: FakeEventSource[] = [];
+  public onopen: (() => void) | null = null;
+  public onerror: (() => void) | null = null;
+  public readyState = FakeEventSource.CONNECTING;
+  public closed = false;
+  public listeners: Partial<Record<string, (e: MessageEvent) => void>> = {};
+  public url: string;
+  public constructor(url: string) {
+    this.url = url;
     FakeEventSource.all.push(this);
   }
-  addEventListener(type: string, fn: (e: MessageEvent) => void) {
+  public addEventListener(type: string, fn: (e: MessageEvent) => void) {
     this.listeners[type] = fn;
   }
-  close() {
+  public close() {
     this.closed = true;
     this.readyState = FakeEventSource.CLOSED;
   }

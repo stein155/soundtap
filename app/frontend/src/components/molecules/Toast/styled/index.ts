@@ -32,7 +32,7 @@ export const Bubble = styled.div`
   box-shadow:
     var(--shadow-lg),
     0 0 0 100vmax rgba(17, 17, 17, 0.25);
-  animation: ${rise} 160ms var(--ease);
+  animation: ${rise} var(--dur-fast) var(--ease);
   pointer-events: auto;
 
   @media ${desktop} {

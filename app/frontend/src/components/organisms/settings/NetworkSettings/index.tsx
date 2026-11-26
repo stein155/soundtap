@@ -45,8 +45,6 @@ function statusLine(n: NetworkInfo, t: ReturnType<typeof useI18n>['t']): string 
   return [n.type === 'ethernet' ? t('ethernetLabel') : signal, n.ip].filter(Boolean).join(' · ');
 }
 
-// The connection in use: the network, its signal and address. On Ethernet there is no
-// SSID, and saying so is the diagnosis for "my Wi-Fi settings do nothing".
 // The connection's name: wired, or the Wi-Fi network it is on.
 function connectionName(
   network: NetworkInfo,
@@ -58,13 +56,21 @@ function connectionName(
 }
 
 // What to know about a working connection: wired, or a weak Wi-Fi signal.
-function Diagnosis({ wired, poor }: { wired: boolean; poor: boolean }): ReactElement | null {
+function Diagnosis({
+  wired,
+  poor,
+}: {
+  readonly wired: boolean;
+  readonly poor: boolean;
+}): ReactElement | null {
   const { t } = useI18n();
   if (wired) return <Hint>{t('netDiagWired')}</Hint>;
   return poor ? <Hint>{t('netDiagPoor')}</Hint> : null;
 }
 
-function NetworkStatus({ network }: { network: NetworkInfo | null }) {
+// The connection in use: the network, its signal and address. On Ethernet there is no
+// SSID, and saying so is the diagnosis for "my Wi-Fi settings do nothing".
+function NetworkStatus({ network }: { readonly network: NetworkInfo | null }) {
   const { t } = useI18n();
   const wired = network?.type === 'ethernet';
   return (
@@ -91,7 +97,7 @@ function NetworkStatus({ network }: { network: NetworkInfo | null }) {
 
 // New settings that did not join: the speaker went back to its last network, and says why
 // once, until dismissed.
-export function FellBackNotice({ speaker }: { speaker: string }): ReactElement | null {
+export function FellBackNotice({ speaker }: { readonly speaker: string }): ReactElement | null {
   const { t } = useI18n();
   const [reason, setReason] = useState('');
   useEffect(() => {
@@ -124,9 +130,9 @@ function SavedNetworks({
   speaker,
   speakerName,
 }: {
-  network: NetworkInfo | null;
-  speaker: string;
-  speakerName: string;
+  readonly network: NetworkInfo | null;
+  readonly speaker: string;
+  readonly speakerName: string;
 }) {
   const { t } = useI18n();
   const [saved, setSaved] = useState<SavedWifi[]>([]);
@@ -139,7 +145,7 @@ function SavedNetworks({
     };
   }, [speaker]);
   const others = saved.filter((n) => n.ssid !== network?.ssid);
-  if (!others.length) return null;
+  if (others.length === 0) return null;
   const forget = async (id: string) => {
     setError('');
     try {
@@ -166,7 +172,9 @@ function SavedNetworks({
             <Text>{n.ssid}</Text>
             <TextButton
               aria-label={`${t('wifiForget')} ${n.ssid}`}
-              onClick={() => void forget(n.id)}
+              onClick={() => {
+                void forget(n.id);
+              }}
             >
               {t('wifiForget')}
             </TextButton>
@@ -189,9 +197,9 @@ export function NetworkSettings({
   speaker,
   speakerName,
 }: {
-  network: NetworkInfo | null;
-  speaker: string;
-  speakerName: string;
+  readonly network: NetworkInfo | null;
+  readonly speaker: string;
+  readonly speakerName: string;
 }): ReactElement {
   const { t } = useI18n();
   const [finding, setFinding] = useState(false);

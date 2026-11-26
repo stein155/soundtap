@@ -21,7 +21,7 @@ export const Bar = styled.div`
   font-size: 13.5px;
   font-weight: 600;
   box-shadow: var(--shadow-lg);
-  animation: ${popIn} 160ms ease;
+  animation: ${popIn} var(--dur-fast) var(--ease);
   pointer-events: auto;
 
   @media ${desktop} {

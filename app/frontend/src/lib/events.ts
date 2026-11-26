@@ -15,7 +15,6 @@ import { normalizeNowPlaying } from './api/playback';
 import { apiURL } from './base';
 import type { NowPlaying } from './types';
 
-// The server pings every 5 s; three missed beats is a dead stream.
 // An event's JSON object, or null when it is no JSON or no object: such an event is skipped.
 function eventObject(e: MessageEvent): object | null {
   try {
@@ -32,6 +31,7 @@ function levelOf(volume: unknown, muted: unknown): number | undefined {
   return muted === true ? 0 : volume;
 }
 
+// The server pings every 5 s; three missed beats is a dead stream.
 const STALE_MS = 15000;
 const STALE_RETRY_MS = 3000;
 
@@ -67,7 +67,7 @@ function watched(
       reopen = setTimeout(open, STALE_RETRY_MS);
     }, STALE_MS);
   };
-  const open = () => {
+  function open() {
     if (closed) return;
     const source = new EventSource(url);
     es = source;
@@ -99,7 +99,7 @@ function watched(
         fn(e);
       });
     }
-  };
+  }
   open();
   return () => {
     closed = true;

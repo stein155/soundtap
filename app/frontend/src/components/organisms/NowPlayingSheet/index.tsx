@@ -21,25 +21,25 @@ const average = (rooms: Room[]) =>
   Math.round(rooms.reduce((sum, r) => sum + r.volume, 0) / rooms.length);
 
 interface Props {
-  open: boolean;
-  onClose: () => void;
-  lead: Room;
-  members: Room[];
-  starting: boolean;
-  sleepTimer: SleepTimer;
-  onTransport: () => void;
+  readonly open: boolean;
+  readonly onClose: () => void;
+  readonly lead: Room;
+  readonly members: Room[];
+  readonly starting: boolean;
+  readonly sleepTimer: SleepTimer;
+  readonly onTransport: () => void;
   // Spotify's previous and next track.
-  onSkip: (dir: 'previous' | 'next') => void;
+  readonly onSkip: (dir: 'previous' | 'next') => void;
   // Nothing plays: start the room's first preset (or ask for a station).
-  onStart: () => void;
-  onSleep: (minutes: number) => void;
-  onVolume: (volume: number) => void;
+  readonly onStart: () => void;
+  readonly onSleep: (minutes: number) => void;
+  readonly onVolume: (volume: number) => void;
   // Without it the speaker icon is only a picture (a group has no single level to mute).
-  onMute?: (() => void) | undefined;
-  onPresets: () => void;
-  onSpeaker: () => void;
+  readonly onMute?: (() => void) | undefined;
+  readonly onPresets: () => void;
+  readonly onSpeaker: () => void;
   // Who plays along: the group sheet.
-  onGroup: () => void;
+  readonly onGroup: () => void;
 }
 
 // Now playing, full screen: what plays over its own blurred picture, the transport, the
@@ -48,39 +48,52 @@ interface Props {
 // What plays, in words: a station that names its song shows the station small above, the
 // song as the title and the artist under it, as the design has it; anything else keeps its
 // title and second line.
-function Titles(p: {
-  title: string;
-  track?: string | undefined;
-  artist?: string | undefined;
-  line: string;
+function Titles({
+  title,
+  track,
+  artist,
+  line,
+}: {
+  readonly title: string;
+  readonly track?: string | undefined;
+  readonly artist?: string | undefined;
+  readonly line: string;
 }) {
-  if (!p.track) {
+  if (!track) {
     return (
       <>
-        <h2 className="np-title">{p.title}</h2>
-        <p className="np-line">{p.line}</p>
+        <h2 className="np-title">{title}</h2>
+        <p className="np-line">{line}</p>
       </>
     );
   }
   return (
     <>
-      <p className="np-eyebrow">{p.title}</p>
-      <h2 className="np-title">{p.track}</h2>
-      {p.artist && <p className="np-line">{p.artist}</p>}
+      <p className="np-eyebrow">{title}</p>
+      <h2 className="np-title">{track}</h2>
+      {artist && <p className="np-line">{artist}</p>}
     </>
   );
 }
 
 // Under the volume: Spotify's modes, then the sleep timer and the group as pills.
-function Extras(p: { modes: ReactNode; sleep: ReactNode; onGroup: () => void }) {
+function Extras({
+  modes,
+  sleep,
+  onGroup,
+}: {
+  readonly modes: ReactNode;
+  readonly sleep: ReactNode;
+  readonly onGroup: () => void;
+}) {
   const { t } = useI18n();
   return (
     <div className="np-row">
       <div className="np-left">
-        {p.modes}
+        {modes}
         <div className="np-pills">
-          {p.sleep}
-          <Button className="np-pill" onPress={p.onGroup}>
+          {sleep}
+          <Button className="np-pill" onPress={onGroup}>
             <Icon.group aria-hidden="true" />
             {t('group')}
           </Button>

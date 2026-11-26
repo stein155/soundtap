@@ -56,6 +56,7 @@ export function useFirmwareUpload(speaker: string): FirmwareUploadState {
         confirm,
       });
       if (current()) {
+        // eslint-disable-next-line require-atomic-updates -- current() says no later pick replaced this one
         if (!install) checked.current = answer;
         setReport(answer);
       }
@@ -73,13 +74,12 @@ export function useFirmwareUpload(speaker: string): FirmwareUploadState {
     checked.current = null;
     setOutcome(null);
     if (!picked) return;
-    if (!picked.name.toLowerCase().endsWith('.stu'))
-      setOutcome({ text: t('firmwareNotStu'), error: true });
-    else
+    if (picked.name.toLowerCase().endsWith('.stu'))
       void upload(picked, sig, false, {
         failure: ['firmwareCheckFailed', 'firmwareCheckFailedHint'],
         current,
       });
+    else setOutcome({ text: t('firmwareNotStu'), error: true });
   };
 
   // A pick is a .stu, optionally with its .sig; the speaker checks it at once.

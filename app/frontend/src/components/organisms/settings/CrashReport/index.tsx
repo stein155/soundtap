@@ -19,9 +19,9 @@ export function CrashReportSwitch({
   on,
   onChange,
 }: {
-  speaker: string;
-  on: boolean;
-  onChange: (on: boolean) => void;
+  readonly speaker: string;
+  readonly on: boolean;
+  readonly onChange: (on: boolean) => void;
 }): ReactElement {
   const { t } = useI18n();
   const [failed, setFailed] = useState(false);
@@ -41,7 +41,9 @@ export function CrashReportSwitch({
           on={on}
           label={t('crashReportsSetting')}
           desc={t('crashReportsSettingHint')}
-          onToggle={() => void toggle()}
+          onToggle={() => {
+            void toggle();
+          }}
         />
       </SetMenu>
       {failed && (
@@ -61,8 +63,8 @@ export function CrashNotice({
   speaker,
   enabled,
 }: {
-  speaker: string;
-  enabled: boolean;
+  readonly speaker: string;
+  readonly enabled: boolean;
 }): ReactElement | null {
   const { t } = useI18n();
   const [crash, setCrash] = useState<CrashReport | null>(null);

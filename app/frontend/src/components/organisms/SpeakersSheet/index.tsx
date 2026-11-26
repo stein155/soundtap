@@ -19,16 +19,24 @@ import type { SelectedRoom } from '../../../hooks/useSelectedRoom';
 import type { usePlayback } from '../../../hooks/usePlayback';
 
 interface Props {
-  open: boolean;
-  onClose: () => void;
-  selected: SelectedRoom;
-  playback: ReturnType<typeof usePlayback>;
-  onSettings: (room: Room) => void;
+  readonly open: boolean;
+  readonly onClose: () => void;
+  readonly selected: SelectedRoom;
+  readonly playback: ReturnType<typeof usePlayback>;
+  readonly onSettings: (room: Room) => void;
 }
 
 // One speaker: its drawing, its name, what it plays (or that it is offline), and a tick on
 // the one this page controls. A tap makes it the one.
-function SpeakerRow({ room, on, onSelect }: { room: Room; on: boolean; onSelect: () => void }) {
+function SpeakerRow({
+  room,
+  on,
+  onSelect,
+}: {
+  readonly room: Room;
+  readonly on: boolean;
+  readonly onSelect: () => void;
+}) {
   const { t } = useI18n();
   const view = describePlayback(room.now, t, speakerArg(room));
   return (
@@ -66,9 +74,9 @@ function Lead({
   playback,
   onSettings,
 }: {
-  lead: Room;
-  playback: Props['playback'];
-  onSettings: () => void;
+  readonly lead: Room;
+  readonly playback: Props['playback'];
+  readonly onSettings: () => void;
 }) {
   const { t } = useI18n();
   const [choosing, setChoosing] = useState(false);
@@ -103,7 +111,12 @@ function Lead({
       </SetMenu>
       <PairAlone room={lead} grouped={false} />
       <div className="spks-actions">
-        <Button className="spks-power" onPress={() => void playback.power(!on)}>
+        <Button
+          className="spks-power"
+          onPress={() => {
+            void playback.power(!on);
+          }}
+        >
           <Icon.power aria-hidden="true" />
           {t(on ? 'powerOffName' : 'powerOnName', { name: lead.name })}
         </Button>

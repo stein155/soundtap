@@ -25,12 +25,10 @@ export const settingsIcons = {
   cog: {
     svg: solid,
     body: (
-      <>
-        <path
-          fillRule="evenodd"
-          d="M10.5 2h3l.5 2.6 1.6.7 2.3-1.5 2.1 2.1-1.5 2.3.7 1.6L22 10.5v3l-2.6.5-.7 1.6 1.5 2.3-2.1 2.1-2.3-1.5-1.6.7L13.5 22h-3l-.5-2.6-1.6-.7-2.3 1.5-2.1-2.1 1.5-2.3-.7-1.6L2 13.5v-3l2.6-.5.7-1.6-1.5-2.3 2.1-2.1 2.3 1.5 1.6-.7ZM12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z"
-        />
-      </>
+      <path
+        fillRule="evenodd"
+        d="M10.5 2h3l.5 2.6 1.6.7 2.3-1.5 2.1 2.1-1.5 2.3.7 1.6L22 10.5v3l-2.6.5-.7 1.6 1.5 2.3-2.1 2.1-2.3-1.5-1.6.7L13.5 22h-3l-.5-2.6-1.6-.7-2.3 1.5-2.1-2.1 1.5-2.3-.7-1.6L2 13.5v-3l2.6-.5.7-1.6-1.5-2.3 2.1-2.1 2.3 1.5 1.6-.7ZM12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z"
+      />
     ),
   },
   layers: {
@@ -65,11 +63,7 @@ export const settingsIcons = {
   },
   home: {
     svg: line(),
-    body: (
-      <>
-        <path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z" />
-      </>
-    ),
+    body: <path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z" />,
   },
   download: {
     svg: line(),
@@ -111,11 +105,7 @@ export const settingsIcons = {
   },
   moon: {
     svg: line(),
-    body: (
-      <>
-        <path d="M19.5 14.5A8 8 0 0 1 9.5 4.5a8 8 0 1 0 10 10Z" />
-      </>
-    ),
+    body: <path d="M19.5 14.5A8 8 0 0 1 9.5 4.5a8 8 0 1 0 10 10Z" />,
   },
   refresh: {
     svg: line('1.7'),
@@ -137,11 +127,7 @@ export const settingsIcons = {
   },
   shield: {
     svg: line(),
-    body: (
-      <>
-        <path d="M12 3.5 5 6v5.5c0 4.3 3 7.6 7 9 4-1.4 7-4.7 7-9V6l-7-2.5Z" />
-      </>
-    ),
+    body: <path d="M12 3.5 5 6v5.5c0 4.3 3 7.6 7 9 4-1.4 7-4.7 7-9V6l-7-2.5Z" />,
   },
   // A paired phone or tablet, on the Bluetooth page.
   phone: {
@@ -174,9 +160,7 @@ export const settingsIcons = {
   folder: {
     svg: line(),
     body: (
-      <>
-        <path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z" />
-      </>
+      <path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z" />
     ),
   },
   pencil: {

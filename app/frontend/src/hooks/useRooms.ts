@@ -166,6 +166,7 @@ export function useRooms(skip: string | null): RoomsState {
       setLeaders(next);
       for (const ms of REGROUP_CHECKS_MS) {
         const t = setTimeout(() => {
+          // eslint-disable-next-line react-hooks/memo-dependencies -- t is this loop's own timer, declared inside the callback
           householdRef.current.timers.delete(t);
           void loadGroups('ask');
         }, ms);
@@ -179,7 +180,12 @@ export function useRooms(skip: string | null): RoomsState {
   const reconnect = useCallback(
     async (id: string) => {
       setConnecting((c) => ({ ...c, [id]: true }));
-      await Promise.all([loadDevices(), new Promise((r) => setTimeout(r, RETRY_MIN_MS))]);
+      await Promise.all([
+        loadDevices(),
+        new Promise((r) => {
+          setTimeout(r, RETRY_MIN_MS);
+        }),
+      ]);
       setConnecting((c) => ({ ...c, [id]: false }));
       void loadState();
     },

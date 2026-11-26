@@ -10,7 +10,7 @@ const MINUTE_MS = 60000;
 export function useMinutesLeft(endsAt: number | null): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    if (endsAt === null || endsAt === 0) return;
+    if (endsAt === null || endsAt === 0) return undefined;
     const tick = () => setNow(Date.now());
     tick();
     const id = setInterval(tick, TICK_MS);

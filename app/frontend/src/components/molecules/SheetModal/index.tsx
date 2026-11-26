@@ -4,20 +4,21 @@
 import { useEffect, useRef, type ReactNode, type ReactElement } from 'react';
 import { Dialog, Modal, ModalOverlay } from 'react-aria-components';
 import { useEscape } from '../../../hooks/useEscape';
+import { settleExit } from './motion';
 import { swipeToClose } from './swipe';
 
 export type SheetVariant = 'sheet' | 'full' | 'page' | 'drawer' | 'dialog';
 
 interface Props {
-  open: boolean;
-  onClose: () => void;
+  readonly open: boolean;
+  readonly onClose: () => void;
   // The dialog's accessible name.
-  label: string;
-  variant?: SheetVariant;
+  readonly label: string;
+  readonly variant?: SheetVariant;
   // Extra classes on the sheet itself (a background, a layout).
-  className?: string;
+  readonly className?: string;
   // The content, or a function of the sheet's own close.
-  children: ReactNode | ((close: () => void) => ReactNode);
+  readonly children: ReactNode | ((close: () => void) => ReactNode);
 }
 
 // A layer over the page: a sheet from the bottom, a full-height one, the drawer from the
@@ -51,7 +52,11 @@ export function SheetModal({
       isDismissable
       isKeyboardDismissDisabled
       isOpen={open}
-      onOpenChange={(v) => !v && onClose()}
+      // A layer closed while it was still coming in leaves from where it was.
+      onExit={settleExit}
+      onOpenChange={(v) => {
+        if (!v) onClose();
+      }}
     >
       <Modal className={`${cls[variant]}${className ? ` ${className}` : ''}`}>
         <Dialog className="dlg" aria-label={label}>
@@ -82,9 +87,9 @@ function SwipeClose({
   onClose,
   children,
 }: {
-  drawer: boolean;
-  onClose: () => void;
-  children: ReactNode;
+  readonly drawer: boolean;
+  readonly onClose: () => void;
+  readonly children: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const close = useRef(onClose);
@@ -93,7 +98,7 @@ function SwipeClose({
   });
   useEffect(() => {
     const el = ref.current;
-    if (!el) return;
+    if (!el) return undefined;
     return swipeToClose(el, drawer, () => close.current());
   }, [drawer]);
   return (

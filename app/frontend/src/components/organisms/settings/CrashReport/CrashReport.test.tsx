@@ -105,7 +105,7 @@ describe('CrashReportSwitch', () => {
     const { getByRole, rerender, findByRole } = renderWithI18n(
       <CrashReportSwitch speaker="kitchen" on={false} onChange={onChange} />
     );
-    const row = getByRole('switch', { name: /Offer crash reports/ });
+    const row = getByRole('switch', { name: /Offer crash reports/u });
     expect(row.getAttribute('aria-checked')).toBe('false');
     fireEvent.click(row);
     await waitFor(() => expect(onChange).toHaveBeenCalledWith(true));
@@ -113,8 +113,8 @@ describe('CrashReportSwitch', () => {
 
     vi.mocked(api.saveSettings).mockRejectedValue(new Error('offline'));
     rerender(<CrashReportSwitch speaker="kitchen" on onChange={onChange} />);
-    fireEvent.click(getByRole('switch', { name: /Offer crash reports/ }));
-    expect((await findByRole('alert')).textContent).toBe('Crash reports could not be switched');
+    fireEvent.click(getByRole('switch', { name: /Offer crash reports/u }));
+    expect((await findByRole('alert')).textContent).toBe('Crash reports couldn’t be switched');
     expect(onChange).toHaveBeenCalledTimes(1);
   });
 });

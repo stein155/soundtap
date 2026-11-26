@@ -26,12 +26,21 @@ describe('usePlayback Spotify pause', () => {
 
   it('shows paused at once, ignores a second tap, and undoes it on failure', async () => {
     let fail: (e: Error) => void = vi.fn();
-    vi.mocked(api.setPaused).mockImplementationOnce(async () => new Promise((_, r) => (fail = r)));
+    vi.mocked(api.setPaused).mockImplementationOnce(
+      async () =>
+        new Promise((_, r) => {
+          fail = r;
+        })
+    );
     const patch = vi.fn();
     const { result } = renderHook(() => usePlayback(selected(patch), () => vi.fn()));
 
-    act(() => void result.current.transport());
-    act(() => void result.current.transport());
+    act(() => {
+      void result.current.transport();
+    });
+    act(() => {
+      void result.current.transport();
+    });
     expect(api.setPaused).toHaveBeenCalledTimes(1);
     expect(patch).toHaveBeenCalledWith('kitchen', {
       now: { ...now, playStatus: 'PAUSE_STATE' },

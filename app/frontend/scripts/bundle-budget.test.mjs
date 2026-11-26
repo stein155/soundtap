@@ -51,6 +51,6 @@ describe('bundle budget', () => {
   });
 
   it('refuses an index.html that names a script the build does not have', () => {
-    expect(() => measure(build({ 'index-a.js': 10 }))).toThrow(/not in/);
+    expect(() => measure(build({ 'index-a.js': 10 }))).toThrow(/not in/u);
   });
 });

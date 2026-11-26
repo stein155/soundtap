@@ -91,7 +91,7 @@ export function useTuneInBrowser(active: boolean, lang: string, opened = active)
   const levelKey = `${lang}|${path}`;
   const known = levels[levelKey];
   useEffect(() => {
-    if (!active || known) return;
+    if (!active || known) return undefined;
     let current = true;
     void browseTuneIn(path || undefined, tuneInLocale(lang)).then((result) => {
       if (!current) return;
@@ -105,7 +105,7 @@ export function useTuneInBrowser(active: boolean, lang: string, opened = active)
 
   const q = query.trim();
   useEffect(() => {
-    if (!q) return;
+    if (!q) return undefined;
     let current = true;
     const id = setTimeout(async () => {
       const stations = await searchTuneIn(q);

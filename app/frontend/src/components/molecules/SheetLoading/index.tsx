@@ -3,7 +3,6 @@
 
 import styled, { keyframes } from 'styled-components';
 import { Spinner } from '../../atoms/Spinner';
-import { reducedMotion } from '../../../theme/keyframes';
 import { useI18n } from '../../../lib/i18n';
 import type { ReactElement } from 'react';
 
@@ -20,10 +19,10 @@ const appear = keyframes`
 `;
 
 // A fast answer never shows the ring: it waits 250 ms, then fades in as Stockholm's loader.
+// Less motion asked for keeps the wait and drops the fade (theme/GlobalStyle.ts).
 const Late = styled.span`
   display: inline-block;
-  animation: ${appear} 0.3s var(--ease) 250ms backwards;
-  ${reducedMotion}
+  animation: ${appear} var(--dur-base) var(--ease) 250ms backwards;
 `;
 
 const centred = { padding: '60px 20px', textAlign: 'center' } as const;

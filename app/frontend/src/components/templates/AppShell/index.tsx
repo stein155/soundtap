@@ -14,11 +14,11 @@ export function AppShell({
   page,
   children,
 }: {
-  header?: ReactNode;
-  footer?: ReactNode;
-  overlays?: ReactNode;
-  page?: ReactNode;
-  children?: ReactNode;
+  readonly header?: ReactNode;
+  readonly footer?: ReactNode;
+  readonly overlays?: ReactNode;
+  readonly page?: ReactNode;
+  readonly children?: ReactNode;
 }): ReactElement {
   const docked = Boolean(footer);
   const hasPage = Boolean(page);

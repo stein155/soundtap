@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
 import styled from 'styled-components';
-import { useEffect, useState, type ReactElement } from 'react';
+import { useEffect, useEffectEvent, useState, type ReactElement } from 'react';
 import { Hint } from '../../../atoms/Hint';
 import { Accordion, useAccordionGroup } from '../../../molecules/Accordion';
 import { ChoiceList } from '../../../molecules/ChoiceList';
@@ -21,14 +21,14 @@ import { ModelArt } from '../../../molecules/ModelArt';
 // The model as it fits on one line next to the speaker's name: "SoundTouch 10",
 // "Wireless Link".
 const shortModel = (model?: string) =>
-  (model || '').replace(/^SoundTouch Wireless Link( Adapter)?$/, 'Wireless Link');
+  (model || '').replace(/^SoundTouch Wireless Link(?: Adapter)?$/u, 'Wireless Link');
 
 type OverviewSection = 'language' | 'about';
 
 interface Props {
-  rooms: Room[];
-  onSpeaker: (id: string) => void;
-  onIntegrations: () => void;
+  readonly rooms: Room[];
+  readonly onSpeaker: (id: string) => void;
+  readonly onIntegrations: () => void;
 }
 
 // The first level of settings, as Stockholm's: every speaker, then the household's
@@ -79,9 +79,9 @@ export function SettingsOverview({ rooms, onSpeaker, onIntegrations }: Props): R
   );
 }
 
-// A speaker's row: its drawing, its name, and under it the model ("this speaker" for the one
-// serving the page) or that it is offline; an Update badge when a newer release is out.
-function SpeakerRow({ room, onOpen }: { room: Room; onOpen: () => void }) {
+// A speaker's row: its drawing, its name, and under it the model or that it is offline; an
+// Update badge when a newer release is out.
+function SpeakerRow({ room, onOpen }: { readonly room: Room; readonly onOpen: () => void }) {
   const { t } = useI18n();
   const speaker = speakerArg(room);
   const [version, setVersion] = useState<VersionInfo | null>(null);
@@ -124,21 +124,28 @@ const AboutText = styled.div`
 
 // Every speaker as Stockholm's About lists them, each under its name: model, IP address and
 // the software it runs; then the licence, and that SoundTap is not Bose's.
-function About({ rooms }: { rooms: Room[] }) {
+function About({ rooms }: { readonly rooms: Room[] }) {
   const { t } = useI18n();
   const [versions, setVersions] = useState<Record<string, string>>({});
-  useEffect(() => {
-    // A ref-like flag, not a reassigned let: the callbacks made in the loop read it.
-    const run = { live: true };
-    for (const room of rooms.filter((r) => r.online)) {
-      void getVersion(speakerArg(room)).then(
-        (v) => run.live && setVersions((all) => ({ ...all, [room.id]: versionLabel(v) }))
+  // Read again when the online set changes, not on every render: the page hands over a new
+  // rooms array each time, and each one used to ask every speaker again and drop the answers
+  // still on their way.
+  const online = rooms.filter((r) => r.online).map((r) => [r.id, speakerArg(r)] as const);
+  const key = JSON.stringify(online);
+  const readVersions = useEffectEvent((live: () => boolean) => {
+    for (const [id, speaker] of online) {
+      void getVersion(speaker).then(
+        (v) => live() && setVersions((all) => ({ ...all, [id]: versionLabel(v) }))
       );
     }
+  });
+  useEffect(() => {
+    let live = true;
+    readVersions(() => live);
     return () => {
-      run.live = false;
+      live = false;
     };
-  }, [rooms]);
+  }, [key]);
   return (
     <>
       {rooms.map((room) => (
@@ -165,14 +172,17 @@ function About({ rooms }: { rooms: Room[] }) {
 }
 
 // What is switched on, in one line: "Spotify · AirPlay · MQTT".
-const integrationsSummary = (prefs: ReturnType<typeof useHouseholdPrefs>, off: string) =>
-  [
-    prefs.integrations?.spotify === true && 'Spotify',
-    prefs.integrations?.airplay === true && 'AirPlay',
-    prefs.mqttHost && 'MQTT',
-  ]
-    .filter(Boolean)
-    .join(' · ') || off;
+function integrationsSummary(prefs: ReturnType<typeof useHouseholdPrefs>, off: string) {
+  return (
+    [
+      prefs.integrations?.spotify === true && 'Spotify',
+      prefs.integrations?.airplay === true && 'AirPlay',
+      prefs.mqttHost && 'MQTT',
+    ]
+      .filter(Boolean)
+      .join(' · ') || off
+  );
+}
 
 // What SoundTap connects to outside the speakers: the receivers phones and apps play to
 // (music services), and the smart-home systems that see and steer the speakers. Every
@@ -183,8 +193,8 @@ export function Integrations({
   rooms,
   onOpen,
 }: {
-  rooms: Room[];
-  onOpen: (page: Receiver | 'mqtt') => void;
+  readonly rooms: Room[];
+  readonly onOpen: (page: Receiver | 'mqtt') => void;
 }): ReactElement {
   const { t } = useI18n();
   const { integrations, mqttHost } = useHouseholdPrefs(rooms);
@@ -225,8 +235,8 @@ export function Integration({
   rooms,
   which,
 }: {
-  rooms: Room[];
-  which: Receiver;
+  readonly rooms: Room[];
+  readonly which: Receiver;
 }): ReactElement | null {
   const { t } = useI18n();
   const prefs = useHouseholdPrefs(rooms);
@@ -243,7 +253,9 @@ export function Integration({
       <SetSwitch
         label={{ spotify: 'Spotify Connect', airplay: 'AirPlay', applehome: 'Apple Home' }[which]}
         on={integrations[key]}
-        onToggle={() => void prefs.saveIntegrations({ ...integrations, [key]: !integrations[key] })}
+        onToggle={() => {
+          void prefs.saveIntegrations({ ...integrations, [key]: !integrations[key] });
+        }}
       />
     </SetMenu>
   );

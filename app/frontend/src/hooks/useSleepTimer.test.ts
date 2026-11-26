@@ -28,7 +28,11 @@ describe('useSleepTimer', () => {
     let answer: (s: api.SleepState) => void = vi.fn();
     vi.mocked(api.getSleep)
       .mockReset()
-      .mockReturnValueOnce(new Promise((r) => (answer = r)));
+      .mockReturnValueOnce(
+        new Promise((r) => {
+          answer = r;
+        })
+      );
     const endsAt = new Date(Date.now() + 30 * 60000).toISOString();
     vi.mocked(api.setSleep).mockResolvedValue({ minutes: 30, endsAt });
     const { result } = renderHook(() => useSleepTimer('Kitchen', true));

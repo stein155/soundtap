@@ -22,14 +22,14 @@ import { useUpdateConfirm } from './UpdateConfirm';
 
 // A tick only once the speaker is up to date: not before a check, nor after one failed; a
 // spinner while it works.
-const StatusIcon = ({ phase }: { phase: UpdatePhase }) => {
+function StatusIcon({ phase }: { readonly phase: UpdatePhase }) {
   if (phase === 'busy') return <Spinner />;
   return phase === 'done' || phase === 'updated' ? (
     <Icon.check width="16" height="16" aria-hidden="true" />
   ) : (
     <Icon.info width="16" height="16" aria-hidden="true" />
   );
-};
+}
 
 // soundtapd replacing itself with the latest stable release. A newer one shows in the card
 // drawn for a new version, with its notes; otherwise the card is the version the speaker
@@ -41,14 +41,16 @@ function SelfUpdate({
   model,
   version,
 }: {
-  speaker: string;
-  name: string;
-  model: string;
-  version: VersionInfo;
+  readonly speaker: string;
+  readonly name: string;
+  readonly model: string;
+  readonly version: VersionInfo;
 }) {
   const { t } = useI18n();
   const update = useSelfUpdate(speaker, version);
-  const confirm = useUpdateConfirm(() => void update.install());
+  const confirm = useUpdateConfirm(() => {
+    void update.install();
+  });
   const offer = update.newer ? update.target : null;
   const now = shortVersionLabel(version);
   const status = (
@@ -62,7 +64,7 @@ function SelfUpdate({
       <VersionCard
         offer={!!offer}
         kicker={offer ? t('updatesNewVersion') : t('upFirmware')}
-        title={offer ? `SoundTap app ${offer.tag.replace(/^app-v/, '')}` : versionLabel(version)}
+        title={offer ? `SoundTap app ${offer.tag.replace(/^app-v/u, '')}` : versionLabel(version)}
         meta={offer ? `${t('updatesNow', { version: now })} · ${t('updatesSigned')}` : status}
         notes={offer?.notes}
       >
@@ -71,7 +73,13 @@ function SelfUpdate({
           variant={offer ? 'stockholm' : 'ghost'}
           wide
           disabled={update.phase === 'busy'}
-          onClick={offer ? confirm.ask : () => void update.install()}
+          onClick={
+            offer
+              ? confirm.ask
+              : () => {
+                  void update.install();
+                }
+          }
         >
           {offer ? t('updateInstall') : t('updateNow')}
         </Button>
@@ -113,7 +121,7 @@ function ArchiveNote() {
 // choice, signed or your own unsigned build, or Bose's own update file to go back (the same
 // upload, which knows Bose's file). Every upload asks for one press on the speaker, signed
 // or not (ADR 0048). The installer sends owners here for the way back.
-function OtherWays({ speaker }: { speaker: string }) {
+function OtherWays({ speaker }: { readonly speaker: string }) {
   const { t } = useI18n();
   const page = useAccordionGroup<'upload' | 'bose'>();
   return (
@@ -152,11 +160,11 @@ export function UpdateSettings({
   model,
   version,
 }: {
-  speaker: string;
+  readonly speaker: string;
   // The speaker's name, over the page that follows an update.
-  name: string;
-  model: string;
-  version: VersionInfo | null;
+  readonly name: string;
+  readonly model: string;
+  readonly version: VersionInfo | null;
 }): ReactElement {
   const { t } = useI18n();
   const firmware = version?.updateMode === 'firmware';
@@ -180,13 +188,7 @@ export function UpdateSettings({
       {!core && !(firmware && version.updatable) && (
         <VersionCard kicker={t('upFirmware')} title={versionLabel(version) || '—'} />
       )}
-      {firmware ? (
-        <>
-          <OtherWays speaker={speaker} />
-        </>
-      ) : (
-        <Hint>{t('updatesOnSpeaker')}</Hint>
-      )}
+      {firmware ? <OtherWays speaker={speaker} /> : <Hint>{t('updatesOnSpeaker')}</Hint>}
     </>
   );
 }

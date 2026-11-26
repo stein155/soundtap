@@ -10,15 +10,13 @@ import { useOptimisticPlay } from './speaker/play';
 import { useSpeakerReads } from './speaker/reads';
 import { useSpeakerVolume } from './speaker/volume';
 
-// Live state for one speaker -- the selected room -- through its /api/* endpoints.
+// Live state for one speaker, the selected room, through its /api/* endpoints.
 //
-// Playback runs through a small state machine so the UI never flickers while a
-// station is starting. After a tap the box passes through STANDBY/INVALID then
-// BUFFERING_STATE before it reaches PLAY_STATE, and during a switch it may even
-// report the *previous* station as PLAY_STATE for a moment. To keep the picked
-// station on screen we hold a "pending" target until the box actually plays it
-// (or the pending window expires). Components consume a derived { status, station }
-// instead of the raw playStatus, so "starten / bufferen / live" render cleanly.
+// After a tap the speaker passes through STANDBY or INVALID and BUFFERING_STATE before
+// PLAY_STATE, and during a switch it may report the previous station as playing for a
+// moment. The station picked stays on screen as a "pending" target until the speaker plays
+// it or the pending window runs out. Components read a derived { status, station }, not the
+// raw playStatus, so starting, buffering and live each show once, in that order.
 //
 // The pieces live in speaker/: play.ts (the pending target and now-playing), volume.ts,
 // reads.ts (the reads and their staleness guards) and feed.ts (SSE push + poll);
@@ -70,7 +68,7 @@ export function useSpeaker(speaker = ''): SpeakerLive {
   // Volume failed: the slider goes back to what the speaker says at once.
   const { volumeFailures, releaseHold } = vol;
   useEffect(() => {
-    if (!volumeFailures) return;
+    if (volumeFailures === 0) return;
     releaseHold();
     void refresh();
   }, [volumeFailures, releaseHold, refresh]);

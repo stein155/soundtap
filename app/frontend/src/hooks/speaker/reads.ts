@@ -40,7 +40,8 @@ export function useSpeakerReads(
   }, [speaker]);
   const refresh = useCallback(async () => {
     if (speakerRef.current !== speaker) return true; // not a miss: just not ours any more
-    const seq = ++refreshSeqRef.current;
+    refreshSeqRef.current += 1;
+    const seq = refreshSeqRef.current;
     const [np, vol] = await Promise.all([getNowPlaying(speaker), getVolume(speaker)]);
     // A newer refresh in flight, or a room switch since: the answer belongs elsewhere.
     if (seq === refreshSeqRef.current && speakerRef.current === speaker) applyState(np, vol);
@@ -49,7 +50,7 @@ export function useSpeakerReads(
   // An SSE push is the freshest truth: bump the refresh sequence to discard any slower
   // in-flight poll response before folding it in.
   const discardInFlight = useCallback(() => {
-    refreshSeqRef.current++;
+    refreshSeqRef.current += 1;
   }, []);
 
   // A failed read keeps the slots on screen and says so, so the caller can retry. The

@@ -21,12 +21,12 @@ export function VersionCard({
   notes,
   children,
 }: {
-  offer?: boolean;
-  kicker: string;
-  title: string;
-  meta?: ReactNode;
-  notes?: string | undefined;
-  children?: ReactNode;
+  readonly offer?: boolean;
+  readonly kicker: string;
+  readonly title: string;
+  readonly meta?: ReactNode;
+  readonly notes?: string | undefined;
+  readonly children?: ReactNode;
 }): ReactElement {
   const { t } = useI18n();
   const [showNotes, setShowNotes] = useState(false);

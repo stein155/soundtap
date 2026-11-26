@@ -17,7 +17,7 @@ function shownStatus(reported: NowPlaying | null, player: Player): string {
 // The selected room's now-playing as the room cards read it, built from the live
 // speaker state: the optimistic station while one is starting, then the speaker's own.
 function liveNowPlaying(raw: NowPlaying | null, player: Player): NowPlaying {
-  const station = player.station;
+  const { station } = player;
   const reported = raw && !raw.standby ? raw : null;
   if (station) {
     return {

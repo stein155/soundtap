@@ -29,7 +29,10 @@ describe('useTuneInBrowser', () => {
     let answer: (stations: Station[]) => void = vi.fn();
     search.mockResolvedValueOnce([station('Jazz FM')]);
     search.mockImplementationOnce(
-      async () => new Promise<Station[]>((resolve) => (answer = resolve))
+      async () =>
+        new Promise<Station[]>((resolve) => {
+          answer = resolve;
+        })
     );
     const { result } = renderHook(() => useTuneInBrowser(true, 'en'));
 

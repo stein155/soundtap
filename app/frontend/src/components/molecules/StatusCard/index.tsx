@@ -12,9 +12,9 @@ export function StatusCard({
   busy = false,
   children,
 }: {
-  icon?: ReactNode;
-  busy?: boolean;
-  children?: ReactNode;
+  readonly icon?: ReactNode;
+  readonly busy?: boolean;
+  readonly children?: ReactNode;
 }): ReactElement {
   return (
     <Card aria-busy={busy || undefined}>

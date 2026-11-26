@@ -65,6 +65,7 @@ describe('useSleepTimer past its end', () => {
     vi.mocked(api.getSleep).mockClear();
     // In steps: React applies a miss, and arms the next read, when each act ends.
     for (let step = 0; step < 20; step += 1)
+      // eslint-disable-next-line no-await-in-loop -- each step lands before the next is taken
       await act(async () => vi.advanceTimersByTimeAsync(500));
     expect(vi.mocked(api.getSleep).mock.calls.length).toBeLessThanOrEqual(2);
     vi.useRealTimers();

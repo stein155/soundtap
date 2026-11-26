@@ -25,51 +25,27 @@ export const navigationIcons = {
   // Opens in another app or tab.
   external: {
     svg: { ...capped('2'), strokeLinejoin: 'round' },
-    body: (
-      <>
-        <path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />
-      </>
-    ),
+    body: <path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />,
   },
   plus: {
     svg: capped(),
-    body: (
-      <>
-        <path d="M12 5v14M5 12h14" />
-      </>
-    ),
+    body: <path d="M12 5v14M5 12h14" />,
   },
   close: {
     svg: capped(),
-    body: (
-      <>
-        <path d="M6 6l12 12M18 6 6 18" />
-      </>
-    ),
+    body: <path d="M6 6l12 12M18 6 6 18" />,
   },
   back: {
     svg: line(),
-    body: (
-      <>
-        <path d="m14 6-6 6 6 6" />
-      </>
-    ),
+    body: <path d="m14 6-6 6 6 6" />,
   },
   chevron: {
     svg: line('1.7'),
-    body: (
-      <>
-        <path d="m9 6 6 6-6 6" />
-      </>
-    ),
+    body: <path d="m9 6 6 6-6 6" />,
   },
   check: {
     svg: line('2'),
-    body: (
-      <>
-        <path d="m5 12 5 5L20 7" />
-      </>
-    ),
+    body: <path d="m5 12 5 5L20 7" />,
   },
   eye: {
     svg: line(),
@@ -92,11 +68,7 @@ export const navigationIcons = {
   },
   menu: {
     svg: { viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: '2' },
-    body: (
-      <>
-        <path d="M2 5h20M2 12h20M2 19h20" />
-      </>
-    ),
+    body: <path d="M2 5h20M2 12h20M2 19h20" />,
   },
   // Six buttons, as on the top of the speakers.
   presets: {
@@ -110,18 +82,10 @@ export const navigationIcons = {
   },
   chevronDown: {
     svg: line('2'),
-    body: (
-      <>
-        <path d="m6 9 6 6 6-6" />
-      </>
-    ),
+    body: <path d="m6 9 6 6 6-6" />,
   },
   chevronUp: {
     svg: line('2'),
-    body: (
-      <>
-        <path d="m6 15 6-6 6 6" />
-      </>
-    ),
+    body: <path d="m6 15 6-6 6 6" />,
   },
 } satisfies Record<string, IconSpec>;

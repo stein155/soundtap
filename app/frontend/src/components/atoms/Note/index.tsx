@@ -5,6 +5,6 @@ import type { ReactNode, ReactElement } from 'react';
 import { Paragraph } from './styled';
 
 // Running text above a group of controls, explaining what they do.
-export function Note({ children }: { children: ReactNode }): ReactElement {
+export function Note({ children }: { readonly children: ReactNode }): ReactElement {
   return <Paragraph>{children}</Paragraph>;
 }

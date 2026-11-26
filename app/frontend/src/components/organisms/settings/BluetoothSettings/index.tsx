@@ -10,6 +10,7 @@ import { TextButton } from '../../../atoms/TextButton';
 import { SetMenu } from '../../../molecules/SetMenu';
 import { useI18n } from '../../../../lib/i18n';
 import { forgetBluetoothDevice, pairBluetooth, type BluetoothStatus } from '../../../../lib/api';
+import { usePageVisible } from '../../../../hooks/usePageVisible';
 import { useSpeakerResource } from '../../../../hooks/speaker/resource';
 import { discardResource, refreshResource } from '../../../../hooks/speaker/store';
 import { Connected, Findable, Footer, Forget, Glyph, Name, Row, Value } from './styled';
@@ -24,13 +25,13 @@ function PairedDevices({
   devices,
   onForget,
 }: {
-  devices: Device[];
-  onForget: (device: Device) => void;
+  readonly devices: Device[];
+  readonly onForget: (device: Device) => void;
 }) {
   const { t } = useI18n();
   return (
     <SetMenu title={t('bluetoothDevices')}>
-      {devices.length ? (
+      {devices.length > 0 ? (
         devices.map((d) => {
           const name = d.name || d.address;
           return (
@@ -63,13 +64,29 @@ function PairedDevices({
   );
 }
 
+// The name phones see.
+function SpeakerAlias({ alias }: { readonly alias: string }): ReactElement {
+  const { t } = useI18n();
+  return (
+    <SetMenu>
+      <Row>
+        <Glyph aria-hidden="true">
+          <Icon.bluetooth width="20" height="20" />
+        </Glyph>
+        <Name>{t('bluetoothName')}</Name>
+        <Value>{alias}</Value>
+      </Row>
+    </SetMenu>
+  );
+}
+
 // What the speaker's own radio knows: the name phones see and who has paired.
 export function BluetoothSettings({
   speaker,
   initial,
 }: {
-  speaker: string;
-  initial: BluetoothStatus;
+  readonly speaker: string;
+  readonly initial: BluetoothStatus;
 }): ReactElement {
   const { t } = useI18n();
   // The page's one copy of the speaker's Bluetooth (hooks/speaker/store.ts): the row's
@@ -79,10 +96,13 @@ export function BluetoothSettings({
   const refresh = useCallback(async () => {
     await refreshResource('bluetooth', speaker);
   }, [speaker]);
+  // A hidden page does not poll the speaker.
+  const visible = usePageVisible();
   useEffect(() => {
+    if (!visible) return undefined;
     const id = window.setInterval(refresh, POLL_MS);
     return () => window.clearInterval(id);
-  }, [refresh]);
+  }, [refresh, visible]);
 
   const forget = async (device: Device) => {
     setResult('');
@@ -109,18 +129,13 @@ export function BluetoothSettings({
   return (
     <>
       <Note>{t('bluetoothHint')}</Note>
-      {status.alias && (
-        <SetMenu>
-          <Row>
-            <Glyph aria-hidden="true">
-              <Icon.bluetooth width="20" height="20" />
-            </Glyph>
-            <Name>{t('bluetoothName')}</Name>
-            <Value>{status.alias}</Value>
-          </Row>
-        </SetMenu>
-      )}
-      <PairedDevices devices={status.devices ?? []} onForget={(d) => void forget(d)} />
+      {status.alias && <SpeakerAlias alias={status.alias} />}
+      <PairedDevices
+        devices={status.devices ?? []}
+        onForget={(d) => {
+          void forget(d);
+        }}
+      />
       {result && (
         <Hint error role="status">
           {result}
@@ -132,7 +147,14 @@ export function BluetoothSettings({
             {t('bluetoothFindableHint', { name: status.alias || t('speaker') })}
           </Findable>
         )}
-        <Button wide variant="stockholm" disabled={status.discoverable} onClick={pair}>
+        <Button
+          wide
+          variant="stockholm"
+          disabled={status.discoverable}
+          onClick={() => {
+            void pair();
+          }}
+        >
           {status.discoverable ? t('bluetoothFindable') : t('bluetoothPair')}
         </Button>
       </Footer>

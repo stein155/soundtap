@@ -13,9 +13,9 @@ export function DeveloperSettings({
   crashReports,
   onCrashReports,
 }: {
-  speaker: string;
-  crashReports: boolean;
-  onCrashReports: (on: boolean) => void;
+  readonly speaker: string;
+  readonly crashReports: boolean;
+  readonly onCrashReports: (on: boolean) => void;
 }): ReactElement {
   return (
     <Stack gap={8}>
