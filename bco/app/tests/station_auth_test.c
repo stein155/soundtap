@@ -36,7 +36,7 @@ int main(void)
     const char *ss = "HomeNet";
     unsigned sl = 7;
     memset(ab, 0xa5, sizeof ab);
-    int blen = wstation_assoc(ab, sizeof ab, own, ap, rates, ss, sl);
+    int blen = wstation_assoc(ab, sizeof ab, own, ap, rates, ss, sl, 0);
     assert(blen == (int)(4 + (2 + sl) + 10 + 6 + 22));
     const uint8_t *d = ab + 8, *p = d + 0xc4;
     assert(d[0x18] == 0x00);                        /* FC: assoc request */
@@ -47,14 +47,22 @@ int main(void)
     assert(p[6 + sl + 10] == 50 && p[7 + sl + 10] == 4);         /* ext rates IE */
     assert(p[6 + sl + 16] == 0x30 && p[7 + sl + 16] == 0x14);    /* RSN IE */
     assert(!memcmp(ab + 0x94, ab + 8, 0x38));                    /* header save */
+    /* capability: the AP's Short Preamble (bit 5) and Short Slot Time (bit 10) are mirrored, its
+     * other bits (IBSS, CF, spectrum management, ...) never */
+    assert(wstation_assoc(ab, sizeof ab, own, ap, rates, ss, sl, 0x0431) == blen);
+    assert(p[0] == 0x31 && p[1] == 0x04);
+    assert(wstation_assoc(ab, sizeof ab, own, ap, rates, ss, sl, 0x0401) == blen);
+    assert(p[0] == 0x11 && p[1] == 0x04);
+    assert(wstation_assoc(ab, sizeof ab, own, ap, rates, ss, sl, 0xfbdf) == blen);
+    assert(p[0] == 0x11 && p[1] == 0x00);
     /* every legal SSID length fits, 21..32 bytes included */
     const char *ss32 = "0123456789abcdefghijklmnopqrstuv";
-    assert(wstation_assoc(ab, sizeof ab, own, ap, rates, ss32, 20) == 4 + 22 + 10 + 6 + 22);
-    assert(wstation_assoc(ab, sizeof ab, own, ap, rates, ss32, 21) == 4 + 23 + 10 + 6 + 22);
-    assert(wstation_assoc(ab, sizeof ab, own, ap, rates, ss32, 32) == 76);
-    assert(!wstation_assoc(ab, sizeof ab, own, ap, rates, ss, 33));   /* ssid too long */
-    assert(!wstation_assoc(ab, 8 + 0xc4 + 10, own, ap, rates, ss, sl)); /* buffer too small */
-    assert(!wstation_assoc(ab, sizeof ab, own, own, rates, ss, sl));  /* own == bssid */
+    assert(wstation_assoc(ab, sizeof ab, own, ap, rates, ss32, 20, 0) == 4 + 22 + 10 + 6 + 22);
+    assert(wstation_assoc(ab, sizeof ab, own, ap, rates, ss32, 21, 0) == 4 + 23 + 10 + 6 + 22);
+    assert(wstation_assoc(ab, sizeof ab, own, ap, rates, ss32, 32, 0) == 76);
+    assert(!wstation_assoc(ab, sizeof ab, own, ap, rates, ss, 33, 0));   /* ssid too long */
+    assert(!wstation_assoc(ab, 8 + 0xc4 + 10, own, ap, rates, ss, sl, 0)); /* buffer too small */
+    assert(!wstation_assoc(ab, sizeof ab, own, own, rates, ss, sl, 0));  /* own == bssid */
 
     /* data frames: stock encapsulation layout */
     uint8_t db[8 + 0xc4 + 64];

@@ -35,7 +35,8 @@ int wifi_join(const unsigned char *ssid, unsigned ssid_len, const unsigned char 
     return 0;
 }
 void wifi_leave(void) { fake_leaves++, fake_state = WIFI_IDLE, fake_ssid_len = 0; }
-int wifi_reset_core(void) { fake_state = WIFI_IDLE; return 0; }
+unsigned fake_resets;
+int wifi_reset_core(void) { fake_resets++, fake_state = WIFI_IDLE; return 0; }
 int wifi_current(struct wifi_bss *o)
 {
     memset(o, 0, sizeof *o);

@@ -118,8 +118,9 @@ _Static_assert(TXFOFF + NTXFBUF * TXFBUF <= 0x7220u, "TX buffers run into the co
 static unsigned rxfree[NRXBUF], nfree, rxfbase;
 static unsigned txfbuf[NTXFBUF], txnfree, txfbase, txbusy[NTXFBUF], txready;
 unsigned wifi_rx_frames, wifi_tx_frames, wifi_tx_drop, wifi_rx_drop, wifi_tx_ok, wifi_tx_failed;
-#ifdef WILD_OWN
-/* RX diagnostics, for when the hardware finds fewer networks than the emulator: these count,
+#ifdef BCO_DEBUG_TRACE
+/* RX diagnostics (the trace build only, build-app.sh link-own-trace: every line goes out on the UART,
+ * which busy-waits per character and starves USB and the RX rings meanwhile), for when the hardware finds fewer networks than the emulator: these count,
  * per scan, how far frames get: records pulled off the
  * supply ring, frames inside the pool window, and beacons/probe-responses matched. rx_cmds
  * counts the core's own scan events. scan_step prints one line when a scan finishes. */
@@ -358,7 +359,7 @@ static int send_assoc(void)
     if (!a)
         return 0;
     body = wstation_assoc((volatile uint8_t *)a, TXFBUF, own, cur.bssid, rates,
-                          (const char *)cur.ssid, cur.ssidlen);
+                          (const char *)cur.ssid, cur.ssidlen, cur.caps);
     if (body <= 0)
         return 0;
     tx_push(a, (unsigned)body, PEER_NONE, 0xffff);
@@ -646,7 +647,7 @@ static void rx_frames(void)
     while (wr_avail(&sup, 3)) {
         const volatile unsigned *e = wr_reserve(&sup, 3, 1);
         unsigned buf = e[0], len = e[2] >> 16;
-#ifdef WILD_OWN
+#ifdef BCO_DEBUG_TRACE
         dg_sup3++;
 #endif
         if (len > RXBUF)
@@ -656,7 +657,7 @@ static void rx_frames(void)
             unsigned fc = le16(b + 0xac);
             /* Supply length excludes the eight-byte pool header (stock subtracts 0xc4). */
             unsigned n = len < RXBUF - 8 ? len + 8 : RXBUF;
-#ifdef WILD_OWN
+#ifdef BCO_DEBUG_TRACE
             dg_frame++;
             {   /* any delivered frame from the test AP, BEFORE the fc/0x94 filter: splits
                  * never-delivered (PHY/core, dg_bokraw==0) from delivered-but-filtered.
@@ -671,7 +672,7 @@ static void rx_frames(void)
                 /* beacon / probe response: the scan table, and the AP's heartbeat. Match the
                  * subtype only (mask the flag byte): a Retry-flagged probe response (fc 0x0850)
                  * passes the core subtype filter (REG(0x630)&0xfc) and must pass here too. */
-#ifdef WILD_OWN
+#ifdef BCO_DEBUG_TRACE
                 dg_bcn++;
                 if ((fc & 0xfc) == 0x50)
                     dg_presp++;
@@ -689,7 +690,7 @@ static void rx_frames(void)
             } else if (state == WIFI_AP) {
                 rx_ap(b, n);
             } else {
-#ifdef WILD_OWN
+#ifdef BCO_DEBUG_TRACE
                 dg_nonbcn++;
                 if (!dg_nbmark)
                     dg_nbmark = fc << 16 | b[0x94] << 8 | b[0x97];
@@ -704,7 +705,7 @@ static void rx_frames(void)
             }
             rxfree[nfree++] = buf;
         }
-#ifdef WILD_OWN
+#ifdef BCO_DEBUG_TRACE
         else
             dg_rxleak++;   /* completion whose buffer didn't match the pool: lost from rxfree */
 #endif
@@ -732,7 +733,7 @@ static void rx_cmds(void)
             words--;
             if (type == 0xbd && len == 8)
                 corebd++;
-#ifdef WILD_OWN
+#ifdef BCO_DEBUG_TRACE
             if (type == 0xc3 || type == 0xc4) {
                 dg_evt++; /* the core's own scan progress / done events */
                 if (words >= 7) {                   /* payload = {rxfiq, rxkeep, chan, vco, rxfcs, rxdwell} THIS channel */
@@ -757,7 +758,7 @@ static void rx_cmds(void)
 
 /* ---- scan ---- */
 
-/* passes per scan. On hardware the pure-listen (passive) pass receives nothing: the core's RX/AGC
+/* passes per scan (the last one directed at the profile's SSID, if any). On hardware the pure-listen (passive) pass receives nothing: the core's RX/AGC
  * only wakes once a frame has been transmitted, so every captured frame comes from an active pass
  * (probe-req TX, then listen). All passes are therefore active: each is a fresh probe on the
  * channel, which both keeps RX alive and gives a weak AP (the test AP, -56 dBm next to a -33 dBm
@@ -774,7 +775,7 @@ static void scan_step(void)
     if (scan_pass == SCAN_PASSES) { /* 0xe4 was sent a dwell ago: done */
         state = WIFI_IDLE;
         scan_chan = 0;
-#ifdef WILD_OWN
+#ifdef BCO_DEBUG_TRACE
         hex("scan sup3 ", dg_sup3);
         hex("scan frame ", dg_frame);
         hex("scan bcn ", dg_bcn);
@@ -817,6 +818,13 @@ static void scan_step(void)
         unsigned char *pr = (unsigned char *)w;
         for (unsigned j = 0; j < 64; j++)
             pr[j] = j < 6 ? 0xff : 0;
+        /* The last pass probes for the profile's SSID ([6] length, [7..] SSID; the core's
+         * probe_req): a hidden network answers only a probe that names it. The first pass stays a
+         * wildcard, so the list still holds every network around. */
+        if (have_cur && scan_pass == SCAN_PASSES - 1 && cur.ssidlen <= 32) {
+            pr[6] = cur.ssidlen;
+            copy(pr + 7, cur.ssid, cur.ssidlen);
+        }
         pr[0x27] = scan_chan;
         copy(pr + 0x28, rate_block, 13);
         /* listen ~112 ms per channel (0x36, units of 1024 ticks ~= ms) so a full ~102 ms beacon
@@ -842,7 +850,7 @@ static void scan_begin(void)
             w++;
         }
     nbss = w;
-#ifdef WILD_OWN
+#ifdef BCO_DEBUG_TRACE
     dg_sup3 = dg_frame = dg_bcn = dg_presp = dg_evt = dg_bok = dg_bokraw = 0;   /* per-scan so a capture is readable */
     dg_bss_short = dg_bss_nossid = 0;
 #endif
@@ -852,7 +860,7 @@ static void scan_begin(void)
 
 int wifi_scan(int start)
 {
-#ifdef WILD_OWN
+#ifdef BCO_DEBUG_TRACE
     /* diag: every driver T_SCAN call — start flag, current state, nbss, join_pending — to see
      * why cfg80211 gets 0 BSSes while the core's own scan finds APs. */
     hex("scanreq ", (unsigned)start << 24 | (state & 0xff) << 16 | (join_pending & 1) << 12 |
@@ -886,7 +894,17 @@ int wifi_bss(unsigned i, struct wifi_bss *o)
 
 /* ---- join ---- */
 
-/* The best-heard RSN BSS with this SSID on 2.4 GHz, -1 if none. */
+/* a heard above b: the stronger last beacon (a BSS without a level counts as the weakest), on a
+ * tie the one heard in the later scan. */
+static int stronger(const struct bss *a, const struct bss *b)
+{
+    int ra = a->rssi < 0 ? a->rssi : -128, rb = b->rssi < 0 ? b->rssi : -128;
+    if (ra != rb)
+        return ra > rb;
+    return (unsigned short)(scan_gen - a->gen) < (unsigned short)(scan_gen - b->gen);
+}
+
+/* The strongest RSN BSS with this SSID on 2.4 GHz, -1 if none. */
 static int pick(void)
 {
     int best = -1;
@@ -895,7 +913,7 @@ static int pick(void)
         if (b->ssidlen != cur.ssidlen || !same(b->ssid, cur.ssid, cur.ssidlen) || !b->rsn ||
             b->chan < 1 || b->chan > NCHAN)
             continue;
-        if (best < 0 || b->seen > bsstab[best].seen)
+        if (best < 0 || stronger(b, &bsstab[best]))
             best = (int)i;
     }
     return best;
@@ -918,7 +936,10 @@ static unsigned lowest_rate(const struct bss *b)
 
 static void fail(void)
 {
-#ifdef WILD_OWN
+    /* One line per failed join, for support: the step it ended in and whether the AP answered the
+     * authentication and association or sent us away. */
+    hex("join failed ", jstep << 16 | rxauthok << 8 | rxassocok << 4 | kicked);
+#ifdef BCO_DEBUG_TRACE
     /* Join diagnostics, for a join that does not complete: how far it got — core BSS setup,
      * auth/assoc responses, deauth, TX counters and the 4-way state — so the dead step is
      * clear without a sniffer. */
@@ -952,6 +973,7 @@ static void join_attempt(void)
     }
     copy(cur.bssid, bsstab[i].bssid, 6);
     cur.chan = bsstab[i].chan;
+    cur.caps = bsstab[i].caps; /* the association request mirrors its short slot and preamble */
     for (unsigned r = 0; r < 8; r++)
         rates[r] = lo;
     keyed = 0, keys_due = 0, rxauthok = rxassocok = kicked = 0, eappend = 0;
@@ -1233,7 +1255,7 @@ int wifi_current(struct wifi_bss *o)
 void wifi_poll(unsigned t)
 {
     now = t;
-#ifdef WILD_OWN
+#ifdef BCO_DEBUG_TRACE
     {   /* one line per state change: [31:24]=state [23:16]=jstep [15:8]=sm.state
          * [2:0]=rxauthok|rxassocok|keyed. shows exactly how far an own-core join gets. */
         static unsigned last = 0xffffffff;
@@ -1338,6 +1360,7 @@ static void wild_own_probe(void)
     hex("wild own desc ", wild_own_desc);
     /* identify the WiLD silicon: the IDs our core read into its id1 block (reg0 = core silicon
      * ID, rf0 = RF transceiver ID/rev). Reads over the host window, so the real chip answers. */
+#ifdef BCO_DEBUG_TRACE
     if (wild_own_type == 4) {
         unsigned b = 0x30000000 + desc(1);
         hex("wild id reg0 ", *(volatile unsigned *)(b + 0x04));
@@ -1347,6 +1370,7 @@ static void wild_own_probe(void)
         hex("wild id regb00 ", *(volatile unsigned *)(b + 0x1c));
         hex("wild id rf0 ", *(volatile unsigned *)(b + 0x20));
     }
+#endif
 }
 #endif
 
@@ -1410,9 +1434,9 @@ int wifi_init(const unsigned char mac[6])
 }
 
 /* Reboot the WiLD core from scratch (our core image), same path wifi_init uses, with the station
- * state already cleared by the caller. A sticky MAC/RX wedge only clears on a fresh core boot, so
- * this gives the SCM a radio reset (driven from T_FORGET) without re-flashing the DM870 app.
- * dev-phase iteration aid; it is the same ~1 s bring-up wifi_init runs at boot. */
+ * state already cleared by the caller. A sticky MAC wedge only clears on a fresh core boot: the
+ * TX-wedge self-heal in wifi_poll and WILD_BOOT call it, FORGET does not. It is the same ~1 s
+ * bring-up wifi_init runs at boot, busy waits included. */
 #ifdef WILD_OWN
 /* Runtime core image (dev-phase iteration aid): the SCM streams a WiLD build into this staging
  * area (mgmt WILD_WRITE) and boots it (WILD_BOOT) without re-flashing the app. Free SDRAM below

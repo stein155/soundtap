@@ -10,7 +10,7 @@
 #include "wifi.h"
 extern unsigned fake_state, fake_scanning, fake_nbss, fake_joins, fake_leaves, fake_ssid_len;
 extern unsigned char fake_ssid[32], fake_pmk[32], fake_seed[32];
-extern unsigned fake_tx_free;
+extern unsigned fake_tx_free, fake_resets;
 /* netcard.c's counters LINK_STATS reports; netcard.c itself is not linked into this test */
 unsigned netcard_dropped = 0x404, netcard_to_wifi = 0x505;
 static unsigned le32(const unsigned char *p) { return p[0] | p[1] << 8 | p[2] << 16 | (unsigned)p[3] << 24; }
@@ -75,6 +75,7 @@ int main(void)
     sp[5] = 1, sp[0] = 0; ask(3, sp, sizeof sp, r); assert(r[6] == 1); /* empty ssid */
     assert(fake_joins == 1);
     ask(4, 0, 0, r); assert(r[6] == 0 && fake_leaves == 1);
+    assert(fake_resets == 0); /* FORGET leaves the network; the core keeps running */
     ask(5, 0, 0, r); assert(r[7] == WIFI_IDLE && r[8] == 0);
     /* AP: channel 6, 100 TU, a 40-byte body; status lists the clients; stop */
     extern unsigned fake_ap_chan, fake_ap_bint, fake_ap_len, fake_ap_stops;

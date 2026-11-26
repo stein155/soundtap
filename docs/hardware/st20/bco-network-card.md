@@ -12,13 +12,14 @@ observation on one board, not approval of a later image: release evidence belong
 
 1. [The link](#the-link)
 2. [Control messages](#control-messages)
-3. [Protocol level and resent requests](#protocol-level-and-resent-requests)
-4. [Flow control and the counters](#flow-control-and-the-counters)
-5. [The card's clock](#the-cards-clock)
-6. [The setup access point on the WiLD core](#the-setup-access-point-on-the-wild-core)
-7. [CCMP on the core's cipher engine](#ccmp-on-the-cores-cipher-engine)
-8. [Medium access and rate adaptation](#medium-access-and-rate-adaptation)
-9. [Measurements on the bench ST20](#measurements-on-the-bench-st20)
+3. [Choosing the network](#choosing-the-network)
+4. [Protocol level and resent requests](#protocol-level-and-resent-requests)
+5. [Flow control and the counters](#flow-control-and-the-counters)
+6. [The card's clock](#the-cards-clock)
+7. [The setup access point on the WiLD core](#the-setup-access-point-on-the-wild-core)
+8. [CCMP on the core's cipher engine](#ccmp-on-the-cores-cipher-engine)
+9. [Medium access and rate adaptation](#medium-access-and-rate-adaptation)
+10. [Measurements on the bench ST20](#measurements-on-the-bench-st20)
 
 ## The link
 
@@ -48,7 +49,12 @@ index), `mwifiex` (BSS index), `rndis_wlan` (usbnet minidriver with a cfg80211 `
   channel 2 to the GEM (`bco/app/src/wired.c`), channel 0 to the management server
   (`bco/app/src/mgmt.c`). The BCO's own DHCP client is a hardware self-test only.
 - The BCO has about 16 MB of RAM and a slow debug UART (about 42 ms per character), so the data
-  path needs buffer discipline, and tests count frames instead of logging them.
+  path needs buffer discipline, and tests count frames instead of logging them. A UART line
+  busy-waits, and USB and the receive rings wait with it, so the shipped image (`link-own`)
+  writes one only at boot and for rare events: a failed join, a lost link, a wedged transmitter.
+  The per-channel scan lines, the scan summary, the per-state join trace and the three-second
+  receive-ring heartbeat are in the bench build `link-own-trace` only
+  ([the app README](../../../bco/app/README.md#build)).
 
 ## Control messages
 
@@ -58,13 +64,16 @@ and the BCO answers with the same `seq` and `type|0x80`, status first.
 - `HELLO`: firmware version, Wi-Fi MAC, state, protocol level and capability bits.
 - `SCAN`: payload `{1}` starts a scan, an empty payload polls; status 3 means still scanning,
   status 0 carries the results (`ssid_len, ssid, bssid[6], channel, rssi i8, security`: 0 open,
-  1 RSN, 2 WPA1 only). A scan takes about 11 s (13 channels passive, then probing); while
-  connected the cached list is returned.
+  1 RSN, 2 WPA1 only). A scan is two probing passes over channels 1-13, 200 ms per channel;
+  while connected the cached list is returned. With a profile set, the second pass probes for its
+  SSID ([choosing the network](#choosing-the-network)).
 - `SET_PROFILE`: `ssid_len, ssid, security = 1, pmk_len = 32, PMK, 32 random bytes` from the SCM
   kernel for the SNonce. Only WPA2-PSK on 2.4 GHz; anything else is answered "unsupported"
   (status 2). The PMK is never echoed or logged.
-- `FORGET` leaves the network without sending deauthentication and resets the WiLD core;
-  `STATUS` reports state, network, channel and RSSI.
+- `FORGET` leaves the network without sending deauthentication and drops the profile; the WiLD
+  core keeps running (a core reboot recalibrates the radio in busy waits that stall USB; the app
+  reboots the core only when its transmitter wedges). `STATUS` reports state, network, channel
+  and RSSI.
 - `AP_START` (6: channel, beacon interval in TU, beacon body), `AP_STOP` (7) and `AP_STATUS` (8:
   the associated clients) drive the setup access point.
 - `FLOW` (13: `1` on, `0` off) switches the credit reports of
@@ -72,6 +81,24 @@ and the BCO answers with the same `seq` and `type|0x80`, status first.
 - `LINK_STATS` (14): status, then five le32 counters since the app started: Wi-Fi frames
   acknowledged, failed on air after the retries, dropped before the air (no free transmit buffer,
   not joined), messages the link dropped on any channel, and frames from the SCM the radio took.
+
+## Choosing the network
+
+- SET_PROFILE joins the strongest RSN access point on channels 1-13 with the profile's SSID: the
+  highest level of its last beacon or probe response, and on a tie the one heard in the later
+  scan. An access point heard without a level counts as the weakest. The scan table keeps a BSS
+  heard in any of the last five scans.
+- A hidden network leaves its SSID out of the beacon. The scan's second pass sends a probe request
+  naming the profile's SSID (the core's probe from payload bytes 6 onward), the access point
+  answers it with its name, and the scan table keeps that name: a later beacon without the SSID
+  does not erase it. The first pass stays a wildcard, so the list still shows every network. The
+  SCM's SCAN carries no SSID, so the directed probe runs only while a profile is set (from
+  SET_PROFILE until FORGET). `wpa_supplicant` picks the network from the scan list, where
+  a hidden one has no name until such a probe, so whether a first join of a hidden network
+  reaches SET_PROFILE at all is open (the hardware checklist's hidden-network row).
+- The association request's capability is ESS and Privacy, plus Short Preamble and Short Slot
+  Time when the access point's own capability has them, as an ERP station sends: a station that
+  leaves Short Slot out makes the access point move the whole BSS to the long slot.
 
 ## Protocol level and resent requests
 
@@ -250,7 +277,9 @@ itself (`tx_kick`, `ACK_LATE`, `rate_cls` in `bco/wild/fw/src/xport.c`):
 
 Limits: 24 Mb/s is the floor of the adaptation, because below it a frame outlasts `ACK_LATE`; a
 weaker link falls back to the basic rate on the last tries. 9 us assumes a BSS with short slots
-(every OFDM/ERP network); a BSS with 11b-only stations would need 20 us, which is not handled.
+(every OFDM/ERP network); the association request asks for them when the access point offers
+them ([choosing the network](#choosing-the-network)). A BSS with 11b-only stations would need
+20 us, which is not handled.
 
 Porting stock's EDCA scheduler would mean reading stock TX code, which stays off-limits; queue 9
 with DCF backoff gives the same medium access for best-effort traffic.

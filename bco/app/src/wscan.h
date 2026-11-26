@@ -23,13 +23,22 @@ struct bss {
 #define BSS_KEEP 5u
 static struct bss bsstab[NBSS];
 static unsigned nbss, bssdrop, scan_gen;
-#ifdef WILD_OWN
+#ifdef BCO_DEBUG_TRACE
 static unsigned dg_bss_short, dg_bss_nossid; /* bss_add rejects: frame too short / no SSID IE at +44 */
 #endif
 
 /* The beacon's level in dBm sits in the RX descriptor 0x14 bytes before the header (buf+0x98):
  * found on hardware 2026-10-09, steady per BSS, same for one router's two BSSIDs. */
 #define RXRSSI (-0x14)
+
+/* A hidden network's beacon carries an empty SSID, or one of NUL bytes. */
+static int ssid_hidden(const unsigned char *s, unsigned n)
+{
+    while (n--)
+        if (*s++)
+            return 0;
+    return 1;
+}
 
 static int bss_add(const unsigned char *h, unsigned len, unsigned rxchan, signed char rssi)
 {
@@ -39,7 +48,7 @@ static int bss_add(const unsigned char *h, unsigned len, unsigned rxchan, signed
     struct bss *b = 0;
     int rsn = 0, wpa = 0;
     if (len < RXBODY + 12 + 2) {
-#ifdef WILD_OWN
+#ifdef BCO_DEBUG_TRACE
         dg_bss_short++;
 #endif
         return 0;
@@ -56,7 +65,7 @@ static int bss_add(const unsigned char *h, unsigned len, unsigned rxchan, signed
         ie += 2 + ie[1];
     }
     if (!ssid) {
-#ifdef WILD_OWN
+#ifdef BCO_DEBUG_TRACE
         dg_bss_nossid++;
 #endif
         return 0;
@@ -75,10 +84,16 @@ static int bss_add(const unsigned char *h, unsigned len, unsigned rxchan, signed
         b = &bsstab[nbss++];
         for (i = 0; i < 6; i++)
             b->bssid[i] = h[16 + i];
+        b->ssidlen = 0, b->rssi = 0, b->seen = 0; /* the slot may hold an aged-out BSS */
     }
-    for (i = 0; i < ssidlen; i++)
-        b->ssid[i] = ssid[i];
-    b->ssidlen = ssidlen, b->chan = chan, b->rsn = rsn, b->wpa = wpa, b->seen++, b->gen = scan_gen;
+    /* A directed probe's response names a hidden network; its next beacon, with the SSID left
+     * out, must not take the name away again. */
+    if (!ssid_hidden(ssid, ssidlen) || ssid_hidden(b->ssid, b->ssidlen)) {
+        for (i = 0; i < ssidlen; i++)
+            b->ssid[i] = ssid[i];
+        b->ssidlen = ssidlen;
+    }
+    b->chan = chan, b->rsn = rsn, b->wpa = wpa, b->seen++, b->gen = scan_gen;
     if (rssi < 0)
         b->rssi = rssi;
     b->caps = h[RXBODY + 10] | h[RXBODY + 11] << 8;

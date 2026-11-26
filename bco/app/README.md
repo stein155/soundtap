@@ -10,7 +10,11 @@ itself, once per image. `bcoflash` is the development tool for a manual flash.
 
 Buildroot builds it ([`os/package/soundtap-bco-app`](../../os/package/soundtap-bco-app/)): `build-app.sh VARIANT SRC OUT` per variant, with
 `link-own` the shipped image (the network card with our WiLD core linked in, `WILD_BIN` from
-`bco/wild/fw`). `bco/tools/bco-pack` wraps the two stages into a `.bcd` that BFL accepts (header byte
+`bco/wild/fw`). `link-own-trace` is the same card with `-DBCO_DEBUG_TRACE`: the UART diagnostics
+of scan, join and the receive rings (per-channel scan lines, a scan summary with every BSS, one
+line per join state, a heartbeat every 3 s). Each UART character busy-waits while USB and the
+receive rings wait, so it is a bench build only, flashed by hand with `bcoflash`, never shipped;
+`WILD_OWN` selects our core, `BCO_DEBUG_TRACE` the traces. `bco/tools/bco-pack` wraps the two stages into a `.bcd` that BFL accepts (header byte
 +0x28 = 2, the 0xb0-byte header).
 
 `make test-bco` (part of `make test`; CI's `bco` job) runs the host unit tests and the first

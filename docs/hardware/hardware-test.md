@@ -512,7 +512,7 @@ prohibited and historical results are not silently counted as pending executable
 | a new slot confirms with the router switched off: the boot confirm checks no network (ADR 0010) | open |
 | ROM-USB restore of the release's boot chain (`tools/recovery/rom-usb-restore.py`, [recovery tools](install-records.md#repairing-the-boot-chain-over-rom-usb)) | open |
 
-### ST20 (40 open)
+### ST20 (41 open)
 
 | Prove on the speaker | Status |
 |---|---|
@@ -527,6 +527,7 @@ prohibited and historical results are not silently counted as pending executable
 | custom radio URL plays (Custom Station page) | open |
 | Bluetooth hint disappears after the pairing window | unavailable: Series I; Series III has offline coverage only (scope above) |
 | join a hidden network; visible networks still join | open |
+| BCO network choice (ADR 0031, [choosing the network](st20/bco-network-card.md#choosing-the-network)): with two access points of one SSID in range, `iw dev wlan0 link` names the stronger one's BSSID (compare the levels in `iw dev wlan0 scan`), also when the weaker one was heard more often; the access point's station list shows the speaker with short slot time and short preamble, and the BSS stays on the short slot | open |
 | phone volume slider follows speaker volume (AVRCP) | unavailable: Series I; Series III has offline coverage only (scope above) |
 | reconnect of trusted phones when Bluetooth is selected | unavailable: Series I; Series III has offline coverage only (scope above) |
 | pairings read and cleared over D-Bus | unavailable: Series I; Series III has offline coverage only (scope above) |

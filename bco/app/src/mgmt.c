@@ -144,11 +144,10 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
             st = wifi_join(a + 1, a[0], a + 1 + a[0] + 2, a + 1 + a[0] + 2 + 32) ? 1 : 0;
         *o++ = st;
         break;
-    case 4: /* FORGET: drop the link, then reboot the WiLD core so a sticky RX wedge clears
-             * without re-flashing the DM870 app (dev-phase iteration aid; `iw dev wlan0 disconnect`
-             * reaches here via the driver). */
+    case 4: /* FORGET: drop the association and the profile. The core keeps running: a reboot would
+             * recalibrate the radio in busy waits that stall USB, and wifi.c already reboots a
+             * core whose transmitter wedged. */
         wifi_leave();
-        wifi_reset_core();
         *o++ = 0;
         break;
     case 5: { /* STATUS: status, state, ssid_len, ssid, bssid, channel, rssi */

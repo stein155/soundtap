@@ -17,6 +17,7 @@ for t in tests/*_test.c; do
 	netcard) extra="tests/wifi_fake.c src/netcard.c src/mgmt.c" ;;
 	*_fuzz) extra="-g -fsanitize=address,undefined -fno-sanitize-recover=all" ;;
 	wifi_join) extra="-no-pie" ;; # includes wifi.c, whose 32-bit addresses must reach the globals
+	wifi_poll) extra="-no-pie -DWILD_OWN" ;; # the same, with the defines of the shipped image
 	*) extra= ;;
 	esac
 	echo "== $name"

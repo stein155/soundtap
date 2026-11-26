@@ -10,6 +10,10 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
 
 ## [Unreleased]
 
+- **SoundTouch 20: steadier Wi-Fi while streaming**: its network chip no longer stops to write
+  diagnostics, it connects to the strongest access point of your network rather than the one it
+  heard most often, and leaving a network no longer restarts its Wi-Fi radio.
+
 ## [app-v0.1.0-alpha.4] - 2026-11-25
 
 - The SoundTap app that SoundTap Core 0.1.0-alpha.4 carries; what it changes is listed under

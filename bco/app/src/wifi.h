@@ -28,7 +28,8 @@ int wifi_join(const unsigned char *ssid, unsigned ssid_len, const unsigned char 
               const unsigned char s[32]);
 void wifi_leave(void);
 /* Reboot the WiLD core (same ~1 s bring-up as wifi_init), clearing a sticky radio wedge without a
- * DM870 re-flash. Driven from T_FORGET; the caller leaves the station link first. */
+ * DM870 re-flash: wifi.c's TX-wedge self-heal and WILD_BOOT; the caller leaves the station link
+ * first. FORGET does not reboot the core. */
 int wifi_reset_core(void);
 int wifi_wild_write(unsigned off, const unsigned char *p, unsigned n);
 int wifi_wild_boot(unsigned len, unsigned crc);

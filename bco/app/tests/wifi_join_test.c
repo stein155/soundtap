@@ -9,7 +9,8 @@
  *
  * wifi.c keeps addresses in 32-bit words, so the test links without PIE (globals below 4 GiB, as
  * bco/wild/fw/tests/host.h does) and maps the one page of WiLD registers the step touches (the
- * doorbell and the timer it mixes into the SNonce) at its address. Nothing here talks to a speaker. */
+ * doorbell and the timer it mixes into the SNonce) at its address, and the UART page. Nothing here
+ * talks to a speaker. */
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -35,11 +36,14 @@ void netcard_from_port(unsigned ch, const unsigned char *f, unsigned n)
 __attribute__((constructor)) static void map_wreg(void)
 {
     static int probe;
-    if (mmap((void *)WREG, 0x1000, PROT_READ | PROT_WRITE,
-             MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0) != (void *)WREG) {
-        perror("wifi_join: map the WiLD registers");
-        exit(2);
-    }
+    /* the WiLD registers, and the UART page: a failed join says so in one line (board.h say) */
+    static const unsigned long at[2] = {(unsigned long)WREG, 0xb1001000ul};
+    for (int i = 0; i < 2; i++)
+        if (mmap((void *)at[i], 0x1000, PROT_READ | PROT_WRITE,
+                 MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0) != (void *)at[i]) {
+            perror("wifi_join: map the WiLD registers and the UART");
+            exit(2);
+        }
     if ((uintptr_t)&probe >> 32) {
         fputs("wifi_join: globals above 4 GiB; build with -no-pie\n", stderr);
         exit(2);
