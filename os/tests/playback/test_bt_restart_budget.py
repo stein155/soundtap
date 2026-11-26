@@ -4,6 +4,7 @@
 """bt.sh's give-up budget counts bluetoothd deaths in quick succession, not over the whole uptime."""
 import re
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -13,14 +14,21 @@ BUDGET = re.search(r"^BT_STABLE_SECONDS=.*?^note_bt_death\(\) \{\n.*?^\}\n", BT,
 
 
 def restarts_after_death(before: int, up_for: int) -> int:
-    """Return the count after one more death, for a stack that had been up `up_for` seconds."""
-    script = (
-        BUDGET.group(0)
-        + f"restarts={before}\n"
-        + f"bt_up_since=$(( $(cut -d. -f1 /proc/uptime) - {up_for} ))\n"
-        + "note_bt_death\necho $restarts\n"
-    )
-    out = subprocess.run(["sh", "-ec", script], capture_output=True, text=True, check=True)
+    """Return the count after one more death, for a stack that had been up `up_for` seconds.
+
+    The function reads the uptime from a file standing in for /proc/uptime, so the test runs
+    on any host.
+    """
+    with tempfile.NamedTemporaryFile("w", suffix="uptime") as uptime:
+        uptime.write("10000.42 9000.00\n")
+        uptime.flush()
+        script = (
+            BUDGET.group(0).replace("/proc/uptime", uptime.name)
+            + f"restarts={before}\n"
+            + f"bt_up_since=$(( 10000 - {up_for} ))\n"
+            + "note_bt_death\necho $restarts\n"
+        )
+        out = subprocess.run(["sh", "-ec", script], capture_output=True, text=True, check=True)
     return int(out.stdout)
 
 

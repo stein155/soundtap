@@ -573,6 +573,16 @@ n=$(cat "$STATE/ntpd" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"$STATE/n
             with self.assertRaisesRegex(SystemExit, "default-deny"):
                 check.validate_ssh_policy(root, profile="production")
 
+    def test_production_filter_covers_ipv6(self) -> None:
+        """An ip table instead of the inet one leaves IPv6 unfiltered and is refused (ADR 0134)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.production(tmp)
+            check.validate_ssh_policy(root, profile="production")
+            rules = root / "etc/soundtap/firewall.nft"
+            rules.write_text(rules.read_text().replace("table inet filter", "table ip filter"))
+            with self.assertRaisesRegex(SystemExit, "does not cover IPv6"):
+                check.validate_ssh_policy(root, profile="production")
+
     def test_production_rejects_the_gadget_shell(self) -> None:
         """Production refuses a root shell on the USB gadget console."""
         with tempfile.TemporaryDirectory() as tmp:

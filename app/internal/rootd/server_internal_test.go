@@ -19,6 +19,7 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stein155/soundtap/app/internal/flash"
 	"github.com/stein155/soundtap/app/internal/ubootenv"
@@ -739,3 +740,25 @@ func TestALongOutputStillAnswers(t *testing.T) {
 
 // errSaveFailed is the failure a test's settle step reports.
 var errSaveFailed = errors.New("save failed")
+
+// A command killed at its timeout whose child still holds the output pipe ends the request
+// within waitDelay, instead of waiting for that child (and, for a NAND one, holding the
+// NAND lock meanwhile).
+func TestRunCommandDoesNotWaitForAChildHoldingThePipe(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+
+	_, err := runCommand(ctx, program("/bin/sh", "-c", "/bin/sleep 30 & wait"))
+	if err == nil {
+		t.Fatal("a killed command reported success")
+	}
+
+	// Without the bound it waits the child's full 30 s; a busy host may be slow, never that slow.
+	if took := time.Since(start); took > 20*time.Second {
+		t.Fatalf("runCommand returned after %v, want about %v", took, waitDelay)
+	}
+}

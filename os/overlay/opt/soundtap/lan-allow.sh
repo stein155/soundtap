@@ -16,7 +16,7 @@ LOG=/run/soundtap/log.fifo
 log() { echo "[firewall] $*" >>"${LOG}" 2>&1 || true; }  # an unwritable log loses the line only
 
 command -v "${NFT}" >/dev/null 2>&1 || exit 0
-"${NFT}" list set ip filter lan_nets >/dev/null 2>&1 || exit 0  # alpha: no ruleset loaded
+"${NFT}" list set inet filter lan_nets >/dev/null 2>&1 || exit 0  # alpha: no ruleset loaded
 
 octet() { case "$1" in '' | *[!0-9]*) return 1 ;; *) ;; esac; [ "$1" -le 255 ]; }
 
@@ -65,7 +65,7 @@ drop() { # <iface>
 	true >"${STATE}.$1" || log "$1: could not clear ${STATE}.$1"
 	# shellcheck disable=SC2310 # a test: false is an answer, not an error
 	used_elsewhere "$1" "${gone}" && return 0
-	"${NFT}" delete element ip filter lan_nets "{ ${gone} }" 2>>"${LOG}" || log "could not remove ${gone}"
+	"${NFT}" delete element inet filter lan_nets "{ ${gone} }" 2>>"${LOG}" || log "could not remove ${gone}"
 	log "$1: no longer answering ${gone}"
 }
 
@@ -81,7 +81,7 @@ add)
 	echo "${net}" >"${STATE}.${iface}"
 	# shellcheck disable=SC2310 # a test: false is an answer, not an error
 	used_elsewhere "${iface}" "${net}" && exit 0
-	"${NFT}" add element ip filter lan_nets "{ ${net} }" 2>>"${LOG}" || { log "could not add ${net}"; exit 1; }
+	"${NFT}" add element inet filter lan_nets "{ ${net} }" 2>>"${LOG}" || { log "could not add ${net}"; exit 1; }
 	log "${iface}: answering ${net}"
 	;;
 del)

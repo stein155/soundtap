@@ -51,6 +51,37 @@ class BcoLinkContract(unittest.TestCase):
                          ("MGMT_FLOW_LEN", "BCO_FLOW_LEN"), ("MGMT_STATS_N", "BCO_STATS_N")):
             self.assertEqual(self.app[app], self.drv[drv], app)
 
+    def test_standard_features(self) -> None:
+        """The features of ADR 0135 have the same bits, layouts and numbers on both sides."""
+        same = {f"BCOLINK_CAP_{n}": f"BCOLINK_CAP_{n}" for n in ("EVENTS", "ROAM", "REGDOM", "SCAN_SSID", "NVINFO")}
+        same |= {"MGMT_EVENT_LEN": "BCO_EVENT_LEN", "MGMT_PROFILE_TAIL": "BCO_PROFILE_TAIL",
+                 "MGMT_REGDOM_LEN": "BCO_REGDOM_LEN", "MGMT_NV_ENTRY": "BCO_NV_ENTRY"}
+        same |= {f"MGMT_PROFILE_{n}": f"BCO_PROFILE_{n}" for n in ("BSSID_FIXED", "BSSID_HINT", "ROAM")}
+        same |= {f"MGMT_EV_{n}": f"BCO_EV_{n}" for n in
+                 ("DEAUTH", "DISASSOC", "BEACON_LOSS", "TX_WEDGE", "ROAMED", "ROAM_FAILED")}
+        for app, drv in same.items():
+            self.assertEqual(self.app[app], self.drv[drv], app)
+
+    def test_new_requests_follow_hello(self) -> None:
+        """The driver sends what ADR 0135 added only where the app announced it.
+
+        An older app answers an unknown request with 0xff and refuses a longer SET_PROFILE, so
+        each function that sends one also checks its capability bit (ADR 0031's rule).
+        """
+        funcs = dict(re.findall(r"\n\+static [^\n]*\b(\w+)\([^)]*\)\n\+\{(.*?)\n\+\}", self.patch, re.DOTALL))
+        for name, body in funcs.items():
+            for req, cap in (("bco_req(b, T_EVENTS", "EVENTS"), ("bco_req(b, T_SET_REGDOM", "REGDOM"),
+                             ("bco_req(b, T_NV_INFO", "NVINFO"),
+                             ("BCO_PROFILE_ROAM", "ROAM"), ("start[1] = req->ssids", "SCAN_SSID")):
+                if req in body:
+                    self.assertIn(f"BCOLINK_CAP_{cap}", body, f"{name} uses {req}")
+        self.assertIn("wiphy->reg_notifier = bco_reg_notifier", self.patch)
+        self.assertIn("mod_delayed_work(system_wq, &b->join_work, 0)", funcs["bco_ctrl_rx"])
+        self.assertIn("cancel_work_sync(&b->reg_work)", funcs["bco_unbind"])
+        # the antenna read is a bench read: root only, nothing in the driver asks on its own
+        self.assertIn("DEVICE_ATTR_ADMIN_RO(nv_keys)", self.patch)
+        self.assertEqual([n for n, b in funcs.items() if "bco_req(b, T_NV_INFO" in b], ["nv_keys_show"])
+
     def test_held_queue_is_watched(self) -> None:
         """Whatever stops a queue for want of credit also schedules the watch that counts afresh.
 

@@ -41,14 +41,22 @@ CONFIG_MACH_OMAP_GENERIC=y
 # CONFIG_DEBUG_KERNEL is not set
 # CONFIG_DEBUG_FS is not set
 # CONFIG_PM_DEBUG is not set
-# CONFIG_IPV6 is not set
+# IPv6 next to IPv4 (ADR 0134): link-local and SLAAC addresses, nothing more. No tunnels
+# (SIT is on by default once IPv6 is), no Mobile IPv6.
+CONFIG_IPV6=y
+# CONFIG_IPV6_SIT is not set
+# CONFIG_IPV6_TUNNEL is not set
+# CONFIG_IPV6_MIP6 is not set
 # nf_tables with connection tracking, built in (the image loads no modules) for the
-# production input filter (ADR 0066). Without a ruleset no hook is registered.
+# production input filter (ADR 0066). Its one inet table filters IPv4 and IPv6 alike.
+# Without a ruleset no hook is registered.
 CONFIG_NETFILTER=y
 CONFIG_NETFILTER_ADVANCED=y
 CONFIG_NF_CONNTRACK=y
 CONFIG_NF_TABLES=y
+CONFIG_NF_TABLES_INET=y
 CONFIG_NF_TABLES_IPV4=y
+CONFIG_NF_TABLES_IPV6=y
 CONFIG_NFT_CT=y
 # CONFIG_BRIDGE is not set
 # CONFIG_VLAN_8021Q is not set
@@ -207,6 +215,32 @@ CONFIG_USB_NET_SOUNDTAP_BCO=y
 CONFIG_DEBUG_INFO_NONE=y
 CONFIG_CMDLINE=""
 # CONFIG_CMDLINE_FORCE is not set
+
+# Room in the kernel partition (4.75 MiB, os/support/kernel_size_check.py): what omap2plus brings
+# for boards that are not ours. Our device trees name one PMIC, the TPS65910; no board has a
+# touchscreen, a SATA port, HDMI CEC on the SoC, a display console or an ext2/3/4 volume.
+# CONFIG_MFD_CPCAP is not set
+# CONFIG_MFD_PALMAS is not set
+# CONFIG_MFD_TI_LP873X is not set
+# CONFIG_MFD_TI_LP87565 is not set
+# CONFIG_MFD_TPS65217 is not set
+# CONFIG_MFD_TPS65218 is not set
+# CONFIG_TWL4030_CORE is not set
+# CONFIG_TWL6040_CORE is not set
+# CONFIG_GPIO_PCF857X is not set
+# CONFIG_REGULATOR_CPCAP is not set
+# CONFIG_REGULATOR_LP872X is not set
+# CONFIG_REGULATOR_TPS65023 is not set
+# CONFIG_REGULATOR_TPS6507X is not set
+# CONFIG_INPUT_TOUCHSCREEN is not set
+# CONFIG_ATA is not set
+# CONFIG_MEDIA_CEC_SUPPORT is not set
+# CONFIG_VT is not set
+# CONFIG_EXT2_FS is not set
+# CONFIG_EXT3_FS is not set
+# CONFIG_EXT4_FS is not set
+# CONFIG_TI_PIPE3 is not set
+# CONFIG_OMAP_IOMMU is not set
 
 # What the script build's two olddefconfig passes leave behind: switching USB off and on
 # again drops omap2plus's USB host drivers, and the rest follows from what it enables.

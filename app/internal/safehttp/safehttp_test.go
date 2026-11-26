@@ -121,9 +121,34 @@ func TestPublicIP(t *testing.T) {
 		"255.255.255.255": false, "0.1.2.3": false, "10.0.0.1": false, "127.0.0.1": false,
 		"169.254.1.1": false, "::1": false, "fd00::1": false, "fe80::1": false,
 		"2001:db8::1": false, "3fff::1": false, "64:ff9b:1::1": false, "100::1": false,
+		// NAT64 reaches the IPv4 address it embeds: 8.8.8.8, 10.0.0.1, 127.0.0.1.
+		"64:ff9b::808:808": true, "64:ff9b::a00:1": false, "64:ff9b::7f00:1": false,
 	} {
 		if got := safehttp.PublicIP(net.ParseIP(addr)); got != want {
 			t.Errorf("PublicIP(%s) = %v, want %v", addr, got, want)
 		}
+	}
+}
+
+// A URL in a log line keeps its host, path and query and loses who it logs in as.
+func TestLogURLDropsUserinfo(t *testing.T) {
+	t.Parallel()
+
+	for text, want := range map[string]string{
+		"http://user:secret@radio.example/live.mp3":        "http://radio.example/live.mp3",
+		"https://token@cdn.example:8443/a?b=c":             "https://cdn.example:8443/a?b=c",
+		"http://u:p@ss@radio.example/x":                    "http://radio.example/x",
+		"play http://a:b@one.example/ then http://two.ex/": "play http://one.example/ then http://two.ex/",
+		"http://radio.example/live?mail=me@example.org":    "http://radio.example/live?mail=me@example.org",
+		"s24896": "s24896",
+	} {
+		if got := safehttp.LogURL(text); got != want {
+			t.Errorf("LogURL(%q) = %q, want %q", text, got, want)
+		}
+	}
+
+	err := safehttp.HTTPStatusError{URL: "http://user:secret@radio.example/x", Status: http.StatusNotFound}
+	if got := err.Error(); got != "http://radio.example/x status 404" {
+		t.Errorf("HTTPStatusError = %q", got)
 	}
 }

@@ -41,6 +41,10 @@ DENY = (
     "RTL_CARDS",
     "USB_DWC3",
     "USB_ISP1760",
+    # IPv6 is link-local and SLAAC only (ADR 0134): no tunnel or Mobile IPv6 endpoint.
+    "IPV6_SIT",
+    "IPV6_TUNNEL",
+    "IPV6_MIP6",
 )
 REQUIRE = (
     "STRICT_KERNEL_RWX",
@@ -51,6 +55,11 @@ REQUIRE = (
     "KEYBOARD_GPIO_POLLED",
     # An oops panics, so a half-dead kernel resets instead of being fed to the watchdog.
     "PANIC_ON_OOPS",
+    # IPv6, and the inet table that filters it with IPv4 in one ruleset (ADR 0066, ADR 0134):
+    # without NF_TABLES_INET a production image would load no filter at all.
+    "IPV6",
+    "NF_TABLES_INET",
+    "NF_TABLES_IPV6",
 )
 # Seconds before a panic resets the board (below 0: at once); 0 waits for ever.
 NONZERO = ("PANIC_TIMEOUT",)

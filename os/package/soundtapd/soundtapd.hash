@@ -1,6 +1,6 @@
 # Locally generated license files.
 sha256  3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986  LICENSE
-sha256  4b82dbc8577e617f26b7267dbfe3a3cb5d473e401b136dfd5dd65d062a319388  frontend/THIRD_PARTY_LICENSES.txt
+sha256  ada2a32b526841785f13bd206393496d51bb71d375a694f746e97a9ab0b170ec  frontend/THIRD_PARTY_LICENSES.txt
 # The vendored Go modules' own (app/vendor, ADR 0124).
 sha256  e2bcf9854f46a58b6e6f014d64e102a6b4e35a87d117094903e66fb68454a3fd  vendor/github.com/eclipse/paho.mqtt.golang/LICENSE
 sha256  83bbba033dc985487e321b6dfde111772affb73460be48726299fed3da684b1c  vendor/github.com/eclipse/paho.mqtt.golang/edl-v10

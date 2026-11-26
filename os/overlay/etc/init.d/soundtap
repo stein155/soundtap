@@ -154,10 +154,17 @@ set_kernel_params
 # that another user planted in /tmp or a sticky directory soundtapd may write (/run,
 # /run/soundtap, /mnt/nv; grant_soundtapd): a decoder or a soundtapd exploit could otherwise
 # redirect a write of root's.
+# IPv6 (ADR 0134): connections out use a temporary address, so a radio station or an update
+# server does not see the stable one, which carries the interface's MAC. Set on every
+# interface that is already there (the built-in Wi-Fi) and on the default for later ones.
 set_kernel_params() {
 for kv in kernel/panic=5 vm/panic_on_oom=2 vm/min_free_kbytes=2000 vm/vfs_cache_pressure=500 \
 	fs/protected_symlinks=1 fs/protected_hardlinks=1 fs/protected_regular=2 fs/protected_fifos=2; do
 	echo "${kv#*=}" >"${PROC_DIR}/sys/${kv%%=*}" 2>/dev/null || true  # key absent on older kernels
+done
+for f in "${PROC_DIR}"/sys/net/ipv6/conf/*/use_tempaddr; do
+	[ -e "${f}" ] || continue  # no IPv6: a stock kernel
+	echo 2 >"${f}" 2>/dev/null || true  # an interface that went away meanwhile
 done
 }
 

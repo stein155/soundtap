@@ -71,6 +71,8 @@ const (
 	otherTimeout   = 2 * time.Minute
 	btTimeout      = 5 * time.Second
 	btLongTimeout  = time.Minute
+	// waitDelay is how long a killed command's output pipe may stay open after it.
+	waitDelay = 2 * time.Second
 )
 
 // GPIO export: how often, and how long apart, the attributes are looked for after the
@@ -174,6 +176,10 @@ func runCommand(ctx context.Context, command *Command) (string, error) {
 	}
 
 	cmd := exec.CommandContext(ctx, command.Name, command.Args...)
+	// A command killed at its timeout may leave a child holding the output pipe; without a
+	// bound CombinedOutput waits for that child, and a NAND request keeps the NAND lock.
+	cmd.WaitDelay = waitDelay
+
 	if command.Stdin != nil {
 		cmd.Stdin = command.Stdin
 	}

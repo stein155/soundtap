@@ -23,6 +23,15 @@ BCO's transmit and link counters and the flow-control state are under
 /sys/class/net/bcolink0/bco/. An app without these capabilities works
 as before.
 
+A BCO app that announces them also sends link events (deauthentication,
+disassociation, beacon loss), which end the connection at once with the
+access point's reason; roams within the SSID, reported as
+cfg80211_roamed (WIPHY_FLAG_SUPPORTS_FW_ROAM) and steered by the
+connect's BSSID or BSSID hint; takes the regulatory domain cfg80211
+settles on as channel masks and a TX power limit (reg_notifier); probes
+for the scan's SSID, so hidden networks answer; and lists its PersParam
+keys in the root-only bco/nv_keys for a bench check.
+
 Upstream: Not applicable (SoundTap hardware support)
 Signed-off-by: Stein Milder <info@steinmilder.nl>
 ---
@@ -58,7 +67,7 @@ diff -Nru a/drivers/net/usb/Makefile b/drivers/net/usb/Makefile
 diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 --- a/drivers/net/usb/soundtap_bco.c	1970-01-01 01:00:00.000000000 +0100
 +++ b/drivers/net/usb/soundtap_bco.c	2026-10-06 18:06:43.454816079 +0200
-@@ -0,0 +1,1308 @@
+@@ -0,0 +1,1536 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * SoundTap BCO link: the SoundTouch 20's Wi-Fi and wired ports, which live on the BCO co-processor
@@ -80,6 +89,12 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 + * wait in wlan0's (or wlan1's) qdisc while it has none, instead of being dropped on the BCO. Its
 + * counters (BCOLINK_CAP_STATS) are in /sys/class/net/bcolink0/bco/.
 + *
++ * The standard firmware features of ADR 0135, each used only when HELLO announces it: link events
++ * (deauthentication, disassociation, beacon loss) end the connection at once instead of at the next
++ * STATUS poll; the BCO roams within the SSID and the driver reports it (cfg80211_roamed); the
++ * regulatory domain cfg80211 settles on goes down as channel masks and a TX power limit; a scan's
++ * SSID goes into the BCO's directed probe, for hidden networks.
++ *
 + * The protocol constants mirror bco/app/src/bcolink.h in the SoundTap tree.
 + */
 +#include <linux/module.h>
@@ -95,6 +110,7 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +#include <linux/random.h>
 +#include <linux/workqueue.h>
 +#include <linux/unaligned.h>
++#include <linux/ctype.h>
 +#include <net/cfg80211.h>
 +
 +#define BCOLINK_HDR		2
@@ -123,8 +139,32 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +/* Wi-Fi held for want of credit this long means a lost report or frame: count afresh. */
 +#define BCO_FLOW_STUCK		HZ
 +
++/* ADR 0135's capabilities; bco/app/src/bcolink.h. */
++#define BCOLINK_CAP_EVENTS	0x10
++#define BCOLINK_CAP_ROAM	0x20
++#define BCOLINK_CAP_REGDOM	0x40
++#define BCOLINK_CAP_SCAN_SSID	0x80
++#define BCOLINK_CAP_NVINFO	0x100
++/* An unasked EVENTS report: status, event, le16 reason, bssid, channel, rssi (bco/app/src/mgmt.h). */
++#define BCO_EVENT_LEN		12
++#define BCO_EV_DEAUTH		1
++#define BCO_EV_DISASSOC		2
++#define BCO_EV_BEACON_LOSS	3
++#define BCO_EV_TX_WEDGE		4
++#define BCO_EV_ROAMED		5
++#define BCO_EV_ROAM_FAILED	6
++/* SET_PROFILE's tail: flags, bssid. */
++#define BCO_PROFILE_TAIL	7
++#define BCO_PROFILE_BSSID_FIXED	0x1
++#define BCO_PROFILE_BSSID_HINT	0x2
++#define BCO_PROFILE_ROAM	0x4
++/* SET_REGDOM: country[2], le16 channels, le16 passive, i8 dBm. */
++#define BCO_REGDOM_LEN		7
++/* NV_INFO entry: le32 key, le16 value length, 4 value bytes. */
++#define BCO_NV_ENTRY		10
++
 +enum { T_HELLO = 1, T_SCAN, T_SET_PROFILE, T_FORGET, T_STATUS, T_AP_START, T_AP_STOP, T_AP_STATUS,
-+	T_WIRED_PROBE = 12, T_FLOW, T_LINK_STATS };
++	T_WIRED_PROBE = 12, T_FLOW, T_LINK_STATS, T_EVENTS, T_SET_REGDOM, T_NV_INFO };
 +enum { S_IDLE, S_SCANNING, S_JOINING, S_UP, S_FAILED, S_AP };
 +
 +struct bco {
@@ -151,6 +191,16 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +	struct cfg80211_scan_request *scan_req;	/* under lock */
 +	unsigned long join_deadline;
 +	bool joining, connected, running;
++	u8 bssid[ETH_ALEN];		/* the access point connected to (under lock) */
++
++	/* The last link event (BCOLINK_CAP_EVENTS), under rx_lock, for join_work to report. */
++	bool ev_pending;
++	u8 ev_type;
++	u16 ev_reason;
++
++	/* The regulatory domain for SET_REGDOM (BCOLINK_CAP_REGDOM), under rx_lock. */
++	struct work_struct reg_work;
++	u8 regdom[BCO_REGDOM_LEN];
 +
 +	/*
 +	 * Flow control on channel 1 (BCOLINK_CAP_FLOW): the BCO reports how many Wi-Fi transmit
@@ -292,6 +342,13 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +	if (p[1] == (T_FLOW | 0x80) && len >= BCO_FLOW_LEN && !p[BCO_MGMT_HDR])
 +		bco_flow_apply(b, p + BCO_MGMT_HDR, false);
 +	spin_lock_irqsave(&b->rx_lock, flags);
++	/* a link event (EVENTS' own reply is shorter): join_work reports it now, not at its next poll */
++	if (p[1] == (T_EVENTS | 0x80) && len >= BCO_EVENT_LEN && !p[BCO_MGMT_HDR]) {
++		b->ev_pending = true;
++		b->ev_type = p[BCO_MGMT_HDR + 1];
++		b->ev_reason = get_unaligned_le16(p + BCO_MGMT_HDR + 2);
++		mod_delayed_work(system_wq, &b->join_work, 0);
++	}
 +	if (b->armed && p[1] == b->want_type && get_unaligned_be16(p + 2) == b->want_seq) {
 +		memcpy(b->rsp, p + BCO_MGMT_HDR, len);
 +		b->rsp_len = len;
@@ -611,11 +668,21 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +	struct bco *b = container_of(w, struct bco, scan_work);
 +	struct cfg80211_scan_info info = { };
 +	struct cfg80211_scan_request *req;
-+	const u8 start = 1;
++	u8 start[2 + IEEE80211_MAX_SSID_LEN] = { 1 };
++	unsigned int n_start = 1, i;
 +	int err, tries;
 +
 +	mutex_lock(&b->lock);
-+	err = bco_req(b, T_SCAN, &start, 1);
++	/* SCAN {1, ssid_len, ssid}: the BCO's directed pass probes for it, so a hidden network answers */
++	req = b->scan_req;
++	for (i = 0; req && (b->caps & BCOLINK_CAP_SCAN_SSID) && i < req->n_ssids; i++)
++		if (req->ssids[i].ssid_len) {
++			start[1] = req->ssids[i].ssid_len;
++			memcpy(start + 2, req->ssids[i].ssid, start[1]);
++			n_start = 2 + start[1];
++			break;
++		}
++	err = bco_req(b, T_SCAN, start, n_start);
 +	for (tries = 0; err == -EIO && b->rsp_len && b->rsp[0] == 3 && tries < 50; tries++) {
 +		mutex_unlock(&b->lock);
 +		msleep(500);
@@ -671,12 +738,33 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +	return r[1];
 +}
 +
++/*
++ * The connection after a link event, or a roam the BCO made. A deauthentication or disassociation
++ * carries the access point's reason; beacon loss and a wedged transmitter are local.
++ */
++static void bco_report_lost(struct bco *b, u8 ev, u16 reason)
++{
++	bool local = ev != BCO_EV_DEAUTH && ev != BCO_EV_DISASSOC;
++
++	if (local)
++		reason = ev == BCO_EV_BEACON_LOSS ? WLAN_REASON_DISASSOC_DUE_TO_INACTIVITY :
++						    WLAN_REASON_UNSPECIFIED;
++	else if (!reason)
++		reason = WLAN_REASON_UNSPECIFIED;
++	if (ev)
++		netdev_info(b->wlan, "BCO link lost: event %u, reason %u\n", ev, reason);
++	netif_carrier_off(b->wlan);
++	cfg80211_disconnected(b->wlan, reason, NULL, 0, local, GFP_KERNEL);
++}
++
 +static void bco_join_poll(struct work_struct *w)
 +{
 +	struct bco *b = container_of(to_delayed_work(w), struct bco, join_work);
 +	struct cfg80211_connect_resp_params cr = { };
 +	struct cfg80211_bss *bss = NULL;
-+	u8 ap[ETH_ALEN];
++	unsigned long flags;
++	u8 ap[ETH_ALEN], ev = 0;
++	u16 reason = 0;
 +	bool fail, lost = false;
 +	int state;
 +
@@ -685,21 +773,47 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +		mutex_unlock(&b->lock);
 +		return;
 +	}
++	spin_lock_irqsave(&b->rx_lock, flags);
++	if (b->ev_pending) {
++		ev = b->ev_type;
++		reason = b->ev_reason;
++		b->ev_pending = false;
++	}
++	spin_unlock_irqrestore(&b->rx_lock, flags);
 +	state = bco_status(b);
 +	if (b->connected) {
++		/* the BCO is moving to another access point of the network (BCOLINK_CAP_ROAM) */
++		if (state == S_JOINING && (b->caps & BCOLINK_CAP_ROAM)) {
++			mutex_unlock(&b->lock);
++			schedule_delayed_work(&b->join_work, HZ / 2);
++			return;
++		}
 +		lost = state != S_UP && state != -1;	/* a missed poll is not a lost link */
 +		if (lost)
 +			b->connected = false;
++		if (state == S_UP && !ether_addr_equal(b->rsp + 3 + b->rsp[2], b->bssid)) {
++			const u8 *r = b->rsp, *bssid = r + 3 + r[2];
++
++			bss = bco_inform(b, r + 3, r[2], bssid, bssid[6], (s8)bssid[7], 1);
++			if (bss)
++				memcpy(b->bssid, bssid, ETH_ALEN);
++		}
 +		mutex_unlock(&b->lock);
 +		if (lost) {
-+			netif_carrier_off(b->wlan);
-+			cfg80211_disconnected(b->wlan, WLAN_REASON_UNSPECIFIED, NULL, 0, false,
-+					      GFP_KERNEL);
-+		} else {
-+			if (state == S_UP)
-+				netif_carrier_on(b->wlan);	/* back after bcolink0 was down */
-+			schedule_delayed_work(&b->join_work, BCO_LINK_POLL);
++			bco_report_lost(b, ev, reason);
++			return;
 +		}
++		if (bss) {
++			struct cfg80211_roam_info roam = { .links[0].bss = bss };
++
++			memcpy(ap, bss->bssid, ETH_ALEN);
++			netdev_info(b->wlan, "BCO roamed to %pM\n", ap);
++			cfg80211_roamed(b->wlan, &roam, GFP_KERNEL);	/* consumes the bss reference */
++			cfg80211_port_authorized(b->wlan, ap, NULL, 0, GFP_KERNEL);
++		}
++		if (state == S_UP)
++			netif_carrier_on(b->wlan);	/* back after bcolink0 was down */
++		schedule_delayed_work(&b->join_work, BCO_LINK_POLL);
 +		return;
 +	}
 +	if (state == S_UP) {
@@ -713,6 +827,8 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +	if (bss || fail) {
 +		b->joining = false;
 +		b->connected = !!bss;
++		if (bss)
++			memcpy(b->bssid, bss->bssid, ETH_ALEN);
 +	}
 +	mutex_unlock(&b->lock);
 +
@@ -738,7 +854,7 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +		       struct cfg80211_connect_params *sme)
 +{
 +	struct bco *b = wiphy_priv(wiphy);
-+	u8 pl[1 + 32 + 2 + WLAN_PMK_LEN + 32];
++	u8 pl[1 + 32 + 2 + WLAN_PMK_LEN + 32 + BCO_PROFILE_TAIL];
 +	unsigned int n = 0;
 +	int err;
 +
@@ -754,6 +870,16 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +	n += WLAN_PMK_LEN;
 +	get_random_bytes(pl + n, 32);			/* the BCO's SNonce seed: it has no RNG */
 +	n += 32;
++	/* the BSSID userspace asked for, and roaming within the SSID unless it fixed one */
++	if (READ_ONCE(b->caps) & BCOLINK_CAP_ROAM) {
++		pl[n++] = sme->bssid ? BCO_PROFILE_BSSID_FIXED :
++			  BCO_PROFILE_ROAM | (sme->bssid_hint ? BCO_PROFILE_BSSID_HINT : 0);
++		if (sme->bssid || sme->bssid_hint)
++			memcpy(pl + n, sme->bssid ?: sme->bssid_hint, ETH_ALEN);
++		else
++			eth_zero_addr(pl + n);
++		n += ETH_ALEN;
++	}
 +	mutex_lock(&b->lock);
 +	err = b->running ? bco_req(b, T_SET_PROFILE, pl, n) : -ENETDOWN;
 +	if (!err) {
@@ -1015,6 +1141,73 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +	.ndo_validate_addr = eth_validate_addr,
 +};
 +
++/* ---- regulatory domain (BCOLINK_CAP_REGDOM) ---- */
++
++/*
++ * cfg80211 settled on a regulatory domain (`iw reg set`, soundtapd's country): the channels it
++ * leaves enabled, those only for listening (NO_IR) and the lowest power limit among them go to the
++ * BCO. The request is sent from a work item, since the notifier runs under RTNL.
++ */
++static void bco_reg_notifier(struct wiphy *wiphy, struct regulatory_request *req)
++{
++	struct bco *b = wiphy_priv(wiphy);
++	const struct ieee80211_supported_band *sb = wiphy->bands[NL80211_BAND_2GHZ];
++	unsigned long flags;
++	u16 chans = 0, passive = 0;
++	int i, dbm = 30;
++
++	if (!sb)
++		return;
++	for (i = 0; i < sb->n_channels; i++) {
++		const struct ieee80211_channel *c = &sb->channels[i];
++
++		if ((c->flags & IEEE80211_CHAN_DISABLED) || c->hw_value < 1 || c->hw_value > 13)
++			continue;
++		chans |= BIT(c->hw_value - 1);
++		if (c->flags & IEEE80211_CHAN_NO_IR)
++			passive |= BIT(c->hw_value - 1);
++		dbm = min(dbm, c->max_reg_power ?: c->max_power);
++	}
++	if (!chans)
++		return;		/* nothing usable: the BCO keeps what it has */
++	spin_lock_irqsave(&b->rx_lock, flags);
++	b->regdom[0] = req->alpha2[0];
++	b->regdom[1] = req->alpha2[1];
++	put_unaligned_le16(chans, b->regdom + 2);
++	put_unaligned_le16(passive, b->regdom + 4);
++	b->regdom[6] = clamp(dbm, 0, 30);
++	spin_unlock_irqrestore(&b->rx_lock, flags);
++	schedule_work(&b->reg_work);
++}
++
++static void bco_reg_work(struct work_struct *w)
++{
++	struct bco *b = container_of(w, struct bco, reg_work);
++	struct net_device *net = b->usb->net;
++	u8 pl[BCO_REGDOM_LEN];
++	unsigned long flags;
++	bool enforced;
++	int err;
++
++	if (!(READ_ONCE(b->caps) & BCOLINK_CAP_REGDOM))
++		return;
++	spin_lock_irqsave(&b->rx_lock, flags);
++	memcpy(pl, b->regdom, sizeof(pl));
++	spin_unlock_irqrestore(&b->rx_lock, flags);
++	if (!get_unaligned_le16(pl + 2))
++		return;
++	mutex_lock(&b->lock);
++	err = bco_req(b, T_SET_REGDOM, pl, sizeof(pl));
++	enforced = !err && b->rsp_len >= 2 && b->rsp[1];
++	mutex_unlock(&b->lock);
++	if (err)
++		netdev_warn(net, "BCO refused regulatory domain %c%c (%d)\n", pl[0], pl[1], err);
++	else
++		netdev_info(net, "BCO regulatory domain %c%c: channels %#x, passive %#x, %d dBm%s\n",
++			    pl[0], pl[1], get_unaligned_le16(pl + 2), get_unaligned_le16(pl + 4),
++			    (s8)pl[6], enforced ? "" : " (limit not enforced by the BCO)");
++}
++
 +/* ---- bring-up ---- */
 +
 +static struct net_device *bco_port_new(struct bco *b, const char *name, u8 ch,
@@ -1085,6 +1278,9 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +			netdev_info(net, "BCO transmit flow control on, %u of %u buffers free\n",
 +				    b->rsp[1], b->rsp[2]);
 +	}
++	/* link events at once instead of at the next STATUS poll (ADR 0135) */
++	if (!err && (b->caps & BCOLINK_CAP_EVENTS) && bco_req(b, T_EVENTS, (const u8[]){ 1 }, 1))
++		netdev_warn(net, "BCO refused link events: a lost link shows at the next poll\n");
 +	mutex_unlock(&b->lock);
 +	if (err)
 +		goto fail;
@@ -1101,6 +1297,9 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +	wiphy->iface_combinations = &bco_combo;
 +	wiphy->n_iface_combinations = 1;
 +	wiphy->flags |= WIPHY_FLAG_HAVE_AP_SME;
++	if (b->caps & BCOLINK_CAP_ROAM)
++		wiphy->flags |= WIPHY_FLAG_SUPPORTS_FW_ROAM;	/* the BCO roams within the SSID */
++	wiphy->reg_notifier = bco_reg_notifier;
 +	wiphy->max_scan_ssids = 1;
 +	wiphy->max_scan_ie_len = 256;	/* wpa_supplicant adds IEs; the BCO probes with its own */
 +	wiphy->signal_type = CFG80211_SIGNAL_TYPE_MBM;
@@ -1220,10 +1419,46 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +}
 +static DEVICE_ATTR_RO(flow_resyncs);
 +
++/*
++ * NV_INFO (BCOLINK_CAP_NVINFO): the keys of the BCO's PersParam log, each with its value length and,
++ * for a value of at most 4 bytes, the value. Read-only on the BCO, readable by root only, and asked
++ * of the BCO only when someone reads the file: the bench check for the antenna setting (ADR 0135).
++ */
++static ssize_t nv_keys_show(struct device *d, struct device_attribute *a, char *buf)
++{
++	struct bco *b = bco_of_dev(d);
++	ssize_t len = 0;
++	int err, i, k;
++
++	if (!(READ_ONCE(b->caps) & BCOLINK_CAP_NVINFO))
++		return -EOPNOTSUPP;
++	if (mutex_lock_interruptible(&b->lock))
++		return -EINTR;
++	err = bco_req(b, T_NV_INFO, NULL, 0);
++	if (!err && (b->rsp_len < 2 || b->rsp_len < 2 + b->rsp[1] * BCO_NV_ENTRY))
++		err = -EPROTO;
++	for (i = 0; !err && i < b->rsp[1]; i++) {
++		const u8 *e = b->rsp + 2 + i * BCO_NV_ENTRY;
++		u32 key = get_unaligned_le32(e);
++		u16 vl = get_unaligned_le16(e + 4);
++
++		for (k = 24; k >= 0; k -= 8)
++			len += sysfs_emit_at(buf, len, "%c", isprint(key >> k & 0xff) ? key >> k & 0xff : '.');
++		len += sysfs_emit_at(buf, len, " %u", vl);
++		if (vl <= 4)
++			len += sysfs_emit_at(buf, len, " %*phN", vl, e + 6);
++		len += sysfs_emit_at(buf, len, "\n");
++	}
++	mutex_unlock(&b->lock);
++	return err ? err : len;
++}
++static DEVICE_ATTR_ADMIN_RO(nv_keys);
++
 +static struct attribute *bco_attrs[] = {
 +	&dev_attr_tx_ok.attr, &dev_attr_tx_failed.attr, &dev_attr_tx_dropped.attr,
 +	&dev_attr_link_dropped.attr, &dev_attr_tx_frames.attr,
 +	&dev_attr_flow.attr, &dev_attr_flow_stops.attr, &dev_attr_flow_resyncs.attr,
++	&dev_attr_nv_keys.attr,
 +	NULL
 +};
 +
@@ -1260,6 +1495,7 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +	INIT_DELAYED_WORK(&b->wired_work, bco_wired_poll);
 +	spin_lock_init(&b->flow_lock);
 +	INIT_DELAYED_WORK(&b->flow_work, bco_flow_watch);
++	INIT_WORK(&b->reg_work, bco_reg_work);
 +	dev->driver_priv = b;
 +
 +	/* bcolink0 is a transport, not a LAN: no addresses, no ARP, no IPv6 autoconfiguration */
@@ -1297,6 +1533,7 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +	cancel_delayed_work_sync(&b->join_work);
 +	cancel_work_sync(&b->scan_work);
 +	cancel_delayed_work_sync(&b->flow_work);
++	cancel_work_sync(&b->reg_work);
 +	wiphy_free(b->wiphy);
 +}
 +

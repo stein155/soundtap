@@ -71,7 +71,8 @@ timeout 900 docker run --rm --privileged -v /dev/bus/usb:/dev/bus/usb -v "${REPO
   ./rom-usb-loader --usb-spl --mlo-sha256 "${MLO_SHA}" --uboot-sha256 "${UBOOT_SHA}" \
   /art/MLO /art/u-boot.img --watch 900 --upload-dir /dump >"${OUT}/loader.log" 2>&1
 test -f "${FILE}" && test ! -L "${FILE}" || { echo "dump file missing: ${FILE}" >&2; exit 1; }
-test "$(stat -c%s "${FILE}" || true)" = "${LEN_DEC}" || { echo "dump length mismatch" >&2; exit 1; }
+SIZE=$(wc -c <"${FILE}")
+test "$((SIZE))" = "${LEN_DEC}" || { echo "dump length mismatch" >&2; exit 1; }
 CRC=$(python3 -c "import zlib; print('%08x' % (zlib.crc32(open('${FILE}','rb').read()) & 0xffffffff))")
 grep -a -F "uboot: DP-${NAME}-crc" "${OUT}/loader.log" >/dev/null || { echo "board dump CRC marker missing" >&2; exit 1; }
 python3 - "${OUT}/loader.log" "${NAME}" "${CRC}" <<'PY' || { echo "board dump CRC mismatch" >&2; exit 1; }

@@ -18,7 +18,9 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"regexp"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -277,6 +279,14 @@ func PublicIP(a net.IP) bool {
 	}
 
 	addr = addr.Unmap()
+	if nat64().Contains(addr) {
+		// A NAT64 gateway turns 64:ff9b::/96 into the IPv4 address in its last 32 bits,
+		// a private one on the gateway's side too: that address is what is reached.
+		v4 := addr.As16()
+
+		return PublicIP(net.IPv4(v4[12], v4[13], v4[14], v4[15]))
+	}
+
 	if addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast() ||
 		addr.IsLinkLocalMulticast() || addr.IsMulticast() || addr.IsUnspecified() {
 		return false
@@ -307,6 +317,9 @@ func notGlobal() []netip.Prefix {
 	)
 }
 
+// nat64 is the well-known NAT64 prefix (RFC 6052).
+func nat64() netip.Prefix { return netip.MustParsePrefix("64:ff9b::/96") }
+
 // Blocks inside notGlobal that the registries mark globally reachable.
 func globalExceptions() []netip.Prefix {
 	return prefixes(
@@ -324,10 +337,25 @@ func prefixes(ss ...string) []netip.Prefix {
 	return ps
 }
 
+// userinfo is the user:password@ part of a URL in text: the authority up to its last @,
+// as a URL parser reads it, so a password with an @ in it goes whole.
+var userinfo = regexp.MustCompile(`(://)[^/?#\s]+@`)
+
+// LogURL is text, a URL or a line that holds some, without the user:password@ part of
+// any URL in it. A custom stream may carry its credentials there, and some services put a
+// token in the user, so both go: credentials never reach the log (AGENTS.md).
+func LogURL(text string) string {
+	if !strings.Contains(text, "@") {
+		return text
+	}
+
+	return userinfo.ReplaceAllString(text, "${1}")
+}
+
 // HTTPStatusError is returned when a fetch gets a non-200 response.
 type HTTPStatusError struct {
 	URL    string
 	Status int
 }
 
-func (e HTTPStatusError) Error() string { return e.URL + " status " + strconv.Itoa(e.Status) }
+func (e HTTPStatusError) Error() string { return LogURL(e.URL) + " status " + strconv.Itoa(e.Status) }

@@ -146,6 +146,76 @@ const response = (body, ok = true) => ({ok, json: async () => body});
 """, text=True, capture_output=True, check=False)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_language_newest_pick_wins(self) -> None:
+        """A slower load of an earlier language pick does not flip the page back from a later one."""
+        result = subprocess.run(["node", "--input-type=commonjs", "-"], cwd=ROOT,
+                                input=r"""
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const fs = require('node:fs');
+const [installer, page] = [...fs.readFileSync('docs/installer/index.html', 'utf8')
+  .matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+const strings = (lang) => JSON.parse(fs.readFileSync('docs/installer/i18n/' + lang + '.json', 'utf8'));
+// Anything the page touches and this test does not look at: callable, constructible, empty
+// when iterated, '' as a string, and keeping what is written to it.
+const stub = () => new Proxy(function () {}, {
+  get(target, key) {
+    if (key === Symbol.iterator) return function* () {};
+    if (key === Symbol.toPrimitive) return () => '';
+    if (key === 'then') return undefined;
+    if (!(key in target)) target[key] = stub();
+    return target[key];
+  },
+  set(target, key, value) {
+    Object.defineProperty(target, key, {value, writable: true, configurable: true});
+    return true;
+  },
+  apply: () => stub(),
+  construct: () => stub(),
+});
+const elements = {};
+const listeners = {};
+const document = stub();
+document.getElementById = (id) => {
+  if (!elements[id]) {
+    elements[id] = stub();
+    elements[id].addEventListener = (name, fn) => { listeners[id + ':' + name] = fn; };
+  }
+  return elements[id];
+};
+const held = {};
+const fetch = (url) => {
+  if (url === 'versions.json') {
+    return Promise.resolve({ok: true, json: async () => ({supported: [], unsupported: [], preview: []})});
+  }
+  const lang = /^i18n\/(.+)\.json$/.exec(url);
+  if (!lang) return new Promise(() => {});
+  if (lang[1] === 'en') return Promise.resolve({ok: true, json: async () => strings('en')});
+  return new Promise((resolve) => { held[lang[1]] = () => resolve({ok: true, json: async () => strings(lang[1])}); });
+};
+const ctx = vm.createContext({document, fetch, AbortSignal, setTimeout, window: stub(), history: stub(),
+  location: stub(), localStorage: stub(), MutationObserver: stub(), requestAnimationFrame: stub(),
+  navigator: {languages: ['en'], language: 'en', userAgent: '', maxTouchPoints: 0}});
+vm.runInContext(installer, ctx);
+vm.runInContext(page, ctx);
+const settle = () => new Promise((r) => setImmediate(r));
+(async () => {
+  await settle();
+  const pick = (lang) => { elements.lang.value = lang; listeners['lang:change'](); };
+  pick('de');
+  pick('nl');
+  held.nl();
+  await settle();
+  held.de();
+  await settle();
+  assert.equal(document.documentElement.lang, 'nl');
+  assert.equal(elements.lang.value, 'nl');
+  assert.equal(document.title, strings('nl')['page.title']);
+  console.log('language picks passed');
+})().catch(err => { console.error(err); process.exitCode = 1; });
+""", text=True, capture_output=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

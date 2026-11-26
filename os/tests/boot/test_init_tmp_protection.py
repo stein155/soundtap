@@ -40,5 +40,30 @@ class TmpProtection(unittest.TestCase):
             self.assertEqual((init.proc / "sys/fs/protected_fifos").read_text(), "2\n")
 
 
+class Ipv6TemporaryAddresses(unittest.TestCase):
+    """set_kernel_params prefers temporary IPv6 addresses for connections out (ADR 0134)."""
+
+    def test_every_interface_and_the_default_prefer_temporary_addresses(self) -> None:
+        """all, default and every interface already there get use_tempaddr 2."""
+        with tempfile.TemporaryDirectory() as tmp:
+            init = InitScript(tmp)
+            conf = init.proc / "sys/net/ipv6/conf"
+            for name in ("all", "default", "lo", "wlan0"):
+                (conf / name).mkdir(parents=True)
+                (conf / name / "use_tempaddr").write_text("0\n")
+            init.run("set_kernel_params")
+            got = {name: (conf / name / "use_tempaddr").read_text().strip() for name in ("all", "default", "lo", "wlan0")}
+        self.assertEqual(got, dict.fromkeys(("all", "default", "lo", "wlan0"), "2"))
+
+    def test_a_kernel_without_ipv6_is_left_alone(self) -> None:
+        """Without /proc/sys/net/ipv6 (a stock kernel) nothing is written and the rest goes on."""
+        with tempfile.TemporaryDirectory() as tmp:
+            init = InitScript(tmp)
+            (init.proc / "sys/fs").mkdir(parents=True)
+            done = init.run("set_kernel_params; echo done")
+            self.assertEqual(done.stdout, "done\n")
+            self.assertFalse((init.proc / "sys/net").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -6,7 +6,8 @@
 # namespace whose "wlan1" is a veth, then sends a DHCPDISCOVER-shaped broadcast to 67 and a
 # DNS query to 53 from the client side, plus one to a closed port. Then SSDP (1900), which
 # is answered only from the speaker's own subnets: refused before lan-allow.sh adds the
-# subnet, accepted after, and still refused from a routed address. Needs root and nft:
+# subnet, accepted after, and still refused from a routed address; then the same over IPv6
+# with lan_nets6. Needs root and nft:
 #   docker run --rm --privileged -v "$PWD":/w alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc sh /w/os/tests/wifi/firewall_setup_ap_test.sh
 #
 # The namespace is a process's (unshare + nsenter), not `ip netns`: `ip netns exec` remounts
@@ -65,4 +66,46 @@ routed() {
 }
 # shellcheck disable=SC2310 # the probe's status is what this test checks
 routed && { echo "SSDP from a routed address: accepted"; fail=1; } || echo "SSDP from a routed address: dropped"
+# IPv6 (ADR 0134): the same inet table. A container starts with IPv6 off on its links.
+sysctl -qw net.ipv6.conf.phone.disable_ipv6=0
+spk sysctl -qw net.ipv6.conf.wlan1.disable_ipv6=0
+ip -6 addr add fe80::10/64 dev phone nodad
+ip -6 addr add 2001:db8:42::10/64 dev phone nodad
+ip -6 addr add 2001:db8:99::10/128 dev phone nodad
+spk ip -6 addr add fe80::1/64 dev wlan1 nodad
+spk ip -6 addr add 2001:db8:42::1/64 dev wlan1 nodad
+spk ip -6 route add 2001:db8:99::10/128 dev wlan1
+got6() { # <port> <source>: does the speaker side receive a UDP datagram from source?
+	rm -f /tmp/got
+	spk timeout 3 socat -u "UDP6-RECV:$1,reuseaddr" OPEN:/tmp/got,creat &
+	recv=$!
+	sleep 1
+	echo probe | socat -u - "UDP6-DATAGRAM:[$3]:$1,bind=[$2]" || true
+	wait "${recv}" || true
+	[ -s /tmp/got ]
+}
+# shellcheck disable=SC2310 # the probe's status is what this test checks
+got6 1900 2001:db8:42::10 2001:db8:42::1 && { echo "IPv6 SSDP before lan_nets6: accepted"; fail=1; } \
+	|| echo "IPv6 SSDP before lan_nets6: dropped"
+# What soundtapd's lanfilter writes for wlan1 with these addresses.
+printf 'flush set inet filter lan_nets6\nadd element inet filter lan_nets6 { "wlan1" . fe80::/10, "wlan1" . 2001:db8:42::/64 }\n' \
+	| spk nft -f -
+# shellcheck disable=SC2310 # the probe's status is what this test checks
+{ got6 1900 2001:db8:42::10 2001:db8:42::1 && echo "IPv6 SSDP from own prefix: accepted"; } \
+	|| { echo "IPv6 SSDP from own prefix: DROPPED"; fail=1; }
+# shellcheck disable=SC2310 # the probe's status is what this test checks
+{ got6 1900 fe80::10%phone fe80::1%phone && echo "IPv6 SSDP over link-local: accepted"; } \
+	|| { echo "IPv6 SSDP over link-local: DROPPED"; fail=1; }
+# shellcheck disable=SC2310 # the probe's status is what this test checks
+got6 1900 2001:db8:99::10 2001:db8:42::1 && { echo "IPv6 SSDP from a routed address: accepted"; fail=1; } \
+	|| echo "IPv6 SSDP from a routed address: dropped"
+# shellcheck disable=SC2310 # the probe's status is what this test checks
+got6 9999 2001:db8:42::10 2001:db8:42::1 && { echo "IPv6 closed port 9999: accepted"; fail=1; } \
+	|| echo "IPv6 closed port 9999: dropped"
+# Router advertisements from the open setup AP are dropped before the hop-limit-255 accept.
+ra=$(spk nft list chain inet filter input | grep -n 'nd-router-advert' | cut -d: -f1 | tr '\n' ' ')
+case "$(spk nft list chain inet filter input | grep 'nd-router-advert' | head -n 1)" in
+*'iifname "wlan1"'*drop*) echo "IPv6 router advertisement on wlan1: dropped first (${ra})" ;;
+*) echo "IPv6 router advertisement on wlan1: NOT dropped before the accept"; fail=1 ;;
+esac
 exit "${fail}"

@@ -16,8 +16,9 @@ for model in st10 st20; do
 	"${HOST_DIR}/bin/mkimage" -A arm -O linux -T kernel -C none \
 		-a 0x80008000 -e 0x80008000 -n "Linux-6.12 SoundTap ${model}" \
 		-d "${images}/zImage" "${out}"
-	test "$(wc -c <"${out}" || true)" -le 4980736 || { echo "${out} exceeds 4.75 MiB" >&2; exit 1; }
 done
+# The size budget: fails over 4.75 MiB, warns when little room is left.
+python3 "${BR2_EXTERNAL_SOUNDTAP_PATH:?}/support/kernel_size_check.py" "${images}/uImage-st10" "${images}/uImage-st20"
 kver=$(sed -n 's/^BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="\(.*\)"$/\1/p' "${BR2_CONFIG:?}")
 cp "${BUILD_DIR}/linux-${kver}/.config" "${images}/kernel.config"
 for opt in CONFIG_MODULES=y CONFIG_RTC_DRV_OMAP=y CONFIG_I2C_OMAP=y CONFIG_LEDS_PWM=y; do

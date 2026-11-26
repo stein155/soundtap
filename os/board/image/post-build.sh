@@ -31,11 +31,7 @@ done
 "${HOST_DIR}/bin/mkimage" -A arm -O linux -T kernel -C none \
 	-a 0x80008000 -e 0x80008000 -n "Linux-6.12 SoundTap st20" \
 	-d "${BINARIES_DIR}/zImage" "${target}/boot/uImage-spotty"
-size=$(wc -c <"${target}/boot/uImage-spotty")
-test "${size}" -le 4980736 || {
-	printf 'uImage-spotty %s exceeds 4.75 MiB limit\n' "${size}" >&2
-	exit 1
-}
+python3 "${BR2_EXTERNAL_SOUNDTAP_PATH:?}/support/kernel_size_check.py" "${target}/boot/uImage-spotty"
 # The kernel is in the slot as uImage-*; the raw copy Buildroot installs is not read by
 # anything and costs 4 MiB of a tight rootfs budget.
 rm -f "${target}/boot/zImage"

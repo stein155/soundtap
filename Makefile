@@ -292,6 +292,7 @@ stu:
 
 image-check:
 	@cd "$(IMAGES)" && sha256sum -c SHA256SUMS
+	@python3 "$(ROOT)/os/support/kernel_size_check.py" "$(IMAGES)/uImage-st10" "$(IMAGES)/uImage-st20"
 	@python3 "$(ROOT)/os/support/kernel_config_check.py" "$(IMAGES)/kernel.config"
 	@python3 "$(ROOT)/os/support/ignore_cves.py" --kernel-config "$(IMAGES)/kernel.config"
 	@python3 "$(ROOT)/os/support/rootfs_check.py" --profile "$(SOUNDTAP_PROFILE)" --accounts "$(IMAGES)/rootfs-tree" "$(OUTPUT)/target"

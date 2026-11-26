@@ -1,20 +1,20 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-"""The README and the compatibility matrix call every model the release checklist covers Supported.
+"""The compatibility matrix calls every model the release checklist covers Supported; the README names them.
 
 Supported is a model's place in the release (owner decision 2026-11-20), not a count of
 checklist passes: a release is published only after each of these models has passed its
 column of the checklist (RELEASING.md), so an open row blocks a release, not the model. Open
-rows stay in docs/hardware/hardware-test.md.
+rows stay in docs/hardware/hardware-test.md. The README shows the four models and links to the
+matrix for their status, so it only has to name each one.
 """
 import pathlib
-import re
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
-README_ROWS = {"ST10": "SoundTouch 10", "ST20": "SoundTouch 20 Series I",
-               "WLA": "SoundTouch Wireless Link adapter", "ST300": "SoundTouch 300"}
+README_NAMES = {"ST10": "SoundTouch 10", "ST20": "SoundTouch 20",
+                "WLA": "Wireless Link adapter", "ST300": "SoundTouch 300"}
 
 
 def cells(line: str) -> list[str]:
@@ -33,15 +33,14 @@ class ModelStatus(unittest.TestCase):
 
     def test_the_checklist_covers_the_four_release_models(self) -> None:
         """The release checklist covers the four models."""
-        self.assertEqual(sorted(release_models()), sorted(README_ROWS))
+        self.assertEqual(sorted(release_models()), sorted(README_NAMES))
 
     def test_readme(self) -> None:
-        """The README calls every release model Supported and none In test."""
+        """The README names every release model, points at the matrix and calls none In test."""
         readme = (ROOT / "README.md").read_text()
         for model in release_models():
-            row = re.search(r"^\| \**" + re.escape(README_ROWS[model]) + r"\** \| ([^|]+)\|", readme, re.MULTILINE)
-            self.assertIsNotNone(row, model)
-            self.assertIn("Supported", row.group(1), model)
+            self.assertIn(README_NAMES[model], readme, model)
+        self.assertIn("docs/owners/compatibility.md", readme)
         self.assertNotIn("In test", readme)
 
     def test_compatibility_matrix(self) -> None:

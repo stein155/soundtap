@@ -49,9 +49,9 @@ class LanAllowTest(unittest.TestCase):
             lan("add", "wlan1", "192.168.42.1", "24")
             lan("add", "eth0", "10.1.2.3/16")
             self.assertEqual(lan.nft(), [
-                "add element ip filter lan_nets { 192.168.178.0/24 }",
-                "add element ip filter lan_nets { 192.168.42.0/24 }",
-                "add element ip filter lan_nets { 10.1.0.0/16 }",
+                "add element inet filter lan_nets { 192.168.178.0/24 }",
+                "add element inet filter lan_nets { 192.168.42.0/24 }",
+                "add element inet filter lan_nets { 10.1.0.0/16 }",
             ])
 
     def test_a_renewal_changes_nothing_and_a_new_subnet_replaces_the_old(self) -> None:
@@ -62,9 +62,9 @@ class LanAllowTest(unittest.TestCase):
             lan("add", "wlan0", "192.168.1.20", "255.255.255.0")
             lan("add", "wlan0", "10.0.0.9", "255.0.0.0")
             self.assertEqual(lan.nft(), [
-                "add element ip filter lan_nets { 192.168.1.0/24 }",
-                "delete element ip filter lan_nets { 192.168.1.0/24 }",
-                "add element ip filter lan_nets { 10.0.0.0/8 }",
+                "add element inet filter lan_nets { 192.168.1.0/24 }",
+                "delete element inet filter lan_nets { 192.168.1.0/24 }",
+                "add element inet filter lan_nets { 10.0.0.0/8 }",
             ])
 
     def test_two_interfaces_on_one_subnet_share_one_element(self) -> None:
@@ -74,9 +74,9 @@ class LanAllowTest(unittest.TestCase):
             lan("add", "wlan0", "192.168.1.20", "255.255.255.0")
             lan("add", "eth0", "192.168.1.21", "255.255.255.0")
             lan("del", "wlan0")
-            self.assertEqual(lan.nft(), ["add element ip filter lan_nets { 192.168.1.0/24 }"])
+            self.assertEqual(lan.nft(), ["add element inet filter lan_nets { 192.168.1.0/24 }"])
             lan("del", "eth0")
-            self.assertEqual(lan.nft()[-1], "delete element ip filter lan_nets { 192.168.1.0/24 }")
+            self.assertEqual(lan.nft()[-1], "delete element inet filter lan_nets { 192.168.1.0/24 }")
 
     def test_del_empties_the_state_file_init_made_shared(self) -> None:
         """Del empties the shared state file instead of removing it.
@@ -96,9 +96,9 @@ class LanAllowTest(unittest.TestCase):
             self.assertTrue((state / "lan-net.wlan0").is_file())
             self.assertEqual((state / "lan-net.wlan0").read_text(), "")
             lan("add", "eth0", "192.168.1.21", "255.255.255.0")
-            self.assertEqual(lan.nft(), ["add element ip filter lan_nets { 192.168.1.0/24 }",
-                                         "delete element ip filter lan_nets { 192.168.1.0/24 }",
-                                         "add element ip filter lan_nets { 192.168.1.0/24 }"])
+            self.assertEqual(lan.nft(), ["add element inet filter lan_nets { 192.168.1.0/24 }",
+                                         "delete element inet filter lan_nets { 192.168.1.0/24 }",
+                                         "add element inet filter lan_nets { 192.168.1.0/24 }"])
 
     def test_del_of_an_interface_without_address_is_quiet(self) -> None:
         """Del of an interface that never had an address succeeds and changes nothing."""

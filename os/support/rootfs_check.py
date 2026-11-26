@@ -147,6 +147,10 @@ def validate_production_ssh(root: Path, root_entry: str) -> None:
         fail("production rootfs has no nft for its input filter")
     if not rules.is_file() or "policy drop" not in rules.read_text():
         fail("production rootfs has no default-deny input filter")
+    # An ip table filters IPv4 only and leaves every port open over IPv6 (ADR 0134).
+    if re.search(r"(?m)^\s*table\s+(?!inet\b)\w+\s+filter\b", rules.read_text()) or \
+            not re.search(r"(?m)^\s*table\s+inet\s+filter\b", rules.read_text()):
+        fail("production input filter does not cover IPv6: it must be one inet table")
     # Without these the setup AP gives no lease and no captive portal.
     if 'iifname "wlan1" udp dport { 53, 67 } accept' not in rules.read_text():
         fail("production input filter blocks the setup AP's DHCP and DNS")

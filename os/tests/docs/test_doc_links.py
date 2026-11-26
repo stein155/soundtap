@@ -106,11 +106,14 @@ def site_link_errors(docs: Path, name: str, text: str) -> list[str]:
             if path and not path.endswith("/"):
                 dest = docs / path  # a file the site copies as it is
             else:
-                # A page: docs/x.md or docs/x/README.md is x/; the home page is the README.
+                # A page: docs/x.md or docs/x/README.md is x/; the home page is the landing
+                # template and overview/ the README (docs/tools/root_pages.py).
                 page = path.rstrip("/")
                 dest = next((p for p in (docs / (page + ".md"), docs / page / "README.md",
                                          docs / page / "index.html") if page and p.is_file()),
-                            None) if page else ROOT / "README.md"
+                            None) if page else docs / "overrides/home.html"
+                if page == "overview":
+                    dest = ROOT / "README.md"
             if dest is None or not dest.exists():
                 errors.append(f"missing {target}")
             elif url.fragment and dest.suffix == ".md" and url.fragment not in anchors(dest.read_text()):
