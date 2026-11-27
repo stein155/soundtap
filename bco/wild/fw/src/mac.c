@@ -141,6 +141,10 @@ static void send_ack(const unsigned char *e)
     REG(0x670) = 0x800000;
     ack_desc.rate = 8;
     ack_hdr[0] = 0xd4;                          /* duration 0, no fragment bursts */
+    if (ap_mode) {                              /* diag: what the setup AP acknowledges, and how */
+        rec[RC_APACK]++;
+        rec[RC_APACKLAST] = ack_desc.cls | (e[6] & 15u) << 8 | (unsigned)e[8] << 16;
+    }
 }
 
 static int same_mac(const unsigned char *a, const unsigned char *b)

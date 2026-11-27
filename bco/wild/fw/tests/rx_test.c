@@ -483,6 +483,8 @@ static void ap_clients(void)
         fbuf[n++] = i + 1;
     air_rx(fbuf, n + 4, ST_IN);
     CHECK(rxq_in == 1 && acked(), "ap_mode: toDS data without the filter flag kept and ACKed");
+    CHECK(rec[RC_APACK] == 1 && rec[RC_APACKLAST] == (resp_class[11] | 11u << 8 | 0x08u << 16),
+          "the ACK counted with its rate class, the received rate index and frame control");
     CHECK(rec[RC_APIN] == 1 && rec[RC_APNOFILT] == 1 && rec[RC_APKEEP] == 1, "ap counters");
     CHECK(rec[RC_APDATA] == 1 && rec[RC_APDRATE] == (11u | 0xc4u << 8 | 0x08u << 16) && !rec[RC_APNOROOM],
           "a client's data frame counted with its rate index, level and frame control");
