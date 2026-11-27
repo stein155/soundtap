@@ -6,6 +6,8 @@
  * receive-key lookup. Command layouts are wifi.c's set_key() and the PEER_ADD/JOIN_DONE bodies. */
 #include "core_sim.h"
 
+static int soft; /* sta_rxkey: the app deciphers under this key (ADR 0136) */
+
 static const unsigned char TK[16] = {0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
                                      0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f};
 static const unsigned char GTK[16] = {0xe0, 0xe1, 0xe2, 0xe3, 0xe4, 0xe5, 0xe6, 0xe7,
@@ -48,8 +50,36 @@ static void run(void)
     host_events();
 }
 
+/* A key of another cipher than CCMP is the app's (ADR 0136): it marks the slot soft, never gives
+ * the core a key to encipher with, and a CCMP install over it makes the slot the engine's again. */
+static void soft_keys(void)
+{
+    unsigned char pr[10] = {0}, p[52] = {0};
+    unsigned long long pn = 0, *rxpn;
+    sim_init();
+    memcpy(pr, BSSID, 6);
+    host_cmd(0xb5, 0x12, 0x11, pr, sizeof pr);
+    p[8] = 2, p[19] = 16;                       /* TKIP pairwise, no key bytes used */
+    memcpy(p + 12, BSSID, 6);
+    host_cmd(13, 0x12, 1, p, 52);
+    memset(p, 0, sizeof p);
+    p[0] = 1, p[4] = 0, p[7] = 16;              /* WEP-40 default key 0 */
+    host_cmd(11, 0x12, 1, p, 40);
+    pump(4);
+    soft = 0;
+    CHECK(sta_rxkey(0, 0, 0, &rxpn, &soft) && soft, "TKIP pairwise: the app deciphers");
+    CHECK(!sta_txkey(0, &pn), "and the core never enciphers with it");
+    soft = 0;
+    CHECK(sta_rxkey(6, 1, 0, &rxpn, &soft) && soft, "WEP default key 0: the app's");
+    set_key(1, 0, BSSID, TK);                   /* a CCMP rekey: the engine's again */
+    pump(4);
+    soft = 1;
+    CHECK(sta_rxkey(0, 0, 0, &rxpn, &soft) && !soft && sta_txkey(0, &pn), "CCMP over it: hardware");
+}
+
 int main(void)
 {
+    soft_keys();
     unsigned long long pn = 0, *rxpn = 0;
     const unsigned char *k;
     const struct event *e;
@@ -79,9 +109,9 @@ int main(void)
     e = find_event(0x1b);
     CHECK(e && e->module == 1 && e->len == 2 && e->payload[0] == 0 && e->payload[1] == 0,
           "install acknowledged to the sender");
-    k = sta_rxkey(0, 0, 0, &rxpn);
+    k = sta_rxkey(0, 0, 0, &rxpn, &soft);
     CHECK(k && !memcmp(k, TK, 16) && rxpn && *rxpn == 0, "receive key with PN 0");
-    CHECK(!sta_rxkey(1, 0, 0, &rxpn) && !sta_rxkey(6, 0, 0, &rxpn) && !sta_rxkey(99, 0, 0, &rxpn),
+    CHECK(!sta_rxkey(1, 0, 0, &rxpn, &soft) && !sta_rxkey(6, 0, 0, &rxpn, &soft) && !sta_rxkey(99, 0, 0, &rxpn, &soft),
           "no receive key for other slots");
     CHECK(!sta_txkey(6, &pn) && !sta_txkey(1000, &pn), "no transmit key past the table");
 
@@ -107,7 +137,7 @@ int main(void)
     /* pairwise delete */
     set_key(1, 0, BSSID, 0);
     run();
-    CHECK(!sta_txkey(0, &pn) && !sta_rxkey(0, 0, 0, &rxpn), "pairwise key deleted");
+    CHECK(!sta_txkey(0, &pn) && !sta_rxkey(0, 0, 0, &rxpn, &soft), "pairwise key deleted");
     e = find_event(0xbb);
     CHECK(e && e->module == 0x11 && e->payload[0] == 0, "delete notification");
     CHECK(find_event(0x1c) && find_event(0x1c)->module == 1, "delete acknowledged");
@@ -115,10 +145,10 @@ int main(void)
     /* group keys: index 0..3, key id taken modulo 4 on receive */
     set_key(0, 2, 0, GTK);
     run();
-    k = sta_rxkey(6, 1, 2, &rxpn);
+    k = sta_rxkey(6, 1, 2, &rxpn, &soft);
     CHECK(k && !memcmp(k, GTK, 16) && *rxpn == 0, "group key 2 installed");
-    CHECK(sta_rxkey(0, 1, 6, &rxpn) == k, "key id 6 is index 2");
-    CHECK(!sta_rxkey(0, 1, 1, &rxpn), "no group key 1");
+    CHECK(sta_rxkey(0, 1, 6, &rxpn, &soft) == k, "key id 6 is index 2");
+    CHECK(!sta_rxkey(0, 1, 1, &rxpn, &soft), "no group key 1");
     CHECK(find_event(0x1b) && find_event(0x1b)->payload[0] == 0, "group install acknowledged");
     set_key(0, 4, 0, TK);
     run();
@@ -127,14 +157,14 @@ int main(void)
     set_key(0, 255, 0, TK);
     run();
     for (unsigned i = 0; i < 4; i++)
-        CHECK(i == 2 ? sta_rxkey(0, 1, i, &rxpn) == k : !sta_rxkey(0, 1, i, &rxpn),
+        CHECK(i == 2 ? sta_rxkey(0, 1, i, &rxpn, &soft) == k : !sta_rxkey(0, 1, i, &rxpn, &soft),
               "index %u after out-of-range installs", i);
     set_key(0, 7, 0, 0);
     run();
-    CHECK(sta_rxkey(0, 1, 2, &rxpn) != 0, "delete of index 7 touches nothing");
+    CHECK(sta_rxkey(0, 1, 2, &rxpn, &soft) != 0, "delete of index 7 touches nothing");
     set_key(0, 2, 0, 0);
     run();
-    CHECK(!sta_rxkey(0, 1, 2, &rxpn), "group key 2 deleted");
+    CHECK(!sta_rxkey(0, 1, 2, &rxpn, &soft), "group key 2 deleted");
 
     /* PEER_DEL, drop all, JOIN_DONE */
     peer_add(BSSID, 0);
@@ -159,7 +189,7 @@ int main(void)
     CHECK(sta_txkey(3, &pn), "PEER_ADD of the same MAC keeps its key");
     peer_add(GTK, 3); /* another MAC in slot 3 */
     run();
-    CHECK(!sta_txkey(3, &pn) && !sta_rxkey(3, 0, 0, &rxpn), "a new peer in the slot has no key");
+    CHECK(!sta_txkey(3, &pn) && !sta_rxkey(3, 0, 0, &rxpn, &soft), "a new peer in the slot has no key");
     peer_add(OWN, 3);
     set_key(1, 0, OWN, TK);
     {
@@ -172,7 +202,7 @@ int main(void)
     host_cmd(0xb7, 0x12, 0x11, 0, 0);
     run();
     CHECK(peer_slot(BSSID) == 6, "drop-all empties the table");
-    CHECK(!sta_txkey(0, &pn) && !sta_rxkey(0, 0, 0, &rxpn), "and drops the keys");
+    CHECK(!sta_txkey(0, &pn) && !sta_rxkey(0, 0, 0, &rxpn, &soft), "and drops the keys");
     peer_add(BSSID, 0);
     set_key(1, 0, BSSID, TK);
     {
@@ -222,7 +252,7 @@ int main(void)
               rec[RC_CMDBAD]);
         k = sta_txkey(0, &pn);
         CHECK(k && !memcmp(k, TK, 16) && pn == 1, "the AP's pairwise key untouched");
-        CHECK(sta_rxkey(0, 1, 1, &rxpn) && !sta_rxkey(0, 1, 0, &rxpn), "group keys untouched");
+        CHECK(sta_rxkey(0, 1, 1, &rxpn, &soft) && !sta_rxkey(0, 1, 0, &rxpn, &soft), "group keys untouched");
         CHECK(peer_slot(BSSID) == 0 && peer_slot(OWN) == 6 && privacy == 7, "peer table untouched");
     }
     CHECK(irq_depth == 0, "critical sections balanced");

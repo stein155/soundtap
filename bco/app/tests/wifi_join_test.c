@@ -42,6 +42,7 @@
 #undef memcpy
 #undef memset
 #include "../src/wpa.c"
+#include "../src/wsec.c"
 
 void netcard_from_port(unsigned ch, const unsigned char *f, unsigned n)
 {
@@ -445,6 +446,128 @@ static void open_network(void)
     printf("ok: an open network joins without a handshake and carries data in the clear\n");
 }
 
+/* A data frame from the AP that the core passed up under one of the app's keys (RX_SOFT): the
+ * MSDU (LLC/SNAP IPv4 and 20 bytes) enciphered as TKIP under tk and mic_key with TSC tsc, to da. */
+static unsigned char rxt[0xcc + 8 + 8 + 20 + 12];
+static unsigned rx_tkip(const unsigned char *da, const unsigned char *tk, const unsigned char *mic_key,
+                        unsigned keyid, unsigned long long tsc)
+{
+    static const unsigned char llc[8] = {0xaa, 0xaa, 3, 0, 0, 0, 0x08, 0x00};
+    memset(rxt, 0, sizeof rxt);
+    rxt[0x94] = 0x18, rxt[0x97] = 0xc4, rxt[0x94 + 7] = RX_SOFT;
+    rxt[0xac] = 0x08, rxt[0xad] = 0x42;
+    memcpy(rxt + 0xac + 4, da, 6), memcpy(rxt + 0xac + 10, AP, 6), memcpy(rxt + 0xac + 16, AP, 6);
+    unsigned char *m = rxt + 0xcc + WSEC_TKIP_HDR;
+    memcpy(m, llc, 8);
+    m[8] = 0x45, m[8 + 3] = 20;
+    return 0xcc + wsec_tkip_protect(tk, mic_key, keyid, tsc, AP, da, AP, rxt + 0xcc, 8 + 20);
+}
+
+/* TKIP in the app (ADR 0136): a mixed-mode router's TKIP group key is installed as the app's (the
+ * core gets the cipher and no key bytes) and its broadcasts reach the SCM, a replayed TSC does not;
+ * under a TKIP pairwise key frames go out enciphered by the app (TX_RAW, the STA-to-AP MIC key, the
+ * TSC counting up) and come in deciphered; a Michael failure is reported to the AP, and a second
+ * within a minute deauthenticates with reason 14 and keeps TKIP networks out for a minute. */
+static void tkip_frames(void)
+{
+    static const unsigned char own_mac[6] = {0x02, 0x11, 0x22, 0x33, 0x44, 0x55};
+    unsigned char gtk[32], ptk[32];
+    for (unsigned i = 0; i < 32; i++)
+        gtk[i] = (unsigned char)(0xa0 + i), ptk[i] = (unsigned char)(0x40 + i);
+    copy(own, own_mac, 6);
+    cmd_ring(63);
+    tx_frames();
+    memset(&sm, 0, sizeof sm);
+    copy(cur.bssid, AP, 6), have_cur = 1, state = WIFI_UP, prof_sec = WIFI_SEC_PSK, now = 40000;
+    keyed = 1, ap_keyed = 0;
+    /* the group key from the handshake: TKIP, index 2 */
+    sm.group = 2, sm.gtk_len = 32, sm.gtk_idx = 2;
+    memcpy(sm.gtk, gtk, 32);
+    keys_due = WPA_RX_INSTALL_GTK;
+    install_keys();
+    assert(!keys_due && sw_grp[2].cipher == WSEC_TKIP && !memcmp(sw_grp[2].key, gtk, 32));
+    int seen = 0;
+    for (unsigned i = 1; i + 12 < 64; i++)
+        if (cmdbuf[i] == 11 && cmdbuf[i + 1] == (18u | 1u << 16)) {
+            const unsigned char *pl = (const unsigned char *)(cmdbuf + i + 2);
+            assert(pl[0] == WSEC_TKIP && pl[4] == 2);
+            for (unsigned k = 0; k < 16; k++)
+                assert(pl[8 + k] == 0); /* the key stays in the app */
+            seen = 1;
+        }
+    assert(seen);
+    /* a broadcast under it reaches the SCM; the same TSC again does not */
+    unsigned before = wifi_rx_frames;
+    rx_station(rxt, rx_tkip(ap_bcast, gtk, gtk + 16, 2, 7));
+    assert(wifi_rx_frames == before + 1);
+    rx_station(rxt, rx_tkip(ap_bcast, gtk, gtk + 16, 2, 7));
+    assert(wifi_rx_frames == before + 1);
+    rx_station(rxt, rx_tkip(ap_bcast, gtk, gtk + 16, 2, 8));
+    assert(wifi_rx_frames == before + 2);
+    /* a key id without a key: dropped */
+    rx_station(rxt, rx_tkip(ap_bcast, gtk, gtk + 16, 1, 9));
+    assert(wifi_rx_frames == before + 2);
+
+    /* a TKIP pairwise key: TX enciphered by the app, the TSC from 1 */
+    sw_pair.cipher = WSEC_TKIP, sw_pair.tsc = sw_pair.rxtsc = 0;
+    memcpy(sw_pair.key, ptk, 32);
+    unsigned char frame[14 + 28] = {0};
+    memcpy(frame, AP, 6), memcpy(frame + 6, own, 6), frame[12] = 0x08;
+    for (unsigned i = 14; i < sizeof frame; i++)
+        frame[i] = (unsigned char)i;
+    for (unsigned t = 1; t <= 2; t++) {
+        tx_frames();
+        assert(radio_tx_eth(frame, sizeof frame) == 0);
+        const unsigned char *d = last_frame() + 8;
+        unsigned char body[8 + 8 + 28 + 12];
+        assert(d[0x18] == 0x08 && d[0x19] == 0x41 && d[0x13] == 1 && last_frame()[0x94 + 0x13] == 1);
+        memcpy(body, d + 0xc4, sizeof body);
+        assert(wsec_extiv(body) && wsec_tkip_tsc(body) == t);
+        assert(wsec_tkip_open(ptk, ptk + 24, own, AP, own, body, sizeof body) == 8 + 28);
+        assert(body[8] == 0xaa && body[8 + 6] == 0x08 && !memcmp(body + 16, frame + 14, 28));
+    }
+    /* and RX under it, with the AP-to-STA MIC key */
+    before = wifi_rx_frames;
+    rx_station(rxt, rx_tkip(own, ptk, ptk + 16, 0, 1));
+    assert(wifi_rx_frames == before + 1 && ap_keyed);
+    /* EAPOL once the AP uses the key: enciphered by the app too */
+    tx_frames();
+    unsigned char e[O_KD] = {2, 3};
+    assert(send_eapol(e, sizeof e));
+    assert(last_frame()[8 + 0x13] == 1 && last_frame()[8 + 0x12] == 1);
+
+    /* a Michael failure (ICV good, MIC key wrong): reported to the AP, nothing to the SCM */
+    sm.ptk_set = 1;
+    tx_frames();
+    rx_station(rxt, rx_tkip(ap_bcast, gtk, ptk, 2, 20));
+    assert(wifi_rx_frames == before + 1 && mic_fail_seen && state == WIFI_UP);
+    unsigned char rep[8 + 8 + O_KD + 12];
+    memcpy(rep, last_frame() + 8 + 0xc4, sizeof rep);
+    assert(wsec_tkip_open(ptk, ptk + 24, own, AP, own, rep, sizeof rep) == 8 + O_KD);
+    unsigned ki = be16(rep + 16 + O_KEYINFO);
+    assert((ki & (KI_ERROR | KI_REQUEST | KI_MIC)) == (KI_ERROR | KI_REQUEST | KI_MIC) && !(ki & KI_PAIRWISE));
+    /* the second within a minute: deauthentication 14, link down, TKIP networks kept out */
+    now += 30000;
+    tx_frames();
+    rx_station(rxt, rx_tkip(ap_bcast, gtk, ptk, 2, 21));
+    assert(state == WIFI_FAILED && cm_on && fail_step == WIFI_FAIL_KICKED && fail_code == 14);
+    const unsigned char *d = last_frame() + 8;
+    assert(d[0x18] == 0xc0 && d[0xc4] == 14 && d[0xc5] == 0);
+    assert(!sw_pair.cipher && !sw_grp[2].cipher && !keyed);
+    nbss = 1;
+    memset(&bsstab[0], 0, sizeof bsstab[0]);
+    memcpy(bsstab[0].bssid, AP, 6), memcpy(bsstab[0].ssid, "Home", 4);
+    bsstab[0].ssidlen = 4, bsstab[0].chan = 6, bsstab[0].rsn = 1, bsstab[0].rsnok = 1, bsstab[0].grp = 2;
+    memcpy(cur.ssid, "Home", 4), cur.ssidlen = 4;
+    state = WIFI_JOINING;
+    join_attempt();
+    assert(state == WIFI_FAILED && fail_step == WIFI_FAIL_SECURITY);
+    now += CM_HOLD_MS;
+    assert(match(&bsstab[0]));
+    cm_on = 0, mic_fail_seen = 0, nbss = 0, have_cur = 0, state = WIFI_IDLE;
+    printf("ok: TKIP group and pairwise frames in the app, MIC failures and countermeasures\n");
+}
+
 int main(void)
 {
     /* a full ring: no PEER_ADD and no 4-way yet; the next poll still has the step */
@@ -484,5 +607,6 @@ int main(void)
     ap_full();
     link_frames();
     open_network();
+    tkip_frames();
     return 0;
 }

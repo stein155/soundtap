@@ -17,6 +17,7 @@
 #include "wring.h"
 #include "wstation.h"
 #include "wpa.h"
+#include "wsec.h"
 
 #define WSRAM ((volatile unsigned char *)0x30000000)
 #define WREG ((volatile unsigned *)0x30200000)
@@ -107,13 +108,17 @@ static int same(const volatile unsigned char *a, const unsigned char *b, unsigne
 
 static volatile struct wring tx, rx, frm[4], sup;
 
-#define RXBUF 0x6c0u /* stock pool list 1 + 8: frames arrive still enciphered (CCMP header + MIC) */
+/* RX: stock pool list 1 + 8, and room for a TKIP frame, which arrives with its 20 bytes of IV, MIC
+ * and ICV for the app to decipher (ADR 0136; the core's RXBUF_HOST): 7 x 0x6e0 from +0x1000 end at
+ * +0x4020, below the TX buffers. */
+#define RXBUF 0x6e0u
 #define NRXBUF 7
-/* TX: 8 + 0xc4 descriptor + LLC/SNAP + 1500 + the CCMP header and MIC the core adds in place, from
- * UMR0 +0x4100 (RX ends +0x3f40, rings at +0x7220): 7 x 0x6c0 end at +0x7040, and an eighth would
- * not fit below the rings (the SRAM budget is in stacks.h). */
+_Static_assert(0x1000u + NRXBUF * RXBUF <= 0x4100u, "RX buffers run into the TX buffers");
+/* TX: 8 + 0xc4 descriptor + LLC/SNAP + 1500 + the CCMP header and MIC the core adds in place, or
+ * the 20 bytes of a TKIP frame the app enciphered, from UMR0 +0x4100 (rings at +0x7220): 7 x 0x6d0
+ * end at +0x70b0, and an eighth would not fit below the rings (the SRAM budget is in stacks.h). */
 #define TXFOFF 0x4100u
-#define TXFBUF 0x6c0u
+#define TXFBUF 0x6d0u
 #define NTXFBUF WIFI_TX_BUFS
 _Static_assert(TXFOFF + NTXFBUF * TXFBUF <= 0x7220u, "TX buffers run into the command rings");
 static unsigned rxfree[NRXBUF], nfree, rxfbase;
@@ -270,6 +275,24 @@ static int keyed;                      /* PTK installed in the core */
 static int ap_keyed;                   /* and the AP uses it: a unicast frame from it deciphered */
 static unsigned keys_due;              /* WPA_RX_INSTALL_PTK/GTK not yet in the command ring */
 
+/* The keys the app enciphers and deciphers itself (WEP, TKIP; ADR 0136), the core holding only a
+ * mark for them (set_key). A TKIP key is the TK, then the MIC key from the AP (bytes 16-23, which
+ * the station receives with) and the one to it (24-31, which it sends with). tsc: the last TSC
+ * sent (pairwise) or accepted (both); a fresh key starts at 0, as the core's CCMP PN does. */
+static struct swkey {
+    unsigned char cipher; /* WSEC_*, 0 = none */
+    unsigned char key[32];
+    unsigned long long tsc, rxtsc;
+} sw_pair, sw_grp[4];
+/* A frame's body while the app enciphers or deciphers it: up to a TKIP header, LLC/SNAP and 1500
+ * bytes, the Michael MIC and the ICV. */
+static unsigned char secbuf[WSEC_TKIP_HDR + 8 + 1500 + WSEC_MIC + WSEC_ICV];
+/* TKIP countermeasures (IEEE 802.11-2020 12.5.2.4): when a Michael MIC failed last, and until when
+ * no TKIP network is joined after two failures within a minute. */
+static unsigned mic_fail_t, mic_fail_seen, cm_until, cm_on;
+#define CM_WINDOW_MS 60000u
+#define CM_HOLD_MS 60000u
+
 /* join sub-steps */
 enum { J_SCAN, J_SETUP, J_AUTH, J_ASSOC, J_4WAY };
 static unsigned jstep, jtries, deadline, join_pending, corebd, rxauthok, rxassocok, kicked;
@@ -402,8 +425,11 @@ static void put32(unsigned char *p, unsigned v)
     p[0] = v, p[1] = v >> 8, p[2] = v >> 16, p[3] = v >> 24;
 }
 
-/* CCMP pairwise (type 13) or group (type 11) key; key == 0 deletes (types 14 / 12). */
-static int set_key(int pairwise, unsigned idx, const unsigned char *key)
+/* Pairwise (type 13) or group (type 11) key of cipher suite type cipher; key == 0 deletes (types
+ * 14 / 12). A CCMP key goes to the core's engine. Any other (WEP, TKIP) is the app's (ADR 0136):
+ * the install names the cipher and carries no key bytes, so the core only knows to pass the frames
+ * under it up undeciphered; the key itself stays here (sw_pair, sw_grp). */
+static int set_key(int pairwise, unsigned idx, const unsigned char *key, unsigned cipher)
 {
     union { unsigned w[13]; unsigned char b[52]; } p;
     unsigned type, len;
@@ -412,15 +438,17 @@ static int set_key(int pairwise, unsigned idx, const unsigned char *key)
     if (pairwise) {
         type = key ? 13 : 14, len = key ? 52 : 6;
         if (key) {
-            put32(p.b + 8, 4), p.b[19] = 16;
-            copy(p.b + 20, key, 16);
+            put32(p.b + 8, cipher), p.b[19] = 16;
+            if (cipher == WSEC_CCMP)
+                copy(p.b + 20, key, 16);
         }
         copy(p.b + (key ? 12 : 0), cur.bssid, 6);
     } else {
         type = key ? 11 : 12, len = key ? 40 : 2;
         if (key) {
-            put32(p.b, 4), p.b[4] = idx, p.b[7] = 16;
-            copy(p.b + 8, key, 16);
+            put32(p.b, cipher), p.b[4] = idx, p.b[7] = 16;
+            if (cipher == WSEC_CCMP)
+                copy(p.b + 8, key, 16);
         } else {
             p.b[0] = idx;
         }
@@ -499,6 +527,23 @@ static int send_assoc(void)
     return 1;
 }
 
+/* A data frame to the AP under the app's own pairwise key (TKIP, ADR 0136): the MSDU (LLC/SNAP for
+ * et, then p) enciphered in secbuf, sent as TX_RAW so the core passes it as it is. The TSC counts up
+ * per frame; a retry is the core's, of the same frame. Returns the body length, 0 on reject. */
+static int sw_data(unsigned a, const unsigned char *da, unsigned et, const unsigned char *p, unsigned n)
+{
+    unsigned char *m = secbuf + WSEC_TKIP_HDR;
+    unsigned len;
+    if (sw_pair.cipher != WSEC_TKIP || n > 1500)
+        return 0;
+    m[0] = 0xaa, m[1] = 0xaa, m[2] = 3, m[3] = m[4] = m[5] = 0;
+    m[6] = (unsigned char)(et >> 8), m[7] = (unsigned char)et;
+    copy(m + 8, p, n);
+    len = wsec_tkip_protect(sw_pair.key, sw_pair.key + 24, 0, ++sw_pair.tsc, own, da, own, secbuf, 8 + n);
+    return wstation_raw((volatile uint8_t *)a, TXFBUF, own, cur.bssid, da, data_rates,
+                        et == WPA_EAPOL_ETHERTYPE, secbuf, len);
+}
+
 /* EAPOL-Key to the AP. Once the AP uses the PTK it goes out Protected, as stock sends it (a later
  * rekey's messages). Before that it goes in the clear, also when the PTK is already in our core:
  * the AP installs its key only on our Message 4, so when that got lost and it resends Message 3,
@@ -510,10 +555,14 @@ static int send_eapol(const unsigned char *f, unsigned n)
     int body;
     if (!a)
         return 0;
-    body = wstation_eapol((volatile uint8_t *)a, TXFBUF, own, cur.bssid, rates, f, n);
+    /* under the app's own pairwise key (TKIP) the app enciphers it, once the AP uses the key */
+    if (keyed && ap_keyed && sw_pair.cipher)
+        body = sw_data(a, cur.bssid, WPA_EAPOL_ETHERTYPE, f, n);
+    else
+        body = wstation_eapol((volatile uint8_t *)a, TXFBUF, own, cur.bssid, rates, f, n);
     if (body <= 0)
         return 0;
-    if (keyed && ap_keyed) {
+    if (keyed && ap_keyed && !sw_pair.cipher) {
         volatile unsigned char *b = (volatile unsigned char *)a;
         b[8 + 0x19] |= 0x40, b[0x94 + 0x19] |= 0x40;
     }
@@ -535,7 +584,8 @@ int radio_tx_eth(const unsigned char *f, unsigned n)
         wifi_tx_drop++;
         return -1;
     }
-    body = wstation_data((volatile uint8_t *)a, TXFBUF, own, cur.bssid, f, data_rates, et, f + 14,
+    body = sw_pair.cipher ? sw_data(a, f, et, f + 14, n - 14) :
+           wstation_data((volatile uint8_t *)a, TXFBUF, own, cur.bssid, f, data_rates, et, f + 14,
                          n - 14, prof_sec != WIFI_SEC_OPEN);
     if (body <= 0) {
         wifi_tx_drop++;
@@ -598,6 +648,76 @@ static void rx_data(const volatile unsigned char *da, const volatile unsigned ch
 
 /* One received non-beacon frame. Header at +0xac, body at +0xcc (measured layout only). */
 #define RX_DECIPHERED 1   /* record byte 7: the core deciphered this frame (bco/wild/fw xport.c) */
+#define RX_SOFT 2         /* record byte 7: under a key the app deciphers (ADR 0136) */
+#define REASON_MIC_FAILURE 14 /* IEEE 802.11 reason: Michael MIC failure (countermeasures) */
+
+static void drop_link(void);
+
+/* A deauthentication to the AP with an IEEE 802.11 reason code. */
+static void send_deauth(unsigned reason)
+{
+    unsigned a = tx_buf();
+    const unsigned char r[2] = {(unsigned char)reason, (unsigned char)(reason >> 8)};
+    if (a && wframe((volatile uint8_t *)a, TXFBUF, 0xc0, cur.bssid, own, cur.bssid, rates, 0, r, 2) > 0)
+        tx_push(a, 2, PEER_NONE, 0xffff);
+}
+
+/* A Michael MIC failure under the TKIP key (pairwise or group) with a good ICV: report it to the
+ * AP, and on the second within CM_WINDOW_MS start the countermeasures (IEEE 802.11-2020
+ * 12.5.2.4): deauthenticate with reason 14, drop the link and join no TKIP network for CM_HOLD_MS. */
+static void mic_failure(int pairwise)
+{
+    unsigned char out[WPA_EAPOL_MAX];
+    size_t n = wpa_mic_failure(&sm, pairwise, out);
+    int second = mic_fail_seen && (int)(now - mic_fail_t) < (int)CM_WINDOW_MS;
+    hex("tkip mic failure ", (unsigned)pairwise << 8 | (unsigned)second);
+    if (n)
+        send_eapol(out, (unsigned)n);
+    mic_fail_seen = 1, mic_fail_t = now;
+    if (!second)
+        return;
+    send_deauth(REASON_MIC_FAILURE);
+    drop_link();
+    cm_on = 1, cm_until = now + CM_HOLD_MS;
+    kicked = 1, fail_step = WIFI_FAIL_KICKED, fail_code = REASON_MIC_FAILURE;
+    if (state == WIFI_UP)
+        post(WIFI_EV_DEAUTH, REASON_MIC_FAILURE);
+    state = WIFI_FAILED, join_pending = 0;
+}
+
+/* Open a data frame from the AP that came up under one of the app's keys (RX_SOFT): copy its body
+ * (n bytes) into secbuf and decipher it there. h is the 802.11 header (TA addr2; DA addr1 and SA
+ * addr3, the frame coming from the DS). A TKIP frame must carry a TSC above its key's last one,
+ * which it then takes. Returns the plaintext's length, *off its offset in secbuf, or -1 to drop. */
+static int sw_open(const volatile unsigned char *h, const volatile unsigned char *body, unsigned n,
+                   unsigned *off)
+{
+    unsigned char hh[24];
+    struct swkey *k;
+    unsigned long long tsc;
+    int r;
+    if (n < WSEC_WEP_OVERHEAD || n > sizeof secbuf)
+        return -1;
+    copy(hh, h, 24);
+    copy(secbuf, body, n);
+    if (!wsec_extiv(secbuf))
+        return -1; /* WEP: no keys yet (ADR 0136, later in this branch) */
+    k = (hh[4] & 1) ? &sw_grp[wsec_keyid(secbuf)] : &sw_pair;
+    if (k->cipher != WSEC_TKIP || n < WSEC_TKIP_OVERHEAD)
+        return -1;
+    tsc = wsec_tkip_tsc(secbuf);
+    if (tsc <= k->rxtsc)
+        return -1; /* a replay, or a frame from before the key */
+    r = wsec_tkip_open(k->key, k->key + 16, hh + 10, hh + 4, hh + 16, secbuf, n);
+    if (r == WSEC_MIC_FAIL)
+        mic_failure(k == &sw_pair);
+    if (r < 0)
+        return -1;
+    k->rxtsc = tsc;
+    *off = WSEC_TKIP_HDR;
+    return r;
+}
+
 static void rx_station(const volatile unsigned char *b, unsigned len)
 {
     const volatile unsigned char *h = b + 0xac, *body = b + 0xcc;
@@ -638,14 +758,30 @@ static void rx_station(const volatile unsigned char *b, unsigned len)
      * take nothing else: a frame still protected had no key, an unmarked one came in clear. One
      * exception: EAPOL to us in the clear (802.1X control port). An AP that missed our Message 4
      * has no key yet and resends Message 3 unprotected; the supplicant checks its MIC. */
+    /* A frame under one of the app's keys (TKIP, ADR 0136) the app deciphers itself, and from then
+     * on it counts as the core's deciphered ones do. */
     int clear_eapol = same(h + 4, own, 6) && len >= 0xcc + 8 && body[6] == 0x88 && body[7] == 0x8e;
-    if ((fc & 0x4000) || (keyed && b[0x94 + 7] != RX_DECIPHERED && !clear_eapol)) {
+    int dec = b[0x94 + 7] == RX_DECIPHERED;
+    unsigned n = len - 0xcc, off = 0;
+    const volatile unsigned char *pl = body;
+    if ((fc & 0x4000) && b[0x94 + 7] == RX_SOFT) {
+        int m = sw_open(h, body, n, &off);
+        if (m < 0) {
+            wifi_rx_drop++;
+            return;
+        }
+        pl = secbuf + off, n = (unsigned)m, dec = 1;
+    } else if (fc & 0x4000) {
         wifi_rx_drop++;
         return;
     }
-    if (keyed && b[0x94 + 7] == RX_DECIPHERED && same(h + 4, own, 6))
+    if (keyed && !dec && !clear_eapol) {
+        wifi_rx_drop++;
+        return;
+    }
+    if (keyed && dec && same(h + 4, own, 6))
         ap_keyed = 1; /* a group frame proves only the GTK, which the AP uses regardless */
-    rx_data(h + 4, h + 16, body, len - 0xcc);
+    rx_data(h + 4, h + 16, pl, n);
 }
 
 /* ---- access point (ADR 0031): open only, BSSID = own MAC ---- */
@@ -1195,6 +1331,8 @@ static int match(const struct bss *b)
 {
     if (!named(b))
         return 0;
+    if (cm_on && !due(cm_until) && b->grp == WSEC_TKIP)
+        return 0; /* TKIP countermeasures: no TKIP network for CM_HOLD_MS (mic_failure) */
     if (prof_sec == WIFI_SEC_OPEN)
         return !(b->caps & 0x10) && !b->rsn && !b->wpa;
     return b->rsnok;
@@ -1206,7 +1344,7 @@ static int match(const struct bss *b)
 static int seen_other(void)
 {
     for (unsigned i = 0; i < nbss; i++)
-        if (named(&bsstab[i]) && !bsstab[i].rsnok)
+        if (named(&bsstab[i]) && !match(&bsstab[i]))
             return 1;
     return 0;
 }
@@ -1409,13 +1547,27 @@ static void join_step(void)
  * leaves a key due, tried again on the next poll instead of being lost. */
 static void install_keys(void)
 {
-    if ((keys_due & WPA_RX_INSTALL_PTK) && !set_key(1, 0, sm.ptk + 32))
+    if ((keys_due & WPA_RX_INSTALL_PTK) && !set_key(1, 0, sm.ptk + 32, WSEC_CCMP))
         keys_due &= ~WPA_RX_INSTALL_PTK, keyed = 1;
-    /* The core's cipher engine is CCMP only: a TKIP group key (32 bytes, a mixed-mode router) is
-     * not installed. Unicast still works; the router's TKIP broadcasts are dropped (rx_station). */
-    if ((keys_due & WPA_RX_INSTALL_GTK) && !(keys_due & WPA_RX_INSTALL_PTK) &&
-        (sm.group != 4 || sm.gtk_len != 16 || !set_key(0, (unsigned)sm.gtk_idx, sm.gtk)))
-        keys_due &= ~WPA_RX_INSTALL_GTK;
+    /* A CCMP group key goes to the engine. A TKIP one (32 bytes: a WPA/WPA2 mixed router keeps
+     * TKIP for its broadcasts) stays here and the core only learns that its frames are the app's
+     * (ADR 0136), so mDNS, ARP and DHCP broadcasts come through. A key of any other length is
+     * not installed. */
+    if ((keys_due & WPA_RX_INSTALL_GTK) && !(keys_due & WPA_RX_INSTALL_PTK)) {
+        unsigned idx = (unsigned)sm.gtk_idx & 3;
+        int ccmp = sm.group == 4 && sm.gtk_len == 16, tkip = sm.group == 2 && sm.gtk_len == 32;
+        if (!ccmp && !tkip) {
+            keys_due &= ~WPA_RX_INSTALL_GTK;
+        } else if (!set_key(0, idx, sm.gtk, ccmp ? WSEC_CCMP : WSEC_TKIP)) {
+            keys_due &= ~WPA_RX_INSTALL_GTK;
+            sw_grp[idx].cipher = 0;
+            if (tkip) {
+                copy(sw_grp[idx].key, sm.gtk, 32);
+                sw_grp[idx].rxtsc = 0;
+                sw_grp[idx].cipher = WSEC_TKIP;
+            }
+        }
+    }
 }
 
 /* Feed a received EAPOL-Key frame to the supplicant: replies first, then key installs. */
@@ -1446,9 +1598,9 @@ static void drop_link(void)
         copy(pd, cur.bssid, 6);
         pd[6] = PEER_AP;
         if (keyed) {
-            set_key(1, 0, 0);
-            if (sm.group == 4)
-                set_key(0, (unsigned)(sm.gtk_idx & 3), 0);
+            set_key(1, 0, 0, 0);
+            if (sm.gtk_idx >= 0)
+                set_key(0, (unsigned)(sm.gtk_idx & 3), 0, 0);
         }
         wr_cmd_checked(&tx, CMD_PEER_DEL, 0x12, 0x11, pd, sizeof pd);
         DOORBELL();
@@ -1456,6 +1608,10 @@ static void drop_link(void)
     keyed = ap_keyed = 0, keys_due = 0;
     for (unsigned i = 0; i < sizeof sm; i++)
         ((volatile unsigned char *)&sm)[i] = 0;
+    for (unsigned i = 0; i < sizeof sw_pair; i++)
+        ((volatile unsigned char *)&sw_pair)[i] = 0;
+    for (unsigned i = 0; i < sizeof sw_grp; i++)
+        ((volatile unsigned char *)sw_grp)[i] = 0;
 }
 
 /* ---- background scan and roam (ADR 0135) ---- */

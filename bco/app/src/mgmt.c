@@ -207,9 +207,9 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
     case 5: { /* STATUS: status, state, ssid_len, ssid, bssid, channel, rssi, then why the last
                * join failed: step (WIFI_FAIL_*), le16 IEEE status or reason code. The driver reads
                * the failure only when the reply is long enough, so an older driver is unaffected.
-               * Last, the BSS's RSN group cipher suite type (2 TKIP, 4 CCMP, 0 unknown): with TKIP
-               * the core drops the router's broadcasts (wifi.c install_keys), which the SCM logs.
-               * Again read only when present. Then what the network offers (WIFI_BSS_*,
+               * Last, the BSS's RSN group cipher suite type (2 TKIP, 4 CCMP, 0 unknown), which the
+               * SCM logs: a TKIP group's broadcasts the app deciphers itself (wifi.c install_keys,
+               * ADR 0136). Again read only when present. Then what the network offers (WIFI_BSS_*,
                * BCOLINK_CAP_SECURITY), for the driver's scan cache. */
         struct wifi_bss b;
         unsigned step, code;

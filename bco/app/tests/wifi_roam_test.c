@@ -32,6 +32,7 @@
 #undef memcpy
 #undef memset
 #include "../src/wpa.c"
+#include "../src/wsec.c"
 
 const unsigned char wild_own[4], wild_own_end[1];
 

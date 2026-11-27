@@ -10,6 +10,8 @@
  * completion word and checks the control block the core hands it. */
 #include "core_sim.h"
 
+static int soft; /* sta_rxkey: the app deciphers under this key (ADR 0136) */
+
 static const unsigned char TK[16] = {0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
                                      0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f};
 static const unsigned char GTK[16] = {0xe0, 0xe1, 0xe2, 0xe3, 0xe4, 0xe5, 0xe6, 0xe7,
@@ -391,7 +393,7 @@ static void ccmp(void)
     unsigned long long *last;
     setup(1);
     joined = 1;
-    sta_rxkey(0, 0, 0, &last);
+    sta_rxkey(0, 0, 0, &last, &soft);
 
     CHECK(deliver_ccmp(&d, 0x200000, 0x0000a1b2c3d4e5f6ull & 0xffffffffffffull, 50), "deciphered");
     unsigned long long pn = 0xa1b2c3d4e5f6ull;
@@ -431,7 +433,7 @@ static void ccmp(void)
     air_rx(fbuf, len, ST_IN | ST_ADDR);
     CHECK(!delivered(&d), "no pairwise key for an unknown transmitter");
     CHECK(!deliver_ccmp(&d, 0x200000, 7, 0), "no data at all: dropped");
-    unsigned maxn = 0x6c0 - 0x94 - 24 - 8 + 16; /* n = len - 4 */
+    unsigned maxn = RXBUF - 0x94 - 24 - 8 + 16; /* n = len - 4 */
     CHECK(deliver_ccmp(&d, 0x200000, 8, maxn - 40), "largest protected frame");
     CHECK(d.end == RXBUF - 8, "fills the host buffer exactly (%#x)", d.end);
     recycle(&d);
@@ -443,7 +445,7 @@ static void ccmp(void)
     air_rx(fbuf, len, ST_IN);
     CHECK(delivered(&d) && !memcmp(&dma_b[10], GTK, 16), "group frame under group key 1");
     recycle(&d);
-    sta_rxkey(0, 1, 1, &last);
+    sta_rxkey(0, 1, 1, &last, &soft);
     CHECK(*last == 3, "group PN tracked separately");
     len = data_frame(BCAST, BSSID, 1, 2, 4, 30);
     air_rx(fbuf, len, ST_IN);
@@ -455,7 +457,7 @@ static void ccmp(void)
     for (unsigned i = 0; i < NRX; i++) {
         CHECK(deliver_ccmp(&d, 0x200000, 10 + i, 10), "fill buffer %u", i);
     }
-    sta_rxkey(0, 0, 0, &last);
+    sta_rxkey(0, 0, 0, &last, &soft);
     CHECK(!deliver_ccmp(&d, 0x200000, 20, 10), "no buffer: not delivered yet");
     CHECK(*last == 13 && rxq_in - rxq_out == 1, "still queued, PN unused");
     recycle(&d); /* one buffer back: the wait ends */
@@ -464,8 +466,69 @@ static void ccmp(void)
     CHECK(!delivered(&d), "and only once");
 }
 
+/* Frames under the app's keys (ADR 0136) go up as they came: TKIP unicast under the soft pairwise
+ * key, TKIP group under a soft group key, WEP (no ExtIV) under a default key in the group table,
+ * cipher header and trailer kept, protected bit set, record byte 7 = RX_SOFT. A frame for a key id
+ * nobody installed is still dropped, and the largest TKIP frame is not cut. */
+static void soft_frames(void)
+{
+    struct rxd d;
+    unsigned char pr[10] = {0}, p[52] = {0};
+    setup(0);
+    joined = 1;
+    memcpy(pr, BSSID, 6);
+    host_cmd(0xb5, 0x12, 0x11, pr, sizeof pr);
+    p[8] = 2, p[19] = 16;
+    memcpy(p + 12, BSSID, 6);
+    host_cmd(13, 0x12, 1, p, 52);              /* TKIP pairwise */
+    memset(p, 0, sizeof p);
+    p[0] = 2, p[4] = 1, p[7] = 16;
+    host_cmd(11, 0x12, 1, p, 40);              /* TKIP group key 1 */
+    memset(p, 0, sizeof p);
+    p[0] = 5, p[4] = 3, p[7] = 16;
+    host_cmd(11, 0x12, 1, p, 40);              /* WEP-104 default key 3 */
+    pump(4);
+    REG(0xb18) = 0;                            /* the engine must not run */
+
+    unsigned len = data_frame(OWN, BSSID, 1, 0, 0x10203, 40);
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
+    CHECK(delivered(&d) && d.buf[0x94 + 7] == 2, "TKIP unicast up as RX_SOFT");
+    CHECK(d.buf[0xac + 1] == 0x42, "protected bit kept");
+    CHECK(!memcmp(d.buf + 0xcc, fbuf + 24, 8 + 40 + 8) && d.end == 0x94 + 24 + 24 + 8 + 40 + 8,
+          "body as on air: header, ciphertext, trailer");
+    recycle(&d);
+    len = data_frame(BCAST, BSSID, 1, 1, 5, 30);
+    air_rx(fbuf, len, ST_IN);
+    CHECK(delivered(&d) && d.buf[0x94 + 7] == 2, "TKIP group key 1 up as RX_SOFT");
+    recycle(&d);
+    len = data_frame(BCAST, BSSID, 1, 2, 6, 30);
+    air_rx(fbuf, len, ST_IN);
+    CHECK(!delivered(&d), "group key id 2: nobody's, dropped");
+    /* WEP: IV, key id 3 without ExtIV, unicast and broadcast both under default key 3 */
+    len = data_frame(OWN, BSSID, 1, 3, 7, 20);
+    fbuf[24 + 3] = 3 << 6;
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
+    CHECK(delivered(&d) && d.buf[0x94 + 7] == 2 && d.buf[0xcc + 3] == 0xc0, "WEP unicast up as RX_SOFT");
+    recycle(&d);
+    len = data_frame(BCAST, BSSID, 1, 3, 8, 20);
+    fbuf[24 + 3] = 3 << 6;
+    air_rx(fbuf, len, ST_IN);
+    CHECK(delivered(&d) && d.buf[0x94 + 7] == 2, "WEP broadcast up as RX_SOFT");
+    recycle(&d);
+    len = data_frame(OWN, BSSID, 1, 0, 9, 20);
+    fbuf[24 + 3] = 0;
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
+    CHECK(!delivered(&d), "WEP key id 0: no default key, dropped");
+    /* the largest TKIP frame: 8 + 1500 + 8 SNAP and IP, MIC 8 + ICV 4 (data_frame's trailer is 8) */
+    len = data_frame(OWN, BSSID, 1, 0, 10, 1508 + 4);
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
+    CHECK(delivered(&d) && d.end == 0x94 + 24 + 24 + 1528, "a 1528-byte TKIP body fits (%#x)", d.end);
+    recycle(&d);
+}
+
 int main(void)
 {
+    soft_frames();
     keep_filter();
     ack_unicast_data();
     group_leave();

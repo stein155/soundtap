@@ -15,6 +15,12 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
 - **SoundTouch 20: joins open networks** (without a password), and an open network the
   original software had saved is taken over on the first install.
 
+### Fixed
+
+- **SoundTouch 20: on networks that mix WPA and WPA2, apps find the speaker again.** The
+  speaker now also receives such a network's broadcasts, which the AirPlay, Spotify and
+  SoundTap apps use to find it.
+
 ## [app-v0.1.0-alpha.6] - 2026-11-27
 
 - The SoundTap app that SoundTap Core 0.1.0-alpha.6 carries; what it changes is listed under

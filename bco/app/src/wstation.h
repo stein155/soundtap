@@ -214,6 +214,41 @@ static int wstation_data(volatile uint8_t *buf, size_t size, const uint8_t own[6
     return (int)body;
 }
 
+/* A data frame to the AP whose body the app already enciphered (WEP, TKIP; ADR 0136): the body is
+ * the cipher header, the ciphertext and its trailer. FC = data, toDS, Protected; descriptor byte
+ * 0x13 = 1 (TX_RAW) so the core sends it as it is (bco/wild/fw xport.c); d[0x12] = 1 for EAPOL as in
+ * wstation_data. addr3 = da. Returns the body length, 0 on reject. */
+#define WSTATION_RAW_MAXBODY (WSTATION_DATA_MAXBODY + 20u) /* + a TKIP IV, Michael MIC and ICV */
+static int wstation_raw(volatile uint8_t *buf, size_t size, const uint8_t own[6], const uint8_t bssid[6],
+                        const uint8_t da[6], const uint8_t rates[8], int eapol, const uint8_t *body,
+                        unsigned blen)
+{
+    if (!buf || !rates || !da || !body || !blen || blen > WSTATION_RAW_MAXBODY ||
+        size < 8 + WSTATION_ASSOC_HDR + blen || !wstation_unicast(own) || !wstation_unicast(bssid))
+        return 0;
+    for (unsigned i = 0; i < 8 + WSTATION_ASSOC_HDR; i++)
+        buf[i] = 0;
+    buf[0] = 0x0a, buf[1] = 4, buf[2] = 3, buf[3] = 0x74;
+    volatile uint8_t *d = buf + 8;
+    d[0] = 0x18, d[1] = 0x18, d[2] = 0x32, d[3] = 0xc4;
+    for (unsigned i = 0; i < 8; i++)
+        d[4 + i] = rates[i];
+    d[0x12] = (uint8_t)(eapol != 0);
+    d[0x13] = 1; /* TX_RAW: enciphered by the app */
+    d[0x14] = 4;
+    d[0x18] = 0x08, d[0x19] = 0x41; /* data; toDS, Protected */
+    for (unsigned i = 0; i < 6; i++) {
+        d[0x1c + i] = bssid[i];
+        d[0x22 + i] = own[i];
+        d[0x28 + i] = da[i];
+    }
+    for (unsigned i = 0; i < blen; i++)
+        d[WSTATION_ASSOC_HDR + i] = body[i];
+    for (unsigned i = 0; i < 0x38; i++)
+        buf[0x94 + i] = buf[8 + i];
+    return (int)blen;
+}
+
 /* One EAPOL-Key data frame to the AP (4-way msg2/msg4): ethertype 0x888e, addr3 = AP.
  * Thin wrapper over wstation_data. Returns body length, 0 on reject. */
 #define WSTATION_EAPOL_MAXBODY 200u

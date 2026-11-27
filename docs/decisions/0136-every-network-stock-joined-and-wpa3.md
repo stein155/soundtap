@@ -32,10 +32,13 @@ matches the profile.
 ### WEP and TKIP run in software in the BCO app
 
 The BCO app enciphers and deciphers WEP and TKIP frames itself: RC4, the CRC-32 ICV, TKIP's key
-mixing, the TSC replay check and the Michael MIC with its countermeasures. CCMP data stays on
-the core's cipher engine. The keys stay on the BCO, as ADR 0031 requires: the app holds the
-software keys, and the core learns only that a key slot is deciphered by the app, so it passes
-such a frame up undeciphered and sends a frame the app enciphered as it is.
+mixing, the TSC replay check and the Michael MIC with its countermeasures (a report to the access
+point, and on a second failure within a minute a deauthentication and a minute without TKIP).
+CCMP data stays on the core's cipher engine. The keys stay on the BCO, as ADR 0031 requires: the
+app holds the software keys, and the core learns only that a key slot is deciphered by the app, so
+it passes such a frame up undeciphered and sends a frame the app marked as enciphered as it is
+([how it runs](../hardware/st20/bco-network-card.md#wep-and-tkip-stocks-engine-modes-and-where-soundtap-runs-them)).
+A WPA/WPA2 mixed network's TKIP group key is one of these, so its broadcasts arrive.
 
 Alternatives that lost:
 
@@ -59,5 +62,7 @@ Alternatives that lost:
 - `os/board/rootfs/linux-patches/0007-net-usb-add-soundtap-bco-link-driver.patch`: `bco_connect`
   and `bco_status_sec` in the driver.
 - `app/internal/bco/stockprofile.go`: `stockProfileFrom` takes stock's open profile.
+- `bco/app/src/wsec.c`: WEP, TKIP and their primitives; `bco/app/src/wifi.c` (`set_key`,
+  `install_keys`, `sw_open`, `sw_data`, `mic_failure`) and `bco/app/src/wpa.c` (`wpa_mic_failure`).
 - `bco/wild/fw/src/sta.c` (software key slots) and `bco/wild/fw/src/xport.c` (frames the app
   deciphers or enciphered).

@@ -25,6 +25,7 @@
 #undef memcpy
 #undef memset
 #include "../src/wpa.c"
+#include "../src/wsec.c"
 
 static int fails;
 #define CHECK(c, ...)                                                                          \
@@ -51,12 +52,15 @@ void netcard_from_port(unsigned ch, const unsigned char *f, unsigned n)
 __attribute__((constructor)) static void map_wreg(void)
 {
     static int probe;
-    /* the WiLD registers: the doorbell the AP's peer commands and the key commands ring */
-    if (mmap((void *)WREG, 0x1000, PROT_READ | PROT_WRITE,
-             MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0) != (void *)WREG) {
-        perror("wifi_rx_fuzz: map the WiLD registers");
-        exit(2);
-    }
+    /* the WiLD registers: the doorbell the AP's peer commands and the key commands ring; and the
+     * UART page: a Michael MIC failure says so in one line (board.h say) */
+    static const unsigned long at[2] = {(unsigned long)WREG, 0xb1001000ul};
+    for (int i = 0; i < 2; i++)
+        if (mmap((void *)at[i], 0x1000, PROT_READ | PROT_WRITE,
+                 MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0) != (void *)at[i]) {
+            perror("wifi_rx_fuzz: map the WiLD registers and the UART");
+            exit(2);
+        }
     if ((uintptr_t)&probe >> 32) {
         fputs("wifi_rx_fuzz: globals above 4 GiB; build with -no-pie\n", stderr);
         exit(2);
@@ -316,6 +320,57 @@ static void fuzz_data(void)
     CHECK(to_scm - before > 1000, "frames reach the SCM (%u)", to_scm - before);
 }
 
+/* Frames under the app's own keys (RX_SOFT, ADR 0136): TKIP pairwise and group frames from the AP,
+ * valid, then mutated and cut, through rx_station's software decipher (sw_open, wsec.c). Intact
+ * ones reach the SCM; Michael failures may end the link (the countermeasures), which each round
+ * starts over from. */
+static void fuzz_soft(void)
+{
+    static const unsigned char llc[8] = {0xaa, 0xaa, 3, 0, 0, 0, 0x08, 0x00};
+    unsigned char f[0xcc + 8 + 8 + 300 + 12], key[32];
+    unsigned before = to_scm, mics = 0;
+    for (unsigned i = 0; i < 32; i++)
+        key[i] = (unsigned char)(i * 9 + 1);
+    for (unsigned it = 0; it < 20000 && !fails; it++) {
+        if (it % 64 == 0) {
+            rings_fresh();
+            state = WIFI_UP, keyed = 1, have_cur = 1, cm_on = 0, mic_fail_seen = 0, now += 70000;
+            sm.ptk_set = 1;
+            sw_pair.cipher = WSEC_TKIP, sw_grp[1].cipher = WSEC_TKIP;
+            memcpy(sw_pair.key, key, 32), memcpy(sw_grp[1].key, key, 32);
+            sw_pair.rxtsc = sw_grp[1].rxtsc = 0;
+        }
+        int group = rnd() % 2;
+        unsigned n = 8 + rnd() % 300;
+        memset(f, 0, 0xcc);
+        f[0x94] = 0x18, f[0x97] = 0xc4, f[0x94 + 7] = RX_SOFT;
+        f[0xac] = 0x08, f[0xad] = 0x42;
+        if (group)
+            memset(f + 0xac + 4, 0xff, 6);
+        else
+            memcpy(f + 0xac + 4, OWN, 6);
+        memcpy(f + 0xac + 10, BSS, 6), memcpy(f + 0xac + 16, BSS, 6);
+        memcpy(f + 0xcc + 8, llc, 8);
+        for (unsigned i = 8; i < n; i++)
+            f[0xcc + 8 + i] = (unsigned char)rnd();
+        /* now and then under the wrong Michael key: ICV good, MIC bad */
+        unsigned len = 0xcc + wsec_tkip_protect(key, key + (rnd() % 16 ? 16 : 24), group, it + 1, BSS,
+                                                f + 0xac + 4, BSS, f + 0xcc, n);
+        if (rnd() % 3 == 0)
+            mutate(f + 0xcc, len - 0xcc, 1 + rnd() % 3);
+        if (rnd() % 8 == 0)
+            len = 0xcc + rnd() % (len - 0xcc + 1);
+        unsigned char *p = exact(f, len);
+        rx_station(p, len);
+        free(p);
+        mics += mic_fail_seen, mic_fail_seen = 0;
+        if (state != WIFI_UP)
+            it |= 63; /* the countermeasures ended the link: next round */
+    }
+    CHECK(to_scm - before > 1000, "TKIP frames reach the SCM (%u)", to_scm - before);
+    CHECK(mics > 0, "Michael failures seen (%u)", mics);
+}
+
 int main(void)
 {
     copy(own, OWN, 6);
@@ -324,6 +379,7 @@ int main(void)
     fuzz_ap();
     have_cur = 1;
     fuzz_data();
+    fuzz_soft();
     printf("wifi rx fuzz: %s (%u frames to the SCM)\n", fails ? "FAILED" : "ok", to_scm);
     return fails != 0;
 }

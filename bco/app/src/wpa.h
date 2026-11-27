@@ -13,8 +13,8 @@
  * Station role only. It never acts as an authenticator and never wraps key data; it only unwraps
  * the GTK the AP sends. Pairwise CCMP only (key descriptor version 2 = HMAC-SHA1 MIC + AES key
  * wrap); the group cipher is the AP's, CCMP or TKIP (a WPA/WPA2 mixed-mode router keeps TKIP for its
- * broadcasts). TKIP pairwise, WEP and descriptor version 1 (HMAC-MD5/RC4) are deliberately not
- * implemented. */
+ * broadcasts; the app deciphers those itself, wsec.c, ADR 0136). TKIP pairwise and descriptor
+ * version 1 (HMAC-MD5/RC4) are not implemented. */
 #ifndef WPA_H
 #define WPA_H
 
@@ -28,6 +28,8 @@ void wpa_hmac_sha1(const uint8_t *key, size_t key_len, const uint8_t *data, size
 /* IEEE 802.11 PRF: out = truncate(HMAC-SHA1(key, label||0x00||data||i), out_len). */
 void wpa_sha1_prf(const uint8_t *key, size_t key_len, const char *label, const uint8_t *data,
                   size_t data_len, uint8_t *out, size_t out_len);
+/* The AES S-box, which TKIP's key mixing derives its own from (wsec.c). */
+uint8_t wpa_aes_sbox(unsigned i);
 /* AES-128 single-block decrypt (needed only for RFC 3394 unwrap). */
 void wpa_aes128_dec(const uint8_t key[16], const uint8_t in[16], uint8_t out[16]);
 /* RFC 3394 AES key unwrap. cipher is (n+1)*8 bytes, plain is n*8. Returns 1 on IV match. */
@@ -75,6 +77,7 @@ struct wpa_sm {
     uint8_t rx_replay_set;
     uint8_t ptk_set;   /* a handshake completed: ptk is in use (group key messages verify under it) */
     uint8_t group;     /* group cipher suite type in our RSN IE: 4 CCMP (wpa_sm_init), 2 TKIP */
+    uint8_t req_replay[8]; /* the counter of our last request (a MIC failure report) */
 };
 
 /* Set up once per connect, after association. snonce must be 32 random bytes (caller supplies;
@@ -96,6 +99,11 @@ void wpa_sm_init(struct wpa_sm *sm, const uint8_t pmk[32], const uint8_t aa[6],
  * moves that counter (a resent msg1 with the same counter is answered). out must hold >= 155
  * bytes. Never touches global state. */
 int wpa_sm_rx(struct wpa_sm *sm, const uint8_t *in, size_t in_len, uint8_t *out, size_t *out_len);
+
+/* A Michael MIC failure report (TKIP) for the AP, MICed under the PTK in use; pairwise when the
+ * failure was under the pairwise key. Returns its length (WPA_EAPOL_MAX at most), 0 before a
+ * handshake completed. */
+size_t wpa_mic_failure(struct wpa_sm *sm, int pairwise, uint8_t *out);
 
 #define WPA_EAPOL_ETHERTYPE 0x888e
 #define WPA_EAPOL_RX_MAX 256 /* largest received EAPOL-Key frame taken */

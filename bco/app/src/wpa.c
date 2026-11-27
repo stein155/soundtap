@@ -191,6 +191,11 @@ static const uint8_t sbox[256] = {
     0x70, 0x3e, 0xb5, 0x66, 0x48, 0x03, 0xf6, 0x0e, 0x61, 0x35, 0x57, 0xb9, 0x86, 0xc1, 0x1d, 0x9e,
     0xe1, 0xf8, 0x98, 0x11, 0x69, 0xd9, 0x8e, 0x94, 0x9b, 0x1e, 0x87, 0xe9, 0xce, 0x55, 0x28, 0xdf,
     0x8c, 0xa1, 0x89, 0x0d, 0xbf, 0xe6, 0x42, 0x68, 0x41, 0x99, 0x2d, 0x0f, 0xb0, 0x54, 0xbb, 0x16};
+uint8_t wpa_aes_sbox(unsigned i)
+{
+    return sbox[i & 0xff];
+}
+
 static uint8_t inv_sbox[256];
 static int inv_ready;
 static uint8_t xtime(uint8_t x) { return (uint8_t)((x << 1) ^ ((x >> 7) * 0x1b)); }
@@ -329,6 +334,8 @@ void wpa_pmk_to_ptk(const uint8_t pmk[32], const uint8_t aa[6], const uint8_t sp
 #define KI_ACK 0x0080
 #define KI_MIC 0x0100
 #define KI_SECURE 0x0200
+#define KI_ERROR 0x0400
+#define KI_REQUEST 0x0800
 #define KI_ENCRYPTED 0x1000
 
 static uint16_t be16(const uint8_t *p) { return (uint16_t)(p[0] << 8 | p[1]); }
@@ -431,6 +438,29 @@ static int unwrap_gtk(struct wpa_sm *sm, const uint8_t *kek, uint16_t ki, const 
         !wpa_aes_unwrap(kek, n, in + O_KD, kd))
         return 0;
     return wpa_extract_gtk(kd, n * 8, sm->gtk, &sm->gtk_len, &sm->gtk_idx, &sm->gtk_tx);
+}
+
+/* Michael MIC failure report (IEEE 802.11-2020 12.7.2): an EAPOL-Key frame with Error and Request
+ * set, MICed under the KCK, its replay counter above every one used before (the AP checks the
+ * requests' counters apart from its own). pairwise: the failure was under the pairwise key. */
+size_t wpa_mic_failure(struct wpa_sm *sm, int pairwise, uint8_t *out)
+{
+    uint8_t mic[20];
+    unsigned i;
+    if (!sm->ptk_set)
+        return 0;
+    if (replay_newer(sm->rx_replay, sm->req_replay))
+        cp(sm->req_replay, sm->rx_replay, 8);
+    for (i = 8; i-- && !++sm->req_replay[i];) {}
+    zero(out, O_KD);
+    out[0] = 2, out[1] = 3;
+    wbe16(out + 2, O_KD - 4);
+    out[4] = 2;
+    wbe16(out + O_KEYINFO, (uint16_t)(2 | KI_MIC | KI_ERROR | KI_REQUEST | (pairwise ? KI_PAIRWISE : 0)));
+    cp(out + O_REPLAY, sm->req_replay, 8);
+    wpa_hmac_sha1(sm->ptk, 16, out, O_KD, mic);
+    cp(out + O_MIC, mic, 16);
+    return O_KD;
 }
 
 int wpa_sm_rx(struct wpa_sm *sm, const uint8_t *in, size_t in_len, uint8_t *out, size_t *out_len)

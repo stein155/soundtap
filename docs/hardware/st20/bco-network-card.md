@@ -91,8 +91,9 @@ and the BCO answers with the same `seq` and `type|0x80`, status first.
   offloaded), 43 for security it cannot join, and a scan, authentication or association timeout.
   soundtapd reads 15 as a wrong password. Last comes the network's RSN group cipher (2 TKIP, 4
   CCMP, 0 unknown), which the driver reads only when present and logs with the join result
-  (`BCO joined …, group cipher …` or `BCO join failed: step …, code …, group cipher …`): with a
-  TKIP group the core drops the router's broadcasts. After it comes what the network offers, as in
+  (`BCO joined …, group cipher …` or `BCO join failed: step …, code …, group cipher …`); a TKIP
+  group's broadcasts the app deciphers itself (an app before `BCOLINK_CAP_SECURITY` dropped them).
+  After it comes what the network offers, as in
   SCAN (0 open, 1 RSN, 2 WPA1, 3 WEP), which the driver puts in its scan cache for a roam or a join
   it reports. `SCAN` lists what fits in one reply (1536
   bytes: 36 networks when every SSID is 32 bytes long), its count matching. A join that runs past
@@ -206,15 +207,17 @@ app's start, so they wrap and start over after a BCO power cycle. `/api/health` 
 ### The SRAM budget
 
 The WiLD core reaches the app's buffers only through UMR0, the 64 KB internal SRAM
-(`bco/app/src/stacks.h`); the 16 MB SDRAM is out of its reach. A transmit buffer is `0x6c0` bytes:
+(`bco/app/src/stacks.h`); the 16 MB SDRAM is out of its reach. A transmit buffer is `0x6d0` bytes:
 the 8-byte record, the `0xc4` descriptor, LLC/SNAP, 1500 bytes and the CCMP header and MIC the core
-adds in place.
+adds in place, or the IV, Michael MIC and ICV of a TKIP frame the app enciphered (20 bytes). A
+receive buffer is `0x6e0` bytes, so a TKIP frame comes up whole for the app to decipher
+([ADR 0136](../../decisions/0136-every-network-stock-joined-and-wpa3.md)).
 
 | SRAM | Use |
 |---|---|
 | `0x0000-0x0fff` | vectors and trampolines |
-| `0x1000-0x3f3f` | 7 receive buffers |
-| `0x4100-0x703f` | 7 transmit buffers (6 until flow control) |
+| `0x1000-0x401f` | 7 receive buffers |
+| `0x4100-0x70af` | 7 transmit buffers (6 until flow control) |
 | `0x7220-0x959f` | the core's command rings |
 | `0x9600-0xa13f` | frame and supply rings |
 | `0xa200-0xd01f` | the wired port's MACB rings and buffers (`wired.c`) |
@@ -223,8 +226,8 @@ adds in place.
 
 An eighth transmit buffer would have to go into the `0xd020` gap or above the first stage, apart
 from the other seven, and neither area is proven free of BFL's use on hardware; the gaps at
-`0x3f40` and `0x7040` are too small. `wifi.c` asserts at build time that the seven end below the
-command rings.
+`0x4020` and `0x70b0` are too small. `wifi.c` asserts at build time that the receive buffers end
+below the transmit buffers and the seven transmit buffers below the command rings.
 
 ## Link events, roaming and the regulatory domain
 
@@ -415,6 +418,30 @@ already are, and keeps the engine for CCMP data ([ADR 0136](../../decisions/0136
 - Measuring the engine's modes against the software path, one mode at a time, is an open row in
   [the hardware checklist](../hardware-test.md); with them proven the core could take WEP and
   TKIP over as it does CCMP.
+
+How it runs (`bco/app/src/wsec.c`, `bco/app/src/wifi.c`, the core's `sta.c` and `xport.c`):
+
+1. A key install names the cipher suite type (`set_key`): CCMP goes to the engine with its key;
+   WEP or TKIP goes with the type and no key bytes, and the core marks that key slot as the app's.
+   The app keeps the key, and for TKIP the TSC it last sent and the one it last accepted. A
+   32-byte TKIP key is the TK, the MIC key the AP sends with (bytes 16-23, which the station
+   receives with) and the one it receives with (24-31).
+2. Receive: a protected data frame under a slot of the app's comes up as it came, cipher header
+   and trailer included, protected bit set, record byte 7 = 2 (`RX_SOFT`). A header without the
+   ExtIV bit is WEP's, whose key id names a default key in the core's group table, for unicast and
+   group frames alike. The app copies the body out, refuses a TSC that is not above the key's last
+   one, deciphers, checks the ICV and then Michael (DA addr1, SA addr3, TA addr2, priority 0), and
+   takes the TSC only then.
+3. Transmit: under a TKIP pairwise key the app builds the MSDU, adds Michael (the station's MIC
+   key) and the ICV, enciphers with the next TSC and sends the frame with descriptor byte `0x13` =
+   1 (`TX_RAW`): the core sends that body as it is, without the engine and without a key of its
+   own. A protected frame without the mark and without a CCMP key is still never sent.
+4. A Michael failure (the ICV held, the MIC did not) is reported to the access point in an
+   EAPOL-Key frame with Error and Request. A second within 60 s starts the countermeasures of IEEE
+   802.11: a deauthentication with reason 14, the link dropped (a link event with reason 14), and no
+   network with a TKIP group or pairwise cipher joined for 60 s.
+5. The receive and transmit buffers grew by the 20 bytes of a TKIP frame
+   ([the SRAM budget](#the-sram-budget)).
 
 ## Medium access and rate adaptation
 

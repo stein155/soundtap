@@ -29,6 +29,7 @@
 #undef memcpy
 #undef memset
 #include "../src/wpa.c"
+#include "../src/wsec.c"
 
 /* wild_own.S's core image; the test never boots it */
 const unsigned char wild_own[4], wild_own_end[1];

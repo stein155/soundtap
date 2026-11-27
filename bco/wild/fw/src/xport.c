@@ -89,8 +89,14 @@ static int xfer(struct ring *h, unsigned hc, struct ring *l, unsigned lc, int to
  * be above the key's last one, and it goes up as plaintext: protected bit clear, no CCMP header
  * or MIC, record byte 7 = RX_DECIPHERED. A frame that fails any of that is dropped here. The
  * engine works on word-aligned buffers, so header and body are staged before it runs (receive-area
- * frames are not aligned). */
+ * frames are not aligned).
+ * A frame under a key the app deciphers (WEP, TKIP: sta.c's soft keys, ADR 0136) goes up as it
+ * came, cipher header and trailer included, protected bit set, record byte 7 = RX_SOFT; the app
+ * checks its replay counter, ICV and MIC. A header without the ExtIV bit is WEP's: its key id names
+ * one of the default keys, kept in the group table for unicast and group frames alike. */
 #define RX_DECIPHERED 1
+#define RX_SOFT 2
+#define RXBUF_HOST 0x6e0u   /* the host's RX buffer (wifi.c RXBUF): a TKIP frame's 20 bytes fit */
 static unsigned char rx_stage[24 + 0x6b8] __attribute__((aligned(8)));
 static unsigned *rx_slot, rx_end, rx_peer;
 
@@ -115,6 +121,7 @@ static int rx_deliver(void)
                                            0x60, 0x30, 0x18, 0x0c, 0x6c, 0x48, 0x24, 0x12};
     const unsigned char *e = rx_peek(), *h;
     unsigned n, slot, dec = 0;
+    int app_key = 0;
     unsigned long long pn = 0, *last = 0;
     if (!e)
         return 0;
@@ -123,11 +130,17 @@ static int rx_deliver(void)
     rx_peer = peer_slot(h + 10);        /* addr2 = the frame's transmitter */
     if ((h[0] & 0x0c) == 0x08 && (h[1] & 0x40)) {
         const unsigned char *cc = h + 24, *tk = 0;
-        if (n >= 24 + 8 + 8 + 1 && n - 16 <= 0x6c0 - 0x94 - 24 - 8 && (cc[3] & 0x20)) {
-            tk = sta_rxkey(rx_peer, h[4] & 1, cc[3] >> 6, &last);
+        if (n >= 24 + 4 + 4 + 1)
+            tk = sta_rxkey(rx_peer, (h[4] & 1) || !(cc[3] & 0x20), cc[3] >> 6, &last, &app_key);
+        if (tk && app_key) {
+            dec = RX_SOFT;      /* the app's key: up as it came */
+            goto deliver;
+        }
+        if (tk && n >= 24 + 8 + 8 + 1 && n - 16 <= RXBUF_HOST - 0x94 - 24 - 8 && (cc[3] & 0x20))
             pn = cc[0] | cc[1] << 8 |
                  (unsigned long long)(cc[4] | cc[5] << 8 | cc[6] << 16 | (unsigned)cc[7] << 24) << 16;
-        }
+        else
+            tk = 0;
         if (tk && pn > *last) {
             copy_bytes(rx_stage + 24, h, 24);
             copy_bytes(rx_stage + 56, cc + 8, n - 32);
@@ -136,14 +149,15 @@ static int rx_deliver(void)
             rx_pop();
             return 0;
         }
-        n -= 16, dec = 1;
+        n -= 16, dec = RX_DECIPHERED;
     }
+deliver:
     if (!ring_take(&l_sup, 1, 1, &slot))
         return 0;                       /* the frame stays queued and is deciphered again */
-    if (dec)
+    if (dec == RX_DECIPHERED)
         *last = pn;
-    if (n > 0x6c0 - 0x94 - 24 - 8)       /* host RX buffer (wifi.c RXBUF) */
-        n = 0x6c0 - 0x94 - 24 - 8;
+    if (n > RXBUF_HOST - 0x94 - 24 - 8)  /* host RX buffer (wifi.c RXBUF) */
+        n = RXBUF_HOST - 0x94 - 24 - 8;
     for (unsigned i = 0; i < 24; i++)
         rx_stage[i] = 0;
     rx_stage[0] = 24;
@@ -153,13 +167,13 @@ static int rx_deliver(void)
     rx_stage[4] = e[4];
     rx_stage[5] = rx_chan;
     rx_stage[6] = rate[e[6] & 15];
-    rx_stage[7] = dec ? RX_DECIPHERED : 0;
+    rx_stage[7] = (unsigned char)dec;
     copy_bytes(rx_stage + 24, h, 24);
-    if (dec)
+    if (dec == RX_DECIPHERED)
         rx_stage[24 + 1] &= ~0x40u; /* plaintext now */
     for (unsigned i = 0; i < 8; i++)
         rx_stage[48 + i] = 0;       /* cipher-header room (IV); empty */
-    if (!dec)
+    if (dec != RX_DECIPHERED)
         copy_bytes(rx_stage + 56, h + 24, n - 24);
     rx_pop();
     rx_slot = (unsigned *)slot;
@@ -183,6 +197,7 @@ static int rx_deliver(void)
  * Medium access, retries and the data rate: ADR 0031 (tx_kick, ACK_LATE, rate_cls).
  * single fragment; fragmentation, RTS/CTS and group-key TX are later milestones. */
 volatile unsigned tx_done_q;
+#define TX_RAW 1 /* descriptor byte 0x13: the app enciphered the body (ADR 0136) */
 static unsigned char tx_pkt[0xc4 + 0x600];  /* [0..0x38] descriptor, on-air header at +0x18, body at +0xc4 */
 static unsigned tx_q, tx_rec, tx_t0;
 #define TX_LOST 200000 /* R_TIMER ticks (~1 us): a frame and its retries are done well within this */
@@ -262,6 +277,15 @@ static void tx_stage_done(void)
     tx_desc.hdrlen = 24;
     tx_desc.hdr = h;
     tx_desc.l2 = 0;
+    /* A frame the app enciphered itself (WEP, TKIP, a protected management frame; descriptor
+     * byte 0x13 = TX_RAW, ADR 0136) goes out as it is: its body already holds the cipher header,
+     * the ciphertext and the trailer. */
+    if (tx_pkt[0x13] & TX_RAW) {
+        tx_desc.l1 = body_len;
+        tx_desc.p1 = tx_pkt + 0xc4;
+        tx_desc.len = 24 + body_len + 4;
+        goto start;
+    }
     /* Protected data frame: encipher as CCMP with the pairwise key of the destination peer (the
      * record's peer slot) on the cipher engine. The 8-byte CCMP header goes just before the body,
      * the engine turns the body into ciphertext + an 8-byte MIC in place. Group/broadcast TX

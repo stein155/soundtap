@@ -67,7 +67,7 @@ diff -Nru a/drivers/net/usb/Makefile b/drivers/net/usb/Makefile
 diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 --- a/drivers/net/usb/soundtap_bco.c	1970-01-01 01:00:00.000000000 +0100
 +++ b/drivers/net/usb/soundtap_bco.c	2026-10-06 18:06:43.454816079 +0200
-@@ -0,0 +1,1690 @@
+@@ -0,0 +1,1697 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * SoundTap BCO link: the SoundTouch 20's Wi-Fi and wired ports, which live on the BCO co-processor
@@ -260,6 +260,8 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +};
 +
 +static const u32 bco_ciphers[] = { WLAN_CIPHER_SUITE_CCMP };
++/* An app with BCOLINK_CAP_SECURITY runs TKIP too, in software (ADR 0136). */
++static const u32 bco_ciphers_sec[] = { WLAN_CIPHER_SUITE_CCMP, WLAN_CIPHER_SUITE_TKIP };
 +
 +static struct bco *bco_of(struct usbnet *dev)
 +{
@@ -760,8 +762,8 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +
 +/*
 + * The group cipher of the BSS in a STATUS reply already checked by bco_status, or NULL from an
-+ * app that does not report it. With TKIP the BCO drops the router's group frames (ARP, DHCP
-+ * broadcasts), so the log names it.
++ * app that does not report it. An app without BCOLINK_CAP_SECURITY drops a TKIP group's frames
++ * (ARP, DHCP broadcasts); one with it deciphers them in software (ADR 0136). The log names it.
 + */
 +static const char *bco_group_cipher(struct bco *b)
 +{
@@ -1457,8 +1459,13 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +	wiphy->max_scan_ssids = 1;
 +	wiphy->max_scan_ie_len = 256;	/* wpa_supplicant adds IEs; the BCO probes with its own */
 +	wiphy->signal_type = CFG80211_SIGNAL_TYPE_MBM;
-+	wiphy->cipher_suites = bco_ciphers;
-+	wiphy->n_cipher_suites = ARRAY_SIZE(bco_ciphers);
++	if (b->caps & BCOLINK_CAP_SECURITY) {
++		wiphy->cipher_suites = bco_ciphers_sec;
++		wiphy->n_cipher_suites = ARRAY_SIZE(bco_ciphers_sec);
++	} else {
++		wiphy->cipher_suites = bco_ciphers;
++		wiphy->n_cipher_suites = ARRAY_SIZE(bco_ciphers);
++	}
 +	wiphy_ext_feature_set(wiphy, NL80211_EXT_FEATURE_4WAY_HANDSHAKE_STA_PSK);
 +	set_wiphy_dev(wiphy, &b->usb->intf->dev);
 +	err = wiphy_register(wiphy);

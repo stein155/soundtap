@@ -39,9 +39,9 @@ void delay(unsigned ticks) /* counted, not waited: deadlines stay where the test
 #define H_EVT_N 1250
 #define H_FRM_N 28
 #define H_SUP_N 8
-#define RXBUF 0x6c0 /* wifi.c's RX buffer */
+#define RXBUF 0x6e0 /* wifi.c's RX buffer */
 #define NRX 4
-#define TXFBUF 0x6c0
+#define TXFBUF 0x6d0
 static unsigned h_cmd_buf[H_CMD_N], h_evt_buf[H_EVT_N], h_frm_buf[4][H_FRM_N * 6],
     h_sup_buf[H_SUP_N * 6];
 static unsigned char h_rx[NRX][RXBUF] __attribute__((aligned(8)));
@@ -278,6 +278,7 @@ static const unsigned char BCAST[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 /* ---- transmit: a host frame on frm[q] ---- */
 /* Record {buf, -, 1 | (body + 0xc4) << 16, -, peer | dest << 16, -}; the buffer holds the
  * descriptor copy at +0x94 with the on-air header at +0xac and the body at +0xcc (wstation.h). */
+static unsigned char host_desc13; /* descriptor byte 0x13 of the next host_tx (1: TX_RAW) */
 static void host_tx(unsigned q, unsigned b, const unsigned char *h24, const void *body,
                     unsigned body_len, unsigned peer, unsigned dest)
 {
@@ -285,6 +286,7 @@ static void host_tx(unsigned q, unsigned b, const unsigned char *h24, const void
     unsigned char *buf = h_tx[b];
     memset(buf, 0, TXFBUF);
     memcpy(buf + 0xac, h24, 24);
+    buf[0x94 + 0x13] = host_desc13;
     if (body_len <= TXFBUF - 0xcc)
         memcpy(buf + 0xcc, body, body_len);
     if (!ring_take(&H_frm[q], 0, 1, &slot)) {
