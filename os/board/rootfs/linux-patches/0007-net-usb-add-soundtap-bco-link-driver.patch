@@ -78,7 +78,7 @@ diff -Nru a/drivers/net/usb/Makefile b/drivers/net/usb/Makefile
 diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 --- a/drivers/net/usb/soundtap_bco.c	1970-01-01 01:00:00.000000000 +0100
 +++ b/drivers/net/usb/soundtap_bco.c	2026-10-06 18:06:43.454816079 +0200
-@@ -0,0 +1,2162 @@
+@@ -0,0 +1,2163 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * SoundTap BCO link: the SoundTouch 20's Wi-Fi and wired ports, which live on the BCO co-processor
@@ -256,7 +256,7 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +	unsigned long join_deadline;
 +	bool joining, connected, running;
 +	bool keyed;			/* the connect's network has keys: the BCO opens the port */
-+	u32 sae_freq;			/* the SAE connect's access point's frequency (cfg80211_rx_mgmt) */
++	u32 sae_freq;			/* the SAE connect's AP's frequency; READ_ONCE in RX (rx_mgmt) */
 +	/*
 +	 * Static WEP keys as wpa_supplicant sets them (add_key, set_default_key) and cfg80211 uploads
 +	 * them after a connect; under lock. Only the default one goes to the BCO, in SET_PROFILE.
@@ -447,7 +447,8 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +		}
 +	}
 +	if (p[1] == (T_AUTH_FRAME | 0x80) && len >= 1 + 24 + 6 && !p[BCO_MGMT_HDR] && b->wlan)
-+		cfg80211_rx_mgmt(&b->wdev, b->sae_freq, 0, p + BCO_MGMT_HDR + 1, len - 1, 0);
++		cfg80211_rx_mgmt(&b->wdev, READ_ONCE(b->sae_freq), 0, p + BCO_MGMT_HDR + 1,
++				 len - 1, 0);
 +	/* the BCO's unasked credit reports (seq 0); FLOW's reply is also handled as one below */
 +	if (p[1] == (T_FLOW | 0x80) && len >= BCO_FLOW_LEN && !p[BCO_MGMT_HDR])
 +		bco_flow_apply(b, p + BCO_MGMT_HDR, false);
@@ -1224,7 +1225,7 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +		b->joining = true;
 +		b->connected = false;
 +		b->keyed = !open && !wep;
-+		b->sae_freq = ch ? ch->center_freq : bco_chan_freq(6);
++		WRITE_ONCE(b->sae_freq, ch ? ch->center_freq : bco_chan_freq(6));
 +		b->join_deadline = jiffies + BCO_JOIN_TIMEOUT;
 +	}
 +	mutex_unlock(&b->lock);
