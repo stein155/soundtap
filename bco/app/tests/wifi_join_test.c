@@ -642,6 +642,27 @@ static void ap_data(void)
     c->seen = now - WIFI_AP_GONE_MS + 1;
     assert(wifi_ap_client_info(info) == 1 && ap_anyone_dozing());
 
+    /* it authenticates again while it was dozing (it left without a word and came back): it
+     * starts awake, the frames held for its earlier association are dropped, and frames for it
+     * go straight out instead of waiting for a PS-Poll that never comes */
+    tx_frames();
+    memcpy(pkt, phone, 6);
+    before = wifi_tx_frames;
+    assert(radio_tx_eth(pkt, sizeof pkt) == 0 && c->h.n == 1 && wifi_tx_frames == before);
+    unsigned lost = ap_hdrop;
+    rx_ap(rxf, rx_mgmt(0xb0, own, phone, own, au, sizeof au));
+    assert(!c->dozing && c->h.n == 0 && ap_hdrop == lost + 1 && wifi_tx_frames == before + 1);
+    assert(radio_tx_eth(pkt, sizeof pkt) == 0 && wifi_tx_frames == before + 2);
+    /* the same for a reassociation (its body carries the current AP's address too) */
+    static const unsigned char ras[] = {0x01, 0x00, 0x0a, 0x00, 0x02, 0x11, 0x22, 0x33, 0x44, 0x55,
+                                        1, 4, 0x82, 0x84, 0x8b, 0x96};
+    rx_ap(rxf, rx_mgmt(0x48 | 0x1100, own, phone, own, au, 0));
+    assert(c->dozing && radio_tx_eth(pkt, sizeof pkt) == 0 && c->h.n == 1);
+    before = wifi_tx_frames;
+    rx_ap(rxf, rx_mgmt(0x20, own, phone, own, ras, sizeof ras));
+    assert(c->state == 2 && !c->dozing && c->h.n == 0 && ap_hdrop == lost + 2);
+    assert(wifi_tx_frames == before + 1 && last_frame()[8 + 0x18] == 0x30); /* the response */
+
     /* stopping the AP drops every peer in the core, which ends its ap_mode */
     cmd_ring(16);
     wifi_ap_stop();

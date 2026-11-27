@@ -354,7 +354,8 @@ phone). Now:
   image (`app.ld` `.noinit`), and its bit (AID = slot + 1) is set in the beacon's TIM; a PS-Poll
   fetches one frame with More Data while more wait, a frame with the bit clear fetches the rest.
   Every beacon is a DTIM beacon (count 0, period 1); while any client dozes, group frames wait for
-  the next one, which carries the group bit, and follow it.
+  the next one, which carries the group bit, and follow it. A client that authenticates or
+  associates again starts awake, and what was held for it before is dropped (counted as lost).
 - `AP_STATUS` (`bco/app/src/mgmt.h`): status, count, the client MACs and eight counters (AP up,
   probe requests, frames heard, transmits ACKed, lost, dropped, frames to the SCM, beacons); behind
   `BCOLINK_CAP_APDIAG` then the ms from `AP_START` to the first beacon, the core's frames to our

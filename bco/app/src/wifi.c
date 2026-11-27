@@ -1288,6 +1288,17 @@ static int ap_anyone_dozing(void)
     return 0;
 }
 
+/* A client that authenticates or associates again (it left without a word and came back) starts
+ * awake, and the frames held for its earlier association are dropped (counted as lost), as hostapd
+ * and mac80211 flush them: a kept dozing flag held every frame for a phone that no longer dozed,
+ * and that now waits for its association response and DHCP answer. */
+static void ap_restart(struct client *c)
+{
+    ap_hdrop += c->h.n;
+    c->h.n = c->h.head = 0;
+    c->dozing = 0;
+}
+
 /* A client's power-management bit, from a data or null-data frame of it: waking up (bit clear)
  * releases what was held for it. */
 static void ap_pm(struct client *c, unsigned fc)
@@ -1398,6 +1409,7 @@ static void rx_ap(const volatile unsigned char *b, unsigned len)
                 ap_peer(c, CMD_PEER_ADD);
                 c->state = 1;
             }
+            ap_restart(c);
             ap_send(c, 0xb0, c->mac, own, ap_mrates, 0, ok, sizeof ok);
         } else if ((sub == 0x00 || sub == 0x20) && c->state) {
             unsigned skip = sub ? 10 : 4, o = 6;
@@ -1410,6 +1422,7 @@ static void rx_ap(const volatile unsigned char *b, unsigned len)
             copy(ies, body + skip, il);
             if (!wstation_rate_chain(ies, il, c->rates))
                 return;
+            ap_restart(c);
             c->state = 2;
             rsp[0] = ap_body[10], rsp[1] = ap_body[11]; /* capability */
             rsp[2] = rsp[3] = 0;                         /* success */

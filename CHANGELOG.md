@@ -70,6 +70,8 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
   network again** when the router sends its network key a second time.
 - **SoundTouch 20: a short hold-up inside the speaker no longer garbles network data** passed
   between its network chip and its main processor.
+- **SoundTouch 20: a phone that rejoins the setup network gets its answers at once**, also
+  when it had gone to sleep on it before.
 
 ## [app-v0.1.0-alpha.6] - 2026-11-27
 
