@@ -2,134 +2,134 @@
 <INDEX REVISION="02.11.00">
   <DEVICE ID="0x0924" PRODUCTNAME="SoundTouch 30">
     <HARDWARE REVISION="00.01.00">
-      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.5" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.5/Update.stu">
-        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x46ce0360" FILENAME="SoundTap-Core-0.1.0-alpha.5-preview.stu"/>
+      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.6" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.6/Update.stu">
+        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x4449a749" FILENAME="SoundTap-Core-0.1.0-alpha.6-preview.stu"/>
       </RELEASE>
     </HARDWARE>
   </DEVICE>
   <DEVICE ID="0x093B" PRODUCTNAME="SoundTouch 20">
     <HARDWARE REVISION="00.01.00">
-      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.5" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.5/Update.stu">
-        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x46ce0360" FILENAME="SoundTap-Core-0.1.0-alpha.5-preview.stu"/>
+      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.6" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.6/Update.stu">
+        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x4449a749" FILENAME="SoundTap-Core-0.1.0-alpha.6-preview.stu"/>
       </RELEASE>
     </HARDWARE>
   </DEVICE>
   <DEVICE ID="0x093C" PRODUCTNAME="SoundTouch 30">
     <HARDWARE REVISION="00.01.00">
-      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.5" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.5/Update.stu">
-        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x46ce0360" FILENAME="SoundTap-Core-0.1.0-alpha.5-preview.stu"/>
+      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.6" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.6/Update.stu">
+        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x4449a749" FILENAME="SoundTap-Core-0.1.0-alpha.6-preview.stu"/>
       </RELEASE>
     </HARDWARE>
   </DEVICE>
   <DEVICE ID="0x0925" PRODUCTNAME="SoundTouch Portable">
     <HARDWARE REVISION="00.01.00">
-      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.5" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.5/Update.stu">
-        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x46ce0360" FILENAME="SoundTap-Core-0.1.0-alpha.5-preview.stu"/>
+      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.6" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.6/Update.stu">
+        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x4449a749" FILENAME="SoundTap-Core-0.1.0-alpha.6-preview.stu"/>
       </RELEASE>
     </HARDWARE>
   </DEVICE>
   <DEVICE ID="0x093A" PRODUCTNAME="SoundTouch SA-5">
     <HARDWARE REVISION="00.01.00">
-      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.5" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.5/Update.stu">
-        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x46ce0360" FILENAME="SoundTap-Core-0.1.0-alpha.5-preview.stu"/>
+      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.6" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.6/Update.stu">
+        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x4449a749" FILENAME="SoundTap-Core-0.1.0-alpha.6-preview.stu"/>
       </RELEASE>
     </HARDWARE>
   </DEVICE>
   <DEVICE ID="0x0932" PRODUCTNAME="Wave SoundTouch">
     <HARDWARE REVISION="00.01.00">
-      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.5" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.5/Update.stu">
-        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x46ce0360" FILENAME="SoundTap-Core-0.1.0-alpha.5-preview.stu"/>
+      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.6" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.6/Update.stu">
+        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x4449a749" FILENAME="SoundTap-Core-0.1.0-alpha.6-preview.stu"/>
       </RELEASE>
     </HARDWARE>
   </DEVICE>
   <DEVICE ID="0x0933" PRODUCTNAME="VideoWave">
     <HARDWARE REVISION="00.01.00">
-      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.5" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.5/Update.stu">
-        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x46ce0360" FILENAME="SoundTap-Core-0.1.0-alpha.5-preview.stu"/>
+      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.6" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.6/Update.stu">
+        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x4449a749" FILENAME="SoundTap-Core-0.1.0-alpha.6-preview.stu"/>
       </RELEASE>
     </HARDWARE>
   </DEVICE>
   <DEVICE ID="0x0944" PRODUCTNAME="VideoWave">
     <HARDWARE REVISION="00.01.00">
-      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.5" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.5/Update.stu">
-        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x46ce0360" FILENAME="SoundTap-Core-0.1.0-alpha.5-preview.stu"/>
+      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.6" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.6/Update.stu">
+        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x4449a749" FILENAME="SoundTap-Core-0.1.0-alpha.6-preview.stu"/>
       </RELEASE>
     </HARDWARE>
   </DEVICE>
   <DEVICE ID="0x0934" PRODUCTNAME="Lifestyle">
     <HARDWARE REVISION="00.01.00">
-      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.5" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.5/Update.stu">
-        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x46ce0360" FILENAME="SoundTap-Core-0.1.0-alpha.5-preview.stu"/>
+      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.6" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.6/Update.stu">
+        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x4449a749" FILENAME="SoundTap-Core-0.1.0-alpha.6-preview.stu"/>
       </RELEASE>
     </HARDWARE>
   </DEVICE>
   <DEVICE ID="0x0945" PRODUCTNAME="Lifestyle">
     <HARDWARE REVISION="00.01.00">
-      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.5" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.5/Update.stu">
-        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x46ce0360" FILENAME="SoundTap-Core-0.1.0-alpha.5-preview.stu"/>
+      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.6" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.6/Update.stu">
+        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x4449a749" FILENAME="SoundTap-Core-0.1.0-alpha.6-preview.stu"/>
       </RELEASE>
     </HARDWARE>
   </DEVICE>
   <DEVICE ID="0x0935" PRODUCTNAME="SoundTouch Stereo JC">
     <HARDWARE REVISION="00.01.00">
-      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.5" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.5/Update.stu">
-        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x46ce0360" FILENAME="SoundTap-Core-0.1.0-alpha.5-preview.stu"/>
+      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.6" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.6/Update.stu">
+        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x4449a749" FILENAME="SoundTap-Core-0.1.0-alpha.6-preview.stu"/>
       </RELEASE>
     </HARDWARE>
   </DEVICE>
   <DEVICE ID="0x0936" PRODUCTNAME="SoundTouch SA-4">
     <HARDWARE REVISION="00.01.00">
-      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.5" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.5/Update.stu">
-        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x46ce0360" FILENAME="SoundTap-Core-0.1.0-alpha.5-preview.stu"/>
+      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.6" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.6/Update.stu">
+        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x4449a749" FILENAME="SoundTap-Core-0.1.0-alpha.6-preview.stu"/>
       </RELEASE>
     </HARDWARE>
   </DEVICE>
   <DEVICE ID="0x0938" PRODUCTNAME="Cinemate">
     <HARDWARE REVISION="00.01.00">
-      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.5" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.5/Update.stu">
-        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x46ce0360" FILENAME="SoundTap-Core-0.1.0-alpha.5-preview.stu"/>
+      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.6" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.6/Update.stu">
+        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x4449a749" FILENAME="SoundTap-Core-0.1.0-alpha.6-preview.stu"/>
       </RELEASE>
     </HARDWARE>
   </DEVICE>
   <DEVICE ID="0x093D" PRODUCTNAME="Wave SoundTouch">
     <HARDWARE REVISION="00.01.00">
-      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.5" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.5/Update.stu">
-        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x46ce0360" FILENAME="SoundTap-Core-0.1.0-alpha.5-preview.stu"/>
+      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.6" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.6/Update.stu">
+        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x4449a749" FILENAME="SoundTap-Core-0.1.0-alpha.6-preview.stu"/>
       </RELEASE>
     </HARDWARE>
   </DEVICE>
   <DEVICE ID="0x093E" PRODUCTNAME="VideoWave">
     <HARDWARE REVISION="00.01.00">
-      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.5" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.5/Update.stu">
-        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x46ce0360" FILENAME="SoundTap-Core-0.1.0-alpha.5-preview.stu"/>
+      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.6" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.6/Update.stu">
+        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x4449a749" FILENAME="SoundTap-Core-0.1.0-alpha.6-preview.stu"/>
       </RELEASE>
     </HARDWARE>
   </DEVICE>
   <DEVICE ID="0x0946" PRODUCTNAME="VideoWave">
     <HARDWARE REVISION="00.01.00">
-      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.5" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.5/Update.stu">
-        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x46ce0360" FILENAME="SoundTap-Core-0.1.0-alpha.5-preview.stu"/>
+      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.6" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.6/Update.stu">
+        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x4449a749" FILENAME="SoundTap-Core-0.1.0-alpha.6-preview.stu"/>
       </RELEASE>
     </HARDWARE>
   </DEVICE>
   <DEVICE ID="0x0940" PRODUCTNAME="SoundTouch Stereo JC">
     <HARDWARE REVISION="00.01.00">
-      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.5" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.5/Update.stu">
-        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x46ce0360" FILENAME="SoundTap-Core-0.1.0-alpha.5-preview.stu"/>
+      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.6" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.6/Update.stu">
+        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x4449a749" FILENAME="SoundTap-Core-0.1.0-alpha.6-preview.stu"/>
       </RELEASE>
     </HARDWARE>
   </DEVICE>
   <DEVICE ID="0x0941" PRODUCTNAME="SoundTouch SA-4">
     <HARDWARE REVISION="00.01.00">
-      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.5" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.5/Update.stu">
-        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x46ce0360" FILENAME="SoundTap-Core-0.1.0-alpha.5-preview.stu"/>
+      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.6" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.6/Update.stu">
+        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x4449a749" FILENAME="SoundTap-Core-0.1.0-alpha.6-preview.stu"/>
       </RELEASE>
     </HARDWARE>
   </DEVICE>
   <DEVICE ID="0x0942" PRODUCTNAME="Cinemate">
     <HARDWARE REVISION="00.01.00">
-      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.5" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.5/Update.stu">
-        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x46ce0360" FILENAME="SoundTap-Core-0.1.0-alpha.5-preview.stu"/>
+      <RELEASE REVISION="99.0.0.1.1" HTTPHOST="https://github.com" URLPATH="stein155/soundtap/releases/download/os-v0.1.0-alpha.6" USBPATH="/stein155/soundtap/releases/download/os-v0.1.0-alpha.6/Update.stu">
+        <IMAGE SUBID="0" LENGTH="69942544" CRC="0x4449a749" FILENAME="SoundTap-Core-0.1.0-alpha.6-preview.stu"/>
       </RELEASE>
     </HARDWARE>
   </DEVICE>
