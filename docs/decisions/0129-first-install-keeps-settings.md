@@ -47,15 +47,39 @@ speaker with presets of its own takes none. A background job in soundtapd then a
 `GET /json/stations/byuuid/<uuid>` of Radio Browser's servers `de1`, `de2` and `fi1`
 `.api.radio-browser.info`, and the round-robin `all.api.radio-browser.info`, in turn, over
 public addresses only, with the User-Agent `SoundTap/<version>`. The uuid is all a request
-carries: no name, serial, address or anything else about the speaker or its owner. The job
+carries (for the name searches below, the station's name): no serial, address or anything else
+about the speaker or its owner. The job
 runs at every start while the file is there, and after a round that left presets waiting
 again after 30 s, doubling to every 10 minutes; there is no signal for "the network is up",
 and a round without network costs a failed name lookup. A preset is stored only while its
 slot is empty (checked and written under one lock, so a preset the owner stored meanwhile is
 never replaced) and only with a stream address an owner could enter themselves (http or
 https, at most 512 bytes). It is dropped, with a log line saying why, when its slot holds a
-preset, Radio Browser knows no such station, or the address is not usable; after 7 days from
-the time first seen without an answer it is given up. That time is taken only after NTP has
+preset or the address is not usable; after 7 days from the time first seen without an answer it
+is given up.
+
+Radio Browser drops a station's uuid when the station is added again (on the owner's ST20 two
+of five presets named such uuids; "NPO Radio 2" now has another one). When a server answers that
+it knows no station by the uuid, and only then (a lookup no server answered waits for the next
+round), the preset is looked for by its name, stock's `itemName`:
+
+1. TuneIn's search (`Search.ashx` of `opml.radiotime.com`, as the radio page uses it, with
+   the name as the query). A station whose name equals the preset's, ignoring case and
+   spacing, is taken when it is the only one; it becomes a TuneIn preset like one the owner
+   stores (`/v1/playback/station/<guide id>`), so it plays and finds its stream as those do.
+   TuneIn's results name no country, so two stations of that name are none.
+2. Else Radio Browser's `GET /json/stations/bynameexact/<name>`, on the same servers. Of the
+   stations of that name with a usable stream address, those of the speaker's country (the
+   country in its own Manufacturing-Data, read from NAND; none when it does not read) when
+   there are any, then those Radio Browser last found playing (`lastcheckok`) when there are
+   any; the one station left, or several that all play the same stream (the same station
+   entered twice), becomes a preset with its own stream address as above.
+3. Else the preset is dropped, with a log line naming the routes tried.
+
+A name search that did not answer and found nothing keeps the preset for the next round, under
+the same week. The log names the route each preset came by (`radio-browser-uuid`,
+`tunein-name`, `radio-browser-name`). stock's own logo is kept, and the found station's taken
+only when stock had none. That time is taken only after NTP has
 set the clock this boot (`/run/soundtap/clock-synced`): on the first boot after an install from
 stock init sets the clock to the build's time, and a preset dated by it would be given up at the
 first failed lookup once NTP moved the clock on by more than a week. A time no later than an
@@ -100,9 +124,16 @@ bytes in git); the owner typing the password again after the install.
 - A first boot that brings nothing over says why in its log, file by file and preset by preset.
 - SoundTap contacts one more outside service, Radio Browser, and only for an install from
   stock with Radio Browser presets: once per such preset, with its uuid alone, for at most a
-  week. A speaker installed otherwise, or whose presets were all resolved, never contacts it.
+  week; for a uuid Radio Browser no longer knows, TuneIn and Radio Browser are also asked for
+  the station's name. A speaker installed otherwise, or whose presets were all resolved, never
+  contacts Radio Browser.
 - A Radio Browser preset appears some seconds to minutes after the first start, once the
-  network answers, not at once; a station Radio Browser has dropped stays empty.
+  network answers, not at once. A station Radio Browser has dropped comes back when TuneIn or
+  Radio Browser has exactly one station of its name; otherwise its slot stays empty. A station
+  found by name is the station of that name today, which may be another than stock's when two
+  stations share a name and only one is listed.
+- A preset found on TuneIn is a TuneIn preset: it shows and plays as one, and needs TuneIn as
+  every TuneIn preset does.
 - The stream address is the one Radio Browser gives today; a station that later moves its
   stream needs its preset set again, as any preset with its own stream address does.
 - No Bose byte enters the repository or the image, and no Bose code runs under SoundTap: the
@@ -128,5 +159,8 @@ bytes in git); the owner typing the password again after the install.
 - `app/cmd/soundtapd/identity.go`: `stockDeviceName`, `stockPresets`, `stockClock`,
   `takeStockClock` and `takeStockOnce`.
 - `app/cmd/soundtapd/stock_radiobrowser.go`: `recordPendingStockPresets` and `stockLookups`,
-  the lookups of stock's Radio Browser presets; `app/internal/radiobrowser`: the client.
+  the lookups of stock's Radio Browser presets; `app/cmd/soundtapd/stock_byname.go`:
+  `takeOverByName`, `tuneInMatch` and `radioBrowserMatch`, the search by name;
+  `app/internal/radiobrowser`: the client; `app/internal/tunein`: TuneIn's search;
+  `app/internal/wifi/regulatory.go`: `ManufacturingCountry`.
 - `app/internal/speakerstate/backend_presets.go`: `StorePresetIfEmpty`.

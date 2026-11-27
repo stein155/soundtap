@@ -22,7 +22,9 @@ import (
 	"github.com/stein155/soundtap/app/internal/radiobrowser"
 	"github.com/stein155/soundtap/app/internal/speaker"
 	"github.com/stein155/soundtap/app/internal/speakerstate"
+	"github.com/stein155/soundtap/app/internal/tunein"
 	"github.com/stein155/soundtap/app/internal/web"
+	"github.com/stein155/soundtap/app/internal/wifi"
 )
 
 // sourceRadioBrowser is the source stock gives a preset from Radio Browser.
@@ -161,17 +163,26 @@ func readPendingStockPresets(path string) (pendingStockFile, error) {
 	return file, nil
 }
 
-// stockLookups stores stock's Radio Browser presets once their stream address is known.
-// Close ends them for a factory reset: a round still in flight then never writes the pending
-// file back after the reset removed it.
+// stockLookups stores stock's Radio Browser presets once their stream address is known. A
+// preset whose uuid Radio Browser no longer knows is looked for by its name: on TuneIn, then
+// on Radio Browser (stock_byname.go). Close ends them for a factory reset: a round still in
+// flight then never writes the pending file back after the reset removed it.
 type stockLookups struct {
 	path string
 	// resolve looks a station up (radiobrowser.Client.Station).
 	resolve func(ctx context.Context, uuid string) (radiobrowser.Station, error)
+	// searchTuneIn searches TuneIn's stations for a name (tunein.Client.Search).
+	searchTuneIn func(ctx context.Context, name string) ([]tunein.Station, error)
+	// searchByName lists Radio Browser's stations of exactly a name (radiobrowser.Client.ByName).
+	searchByName func(ctx context.Context, name string) ([]radiobrowser.Station, error)
+	// country is the speaker's country, two capitals, "" when unknown: a station of that
+	// country is preferred among Radio Browser's of the same name.
+	country func() string
 	// slotHeld reports whether a slot holds a preset, so a held one is not looked up.
 	slotHeld func(ctx context.Context, slot int) bool
-	// store stores a preset in a slot only while it is empty (StorePresetIfEmpty).
-	store func(ctx context.Context, slot int, stream, name, logo string) (bool, error)
+	// store stores a preset at location (a stream address, or a TuneIn station's
+	// /v1/playback/station/ location) in a slot only while it is empty (StorePresetIfEmpty).
+	store func(ctx context.Context, slot int, location, name, logo string) (bool, error)
 	now   func() time.Time
 	// synced reports whether NTP set the clock this boot (clocksync.Synced): only then does
 	// a preset get its date.
@@ -223,8 +234,11 @@ func startStockPresetLookups(
 
 	client := radiobrowser.New("SoundTap/" + strings.TrimPrefix(version, "app-v"))
 	lookups := &stockLookups{
-		path:    path,
-		resolve: client.Station,
+		path:         path,
+		resolve:      client.Station,
+		searchTuneIn: tunein.New().Search,
+		searchByName: client.ByName,
+		country:      sync.OnceValue(wifi.ManufacturingCountry),
 		slotHeld: func(ctx context.Context, slot int) bool {
 			presets, err := state.Presets(ctx)
 			if err != nil {
@@ -239,8 +253,8 @@ func startStockPresetLookups(
 
 			return false
 		},
-		store: func(ctx context.Context, slot int, stream, name, logo string) (bool, error) {
-			return state.StorePresetIfEmpty(ctx, slot, sourceTuneIn, "stationurl", stream, name, logo)
+		store: func(ctx context.Context, slot int, location, name, logo string) (bool, error) {
+			return state.StorePresetIfEmpty(ctx, slot, sourceTuneIn, "stationurl", location, name, logo)
 		},
 		now:        time.Now,
 		synced:     clocksync.Synced,
@@ -372,9 +386,7 @@ func (l *stockLookups) lookup(ctx context.Context, preset *pendingStockPreset, n
 
 	switch {
 	case errors.Is(err, radiobrowser.ErrUnknownStation):
-		log.Info("stock preset not taken over: Radio Browser knows no such station", "uuid", preset.UUID)
-
-		return false, false
+		return l.takeOverByName(ctx, log, preset, now), false
 	case err != nil:
 		return retryOrGiveUp(log, preset, now, err), errors.Is(err, radiobrowser.ErrNoServer)
 	}
@@ -395,7 +407,7 @@ func (l *stockLookups) lookup(ctx context.Context, preset *pendingStockPreset, n
 	case !stored:
 		log.Info("stock preset not taken over: the slot holds a preset already")
 	default:
-		log.Info("stock preset taken over from Radio Browser")
+		log.Info("stock preset taken over from Radio Browser", "route", routeUUID, "uuid", preset.UUID)
 	}
 
 	return false, false
@@ -405,7 +417,7 @@ func (l *stockLookups) lookup(ctx context.Context, preset *pendingStockPreset, n
 // stockPendingMaxAge; reports whether it still waits.
 func retryOrGiveUp(log *slog.Logger, preset *pendingStockPreset, now time.Time, err error) bool {
 	if !preset.FirstSeen.IsZero() && now.Sub(preset.FirstSeen) >= stockPendingMaxAge {
-		log.Warn("stock preset given up: Radio Browser did not answer for 7 days",
+		log.Warn("stock preset given up: its lookup failed for 7 days",
 			"uuid", preset.UUID, "since", preset.FirstSeen, "err", err)
 
 		return false

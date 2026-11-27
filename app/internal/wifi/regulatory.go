@@ -105,25 +105,8 @@ func normalise(country, region string) Regulatory {
 // readRegulatory finds the country and region: manufacturing data, then the U-Boot
 // environment's override. printenv runs fw_printenv with the config file it is given.
 func readRegulatory(paths *Paths, printenv func(cfg string) ([]byte, error)) (Regulatory, string, string) {
-	parts := map[string]flash.Partition{}
-
-	mtd, err := os.Open(paths.ProcMTD)
-	if err == nil {
-		parts, _ = flash.ParseProcMTD(mtd)
-		_ = mtd.Close()
-	}
-
-	var country, region string
-
-	if part, ok := parts[mfgPartition]; ok {
-		f, err := os.Open(filepath.Join(paths.Dev, fmt.Sprintf("mtd%d", part.Index)))
-		if err == nil {
-			page := make([]byte, mfgPage)
-			n, _ := io.ReadFull(f, page)
-			_ = f.Close()
-			country, region = fromManufacturing(page[:n])
-		}
-	}
+	parts := mtdParts(paths)
+	country, region := readManufacturing(paths, parts)
 
 	if env := readEnv(paths, parts, printenv); env != nil {
 		if v, _ := env.Get("country_code"); v != "" {
@@ -136,6 +119,62 @@ func readRegulatory(paths *Paths, printenv func(cfg string) ([]byte, error)) (Re
 	}
 
 	return normalise(country, region), country, region
+}
+
+// ManufacturingCountry is the country in this speaker's own Manufacturing-Data, two
+// capitals, or "" when none reads (or it is the world domain 00). It only reads NAND: the
+// U-Boot environment's override is read by the Wi-Fi manager alone, which owns
+// fw_env.config. It runs on every model, the ST20 included, where no manager runs.
+func ManufacturingCountry() string {
+	paths := DefaultPaths()
+
+	return countryFromManufacturing(&paths)
+}
+
+// countryFromManufacturing is ManufacturingCountry under paths.
+func countryFromManufacturing(paths *Paths) string {
+	country, _ := readManufacturing(paths, mtdParts(paths))
+
+	reg := normalise(country, "")
+	if reg.Country == "00" {
+		return ""
+	}
+
+	return reg.Country
+}
+
+// mtdParts is the partitions of /proc/mtd by label, none when it does not read.
+func mtdParts(paths *Paths) map[string]flash.Partition {
+	parts := map[string]flash.Partition{}
+
+	mtd, err := os.Open(paths.ProcMTD)
+	if err == nil {
+		parts, _ = flash.ParseProcMTD(mtd)
+		_ = mtd.Close()
+	}
+
+	return parts
+}
+
+// readManufacturing reads the country and region out of NAND.Manufacturing-Data: empty when
+// there is no such partition or it does not read.
+func readManufacturing(paths *Paths, parts map[string]flash.Partition) (string, string) {
+	part, ok := parts[mfgPartition]
+	if !ok {
+		return "", ""
+	}
+
+	file, err := os.Open(filepath.Join(paths.Dev, fmt.Sprintf("mtd%d", part.Index)))
+	if err != nil {
+		return "", ""
+	}
+
+	defer func() { _ = file.Close() }()
+
+	page := make([]byte, mfgPage)
+	n, _ := io.ReadFull(file, page)
+
+	return fromManufacturing(page[:n])
 }
 
 // readEnv reads the U-Boot environment in whichever format the board has (ADR 0010): our

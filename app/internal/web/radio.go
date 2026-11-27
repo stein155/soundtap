@@ -269,6 +269,10 @@ var stationIDRe = regexp.MustCompile(`^[A-Za-z0-9]{1,64}$`)
 
 func validStationID(id string) bool { return stationIDRe.MatchString(id) }
 
+// ValidGuideID is the check a TuneIn guide id given through the API passes, for one that
+// comes from elsewhere (a station found by name for a preset stock left behind).
+func ValidGuideID(id string) bool { return validStationID(id) }
+
 // maxStreamURL bounds a stream URL of the user's own: it is stored on NAND in a preset.
 const maxStreamURL = 512
 

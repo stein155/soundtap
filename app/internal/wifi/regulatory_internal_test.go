@@ -249,3 +249,39 @@ func TestUdhcpcKeepsItsLease(t *testing.T) {
 		t.Fatalf("udhcpc %s", args)
 	}
 }
+
+// The manufacturing country reads from NAND.Manufacturing-Data alone, on both layouts; the
+// world domain, an odd value and a speaker without the partition read as none.
+func TestManufacturingCountry(t *testing.T) {
+	t.Parallel()
+
+	for name, test := range map[string]struct {
+		page []byte
+		mtd  string
+		want string
+	}{
+		"layout 2":     {mfg(2, "NL", "US"), "mtd12: 00100000 00020000 \"NAND.Manufacturing-Data\"\n", "NL"},
+		"layout 1":     {mfg(1, "GB", ""), "mtd12: 00100000 00020000 \"NAND.Manufacturing-Data\"\n", "GB"},
+		"world domain": {mfg(2, "00", "DF"), "mtd12: 00100000 00020000 \"NAND.Manufacturing-Data\"\n", ""},
+		"odd value":    {mfg(2, "nl", "US"), "mtd12: 00100000 00020000 \"NAND.Manufacturing-Data\"\n", ""},
+		"no partition": {mfg(2, "NL", "US"), "mtd5: 00020000 00020000 \"NAND.U-Boot-Env\"\n", ""},
+	} {
+		dir := t.TempDir()
+		paths := DefaultPaths()
+		paths.ProcMTD, paths.Dev = filepath.Join(dir, "mtd"), dir
+
+		err := os.WriteFile(paths.ProcMTD, []byte("dev:    size   erasesize  name\n"+test.mtd), 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		err = os.WriteFile(filepath.Join(dir, "mtd12"), test.page, 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if got := countryFromManufacturing(&paths); got != test.want {
+			t.Errorf("%s: country %q, want %q", name, got, test.want)
+		}
+	}
+}

@@ -21,6 +21,7 @@ import (
 
 	"github.com/stein155/soundtap/app/internal/radiobrowser"
 	"github.com/stein155/soundtap/app/internal/speakerstate"
+	"github.com/stein155/soundtap/app/internal/tunein"
 )
 
 // Station uuids of the tests: made up, one per case.
@@ -184,6 +185,10 @@ func lookupsFor(path string, state *speakerstate.Speaker,
 	return &stockLookups{
 		path:    path,
 		resolve: resolve,
+		// Nothing by name, unless a test sets them (stock_byname_test.go).
+		searchTuneIn: func(context.Context, string) ([]tunein.Station, error) { return nil, nil },
+		searchByName: func(context.Context, string) ([]radiobrowser.Station, error) { return nil, nil },
+		country:      func() string { return "" },
 		slotHeld: func(ctx context.Context, slot int) bool {
 			presets, _ := state.Presets(ctx)
 			for _, preset := range presets {
@@ -194,8 +199,8 @@ func lookupsFor(path string, state *speakerstate.Speaker,
 
 			return false
 		},
-		store: func(ctx context.Context, slot int, stream, name, logo string) (bool, error) {
-			return state.StorePresetIfEmpty(ctx, slot, sourceTuneIn, "stationurl", stream, name, logo)
+		store: func(ctx context.Context, slot int, location, name, logo string) (bool, error) {
+			return state.StorePresetIfEmpty(ctx, slot, sourceTuneIn, "stationurl", location, name, logo)
 		},
 		now:        func() time.Time { return *now },
 		synced:     func() bool { return true },
@@ -246,7 +251,8 @@ func TestStockLookupsStoreOrDropEachPreset(t *testing.T) {
 	for _, want := range []string{
 		`msg="stock preset taken over from Radio Browser" slot=1 name="NPO Radio 2"`,
 		`msg="stock preset not taken over: the slot holds a preset already" slot=2`,
-		`msg="stock preset not taken over: Radio Browser knows no such station" slot=3`,
+		`msg="stock preset not taken over: Radio Browser knows no such station, ` +
+			`and neither TuneIn nor Radio Browser has one station by its name" slot=3`,
 		`msg="stock preset not taken over: Radio Browser gives no usable stream address" slot=4`,
 		`msg="stock preset not taken over: Radio Browser gives no usable stream address" slot=5`,
 		`msg="stock preset not taken over" slot=9 name="No slot" why="no preset slot 9"`,
@@ -316,7 +322,7 @@ func TestStockLookupsRetryThenGiveUp(t *testing.T) {
 		t.Fatalf("the pending file stays: %v", err)
 	}
 
-	if !strings.Contains(buf.String(), `msg="stock preset given up: Radio Browser did not answer for 7 days" slot=1`) {
+	if !strings.Contains(buf.String(), `msg="stock preset given up: its lookup failed for 7 days" slot=1`) {
 		t.Errorf("giving up is not logged with its reason:\n%s", buf.String())
 	}
 }
@@ -564,6 +570,7 @@ func TestStockLookupsRunPaces(t *testing.T) {
 
 		return radiobrowser.Station{
 			UUID: uuidNPO2, Name: "", URL: "", URLResolved: "https://example.com/npo2.mp3", Favicon: "",
+			CountryCode: "", LastCheckOK: 0,
 		}, nil
 	}
 

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-// Package radiobrowser looks a station up by its uuid in Radio Browser
-// (radio-browser.info), the open station directory stock's Radio Browser presets name.
-// A request carries the uuid and the User-Agent and nothing else: no account, no key,
-// nothing about the speaker or its owner (ADR 0129).
+// Package radiobrowser looks a station up by its uuid, or by its exact name, in Radio
+// Browser (radio-browser.info), the open station directory stock's Radio Browser presets
+// name. A request carries the uuid or the name and the User-Agent and nothing else: no
+// account, no key, nothing about the speaker or its owner (ADR 0129).
 package radiobrowser
 
 import (
@@ -52,6 +52,10 @@ type Station struct {
 	URL         string `json:"url"`
 	URLResolved string `json:"url_resolved"`
 	Favicon     string `json:"favicon"`
+	// CountryCode is the station's country, ISO 3166-1 alpha-2, "" when Radio Browser has none.
+	CountryCode string `json:"countrycode"`
+	// LastCheckOK is 1 when Radio Browser's last check of the stream found it playing.
+	LastCheckOK int `json:"lastcheckok"`
 }
 
 // StreamURL is what plays the station: the resolved stream, or the address the station
@@ -99,31 +103,50 @@ func (c *Client) Station(ctx context.Context, uuid string) (Station, error) {
 		return none, fmt.Errorf("%w: %q", ErrInvalidUUID, uuid)
 	}
 
+	stations, err := c.ask(ctx, "/json/stations/byuuid/"+url.PathEscape(strings.ToLower(uuid)))
+	if err != nil {
+		return none, err
+	}
+
+	for _, station := range stations {
+		if strings.EqualFold(station.UUID, uuid) {
+			return station, nil
+		}
+	}
+
+	return none, fmt.Errorf("%w: %s", ErrUnknownStation, uuid)
+}
+
+// ByName lists the stations Radio Browser names exactly name (bynameexact), asking the next
+// server as Station does: none when a server answered with none. ErrNoServer: none answered.
+func (c *Client) ByName(ctx context.Context, name string) ([]Station, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, nil
+	}
+
+	return c.ask(ctx, "/json/stations/bynameexact/"+url.PathEscape(name))
+}
+
+// ask asks the servers in turn for the station list at path, up to the first that answers
+// with one. ErrNoServer: none answered.
+func (c *Client) ask(ctx context.Context, path string) ([]Station, error) {
 	var errs []error
 
 	for _, server := range c.servers {
 		var stations []Station
 
-		err := safehttp.GetJSON(ctx, c.http, c.userAgent,
-			strings.TrimRight(server, "/")+"/json/stations/byuuid/"+url.PathEscape(strings.ToLower(uuid)), &stations)
-		if err != nil {
-			errs = append(errs, err)
-
-			if ctx.Err() != nil {
-				break
-			}
-
-			continue
+		err := safehttp.GetJSON(ctx, c.http, c.userAgent, strings.TrimRight(server, "/")+path, &stations)
+		if err == nil {
+			return stations, nil
 		}
 
-		for _, station := range stations {
-			if strings.EqualFold(station.UUID, uuid) {
-				return station, nil
-			}
-		}
+		errs = append(errs, err)
 
-		return none, fmt.Errorf("%w: %s", ErrUnknownStation, uuid)
+		if ctx.Err() != nil {
+			break
+		}
 	}
 
-	return none, fmt.Errorf("%w: %w", ErrNoServer, errors.Join(errs...))
+	return nil, fmt.Errorf("%w: %w", ErrNoServer, errors.Join(errs...))
 }

@@ -128,11 +128,70 @@ func TestStationErrors(t *testing.T) {
 	}
 }
 
+// ByName asks for the exact name, escaped into the path, and nothing else; a server that
+// knows no such name answers with none, and no server answering is ErrNoServer.
+func TestByName(t *testing.T) {
+	t.Parallel()
+
+	var (
+		path   string
+		query  string
+		header http.Header
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path, query, header = r.URL.EscapedPath(), r.URL.RawQuery, r.Header.Clone()
+
+		if r.URL.Path != "/json/stations/bynameexact/NPO Radio 2" {
+			_, _ = w.Write([]byte("[]"))
+
+			return
+		}
+
+		_, _ = w.Write([]byte(`[{"stationuuid":"961e3b9a-0601-11e8-ae97-52543be04c81","name":"NPO Radio 2",` +
+			`"url_resolved":"http://example.com/npo2","countrycode":"NL","lastcheckok":1}]`))
+	}))
+	t.Cleanup(srv.Close)
+
+	client := radiobrowser.NewWith(srv.Client(), "SoundTap/test", []string{srv.URL})
+
+	stations, err := client.ByName(t.Context(), " NPO Radio 2 ")
+	if err != nil || len(stations) != 1 || stations[0].CountryCode != "NL" || stations[0].LastCheckOK != 1 {
+		t.Fatalf("stations = %+v, %v", stations, err)
+	}
+
+	if path != "/json/stations/bynameexact/NPO%20Radio%202" || query != "" {
+		t.Fatalf("asked %s?%s", path, query)
+	}
+
+	if header.Get("Cookie") != "" || header.Get("Authorization") != "" {
+		t.Fatalf("request carries more than the name: %v", header)
+	}
+
+	stations, err = client.ByName(t.Context(), "Nothing/../servers")
+	if err != nil || len(stations) != 0 {
+		t.Fatalf("an unknown name: %+v, %v", stations, err)
+	}
+
+	if path != "/json/stations/bynameexact/Nothing%2F..%2Fservers" {
+		t.Fatalf("a name with a slash asked %s", path)
+	}
+
+	gone := httptest.NewServer(http.NotFoundHandler())
+	gone.Close()
+
+	_, err = radiobrowser.NewWith(http.DefaultClient, "SoundTap/test", []string{gone.URL}).ByName(t.Context(), "X")
+	if !errors.Is(err, radiobrowser.ErrNoServer) {
+		t.Fatalf("no server: %v, want ErrNoServer", err)
+	}
+}
+
 func TestStreamURLFallsBackToTheEnteredAddress(t *testing.T) {
 	t.Parallel()
 
 	station := radiobrowser.Station{
 		UUID: stationUUID, Name: "X", URL: " http://example.com/x ", URLResolved: " ", Favicon: "",
+		CountryCode: "", LastCheckOK: 0,
 	}
 	if got := station.StreamURL(); got != "http://example.com/x" {
 		t.Fatalf("StreamURL = %q", got)
