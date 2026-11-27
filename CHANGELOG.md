@@ -10,6 +10,15 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
 
 ## [Unreleased]
 
+## [app-v0.1.0-alpha.7] - 2026-11-27
+
+- The SoundTap app that SoundTap Core 0.1.0-alpha.7 carries; what it changes is listed under
+  that release.
+
+## [os-v0.1.0-alpha.7] - 2026-11-27
+
+The seventh alpha of SoundTap Core 0.1.0.
+
 ### Added
 
 - **SoundTouch 20: joins open networks** (without a password), and an open network the
