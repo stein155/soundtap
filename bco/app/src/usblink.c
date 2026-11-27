@@ -169,6 +169,11 @@ static void ep_config(void)
 }
 
 static unsigned configured, addr_pending;
+/* A message whose full packets went out but whose end did not (tx_wait ran out after a full
+ * packet): the transfer is still open, and the next message's packets would join it, so the host
+ * would read the two as one message with the second's bytes in the first's tail. The next send
+ * ends it with a zero-length packet first; the host then drops the cut message on its length. */
+static unsigned tx_open;
 static const unsigned char *ctl_p;
 static unsigned ctl_n;
 static unsigned char rx_buf[BCOLINK_HDR + BCOLINK_MAX];
@@ -272,7 +277,7 @@ void usblink_poll(void)
     unsigned bus = MUSB[0x0a], tx = R16(0x02);
     if (bus & 4) { /* bus reset: back to address 0, endpoints gone */
         MUSB[0x00] = 0;
-        configured = addr_pending = 0;
+        configured = addr_pending = tx_open = 0;
         ctl_n = rx_n = rx_bad = 0;
     }
     if (addr_pending && (tx & 1)) {
@@ -318,6 +323,15 @@ int usblink_send(unsigned ch, const unsigned char *p, unsigned n)
         usblink_tx_dropped++;
         return -1;
     }
+    if (tx_open) {
+        R16(0x12) = 1 | 0x2000; /* the ZLP that ends the open transfer */
+        if (tx_wait()) {
+            MUSB[0x0e] = 0;
+            usblink_tx_dropped++;
+            return -1;
+        }
+        tx_open = 0;
+    }
     fifo_put(0x24, h, BCOLINK_HDR);
     room -= BCOLINK_HDR;
     while (sent < n) {
@@ -329,6 +343,7 @@ int usblink_send(unsigned ch, const unsigned char *p, unsigned n)
             if (tx_wait()) {
                 MUSB[0x0e] = 0;
                 usblink_tx_dropped++; /* the host sees a truncated transfer and drops it on length */
+                tx_open = 1;          /* once the next send has ended it */
                 return -1;
             }
             room = 512;

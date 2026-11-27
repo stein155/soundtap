@@ -40,7 +40,10 @@ index), `mwifiex` (BSS index), `rndis_wlan` (usbnet minidriver with a cfg80211 `
   1536 bytes of payload (`bco/app/src/bcolink.h`, mirrored in the driver). Channel 0 is control,
   1 is Wi-Fi, 2 is the wired port; data payloads are whole Ethernet frames. A transfer carries one
   message and ends with a short packet (a zero-length packet when it is a multiple of 512); the
-  receiver also accepts trailing padding, because the length is in the header. The two-byte
+  receiver also accepts trailing padding, because the length is in the header. A message the BCO
+  gives up on after a full packet (the host stopped reading for about 1 ms) still gets its end:
+  the next message starts with a zero-length packet, so the host drops the cut one on its length
+  instead of reading the next one into its tail. The two-byte
   header leaves the IP header 4-byte aligned.
 - `wlan0` is a cfg80211 FullMAC station whose data travels on channel 1, with the device's own
   Wi-Fi MAC (PersParam `MAC0`, reported in `HELLO`), so the access point sees one station. `scan`

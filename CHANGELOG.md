@@ -68,6 +68,8 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
 - **SoundTouch 20 no longer drops off Wi-Fi when the router renews its key.**
 - **SoundTouch 20: someone nearby can no longer make it accept old broadcasts from your
   network again** when the router sends its network key a second time.
+- **SoundTouch 20: a short hold-up inside the speaker no longer garbles network data** passed
+  between its network chip and its main processor.
 
 ## [app-v0.1.0-alpha.6] - 2026-11-27
 
