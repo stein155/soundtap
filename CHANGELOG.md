@@ -24,13 +24,18 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
 - **Joins WEP networks**, on every speaker, as the original software did: pick *WEP* as the
   security type, or pick the network from the list and type its WEP key. A WEP network the
   original software had saved is taken over on the first install.
+- **The first install also keeps your Radio Browser presets** from the original software,
+  not only your TuneIn ones. They appear shortly after the first start, once the speaker is
+  online: SoundTap asks radio-browser.info for each station's stream, sending only the
+  station's id. A preset you set yourself in the meantime is never replaced, and the log says
+  for each preset whether it was taken over or why not.
 
 ### Fixed
 
-- **SoundTouch 20: phones get an address on the setup network.** A phone could join it but
-  then waited without an address. The speaker's network chip now accepts what a phone sends
-  it, keeps messages for a phone that has gone to sleep until it wakes, and sends messages for
-  every phone at the slowest speed, so phones further away hear them too.
+- **SoundTouch 20: the setup network handles phones better.** The speaker's network chip now
+  accepts what a phone sends it, keeps messages for a phone that has gone to sleep until it
+  wakes, and sends messages for every phone at the slowest speed, so phones further away hear
+  them too. A phone on it still gets no address on our test speaker; that is not solved yet.
 - **SoundTouch 20: phones that save battery stay connected to the setup network**: its
   broadcasts now come exactly on time, when a sleeping phone wakes to listen for them.
 - **SoundTouch 20: the setup network stays up while a phone is on it**, instead of closing

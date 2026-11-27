@@ -282,6 +282,11 @@ func validOwnStream(id string) bool {
 	return err == nil && n > 0
 }
 
+// ValidStreamURL reports whether id is a stream URL a preset may hold as its own stream:
+// the check a stream address given through the API passes, for one that comes from
+// elsewhere (a station looked up for a preset stock left behind).
+func ValidStreamURL(id string) bool { return validOwnStream(id) }
+
 // validStation accepts a TuneIn guide id, or a stream URL of the user's own.
 func validStation(ctx context.Context, id string) bool {
 	if speaker.OwnStream(id) {

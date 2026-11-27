@@ -124,7 +124,8 @@ flowchart TB
   `mdns` (avahi over D-Bus, [ADR 0043](../decisions/0043-mdns-through-avahi.md)), `mqtt` (Eclipse
   Paho's client, [ADR 0110](../decisions/0110-mqtt-bridge.md)), `mqttbridge`, `display`, `bluez`
   (the pairing agent) and `btctl` over `sysbus` (D-Bus through godbus,
-  [ADR 0114](../decisions/0114-bluetooth-agent-in-soundtapd.md)), `tunein`, `hw` (keypad, remote, lamps,
+  [ADR 0114](../decisions/0114-bluetooth-agent-in-soundtapd.md)), `tunein`, `radiobrowser` (the
+  station lookup for stock's Radio Browser presets, [ADR 0129](../decisions/0129-first-install-keeps-settings.md)), `hw` (keypad, remote, lamps,
   amplifier lines and the hardware watchdog behind small interfaces) with `hw/model` (the
   hardware profile per model), `modeltable` (the model table, generated from `os/models.json`), `player` (radio and UPnP through ffmpeg), `panel` (the ST20 panel), `lpm` (the ST300's
   soundbar processor, [ADR 0109](../decisions/0109-st300-soundbar-processor-link.md)), `hw/battery` (the Portable's
@@ -276,7 +277,8 @@ never checked, so a speaker on a broken LAN keeps a good image. On every model,
 init reboots a NAND boot whose soundtapd never comes up within 300 s. U-Boot's boot count
 (RTC SCRATCH2, and for an unconfirmed slot the environment, which a power cut does not
 clear) then carries it to the other slot ([ADR 0010](../decisions/0010-ab-slots-boot-confirm-rollback.md)).
-A first install from Bose's software keeps the speaker's name, TuneIn presets and Wi-Fi: the
+A first install from Bose's software keeps the speaker's name, TuneIn and Radio Browser presets
+(the latter looked up by uuid at radio-browser.info once the network is up) and Wi-Fi: the
 installer takes the key for ST10/WLA stock's encrypted `NetworkProfiles.xml` from NetManager,
 and soundtapd turns the profile into `wifi.conf` on first boot. On the ST20 it reads the
 stock BCO app's settings log before replacing that app, and holds the BCO install until that

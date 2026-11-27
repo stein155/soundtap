@@ -133,6 +133,8 @@ linters:
             rules: { json: snake }
           - pkg: internal/safehttp
             rules: { json: snake }
+          - pkg: internal/radiobrowser
+            rules: { json: snake }
           # os/models.json, shared with the build's Python, is snake_case.
           - pkg: internal/modeltable
             rules: { json: snake }

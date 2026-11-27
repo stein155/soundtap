@@ -55,27 +55,28 @@ var updateNV = flag.Bool("update-nv", false, "rewrite app/testdata/"+nvCurrent+"
 // in loadNV.
 func nvFileReasons() map[string]string {
 	return map[string]string{
-		"soundtap/presets.json.settings": "",
-		"soundtap/presets.json":          "",
-		"soundtap/favorites.json":        "",
-		"soundtap/recent.json":           "",
-		"soundtap/tunein-streams.json":   "",
-		"soundtap/multiroom-server":      "", // loaded in app/internal/web/nvstate_test.go
-		"soundtap/bar-source":            "",
-		"soundtap/bar-audio-mode":        "",
-		"soundtap/bar-cec-mode":          "",
-		"soundtap/bar-hdmi-input":        "",
-		"soundtap/firmware-pending.json": "",
-		"soundtap/.stock-imported":       "",
-		"soundtap/multiroom-enabled":     "",
-		"soundtap/hostname":              "",
-		"soundtap/bco-image":             "",
-		"wifi.conf":                      "", // also joined by the Wi-Fi manager in app/internal/wifi
-		"wifi.conf.good":                 "", // read by the Wi-Fi manager only: app/internal/wifi
-		"wifi.conf.known":                "",
-		"ir.map":                         "",
-		"buttons.map":                    "",
-		"ntp-servers":                    "", // read by clock.sh only: os/tests/boot/test_clock_keep.py
+		"soundtap/presets.json.settings":      "",
+		"soundtap/presets.json":               "",
+		"soundtap/favorites.json":             "",
+		"soundtap/recent.json":                "",
+		"soundtap/tunein-streams.json":        "",
+		"soundtap/multiroom-server":           "", // loaded in app/internal/web/nvstate_test.go
+		"soundtap/bar-source":                 "",
+		"soundtap/bar-audio-mode":             "",
+		"soundtap/bar-cec-mode":               "",
+		"soundtap/bar-hdmi-input":             "",
+		"soundtap/firmware-pending.json":      "",
+		"soundtap/.stock-imported":            "",
+		"soundtap/stock-presets-pending.json": "",
+		"soundtap/multiroom-enabled":          "",
+		"soundtap/hostname":                   "",
+		"soundtap/bco-image":                  "",
+		"wifi.conf":                           "", // also joined by the Wi-Fi manager in app/internal/wifi
+		"wifi.conf.good":                      "", // read by the Wi-Fi manager only: app/internal/wifi
+		"wifi.conf.known":                     "",
+		"ir.map":                              "",
+		"buttons.map":                         "",
+		"ntp-servers":                         "", // read by clock.sh only: os/tests/boot/test_clock_keep.py
 
 		"soundtap/st20-eth0": "machine state written by hand from stock's address; " +
 			"read by the init script and app/internal/bco",
@@ -183,6 +184,14 @@ func nvPendingFixture() install.Pending {
 	return pending
 }
 
+// nvStockPendingFixture is the stock Radio Browser presets waiting in the fixtures.
+func nvStockPendingFixture() []pendingStockPreset {
+	return []pendingStockPreset{{
+		Slot: 2, UUID: "00000000-0000-4000-8000-000000000001", Name: "Radio Example",
+		Logo: "https://example.com/radio.png", FirstSeen: time.Date(2026, 11, 12, 6, 0, 0, 0, time.UTC),
+	}}
+}
+
 // nvStreamsFixture is the TuneIn stream cache of the fixtures.
 func nvStreamsFixture() map[string]player.CachedStreams {
 	return map[string]player.CachedStreams{
@@ -243,6 +252,8 @@ func writeNV(t *testing.T, nvDir string) {
 	must(t, atomicjson.Write(filepath.Join(home, install.PendingPath), nvPendingFixture(), 0o600))
 	must(t, atomicjson.Write(filepath.Join(home, "tunein-streams.json"), nvStreamsFixture(), 0o600))
 	must(t, markStockTaken(home))
+	recordPendingStockPresets(filepath.Join(home, stockPendingName), nvStockPendingFixture(),
+		nvStockPendingFixture()[0].FirstSeen, quietLog())
 	must(t, multiroom.PersistActive(filepath.Join(home, "multiroom-enabled"), true))
 	pointHostnameAt(t, home)
 	must(t, publishHostname(nvSettingsFixture().Name))
@@ -342,7 +353,7 @@ func TestNVRollbackLeavesNewerFilesInPlace(t *testing.T) {
 	must(t, os.CopyFS(nvDir, os.DirFS(filepath.Join(nvFixtures, nvCurrent))))
 
 	home := filepath.Join(nvDir, "soundtap")
-	for _, name := range []string{"presets.json.settings", install.PendingPath} {
+	for _, name := range []string{"presets.json.settings", install.PendingPath, stockPendingName} {
 		addLaterField(t, filepath.Join(home, name))
 	}
 
@@ -516,6 +527,9 @@ func loadNV(t *testing.T, nvDir string, wantSettings *settings.Settings) {
 	recovery := install.LoadRecovery(home, func() (string, error) { return "ubi.mtd=9,2048", nil })
 	check("firmware-pending", []any{recovery.Status, recovery.Pending}, []any{"booted", nvPendingFixture()})
 	check(".stock-imported keeps stock's name and presets out", stockTaken(home), true)
+
+	stockPending, err := readPendingStockPresets(filepath.Join(home, stockPendingName))
+	check("stock-presets-pending.json", []any{stockPending.Presets, err}, []any{nvStockPendingFixture(), nil})
 
 	streams := &player.StreamCache{}
 	streams.Load(filepath.Join(home, "tunein-streams.json"))

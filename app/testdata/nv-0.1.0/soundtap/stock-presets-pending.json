@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "presets": [
+    {
+      "slot": 2,
+      "uuid": "00000000-0000-4000-8000-000000000001",
+      "name": "Radio Example",
+      "logo": "https://example.com/radio.png",
+      "firstSeen": "2026-11-12T06:00:00Z"
+    }
+  ]
+}
