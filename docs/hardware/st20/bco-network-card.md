@@ -112,10 +112,12 @@ and the BCO answers with the same `seq` and `type|0x80`, status first.
   neighbours drops a stranger, never the owner's network. The 4-way takes only a frame whose MIC
   verified as the replay reference: a resent Message 1 is answered, and a forged one cannot lock
   the handshake out. EAPOL goes in the clear until the AP is seen using the pairwise key, so a
-  Message 4 resent after a lost one stays readable. A deauthentication or disassociation to every
-  station from the joined BSS ends the link. The setup access point keeps an associated client's
-  slot: a seventh newcomer gets status 17, and only an authenticated-only client or one silent for
-  300 s gives its slot up.
+  Message 4 resent after a lost one stays readable. A rekey's Message 4 goes out under the
+  pairwise key in use: the core enciphers a frame when it sends it, so the new key is handed to it
+  only once Message 4's buffer is back (the access point switches keys on that Message 4). A
+  deauthentication or disassociation to every station from the joined BSS ends the link. The
+  setup access point keeps an associated client's slot: a seventh newcomer gets status 17, and
+  only an authenticated-only client or one silent for 300 s gives its slot up.
 - `AP_START` (6: channel, beacon interval in TU, beacon body), `AP_STOP` (7) and `AP_STATUS` (8:
   the associated clients) drive the setup access point.
 - `FLOW` (13: `1` on, `0` off) switches the credit reports of

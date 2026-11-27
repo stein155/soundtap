@@ -20,7 +20,8 @@
  * The link: a deauthentication or disassociation sent to everyone by our access point ends the
  * link as a unicast one does. Message 4 answering a resent Message 3 goes in the clear, as the
  * first did, until a unicast frame the core deciphered shows the AP uses the PTK; the resent
- * Message 3 itself comes in the clear and is let through to the supplicant.
+ * Message 3 itself comes in the clear and is let through to the supplicant. A rekey's Message 4,
+ * which the core enciphers under the PTK in use, goes out before the new PTK reaches the core.
  *
  * wifi.c keeps addresses in 32-bit words, so the test links without PIE (globals below 4 GiB, as
  * bco/wild/fw/tests/host.h does) and maps the one page of WiLD registers the step touches (the
@@ -332,6 +333,94 @@ static void link_frames(void)
     assert(d[0x18] == 0x08 && (d[0x19] & 0x40));
     keyed = ap_keyed = 0, have_cur = 0, state = WIFI_IDLE;
     printf("ok: Message 4 for a resent Message 3 goes in the clear until the AP uses the key\n");
+}
+
+/* The core hands a TX buffer back: its record moves through the core's channels 1 and 2 to the
+ * host's channel 3 (with the buffer in word 1, as xport.c tx_return writes it) and a report. */
+static void core_returns_frames(void)
+{
+    while (wr_avail(&frm[2], 1)) {
+        volatile unsigned *e = wr_reserve(&frm[2], 1, 1);
+        e[1] = e[0], e[3] = 0;
+        wr_commit(&frm[2], 1, 1);
+        wr_reserve(&frm[2], 2, 1);
+        wr_commit(&frm[2], 2, 1);
+    }
+}
+
+/* The type of the command record at word w of the command ring, 0 if none was written there. */
+static unsigned cmd_at(unsigned w)
+{
+    return (cmdbuf[w] & 0xff) == 1 ? cmdbuf[w + 1] & 0xffff : 0;
+}
+
+/* A PTK rekey under CCMP: the core enciphers a frame when it stages it, after the commands queued
+ * before it, so Message 4 queued Protected with the new PTK's install behind it went out under the
+ * new TK, which the AP installs only on that Message 4. The new PTK must reach the command ring
+ * only once Message 4's buffer is back. (WPA1 with CCMP: its Message 3 carries no wrapped GTK,
+ * the path to the key install is the same as RSN's.) */
+static void rekey_msg4_old_key(void)
+{
+    static const unsigned char own_mac[6] = {0x02, 0x11, 0x22, 0x33, 0x44, 0x55};
+    static const unsigned char pmk0[32] = {3}, sn0[32] = {4};
+    unsigned char m[O_KD] = {0}, anonce[32], old_tk[16], mic[20];
+    copy(own, own_mac, 6);
+    copy(cur.bssid, AP, 6), have_cur = 1;
+    prof_sec = WIFI_SEC_PSK, state = WIFI_UP, kicked = 0;
+    wpa_sm_init(&sm, pmk0, AP, own, sn0);
+    wpa_sm_config(&sm, WPA_PROTO_WPA, WPA_CIPHER_CCMP, WPA_CIPHER_CCMP, WPA_AKM_PSK, 0);
+    for (unsigned i = 0; i < 48; i++)
+        sm.ptk[i] = (unsigned char)(0x30 + i);
+    memcpy(old_tk, sm.ptk + 32, 16);
+    sm.state = WPA_DONE, sm.ptk_set = 1, sm.rx_replay_set = 1, sm.rx_replay[7] = 4;
+    keyed = ap_keyed = 1, keys_due = 0, eappend = 0, eapol_buf = 0;
+    memset(&sw_pair, 0, sizeof sw_pair);
+    cmd_ring(32);
+    tx_frames();
+
+    /* Message 1 of the rekey, under the PTK in use: Message 2 goes out Protected */
+    for (unsigned i = 0; i < 32; i++)
+        anonce[i] = (unsigned char)(0xc0 + i);
+    m[0] = 2, m[1] = 3, m[3] = O_KD - 4, m[4] = DESC_WPA;
+    wbe16(m + O_KEYINFO, 2 | KI_PAIRWISE | KI_ACK);
+    m[O_KEYLEN + 1] = 16, m[O_REPLAY + 7] = 5;
+    memcpy(m + O_NONCE, anonce, 32);
+    rx_station(rxd, rx_eapol(m, O_KD, 1));
+    eapol();
+    assert(sm.state == WPA_GOT_MSG1 && (last_frame()[8 + 0x19] & 0x40));
+    core_returns_frames();
+    tx_reclaim();
+    assert(!eapol_buf && txnfree == NTXFBUF);
+
+    /* Message 3 under the new PTK's KCK: Message 4 goes out Protected, the new PTK waits */
+    memset(m, 0, sizeof m);
+    m[0] = 2, m[1] = 3, m[3] = O_KD - 4, m[4] = DESC_WPA;
+    wbe16(m + O_KEYINFO, 2 | KI_PAIRWISE | KI_INSTALL | KI_ACK | KI_MIC);
+    m[O_KEYLEN + 1] = 16, m[O_REPLAY + 7] = 6;
+    memcpy(m + O_NONCE, anonce, 32);
+    wpa_hmac_sha1(sm.tptk, 16, m, O_KD, mic);
+    memcpy(m + O_MIC, mic, 16);
+    unsigned at = tx.ch[0].pos, room = wr_avail(&tx, 0);
+    rx_station(rxd, rx_eapol(m, O_KD, 1));
+    eapol();
+    assert(sm.state == WPA_DONE && memcmp(sm.ptk + 32, old_tk, 16) != 0);
+    const unsigned char *d = last_frame() + 8;
+    assert(d[0x18] == 0x08 && (d[0x19] & 0x40));               /* Message 4, Protected */
+    assert(eapol_buf == txfbuf[txnfree] && (keys_due & WPA_RX_INSTALL_PTK));
+    assert(wr_avail(&tx, 0) == room && !cmd_at(at));           /* no key behind it in the ring */
+    /* polls while the core still holds it change nothing */
+    eapol();
+    install_keys();
+    assert(wr_avail(&tx, 0) == room && (keys_due & WPA_RX_INSTALL_PTK));
+    /* the core enciphered and sent it (under the old TK, the only one it has) and gives it back */
+    core_returns_frames();
+    tx_reclaim(); /* the next poll: reclaim, then the EAPOL step */
+    eapol();
+    assert(!eapol_buf && !(keys_due & WPA_RX_INSTALL_PTK) && keyed);
+    assert(cmd_at(at) == 13 && !memcmp((unsigned char *)&cmdbuf[at + 3] + 20, sm.ptk + 32, 16));
+    keyed = ap_keyed = 0, have_cur = 0, state = WIFI_IDLE;
+    memset(&sm, 0, sizeof sm);
+    printf("ok: a rekey's Message 4 goes out under the old key, the new PTK after it\n");
 }
 
 /* Six phones associated with the setup network: a seventh address is refused, nobody is thrown
@@ -1139,6 +1228,7 @@ int main(void)
     ap_full();
     ap_data();
     link_frames();
+    rekey_msg4_old_key();
     open_network();
     tkip_frames();
     choose_security();

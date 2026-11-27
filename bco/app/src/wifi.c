@@ -123,6 +123,9 @@ _Static_assert(0x1000u + NRXBUF * RXBUF <= 0x4100u, "RX buffers run into the TX 
 _Static_assert(TXFOFF + NTXFBUF * TXFBUF <= 0x7220u, "TX buffers run into the command rings");
 static unsigned rxfree[NRXBUF], nfree, rxfbase;
 static unsigned txfbuf[NTXFBUF], txnfree, txfbase, txbusy[NTXFBUF], txready;
+/* The TX buffer of an EAPOL-Key frame the core enciphers under the PTK in use (a rekey's
+ * Message 4), until the core hands it back: the new PTK waits for it (install_keys). */
+static unsigned eapol_buf;
 unsigned wifi_rx_frames, wifi_tx_frames, wifi_tx_drop, wifi_rx_drop, wifi_tx_ok, wifi_tx_failed;
 #ifdef BCO_DEBUG_TRACE
 /* RX diagnostics (the trace build only, build-app.sh link-own-trace: every line goes out on the UART,
@@ -174,6 +177,7 @@ static void rings(unsigned host_umr)
         txfbuf[txnfree] = txfbase + txnfree * TXFBUF;
         txbusy[txnfree] = 0;
     }
+    eapol_buf = 0;
     txready = 1;
 }
 
@@ -199,6 +203,8 @@ static void tx_reclaim(void)
             const volatile unsigned *e = wr_reserve(&frm[c], 3, 1);
             unsigned buf = e[1], off = buf - txfbase;
             wr_commit(&frm[c], 3, 1);
+            if (buf == eapol_buf)
+                eapol_buf = 0;
             if (off < NTXFBUF * TXFBUF && off % TXFBUF == 0 && txbusy[off / TXFBUF] &&
                 txnfree < NTXFBUF) {
                 txbusy[off / TXFBUF] = 0;
@@ -783,7 +789,13 @@ static int sw_data(unsigned a, const unsigned char *da, unsigned et, const unsig
  * rekey's messages). Before that it goes in the clear, also when the PTK is already in our core:
  * the AP installs its key only on our Message 4, so when that got lost and it resends Message 3,
  * the second Message 4 must be readable without the key. An AP accepts EAPOL in the clear at any
- * time (802.1X control port), so the clear one is never the wrong choice. */
+ * time (802.1X control port), so the clear one is never the wrong choice.
+ * The core enciphers a Protected frame when it stages it, after the key commands queued before
+ * (xport.c schedule): a rekey's Message 4 followed at once by the new PTK went out under the new
+ * TK, which the AP installs only on that Message 4, so it resent Message 3 and then dropped us.
+ * Its buffer is kept in eapol_buf and the new PTK waits until the core hands it back (as Linux
+ * drivers wait for pending 802.1X frames before a key install). Under TKIP the app enciphers
+ * here, before the new key exists. */
 static int send_eapol(const unsigned char *f, unsigned n)
 {
     unsigned a = tx_buf();
@@ -800,6 +812,7 @@ static int send_eapol(const unsigned char *f, unsigned n)
     if (keyed && ap_keyed && !sw_pair.cipher) {
         volatile unsigned char *b = (volatile unsigned char *)a;
         b[8 + 0x19] |= 0x40, b[0x94 + 0x19] |= 0x40;
+        eapol_buf = a;
     }
     tx_push(a, (unsigned)body, PEER_AP, 0x11);
     return 1;
@@ -1911,6 +1924,7 @@ static void join_attempt(void)
     for (unsigned r = 0; r < 8; r++)
         rates[r] = lo;
     keyed = ap_keyed = 0, keys_due = 0, rxauthok = rxassocok = kicked = 0, eappend = 0;
+    eapol_buf = 0;
     /* WEP shared key asks with algorithm 1 at once; "auto" starts with open system */
     auth_alg = prof_sec == WIFI_SEC_WEP && wep_auth == WIFI_WEP_SHARED ? AUTH_SHARED_KEY :
                prof_sec == WIFI_SEC_SAE ? AUTH_SAE : 0;
@@ -2095,8 +2109,9 @@ static void install_keys(void)
             ipn |= (unsigned long long)sm.ipn[i] << (8 * i);
         keys_due &= ~WPA_RX_INSTALL_IGTK;
     }
-    /* A CCMP PTK's TK goes to the engine; a TKIP one (TK and both MIC keys) stays here */
-    if ((keys_due & WPA_RX_INSTALL_PTK) &&
+    /* A CCMP PTK's TK goes to the engine; a TKIP one (TK and both MIC keys) stays here. Not
+     * while a Message 4 under the old key is still in the core (send_eapol). */
+    if ((keys_due & WPA_RX_INSTALL_PTK) && !eapol_buf &&
         !set_key(1, 0, sm.ptk + 32, sm.pairwise == WPA_CIPHER_TKIP ? WSEC_TKIP : WSEC_CCMP)) {
         keys_due &= ~WPA_RX_INSTALL_PTK, keyed = 1;
         /* PMF: the same TK protects the robust management frames, in software */
@@ -2168,7 +2183,7 @@ static void drop_link(void)
         wr_cmd_checked(&tx, CMD_PEER_DEL, 0x12, 0x11, pd, sizeof pd);
         DOORBELL();
     }
-    keyed = ap_keyed = 0, keys_due = 0;
+    keyed = ap_keyed = 0, keys_due = 0, eapol_buf = 0;
     for (unsigned i = 0; i < sizeof sm; i++)
         ((volatile unsigned char *)&sm)[i] = 0;
     for (unsigned i = 0; i < sizeof sw_pair; i++)
