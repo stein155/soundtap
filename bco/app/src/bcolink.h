@@ -33,9 +33,11 @@
 #define BCOLINK_CAP_REGDOM   0x40u         /* SET_REGDOM: country, channel masks, TX power limit */
 #define BCOLINK_CAP_SCAN_SSID 0x80u        /* SCAN {1, ssid_len, ssid}: the directed probe's SSID */
 #define BCOLINK_CAP_NVINFO   0x100u        /* NV_INFO: read-only PersParam key list (bench only) */
+/* Every network security stock joined (ADR 0136). */
+#define BCOLINK_CAP_SECURITY 0x200u        /* SET_PROFILE security 0 (open) */
 #define BCOLINK_CAPS (BCOLINK_CAP_AP | BCOLINK_CAP_REPLAY | BCOLINK_CAP_FLOW | BCOLINK_CAP_STATS | \
                       BCOLINK_CAP_EVENTS | BCOLINK_CAP_ROAM | BCOLINK_CAP_REGDOM | BCOLINK_CAP_SCAN_SSID | \
-                      BCOLINK_CAP_NVINFO)
+                      BCOLINK_CAP_NVINFO | BCOLINK_CAP_SECURITY)
 
 #define BCOLINK_USB_VID  0x1209u           /* pid.codes; 0x0001 is its test PID: allocate one before release */
 #define BCOLINK_USB_PID  0x0001u

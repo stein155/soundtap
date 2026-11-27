@@ -180,6 +180,28 @@ class BcoLinkContract(unittest.TestCase):
         self.assertIn("if (b->rsp_len < at + 1)\n+\t\treturn NULL;", body)
         self.assertIn("bco_group_cipher(b)", funcs["bco_join_result"])
 
+    def test_security(self) -> None:
+        """ADR 0136's profile and scan security values are numbered the same on both sides.
+
+        The driver sends an open network only to an app that announces BCOLINK_CAP_SECURITY, and
+        reads STATUS's security byte right after the group cipher, only when present.
+        """
+        self.assertEqual(self.app["BCOLINK_CAP_SECURITY"], self.drv["BCOLINK_CAP_SECURITY"])
+        wifi = (APP / "wifi.h").read_text()
+        for app, drv in (("WIFI_SEC_", "BCO_SEC_"), ("WIFI_BSS_", "BCO_BSS_")):
+            names = re.search(rf"enum \{{ ({app}[^}}]*)\}}", wifi)[1]
+            names = [n.strip()[len(app):] for n in names.split(",") if n.strip()]
+            mirror = re.search(rf"enum \{{ ({drv}[^}}]*)\}}", self.patch)[1].replace("\n+", " ")
+            mirror = [n.strip()[len(drv):] for n in mirror.split(",") if n.strip()]
+            self.assertEqual(names, mirror, app)
+        funcs = dict(re.findall(r"\n\+static [^\n]*\b(\w+)\([^)]*\)\n\+\{(.*?)\n\+\}", self.patch, re.DOTALL))
+        self.assertRegex(funcs["bco_connect"], r"open && !\(caps & BCOLINK_CAP_SECURITY\)")
+        mgmt = (APP / "mgmt.c").read_text()
+        status = re.search(r"case 5: \{ /\* STATUS(.*?)break;", mgmt, re.DOTALL)[1]
+        self.assertRegex(status, r"\*o\+\+ = b\.grp;\s*\*o\+\+ = b\.sec;")
+        self.assertIn("at = 3 + r[2] + 8 + 3 + 1;", funcs["bco_status_sec"])
+        self.assertIn("b->rsp_len >= at + 1", funcs["bco_status_sec"])
+
     def test_hunk_count(self) -> None:
         """The driver patch's hunk header counts the lines the new file has."""
         lines = self.patch.split("\n")

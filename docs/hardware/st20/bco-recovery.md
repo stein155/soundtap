@@ -254,8 +254,9 @@ app 9423 **[STATIC]**, except where marked as read on hardware. Numbers are that
   prints the passphrase, are not verified on hardware, so SoundTap reads the log with `rd`.
 
 SoundTap takes the active profile's network when its security is one of the three PSK values
-and its passphrase is a WPA passphrase. Open and WEP networks, stock's setup profile, and a
-profile with no network are left to the setup network.
+and its passphrase is a WPA passphrase, or when it is `NONE` (an open network; a passphrase left
+in the profile is not used). WEP networks, stock's setup profile, and a profile with no network
+are left to the setup network.
 
 ## Evidence index (all read-only, from the extracted STU)
 

@@ -8,7 +8,7 @@
 unsigned fake_state, fake_scanning, fake_nbss, fake_joins, fake_leaves;
 unsigned fake_ssid_max; /* 1: every scan entry has a 32-byte SSID, the longest a reply carries */
 unsigned char fake_ssid[32], fake_pmk[32], fake_seed[32];
-unsigned fake_ssid_len;
+unsigned fake_ssid_len, fake_sec, fake_key_len;
 
 unsigned wifi_state(void) { return fake_state; }
 int wifi_scan(int start)
@@ -31,14 +31,18 @@ int wifi_bss(unsigned i, struct wifi_bss *o)
 }
 unsigned fake_join_flags;
 unsigned char fake_join_bssid[6];
-int wifi_join(const unsigned char *ssid, unsigned ssid_len, const unsigned char k[32],
-              const unsigned char s[32], unsigned flags, const unsigned char bssid[6])
+int wifi_join(const unsigned char *ssid, unsigned ssid_len, unsigned sec, const unsigned char *key,
+              unsigned key_len, const unsigned char s[32], unsigned flags, const unsigned char bssid[6])
 {
     fake_join_flags = bssid ? flags : 0xff; /* 0xff: no tail */
     if (bssid)
         memcpy(fake_join_bssid, bssid, 6);
     memcpy(fake_ssid, ssid, ssid_len), fake_ssid_len = ssid_len;
-    memcpy(fake_pmk, k, 32), memcpy(fake_seed, s, 32);
+    memset(fake_pmk, 0, 32);
+    if (key_len)
+        memcpy(fake_pmk, key, key_len);
+    memcpy(fake_seed, s, 32);
+    fake_sec = sec, fake_key_len = key_len;
     fake_joins++, fake_state = WIFI_JOINING;
     return 0;
 }
@@ -54,6 +58,7 @@ int wifi_current(struct wifi_bss *o)
     o->ssid_len = fake_ssid_len, memcpy(o->ssid, fake_ssid, fake_ssid_len);
     memcpy(o->bssid, "\x02\x00\x00\x00\x00\x10", 6), o->chan = 6, o->rssi = -50;
     o->grp = (unsigned char)fake_grp;
+    o->sec = WIFI_BSS_RSN;
     return 1;
 }
 

@@ -196,6 +196,12 @@ func TestStockProfileTakesTheActiveProfile(t *testing.T) {
 			want:     StockProfile{SSID: "Home net", Passphrase: strings.Repeat("Ab", 32)},
 			maxWords: 0,
 		},
+		"an open network, an old passphrase left in it": {
+			flash: map[uint32][]byte{sectorA: settingsLog(0x08, kSSID1, "Cafe", kSec1, "NONE",
+				kPass1, "correct horse")},
+			want:     StockProfile{SSID: "Cafe", Passphrase: ""},
+			maxWords: 0,
+		},
 		"a log longer than one rd, with a short rd": {
 			flash: map[uint32][]byte{sectorA: settingsLog(0x08, append(fillers(300),
 				kSSID1, "Home net", kPass1, "correct horse")...)},
@@ -251,7 +257,6 @@ func TestStockProfileNotImportable(t *testing.T) {
 	for name, sector := range map[string][]byte{
 		"nothing saved":         settingsLog(0x08, kDeviceName, "Keuken", kCountry, "EU"),
 		"both sectors unused":   settingsLog(0xff),
-		"open network":          settingsLog(0x08, kSSID1, "Cafe", kSec1, "NONE"),
 		"wep":                   settingsLog(0x08, kSSID1, "Home net", kSec1, "WEP", kPass1, "abcde"),
 		"short passphrase":      settingsLog(0x08, kSSID1, "Home net", kSec1, "WPA2PSK", kPass1, "short"),
 		"no passphrase":         settingsLog(0x08, kSSID1, "Home net", kSec1, "WPA2PSK"),

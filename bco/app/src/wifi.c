@@ -233,6 +233,7 @@ static int have_cur;
 static unsigned char rates[8];         /* management/EAPOL rate vector: the AP's lowest rate */
 static unsigned char data_rates[8];    /* data frames: the AP's rates fastest first (wstation_rate_chain) */
 static unsigned char pmk[32], seed[32];
+static unsigned prof_sec; /* the profile's security, WIFI_SEC_* (SET_PROFILE) */
 
 /* MIB 20:11 Rssi (S8, read-only): the core's RSSI of the BSS we are joined to, in dBm. The own
  * WiLD core never writes that MIB, so it reads 0 there; the level of the AP's last beacon
@@ -484,10 +485,14 @@ static int send_assoc(void)
     int body;
     if (!a)
         return 0;
+    /* an open network: neither a security IE nor the Privacy bit */
     unsigned char ie[WPA_RSN_IE_LEN];
-    wpa_rsn_ie(ie, cur.grp);
+    unsigned ielen = 0;
+    if (prof_sec == WIFI_SEC_PSK)
+        wpa_rsn_ie(ie, cur.grp), ielen = sizeof ie;
     body = wstation_assoc((volatile uint8_t *)a, TXFBUF, own, cur.bssid, rates,
-                          (const char *)cur.ssid, cur.ssidlen, cur.caps, ie);
+                          (const char *)cur.ssid, cur.ssidlen, cur.caps, ie, ielen,
+                          prof_sec != WIFI_SEC_OPEN);
     if (body <= 0)
         return 0;
     tx_push(a, (unsigned)body, PEER_NONE, 0xffff);
@@ -531,7 +536,7 @@ int radio_tx_eth(const unsigned char *f, unsigned n)
         return -1;
     }
     body = wstation_data((volatile uint8_t *)a, TXFBUF, own, cur.bssid, f, data_rates, et, f + 14,
-                         n - 14);
+                         n - 14, prof_sec != WIFI_SEC_OPEN);
     if (body <= 0) {
         wifi_tx_drop++;
         return -1;
@@ -1141,6 +1146,12 @@ int wifi_scan(int start)
     return (int)nbss;
 }
 
+/* What a BSS offers, WIFI_BSS_*. */
+static unsigned bss_sec(const struct bss *b)
+{
+    return b->rsn ? WIFI_BSS_RSN : b->wpa ? WIFI_BSS_WPA : (b->caps & 0x10) ? WIFI_BSS_WEP : WIFI_BSS_OPEN;
+}
+
 int wifi_bss(unsigned i, struct wifi_bss *o)
 {
     if (i >= nbss)
@@ -1150,7 +1161,7 @@ int wifi_bss(unsigned i, struct wifi_bss *o)
     copy(o->ssid, b->ssid, b->ssidlen);
     copy(o->bssid, b->bssid, 6);
     o->chan = b->chan;
-    o->sec = b->rsn ? 1 : b->wpa ? 2 : 0;
+    o->sec = bss_sec(b);
     o->grp = b->grp;
     /* the joined BSS: the core's own level (MIB 20:11); the rest: their last beacon */
     o->rssi = have_cur && state == WIFI_UP && same(cur.bssid, b->bssid, 6) ? link_rssi() : b->rssi;
@@ -1176,15 +1187,22 @@ static int named(const struct bss *b)
     return b->ssidlen == cur.ssidlen && same(b->ssid, cur.ssid, cur.ssidlen) && chan_ok(b->chan);
 }
 
-/* A named BSS whose RSN IE this station can join (bss.rsnok: pairwise CCMP, AKM PSK, management
- * frame protection not required, a CCMP or TKIP group cipher). */
+/* A named BSS this station can join with the profile's security: an open network (no Privacy
+ * bit, capability bit 4) for an open profile; for a PSK profile one whose RSN IE it can join
+ * (bss.rsnok: pairwise CCMP, AKM PSK, management frame protection not required, a CCMP or TKIP
+ * group cipher). */
 static int match(const struct bss *b)
 {
-    return named(b) && b->rsnok;
+    if (!named(b))
+        return 0;
+    if (prof_sec == WIFI_SEC_OPEN)
+        return !(b->caps & 0x10) && !b->rsn && !b->wpa;
+    return b->rsnok;
 }
 
-/* The SSID is there, but only with security this station cannot join (WPA3 only, management
- * frame protection required, no CCMP), so the failure says so instead of "not found". */
+/* The SSID is there, but only with security this station cannot join with the profile (WPA3
+ * only, management frame protection required, no CCMP, or another security than the profile's),
+ * so the failure says so instead of "not found". */
 static int seen_other(void)
 {
     for (unsigned i = 0; i < nbss; i++)
@@ -1272,6 +1290,7 @@ static void join_attempt(void)
     cur.chan = bsstab[i].chan;
     cur.caps = bsstab[i].caps; /* the association request mirrors its short slot and preamble */
     cur.grp = bsstab[i].grp;   /* and carries the RSN IE with its group cipher */
+    cur.rsn = bsstab[i].rsn, cur.wpa = bsstab[i].wpa; /* what STATUS reports it offers */
     for (unsigned r = 0; r < 8; r++)
         rates[r] = lo;
     keyed = ap_keyed = 0, keys_due = 0, rxauthok = rxassocok = kicked = 0, eappend = 0;
@@ -1300,6 +1319,15 @@ static void snonce(unsigned char out[32])
     wpa_sha1_prf(seed, 32, "SoundTap SNonce", mix, sizeof mix, out, 32);
 }
 
+/* The join completed: the handshake, or for an open network the association. */
+static void join_done(void)
+{
+    state = WIFI_UP;
+    fail_step = fail_code = 0;
+    last_beacon = now, beacons_up = 0;
+    link_up();
+}
+
 static void join_step(void)
 {
     if (kicked && jstep >= J_AUTH) {
@@ -1310,7 +1338,7 @@ static void join_step(void)
     case J_SCAN:
         return; /* waiting for the scan; wifi_poll starts the attempt */
     case J_SETUP: { /* 0xbd, or a second, then JOIN_DONE and the auth request */
-        unsigned char jd[6] = {1, 1, 0, 0, 0, 0}; /* privacy, open the AC queues */
+        unsigned char jd[6] = {prof_sec != WIFI_SEC_OPEN, 1, 0, 0, 0, 0}; /* privacy, open the AC queues */
         if (!corebd && !due(deadline))
             return;
         if (!wr_cmd_checked(&tx, CMD_JOIN_DONE, 0x12, 11, jd, sizeof jd))
@@ -1350,6 +1378,10 @@ static void join_step(void)
                 return;
             }
             DOORBELL();
+            if (prof_sec == WIFI_SEC_OPEN) { /* no handshake: the link is up */
+                join_done();
+                return;
+            }
             snonce(sn);
             wpa_sm_init(&sm, pmk, cur.bssid, own, sn);
             sm.group = cur.grp == 2 ? 2 : 4; /* Message 2 repeats the RSN IE of the request */
@@ -1362,10 +1394,7 @@ static void join_step(void)
         return;
     case J_4WAY:
         if (sm.state == WPA_DONE && keyed && !keys_due) {
-            state = WIFI_UP;
-            fail_step = fail_code = 0;
-            last_beacon = now, beacons_up = 0;
-            link_up();
+            join_done();
         } else if (due(deadline)) {
             /* no Message 1, or Message 3 never verified: almost always a wrong password */
             if (fail_step != WIFI_FAIL_KICKED)
@@ -1546,17 +1575,21 @@ static void bg_step(void)
     }
 }
 
-int wifi_join(const unsigned char *ssid, unsigned ssid_len, const unsigned char k[32],
-              const unsigned char s[32], unsigned flags, const unsigned char bssid[6])
+int wifi_join(const unsigned char *ssid, unsigned ssid_len, unsigned sec, const unsigned char *key,
+              unsigned key_len, const unsigned char s[32], unsigned flags, const unsigned char bssid[6])
 {
-    if (ssid_len < 1 || ssid_len > 32 || state == WIFI_AP)
+    if (ssid_len < 1 || ssid_len > 32 || state == WIFI_AP ||
+        !((sec == WIFI_SEC_OPEN && !key_len) || (sec == WIFI_SEC_PSK && key_len == 32)))
         return -1;
     drop_link();
     copy(cur.ssid, ssid, ssid_len);
     cur.ssidlen = ssid_len;
-    cur.grp = 0; /* STATUS reports no group cipher of an earlier network until one is picked */
+    cur.grp = cur.rsn = cur.wpa = 0; /* STATUS reports nothing of an earlier network until one is picked */
+    cur.caps = 0;
     bss_want(0, ssid, ssid_len);
-    copy(pmk, k, 32);
+    for (unsigned i = 0; i < 32; i++)
+        pmk[i] = i < key_len ? key[i] : 0;
+    prof_sec = sec;
     copy(seed, s, 32);
     prof_flags = bssid ? flags & (WIFI_BSSID_FIXED | WIFI_BSSID_HINT | WIFI_ROAM) : 0;
     if (bssid)
@@ -1688,7 +1721,7 @@ int wifi_current(struct wifi_bss *o)
     o->ssid_len = cur.ssidlen;
     copy(o->ssid, cur.ssid, cur.ssidlen);
     copy(o->bssid, cur.bssid, 6);
-    o->chan = cur.chan, o->sec = 1, o->rssi = state == WIFI_UP ? link_rssi() : 0;
+    o->chan = cur.chan, o->sec = bss_sec(&cur), o->rssi = state == WIFI_UP ? link_rssi() : 0;
     o->grp = cur.grp; /* the target's from join_attempt on, 0 before */
     return 1;
 }

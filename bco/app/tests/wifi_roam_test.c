@@ -109,7 +109,7 @@ static void joined(unsigned flags, signed char level, unsigned t)
     state = WIFI_IDLE; /* nothing to tear down in the core */
     wifi_leave();
     copy(cur.ssid, (const unsigned char *)"Lab", 3);
-    cur.ssidlen = 3, have_cur = 1;
+    cur.ssidlen = 3, have_cur = 1, prof_sec = WIFI_SEC_PSK;
     prof_flags = flags, copy(prof_bssid, bsstab[0].bssid, 6);
     roam_on = (flags & WIFI_ROAM) && !(flags & WIFI_BSSID_FIXED);
     copy(cur.bssid, bsstab[0].bssid, 6), cur.chan = bsstab[0].chan;
@@ -184,7 +184,7 @@ int main(void)
     assert(directed == 9);
     /* nothing to join on a channel outside the domain; no access point on a passive one */
     copy(cur.ssid, (const unsigned char *)"Lab", 3);
-    cur.ssidlen = 3, have_cur = 1;
+    cur.ssidlen = 3, have_cur = 1, prof_sec = WIFI_SEC_PSK;
     set_bss(0, "Lab", 1, 12, -40);
     nbss = 1;
     assert(pick() == -1);

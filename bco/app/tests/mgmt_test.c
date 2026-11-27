@@ -69,9 +69,10 @@ int main(void)
            r[24] == 1 && r[25] == BCOLINK_PROTO && le32(r + 26) == BCOLINK_CAPS &&
            (BCOLINK_CAPS & (BCOLINK_CAP_AP | BCOLINK_CAP_REPLAY | BCOLINK_CAP_FLOW | BCOLINK_CAP_STATS |
                             BCOLINK_CAP_EVENTS | BCOLINK_CAP_ROAM | BCOLINK_CAP_REGDOM |
-                            BCOLINK_CAP_SCAN_SSID | BCOLINK_CAP_NVINFO)) == BCOLINK_CAPS &&
-           BCOLINK_CAPS == 0x1ff);
-    n = ask(5, 0, 0, r); assert(r[6] == 0 && r[7] == WIFI_IDLE && r[8] == 0 && n == MGMT_HDR + 15 &&
+                            BCOLINK_CAP_SCAN_SSID | BCOLINK_CAP_NVINFO | BCOLINK_CAP_SECURITY)) ==
+               BCOLINK_CAPS &&
+           BCOLINK_CAPS == 0x3ff);
+    n = ask(5, 0, 0, r); assert(r[6] == 0 && r[7] == WIFI_IDLE && r[8] == 0 && n == MGMT_HDR + 16 &&
                                 r[17] == WIFI_FAIL_NONE && r[18] == 0 && r[19] == 0 && r[20] == 0);
     /* a refused association: the step and the AP's status code (le16) follow the BSS */
     extern unsigned fake_fail_step, fake_fail_code;
@@ -138,7 +139,7 @@ int main(void)
     fake_grp = 2;
     n = ask(5, 0, 0, r);
     assert(r[7] == WIFI_JOINING && r[8] == 4 && !memcmp(r + 9, "test", 4) && r[19] == 6 &&
-           (signed char)r[20] == -50 && n == MGMT_HDR + 15 + 4 && r[24] == 2);
+           (signed char)r[20] == -50 && n == MGMT_HDR + 15 + 5 && r[24] == 2 && r[25] == WIFI_BSS_RSN);
     fake_grp = 0;
     for (unsigned i = 0; i + 4 <= n; i++) assert(memcmp(r + i, "\xab\xab\xab\xab", 4)); /* PMK never echoed */
     ask(3, sp, sizeof sp - 1, r); assert(r[6] == 1);              /* no seed */
@@ -151,10 +152,22 @@ int main(void)
     assert(r[6] == 0 && fake_joins == 2 && fake_join_flags == (MGMT_PROFILE_BSSID_HINT | MGMT_PROFILE_ROAM) &&
            fake_join_bssid[5] == 0x42);
     ask(3, spt, sizeof spt - 1, r); assert(r[6] == 1 && fake_joins == 2); /* a short tail */
-    sp[5] = 0; ask(3, sp, sizeof sp, r); assert(r[6] == 2);       /* open: unsupported */
+    sp[5] = 0; ask(3, sp, sizeof sp, r); assert(r[6] == 2);       /* open with a key: unsupported */
+    sp[5] = 7; ask(3, sp, sizeof sp, r); assert(r[6] == 2);       /* an unknown security */
     sp[5] = 1, sp[0] = 0; ask(3, sp, sizeof sp, r); assert(r[6] == 1); /* empty ssid */
     ask(3, sp, 0, r); assert(r[6] == 1);                           /* no payload at all */
     assert(fake_joins == 2);
+    /* an open network (security 0): no key, the seed */
+    extern unsigned fake_sec, fake_key_len;
+    unsigned char so[1 + 4 + 2 + 32] = {4, 'o', 'p', 'e', 'n', 0, 0};
+    memset(so + 7, 0xcd, 32);
+    ask(3, so, sizeof so, r);
+    assert(r[6] == 0 && fake_joins == 3 && fake_sec == 0 && fake_key_len == 0 && fake_seed[0] == 0xcd);
+    so[6] = 1; ask(3, so, sizeof so, r); assert(r[6] == 1);       /* a key length past the end */
+    sp[0] = 4;
+    unsigned char sk[sizeof sp - 16];                              /* PSK with a 16-byte key */
+    memcpy(sk, sp, 7), sk[6] = 16, memset(sk + 7, 0xab, 16), memset(sk + 23, 0xcd, 32);
+    ask(3, sk, sizeof sk, r); assert(r[6] == 2 && fake_joins == 3);
     ask(4, 0, 0, r); assert(r[6] == 0 && fake_leaves == 1);
     assert(fake_resets == 0); /* FORGET leaves the network; the core keeps running */
     ask(5, 0, 0, r); assert(r[7] == WIFI_IDLE && r[8] == 0);

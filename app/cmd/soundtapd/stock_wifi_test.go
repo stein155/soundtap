@@ -284,6 +284,15 @@ func TestAdoptStockBCOWifi(t *testing.T) {
 	if got, _ := os.ReadFile(conf); !strings.Contains(string(got), "PSK_HEX="+strings.Repeat("ab", 32)+"\n") {
 		t.Fatalf("wifi.conf = %q, want a PSK_HEX line", got)
 	}
+
+	// An open network goes in without a passphrase, as the Wi-Fi manager reads an open one.
+	conf = filepath.Join(t.TempDir(), "wifi.conf")
+	adoptStockBCOWifi(ctx, conf, read(profile("Cafe", ""), nil), noWait, log)
+
+	want = "SSID_B64=" + base64.StdEncoding.EncodeToString([]byte("Cafe")) + "\nPSK_B64=\n"
+	if got, _ := os.ReadFile(conf); string(got) != want {
+		t.Fatalf("wifi.conf = %q, want %q", got, want)
+	}
 }
 
 // noWait stands in for sleepCtx: no time passes in a test.
@@ -301,7 +310,7 @@ var (
 func TestAdoptStockBCOWifiRetries(t *testing.T) {
 	t.Parallel()
 
-	notImportable := fmt.Errorf("%w: open network", bco.ErrStockProfileNotImportable)
+	notImportable := fmt.Errorf("%w: WEP network", bco.ErrStockProfileNotImportable)
 	good := bco.StockProfile{SSID: "Home net", Passphrase: "correct horse"}
 
 	for name, tcase := range map[string]struct {

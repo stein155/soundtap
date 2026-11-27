@@ -78,6 +78,7 @@ static void cmd_ring(unsigned words)
 /* The AP answered the association: the state join_step finds in J_ASSOC. */
 static void associated(void)
 {
+    prof_sec = WIFI_SEC_PSK;
     copy(cur.bssid, AP, 6);
     state = WIFI_JOINING, jstep = J_ASSOC, rxassocok = 1, kicked = 0;
     now = 1000, deadline = now + 1500;
@@ -124,9 +125,14 @@ static void security_and_status(void)
     memcpy(bsstab[0].bssid, AP, 6), memcpy(bsstab[0].ssid, "Home", 4);
     bsstab[0].ssidlen = 4, bsstab[0].chan = 6, bsstab[0].rsn = 1, bsstab[0].rsnok = 0;
     memcpy(cur.ssid, "Home", 4), cur.ssidlen = 4, have_cur = 1;
-    state = WIFI_JOINING, fail_step = fail_code = 0;
+    state = WIFI_JOINING, fail_step = fail_code = 0, prof_sec = WIFI_SEC_PSK;
     join_attempt();
     assert(state == WIFI_FAILED && fail_step == WIFI_FAIL_SECURITY);
+    /* an open profile does not join an RSN network either */
+    prof_sec = WIFI_SEC_OPEN, state = WIFI_JOINING;
+    join_attempt();
+    assert(state == WIFI_FAILED && fail_step == WIFI_FAIL_SECURITY);
+    prof_sec = WIFI_SEC_PSK;
     nbss = 0;
     state = WIFI_JOINING;
     join_attempt();
@@ -355,6 +361,90 @@ static void ap_full(void)
     printf("ok: a full access point refuses a new address instead of dropping a phone\n");
 }
 
+/* An open network: the association request has no security IE and no Privacy bit, JOIN_DONE
+ * says no privacy, the link is up once the AP associated (no handshake), data goes out without the
+ * Protected bit and frames in the clear come in. A PSK profile does not join it. */
+static void open_network(void)
+{
+    static const unsigned char open_ap[6] = {0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x07};
+    static const unsigned char seed0[32] = {0};
+    static const unsigned char ies[] = {0, 4, 'C', 'a', 'f', 'e', 1, 4, 0x82, 0x84, 0x8b, 0x96, 3, 1, 6};
+    cmd_ring(63);
+    tx_frames();
+    nbss = 1;
+    memset(&bsstab[0], 0, sizeof bsstab[0]);
+    memcpy(bsstab[0].bssid, open_ap, 6), memcpy(bsstab[0].ssid, "Cafe", 4);
+    bsstab[0].ssidlen = 4, bsstab[0].chan = 6, bsstab[0].caps = 0x0401, bsstab[0].rssi = -50;
+    memcpy(bsstab[0].ies, ies, sizeof ies), bsstab[0].ielen = sizeof ies;
+    state = WIFI_IDLE, now = 30000;
+    /* a PSK profile: only an open network has the SSID, so the join fails on security */
+    unsigned char k[32];
+    memset(k, 1, sizeof k);
+    assert(wifi_join((const unsigned char *)"Cafe", 4, WIFI_SEC_PSK, k, 32, seed0, 0, 0) == 0);
+    assert(state == WIFI_SCANNING);   /* nothing it can join yet: it scans; then the attempt */
+    state = WIFI_JOINING;
+    join_attempt();
+    assert(state == WIFI_FAILED && fail_step == WIFI_FAIL_SECURITY);
+    /* an open profile with a key, or a PSK one without, is refused */
+    assert(wifi_join((const unsigned char *)"Cafe", 4, WIFI_SEC_OPEN, k, 32, seed0, 0, 0) == -1);
+    assert(wifi_join((const unsigned char *)"Cafe", 4, WIFI_SEC_PSK, k, 0, seed0, 0, 0) == -1);
+    state = WIFI_IDLE;
+    assert(wifi_join((const unsigned char *)"Cafe", 4, WIFI_SEC_OPEN, 0, 0, seed0, 0, 0) == 0);
+    assert(state == WIFI_JOINING && jstep == J_SETUP && same(cur.bssid, open_ap, 6));
+    corebd = 1;
+    join_step();
+    assert(jstep == J_AUTH);
+    /* JOIN_DONE (0xb8) went out with privacy 0 */
+    int seen = 0;
+    for (unsigned i = 1; i + 3 < 64; i++)
+        if (cmdbuf[i] == CMD_JOIN_DONE && cmdbuf[i + 1] == (0x12 | 11u << 16)) {
+            assert(((unsigned char *)(cmdbuf + i + 2))[0] == 0);
+            seen = 1;
+        }
+    assert(seen);
+    rxauthok = 1;
+    join_step();
+    assert(jstep == J_ASSOC);
+    const unsigned char *d = last_frame() + 8, *b = d + 0xc4;
+    assert(d[0x18] == 0x00 && b[0] == 0x01 && b[1] == 0x04);  /* ESS + short slot, no Privacy */
+    unsigned blen = 4 + 6 + 10 + 6, rec = 0;
+    for (unsigned i = 0; i < 28; i++)                        /* the frame's ring record */
+        if (frmbuf[i * 6] == txfbuf[txnfree])
+            rec = frmbuf[i * 6 + 2] >> 16;
+    assert(rec == blen + 0xc4 && b[blen - 6] == 50);         /* no RSN IE after the rates */
+    rxassocok = 1;
+    join_step();
+    assert(state == WIFI_UP);
+    struct wifi_bss o;
+    wifi_current(&o);
+    assert(o.sec == WIFI_BSS_OPEN && o.grp == 0);
+    /* a frame from the SCM goes out in the clear */
+    unsigned char frame[14 + 20] = {0};
+    memcpy(frame, open_ap, 6), memcpy(frame + 6, own, 6), frame[12] = 0x08;
+    tx_frames();
+    assert(radio_tx_eth(frame, sizeof frame) == 0);
+    d = last_frame() + 8;
+    assert(d[0x18] == 0x08 && d[0x19] == 0x01);
+    /* a data frame in the clear from the AP reaches the SCM; a protected one does not */
+    static unsigned char rxo[0xcc + 8 + 20];
+    static const unsigned char llc[8] = {0xaa, 0xaa, 3, 0, 0, 0, 0x08, 0x00};
+    memset(rxo, 0, sizeof rxo);
+    rxo[0x94] = 0x18, rxo[0x97] = 0xc4;
+    rxo[0xac] = 0x08, rxo[0xad] = 0x02;
+    memcpy(rxo + 0xac + 4, own, 6), memcpy(rxo + 0xac + 10, open_ap, 6), memcpy(rxo + 0xac + 16, open_ap, 6);
+    memcpy(rxo + 0xcc, llc, 8);
+    rxo[0xcc + 8] = 0x45, rxo[0xcc + 8 + 3] = 20;
+    unsigned before = wifi_rx_frames;
+    rx_station(rxo, sizeof rxo);
+    assert(wifi_rx_frames == before + 1);
+    rxo[0xad] |= 0x40;
+    rx_station(rxo, sizeof rxo);
+    assert(wifi_rx_frames == before + 1);
+    wifi_leave();
+    nbss = 0;
+    printf("ok: an open network joins without a handshake and carries data in the clear\n");
+}
+
 int main(void)
 {
     /* a full ring: no PEER_ADD and no 4-way yet; the next poll still has the step */
@@ -393,5 +483,6 @@ int main(void)
     access_point();
     ap_full();
     link_frames();
+    open_network();
     return 0;
 }

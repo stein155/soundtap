@@ -121,8 +121,8 @@ func stockLayout9423() stockLayout {
 }
 
 // ErrStockProfileNotImportable is a definitive answer: stock's settings were read whole and
-// hold no network SoundTap takes over (none saved, an open or WEP network, a passphrase
-// that is no WPA passphrase). Asking again gives the same answer. Every other error from
+// hold no network SoundTap takes over (none saved, a WEP network, a passphrase that is no
+// WPA passphrase). Asking again gives the same answer. Every other error from
 // ReadStockProfile (no reply, a garbled dump, a cut-off log) may pass on a second try.
 var ErrStockProfileNotImportable = errors.New("BCO stock profile not importable")
 
@@ -136,8 +136,9 @@ func notImportable(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrStockProfileNotImportable, fmt.Sprintf(format, args...))
 }
 
-// StockProfile is the WPA network Bose's BCO app has saved. A Passphrase of 64 hex digits
-// is a raw key (IsHexPSK).
+// StockProfile is the network Bose's BCO app has saved: a WPA network with its Passphrase,
+// or an open one with none (ADR 0136). A Passphrase of 64 hex digits is a raw key
+// (IsHexPSK).
 type StockProfile struct {
 	SSID, Passphrase string
 }
@@ -306,7 +307,8 @@ func walkStockLog(sector []byte) (map[uint16]string, bool, error) {
 }
 
 // stockProfileFrom takes the active profile's network out of stock's settings. It takes a
-// WPA network with a passphrase; anything else is ErrStockProfileNotImportable, never a guess.
+// WPA network with a passphrase and an open network; anything else is
+// ErrStockProfileNotImportable, never a guess.
 func stockProfileFrom(settings map[uint16]string) (StockProfile, error) {
 	layout := stockLayout9423()
 
@@ -335,7 +337,8 @@ func stockProfileFrom(settings map[uint16]string) (StockProfile, error) {
 	switch strings.ToUpper(strings.TrimSpace(security)) {
 	case "WPAPSK", "WPA2PSK", "WPAWPA2PSK":
 	case "NONE":
-		return StockProfile{}, notImportable("%q is an open network, which is not taken over", ssid)
+		// An open network: stock may keep a passphrase from before, which is not used.
+		return StockProfile{SSID: ssid, Passphrase: ""}, nil
 	default:
 		return StockProfile{}, notImportable("security %q of %q is not taken over", security, ssid)
 	}

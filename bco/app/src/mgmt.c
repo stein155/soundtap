@@ -181,16 +181,19 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
         }
         break;
     }
-    case 3: { /* SET_PROFILE: ssid_len, ssid, security, pmk_len, pmk, 32-byte seed [, flags, bssid] */
+    case 3: { /* SET_PROFILE: ssid_len, ssid, security, key_len, key, 32-byte seed [, flags, bssid].
+               * security WIFI_SEC_*: 0 open (no key), 1 PSK (the 32-byte PMK); any other, or a
+               * key length that does not fit it, is unsupported (status 2). */
         unsigned base = len >= 1 && len >= 1u + a[0] + 2 ? 1u + a[0] + 2 + a[1 + a[0] + 1] + 32 : 0;
+        unsigned sec = base ? a[1 + a[0]] : 0, klen = base ? a[1 + a[0] + 1] : 0;
         if (len < 1 || a[0] < 1 || a[0] > 32 || !base || (len != base && len != base + MGMT_PROFILE_TAIL))
             st = 1;
-        else if (a[1 + a[0]] != 1 || a[1 + a[0] + 1] != 32)
-            st = 2; /* WPA2-PSK with a PMK only */
+        else if (!(sec == WIFI_SEC_OPEN && klen == 0) && !(sec == WIFI_SEC_PSK && klen == 32))
+            st = 2;
         else { /* without the tail (an older driver): any BSSID, no roaming */
-            const unsigned char *tail = len > base ? a + base : 0; /* cppcheck-suppress knownConditionTrueFalse ; len is base without the tail */
-            st = wifi_join(a + 1, a[0], a + 1 + a[0] + 2, a + 1 + a[0] + 2 + 32, tail ? tail[0] : 0,
-                           tail ? tail + 1 : 0) ? 1 : 0;
+            const unsigned char *tail = len > base ? a + base : 0;
+            st = wifi_join(a + 1, a[0], sec, a + 1 + a[0] + 2, klen, a + 1 + a[0] + 2 + klen,
+                           tail ? tail[0] : 0, tail ? tail + 1 : 0) ? 1 : 0;
         }
         *o++ = st;
         break;
@@ -206,7 +209,8 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
                * the failure only when the reply is long enough, so an older driver is unaffected.
                * Last, the BSS's RSN group cipher suite type (2 TKIP, 4 CCMP, 0 unknown): with TKIP
                * the core drops the router's broadcasts (wifi.c install_keys), which the SCM logs.
-               * Again read only when present. */
+               * Again read only when present. Then what the network offers (WIFI_BSS_*,
+               * BCOLINK_CAP_SECURITY), for the driver's scan cache. */
         struct wifi_bss b;
         unsigned step, code;
         *o++ = 0; *o++ = wifi_state();
@@ -216,6 +220,7 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
         *o++ = step;
         *o++ = code, *o++ = code >> 8;
         *o++ = b.grp;
+        *o++ = b.sec;
         break;
     }
     case 6: /* AP_START: channel, beacon interval (TU, network order), beacon body */

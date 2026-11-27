@@ -526,14 +526,15 @@ flowchart LR
   end
   DRV == USB bulk, channel header ==> LINK[BCO bcolink]
   LINK -- ch 0 --> MG[mgmt.c server]
-  LINK -- ch 1 --> STA[Wi-Fi station, WPA2/CCMP, or open setup AP]
+  LINK -- ch 1 --> STA[Wi-Fi station: open or WPA2, or the open setup AP]
   LINK -- ch 2 --> GEM[wired port, macb]
   MG --> STA
   STA --> AIR((home Wi-Fi))
   GEM --> LAN((wired LAN))
 ```
 
-`wlan0` is a FullMAC station: `wpa_supplicant` hands the driver a PMK, the BCO runs the 4-way handshake and
+`wlan0` is a FullMAC station: `wpa_supplicant` hands the driver a PMK, or no key for an open network
+([ADR 0136](../decisions/0136-every-network-stock-joined-and-wpa3.md)), the BCO runs the 4-way handshake and
 keeps time from the USB frame number ([detail](../hardware/st20/bco-network-card.md#the-cards-clock)). Proven on the ST20 on 2026-10-06: DHCP on
 `wlan0` and the SoundTap UI on :80 from the LAN ([measurement](../hardware/st20/bco-network-card.md#lan-and-api-response), [ADR 0001](../decisions/0001-soundtapd-one-go-daemon.md)).
 

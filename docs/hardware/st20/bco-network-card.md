@@ -69,15 +69,17 @@ and the BCO answers with the same `seq` and `type|0x80`, status first.
 - `SCAN`: payload `{1}` starts a scan, `{1, ssid_len, ssid}` starts one whose directed pass probes
   for that SSID (`BCOLINK_CAP_SCAN_SSID`), an empty payload polls; status 3 means still scanning,
   status 0 carries the results (`ssid_len, ssid, bssid[6], channel, rssi i8, security`: 0 open,
-  1 RSN, 2 WPA1 only). A scan is two passes over the channels the regulatory domain allows (1-13
+  1 RSN, 2 WPA1 only, 3 WEP: the Privacy bit without either IE). A scan is two passes over the channels the regulatory domain allows (1-13
   until one is set), 200 ms per channel, probing on each but a passive one, where it only listens;
   while connected the cached list is returned. The second pass probes for the SCAN's SSID, else the
   profile's ([choosing the network](#choosing-the-network)).
-- `SET_PROFILE`: `ssid_len, ssid, security = 1, pmk_len = 32, PMK, 32 random bytes` from the SCM
-  kernel for the SNonce, and with `BCOLINK_CAP_ROAM` a tail of `flags, bssid[6]` (1 this BSSID
-  only, 2 this BSSID first, 4 roam within the SSID). Without the tail the app joins any BSSID and
-  never roams. Only WPA2-PSK on 2.4 GHz; anything else is answered "unsupported" (status 2). The
-  PMK is never echoed or logged.
+- `SET_PROFILE`: `ssid_len, ssid, security, key_len, key, 32 random bytes` from the SCM kernel for
+  the SNonce, and with `BCOLINK_CAP_ROAM` a tail of `flags, bssid[6]` (1 this BSSID only, 2 this
+  BSSID first, 4 roam within the SSID). Without the tail the app joins any BSSID and never roams.
+  Security 1 is WPA2-PSK with the 32-byte PMK as the key; with `BCOLINK_CAP_SECURITY`
+  ([ADR 0136](../../decisions/0136-every-network-stock-joined-and-wpa3.md)) security 0 is an open
+  network, without a key. Anything else, or a key length that does not fit the security, is
+  answered "unsupported" (status 2). 2.4 GHz only. The key is never echoed or logged.
 - `FORGET` leaves the network without sending deauthentication and drops the profile; the WiLD
   core keeps running (a core reboot recalibrates the radio in busy waits that stall USB; the app
   reboots the core only when its transmitter wedges). `STATUS` reports state, network, channel
@@ -90,7 +92,9 @@ and the BCO answers with the same `seq` and `type|0x80`, status first.
   soundtapd reads 15 as a wrong password. Last comes the network's RSN group cipher (2 TKIP, 4
   CCMP, 0 unknown), which the driver reads only when present and logs with the join result
   (`BCO joined …, group cipher …` or `BCO join failed: step …, code …, group cipher …`): with a
-  TKIP group the core drops the router's broadcasts. `SCAN` lists what fits in one reply (1536
+  TKIP group the core drops the router's broadcasts. After it comes what the network offers, as in
+  SCAN (0 open, 1 RSN, 2 WPA1, 3 WEP), which the driver puts in its scan cache for a roam or a join
+  it reports. `SCAN` lists what fits in one reply (1536
   bytes: 36 networks when every SSID is 32 bytes long), its count matching. A join that runs past
   90 s, above the app's worst case of about 68 s (scan, then five tries of authentication,
   association and handshake), makes the driver send `FORGET` and report a timeout, so the BCO
@@ -118,8 +122,9 @@ and the BCO answers with the same `seq` and `type|0x80`, status first.
 
 ## Choosing the network
 
-- SET_PROFILE joins the strongest RSN access point on channels 1-13 with the profile's SSID: the
-  highest level of its last beacon or probe response, and on a tie the one heard in the later
+- SET_PROFILE joins the strongest access point on channels 1-13 with the profile's SSID and a
+  security it matches (an open profile only an access point without the Privacy bit, a PSK
+  profile only an RSN one it can join): the highest level of its last beacon or probe response, and on a tie the one heard in the later
   scan. An access point heard without a level counts as the weakest. The scan table keeps a BSS
   heard in any of the last five scans.
 - A hidden network leaves its SSID out of the beacon. The scan's second pass sends a probe request
@@ -134,8 +139,11 @@ and the BCO answers with the same `seq` and `type|0x80`, status first.
   first when it was heard, else the strongest. `wpa_supplicant` sends a hint, not a fixed BSSID, to
   a driver that roams by itself (`WIPHY_FLAG_SUPPORTS_FW_ROAM`), unless the network names a
   `bssid`.
-- The association request's capability is ESS and Privacy, plus Short Preamble and Short Slot
-  Time when the access point's own capability has them, as an ERP station sends: a station that
+- An open network's association request carries no security IE and no Privacy bit, JOIN_DONE goes
+  without privacy, the link is up once the access point associates, and data goes both ways in the
+  clear.
+- The association request's capability is ESS and Privacy (not for an open network), plus Short
+  Preamble and Short Slot Time when the access point's own capability has them, as an ERP station sends: a station that
   leaves Short Slot out makes the access point move the whole BSS to the long slot.
 
 ## Protocol level and resent requests

@@ -42,8 +42,9 @@ BCO while Bose's BCO app is still there, before it replaces that app: afterwards
 be read. Stock keeps its settings as an append-only log in a NOR sector
 ([the stock app's saved network](../hardware/st20/bco-recovery.md#6-the-stock-apps-saved-network)).
 soundtapd reads the active sector through the sdsShell's `rd`, takes the last valid record of
-each setting, and takes the active profile's network when it is WPA with a passphrase; open and
-WEP networks and stock's own setup profile are not taken. The record numbers are BCO app 9423's,
+each setting, and takes the active profile's network when it is WPA with a passphrase or open
+([ADR 0136](0136-every-network-stock-joined-and-wpa3.md)); WEP networks and stock's own setup
+profile are not taken. The record numbers are BCO app 9423's,
 in one table. A read that gets no reply or a garbled dump is tried again, up to 5 times, 30 s
 apart, within 5 minutes; a read that was whole but holds nothing to take is not. The BCO install
 waits for that answer, and goes ahead once the tries run out.
