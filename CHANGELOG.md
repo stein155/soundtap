@@ -16,9 +16,11 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
   original software had saved is taken over on the first install.
 - **SoundTouch 20: joins older routers with WPA (TKIP)**, and WPA2 routers set to TKIP, as the
   original software did.
-- **Joins WPA3 networks**, and networks that mix WPA2 and WPA3, on every speaker, with the same
-  password as always. Where your router offers it, the speaker also uses protected management
-  frames, so nobody nearby can knock it off your Wi-Fi.
+- **SoundTouch 20: joins WPA3 networks**, and networks that mix WPA2 and WPA3, with the same
+  password as always. Where your router offers it, it also uses protected management frames, so
+  nobody nearby can knock it off your Wi-Fi. The other speakers join networks that mix WPA2 and
+  WPA3 as before, over WPA2; a WPA3-only network needs support their Wi-Fi chip's driver does not
+  have yet.
 - **Joins WEP networks**, on every speaker, as the original software did: pick *WEP* as the
   security type, or pick the network from the list and type its WEP key. A WEP network the
   original software had saved is taken over on the first install.
