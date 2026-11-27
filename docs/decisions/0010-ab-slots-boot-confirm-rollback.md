@@ -132,7 +132,9 @@ environment.
   (cut off after 15 minutes) before it confirms, long enough for a household to pull the plug more
   than once. With 4, three cuts in a row, each before its boot's confirm, leave a fourth boot of
   the new slot to confirm it.
-- **The first BCO install** over Bose's app reboots the ST20 to start its network; that reboot
+- **The first BCO install** over Bose's app first reads stock's Wi-Fi network from the BCO, for
+  up to 5 minutes more before the flash ([ADR 0129](0129-first-install-keeps-settings.md)). It
+  reboots the ST20 to start its network; that reboot
   waits up to 2 minutes for the confirmation, so it does not count against the slot.
 - **Init's part.** On a NAND boot whose count is at most `2 * bootlimit + 1` (both slots tried),
   init arms its boot watchdog for 300 s; only soundtapd answering disarms it, so a router outage is

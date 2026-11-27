@@ -413,6 +413,8 @@ Before a release, every cell must carry the release candidate's version and SHA-
 | Path | WLA | ST10 | ST20 | ST300 |
 |---|---|---|---|---|
 | Install from stock (update feed) | 2026-11-13 | 2026-11-17 | 2026-11-14 | 2026-11-15 |
+| Install from stock with progress during the download (`os/installer/module/installer.c`, `SOUNDTAP_STREAM_PROGRESS`): stock keeps the link through the mid-stream statuses (wire state 2, stock's downloading, 1..89 %), its log shows `StatusUpdated: state: downloading, progress: N` rising, `:8090/swUpdateQuery` (and the ST20 display) rises past 1 %, and the install completes. If the display does not move, nothing is lost; if stock drops the link mid-stream the speaker stays on Bose's software: rebuild the package with `WLA_STREAM_PROGRESS=0` | open | open | open | open |
+| ST20 panel during the BCO replacement after an install from stock: *Updating · Network card · Do not unplug* from the read of Bose's Wi-Fi profile through the flash to the reboot (soundtapd's `bcoUpdateNotice`) | n/a | n/a | open | n/a |
 | Back to Bose (`/api/firmware`, unsigned Bose STU) and back through the update feed, name, presets and Wi-Fi kept | 2026-11-17 | 2026-11-17 | 2026-11-11 | 2026-11-15 |
 | Update over the web UI (`/api/firmware`, 5 installs) | 2026-11-17 | 2026-11-17 | 2026-11-17 | 2026-11-13 |
 | Newer Core from the Updates page (`/api/core-update`, press, reboot, confirmed) | open | open | open | open |

@@ -278,7 +278,9 @@ clear) then carries it to the other slot ([ADR 0010](../decisions/0010-ab-slots-
 A first install from Bose's software keeps the speaker's name, TuneIn presets and Wi-Fi: the
 installer takes the key for ST10/WLA stock's encrypted `NetworkProfiles.xml` from NetManager,
 and soundtapd turns the profile into `wifi.conf` on first boot. On the ST20 it reads the
-stock BCO profile before replacing that app ([ADR 0008](../decisions/0008-one-universal-stu.md)).
+stock BCO app's settings log before replacing that app, and holds the BCO install until that
+read gave an answer or ran out of tries ([ADR 0008](../decisions/0008-one-universal-stu.md),
+[ADR 0129](../decisions/0129-first-install-keeps-settings.md)).
 Operator steps per model: [the install guide](../owners/install.md).
 The SoundTap app (soundtapd with the UI) also has its own lane ([ADR 0035](../decisions/0035-releases.md)):
 

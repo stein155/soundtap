@@ -181,12 +181,15 @@ No cable and no computer are needed: a phone with a browser will do.
 1. On a SoundTouch 10 or 20, hold **Preset 2 + Volume −** until it opens its setup network
    (Bose's *AP mode*). On a Wireless Link, start setup mode as Bose's manual describes.
 2. Join that network (named *Bose …*) with your phone or computer.
-3. The speaker is the network's gateway, normally `192.0.2.1`.
+3. The speaker is the network's gateway: `192.168.1.1` on a SoundTouch 20 (its network is
+   called *Bose SoundTouch Wi-Fi Network*), `192.0.2.1` on the other models.
 
 ### 3. Send the package
 
-1. In a browser on that phone or computer, open `http://192.0.2.1:17008/update.html` (use the
-   speaker's address from step 2 if it differs).
+1. In a browser on that phone or computer, open the upload page: on a SoundTouch 20
+   `http://192.168.1.1:17008/update.html`, on the other models
+   `http://192.0.2.1:17008/update.html`. If it does not open, use the gateway address your
+   phone or computer shows for that network.
 2. Bose's update page shows an upload form. Choose `SoundTap-Core-X.Y.Z.stu` and send it.
 
 Uploading takes about two to three minutes; keep the page open until it answers.
@@ -195,7 +198,8 @@ A speaker that is already on your Wi-Fi under Bose's software has the same page 
 `http://<speaker address>:17008/update.html` (a SoundTouch 20 on 27.0.6 accepted it that way);
 then setup mode is not needed.
 
-From a terminal the same upload is one command:
+From a terminal the same upload is one command (on a SoundTouch 20 use `192.168.1.1` instead
+of `192.0.2.1`):
 
 ```sh
 curl -X POST -H 'Expect:' -F 'filename=@SoundTap-Core-X.Y.Z.stu;type=application/octet-stream' http://192.0.2.1:17008/update.html
@@ -250,8 +254,13 @@ the power while it is busy**, and do not send the package again. A SoundTouch 20
 SoundTap splash on its display about a second after it restarts, then updates its network chip
 and restarts once more, so allow extra time; a SoundTouch 10 sweeps its lights from side to
 side while it starts.
-If it has not come back after ten minutes, keep it powered and see
+If it has not come back after ten minutes (twenty on a SoundTouch 20), keep it powered and see
 [When something goes wrong](#when-something-goes-wrong).
+
+The speaker can come back with a different IP address than it had under Bose's software; a
+SoundTouch 20 often does, because its network chip is replaced. The installer command and the
+installer page look for it on your network by themselves. If you cannot find it, look for the
+speaker's name in your router's list of devices, or open `http://soundtap.local`.
 
 ### Put the speaker on your Wi-Fi
 
@@ -278,8 +287,13 @@ your network. The setup network then disappears.
 place on this model, and SoundTap reads it from there on its first start: the speaker comes up
 on the cable or on the network Bose's software used, and about two minutes later restarts once
 and joins your Wi-Fi by itself. It needs a 2.4 GHz WPA2 network with a password; WPA1-only and
-open home networks do not work on this model. Its temporary setup network is open, as on the
-SoundTouch 10.
+open home networks do not work on this model. Taking over the network can fail on this model;
+the speaker then opens its setup network, and you choose your Wi-Fi there once more. Its
+temporary setup network is open, as on the SoundTouch 10.
+
+**What comes over from Bose's software.** The speaker keeps its name. Of the presets, only
+TuneIn radio stations come over. Presets for Spotify, other music services, or music from your
+computer or a media server stay empty: store them again in SoundTap.
 
 ### Start playing
 
@@ -287,9 +301,10 @@ SoundTouch 10.
 
 Open **http://soundtap.local** on any phone, tablet or computer on the same network. Every
 speaker also has its own address, such as `http://soundtap-st10-a1b2c3.local` (its name in
-lower case, with dashes), and your router's device list shows its IP address. With more than
-one speaker, `soundtap.local` reaches one of them; use the speaker's own address for anything
-that changes it.
+lower case, with dashes). Your router's list of devices shows its IP address under the
+speaker's name: a speaker called *Kitchen*, for example, appears as `kitchen` (the name Bose's
+software gave it comes over). With more than one speaker, `soundtap.local` reaches one of them;
+use the speaker's own address for anything that changes it.
 
 Add the page to your home screen and it behaves like an app; no app store needed. From there:
 
@@ -319,7 +334,9 @@ What to know first:
   of SoundTap is refused before anything is written.
 - **SoundTouch 20:** this puts Bose's software back on the main processor. The separate
   network chip still runs SoundTap's app at first; Bose's software then puts its own app back
-  there by itself when it finds another one (seen on a test speaker).
+  there by itself when it finds another one (seen on a test speaker). Bose comes back without
+  its Wi-Fi network, because Bose kept that on the network chip: set up Wi-Fi again in the Bose
+  app. It may also come back without its presets.
 - **SoundTouch 300:** the soundbar's own processor keeps the firmware it has, so this is not a
   full soundbar restore either.
 - **With a USB stick, also when SoundTap does not start any more:** SoundTap's bootloader has

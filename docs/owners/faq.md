@@ -171,7 +171,9 @@ Yes. Download Bose's own update file for your model, choose it on the speaker's 
 confirm the return to Bose and hold a button on the speaker. No SoundTap signature is needed
 for Bose's file. This way back has run on all four models, though not yet from the release
 candidate. On a SoundTouch 20 Bose's software then puts its own app back on the network
-processor itself, when it finds another one there (seen by the owner). A USB stick is built to take you back too, untested so far:
+processor itself, when it finds another one there (seen by the owner). Bose then comes back
+without its Wi-Fi network (Bose kept that on the network processor), so you set up Wi-Fi again
+in the Bose app, and it may come back without its presets. A USB stick is built to take you back too, untested so far:
 Bose's own update file for your model on a stick as `Update.stu`, and the power-on gesture. See
 [Going back to Bose](install.md#going-back-to-bose).
 
@@ -193,8 +195,9 @@ with Docker.
 ### What happens to my Bose presets?
 
 On the first SoundTap start, locally stored TuneIn presets are imported when there is no
-SoundTap preset file yet. This needs the stock `Presets.xml` to still be on the speaker;
-presets from cloud or account-based sources are not imported. This has not yet been checked on
+SoundTap preset file yet. Only TuneIn radio stations come over: presets for Spotify, other
+music services, or music from your computer or a media server stay empty. This needs the stock
+`Presets.xml` to still be on the speaker. This has not yet been checked on
 hardware. Existing SoundTap presets are kept, and a factory reset does not import stock presets
 again. To store a preset, search for a station and hold a preset tile, or choose a Spotify
 playlist or album or a media-server item.
