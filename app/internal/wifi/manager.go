@@ -185,6 +185,7 @@ type Manager struct {
 	apGen    atomic.Uint64 // one more per setup AP opened: an older AP's watch ends
 	lastSSID string
 	hasLast  bool
+	refused  map[string]bool // optional wpa_supplicant settings this build turned down
 }
 
 // New returns a Manager; Run starts it.
@@ -229,6 +230,7 @@ func New(cfg Config) *Manager {
 		wake:     make(chan struct{}, 1),
 		reg:      normalise("", ""),
 		regDone:  false,
+		refused:  map[string]bool{},
 		variant:  "",
 		tries:    0,
 		apGen:    atomic.Uint64{},

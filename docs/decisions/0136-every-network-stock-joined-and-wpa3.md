@@ -95,6 +95,16 @@ network saved as a raw 64-digit key joins over PSK only. wpa_supplicant is built
 WPA3 option; hostapd is not, since the setup network stays open
 ([the hardware checklist](../hardware/hardware-test.md) has each model's runs).
 
+These features are optional to the join. A wpa_supplicant that does not take one (a build
+without `CONFIG_SAE` answers FAIL to `SAE` in `key_mgmt` and to `sae_password`, one without
+`CONFIG_WEP` to `wep_key0`) costs only that feature: soundtapd logs once which setting was
+refused and offers the network the next suites, `WPA-PSK WPA-PSK-SHA256` then `WPA-PSK`; a
+network the build cannot join at all, such as WEP without `CONFIG_WEP`, is left out and the other
+saved networks still join. When wpa_supplicant does not start with `pmf=1` and `sae_check_mfp=1`,
+it starts without them. Only a control socket that stops answering fails the join. On an ST20 a
+stale wpa_supplicant without SAE had refused every join this way and left the speaker on its
+setup network.
+
 Alternatives that lost:
 
 - **SAE on the BCO.** A big-number and elliptic-curve library on a 200 MHz ARM926 in an app that

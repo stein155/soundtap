@@ -88,6 +88,64 @@ func supplicantConf(ctrlDir string) string {
 	return "ctrl_interface=" + ctrlDir + "\npmf=1\nsae_check_mfp=1\n"
 }
 
+// The settings a wpa_supplicant build may not know, each refused at most once per run
+// (Manager.refused): a join goes on without them and never fails for want of one.
+const (
+	refusedGlobal = "pmf=1 sae_check_mfp=1"
+	refusedSAE    = "SAE"
+	refusedSHA256 = "WPA-PSK-SHA256"
+	refusedWEP    = "WEP"
+)
+
+// refuse notes that this wpa_supplicant turned setting down, and logs it the first time.
+func (m *Manager) refuse(setting, means string) {
+	if m.refused[setting] {
+		return
+	}
+
+	m.refused[setting] = true
+	m.log.Warn("wpa_supplicant refused an optional setting", "setting", setting, "means", means)
+}
+
+// startSupplicant starts wpa_supplicant on the station with supplicantConf. pmf and
+// sae_check_mfp are optional: when wpa_supplicant does not start with them and does start
+// with the control socket alone, it runs without them from then on, so a build that does not
+// know them still joins a WPA2 network.
+func (m *Manager) startSupplicant(ctx context.Context) error {
+	conf := filepath.Join(m.cfg.Paths.Tmp, "wpa_supplicant.conf")
+	bare := "ctrl_interface=" + m.cfg.Paths.CtrlDir + "\n"
+
+	run := func(body string) error {
+		err := os.WriteFile(conf, []byte(body), privateFileMode)
+		if err != nil {
+			return fmt.Errorf("write %s: %w", conf, err)
+		}
+
+		_, err = m.runCmd(ctx, "wpa_supplicant", "-B", "-P", m.pid("wpa"), "-i", m.cfg.STA, "-D", "nl80211", "-c", conf)
+
+		return err
+	}
+
+	if m.refused[refusedGlobal] {
+		return run(bare)
+	}
+
+	err := run(supplicantConf(m.cfg.Paths.CtrlDir))
+	if err == nil {
+		return nil
+	}
+
+	bareErr := run(bare)
+	if bareErr != nil {
+		return err
+	}
+
+	m.log.Warn("wpa_supplicant did not start with pmf=1 and sae_check_mfp=1", "err", err)
+	m.refuse(refusedGlobal, "no management frame protection: WPA2 networks join without it")
+
+	return nil
+}
+
 // join starts wpa_supplicant with nets and udhcpc on wlan0 and waits for an address.
 // An error means wpa_supplicant could not be run or configured at all.
 func (m *Manager) join(ctx context.Context, nets []network) (*session, joinResult, error) {
@@ -113,14 +171,7 @@ func (m *Manager) join(ctx context.Context, nets []network) (*session, joinResul
 		m.log.Debug("power save left as it was", "iface", sta, "err", err)
 	}
 
-	conf := filepath.Join(m.cfg.Paths.Tmp, "wpa_supplicant.conf")
-
-	err = os.WriteFile(conf, []byte(supplicantConf(m.cfg.Paths.CtrlDir)), privateFileMode)
-	if err != nil {
-		return nil, none, fmt.Errorf("wpa_supplicant failed: %w", err)
-	}
-
-	_, err = m.runCmd(ctx, "wpa_supplicant", "-B", "-P", m.pid("wpa"), "-i", sta, "-D", "nl80211", "-c", conf)
+	err = m.startSupplicant(ctx)
 	if err != nil {
 		return nil, none, fmt.Errorf("wpa_supplicant failed: %w", err)
 	}
@@ -174,33 +225,122 @@ func (m *Manager) attach(ctx context.Context) (*session, error) {
 // keyMgmt is wpa_supplicant's network variable for the authentication suites.
 const keyMgmt = "key_mgmt"
 
-// securitySettings are a network's security variables for wpa_supplicant (ADR 0136).
+// The authentication suites a password network offers, most capable first (ADR 0136):
+// WPA/WPA2 with PSK-SHA256 and WPA3's SAE, then without SAE, then plain WPA-PSK. A
+// wpa_supplicant built without SAE (or without PSK-SHA256) refuses the first; the network
+// then joins over the next one.
+const (
+	mgmtPSKSAE    = "WPA-PSK WPA-PSK-SHA256 SAE"
+	mgmtPSKSHA256 = "WPA-PSK WPA-PSK-SHA256"
+	mgmtPSK       = "WPA-PSK"
+)
+
+// mgmtCount is how many suites keyMgmts can give.
+const mgmtCount = 3
+
+// keyMgmts are the suites to try for saved, without those this wpa_supplicant refused
+// before. SAE needs the password itself, which a raw 64-digit key does not give.
+func (m *Manager) keyMgmts(saved *network) []string {
+	out := make([]string, 0, mgmtCount)
+	if saved.passphrase != "" && !m.refused[refusedSAE] && !m.refused[refusedSHA256] {
+		out = append(out, mgmtPSKSAE)
+	}
+
+	if !m.refused[refusedSHA256] {
+		out = append(out, mgmtPSKSHA256)
+	}
+
+	return append(out, mgmtPSK)
+}
+
+// setSecurity sets a network's security variables in wpa_supplicant (ADR 0136). It reports
+// false, without an error, for a network this build cannot join at all (WEP without
+// CONFIG_WEP); a refused optional setting only narrows what the network offers.
 //
 //   - WEP: the static key 0, open system or shared key authentication, whichever the access
 //     point takes.
-//   - A password or a raw key: every PSK network, WPA and WPA2, PSK-SHA256, WPA3's SAE and the
-//     WPA2/WPA3 transition; management frame protection comes from supplicantConf's pmf=1, so
-//     wpa_supplicant leaves it off for a driver that cannot do it. SAE needs the password itself,
-//     which a raw 64-digit key does not give: such a network joins over PSK only. The password
-//     goes as hex, so no quoting can go wrong.
+//   - A password or a raw key: the PSK, then the most capable suites keyMgmts gives that
+//     wpa_supplicant takes; management frame protection comes from supplicantConf's pmf=1, so
+//     wpa_supplicant leaves it off for a driver that cannot do it. SAE's password goes as hex,
+//     so no quoting can go wrong.
 //   - Neither: an open network.
-func securitySettings(saved *network) [][2]string {
+func (m *Manager) setSecurity(ctx context.Context, conn *wpactrl.Conn, netID int, saved *network) (bool, error) {
 	switch {
 	case saved.wepHex != "":
-		return [][2]string{
-			{keyMgmt, "NONE"}, {"wep_key0", saved.wepHex}, {"wep_tx_keyidx", "0"}, {"auth_alg", "OPEN SHARED"},
+		if m.refused[refusedWEP] {
+			return false, nil
 		}
+
+		for _, setting := range [][2]string{
+			{keyMgmt, "NONE"}, {"wep_key0", saved.wepHex}, {"wep_tx_keyidx", "0"}, {"auth_alg", "OPEN SHARED"},
+		} {
+			err := conn.SetNetwork(ctx, netID, setting[0], setting[1])
+			if wpactrl.Refused(err) && setting[0] == "wep_key0" {
+				m.refuse(refusedWEP, "this build cannot join WEP networks")
+
+				return false, nil
+			}
+
+			if err != nil {
+				return false, fmt.Errorf("%s: %w", setting[0], err)
+			}
+		}
+
+		return true, nil
 	case saved.keyHex == "":
-		return [][2]string{{keyMgmt, "NONE"}}
-	case saved.passphrase == "":
-		return [][2]string{{keyMgmt, "WPA-PSK WPA-PSK-SHA256"}, {"psk", saved.keyHex}}
+		err := conn.SetNetwork(ctx, netID, keyMgmt, "NONE")
+		if err != nil {
+			return false, fmt.Errorf("%s: %w", keyMgmt, err)
+		}
+
+		return true, nil
 	default:
-		return [][2]string{
-			{keyMgmt, "WPA-PSK WPA-PSK-SHA256 SAE"},
-			{"psk", saved.keyHex},
-			{"sae_password", hex.EncodeToString([]byte(saved.passphrase))},
+		return m.setPSK(ctx, conn, netID, saved)
+	}
+}
+
+// setPSK sets a password network: its PSK, and the first suites of keyMgmts wpa_supplicant
+// takes. A refused SAE password or suite is logged once and the next suite is tried.
+func (m *Manager) setPSK(ctx context.Context, conn *wpactrl.Conn, netID int, saved *network) (bool, error) {
+	err := conn.SetNetwork(ctx, netID, "psk", saved.keyHex)
+	if err != nil {
+		return false, fmt.Errorf("psk: %w", err)
+	}
+
+	for _, mgmt := range m.keyMgmts(saved) {
+		if mgmt == mgmtPSKSAE {
+			err = conn.SetNetwork(ctx, netID, "sae_password", hex.EncodeToString([]byte(saved.passphrase)))
+			if wpactrl.Refused(err) {
+				m.refuse(refusedSAE, "no WPA3: WPA2 networks join without it")
+
+				continue
+			}
+
+			if err != nil {
+				return false, fmt.Errorf("sae_password: %w", err)
+			}
+		}
+
+		err = conn.SetNetwork(ctx, netID, keyMgmt, mgmt)
+		if err == nil {
+			return true, nil
+		}
+
+		if !wpactrl.Refused(err) {
+			return false, fmt.Errorf("%s: %w", keyMgmt, err)
+		}
+
+		switch mgmt {
+		case mgmtPSKSAE:
+			m.refuse(refusedSAE, "no WPA3: WPA2 networks join without it")
+		case mgmtPSKSHA256:
+			m.refuse(refusedSHA256, "no PSK-SHA256: WPA2 networks join without it")
+		default:
+			// plain WPA-PSK refused: nothing left to try
 		}
 	}
+
+	return false, fmt.Errorf("%s: %w", keyMgmt, err)
 }
 
 // configure hands wpa_supplicant the networks: wifi.conf at the highest priority, the
@@ -208,6 +348,10 @@ func securitySettings(saved *network) [][2]string {
 // no quoting can go wrong; the passphrase goes only as SAE's password, in hex too, over the
 // control socket (ADR 0136). A hidden network answers only a probe that names it, and a typed
 // SSID may be hidden: every network is probed for.
+//
+// Only a control socket that stops answering for wifi.conf's network fails the join. A
+// network wpa_supplicant refuses, or one this build cannot join, is removed and the others
+// still join: a missing optional feature never leaves the speaker without Wi-Fi.
 func (m *Manager) configure(ctx context.Context, sess *session, nets []network) error {
 	conn := sess.conn
 
@@ -224,27 +368,24 @@ func (m *Manager) configure(ctx context.Context, sess *session, nets []network) 
 			return fmt.Errorf("add network: %w", err)
 		}
 
-		base := [][2]string{
-			{"ssid", hex.EncodeToString([]byte(saved.ssid))},
-			{"scan_ssid", "1"},
-			{"priority", strconv.Itoa(KnownMax + 1 - rank)},
+		usable, setErr := m.setNetwork(ctx, conn, netID, saved, rank)
+		if setErr != nil && rank == 0 && !wpactrl.Refused(setErr) {
+			return fmt.Errorf("set network: %w", setErr)
 		}
-		security := securitySettings(saved)
-		set := make([][2]string, 0, len(base)+len(security))
-		set = append(set, base...)
-		set = append(set, security...)
 
-		for _, kv := range set {
-			setErr := conn.SetNetwork(ctx, netID, kv[0], kv[1])
+		if !usable || setErr != nil {
 			if setErr != nil {
-				if rank == 0 {
-					return fmt.Errorf("set network: %w", setErr)
-				}
-
-				m.log.Warn("a saved network was skipped", "err", setErr)
-
-				break
+				m.log.Warn("a saved network was skipped", "rank", rank, "err", setErr)
+			} else {
+				m.log.Warn("a saved network was skipped: this build cannot join it", "rank", rank)
 			}
+
+			err = conn.RemoveNetwork(ctx, netID)
+			if err != nil {
+				return fmt.Errorf("remove network: %w", err)
+			}
+
+			continue
 		}
 
 		sess.records[netID] = saved.rec
@@ -256,6 +397,24 @@ func (m *Manager) configure(ctx context.Context, sess *session, nets []network) 
 	}
 
 	return nil
+}
+
+// setNetwork sets one network's name, probe and priority, then its security.
+func (m *Manager) setNetwork(
+	ctx context.Context, conn *wpactrl.Conn, netID int, saved *network, rank int,
+) (bool, error) {
+	for _, setting := range [][2]string{
+		{"ssid", hex.EncodeToString([]byte(saved.ssid))},
+		{"scan_ssid", "1"},
+		{"priority", strconv.Itoa(KnownMax + 1 - rank)},
+	} {
+		err := conn.SetNetwork(ctx, netID, setting[0], setting[1])
+		if err != nil {
+			return false, fmt.Errorf("%s: %w", setting[0], err)
+		}
+	}
+
+	return m.setSecurity(ctx, conn, netID, saved)
 }
 
 // startDHCP starts udhcpc on wlan0 in the background. No -q: udhcpc stays and renews the
