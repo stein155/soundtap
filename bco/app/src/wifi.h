@@ -111,10 +111,20 @@ void wifi_ap_counters(unsigned c[WIFI_AP_COUNTERS]);
  * clients that were dropped because the hold was full. */
 #define WIFI_AP_DIAG 5u
 void wifi_ap_diag(unsigned d[WIFI_AP_DIAG]);
-/* One associated client: dozing (power-management bit set), frames held for it, ms since it was
- * last heard, data and null-data frames from it, unicast frames to it ACKed and lost. */
+/* More of the core's ap_mode counters, sent after the clients: frames to our address with a bad
+ * FCS and the last one's {rate index, level, frame control}, a client's frames with a body and
+ * the last one's, and those that found the core's receive queue full. */
+#define WIFI_AP_EXTRA 5u
+void wifi_ap_extra(unsigned d[WIFI_AP_EXTRA]);
+/* One associated client heard within WIFI_AP_GONE_MS: dozing (power-management bit set), frames
+ * held for it, the level (dBm) and rate code (500 kb/s units) of its last frame, ms since it was
+ * last heard, data and null-data frames from it, unicast frames to it ACKed and lost. A client
+ * silent longer has left without a word: it is not listed, and it holds nothing back. */
+#define WIFI_AP_GONE_MS 90000u
 struct wifi_ap_client {
     unsigned char mac[6], dozing, held;
+    signed char rssi;
+    unsigned char rate;
     unsigned idle_ms, rx_data, rx_null, tx_ok, tx_failed;
 };
 unsigned wifi_ap_client_info(struct wifi_ap_client o[WIFI_AP_CLIENTS]);

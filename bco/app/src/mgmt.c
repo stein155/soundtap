@@ -19,7 +19,8 @@ unsigned char mgmt_wifi_mac[6];
 volatile unsigned mgmt_uptime;
 
 _Static_assert(MGMT_AP_COUNTERS == WIFI_AP_COUNTERS && MGMT_AP_DIAG == WIFI_AP_DIAG &&
-               MGMT_AP_CLIENT == 4 + 5 * 4, "AP_STATUS's layout (mgmt.h) is what case 8 writes");
+               MGMT_AP_CLIENT == 4 + 5 * 4 && MGMT_AP_EXTRA == WIFI_AP_EXTRA,
+               "AP_STATUS's layout (mgmt.h) is what case 8 writes");
 
 static unsigned char *put32(unsigned char *o, unsigned v)
 {
@@ -239,9 +240,12 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
         for (unsigned i = 0; i < WIFI_AP_DIAG; i++) o = put32(o, d[i]);
         for (unsigned i = 0; i < c; i++) {
             const unsigned v[5] = {cl[i].idle_ms, cl[i].rx_data, cl[i].rx_null, cl[i].tx_ok, cl[i].tx_failed};
-            *o++ = cl[i].dozing, *o++ = cl[i].held, *o++ = 0, *o++ = 0;
+            *o++ = cl[i].dozing, *o++ = cl[i].held, *o++ = (unsigned char)cl[i].rssi, *o++ = cl[i].rate;
             for (unsigned j = 0; j < 5; j++) o = put32(o, v[j]);
         }
+        unsigned x[WIFI_AP_EXTRA];
+        wifi_ap_extra(x);
+        for (unsigned i = 0; i < WIFI_AP_EXTRA; i++) o = put32(o, x[i]);
         break;
     }
     case 13: /* FLOW: on (1) or off (0); the reply is a credit report (mgmt.h) */

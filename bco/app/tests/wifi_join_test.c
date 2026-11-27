@@ -401,7 +401,7 @@ static void ap_data(void)
     /* its DHCP discover: toDS, A1 = us, A3 = everybody; to the SCM from the phone */
     static const unsigned char llc[8] = {0xaa, 0xaa, 3, 0, 0, 0, 0x08, 0x00};
     memset(df, 0, sizeof df);
-    df[0x94] = 0x18, df[0x97] = 0xc4;
+    df[0x94] = 0x18, df[0x97] = 0xc4, df[0x94 + 4] = (unsigned char)-41, df[0x94 + 6] = 0x6c; /* 54 Mb/s */
     df[0xac] = 0x08, df[0xad] = 0x01;
     memcpy(df + 0xac + 4, own, 6), memcpy(df + 0xac + 10, phone, 6), memcpy(df + 0xac + 16, ap_bcast, 6);
     memcpy(df + 0xcc, llc, 8);
@@ -410,7 +410,7 @@ static void ap_data(void)
     rx_ap(df, 0xcc + 8 + 28);
     assert(scm_count == 1 && scm_ch == BCOLINK_CH_WIFI && scm_n == 14 + 28);
     assert(!memcmp(scm, ap_bcast, 6) && !memcmp(scm + 6, phone, 6) && scm[12] == 0x08 && scm[13] == 0);
-    assert(c->rx_data == 1 && !c->dozing);
+    assert(c->rx_data == 1 && !c->dozing && c->rssi == -41 && c->rate == 0x6c);
 
     /* the offer, unicast to it: fromDS, A1 = phone, A2 = BSSID = A3 = us, its peer slot */
     static unsigned char pkt[14 + 300];
@@ -497,9 +497,31 @@ static void ap_data(void)
     MB16(-8) = 0x100 >> 2;
     wifi_ap_diag(dg);
     assert(dg[0] == 3 && dg[1] == 9 && dg[2] == 4 && dg[3] == 8 && dg[4] == 1);
+    unsigned ex[WIFI_AP_EXTRA];
+    for (unsigned i = 0; i < WIFI_AP_EXTRA; i++)
+        corerec[CORE_RC_APIN + 3 + i] = 100 + i;
+    wifi_ap_extra(ex);
+    assert(ex[0] == 100 && ex[WIFI_AP_EXTRA - 1] == 100 + WIFI_AP_EXTRA - 1);
     MB16(-8) = 0;
+    wifi_ap_extra(ex);
+    assert(ex[0] == 0);
+    assert(info[0].rssi == c->rssi && info[0].rate == c->rate); /* of its last frame */
+
+    /* a phone silent past WIFI_AP_GONE_MS left without a word: not listed, and while it
+     * last dozed it no longer holds group frames back */
+    c->dozing = 1, c->seen = now - WIFI_AP_GONE_MS;
+    unsigned char macs[WIFI_AP_CLIENTS][6];
+    assert(wifi_ap_client_info(info) == 0 && wifi_ap_clients(macs) == 0 && !ap_anyone_dozing());
+    memcpy(pkt, ap_bcast, 6);
+    before = wifi_tx_frames;
+    assert(radio_tx_eth(pkt, sizeof pkt) == 0 && wifi_tx_frames == before + 1 && ap_gh.n == 0);
+    c->seen = now - WIFI_AP_GONE_MS + 1;
+    assert(wifi_ap_client_info(info) == 1 && ap_anyone_dozing());
+
+    /* stopping the AP drops every peer in the core, which ends its ap_mode */
+    cmd_ring(16);
     wifi_ap_stop();
-    assert(wifi_ap_client_info(info) == 0);
+    assert(cmdbuf[2] == CMD_PEER_CLEAR && wifi_ap_client_info(info) == 0);
     printf("ok: the setup AP carries a phone's DHCP both ways and holds frames while it dozes\n");
 }
 

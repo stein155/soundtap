@@ -397,6 +397,7 @@ static void link_up(void)
 #define CMD_PEER_ADD 0xb5
 #define CMD_PEER_DEL 0xb6
 #define CMD_JOIN_DONE 0xb8
+#define CMD_PEER_CLEAR 0xb7
 #define MGMT_MODULE 0x13
 
 static int due(unsigned t)
@@ -678,7 +679,8 @@ static struct held {
 
 static struct client {
     unsigned char mac[6], state, rates[8]; /* state 1 authenticated, 2 associated */
-    unsigned char dozing;
+    unsigned char dozing, rate; /* rate code of its last frame (500 kb/s units) */
+    signed char rssi;           /* and its level */
     struct hold h;
     unsigned seen, rx_data, rx_null, tx_ok, tx_failed;
 } cl[WIFI_AP_CLIENTS];
@@ -693,7 +695,14 @@ static const unsigned char ap_mrates[8] = {2, 2, 2, 2, 2, 2, 2, 2}; /* 1 Mb/s: e
 /* The core's ap_mode counters in its flight recorder, which HOST_FLAG2 (core 0x1fddc) locates:
  * bco/wild/fw/src/hw.h RC_APIN, RC_APNOFILT, RC_APKEEP (the core asserts these indices). */
 #define CORE_RC_APIN 29u
-#define CORE_RC_N 3u
+#define CORE_RC_N 8u
+
+/* An associated client heard within WIFI_AP_GONE_MS. One silent longer left without a word: it
+ * is not listed (soundtapd's hold then sees the setup AP idle) and holds no group frame back. */
+static int ap_fresh(const struct client *c)
+{
+    return c->state == 2 && now - c->seen < WIFI_AP_GONE_MS;
+}
 
 static void ap_tx_report(unsigned rec4, unsigned bad)
 {
@@ -825,7 +834,7 @@ static void ap_release(unsigned q, struct hold *h, const struct client *c, unsig
 static int ap_anyone_dozing(void)
 {
     for (unsigned i = 0; i < WIFI_AP_CLIENTS; i++)
-        if (cl[i].state == 2 && cl[i].dozing)
+        if (ap_fresh(&cl[i]) && cl[i].dozing)
             return 1;
     return 0;
 }
@@ -908,7 +917,7 @@ static void rx_ap(const volatile unsigned char *b, unsigned len)
     ap_rx++;
     if (sub == 0xa4) { /* PS-Poll (the core pads it to a header): one held frame to its sender */
         if (same(h + 4, own, 6) && (c = ap_client(h + 10, 0)) && c->state == 2) {
-            c->seen = now, c->dozing = 1;
+            c->seen = now, c->dozing = 1, c->rssi = (signed char)b[0x94 + 4], c->rate = b[0x94 + 6];
             ap_release((unsigned)(c - cl), &c->h, c, 1);
         }
         return;
@@ -970,7 +979,7 @@ static void rx_ap(const volatile unsigned char *b, unsigned len)
     if ((fc & 0x0c) != 8 || (fc & 0x0300) != 0x0100 || !same(h + 4, own, 6) ||
         !(c = ap_client(h + 10, 0)) || c->state != 2)
         return;
-    c->seen = now;
+    c->seen = now, c->rssi = (signed char)b[0x94 + 4], c->rate = b[0x94 + 6];
     if (sub & 0x40) {
         c->rx_null++;
     } else {
@@ -1765,8 +1774,12 @@ int wifi_ap_start(unsigned chan, unsigned bint, const unsigned char *body, unsig
 
 void wifi_ap_stop(void)
 {
-    if (state == WIFI_AP)
+    if (state == WIFI_AP) {
         state = WIFI_IDLE;
+        /* every peer goes, and with them the core's ap_mode (bco/wild/fw sta.c) */
+        if (wr_cmd_checked(&tx, CMD_PEER_CLEAR, 0x12, 0x11, 0, 0))
+            DOORBELL();
+    }
     ap_ready = 0, ap_gh.n = 0;
     for (unsigned i = 0; i < WIFI_AP_CLIENTS; i++)
         ap_drop(&cl[i]);
@@ -1783,7 +1796,7 @@ unsigned wifi_ap_clients(unsigned char macs[][6])
 {
     unsigned n = 0;
     for (unsigned i = 0; state == WIFI_AP && i < WIFI_AP_CLIENTS; i++)
-        if (cl[i].state == 2)
+        if (ap_fresh(&cl[i]))
             copy(macs[n++], cl[i].mac, 6);
     return n;
 }
@@ -1792,9 +1805,16 @@ void wifi_ap_diag(unsigned d[WIFI_AP_DIAG])
 {
     unsigned a = (unsigned)MB16(-8) << 2; /* HOST_FLAG2: the core's flight recorder, 0 before */
     d[0] = ap_first;
-    for (unsigned i = 0; i < CORE_RC_N; i++)
+    for (unsigned i = 0; i < 3; i++)
         d[1 + i] = a && a < 0x1fd00u ? *(const volatile unsigned *)(WSRAM + a + 4 * (CORE_RC_APIN + i)) : 0;
     d[4] = ap_hdrop;
+}
+
+void wifi_ap_extra(unsigned d[WIFI_AP_EXTRA])
+{
+    unsigned a = (unsigned)MB16(-8) << 2;
+    for (unsigned i = 0; i < WIFI_AP_EXTRA; i++)
+        d[i] = a && a < 0x1fd00u ? *(const volatile unsigned *)(WSRAM + a + 4 * (CORE_RC_APIN + 3 + i)) : 0;
 }
 
 unsigned wifi_ap_client_info(struct wifi_ap_client o[WIFI_AP_CLIENTS])
@@ -1802,10 +1822,10 @@ unsigned wifi_ap_client_info(struct wifi_ap_client o[WIFI_AP_CLIENTS])
     unsigned n = 0;
     for (unsigned i = 0; state == WIFI_AP && i < WIFI_AP_CLIENTS; i++) {
         const struct client *c = &cl[i];
-        if (c->state != 2)
+        if (!ap_fresh(c))
             continue;
         copy(o[n].mac, c->mac, 6);
-        o[n].dozing = c->dozing, o[n].held = c->h.n;
+        o[n].dozing = c->dozing, o[n].held = c->h.n, o[n].rssi = c->rssi, o[n].rate = c->rate;
         o[n].idle_ms = now - c->seen, o[n].rx_data = c->rx_data, o[n].rx_null = c->rx_null;
         o[n].tx_ok = c->tx_ok, o[n].tx_failed = c->tx_failed;
         n++;

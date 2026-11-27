@@ -165,13 +165,14 @@ int main(void)
     assert(r[6] == 0 && fake_ap_chan == 6 && fake_ap_bint == 100 && fake_ap_len == 40);
     n = ask(8, 0, 0, r);
     assert(r[6] == 0 && r[7] == 1 && r[13] == 0x77 &&
-           n == MGMT_HDR + 8 + 4 * MGMT_AP_COUNTERS + 4 * MGMT_AP_DIAG + MGMT_AP_CLIENT &&
+           n == MGMT_HDR + 8 + 4 * MGMT_AP_COUNTERS + 4 * MGMT_AP_DIAG + MGMT_AP_CLIENT + 4 * MGMT_AP_EXTRA &&
            r[14] == 0x11 && r[18] == 0x22);
     /* the diagnostics tail (BCOLINK_CAP_APDIAG), then the one client's block */
     const unsigned char *t = r + 14 + 4 * MGMT_AP_COUNTERS, *k = t + 4 * MGMT_AP_DIAG;
     assert(le32(t) == 0x1000 && le32(t + 4 * (MGMT_AP_DIAG - 1)) == 0x1000 + MGMT_AP_DIAG - 1);
-    assert(k[0] == 1 && k[1] == 2 && k[2] == 0 && k[3] == 0 && le32(k + 4) == 250 && le32(k + 8) == 7 &&
-           le32(k + 12) == 3 && le32(k + 16) == 5 && le32(k + 20) == 1);
+    assert(k[0] == 1 && k[1] == 2 && (signed char)k[2] == -45 && k[3] == 0x6c && le32(k + 4) == 250 &&
+           le32(k + 8) == 7 && le32(k + 12) == 3 && le32(k + 16) == 5 && le32(k + 20) == 1);
+    assert(le32(k + MGMT_AP_CLIENT) == 0x2000 && le32(k + MGMT_AP_CLIENT + 4 * (MGMT_AP_EXTRA - 1)) == 0x2004);
     ask(7, 0, 0, r); assert(r[6] == 0 && fake_ap_stops == 1);
     ask(8, 0, 0, r); assert(r[7] == 0);
     ap[0] = 14; ask(6, ap, sizeof ap, r); assert(r[6] == 1);       /* no channel 14 */

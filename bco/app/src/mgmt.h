@@ -68,12 +68,15 @@ void mgmt_event_lost(void);
 
 /* AP_STATUS (8): status, count, count client MACs, MGMT_AP_COUNTERS le32 counters (wifi.h
  * wifi_ap_counters); with BCOLINK_CAP_APDIAG then MGMT_AP_DIAG le32 (wifi_ap_diag) and, per
- * client in the same order, MGMT_AP_CLIENT bytes: u8 flags (bit 0 dozing), u8 frames held, two
- * zero bytes, le32 ms since last heard, data frames from it, null-data from it, unicast frames to
- * it ACKed, and lost. A driver without the capability reads up to the MACs, as before. */
+ * client in the same order, MGMT_AP_CLIENT bytes: u8 flags (bit 0 dozing), u8 frames held,
+ * the level (s8, dBm) and rate code (500 kb/s units) of its last frame, le32 ms since last
+ * heard, data frames from it, null-data from it, unicast frames to it ACKed, and lost; then
+ * MGMT_AP_EXTRA le32 (wifi_ap_extra). A driver without the capability reads up to the MACs, as
+ * before; one that knows only the first part ignores the rest. */
 #define MGMT_AP_COUNTERS 8
 #define MGMT_AP_DIAG 5
 #define MGMT_AP_CLIENT 24
+#define MGMT_AP_EXTRA 5
 
 /* NV_INFO (17, BCOLINK_CAP_NVINFO): read-only. Reply: status (1 = no PersParam sector), count, then
  * count entries of key (FourCC as stored, le32), le16 value length, and the value's first 4 bytes
