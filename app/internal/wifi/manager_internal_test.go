@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/stein155/soundtap/app/internal/wpactrl"
 )
 
 func b64(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
@@ -272,7 +274,7 @@ func TestJoinFailureReasons(t *testing.T) {
 		t.Fatalf("a network in the scan that never answered = %q", got)
 	}
 
-	sess := &session{conn: nil, records: nil, wrongKey: false, lost: false}
+	sess := &session{conn: nil, records: nil, wrongKey: false, security: false, lost: false}
 	for seen, want := range map[string]string{
 		"SCANNING ASSOCIATING 4WAY_HANDSHAKE COMPLETED":    "no_address",
 		"SCANNING ASSOCIATING 4WAY_HANDSHAKE DISCONNECTED": "wrong_password",
@@ -288,6 +290,20 @@ func TestJoinFailureReasons(t *testing.T) {
 	got := joinFailure(context.Background(), sess, []string{"SCANNING", "ASSOCIATING"}, "home")
 	if got != "wrong_password" {
 		t.Errorf("a WRONG_KEY event read as %s", got)
+	}
+
+	// the ST20's BCO reports its own failures as association rejects
+	for code, want := range map[string]string{"15": "wrong_password", "43": "refused", "72": "refused"} {
+		rejected := &session{conn: nil, records: nil, wrongKey: false, security: false, lost: false}
+		bench.m.event(context.Background(), rejected, wpactrl.Event{
+			Level: 3, Name: "CTRL-EVENT-ASSOC-REJECT",
+			Text: "CTRL-EVENT-ASSOC-REJECT bssid=02:00:00:00:00:01 status_code=" + code,
+		})
+
+		got := joinFailure(context.Background(), rejected, []string{"SCANNING"}, "home")
+		if got != want {
+			t.Errorf("assoc reject status %s read as %s, want %s", code, got, want)
+		}
 	}
 }
 
@@ -603,6 +619,24 @@ func TestSetupAPFailureIsAProblem(t *testing.T) {
 	if bench.exists("setup-ap") || bench.exists("network-ready") || exists(dnsd) {
 		t.Fatal("a failed AP left its state")
 	}
+}
+
+// With nothing saved, a setup AP that fails to open is tried again until it opens.
+//
+//nolint:paralleltest // its rig points wpactrl.ClientDir, a package variable, at a directory of its own
+func TestSetupAPThatFailsIsTriedAgain(t *testing.T) {
+	bench := newRig(t, "rhino")
+	bench.sys.fail["hostapd"] = true
+	bench.start()
+	bench.eventually("two tries", func() bool { return countPrefix(bench.sys.Calls(), "hostapd") >= 2 })
+
+	bench.sys.mu.Lock()
+	delete(bench.sys.fail, "hostapd")
+	bench.sys.mu.Unlock()
+	bench.eventually("the setup AP once hostapd works", func() bool {
+		return bench.exists("setup-ap") && bench.exists("network-ready")
+	})
+	bench.eventually("the problem cleared", func() bool { return bench.lastProblem() == "" })
 }
 
 //nolint:paralleltest // its rig points wpactrl.ClientDir, a package variable, at a directory of its own

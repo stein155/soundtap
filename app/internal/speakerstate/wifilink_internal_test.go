@@ -197,6 +197,33 @@ func TestNetworkInfoPrefersTheCable(t *testing.T) {
 	}
 }
 
+// An ST20 on its cable with the setup AP running beside it is on the LAN: the settings
+// page said "Connected to" the AP's name with the AP's address.
+func TestNetworkInfoPrefersTheCableOverTheSetupAP(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "setup-ap")
+
+	err := os.WriteFile(marker, nil, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("SOUNDTAP_SETUP_AP_MARKER", marker)
+
+	wired := wiredIP
+	wiredIP = func() string { return "192.0.2.109" }
+
+	t.Cleanup(func() { wiredIP = wired })
+
+	network, err := New().NetworkInfo(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if network.Type != "ethernet" || network.IP != "192.0.2.109" || network.SSID != "" {
+		t.Fatalf("network = %+v, want ethernet on 192.0.2.109", network)
+	}
+}
+
 // The speaker runs on its cable only with carrier and an IPv4 lease on eth0.
 func TestWiredIPNeedsCarrierAndAddress(t *testing.T) {
 	t.Parallel()

@@ -92,11 +92,20 @@ func hostapdConf(iface, ssid string, channel int, country string) string {
 	return conf
 }
 
+// The setup AP's address pool: udhcpd hands out .10 to .50.
+const (
+	apPoolStart = 10
+	apPoolEnd   = 50
+)
+
 // udhcpdConf hands phones on the setup AP an address, the speaker as router and DNS, and
-// a 600 s lease.
-func udhcpdConf(iface string) string {
-	return "start 192.168.42.10\nend   192.168.42.50\ninterface " + iface +
-		"\noption subnet 255.255.255.0\noption router " + APAddress + "\noption dns " + APAddress +
+// a 600 s lease. max_leases is the pool's size (busybox's default of 235 is more than the
+// pool holds and it says so), and lease_file names a file of ours: without one udhcpd
+// tries to open an empty path at start and stop and logs that it cannot.
+func udhcpdConf(iface, leaseFile string) string {
+	return fmt.Sprintf("start 192.168.42.%d\nend   192.168.42.%d\nmax_leases %d\ninterface %s\nlease_file %s\n",
+		apPoolStart, apPoolEnd, apPoolEnd-apPoolStart+1, iface, leaseFile) +
+		"option subnet 255.255.255.0\noption router " + APAddress + "\noption dns " + APAddress +
 		"\noption lease 600\n"
 }
 
@@ -254,8 +263,19 @@ func (m *Manager) startPortal(ctx context.Context, stopAP func()) error {
 	}
 
 	dhcpConf := filepath.Join(m.cfg.Paths.Tmp, "udhcpd.conf")
+	// An empty lease file each time the AP starts: udhcpd reads it at start (and warns
+	// when it is missing), and a phone keeps its address across a lease anyway.
+	leases := filepath.Join(m.cfg.Paths.Tmp, "udhcpd.leases")
 
-	err = os.WriteFile(dhcpConf, []byte(udhcpdConf(m.cfg.AP)), privateFileMode)
+	err = os.WriteFile(leases, nil, privateFileMode)
+	if err != nil {
+		remove(m.state("setup-ap"))
+		stopAP()
+
+		return fmt.Errorf("udhcpd.leases: %w", err)
+	}
+
+	err = os.WriteFile(dhcpConf, []byte(udhcpdConf(m.cfg.AP, leases)), privateFileMode)
 	if err != nil {
 		remove(m.state("setup-ap"))
 		stopAP()

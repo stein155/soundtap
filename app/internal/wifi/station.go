@@ -23,6 +23,7 @@ type session struct {
 	conn     *wpactrl.Conn
 	records  map[int]Record
 	wrongKey bool // wpa_supplicant said a key was wrong (CTRL-EVENT-SSID-TEMP-DISABLED reason=WRONG_KEY)
+	security bool // the router refused our security (status 31, 43, 45 or 72): WPA3 only, PMF required
 	lost     bool // the event stream ended: wpa_supplicant went away
 }
 
@@ -151,7 +152,9 @@ func (m *Manager) attach(ctx context.Context) (*session, error) {
 		if err == nil {
 			err = conn.Attach(ctx)
 			if err == nil {
-				return &session{conn: conn, records: map[int]Record{}, wrongKey: false, lost: false}, nil
+				return &session{
+					conn: conn, records: map[int]Record{}, wrongKey: false, security: false, lost: false,
+				}, nil
 			}
 
 			_ = conn.Close()
@@ -244,11 +247,18 @@ func udhcpcArgs(iface, pidfile, hostname string) []string {
 func (m *Manager) waitJoin(ctx context.Context, sess *session, ssid string) joinResult {
 	res := joinResult{joined: false, assoc: -1, took: 0, seen: nil, reason: ""}
 	state := ""
+	// The window is wall-clock time: a poll can take seconds when wpa_supplicant waits on the
+	// ST20's BCO driver, and 90 polls then stretched "90 s" of "Connecting" to minutes.
+	start := time.Now()
 	polls := max(int(m.cfg.Timing.Join/m.cfg.Timing.Poll), 1)
 
-	secs := func(i int) int { return int(time.Duration(i) * m.cfg.Timing.Poll / time.Second) }
+	secs := func(int) int { return int(time.Since(start) / time.Second) }
 
 	for poll := range polls {
+		if poll > 0 && time.Since(start) >= m.cfg.Timing.Join {
+			break
+		}
+
 		if m.cfg.Sys.HasIPv4(m.cfg.STA) {
 			res.joined, res.took = true, secs(poll)
 
@@ -303,7 +313,7 @@ func joinFailure(ctx context.Context, sess *session, seen []string, ssid string)
 		return "no_address"
 	case sess.wrongKey || has("4WAY_HANDSHAKE", "GROUP_HANDSHAKE"):
 		return "wrong_password"
-	case has("AUTHENTICATING", "ASSOCIATING", "ASSOCIATED"):
+	case sess.security || has("AUTHENTICATING", "ASSOCIATING", "ASSOCIATED"):
 		return "refused"
 	default:
 		// Never got that far: is the network there at all?
@@ -365,6 +375,22 @@ func (m *Manager) event(ctx context.Context, sess *session, event wpactrl.Event)
 		}
 	case "CTRL-EVENT-DISCONNECTED":
 		m.log.Info("wifi disconnected")
+	case "CTRL-EVENT-ASSOC-REJECT":
+		// The router's IEEE 802.11 status code. On the ST20 the BCO reports its own join
+		// failures this way too: 15 when the 4-way handshake did not complete (with handshake
+		// offload wpa_supplicant never sees WRONG_KEY), 43 when the network offers only security
+		// it cannot join (WPA3 only, management frame protection required).
+		code, _ := event.Field("status_code")
+		m.log.Info("association refused", "status_code", code)
+
+		switch code {
+		case "15":
+			sess.wrongKey = true
+		case "31", "43", "45", "72":
+			sess.security = true
+		default:
+			// Another refusal: the furthest wpa_state decides.
+		}
 	default:
 		// Not one the manager acts on.
 	}

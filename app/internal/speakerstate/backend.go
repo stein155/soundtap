@@ -287,6 +287,14 @@ func (s *Speaker) NetworkInfo(ctx context.Context) (*speaker.Network, error) {
 		return nil, err
 	}
 
+	// A cable wins, as on stock: with eth0 up Wi-Fi settings no longer decide the route,
+	// and the UI said "Wi-Fi" on an ST20 that was plugged in. It wins over the setup AP
+	// too, which can run beside the cable (an ST20 with no Wi-Fi saved): the speaker is on
+	// the LAN, not on its own setup network.
+	if ip := wiredIP(); ip != "" {
+		return &speaker.Network{Type: networkEthernet, IP: ip, SSID: "", Signal: "", Dbm: 0, LinkMbps: 0, MHz: 0}, nil
+	}
+
 	if marker := os.Getenv("SOUNDTAP_SETUP_AP_MARKER"); marker != "" {
 		// The marker path is the init script's own setting, not input.
 		_, statErr := os.Stat(marker) //nolint:gosec // see above.
@@ -295,11 +303,6 @@ func (s *Speaker) NetworkInfo(ctx context.Context) (*speaker.Network, error) {
 				Type: networkWifi, SSID: SetupSSID(), IP: SetupAPAddress, Signal: "", Dbm: 0, LinkMbps: 0, MHz: 0,
 			}, nil
 		}
-	}
-	// A cable wins, as on stock: with eth0 up Wi-Fi settings no longer decide the route,
-	// and the UI said "Wi-Fi" on an ST20 that was plugged in.
-	if ip := wiredIP(); ip != "" {
-		return &speaker.Network{Type: networkEthernet, IP: ip, SSID: "", Signal: "", Dbm: 0, LinkMbps: 0, MHz: 0}, nil
 	}
 	// Read the live association before taking the lock: liveWifiLink takes it itself,
 	// and shelling out under s.mu would stall every other API call for the duration.

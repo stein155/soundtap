@@ -588,17 +588,31 @@ func (m *Manager) apUntilRetry(ctx context.Context, reason string, pause time.Du
 	return m.holdAP(ctx, pause)
 }
 
-// apOnly opens the setup AP with no saved network to go back to, and keeps it.
+// apOnly opens the setup AP with no saved network to go back to, and keeps it. An AP that
+// fails to open is tried again every Timing.LongPause, with the reason reported meanwhile:
+// with no network saved it is the speaker's only way to be set up.
 func (m *Manager) apOnly(ctx context.Context, reason string) error {
-	err := m.openAP(ctx, reason)
-	if err != nil {
-		return err
+	for {
+		err := m.openAP(ctx, reason)
+		if err == nil {
+			m.problem("")
+			<-ctx.Done()
+
+			return nil
+		}
+
+		if ctx.Err() != nil {
+			return fmt.Errorf("setup AP: %w", ctx.Err())
+		}
+
+		m.log.Error("wifi", "err", err)
+		m.problem(err.Error())
+		m.log.Warn("setup AP unavailable; trying it again", "after", m.cfg.Timing.LongPause)
+
+		if !sleep(ctx, m.cfg.Timing.LongPause) {
+			return fmt.Errorf("setup AP: %w", ctx.Err())
+		}
 	}
-
-	m.problem("")
-	<-ctx.Done()
-
-	return nil
 }
 
 // networks is wifi.conf first, then every known network not already there, at falling
