@@ -38,6 +38,7 @@ import (
 	"time"
 
 	"github.com/stein155/soundtap/app/internal/atomicjson"
+	"github.com/stein155/soundtap/app/internal/clocksync"
 	"github.com/stein155/soundtap/app/internal/display"
 	"github.com/stein155/soundtap/app/internal/hw"
 	"github.com/stein155/soundtap/app/internal/lanfilter"
@@ -660,7 +661,8 @@ func loadPresets(
 			}
 		}
 
-		recordPendingStockPresets(filepath.Join(filepath.Dir(path), stockPendingName), stock.pending, time.Now(), log)
+		recordPendingStockPresets(filepath.Join(filepath.Dir(path), stockPendingName), stock.pending,
+			trustedNow(time.Now(), clocksync.Synced), log)
 	}
 
 	for _, preset := range presets.All() {

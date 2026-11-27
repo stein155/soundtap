@@ -41,7 +41,7 @@ A Radio Browser preset becomes a preset with its own stream address
 ([ADR 0041](0041-radio-one-ffmpeg-one-url-rule.md)): stock's name and logo, and the
 station's `url_resolved` (else its `url`) from Radio Browser. Since that needs the network, the
 takeover writes such presets down in `/mnt/nv/soundtap/stock-presets-pending.json` (slot, uuid,
-name, logo, the time first seen once the clock is believable;
+name, logo, the time first seen once NTP has set the clock;
 [nv-state](../contributors/nv-state.md)), and only when it takes stock's presets at all: a
 speaker with presets of its own takes none. A background job in soundtapd then asks
 `GET /json/stations/byuuid/<uuid>` of Radio Browser's servers `de1`, `de2` and `fi1`
@@ -55,7 +55,11 @@ slot is empty (checked and written under one lock, so a preset the owner stored 
 never replaced) and only with a stream address an owner could enter themselves (http or
 https, at most 512 bytes). It is dropped, with a log line saying why, when its slot holds a
 preset, Radio Browser knows no such station, or the address is not usable; after 7 days from
-the time first seen without an answer it is given up. The file goes with its last entry, and
+the time first seen without an answer it is given up. That time is taken only after NTP has
+set the clock this boot (`/run/soundtap/clock-synced`): on the first boot after an install from
+stock init sets the clock to the build's time, and a preset dated by it would be given up at the
+first failed lookup once NTP moved the clock on by more than a week. A time no later than an
+hour after the running build's time is taken for such a date and taken again. The file goes with its last entry, and
 with a factory reset. `.stock-imported` still records only that the takeover ran: the lookups
 carry on after it.
 

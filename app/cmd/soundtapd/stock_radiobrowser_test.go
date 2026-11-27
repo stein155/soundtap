@@ -196,8 +196,10 @@ func lookupsFor(path string, state *speakerstate.Speaker,
 		store: func(ctx context.Context, slot int, stream, name, logo string) (bool, error) {
 			return state.StorePresetIfEmpty(ctx, slot, sourceTuneIn, "stationurl", stream, name, logo)
 		},
-		now: func() time.Time { return *now },
-		log: log,
+		now:        func() time.Time { return *now },
+		synced:     func() bool { return true },
+		buildEpoch: time.Time{},
+		log:        log,
 	}
 }
 
@@ -348,6 +350,101 @@ func TestStockLookupsDateAPresetOnceTheClockIsSet(t *testing.T) {
 	file, _ = readPendingStockPresets(path)
 	if !file.Presets[0].FirstSeen.Equal(testNow) {
 		t.Fatalf("first seen %v, want %v", file.Presets[0].FirstSeen, testNow)
+	}
+}
+
+// On the first boot after an install from stock init sets the clock to the build's time: a
+// preset is not dated by it, nor by any clock before NTP set it, so a release older than a
+// week does not give the presets up at the first failed lookup once NTP moves the clock on.
+func TestStockLookupsWaitForNTPToDateAPreset(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), stockPendingName)
+	buildEpoch := testNow.Add(-30 * 24 * time.Hour)
+	recordPendingStockPresets(path, []pendingStockPreset{pending(1, uuidNPO2, "NPO Radio 2", time.Time{})},
+		trustedNow(buildEpoch.Add(time.Minute), func() bool { return false }), slog.New(slog.DiscardHandler))
+
+	file, _ := readPendingStockPresets(path)
+	if !file.Presets[0].FirstSeen.IsZero() {
+		t.Fatalf("dated by the build clock at the takeover: %v", file.Presets[0].FirstSeen)
+	}
+
+	down := func(context.Context, string) (radiobrowser.Station, error) {
+		return radiobrowser.Station{}, radiobrowser.ErrNoServer
+	}
+	now := buildEpoch.Add(2 * time.Minute)
+	synced := false
+	lookups := lookupsFor(path, speakerstate.New(), down, &now, slog.New(slog.DiscardHandler))
+	lookups.synced = func() bool { return synced }
+	lookups.buildEpoch = buildEpoch
+
+	if !lookups.round(t.Context()) {
+		t.Fatal("given up before NTP set the clock")
+	}
+
+	file, _ = readPendingStockPresets(path)
+	if !file.Presets[0].FirstSeen.IsZero() {
+		t.Fatalf("dated before NTP set the clock: %v", file.Presets[0].FirstSeen)
+	}
+
+	now, synced = testNow, true
+
+	if !lookups.round(t.Context()) {
+		t.Fatal("given up at the first round after NTP set the clock")
+	}
+
+	file, _ = readPendingStockPresets(path)
+	if !file.Presets[0].FirstSeen.Equal(testNow) {
+		t.Fatalf("first seen %v, want %v", file.Presets[0].FirstSeen, testNow)
+	}
+}
+
+// A preset an older build dated by init's build clock is dated again once NTP set the clock,
+// instead of being given up at once.
+func TestStockLookupsRedateAPresetDatedByTheBuildClock(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), stockPendingName)
+	buildEpoch := testNow.Add(-30 * 24 * time.Hour)
+	writePending(t, path, pending(1, uuidNPO2, "NPO Radio 2", buildEpoch.Add(time.Minute)))
+
+	down := func(context.Context, string) (radiobrowser.Station, error) {
+		return radiobrowser.Station{}, radiobrowser.ErrNoServer
+	}
+	now := testNow
+	lookups := lookupsFor(path, speakerstate.New(), down, &now, slog.New(slog.DiscardHandler))
+	lookups.buildEpoch = buildEpoch
+
+	if !lookups.round(t.Context()) {
+		t.Fatal("a preset dated by the build clock was given up")
+	}
+
+	file, _ := readPendingStockPresets(path)
+	if !file.Presets[0].FirstSeen.Equal(testNow) {
+		t.Fatalf("first seen %v, want %v", file.Presets[0].FirstSeen, testNow)
+	}
+}
+
+// The build's time reads from its file; a missing or garbled one reads as none.
+func TestReadBuildEpoch(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	good := filepath.Join(dir, "good")
+	bad := filepath.Join(dir, "bad")
+	_ = os.WriteFile(good, []byte("1764000000\n"), 0o600)
+	_ = os.WriteFile(bad, []byte("soon\n"), 0o600)
+
+	if got := readBuildEpoch(good); !got.Equal(time.Unix(1764000000, 0)) {
+		t.Errorf("good = %v", got)
+	}
+
+	if got := readBuildEpoch(bad); !got.IsZero() {
+		t.Errorf("bad = %v", got)
+	}
+
+	if got := readBuildEpoch(filepath.Join(dir, "none")); !got.IsZero() {
+		t.Errorf("missing = %v", got)
 	}
 }
 

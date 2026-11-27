@@ -11,10 +11,12 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/stein155/soundtap/app/internal/atomicjson"
+	"github.com/stein155/soundtap/app/internal/clocksync"
 	"github.com/stein155/soundtap/app/internal/radiobrowser"
 	"github.com/stein155/soundtap/app/internal/speaker"
 	"github.com/stein155/soundtap/app/internal/speakerstate"
@@ -42,6 +44,14 @@ const (
 	stockLookupGrowth     = 2
 )
 
+// buildEpochPath holds the build's time, which init sets the clock to on a boot with no
+// saved clock, such as the first one after an install from stock.
+const buildEpochPath = "/etc/soundtap-build-epoch"
+
+// buildClockGrace is how long after the build's time a preset counts as dated by init's
+// build clock rather than by NTP: the takeover runs in the boot's first minutes.
+const buildClockGrace = time.Hour
+
 // saneClockFloor is the earliest time a speaker's clock is believed: before NTP it may
 // read 1970, and a preset first seen then would be given up at once.
 //
@@ -54,7 +64,8 @@ type pendingStockPreset struct {
 	UUID string `json:"uuid"`
 	Name string `json:"name"`
 	Logo string `json:"logo,omitempty"`
-	// FirstSeen is when the takeover wrote it down; zero while the clock was not yet set.
+	// FirstSeen is when the takeover wrote it down, or the first lookup round after it once
+	// NTP had set the clock; zero until then.
 	FirstSeen time.Time `json:"firstSeen,omitzero"`
 }
 
@@ -67,9 +78,37 @@ type pendingStockFile struct {
 // errPendingVersion is a pending file of a format this build does not know.
 var errPendingVersion = errors.New("unknown version")
 
-// recordPendingStockPresets writes stock's Radio Browser presets down for the lookups. A
-// preset already waiting for the same station keeps the time it was first seen, so a
-// takeover that runs again does not restart its week.
+// trustedNow is now when the clock can date a preset: NTP set it this boot (synced, as
+// clocksync.Synced reports) and it reads later than saneClockFloor. Otherwise it is zero,
+// which leaves the preset undated: on the first boot after an install from stock init sets
+// the clock to the build's time, and a preset dated by it would be given up at the first
+// failed lookup once NTP moves the clock on by more than a week.
+func trustedNow(now time.Time, synced func() bool) time.Time {
+	if now.Before(saneClockFloor) || !synced() {
+		return time.Time{}
+	}
+
+	return now
+}
+
+// readBuildEpoch reads the build's time from path: zero when it does not read.
+func readBuildEpoch(path string) time.Time {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return time.Time{}
+	}
+
+	secs, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
+	if err != nil || secs <= 0 {
+		return time.Time{}
+	}
+
+	return time.Unix(secs, 0).UTC()
+}
+
+// recordPendingStockPresets writes stock's Radio Browser presets down for the lookups, dated
+// now (trustedNow: zero leaves them undated). A preset already waiting for the same station
+// keeps the time it was first seen, so a takeover that runs again does not restart its week.
 func recordPendingStockPresets(path string, pending []pendingStockPreset, now time.Time, log *slog.Logger) {
 	if len(pending) == 0 {
 		return
@@ -130,7 +169,14 @@ type stockLookups struct {
 	// store stores a preset in a slot only while it is empty (StorePresetIfEmpty).
 	store func(ctx context.Context, slot int, stream, name, logo string) (bool, error)
 	now   func() time.Time
-	log   *slog.Logger
+	// synced reports whether NTP set the clock this boot (clocksync.Synced): only then does
+	// a preset get its date.
+	synced func() bool
+	// buildEpoch is the build's time (readBuildEpoch): a preset dated before it, or within
+	// buildClockGrace after it, may have been dated by init's build clock (as builds before
+	// this check did) and is dated again; at worst its week starts again after an update.
+	buildEpoch time.Time
+	log        *slog.Logger
 }
 
 // startStockPresetLookups looks stock's Radio Browser presets up in the background while
@@ -164,8 +210,10 @@ func startStockPresetLookups(ctx context.Context, home string, state *speakersta
 		store: func(ctx context.Context, slot int, stream, name, logo string) (bool, error) {
 			return state.StorePresetIfEmpty(ctx, slot, sourceTuneIn, "stationurl", stream, name, logo)
 		},
-		now: time.Now,
-		log: log.With("comp", "stock-presets"),
+		now:        time.Now,
+		synced:     clocksync.Synced,
+		buildEpoch: readBuildEpoch(buildEpochPath),
+		log:        log.With("comp", "stock-presets"),
 	}
 
 	goSafe("stockPresetLookups", func() { lookups.run(ctx, sleepCtx) })
@@ -220,12 +268,13 @@ func (l *stockLookups) round(ctx context.Context) bool {
 	}
 
 	now := l.now()
+	stamp := trustedNow(now, l.synced)
 	waiting := make([]pendingStockPreset, 0, len(presets))
 	unreachable, changed := false, false
 
 	for _, preset := range presets {
-		if preset.FirstSeen.IsZero() && !now.Before(saneClockFloor) {
-			preset.FirstSeen, changed = now.UTC(), true
+		if !stamp.IsZero() && l.undated(preset.FirstSeen) {
+			preset.FirstSeen, changed = stamp.UTC(), true
 		}
 
 		if ctx.Err() != nil || unreachable {
@@ -252,6 +301,16 @@ func (l *stockLookups) round(ctx context.Context) bool {
 	}
 
 	return len(waiting) > 0 && ctx.Err() == nil
+}
+
+// undated reports whether a preset's first-seen time does not count: none yet, or one an
+// older build took from init's build clock before NTP had set it.
+func (l *stockLookups) undated(firstSeen time.Time) bool {
+	if firstSeen.IsZero() {
+		return true
+	}
+
+	return !l.buildEpoch.IsZero() && !firstSeen.After(l.buildEpoch.Add(buildClockGrace))
 }
 
 // lookup looks one preset up and stores it: keep reports that it still waits, noServer

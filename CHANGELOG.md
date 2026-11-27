@@ -53,6 +53,9 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
 - **A WPA3 network is no longer given up after a passing Wi-Fi hiccup.** When the Wi-Fi
   software failed to start once for an unrelated reason, the speaker stopped offering WPA3 and
   protected management frames until it was restarted.
+- **Radio Browser presets from the original software are no longer given up at once** on a
+  speaker that cannot reach Radio Browser right after the first install: the week SoundTap
+  keeps trying now starts once the speaker knows the time.
 - **On a network that hands out no gateway**, or has no internet, the display and the Wi-Fi
   lamp now say connected instead of "Connecting" for ever.
 
