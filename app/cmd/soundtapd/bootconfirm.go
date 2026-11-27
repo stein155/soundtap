@@ -27,6 +27,17 @@ var bootConfirmAfter = time.Minute
 //nolint:gochecknoglobals // a test seam: tests poll every millisecond
 var bootConfirmPoll = 10 * time.Second
 
+// bootConfirmTries is how often the confirmation, which writes the U-Boot environment, is
+// tried: a passing failure (the flash busy, an environment write that did not read back)
+// must not leave a good boot unconfirmed for its whole uptime, and a lasting one must not
+// write NAND without end.
+const bootConfirmTries = 3
+
+// bootConfirmBackoff is the wait before the second try; it doubles before each next one.
+//
+//nolint:gochecknoglobals // a test seam: tests retry after a millisecond
+var bootConfirmBackoff = 10 * time.Second
+
 // bootProbeTimeout bounds one look at the API's answer.
 const bootProbeTimeout = 5 * time.Second
 
@@ -46,7 +57,7 @@ type bootGate struct {
 	// every model but the ST20.
 	bco     chan struct{}
 	bcoOnce sync.Once
-	// attempted is closed once confirmBoot has made its one attempt.
+	// attempted is closed once confirmBoot has confirmed the boot or given up its tries.
 	attempted     chan struct{}
 	attemptedOnce sync.Once
 	// netDir is where the kernel lists network devices; a test points it elsewhere.
@@ -73,7 +84,7 @@ func (g *bootGate) bcoDone() {
 	}
 }
 
-// awaitAttempt waits up to d for confirmBoot's attempt, and says whether it came.
+// awaitAttempt waits up to d for confirmBoot's outcome, and says whether it came.
 func (g *bootGate) awaitAttempt(ctx context.Context, d time.Duration) bool {
 	timer := time.NewTimer(d)
 	defer timer.Stop()
@@ -133,7 +144,7 @@ func (g *bootGate) checks(probe string) []bootCheck {
 // rollback to the other slot. A boot that does not show it yet is looked at again every
 // bootConfirmPoll for as long as soundtapd runs, so a slow start, a busy moment or a BCO
 // flash only delays the confirmation. The confirmation itself, which writes the
-// environment, is tried once.
+// environment, is tried up to bootConfirmTries times, bootConfirmBackoff apart and doubling.
 func confirmBoot(
 	ctx context.Context, srv interface{ ConfirmBoot() error }, gate *bootGate, checks []bootCheck, log *slog.Logger,
 ) {
@@ -169,14 +180,32 @@ func confirmBoot(
 
 	defer gate.attemptedOnce.Do(func() { close(gate.attempted) })
 
-	err := srv.ConfirmBoot()
-	if err != nil {
-		log.Warn("boot confirm", "err", err)
+	backoff := bootConfirmBackoff
 
-		return
+	for try := 1; ; try++ {
+		err := srv.ConfirmBoot()
+		if err == nil {
+			log.Info("boot confirmed")
+
+			return
+		}
+
+		if try >= bootConfirmTries {
+			log.Error("boot not confirmed: giving up for this boot", "err", err, "tries", try)
+
+			return
+		}
+
+		log.Warn("boot confirm failed, trying again", "err", err, "try", try, "in", backoff)
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+
+		backoff *= 2
 	}
-
-	log.Info("boot confirmed")
 }
 
 // pendingCheck returns what the first unmet check waits for, or "" when all are met.

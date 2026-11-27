@@ -28,10 +28,65 @@ func (c *confirmRecorder) ConfirmBoot() error {
 func quickConfirm(t *testing.T) {
 	t.Helper()
 
-	after, poll := bootConfirmAfter, bootConfirmPoll
-	bootConfirmAfter, bootConfirmPoll = time.Millisecond, time.Millisecond
+	after, poll, backoff := bootConfirmAfter, bootConfirmPoll, bootConfirmBackoff
+	bootConfirmAfter, bootConfirmPoll, bootConfirmBackoff = time.Millisecond, time.Millisecond, time.Millisecond
 
-	t.Cleanup(func() { bootConfirmAfter, bootConfirmPoll = after, poll })
+	t.Cleanup(func() { bootConfirmAfter, bootConfirmPoll, bootConfirmBackoff = after, poll, backoff })
+}
+
+// flakyConfirm fails its first fails confirmations, then confirms.
+type flakyConfirm struct {
+	fails int32
+	n     atomic.Int32
+}
+
+var errFakeEnvWrite = errors.New("fw_setenv: environment did not read back")
+
+func (f *flakyConfirm) ConfirmBoot() error {
+	if f.n.Add(1) <= f.fails {
+		return errFakeEnvWrite
+	}
+
+	return nil
+}
+
+// A confirmation whose environment write fails once is tried again, and the boot is
+// confirmed; one that keeps failing is given up after bootConfirmTries, without writing the
+// environment for the rest of the uptime.
+//
+//nolint:paralleltest // swaps package variables other tests read: bootConfirmAfter, bootConfirmPoll
+func TestConfirmBootRetriesTheWriteBounded(t *testing.T) {
+	quickConfirm(t)
+
+	met := []bootCheck{func(context.Context) string { return "" }}
+
+	once := &flakyConfirm{fails: 1, n: atomic.Int32{}}
+	gate := newBootGate()
+	confirmBoot(t.Context(), once, gate, met, quietLog())
+
+	if n := once.n.Load(); n != 2 {
+		t.Fatalf("a failed write then a good one: %d tries, want 2", n)
+	}
+
+	if !gate.awaitAttempt(t.Context(), time.Second) {
+		t.Fatal("the outcome was not reported")
+	}
+
+	always := &flakyConfirm{fails: 1 << 30, n: atomic.Int32{}}
+	gate = newBootGate()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	confirmBoot(ctx, always, gate, met, quietLog())
+
+	if n := always.n.Load(); n != bootConfirmTries {
+		t.Fatalf("a write that keeps failing: %d tries, want %d", n, bootConfirmTries)
+	}
+
+	if !gate.awaitAttempt(t.Context(), time.Second) {
+		t.Fatal("giving up was not reported")
+	}
 }
 
 // runConfirm runs confirmBoot until it returns or d passed, and says how often it confirmed.

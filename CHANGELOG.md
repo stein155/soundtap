@@ -60,6 +60,9 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
   when it came while SoundTap was still looking them up.
 - **SoundTouch 20: a WEP network taken over from the original software joins** also when
   its router uses another of its four WEP keys than the first.
+- **After an update the speaker notes more reliably that the new version started well.** One
+  failed attempt used to leave it unnoted until the next restart, and enough restarts then
+  rolled the update back; SoundTap now tries up to three times.
 - **On a network that hands out no gateway**, or has no internet, the display and the Wi-Fi
   lamp now say connected instead of "Connecting" for ever.
 

@@ -120,7 +120,10 @@ environment.
   network, so a speaker without a router still confirms a good image; not the audio, because what
   breaks audio (the codec script on `/mnt/nv`, the amplifier) is not fixed by the other slot, and a
   stalled mixer is the watchdog's ([ADR 0052](0052-soundtapd-lifecycle.md)). A boot that never
-  passes stays unconfirmed and is not rebooted for it.
+  passes stays unconfirmed and is not rebooted for it. The confirmation itself, which writes the
+  environment, is tried up to three times, 10 s and then 20 s apart: a passing failure of the
+  write does not leave a good boot unconfirmed for its whole uptime, and a lasting one costs at
+  most three tries.
 - **Settling.** The confirmation clears `upgrade_available` and `bootcount` (one environment
   write, none when they are absent), resets SCRATCH2, and brings an armed `bootlimit` that differs
   to `BootLimit`. It clears them only while `bootcmd` selects the running slot: a selection of the
@@ -209,7 +212,8 @@ good update back).
   `app/internal/flash/bootcount.go:ConfirmBootCount`: SCRATCH2.
 - `app/internal/ubootenv/ubootenv.go`: the codecs of both formats; `app/internal/ubootenv/ubootenvtest`
   and `app/internal/ubootenv/writers_test.go`: the fakes and the same-bytes check of every writer.
-- `app/cmd/soundtapd/bootconfirm.go`: `confirmBoot`, `bootConfirmAfter`, `bootConfirmPoll`;
+- `app/cmd/soundtapd/bootconfirm.go`: `confirmBoot`, `bootConfirmAfter`, `bootConfirmPoll`,
+  `bootConfirmTries`, `bootConfirmBackoff`;
   `app/cmd/soundtapd/bco_install.go`: `bcoFlashLimit`.
 - `os/bootloader/uboot/uboot-2026.07-env-redundant.patch`,
   `os/bootloader/uboot/uboot-2026.07-bootcount-env.patch`,
