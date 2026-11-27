@@ -538,9 +538,11 @@ keeps time from the USB frame number ([detail](../hardware/st20/bco-network-card
 `wlan0` and the SoundTap UI on :80 from the LAN ([measurement](../hardware/st20/bco-network-card.md#lan-and-api-response), [ADR 0001](../decisions/0001-soundtapd-one-go-daemon.md)).
 
 For setup soundtapd's Wi-Fi manager adds `wlan1` as `__ap` and starts `hostapd`, as on the ST10
-([ADR 0031](../decisions/0031-bco-network-card.md)). The driver passes hostapd's beacon to the BCO. The WiLD core
-beacons from it with the BCO's own MAC as BSSID and answers probes; SoundTap's BCO app answers authentication and
-association (AP SME in the device). Channel 1 then carries `wlan1`'s frames.
+([ADR 0031](../decisions/0031-bco-network-card.md)). The driver passes hostapd's beacon to the BCO. SoundTap's BCO
+app beacons from it with the BCO's own MAC as BSSID (the WiLD core has no beacon timer), answers probes, authentication
+and association (AP SME in the device), and holds frames for a client that dozes. Channel 1 then carries `wlan1`'s
+frames. `iw dev wlan1 station dump` lists the clients the BCO reports, and soundtapd logs the BCO's view of the setup
+AP (`/sys/class/net/bcolink0/bco/ap`) while it runs.
 
 The BCO reports its free Wi-Fi transmit buffers as credit; the driver stops `wlan0`'s (or `wlan1`'s) queue
 while there is none, so frames wait in the SCM's qdisc instead of being dropped on the BCO. The BCO's transmit

@@ -300,21 +300,48 @@ phone). Now:
   it `wlan1` to hostapd) only then, so an app without it no longer makes the speaker leave its
   network for an AP that never goes on air.
 - Frames from associated clients (toDS) go to the SCM as Ethernet frames (DA = addr3, SA =
-  addr2); frames from the SCM go out fromDS to an associated client or to every client (group
-  addresses at 1 Mb/s, unicast on the client's own rate chain). While the access point runs it
-  owns link channel 1; the station is left first. There is no intra-BSS relay and no power-save
-  buffering.
+  addr2); frames from the SCM go out fromDS to an associated client or to every client. The core
+  sends group-addressed data at the basic rate (1 Mb/s, as management frames) and unicast data at
+  its data rate; a probe response gets one retry, as the phone that asked has moved on to the next
+  channel by then. While the access point runs it owns link channel 1; the station is left first.
+  There is no intra-BSS relay.
+- In `ap_mode` the core counts a unicast frame whose A1 is the BCO's own address as passing the
+  address filter (`mac.c`): that filter is set up for a station, and whether it flags a toDS frame
+  was never measured. A phone that joined the setup network on alpha.6 got no DHCP lease and
+  udhcpd logged nothing (2026-11-27). So a client's data, null-data, QoS data and PS-Poll are kept
+  and ACKed; QoS data goes up without its QoS control, a PS-Poll padded to a 24-byte header. Other
+  networks' group data on the channel is not kept: it filled the core's four-frame receive queue.
+- Power save: the app follows each client's power-management bit (data and null-data frames).
+  Unicast frames for a dozing client are held, four at most (the oldest goes), in SDRAM past the
+  image (`app.ld` `.noinit`), and its bit (AID = slot + 1) is set in the beacon's TIM; a PS-Poll
+  fetches one frame with More Data while more wait, a frame with the bit clear fetches the rest.
+  Every beacon is a DTIM beacon (count 0, period 1); while any client dozes, group frames wait for
+  the next one, which carries the group bit, and follow it.
+- `AP_STATUS` (`bco/app/src/mgmt.h`): status, count, the client MACs and eight counters (AP up,
+  probe requests, frames heard, transmits ACKed, lost, dropped, frames to the SCM, beacons); behind
+  `BCOLINK_CAP_APDIAG` then the ms from `AP_START` to the first beacon, the core's frames to our
+  address, those the address filter missed, client data kept (its flight recorder, which
+  `HOST_FLAG2` locates), held frames lost, and per client: dozing, frames held, ms since last
+  heard, data and null-data from it, unicast frames to it ACKed and lost. The driver lists the
+  clients for `iw dev wlan1 station dump` (inactive time, packets, failures), which soundtapd's
+  hold reads to keep the setup network up while a phone is on it (before, the dump was always
+  empty and the hold took the network for idle), and writes the whole reply to
+  `/sys/class/net/bcolink0/bco/ap` as `name value` lines. soundtapd logs it every 10 s while it
+  changes (`setup AP status`, a `setup AP client` line per client by the last three octets of its
+  address) and the first beacon once (`setup AP beaconing`, with the time since `starting the
+  setup AP`); udhcpd runs with `-v`, so each DISCOVER and REQUEST is in the log next to the OFFER
+  and ACK.
 - On the SCM, `soundtap_bco` advertises AP mode, a STA + AP interface combination on one channel
   and `WIPHY_FLAG_HAVE_AP_SME` (the device does authentication and association, as `brcmfmac`).
   `start_ap` sends hostapd's beacon (head + a TIM + tail) down as `AP_START`; `stop_ap` sends
   `AP_STOP`. Beacon updates after start (`change_beacon`) are not passed on, and hostapd gets no
   new-station events; `iw dev wlan1 station get` asks the BCO.
-- Clients that doze may lose unicast frames (no TIM bits, no buffering). The radio stays on the
-  access point's channel, so a scan while it runs returns the scan made before it. Beacons come
+- The radio stays on the access point's channel, so a scan while it runs returns the scan made before it. Beacons come
   from the main loop, so their spacing follows its polling: a few milliseconds of jitter, which
   clients tolerate.
-- Not yet seen on air: a phone finding the network and joining it is the hardware checklist's
-  setup-AP row for the ST20.
+- Seen on air on alpha.6 (2026-11-27): the network appeared on a phone after a while and the
+  phone joined, but got no address. A phone getting an address, and how soon the network
+  appears, is the hardware checklist's setup-AP row for the ST20.
 
 ## CCMP on the core's cipher engine
 

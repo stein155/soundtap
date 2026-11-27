@@ -10,6 +10,20 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
 
 ## [Unreleased]
 
+### Fixed
+
+- **SoundTouch 20: phones get an address on the setup network.** A phone could join it but
+  then waited without an address. The speaker's network chip now accepts what a phone sends
+  it, keeps messages for a phone that has gone to sleep until it wakes, and sends messages for
+  every phone at the slowest speed, so phones further away hear them too.
+- **SoundTouch 20: the setup network stays up while a phone is on it**, instead of closing
+  after a few minutes to try your home network again.
+- **SoundTouch 20: the display counts down while you hold Preset 2 and Volume Down** (or
+  Preset 1 and Volume Down for a reset), with the seconds left and a bar, and says "Setup mode
+  on" when the setup network starts.
+- **The log shows how the setup network is doing**: when it started broadcasting, which phones
+  are on it, and each address request a phone makes.
+
 ## [app-v0.1.0-alpha.6] - 2026-11-27
 
 - The SoundTap app that SoundTap Core 0.1.0-alpha.6 carries; what it changes is listed under

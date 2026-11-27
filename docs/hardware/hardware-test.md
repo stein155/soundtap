@@ -526,7 +526,7 @@ prohibited and historical results are not silently counted as pending executable
 | a new slot confirms with the router switched off: the boot confirm checks no network (ADR 0010) | open |
 | ROM-USB restore of the release's boot chain (`tools/recovery/rom-usb-restore.py`, [recovery tools](install-records.md#repairing-the-boot-chain-over-rom-usb)) | open |
 
-### ST20 (48 open)
+### ST20 (49 open)
 
 | Prove on the speaker | Status |
 |---|---|
@@ -547,6 +547,7 @@ prohibited and historical results are not silently counted as pending executable
 | BCO idle check (ADR 0031): left idle past the access point's inactivity time (hostapd `ap_max_inactivity`, 300 s), the ST20 stays associated: no reason-4 disassociation in the AP's log, no disconnect in `iw event`; a capture shows ACKs to the AP's null-data | open |
 | BCO join details (ADR 0031): a TKIP-group network logs `group cipher TKIP` on the join line, a CCMP one `CCMP`; an AP that stops its BSS (a broadcast deauthentication) makes `iw event` show the disconnect at once; a join that runs past 90 s logs `BCO join timed out` and wpa_supplicant tries once more, no loop; in an environment of 40 or more 2.4 GHz networks the owner's network is still found | open |
 | BCO setup access point clients (ADR 0031): with six phones on the setup network a seventh is refused and none of the six drops | open |
+| BCO setup access point on air (ADR 0031): the panel counts Preset 2 + Volume Down down (`Setup mode`, the seconds left and a bar, nothing left after letting go early) and says `Setup mode on`; the log's `setup AP beaconing` comes within 15 s of `chord fired`, and the network shows on a phone within 30 s of it; a phone 5 m away joins and gets an address within 10 s (udhcpd's `received DISCOVER`, `sending OFFER`, `received REQUEST`, `sending ACK` in the log), opens the setup page, and keeps it with its screen off for 2 minutes; `iw dev wlan1 station dump` lists it, and the setup network stays up while it is on | open |
 | BCO regulatory domain (ADR 0135): after soundtapd's `iw reg set`, the kernel log says `BCO regulatory domain` with the speaker's country, its channels and passive channels, and that the TX power limit is not enforced; under `iw reg set 00` an access point on channel 12 or 13 is still found by the passive listen, and a setup access point is never started on a passive channel | open |
 | BCO antenna setting (ADR 0135), a read-only check with the owner's OK for this read alone, on an alpha image whose BCO app announces `BCOLINK_CAP_NVINFO`: `cat /sys/class/net/bcolink0/bco/nv_keys` as root lists the PersParam keys with their lengths; record which key holds the antenna setting and its value in [the BCO network card](st20/bco-network-card.md#antenna-setting); nothing is written | open |
 | phone volume slider follows speaker volume (AVRCP) | unavailable: Series I; Series III has offline coverage only (scope above) |
