@@ -30,10 +30,16 @@ static inline unsigned ahb_hz(void)
     return (XTAL_HZ / n * m >> (pll & 3)) / div;
 }
 
+/* The UART page; a host test under AddressSanitizer may put it elsewhere, since on x86-64 its
+ * shadow gap covers 0xb1001000. */
+#ifndef BOARD_UART_PAGE
+#define BOARD_UART_PAGE 0xb1001000u
+#endif
+
 static inline void say(const char *s)
 {
-    volatile unsigned char *thr = (void *)(0xb1001e80);
-    const volatile unsigned *status = (void *)(0xb1001f44);
+    volatile unsigned char *thr = (void *)(BOARD_UART_PAGE + 0xe80);
+    const volatile unsigned *status = (void *)(BOARD_UART_PAGE + 0xf44);
     while (*s) {
         /* status bit2 is not "busy" on hardware (it never clears), so this is a
          * fixed ~1 ms wait per char (> 87 us char time); poll the real ready bit once known. */

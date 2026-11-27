@@ -19,6 +19,9 @@
 #pragma GCC diagnostic ignored "-Wpointer-to-int-cast"
 #pragma GCC diagnostic ignored "-Wint-to-pointer-cast"
 /* wifi.c brings its own memcpy/memset for the freestanding build; keep the C library's here. */
+/* The UART page say() writes: a buffer here, as the fixed page is in ASan's shadow gap on x86-64. */
+static unsigned char fuzz_uart[0x1000] __attribute__((aligned(4096)));
+#define BOARD_UART_PAGE ((uintptr_t)fuzz_uart)
 #define memcpy wifi_memcpy
 #define memset wifi_memset
 #include "../src/wifi.c"
@@ -52,10 +55,10 @@ void netcard_from_port(unsigned ch, const unsigned char *f, unsigned n)
 __attribute__((constructor)) static void map_wreg(void)
 {
     static int probe;
-    /* the WiLD registers: the doorbell the AP's peer commands and the key commands ring; and the
-     * UART page: a Michael MIC failure says so in one line (board.h say) */
-    static const unsigned long at[2] = {(unsigned long)WREG, 0xb1001000ul};
-    for (int i = 0; i < 2; i++)
+    /* the WiLD registers: the doorbell the AP's peer commands and the key commands ring (the
+     * UART page board.h say() writes is fuzz_uart above) */
+    static const unsigned long at[1] = {(unsigned long)WREG};
+    for (int i = 0; i < 1; i++)
         if (mmap((void *)at[i], 0x1000, PROT_READ | PROT_WRITE,
                  MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0) != (void *)at[i]) {
             perror("wifi_rx_fuzz: map the WiLD registers and the UART");
