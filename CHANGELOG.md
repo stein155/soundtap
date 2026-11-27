@@ -64,7 +64,7 @@ The seventh alpha of SoundTap Core 0.1.0.
   wakes, and sends messages for every phone at the slowest speed, so phones further away hear
   them too. Its announcements are no longer cut off by the next message, it answers phones that
   ask before they send, and it talks to each phone at a speed that phone accepts. A phone on it
-  still gets no address on our test speaker; that is not solved yet.
+  now gets an address.
 - **SoundTouch 20: phones that save battery stay connected to the setup network**: its
   broadcasts now come exactly on time, when a sleeping phone wakes to listen for them.
 - **SoundTouch 20: the setup network stays up while a phone is on it**, instead of closing
