@@ -513,11 +513,12 @@ static int send_assoc(void)
     int body;
     if (!a)
         return 0;
-    /* an open network: neither a security IE nor the Privacy bit */
-    unsigned char ie[WPA_RSN_IE_LEN];
+    /* an open network: neither a security IE nor the Privacy bit; a PSK one the RSN or WPA IE of
+     * what join_attempt chose */
+    unsigned char ie[WPA_IE_MAX];
     unsigned ielen = 0;
     if (prof_sec == WIFI_SEC_PSK)
-        wpa_rsn_ie(ie, cur.grp), ielen = sizeof ie;
+        ielen = wpa_own_ie(ie, cur.proto, cur.grp, cur.pair, WPA_AKM_PSK, 0);
     body = wstation_assoc((volatile uint8_t *)a, TXFBUF, own, cur.bssid, rates,
                           (const char *)cur.ssid, cur.ssidlen, cur.caps, ie, ielen,
                           prof_sec != WIFI_SEC_OPEN);
@@ -1299,6 +1300,7 @@ int wifi_bss(unsigned i, struct wifi_bss *o)
     o->chan = b->chan;
     o->sec = bss_sec(b);
     o->grp = b->grp;
+    o->rpair = b->rpair, o->rakm = b->rakm, o->rcaps = b->rcaps, o->wgrp = b->wgrp, o->wpair = b->wpair;
     /* the joined BSS: the core's own level (MIB 20:11); the rest: their last beacon */
     o->rssi = have_cur && state == WIFI_UP && same(cur.bssid, b->bssid, 6) ? link_rssi() : b->rssi;
     return 0;
@@ -1323,19 +1325,35 @@ static int named(const struct bss *b)
     return b->ssidlen == cur.ssidlen && same(b->ssid, cur.ssid, cur.ssidlen) && chan_ok(b->chan);
 }
 
+/* What join_attempt joins b with under a PSK profile, as wpa_supplicant picks it: RSN over WPA,
+ * and in either pairwise CCMP over TKIP; the group is the access point's. 0 when neither IE lets
+ * this station join (wscan.h rsn_parse, wpa_parse). */
+static int choose(const struct bss *b, unsigned *proto, unsigned *pair, unsigned *grp)
+{
+    if (b->rsnok)
+        *proto = WPA_PROTO_RSN, *pair = (b->rpair & BSS_CCMP) ? WPA_CIPHER_CCMP : WPA_CIPHER_TKIP,
+        *grp = b->grp;
+    else if (b->wpaok)
+        *proto = WPA_PROTO_WPA, *pair = (b->wpair & BSS_CCMP) ? WPA_CIPHER_CCMP : WPA_CIPHER_TKIP,
+        *grp = b->wgrp;
+    else
+        return 0;
+    return 1;
+}
+
 /* A named BSS this station can join with the profile's security: an open network (no Privacy
- * bit, capability bit 4) for an open profile; for a PSK profile one whose RSN IE it can join
- * (bss.rsnok: pairwise CCMP, AKM PSK, management frame protection not required, a CCMP or TKIP
- * group cipher). */
+ * bit, capability bit 4) for an open profile; for a PSK profile one whose RSN or WPA IE it can join
+ * (choose). During the TKIP countermeasures no network that would use TKIP, pairwise or group. */
 static int match(const struct bss *b)
 {
+    unsigned proto, pair, grp;
     if (!named(b))
         return 0;
-    if (cm_on && !due(cm_until) && b->grp == WSEC_TKIP)
-        return 0; /* TKIP countermeasures: no TKIP network for CM_HOLD_MS (mic_failure) */
     if (prof_sec == WIFI_SEC_OPEN)
         return !(b->caps & 0x10) && !b->rsn && !b->wpa;
-    return b->rsnok;
+    if (!choose(b, &proto, &pair, &grp))
+        return 0;
+    return !(cm_on && !due(cm_until) && (pair == WPA_CIPHER_TKIP || grp == WPA_CIPHER_TKIP));
 }
 
 /* The SSID is there, but only with security this station cannot join with the profile (WPA3
@@ -1427,8 +1445,14 @@ static void join_attempt(void)
     copy(cur.bssid, bsstab[i].bssid, 6);
     cur.chan = bsstab[i].chan;
     cur.caps = bsstab[i].caps; /* the association request mirrors its short slot and preamble */
-    cur.grp = bsstab[i].grp;   /* and carries the RSN IE with its group cipher */
+    {   /* and carries the RSN or WPA IE with the ciphers chosen */
+        unsigned proto = 0, pair = 0, grp = 0;
+        choose(&bsstab[i], &proto, &pair, &grp);
+        cur.proto = (unsigned char)proto, cur.pair = (unsigned char)pair, cur.grp = (unsigned char)grp;
+    }
     cur.rsn = bsstab[i].rsn, cur.wpa = bsstab[i].wpa; /* what STATUS reports it offers */
+    cur.rpair = bsstab[i].rpair, cur.rakm = bsstab[i].rakm, cur.rcaps = bsstab[i].rcaps;
+    cur.wgrp = bsstab[i].wgrp, cur.wpair = bsstab[i].wpair;
     for (unsigned r = 0; r < 8; r++)
         rates[r] = lo;
     keyed = ap_keyed = 0, keys_due = 0, rxauthok = rxassocok = kicked = 0, eappend = 0;
@@ -1522,7 +1546,8 @@ static void join_step(void)
             }
             snonce(sn);
             wpa_sm_init(&sm, pmk, cur.bssid, own, sn);
-            sm.group = cur.grp == 2 ? 2 : 4; /* Message 2 repeats the RSN IE of the request */
+            /* Message 2 repeats the IE of the request */
+            wpa_sm_config(&sm, cur.proto, cur.pair, cur.grp, WPA_AKM_PSK, 0);
             jstep = J_4WAY, deadline = now + 8000;
         } else if (due(deadline)) {
             if (fail_step != WIFI_FAIL_ASSOC)
@@ -1547,8 +1572,17 @@ static void join_step(void)
  * leaves a key due, tried again on the next poll instead of being lost. */
 static void install_keys(void)
 {
-    if ((keys_due & WPA_RX_INSTALL_PTK) && !set_key(1, 0, sm.ptk + 32, WSEC_CCMP))
+    /* A CCMP PTK's TK goes to the engine; a TKIP one (TK and both MIC keys) stays here */
+    if ((keys_due & WPA_RX_INSTALL_PTK) &&
+        !set_key(1, 0, sm.ptk + 32, sm.pairwise == WPA_CIPHER_TKIP ? WSEC_TKIP : WSEC_CCMP)) {
         keys_due &= ~WPA_RX_INSTALL_PTK, keyed = 1;
+        sw_pair.cipher = 0;
+        if (sm.pairwise == WPA_CIPHER_TKIP) {
+            copy(sw_pair.key, sm.ptk + 32, 32);
+            sw_pair.tsc = sw_pair.rxtsc = 0;
+            sw_pair.cipher = WSEC_TKIP;
+        }
+    }
     /* A CCMP group key goes to the engine. A TKIP one (32 bytes: a WPA/WPA2 mixed router keeps
      * TKIP for its broadcasts) stays here and the core only learns that its frames are the app's
      * (ADR 0136), so mDNS, ARP and DHCP broadcasts come through. A key of any other length is
@@ -1740,7 +1774,8 @@ int wifi_join(const unsigned char *ssid, unsigned ssid_len, unsigned sec, const 
     drop_link();
     copy(cur.ssid, ssid, ssid_len);
     cur.ssidlen = ssid_len;
-    cur.grp = cur.rsn = cur.wpa = 0; /* STATUS reports nothing of an earlier network until one is picked */
+    cur.grp = cur.rsn = cur.wpa = cur.proto = cur.pair = 0; /* STATUS reports nothing of an earlier network until one is picked */
+    cur.rpair = cur.rakm = cur.rcaps = cur.wgrp = cur.wpair = 0;
     cur.caps = 0;
     bss_want(0, ssid, ssid_len);
     for (unsigned i = 0; i < 32; i++)
@@ -1870,6 +1905,7 @@ int wifi_current(struct wifi_bss *o)
 {
     if (!have_cur) {
         o->ssid_len = o->chan = o->sec = o->grp = 0, o->rssi = 0;
+        o->rpair = o->rakm = o->rcaps = o->wgrp = o->wpair = 0;
         for (unsigned i = 0; i < 6; i++)
             o->bssid[i] = 0;
         return 0;
@@ -1879,6 +1915,7 @@ int wifi_current(struct wifi_bss *o)
     copy(o->bssid, cur.bssid, 6);
     o->chan = cur.chan, o->sec = bss_sec(&cur), o->rssi = state == WIFI_UP ? link_rssi() : 0;
     o->grp = cur.grp; /* the target's from join_attempt on, 0 before */
+    o->rpair = cur.rpair, o->rakm = cur.rakm, o->rcaps = cur.rcaps, o->wgrp = cur.wgrp, o->wpair = cur.wpair;
     return 1;
 }
 

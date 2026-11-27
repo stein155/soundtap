@@ -33,9 +33,12 @@ static unsigned beacon(unsigned char *buf, unsigned char last, signed char rssi)
     return frame(buf, 0x80, last, rssi, ssid, sizeof ssid);
 }
 
+static struct bss last; /* the sets the last rsn()/wpa() call read */
 static int rsn(const unsigned char *ie, unsigned n, unsigned char *grp)
 {
-    return rsn_parse(ie, n, grp);
+    int r = rsn_parse(ie, n, &last);
+    *grp = last.grp;
+    return r;
 }
 
 static void rsn_cases(void)
@@ -61,10 +64,19 @@ static void rsn_cases(void)
     static const unsigned char mfpr[] = {1, 0, 0, 0x0f, 0xac, 4, 1, 0, 0, 0x0f, 0xac, 4,
                                          1, 0, 0, 0x0f, 0xac, 2, 0x40, 0};
     assert(rsn(mfpr, sizeof mfpr, &g) == 0);
-    /* TKIP pairwise only */
+    assert(rsn(mixed, sizeof mixed, &g) && last.rpair == (BSS_CCMP | BSS_TKIP) && last.rakm == BSS_PSK);
+    /* TKIP pairwise only, TKIP group: WPA2 with TKIP (ADR 0136) */
     static const unsigned char tkip[] = {1, 0, 0, 0x0f, 0xac, 2, 1, 0, 0, 0x0f, 0xac, 2,
                                          1, 0, 0, 0x0f, 0xac, 2, 0, 0};
-    assert(rsn(tkip, sizeof tkip, &g) == 0);
+    assert(rsn(tkip, sizeof tkip, &g) == 1 && g == 2 && last.rpair == BSS_TKIP);
+    /* TKIP pairwise under a CCMP group: not a combination anyone may use */
+    static const unsigned char tkip_ccmp[] = {1, 0, 0, 0x0f, 0xac, 4, 1, 0, 0, 0x0f, 0xac, 2,
+                                              1, 0, 0, 0x0f, 0xac, 2, 0, 0};
+    assert(rsn(tkip_ccmp, sizeof tkip_ccmp, &g) == 0);
+    /* WEP-40 pairwise: never */
+    static const unsigned char wep[] = {1, 0, 0, 0x0f, 0xac, 1, 1, 0, 0, 0x0f, 0xac, 1,
+                                        1, 0, 0, 0x0f, 0xac, 2, 0, 0};
+    assert(rsn(wep, sizeof wep, &g) == 0);
     /* enterprise (802.1X) */
     static const unsigned char eap[] = {1, 0, 0, 0x0f, 0xac, 4, 1, 0, 0, 0x0f, 0xac, 4,
                                         1, 0, 0, 0x0f, 0xac, 1, 0, 0};
@@ -76,6 +88,39 @@ static void rsn_cases(void)
     assert(rsn(lie, sizeof lie, &g) == 0);
     static const unsigned char v2[] = {2, 0, 0, 0x0f, 0xac, 4};
     assert(rsn(v2, sizeof v2, &g) == 0);
+}
+
+/* The WPA IE (00-50-F2 type 1) after its OUI and type: WPA-PSK with TKIP, with CCMP, a CCMP
+ * pairwise under a TKIP group, enterprise, truncated, another OUI's suites. */
+static void wpa_cases(void)
+{
+    struct bss b;
+    static const unsigned char tkip[] = {1, 0, 0, 0x50, 0xf2, 2, 1, 0, 0, 0x50, 0xf2, 2,
+                                         1, 0, 0, 0x50, 0xf2, 2};
+    assert(wpa_parse(tkip, sizeof tkip, &b) && b.wgrp == 2 && b.wpair == BSS_TKIP && b.wakm == BSS_PSK);
+    static const unsigned char ccmp[] = {1, 0, 0, 0x50, 0xf2, 4, 1, 0, 0, 0x50, 0xf2, 4,
+                                         1, 0, 0, 0x50, 0xf2, 2};
+    assert(wpa_parse(ccmp, sizeof ccmp, &b) && b.wgrp == 4 && b.wpair == BSS_CCMP);
+    static const unsigned char both[] = {1, 0, 0, 0x50, 0xf2, 2, 2, 0, 0, 0x50, 0xf2, 4, 0, 0x50,
+                                         0xf2, 2, 1, 0, 0, 0x50, 0xf2, 2};
+    assert(wpa_parse(both, sizeof both, &b) && b.wpair == (BSS_CCMP | BSS_TKIP));
+    static const unsigned char eap[] = {1, 0, 0, 0x50, 0xf2, 2, 1, 0, 0, 0x50, 0xf2, 2,
+                                        1, 0, 0, 0x50, 0xf2, 1};
+    assert(!wpa_parse(eap, sizeof eap, &b));
+    assert(!wpa_parse(tkip, 12, &b));
+    static const unsigned char rsnoui[] = {1, 0, 0, 0x0f, 0xac, 2, 1, 0, 0, 0x0f, 0xac, 2,
+                                           1, 0, 0, 0x0f, 0xac, 2};
+    assert(!wpa_parse(rsnoui, sizeof rsnoui, &b));
+    /* a beacon with only the WPA IE: wpaok, not rsn */
+    unsigned char buf[0x14 + 128];
+    static const unsigned char ies[] = {0, 4, 'H', 'o', 'm', 'e', 3, 1, 6, 0xdd, 22, 0x00, 0x50,
+                                        0xf2, 1, 1, 0, 0, 0x50, 0xf2, 2, 1, 0, 0, 0x50, 0xf2, 2,
+                                        1, 0, 0, 0x50, 0xf2, 2};
+    nbss = 0;
+    unsigned len = frame(buf, 0x80, 9, -50, ies, sizeof ies);
+    assert(bss_add(buf + 0x14, len, 6, -50) && bsstab[0].wpa && bsstab[0].wpaok && !bsstab[0].rsn &&
+           !bsstab[0].rsnok && bsstab[0].wgrp == 2);
+    nbss = 0;
 }
 
 /* A beacon from BSSID 02:00:00:00:<hi>:<lo> for ssid. */
@@ -205,6 +250,7 @@ int main(void)
     assert(bss_add(buf + 0x14, len, 11, 0) == 1 && nbss == 2);
     assert(bsstab[1].ssidlen == 0 && bsstab[1].rssi == 0 && bsstab[1].seen == 1);
     rsn_cases();
+    wpa_cases();
     table_cases();
     wanted_cases();
     puts("wscan ok");

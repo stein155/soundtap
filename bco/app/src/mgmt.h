@@ -53,6 +53,14 @@ extern unsigned mgmt_events; /* events are on */
 unsigned mgmt_event_due(unsigned char *r);
 void mgmt_event_lost(void);
 
+/* SCAN's flags (payload byte 0): 1 starts a scan; 2 (BCOLINK_CAP_SECURITY) asks for entries with
+ * their security detail, MGMT_SCAN_DETAIL_LEN bytes after the security byte: RSN group cipher
+ * suite type, RSN pairwise set, RSN AKM set, RSN capabilities' low byte, WPA IE group, WPA IE
+ * pairwise set (wifi.h WIFI_SET_*). STATUS carries the same bytes after its security byte. */
+#define MGMT_SCAN_START 0x1u
+#define MGMT_SCAN_DETAIL 0x2u
+#define MGMT_SCAN_DETAIL_LEN 6
+
 /* SET_PROFILE's tail (BCOLINK_CAP_ROAM): after the 32-byte seed, flags and bssid[6]. Without the
  * tail the app joins any BSSID of the SSID and never roams, as an app before ADR 0135 did. */
 #define MGMT_PROFILE_TAIL 7

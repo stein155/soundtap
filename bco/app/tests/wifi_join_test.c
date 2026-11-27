@@ -568,6 +568,68 @@ static void tkip_frames(void)
     printf("ok: TKIP group and pairwise frames in the app, MIC failures and countermeasures\n");
 }
 
+/* Which security a PSK profile joins with (ADR 0136), as wpa_supplicant picks it: RSN over WPA, in
+ * either pairwise CCMP over TKIP. The association request carries that IE, Message 2 repeats it,
+ * and a TKIP PTK stays in the app. */
+static void choose_security(void)
+{
+    static const unsigned char rates_ies[] = {0, 4, 'H', 'o', 'm', 'e', 1, 4, 0x82, 0x84, 0x8b, 0x96, 3, 1, 6};
+    static const struct {
+        unsigned char rsnok, rpair, grp, wpaok, wpair, wgrp, proto, pair, group;
+        const char *what;
+    } v[] = {
+        {1, BSS_CCMP | BSS_TKIP, 2, 1, BSS_TKIP, 2, WPA_PROTO_RSN, WPA_CIPHER_CCMP, 2, "mixed: RSN, CCMP"},
+        {1, BSS_TKIP, 2, 0, 0, 0, WPA_PROTO_RSN, WPA_CIPHER_TKIP, 2, "WPA2 with TKIP only"},
+        {0, 0, 0, 1, BSS_TKIP, 2, WPA_PROTO_WPA, WPA_CIPHER_TKIP, 2, "WPA only, TKIP"},
+        {0, 0, 0, 1, BSS_CCMP | BSS_TKIP, 2, WPA_PROTO_WPA, WPA_CIPHER_CCMP, 2, "WPA only, CCMP offered"},
+    };
+    unsigned char k[32] = {1}, sn0[32] = {0};
+    for (unsigned t = 0; t < sizeof v / sizeof v[0]; t++) {
+        cmd_ring(63);
+        tx_frames();
+        nbss = 1;
+        memset(&bsstab[0], 0, sizeof bsstab[0]);
+        memcpy(bsstab[0].bssid, AP, 6), memcpy(bsstab[0].ssid, "Home", 4);
+        bsstab[0].ssidlen = 4, bsstab[0].chan = 6, bsstab[0].caps = 0x0411, bsstab[0].rssi = -50;
+        bsstab[0].rsn = v[t].rsnok, bsstab[0].rsnok = v[t].rsnok, bsstab[0].rpair = v[t].rpair;
+        bsstab[0].grp = v[t].grp, bsstab[0].rakm = BSS_PSK;
+        bsstab[0].wpa = v[t].wpaok, bsstab[0].wpaok = v[t].wpaok, bsstab[0].wpair = v[t].wpair;
+        bsstab[0].wgrp = v[t].wgrp, bsstab[0].wakm = BSS_PSK;
+        memcpy(bsstab[0].ies, rates_ies, sizeof rates_ies), bsstab[0].ielen = sizeof rates_ies;
+        state = WIFI_IDLE, now = 50000 + t * 1000;
+        assert(wifi_join((const unsigned char *)"Home", 4, WIFI_SEC_PSK, k, 32, sn0, 0, 0) == 0);
+        assert(state == WIFI_JOINING);
+        if (cur.proto != v[t].proto || cur.pair != v[t].pair || cur.grp != v[t].group) {
+            printf("%s: proto %u pair %u grp %u\n", v[t].what, cur.proto, cur.pair, cur.grp);
+            assert(0);
+        }
+        corebd = 1;
+        join_step();
+        rxauthok = 1;
+        join_step();
+        assert(jstep == J_ASSOC);
+        unsigned char ie[WPA_IE_MAX];
+        unsigned n = wpa_own_ie(ie, v[t].proto, v[t].group, v[t].pair, WPA_AKM_PSK, 0);
+        const unsigned char *b = last_frame() + 8 + 0xc4;
+        assert(b[0] == 0x11 && !memcmp(b + 4 + 6 + 10 + 6, ie, n)); /* Privacy; the IE after the rates */
+        rxassocok = 1;
+        join_step();
+        assert(jstep == J_4WAY && sm.proto == v[t].proto && sm.pairwise == v[t].pair &&
+               sm.ielen == n && !memcmp(sm.ie, ie, n));
+        /* the PTK: CCMP to the engine, TKIP into the app */
+        for (unsigned i = 0; i < 64; i++)
+            sm.ptk[i] = (unsigned char)i;
+        keys_due = WPA_RX_INSTALL_PTK;
+        install_keys();
+        assert(keyed && (v[t].pair == WPA_CIPHER_TKIP ? sw_pair.cipher == WSEC_TKIP && !memcmp(sw_pair.key, sm.ptk + 32, 32)
+                                                    : !sw_pair.cipher));
+        wifi_leave();
+        assert(!sw_pair.cipher);
+    }
+    nbss = 0;
+    printf("ok: a PSK profile picks RSN over WPA and CCMP over TKIP, and says so in its IE\n");
+}
+
 int main(void)
 {
     /* a full ring: no PEER_ADD and no 4-way yet; the next poll still has the step */
@@ -608,5 +670,6 @@ int main(void)
     link_frames();
     open_network();
     tkip_frames();
+    choose_security();
     return 0;
 }

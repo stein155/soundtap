@@ -24,10 +24,23 @@ SET_PROFILE's security byte names what the speaker joins, behind the capability 
 `BCOLINK_CAP_SECURITY` ([the control messages](../hardware/st20/bco-network-card.md#control-messages)):
 0 an open network, without a key; 1 a PSK network, with the PMK. The driver sends a connect
 without a key as an open network only to an app that announces the bit. SCAN reports a WEP network
-as such (3: the Privacy bit without an RSN or WPA IE), and STATUS what the joined network offers,
-so the driver's scan cache shows each network as it is. An open network joins without a
-handshake and its frames go in the clear; the BCO joins only an access point whose security
-matches the profile.
+as such (3: the Privacy bit without an RSN or WPA IE), and with the bit set in its request each
+entry carries its security detail (the RSN group, pairwise and AKM sets and capabilities, the WPA
+IE's group and pairwise set), as STATUS does for the joined network, so the driver's scan cache
+shows wpa_supplicant each network as it is: WPA only, TKIP, the capabilities. An open network
+joins without a handshake and its frames go in the clear; the BCO joins only an access point
+whose security matches the profile.
+
+### A PSK profile joins WPA and WPA2 with CCMP or TKIP, as wpa_supplicant picks
+
+With a PSK profile the BCO joins an access point whose RSN IE or, failing that, WPA IE (vendor
+00-50-F2 type 1) offers PSK with a cipher pair it can use: pairwise CCMP with a CCMP or TKIP
+group, or pairwise TKIP with a TKIP group. It prefers RSN over WPA and pairwise CCMP over TKIP, as
+wpa_supplicant does, and sends that IE in its association request and Message 2. The handshake
+follows what was negotiated: EAPOL-Key descriptor 2 for RSN, 254 for WPA; key descriptor version 2
+(HMAC-SHA1 MIC, AES key wrap) under pairwise CCMP and version 1 (HMAC-MD5 MIC, RC4 key data with
+the first 256 bytes of the stream dropped) under TKIP, with a 64-byte PTK. WPA's Message 3 has no
+GTK; it comes in a group handshake, its key id in the key info.
 
 ### WEP and TKIP run in software in the BCO app
 
@@ -62,6 +75,9 @@ Alternatives that lost:
 - `os/board/rootfs/linux-patches/0007-net-usb-add-soundtap-bco-link-driver.patch`: `bco_connect`
   and `bco_status_sec` in the driver.
 - `app/internal/bco/stockprofile.go`: `stockProfileFrom` takes stock's open profile.
+- `bco/app/src/wscan.h` (`rsn_parse`, `wpa_parse`), `bco/app/src/wifi.c` (`choose`, `match`) and
+  `bco/app/src/wpa.c` (`wpa_sm_config`, `wpa_own_ie`, descriptor 254 and version 1): which security a
+  PSK profile joins, and its handshake.
 - `bco/app/src/wsec.c`: WEP, TKIP and their primitives; `bco/app/src/wifi.c` (`set_key`,
   `install_keys`, `sw_open`, `sw_data`, `mic_failure`) and `bco/app/src/wpa.c` (`wpa_mic_failure`).
 - `bco/wild/fw/src/sta.c` (software key slots) and `bco/wild/fw/src/xport.c` (frames the app

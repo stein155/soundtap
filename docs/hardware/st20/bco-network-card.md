@@ -69,7 +69,11 @@ and the BCO answers with the same `seq` and `type|0x80`, status first.
 - `SCAN`: payload `{1}` starts a scan, `{1, ssid_len, ssid}` starts one whose directed pass probes
   for that SSID (`BCOLINK_CAP_SCAN_SSID`), an empty payload polls; status 3 means still scanning,
   status 0 carries the results (`ssid_len, ssid, bssid[6], channel, rssi i8, security`: 0 open,
-  1 RSN, 2 WPA1 only, 3 WEP: the Privacy bit without either IE). A scan is two passes over the channels the regulatory domain allows (1-13
+  1 RSN, 2 WPA1 only, 3 WEP: the Privacy bit without either IE). With `BCOLINK_CAP_SECURITY` the
+  first byte is a set of flags, 1 start and 2 detail, and a poll `{2}` asks for the detail too: six
+  bytes after each entry's security byte, the RSN group cipher suite type, the RSN pairwise set (1
+  CCMP, 2 TKIP), the RSN AKM set (1 PSK), the RSN capabilities' low byte, the WPA IE's group and its
+  pairwise set. The driver builds each network's RSN and WPA IE from them for its scan cache. A scan is two passes over the channels the regulatory domain allows (1-13
   until one is set), 200 ms per channel, probing on each but a passive one, where it only listens;
   while connected the cached list is returned. The second pass probes for the SCAN's SSID, else the
   profile's ([choosing the network](#choosing-the-network)).
@@ -94,8 +98,8 @@ and the BCO answers with the same `seq` and `type|0x80`, status first.
   (`BCO joined …, group cipher …` or `BCO join failed: step …, code …, group cipher …`); a TKIP
   group's broadcasts the app deciphers itself (an app before `BCOLINK_CAP_SECURITY` dropped them).
   After it comes what the network offers, as in
-  SCAN (0 open, 1 RSN, 2 WPA1, 3 WEP), which the driver puts in its scan cache for a roam or a join
-  it reports. `SCAN` lists what fits in one reply (1536
+  SCAN (0 open, 1 RSN, 2 WPA1, 3 WEP) and its six bytes of detail, which the driver puts in its
+  scan cache for a roam or a join it reports. `SCAN` lists what fits in one reply (1536
   bytes: 36 networks when every SSID is 32 bytes long), its count matching. A join that runs past
   90 s, above the app's worst case of about 68 s (scan, then five tries of authentication,
   association and handshake), makes the driver send `FORGET` and report a timeout, so the BCO
@@ -124,8 +128,9 @@ and the BCO answers with the same `seq` and `type|0x80`, status first.
 ## Choosing the network
 
 - SET_PROFILE joins the strongest access point on channels 1-13 with the profile's SSID and a
-  security it matches (an open profile only an access point without the Privacy bit, a PSK
-  profile only an RSN one it can join): the highest level of its last beacon or probe response, and on a tie the one heard in the later
+  security it matches (an open profile only an access point without the Privacy bit; a PSK
+  profile one whose RSN or WPA IE offers PSK with pairwise CCMP, or pairwise TKIP with a TKIP group,
+  joined over RSN before WPA and with CCMP before TKIP, ADR 0136): the highest level of its last beacon or probe response, and on a tie the one heard in the later
   scan. An access point heard without a level counts as the weakest. The scan table keeps a BSS
   heard in any of the last five scans.
 - A hidden network leaves its SSID out of the beacon. The scan's second pass sends a probe request

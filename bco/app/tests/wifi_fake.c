@@ -59,6 +59,7 @@ int wifi_current(struct wifi_bss *o)
     memcpy(o->bssid, "\x02\x00\x00\x00\x00\x10", 6), o->chan = 6, o->rssi = -50;
     o->grp = (unsigned char)fake_grp;
     o->sec = WIFI_BSS_RSN;
+    o->rpair = WIFI_SET_CCMP, o->rakm = WIFI_SET_PSK;
     return 1;
 }
 

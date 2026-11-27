@@ -9,24 +9,7 @@
 /* ============================ RC4 ============================ */
 void wsec_rc4(const uint8_t *key, unsigned klen, uint8_t *buf, unsigned n)
 {
-    uint8_t s[256];
-    unsigned i, j = 0;
-    for (i = 0; i < 256; i++)
-        s[i] = (uint8_t)i;
-    for (i = 0; i < 256; i++) {
-        uint8_t t = s[i];
-        j = (j + t + key[i % klen]) & 0xff;
-        s[i] = s[j], s[j] = t;
-    }
-    i = j = 0;
-    while (n--) {
-        uint8_t t;
-        i = (i + 1) & 0xff;
-        t = s[i];
-        j = (j + t) & 0xff;
-        s[i] = s[j], s[j] = t;
-        *buf++ ^= s[(s[i] + t) & 0xff];
-    }
+    wpa_rc4_skip(key, klen, 0, buf, n);
 }
 
 /* ============================ CRC-32 ============================ */

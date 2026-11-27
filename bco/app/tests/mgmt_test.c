@@ -72,7 +72,7 @@ int main(void)
                             BCOLINK_CAP_SCAN_SSID | BCOLINK_CAP_NVINFO | BCOLINK_CAP_SECURITY)) ==
                BCOLINK_CAPS &&
            BCOLINK_CAPS == 0x3ff);
-    n = ask(5, 0, 0, r); assert(r[6] == 0 && r[7] == WIFI_IDLE && r[8] == 0 && n == MGMT_HDR + 16 &&
+    n = ask(5, 0, 0, r); assert(r[6] == 0 && r[7] == WIFI_IDLE && r[8] == 0 && n == MGMT_HDR + 16 + MGMT_SCAN_DETAIL_LEN &&
                                 r[17] == WIFI_FAIL_NONE && r[18] == 0 && r[19] == 0 && r[20] == 0);
     /* a refused association: the step and the AP's status code (le16) follow the BSS */
     extern unsigned fake_fail_step, fake_fail_code;
@@ -107,7 +107,20 @@ int main(void)
                n <= MGMT_MAX && (big.r[4] << 8 | big.r[5]) == n - MGMT_HDR);
         for (unsigned i = 0; i < sizeof big.guard; i++)
             assert(big.guard[i] == 0x5c);
+        /* with the security detail (MGMT_SCAN_DETAIL, a poll {2}): 6 bytes more per entry, fewer fit */
+        const unsigned char det = MGMT_SCAN_DETAIL;
+        n = ask(2, &det, 1, big.r);
+        at = MGMT_HDR + 2, k = 0;
+        while (at < n)
+            at += 1 + big.r[at] + 6 + 1 + 1 + 1 + MGMT_SCAN_DETAIL_LEN, k++;
+        assert(big.r[6] == 0 && big.r[7] == k && at == n && k == (MGMT_MAX - MGMT_HDR - 2) / 48 &&
+               n <= MGMT_MAX && !fake_scanning);
+        for (unsigned i = 0; i < sizeof big.guard; i++)
+            assert(big.guard[i] == 0x5c);
         fake_ssid_max = 0;
+        fake_nbss = 1;
+        n = ask(2, &det, 1, r);
+        assert(n == MGMT_HDR + 2 + 13 + MGMT_SCAN_DETAIL_LEN && r[21] == 0 && r[22] == 0); /* the fake's detail: zeros */
     }
     /* SCAN naming an SSID (BCOLINK_CAP_SCAN_SSID): the directed probe looks for it */
     extern unsigned char fake_scan_ssid[32];
@@ -139,7 +152,8 @@ int main(void)
     fake_grp = 2;
     n = ask(5, 0, 0, r);
     assert(r[7] == WIFI_JOINING && r[8] == 4 && !memcmp(r + 9, "test", 4) && r[19] == 6 &&
-           (signed char)r[20] == -50 && n == MGMT_HDR + 15 + 5 && r[24] == 2 && r[25] == WIFI_BSS_RSN);
+           (signed char)r[20] == -50 && n == MGMT_HDR + 15 + 5 + MGMT_SCAN_DETAIL_LEN && r[24] == 2 && r[25] == WIFI_BSS_RSN &&
+           r[26] == 2 && r[27] == WIFI_SET_CCMP && r[28] == WIFI_SET_PSK);
     fake_grp = 0;
     for (unsigned i = 0; i + 4 <= n; i++) assert(memcmp(r + i, "\xab\xab\xab\xab", 4)); /* PMK never echoed */
     ask(3, sp, sizeof sp - 1, r); assert(r[6] == 1);              /* no seed */

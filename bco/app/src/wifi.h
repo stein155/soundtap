@@ -12,8 +12,15 @@ enum { WIFI_IDLE, WIFI_SCANNING, WIFI_JOINING, WIFI_UP, WIFI_FAILED, WIFI_AP };
 struct wifi_bss {
     unsigned char ssid_len, ssid[32], bssid[6], chan, sec; /* sec: WIFI_BSS_* */
     signed char rssi;
-    unsigned char grp; /* RSN group cipher suite type: 2 TKIP, 4 CCMP, 0 unknown (STATUS only) */
+    unsigned char grp; /* RSN group cipher suite type: 2 TKIP, 4 CCMP, 0 unknown; for a network
+                        * joined with only a WPA IE its group (STATUS) */
+    /* What its security IEs offer (SCAN's detail, BCOLINK_CAP_SECURITY): the RSN pairwise and AKM
+     * sets and capabilities' low byte, the WPA IE's group and pairwise set. Sets as WIFI_SET_*. */
+    unsigned char rpair, rakm, rcaps, wgrp, wpair;
 };
+#define WIFI_SET_CCMP 0x1u /* pairwise sets */
+#define WIFI_SET_TKIP 0x2u
+#define WIFI_SET_PSK 0x1u  /* AKM sets */
 
 /* What a scanned network offers (wifi_bss.sec, SCAN's security byte): open, an RSN IE, only a WPA
  * IE, or the Privacy bit without either (WEP). */

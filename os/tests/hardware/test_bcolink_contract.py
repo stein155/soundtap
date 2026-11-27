@@ -201,6 +201,17 @@ class BcoLinkContract(unittest.TestCase):
         self.assertRegex(status, r"\*o\+\+ = b\.grp;\s*\*o\+\+ = b\.sec;")
         self.assertIn("at = 3 + r[2] + 8 + 3 + 1;", funcs["bco_status_sec"])
         self.assertIn("b->rsp_len >= at + 1", funcs["bco_status_sec"])
+        # SCAN's security detail: the same flags, sets and length, asked for only behind the bit,
+        # and STATUS's copy right after its security byte
+        for app, drv in (("MGMT_SCAN_START", "BCO_SCAN_START"), ("MGMT_SCAN_DETAIL", "BCO_SCAN_DETAIL"),
+                         ("MGMT_SCAN_DETAIL_LEN", "BCO_SCAN_DETAIL_LEN")):
+            self.assertEqual(self.app[app], self.drv[drv], app)
+        wifi_sets = defines(wifi)
+        for name in ("CCMP", "TKIP", "PSK"):
+            self.assertEqual(wifi_sets[f"WIFI_SET_{name}"], self.drv[f"BCO_SET_{name}"], name)
+        self.assertIn("READ_ONCE(b->caps) & BCOLINK_CAP_SECURITY", funcs["bco_scan_work"])
+        self.assertRegex(status, r"\*o\+\+ = b\.sec;\s*o = put_detail\(o, &b\);")
+        self.assertIn("at = 3 + r[2] + 8 + 3 + 1 + 1;", funcs["bco_status_detail"])
 
     def test_hunk_count(self) -> None:
         """The driver patch's hunk header counts the lines the new file has."""

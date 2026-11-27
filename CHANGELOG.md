@@ -14,6 +14,8 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
 
 - **SoundTouch 20: joins open networks** (without a password), and an open network the
   original software had saved is taken over on the first install.
+- **SoundTouch 20: joins older routers with WPA (TKIP)**, and WPA2 routers set to TKIP, as the
+  original software did.
 
 ### Fixed
 

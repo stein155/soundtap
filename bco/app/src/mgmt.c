@@ -92,6 +92,13 @@ __attribute__((weak)) const volatile unsigned char *mgmt_nv(void)
     return 0;
 }
 
+/* SCAN's and STATUS's security detail (MGMT_SCAN_DETAIL_LEN bytes). */
+static unsigned char *put_detail(unsigned char *o, const struct wifi_bss *b)
+{
+    *o++ = b->grp, *o++ = b->rpair, *o++ = b->rakm, *o++ = b->rcaps, *o++ = b->wgrp, *o++ = b->wpair;
+    return o;
+}
+
 static unsigned char *put_bss(unsigned char *o, const struct wifi_bss *b)
 {
     *o++ = b->ssid_len;
@@ -160,8 +167,9 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
         *o++ = BCOLINK_PROTO;
         o = put32(o, BCOLINK_CAPS); /* capabilities, le32 */
         break;
-    case 2: { /* SCAN [start [ssid_len ssid]]: status (3 = still scanning), count, entries */
-        int start = len >= 1 && a[0] == 1, found;
+    case 2: { /* SCAN [flags [ssid_len ssid]]: status (3 = still scanning), count, entries; flags
+               * MGMT_SCAN_START and MGMT_SCAN_DETAIL (mgmt.h) */
+        int start = len >= 1 && (a[0] & MGMT_SCAN_START), detail = len >= 1 && (a[0] & MGMT_SCAN_DETAIL), found;
         if (start) /* the directed probe's SSID (BCOLINK_CAP_SCAN_SSID); none leaves the profile's */
             wifi_scan_ssid(a + 2, len >= 2 && a[1] <= 32 && len >= 2u + a[1] ? a[1] : 0);
         found = wifi_scan(start);
@@ -173,10 +181,13 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
          * buffer (MGMT_MAX) takes: a beacon flood from anyone in range fills the table. The list
          * stops before the first entry that no longer fits; the count says how many went in. */
         for (int i = 0; i < found && *cnt < 255 && wifi_bss(i, &b) == 0; i++) {
-            if ((unsigned)(o - r) + 1u + b.ssid_len + 6 + 1 + 1 + 1 > MGMT_MAX)
+            if ((unsigned)(o - r) + 1u + b.ssid_len + 6 + 1 + 1 + 1 + (detail ? MGMT_SCAN_DETAIL_LEN : 0) >
+                MGMT_MAX)
                 break;
             o = put_bss(o, &b);
             *o++ = b.sec;
+            if (detail)
+                o = put_detail(o, &b);
             ++*cnt;
         }
         break;
@@ -210,7 +221,8 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
                * Last, the BSS's RSN group cipher suite type (2 TKIP, 4 CCMP, 0 unknown), which the
                * SCM logs: a TKIP group's broadcasts the app deciphers itself (wifi.c install_keys,
                * ADR 0136). Again read only when present. Then what the network offers (WIFI_BSS_*,
-               * BCOLINK_CAP_SECURITY), for the driver's scan cache. */
+               * BCOLINK_CAP_SECURITY) and its security detail (MGMT_SCAN_DETAIL_LEN bytes), for the
+               * driver's scan cache. */
         struct wifi_bss b;
         unsigned step, code;
         *o++ = 0; *o++ = wifi_state();
@@ -221,6 +233,7 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
         *o++ = code, *o++ = code >> 8;
         *o++ = b.grp;
         *o++ = b.sec;
+        o = put_detail(o, &b);
         break;
     }
     case 6: /* AP_START: channel, beacon interval (TU, network order), beacon body */
