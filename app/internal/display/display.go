@@ -33,6 +33,8 @@ type Manager struct {
 	overlayFrame   []byte
 	transientFrame []byte
 	transientUntil time.Time
+	alertFrame     []byte
+	alertUntil     time.Time
 	shown          []byte
 	drawnAt        time.Time
 
@@ -53,6 +55,8 @@ func New(ctx context.Context, fbPath string, standby func(context.Context) bool,
 		overlayFrame:   nil,
 		transientFrame: nil,
 		transientUntil: time.Time{},
+		alertFrame:     nil,
+		alertUntil:     time.Time{},
 		shown:          nil,
 		drawnAt:        time.Time{},
 
@@ -169,6 +173,22 @@ func (m *Manager) SetTransient(content Content, lasting time.Duration) {
 	m.nudge()
 }
 
+// SetAlert shows what a held key combination is about to do, above everything, the boot,
+// offline and setup screens included: the owner holds the setup combo from those screens too,
+// and a count hidden under them was let go of at 7 and 9 s (ST20, 2026-11-27). It lasts as a
+// transient does, so the caller renews it while it holds.
+func (m *Manager) SetAlert(content Content, lasting time.Duration) {
+	if !m.Available() {
+		return
+	}
+
+	m.mu.Lock()
+	m.alertFrame = content.Frame
+	m.alertUntil = time.Now().Add(lasting)
+	m.mu.Unlock()
+	m.nudge()
+}
+
 // paintTick is how often the panel is looked at: the design's bars and dots move in
 // steps of a tenth of a second. An unchanged frame is written again only after
 // repaintEvery: on the ST20 a frame is a 6 KB SPI transfer, and writing the standby
@@ -223,7 +243,7 @@ func (m *Manager) nudge() {
 // standby clock and nothing outranks it.
 func (m *Manager) tickEvery(ctx context.Context) time.Duration {
 	m.mu.Lock()
-	busy := m.overlayFrame != nil || m.transientFrame != nil
+	busy := m.overlayFrame != nil || m.transientFrame != nil || m.alertFrame != nil
 	m.mu.Unlock()
 
 	if !busy && m.standby != nil && m.standby(ctx) {
@@ -233,29 +253,44 @@ func (m *Manager) tickEvery(ctx context.Context) time.Duration {
 	return paintTick
 }
 
-func (m *Manager) step(ctx context.Context) {
-	m.mu.Lock()
-
-	standbyFrame, npFrame, overlay, transient, until, shown := m.standbyFrame, m.npFrame,
-		m.overlayFrame, m.transientFrame, m.transientUntil, m.shown
-	if transient != nil && !time.Now().Before(until) {
+// timed returns the alert and the transient still due, dropping those whose time is up.
+// Under m.mu.
+func (m *Manager) timed(now time.Time) ([]byte, []byte) {
+	if m.transientFrame != nil && !now.Before(m.transientUntil) {
 		m.transientFrame = nil
-		transient = nil
 	}
+
+	if m.alertFrame != nil && !now.Before(m.alertUntil) {
+		m.alertFrame = nil
+	}
+
+	return m.alertFrame, m.transientFrame
+}
+
+// wanted is the frame to show now: the alert, the overlay, a transient, then the standby or
+// now-playing screen; and the frame shown last.
+func (m *Manager) wanted(ctx context.Context) ([]byte, []byte) {
+	m.mu.Lock()
+	alert, transient := m.timed(time.Now())
+	standbyFrame, npFrame, overlay, shown := m.standbyFrame, m.npFrame, m.overlayFrame, m.shown
 	m.mu.Unlock()
 
-	var want []byte
-
 	switch {
+	case alert != nil:
+		return alert, shown
 	case overlay != nil:
-		want = overlay
+		return overlay, shown
 	case transient != nil:
-		want = transient
+		return transient, shown
 	case m.standby != nil && m.standby(ctx):
-		want = standbyFrame
+		return standbyFrame, shown
 	default:
-		want = npFrame
+		return npFrame, shown
 	}
+}
+
+func (m *Manager) step(ctx context.Context) {
+	want, shown := m.wanted(ctx)
 
 	if want == nil {
 		// Nothing to show (standby with the clock off): a dark panel. There is no

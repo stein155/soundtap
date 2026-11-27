@@ -298,7 +298,8 @@ func testChordHandler(fired *firedChords) (*buttonHandler, *fakeActor) {
 }
 
 // The panel counts the seconds down while a chord is held, and the count and the lamps stop
-// when it fires, or when it is let go.
+// when it fires, or when it is let go (letting go after it fired ends the count once more,
+// which is harmless and covers a timer that fired as the chord was let go).
 //
 //nolint:paralleltest // changes package-wide state other tests read: chordCounting, confirmPending, confirmer and more
 func TestChordCountsDownOnThePanel(t *testing.T) {
@@ -332,7 +333,7 @@ func TestChordCountsDownOnThePanel(t *testing.T) {
 		time.Sleep(4 * time.Second)
 		synctest.Wait()
 
-		if downs, ups := show.counts(); chordCounting.Load() || downs != 2 || ups != 2 {
+		if downs, ups := show.counts(); chordCounting.Load() || downs != 2 || ups != 3 {
 			t.Fatalf("a released chord kept counting: lamps %v, started %d, ended %d", chordCounting.Load(), downs, ups)
 		}
 	})
@@ -690,6 +691,38 @@ func TestKeyDeviceReaderStopsOnCancel(t *testing.T) {
 	if len(handler.holds) != 0 || len(handler.down) != 0 {
 		t.Fatalf("gesture survived cancellation: holds=%d down=%d", len(handler.holds), len(handler.down))
 	}
+}
+
+// A chord let go and held again just as its timer fires: the old timer leaves the new
+// count and the lamps alone.
+//
+//nolint:paralleltest // changes package-wide state other tests read: chordCounting, confirmPending, confirmer and more
+func TestOldChordTimerLeavesANewCountAlone(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var fired firedChords
+
+		handler, _ := testChordHandler(&fired)
+		handler.chords[0].hold = 3 * time.Second
+		show := newFakeChordPanel()
+		handler.chordShow = show
+		handler.Handle(6, true, "PRESET_1")
+		handler.Handle(4, true, "VOLUME_DOWN")
+		old := handler.chordTimer
+		// the timer's body is about to run: it already fired as far as Stop is concerned
+		handler.chordTimer = nil
+		handler.Handle(4, false, "VOLUME_DOWN")
+		handler.Handle(4, true, "VOLUME_DOWN")
+		old.Reset(0)
+		time.Sleep(time.Second)
+		synctest.Wait()
+
+		if _, ups := show.counts(); !chordCounting.Load() || ups != 1 {
+			t.Fatalf("the old timer ended the new count: lamps %v, ends %d", chordCounting.Load(), ups)
+		}
+
+		handler.Handle(4, false, "VOLUME_DOWN")
+		handler.Handle(6, false, "PRESET_1")
+	})
 }
 
 // fakeChordPanel records what the panel was told about a chord.

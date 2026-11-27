@@ -131,7 +131,8 @@ type buttonHandler struct {
 	down       map[string]bool // actions currently held, by action name
 	downIndex  map[string]int  // device index for each held action
 	chordTimer *time.Timer
-	chordShow  chordPanel // the ST20 panel's count while a chord is held
+	chordShow  chordPanel    // the ST20 panel's count while a chord is held
+	chordGen   atomic.Uint64 // one more per chord armed: a timer of an older one leaves the count alone
 	chordArmed string
 	chordSince time.Time
 	swallow    map[string]bool // keys of an abandoned combo whose release does nothing
@@ -211,6 +212,7 @@ func newButtonHandler(sp keyActor, log *slog.Logger, chords ...chord) *buttonHan
 		downIndex:  map[string]int{},
 		chordTimer: nil,
 		chordShow:  frontPanel,
+		chordGen:   atomic.Uint64{},
 		chordArmed: "",
 		chordSince: time.Time{},
 		swallow:    map[string]bool{},
@@ -519,13 +521,18 @@ func (h *buttonHandler) armChord() bool {
 		}
 		// The panel counts the seconds down with a bar, above the volume overlay the
 		// chord's volume key brings up, and stays until the chord fires or is let go.
-		show := h.chordShow
+		show, gen := h.chordShow, h.chordGen.Add(1)
 		show.ChordDown(text, chordDef.hold)
 		chordCounting.Store(true)
 
 		h.chordTimer = time.AfterFunc(chordDef.hold, func() {
-			chordCounting.Store(false)
-			show.ChordUp()
+			// A timer that fired as its chord was let go and held again (Stop came too
+			// late) must not end the new chord's count and lamps.
+			if h.chordGen.Load() == gen {
+				chordCounting.Store(false)
+				show.ChordUp()
+			}
+
 			h.log.Warn("chord fired", "chord", name)
 			action()
 		})
@@ -538,10 +545,14 @@ func (h *buttonHandler) armChord() bool {
 
 func (h *buttonHandler) disarmChord() bool {
 	chordCounting.Store(false)
+	h.chordGen.Add(1) // a timer firing now belongs to no chord on the panel any more
+
+	if h.chordArmed != "" {
+		h.chordShow.ChordUp() // also after it fired: its timer may have seen the generation move
+	}
 
 	canceled := h.chordTimer != nil && h.chordTimer.Stop()
 	if canceled {
-		h.chordShow.ChordUp() // a chord that fired has ended its count itself
 		h.log.Info("chord released early", "chord", h.chordArmed)
 	}
 

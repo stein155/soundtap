@@ -149,6 +149,14 @@ func (p *Panel) ChordDown(word string, hold time.Duration) {
 	p.nudge()
 }
 
+// Counting says a held combination's count is up.
+func (p *Panel) Counting() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return p.chord != "" && p.chordOf > 0
+}
+
 // ChordUp ends the count: the combination fired or was let go.
 func (p *Panel) ChordUp() {
 	p.mu.Lock()
@@ -284,10 +292,16 @@ func (p *Panel) Run(
 		overlay, input := p.Current(now)
 		retick(tick, &every, panelTickFor(status.Standby && overlay == nil))
 
-		if overlay != nil {
+		switch {
+		case p.Counting():
+			// A held combination's count outranks even the boot and setup screens.
+			disp.SetAlert(display.Content{Frame: overlay().Pix(fullLevel)}, overlayHold)
+		case overlay != nil:
 			// Overlays outrank the standby clock too: a preset press wakes the speaker,
 			// and its number must show before the speaker has left standby.
 			disp.SetTransient(display.Content{Frame: overlay().Pix(fullLevel)}, overlayHold)
+		default:
+			// Nothing over the screen.
 		}
 
 		if now.Sub(read) >= time.Second {
