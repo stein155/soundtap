@@ -1,6 +1,6 @@
 # 0129. A first install keeps the speaker's name, presets, Wi-Fi and clock
 
-Status: accepted — 2026-11-11, revised 2026-11-24
+Status: accepted — 2026-11-11, revised 2026-11-27
 
 ## Context
 
@@ -10,6 +10,14 @@ in `NetworkProfiles.xml` and, on the ST20, its standby clock in `ClockDisplay.xm
 zone also as the `/mnt/nv/localtime` link. Without them the speaker comes up unnamed, with empty presets, on its
 setup network, and the owner sets it up again.
 
+Stock's presets name a TuneIn station by its guide id, which SoundTap plays as it is, or a
+Radio Browser station by its uuid (`source="RADIO_BROWSER"`, location
+`/stations/byuuid/<uuid>`). The stream address of a Radio Browser station is not in stock's
+file: only Radio Browser ([radio-browser.info](https://www.radio-browser.info/), an open,
+community-run station directory without accounts or keys) knows it. The first start runs
+before the network is up (on the owner's ST20 the takeover ran half a minute before Wi-Fi
+joined).
+
 Stock keeps each Wi-Fi passphrase AES-256-CBC encrypted (base64, PKCS#7) and no plain copy. The
 key and IV are not on `/mnt/nv`: they are two ASCII digit strings, 32 and 16 long, inside stock's
 `/opt/Bose/NetManager`, the same binary on the ST10, ST20, ST300 and WLA. Neither the repository
@@ -18,8 +26,8 @@ nor the image may hold Bose bytes ([ADR 0049](0049-no-stock-bytes.md)).
 ## Decision
 
 On its first boot after an install from stock, soundtapd takes the name stock knew the speaker
-by and stock's TuneIn presets (stock's other sources need its accounts or cloud, so those slots
-stay empty), once. On a speaker with a panel (the ST20) whose clock has no settings yet it also
+by, stock's TuneIn presets and its Radio Browser presets (stock's other sources need its
+accounts or cloud, so those slots stay empty), once. On a speaker with a panel (the ST20) whose clock has no settings yet it also
 takes stock's clock: off when stock had it off or at brightness 0, 12 or 24 hours, and the zone
 (`timezoneInfo`, else the `localtime` link) when this build knows it; stock's other brightness
 levels, which it never used to dim, change nothing
@@ -27,7 +35,29 @@ levels, which it never used to dim, change nothing
 It records the takeover (`.stock-imported` in its home) only after the name, the presets and the
 clock are stored, so a first start that stops half-way takes them over again on the next start.
 It logs what each of stock's files gave: no file, a file it could not read or parse, how many
-presets it took over, and each preset it left out with the reason.
+presets it took over, how many wait for a lookup, and each preset it left out with the reason.
+
+A Radio Browser preset becomes a preset with its own stream address
+([ADR 0041](0041-radio-one-ffmpeg-one-url-rule.md)): stock's name and logo, and the
+station's `url_resolved` (else its `url`) from Radio Browser. Since that needs the network, the
+takeover writes such presets down in `/mnt/nv/soundtap/stock-presets-pending.json` (slot, uuid,
+name, logo, the time first seen once the clock is believable;
+[nv-state](../contributors/nv-state.md)), and only when it takes stock's presets at all: a
+speaker with presets of its own takes none. A background job in soundtapd then asks
+`GET /json/stations/byuuid/<uuid>` of Radio Browser's servers `de1`, `de2` and `fi1`
+`.api.radio-browser.info`, and the round-robin `all.api.radio-browser.info`, in turn, over
+public addresses only, with the User-Agent `SoundTap/<version>`. The uuid is all a request
+carries: no name, serial, address or anything else about the speaker or its owner. The job
+runs at every start while the file is there, and after a round that left presets waiting
+again after 30 s, doubling to every 10 minutes; there is no signal for "the network is up",
+and a round without network costs a failed name lookup. A preset is stored only while its
+slot is empty (checked and written under one lock, so a preset the owner stored meanwhile is
+never replaced) and only with a stream address an owner could enter themselves (http or
+https, at most 512 bytes). It is dropped, with a log line saying why, when its slot holds a
+preset, Radio Browser knows no such station, or the address is not usable; after 7 days from
+the time first seen without an answer it is given up. The file goes with its last entry, and
+with a factory reset. `.stock-imported` still records only that the takeover ran: the lookups
+carry on after it.
 
 For the Wi-Fi, the installer runs under stock, so it reads the key and IV from the NetManager
 that is running: of all its runs of 12 or more ASCII digits there must be exactly two, one of 32
@@ -54,6 +84,13 @@ bytes in git); the owner typing the password again after the install.
 ## Consequences
 
 - A first boot that brings nothing over says why in its log, file by file and preset by preset.
+- SoundTap contacts one more outside service, Radio Browser, and only for an install from
+  stock with Radio Browser presets: once per such preset, with its uuid alone, for at most a
+  week. A speaker installed otherwise, or whose presets were all resolved, never contacts it.
+- A Radio Browser preset appears some seconds to minutes after the first start, once the
+  network answers, not at once; a station Radio Browser has dropped stays empty.
+- The stream address is the one Radio Browser gives today; a station that later moves its
+  stream needs its preset set again, as any preset with its own stream address does.
 - No Bose byte enters the repository or the image, and no Bose code runs under SoundTap: the
   installer only reads stock's binary as a file, once, while stock is still the running system.
 - On the ST20 the first boot from stock confirms up to 5 minutes later, while the read is tried
@@ -75,3 +112,6 @@ bytes in git); the owner typing the password again after the install.
   `stockLayout9423`; `ErrStockProfileNotImportable` marks the definitive answer.
 - `app/cmd/soundtapd/identity.go`: `stockDeviceName`, `stockPresets`, `stockClock`,
   `takeStockClock` and `takeStockOnce`.
+- `app/cmd/soundtapd/stock_radiobrowser.go`: `recordPendingStockPresets` and `stockLookups`,
+  the lookups of stock's Radio Browser presets; `app/internal/radiobrowser`: the client.
+- `app/internal/speakerstate/backend_presets.go`: `StorePresetIfEmpty`.

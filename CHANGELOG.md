@@ -10,6 +10,14 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
 
 ## [Unreleased]
 
+### Added
+
+- **The first install also keeps your Radio Browser presets** from the original software,
+  not only your TuneIn ones. They appear shortly after the first start, once the speaker is
+  online: SoundTap asks radio-browser.info for each station's stream, sending only the
+  station's id. A preset you set yourself in the meantime is never replaced, and the log says
+  for each preset whether it was taken over or why not.
+
 ## [app-v0.1.0-alpha.6] - 2026-11-27
 
 - The SoundTap app that SoundTap Core 0.1.0-alpha.6 carries; what it changes is listed under

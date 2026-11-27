@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/stein155/soundtap/app/internal/atomicjson"
 	"github.com/stein155/soundtap/app/internal/flash"
 	"github.com/stein155/soundtap/app/internal/hw/model"
+	"github.com/stein155/soundtap/app/internal/radiobrowser"
 	"github.com/stein155/soundtap/app/internal/settings"
 	"github.com/stein155/soundtap/app/internal/speaker"
 	"github.com/stein155/soundtap/app/internal/store"
@@ -430,7 +432,7 @@ const stockTakenName = ".stock-imported"
 // takeover is behind it.
 type stockLeftovers struct {
 	name    func() string
-	presets func() []store.Preset
+	presets func() stockPresetSet
 	clock   func() (settings.Display, bool)
 	home    string
 }
@@ -452,7 +454,7 @@ func stockTakeover(home string, log *slog.Logger) stockLeftovers {
 
 			return name
 		},
-		presets: func() []store.Preset {
+		presets: func() stockPresetSet {
 			presets, skipped, err := readStockPresets()
 			logStockRead(log, "presets", stockPresetsPath, err)
 
@@ -460,8 +462,13 @@ func stockTakeover(home string, log *slog.Logger) stockLeftovers {
 				log.Info("stock preset not taken over", "slot", skip.slot, "source", skip.source, "why", skip.why)
 			}
 
+			for _, wait := range presets.pending {
+				log.Info("stock preset waits for a Radio Browser lookup", "slot", wait.Slot, "name", wait.Name)
+			}
+
 			if err == nil {
-				log.Info("stock presets read", "taken", len(presets), "skipped", len(skipped))
+				log.Info("stock presets read",
+					"taken", len(presets.taken), "pending", len(presets.pending), "skipped", len(skipped))
 			}
 
 			return presets
@@ -537,9 +544,16 @@ type stockPreset struct {
 	Item stockPresetItem `xml:"ContentItem"`
 }
 
-// stockPresets reads the radio presets stock left behind. Only TuneIn stations:
-// stock's other sources need its accounts or cloud, so those slots stay empty.
-func stockPresets() []store.Preset {
+// stockPresetSet is what stock's Presets.xml gives: the TuneIn presets taken over as they
+// are, and the Radio Browser presets that wait for their stream address to be looked up.
+type stockPresetSet struct {
+	taken   []store.Preset
+	pending []pendingStockPreset
+}
+
+// stockPresets reads the radio presets stock left behind. Only TuneIn and Radio Browser
+// stations: stock's other sources need its accounts or cloud, so those slots stay empty.
+func stockPresets() stockPresetSet {
 	presets, _, _ := readStockPresets()
 
 	return presets
@@ -552,12 +566,15 @@ type stockSkip struct {
 	why    string
 }
 
-// readStockPresets reads stock's Presets.xml: the TuneIn presets to take over, the others
-// with the reason each is left out, and why the file gave nothing (fs.ErrNotExist for no file).
-func readStockPresets() ([]store.Preset, []stockSkip, error) {
+// readStockPresets reads stock's Presets.xml: the TuneIn presets to take over, the Radio
+// Browser presets to look up, the others with the reason each is left out, and why the file
+// gave nothing (fs.ErrNotExist for no file).
+func readStockPresets() (stockPresetSet, []stockSkip, error) {
+	var none stockPresetSet
+
 	file, err := os.Open(stockPresetsPath)
 	if err != nil {
-		return nil, nil, fmt.Errorf("open stock presets: %w", err)
+		return none, nil, fmt.Errorf("open stock presets: %w", err)
 	}
 	defer file.Close()
 
@@ -567,28 +584,36 @@ func readStockPresets() ([]store.Preset, []stockSkip, error) {
 
 	err = xml.NewDecoder(io.LimitReader(file, stockXMLLimit)).Decode(&doc)
 	if err != nil {
-		return nil, nil, fmt.Errorf("parse stock presets: %w", err)
+		return none, nil, fmt.Errorf("parse stock presets: %w", err)
 	}
 
 	var (
-		out     []store.Preset
+		out     stockPresetSet
 		skipped []stockSkip
 	)
 
 	for _, preset := range doc.Presets {
 		name, art := strings.TrimSpace(preset.Item.Name), strings.TrimSpace(preset.Item.Art)
-		station := stockStation(preset.Item.Location)
 
-		why := stockPresetProblem(preset.Item, station, name, art)
+		why := stockPresetProblem(preset.Slot, preset.Item, name, art)
 		if why != "" {
 			skipped = append(skipped, stockSkip{slot: preset.Slot, source: preset.Item.Source, why: why})
 
 			continue
 		}
 
-		out = append(out, store.Preset{
-			Slot: preset.Slot, StationID: station, Source: sourceTuneIn, Type: "stationurl",
-			Location: preset.Item.Location, Name: name, Logo: art,
+		if preset.Item.Source == sourceRadioBrowser {
+			out.pending = append(out.pending, pendingStockPreset{
+				Slot: preset.Slot, UUID: stockRadioBrowserUUID(preset.Item.Location), Name: name, Logo: art,
+				FirstSeen: time.Time{},
+			})
+
+			continue
+		}
+
+		out.taken = append(out.taken, store.Preset{
+			Slot: preset.Slot, StationID: stockStation(preset.Item.Location), Source: sourceTuneIn,
+			Type: "stationurl", Location: preset.Item.Location, Name: name, Logo: art,
 		})
 	}
 
@@ -605,14 +630,35 @@ func stockStation(location string) string {
 	return station
 }
 
-// stockPresetProblem is why a preset in stock's file is not taken over, "" when it is.
-func stockPresetProblem(item stockPresetItem, station, name, art string) string {
-	if item.Source != sourceTuneIn {
-		return "not a TuneIn station"
+// stockRadioBrowserUUID is the Radio Browser station a stock preset's location names, ""
+// for none.
+func stockRadioBrowserUUID(location string) string {
+	uuid, found := strings.CutPrefix(location, "/stations/byuuid/")
+	if !found || !radiobrowser.ValidUUID(uuid) {
+		return ""
 	}
 
-	if station == "" {
-		return "unknown TuneIn location " + item.Location
+	return uuid
+}
+
+// stockPresetProblem is why a preset in stock's file is not taken over or looked up, ""
+// when it is.
+func stockPresetProblem(slot int, item stockPresetItem, name, art string) string {
+	if slot < 1 || slot > speaker.PresetSlots {
+		return "no preset slot " + strconv.Itoa(slot)
+	}
+
+	switch item.Source {
+	case sourceTuneIn:
+		if stockStation(item.Location) == "" {
+			return "unknown TuneIn location " + item.Location
+		}
+	case sourceRadioBrowser:
+		if stockRadioBrowserUUID(item.Location) == "" {
+			return "unknown Radio Browser location " + item.Location
+		}
+	default:
+		return "not a TuneIn or Radio Browser station"
 	}
 
 	err := speaker.CheckPreset(name, art)

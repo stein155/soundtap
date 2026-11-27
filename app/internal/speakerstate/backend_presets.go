@@ -29,12 +29,56 @@ func (s *Speaker) StorePreset(ctx context.Context, slot int, source, itemType, l
 	return s.savePreset(slot, &Preset{Source: source, Type: itemType, Location: location, Name: name, Art: art})
 }
 
+// StorePresetIfEmpty is StorePreset for a slot that holds nothing: it reports false and
+// changes nothing when the slot holds a preset, and the check and the write hold presetMu
+// together, so a preset the owner stores meanwhile is never replaced.
+func (s *Speaker) StorePresetIfEmpty(
+	ctx context.Context, slot int, source, itemType, location, name, art string,
+) (bool, error) {
+	err := live(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	if slot < 1 || slot > speaker.PresetSlots {
+		return false, errPresetSlot
+	}
+
+	err = speaker.CheckPreset(name, art)
+	if err != nil {
+		return false, err //nolint:wrapcheck // CheckPreset words it for the caller, which logs it as it is.
+	}
+
+	s.presetMu.Lock()
+	defer s.presetMu.Unlock()
+
+	s.lock()
+	held := s.presets[slot].Location != ""
+	s.unlock()
+
+	if held {
+		return false, nil
+	}
+
+	err = s.savePresetLocked(slot, &Preset{Source: source, Type: itemType, Location: location, Name: name, Art: art})
+	if err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
 // savePreset persists a preset change (nil removes the slot) and only then applies it
 // in memory.
 func (s *Speaker) savePreset(slot int, preset *Preset) error {
 	s.presetMu.Lock()
 	defer s.presetMu.Unlock()
 
+	return s.savePresetLocked(slot, preset)
+}
+
+// savePresetLocked is savePreset for a caller that holds presetMu.
+func (s *Speaker) savePresetLocked(slot int, preset *Preset) error {
 	s.lock()
 	persist := s.presetChange
 	s.unlock()

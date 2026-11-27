@@ -236,7 +236,7 @@ func runDaemon(opt options, serial string, log *slog.Logger) {
 
 	speakerState := newSpeaker(opt, identity, log)
 	tuneinClient := tunein.New()
-	presets := loadPresets(ctx, speakerState, presetsPath, leftovers.presets, log)
+	presets := openPresets(ctx, speakerState, presetsPath, leftovers.presets, log)
 	upd := update.New(version, log.With("comp", "update"))
 
 	port, advertisedPort := advertisedPorts(opt)
@@ -620,14 +620,27 @@ func newSpeaker(opt options, identity string, log *slog.Logger) *speakerstate.Sp
 	return state
 }
 
+// openPresets is loadPresets, then the lookups of stock's Radio Browser presets beside the
+// presets file, once those are on the speaker.
+func openPresets(
+	ctx context.Context, state *speakerstate.Speaker, path string, stockPresets func() stockPresetSet,
+	log *slog.Logger,
+) *store.Store {
+	presets := loadPresets(ctx, state, path, stockPresets, log)
+	startStockPresetLookups(ctx, filepath.Dir(path), state, log)
+
+	return presets
+}
+
 // loadPresets opens the preset store and puts its presets on the speaker.
 func loadPresets(
-	ctx context.Context, state *speakerstate.Speaker, path string, stockPresets func() []store.Preset,
+	ctx context.Context, state *speakerstate.Speaker, path string, stockPresets func() stockPresetSet,
 	log *slog.Logger,
 ) *store.Store {
 	// On the first start after an install from Bose's software (stockPresets is set then), no
 	// file at all means no preset was ever stored here, so stock's presets are kept. Emptied
-	// presets leave a file.
+	// presets leave a file. Stock's Radio Browser presets are written down beside it, for
+	// lookupStockPresets to store once the network answers.
 	_, statErr := os.Stat(path)
 	// An unreadable file leaves the store empty and read-only, so no preset write can
 	// replace the owner's presets with this empty set; a corrupt one was moved aside.
@@ -639,12 +652,15 @@ func loadPresets(
 	}
 
 	if stockPresets != nil && errors.Is(statErr, fs.ErrNotExist) {
-		for _, preset := range stockPresets() {
+		stock := stockPresets()
+		for _, preset := range stock.taken {
 			err := presets.Set(preset)
 			if err != nil {
 				log.Warn("preset from stock not kept", "slot", preset.Slot, "err", err)
 			}
 		}
+
+		recordPendingStockPresets(filepath.Join(filepath.Dir(path), stockPendingName), stock.pending, time.Now(), log)
 	}
 
 	for _, preset := range presets.All() {

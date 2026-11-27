@@ -10,8 +10,10 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stein155/soundtap/app/internal/hw/model"
 	"github.com/stein155/soundtap/app/internal/settings"
@@ -262,8 +264,8 @@ func TestStockDeviceName(t *testing.T) {
 //nolint:paralleltest // swaps package variables other tests read: stockPresetsPath
 func TestStockPresets(t *testing.T) {
 	stockPresetsPath = filepath.Join(t.TempDir(), "Presets.xml")
-	if got := stockPresets(); got != nil {
-		t.Fatalf("no file gave %v", got)
+	if got := stockPresets(); got.taken != nil || got.pending != nil {
+		t.Fatalf("no file gave %+v", got)
 	}
 
 	const doc = `<?xml version="1.0" encoding="UTF-8" ?><presets>
@@ -273,6 +275,12 @@ func TestStockPresets(t *testing.T) {
 		`<itemName>Mix</itemName></ContentItem></preset>
 	<preset id="3"><ContentItem source="TUNEIN" type="stationurl" location="/v1/playback/station/s6712">` +
 		`<itemName> </itemName></ContentItem></preset>
+	<preset id="4"><ContentItem source="RADIO_BROWSER" type="stationurl" ` +
+		`location="/stations/byuuid/005636e9-2142-497b-8f51-606d536fb18a" sourceAccount="" isPresetable="true" ` +
+		`createdOn="1700000000" updatedOn="1700000000"><itemName>NPO Radio 2</itemName>` +
+		`<containerArt>http://example.com/npo2.png</containerArt></ContentItem></preset>
+	<preset id="5"><ContentItem source="RADIO_BROWSER" type="stationurl" location="/stations/byuuid/../x">` +
+		`<itemName>Odd</itemName></ContentItem></preset>
 	<preset id="6"><ContentItem source="TUNEIN" type="stationurl" location="/v1/playback/station/s182221">` +
 		`<itemName>Radio Starfighter</itemName></ContentItem></preset>
 	</presets>`
@@ -282,10 +290,21 @@ func TestStockPresets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := stockPresets()
+	set := stockPresets()
+
+	got := set.taken
 	if len(got) != 2 || got[0].Slot != 1 || got[0].StationID != "s17523" || got[0].Name != "NPO Radio 1" ||
 		got[1].Slot != 6 || got[1].StationID != "s182221" {
 		t.Fatalf("presets = %+v", got)
+	}
+	// A Radio Browser preset waits for its stream address; one with a location that names
+	// no station is left out.
+	want := []pendingStockPreset{{
+		Slot: 4, UUID: "005636e9-2142-497b-8f51-606d536fb18a", Name: "NPO Radio 2",
+		Logo: "http://example.com/npo2.png", FirstSeen: time.Time{},
+	}}
+	if !reflect.DeepEqual(set.pending, want) {
+		t.Fatalf("pending = %+v, want %+v", set.pending, want)
 	}
 }
 
@@ -498,7 +517,17 @@ func TestStockTakenOverOnceNotAfterReset(t *testing.T) {
 		t.Fatalf("first start: name %q, %d presets; want Woonkamer and 1", name, n)
 	}
 
+	// Stock's Radio Browser presets still waiting for their lookup go with the reset too.
+	pendingPath := filepath.Join(home, stockPendingName)
+	recordPendingStockPresets(pendingPath, []pendingStockPreset{{
+		Slot: 2, UUID: "005636e9-2142-497b-8f51-606d536fb18a", Name: "NPO Radio 2", Logo: "", FirstSeen: time.Time{},
+	}}, time.Now(), log)
 	factoryReset(t.Context(), home, filepath.Join(dir, "wifi.conf"), log, func() {})
+
+	_, err = os.Stat(pendingPath)
+	if !os.IsNotExist(err) {
+		t.Fatalf("the pending stock presets survive a factory reset: %v", err)
+	}
 
 	if name, n := start(); name != "SoundTap ST10" || n != 0 {
 		t.Fatalf("start after reset: name %q, %d presets; want SoundTap ST10 and none", name, n)
@@ -607,6 +636,8 @@ func TestStockTakeoverLogsWhy(t *testing.T) {
 		`<itemName>Mix</itemName></ContentItem></preset>`+
 		`<preset id="3"><ContentItem source="TUNEIN" location="/v1/other/s1">`+
 		`<itemName>Odd</itemName></ContentItem></preset>`+
+		`<preset id="4"><ContentItem source="RADIO_BROWSER" location="/stations/byuuid/`+
+		`005636e9-2142-497b-8f51-606d536fb18a"><itemName>NPO Radio 2</itemName></ContentItem></preset>`+
 		`</presets>`), 0o600))
 
 	var buf bytes.Buffer
@@ -618,7 +649,7 @@ func TestStockTakeoverLogsWhy(t *testing.T) {
 		t.Fatalf("a broken configuration gave the name %q", got)
 	}
 
-	if got := leftovers.presets(); len(got) != 1 || got[0].Slot != 1 {
+	if got := leftovers.presets(); len(got.taken) != 1 || got.taken[0].Slot != 1 || len(got.pending) != 1 {
 		t.Fatalf("presets = %+v", got)
 	}
 
@@ -630,9 +661,10 @@ func TestStockTakeoverLogsWhy(t *testing.T) {
 	out := buf.String()
 	for _, want := range []string{
 		`level=WARN msg="stock name: not read"`,
-		`msg="stock preset not taken over" slot=2 source=SPOTIFY why="not a TuneIn station"`,
+		`msg="stock preset not taken over" slot=2 source=SPOTIFY why="not a TuneIn or Radio Browser station"`,
 		`msg="stock preset not taken over" slot=3 source=TUNEIN why="unknown TuneIn location /v1/other/s1"`,
-		`msg="stock presets read" taken=1 skipped=2`,
+		`msg="stock preset waits for a Radio Browser lookup" slot=4 name="NPO Radio 2"`,
+		`msg="stock presets read" taken=1 pending=1 skipped=2`,
 		`msg="stock clock settings: none to take over"`,
 	} {
 		if !strings.Contains(out, want) {

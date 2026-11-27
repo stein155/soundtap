@@ -48,6 +48,7 @@ func factoryReset(ctx context.Context, home, wifiConf string, log *slog.Logger, 
 		filepath.Join(home, "presets.json.settings.tmp"),
 		filepath.Join(home, "recent.json"), // listening history is the owner's
 		filepath.Join(home, "favorites.json"),
+		filepath.Join(home, stockPendingName), // stock's presets must not come back after a reset
 		filepath.Join(home, ".sessions"),
 		filepath.Join(home, ".sessions.tmp"),
 		filepath.Join(home, "plugins"),
