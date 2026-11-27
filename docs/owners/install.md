@@ -268,8 +268,9 @@ speaker's name in your router's list of devices, or open `http://soundtap.local`
 
 After the install the speaker tries to join the Wi-Fi Bose's software was on. That usually
 works, but not on every network. A SoundTouch 10 or Wireless Link takes over WPA, WEP or open
-networks; a SoundTouch 20 joins 2.4 GHz networks that are open or use WEP, WPA or WPA2. If the
-speaker does not show up on your network, use its setup network:
+networks; a SoundTouch 20 joins 2.4 GHz networks that are open or use WEP, WPA or WPA2. Every
+speaker also joins WPA3 networks once you choose them on its setup page. If the speaker does not
+show up on your network, use its setup network:
 
 **SoundTouch 10 and Wireless Link.** A speaker without Wi-Fi settings opens its own network,
 named after the speaker, for example **`SoundTap ST10 A1B2C3`** (on older builds:

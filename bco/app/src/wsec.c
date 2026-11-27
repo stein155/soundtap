@@ -240,3 +240,148 @@ int wsec_tkip_open(const uint8_t tk[16], const uint8_t mic_key[8], const uint8_t
         diff |= mic[i] ^ d[m + i];
     return diff ? WSEC_MIC_FAIL : (int)m;
 }
+
+/* ============================ CCMP (software) ============================ */
+/* The nonce and the AAD of IEEE 802.11-2020 12.5.3.3.3-4 for a frame without QoS or a fourth
+ * address: FC with Retry, PwrMgt and MoreData cleared and Protected set (a data frame's subtype
+ * bits 4-6 cleared too), A1-A3, and the sequence control with only the fragment number left. */
+static void ws_ccmp_init(const uint8_t tk[16], const uint8_t hdr[24], uint64_t pn, unsigned n,
+                         uint8_t a0[16], uint8_t mac[16])
+{
+    uint8_t aad[2 + 22 + 8], b[16];
+    unsigned i, j;
+    int mgmt = (hdr[0] & 0x0c) == 0;
+    a0[0] = 0x01;
+    a0[1] = (uint8_t)(mgmt ? 0x10 : 0); /* nonce flags: priority 0, Management */
+    for (i = 0; i < 6; i++)
+        a0[2 + i] = hdr[10 + i];
+    for (i = 0; i < 6; i++)
+        a0[8 + i] = (uint8_t)(pn >> (40 - 8 * i));
+    a0[14] = a0[15] = 0;
+    /* B0: flags (Adata, M = 8, L = 2), the nonce, the length */
+    b[0] = 0x59;
+    for (i = 1; i < 14; i++)
+        b[i] = a0[i];
+    b[14] = (uint8_t)(n >> 8), b[15] = (uint8_t)n;
+    wpa_aes128_enc(tk, b, mac);
+    aad[0] = 0, aad[1] = 22;
+    aad[2] = (uint8_t)(hdr[0] & (mgmt ? 0xff : 0x8f));
+    aad[3] = (uint8_t)((hdr[1] & ~0x38) | 0x40);
+    for (i = 0; i < 18; i++)
+        aad[4 + i] = hdr[4 + i];
+    aad[22] = hdr[22] & 0x0f, aad[23] = 0;
+    for (i = 24; i < sizeof aad; i++)
+        aad[i] = 0;
+    for (j = 0; j < sizeof aad; j += 16) {
+        for (i = 0; i < 16; i++)
+            mac[i] ^= aad[j + i];
+        wpa_aes128_enc(tk, mac, mac);
+    }
+}
+
+/* CBC-MAC over the payload, and CTR over payload and MIC: encrypt or decrypt in place. */
+static void ws_ccmp_run(const uint8_t tk[16], uint8_t a0[16], uint8_t mac[16], uint8_t *d, unsigned n,
+                        int enc, uint8_t tag[8])
+{
+    uint8_t s[16];
+    unsigned i, k;
+    for (k = 0; k * 16 < n; k++) {
+        unsigned m = n - k * 16 < 16 ? n - k * 16 : 16;
+        a0[14] = (uint8_t)((k + 1) >> 8), a0[15] = (uint8_t)(k + 1);
+        wpa_aes128_enc(tk, a0, s);
+        for (i = 0; i < m; i++) {
+            if (enc)
+                mac[i] ^= d[k * 16 + i], d[k * 16 + i] ^= s[i];
+            else
+                d[k * 16 + i] ^= s[i], mac[i] ^= d[k * 16 + i];
+        }
+        wpa_aes128_enc(tk, mac, mac);
+    }
+    a0[14] = a0[15] = 0;
+    wpa_aes128_enc(tk, a0, s);
+    for (i = 0; i < 8; i++)
+        tag[i] = mac[i] ^ s[i];
+}
+
+unsigned wsec_ccmp_protect(const uint8_t tk[16], const uint8_t hdr[24], uint64_t pn, uint8_t *f, unsigned n)
+{
+    uint8_t a0[16], mac[16];
+    f[0] = (uint8_t)pn, f[1] = (uint8_t)(pn >> 8), f[2] = 0, f[3] = 0x20;
+    f[4] = (uint8_t)(pn >> 16), f[5] = (uint8_t)(pn >> 24), f[6] = (uint8_t)(pn >> 32), f[7] = (uint8_t)(pn >> 40);
+    ws_ccmp_init(tk, hdr, pn, n, a0, mac);
+    ws_ccmp_run(tk, a0, mac, f + WSEC_CCMP_HDR, n, 1, f + WSEC_CCMP_HDR + n);
+    return n + WSEC_CCMP_HDR + WSEC_CCMP_MIC;
+}
+
+uint64_t wsec_ccmp_pn(const uint8_t *f)
+{
+    return f[0] | (uint64_t)f[1] << 8 | (uint64_t)ws_get32(f + 4) << 16;
+}
+
+int wsec_ccmp_open(const uint8_t tk[16], const uint8_t hdr[24], uint8_t *f, unsigned n)
+{
+    uint8_t a0[16], mac[16], tag[8];
+    unsigned m, diff = 0;
+    if (n < WSEC_CCMP_HDR + WSEC_CCMP_MIC || !(f[3] & 0x20))
+        return WSEC_BAD;
+    m = n - WSEC_CCMP_HDR - WSEC_CCMP_MIC;
+    ws_ccmp_init(tk, hdr, wsec_ccmp_pn(f), m, a0, mac);
+    ws_ccmp_run(tk, a0, mac, f + WSEC_CCMP_HDR, m, 0, tag);
+    for (unsigned i = 0; i < 8; i++)
+        diff |= tag[i] ^ f[WSEC_CCMP_HDR + m + i];
+    return diff ? WSEC_MIC_FAIL : (int)m;
+}
+
+/* ============================ BIP-CMAC-128 ============================ */
+/* MIC = AES-CMAC(IGTK, FC (Retry, PwrMgt, MoreData cleared) || A1 || A2 || A3 || body with the
+ * MMIE's MIC zeroed)[0..7], the message gathered in one buffer for wpa_cmac. */
+static int ws_bip_mic(const uint8_t igtk[16], const uint8_t hdr[24], const uint8_t *body, unsigned n,
+                      uint8_t mic[8])
+{
+    uint8_t m[20 + 512], full[16];
+    unsigned i;
+    if (n > sizeof m - 20 || n < WSEC_MMIE_LEN)
+        return 0;
+    m[0] = hdr[0], m[1] = (uint8_t)(hdr[1] & ~0x38);
+    for (i = 0; i < 18; i++)
+        m[2 + i] = hdr[4 + i];
+    for (i = 0; i < n; i++)
+        m[20 + i] = i >= n - 8 ? 0 : body[i];
+    wpa_cmac(igtk, m, 20 + n, full);
+    for (i = 0; i < 8; i++)
+        mic[i] = full[i];
+    return 1;
+}
+
+unsigned wsec_bip_protect(const uint8_t igtk[16], unsigned keyid, uint64_t ipn, const uint8_t hdr[24],
+                          uint8_t *body, unsigned n)
+{
+    uint8_t *e = body + n;
+    unsigned i;
+    e[0] = 76, e[1] = 16, e[2] = (uint8_t)keyid, e[3] = (uint8_t)(keyid >> 8);
+    for (i = 0; i < 6; i++)
+        e[4 + i] = (uint8_t)(ipn >> (8 * i));
+    if (!ws_bip_mic(igtk, hdr, body, n + WSEC_MMIE_LEN, e + 10))
+        return 0;
+    return n + WSEC_MMIE_LEN;
+}
+
+int wsec_bip_check(const uint8_t igtk[16], const uint8_t hdr[24], const uint8_t *body, unsigned n,
+                   unsigned *keyid, uint64_t *ipn)
+{
+    const uint8_t *e;
+    uint8_t mic[8];
+    unsigned i, diff = 0;
+    if (n < WSEC_MMIE_LEN)
+        return 0;
+    e = body + n - WSEC_MMIE_LEN;
+    if (e[0] != 76 || e[1] != 16 || !ws_bip_mic(igtk, hdr, body, n, mic))
+        return 0;
+    for (i = 0; i < 8; i++)
+        diff |= mic[i] ^ e[10 + i];
+    *keyid = e[2] | e[3] << 8;
+    *ipn = 0;
+    for (i = 0; i < 6; i++)
+        *ipn |= (uint64_t)e[4 + i] << (8 * i);
+    return !diff;
+}

@@ -73,4 +73,30 @@ unsigned wsec_tkip_protect(const uint8_t tk[16], const uint8_t mic_key[8], unsig
 int wsec_tkip_open(const uint8_t tk[16], const uint8_t mic_key[8], const uint8_t ta[6], const uint8_t da[6],
                    const uint8_t sa[6], uint8_t *f, unsigned n);
 
+/* --- CCMP in software, for the management frames the app protects itself (PMF, ADR 0136) --- */
+#define WSEC_CCMP_HDR 8u
+#define WSEC_CCMP_MIC 8u
+/* Encipher the n-byte body at f + WSEC_CCMP_HDR in place under tk with packet number pn: the
+ * CCMP header (key id 0, ExtIV) goes at f, the 8-byte MIC after the body. hdr is the 802.11
+ * header as sent (24 bytes; FC with the Protected bit, addresses, sequence control); a management
+ * frame's nonce carries the Management flag (IEEE 802.11-2020 12.5.3.3.4). Returns n + 16. */
+unsigned wsec_ccmp_protect(const uint8_t tk[16], const uint8_t hdr[24], uint64_t pn, uint8_t *f, unsigned n);
+/* The PN of a CCMP header. */
+uint64_t wsec_ccmp_pn(const uint8_t *f);
+/* Decipher a CCMP body (n bytes: header, ciphertext, MIC) in place. The caller checks the PN
+ * (wsec_ccmp_pn) against its replay counter first and takes it only when this succeeds. Returns
+ * the plaintext length, the plaintext at f + WSEC_CCMP_HDR, or WSEC_BAD or WSEC_MIC_FAIL. */
+int wsec_ccmp_open(const uint8_t tk[16], const uint8_t hdr[24], uint8_t *f, unsigned n);
+
+/* --- BIP-CMAC-128 (IEEE 802.11-2020 12.5.4), group-addressed management frames under PMF --- */
+#define WSEC_MMIE_LEN 18u /* element 76: key id (2), IPN (6, little endian), MIC (8) */
+/* Append the MMIE to the n-byte body (room for WSEC_MMIE_LEN more): key id 4 or 5, the IPN,
+ * the MIC over the masked header and the body. Returns n + 18. */
+unsigned wsec_bip_protect(const uint8_t igtk[16], unsigned keyid, uint64_t ipn, const uint8_t hdr[24],
+                          uint8_t *body, unsigned n);
+/* Check a body that ends in an MMIE: 1 when its MIC holds, with *keyid and *ipn read from it
+ * (the caller checks the key id and that the IPN is above its last); 0 otherwise. */
+int wsec_bip_check(const uint8_t igtk[16], const uint8_t hdr[24], const uint8_t *body, unsigned n,
+                   unsigned *keyid, uint64_t *ipn);
+
 #endif

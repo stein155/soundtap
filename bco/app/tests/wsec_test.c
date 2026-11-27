@@ -186,6 +186,69 @@ static void tkip_vectors(void)
     printf("tkip ok\n");
 }
 
+/* CCMP in software for protected management frames and BIP-CMAC-128 (PMF, ADR 0136), against
+ * bodies computed by an independent reference (pyca/cryptography's AES-CCM and AES-CMAC with the
+ * nonce, AAD and MMIE of IEEE 802.11-2020 12.5.3 and 12.5.4, as Linux's mac80211 builds them). */
+static void pmf_vectors(void)
+{
+    static const uint8_t a1[6] = {0x02, 0x11, 0x22, 0x33, 0x44, 0x55}, a2[6] = {0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01};
+    static const uint8_t want_deauth[18] = {0x05, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 0x01, 0x64,
+                                            0xea, 0xe0, 0x7b, 0xa3, 0xd8, 0x72, 0x1d, 0x1f, 0x45};
+    static const uint8_t want_saq[20] = {0x06, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x97, 0x1d,
+                                         0x31, 0xa2, 0xdf, 0x43, 0xce, 0x3a, 0x53, 0x29, 0xe1, 0xd7};
+    static const uint8_t want_bip[20] = {0x03, 0x00, 0x4c, 0x10, 0x04, 0x00, 0xa1, 0x00, 0x00, 0x00,
+                                         0x00, 0x00, 0xa9, 0xe9, 0x00, 0x8a, 0x58, 0x7b, 0x19, 0x57};
+    uint8_t tk[16], igtk[16], hdr[24], f[64];
+    for (unsigned i = 0; i < 16; i++)
+        tk[i] = (uint8_t)(0x40 + i), igtk[i] = (uint8_t)(0x60 + i);
+    /* a protected deauthentication, reason 7, PN 0x010000000005 */
+    memset(hdr, 0, sizeof hdr);
+    hdr[0] = 0xc0, hdr[1] = 0x40;
+    memcpy(hdr + 4, a1, 6), memcpy(hdr + 10, a2, 6), memcpy(hdr + 16, a2, 6);
+    hdr[22] = 0x30, hdr[23] = 0x12;
+    f[8] = 7, f[9] = 0;
+    assert(wsec_ccmp_protect(tk, hdr, 0x010000000005ull, f, 2) == 18);
+    hex_eq(f, want_deauth, 18, "ccmp deauth");
+    assert(wsec_ccmp_pn(f) == 0x010000000005ull);
+    hdr[1] |= 0x08; /* a retry: the AAD masks the bit, the frame still opens */
+    assert(wsec_ccmp_open(tk, hdr, f, 18) == 2 && f[8] == 7);
+    memcpy(f, want_deauth, 18);
+    f[9] ^= 1;
+    assert(wsec_ccmp_open(tk, hdr, f, 18) == WSEC_MIC_FAIL);
+    memcpy(f, want_deauth, 18);
+    hdr[22] ^= 0x10; /* another sequence number: masked, still opens */
+    assert(wsec_ccmp_open(tk, hdr, f, 18) == 2);
+    memcpy(f, want_deauth, 18);
+    hdr[4] ^= 1;     /* another receiver: the AAD differs */
+    assert(wsec_ccmp_open(tk, hdr, f, 18) == WSEC_MIC_FAIL);
+    hdr[4] ^= 1;
+    assert(wsec_ccmp_open(tk, hdr, f, 15) == WSEC_BAD);
+    /* an SA Query request, transaction 0x1234, PN 6 */
+    hdr[0] = 0xd0, hdr[1] = 0x40, hdr[22] = 0x40;
+    f[8] = 8, f[9] = 0, f[10] = 0x34, f[11] = 0x12;
+    assert(wsec_ccmp_protect(tk, hdr, 6, f, 4) == 20);
+    hex_eq(f, want_saq, 20, "ccmp sa query");
+    /* BIP: a deauthentication to everybody, reason 3, key id 4, IPN 0xa1 */
+    uint8_t body[2 + WSEC_MMIE_LEN] = {3, 0};
+    memset(hdr, 0, sizeof hdr);
+    hdr[0] = 0xc0;
+    memset(hdr + 4, 0xff, 6), memcpy(hdr + 10, a2, 6), memcpy(hdr + 16, a2, 6);
+    hdr[22] = 0x50, hdr[23] = 0x12;
+    assert(wsec_bip_protect(igtk, 4, 0xa1, hdr, body, 2) == 20);
+    hex_eq(body, want_bip, 20, "bip mmie");
+    unsigned keyid = 0;
+    uint64_t ipn = 0;
+    assert(wsec_bip_check(igtk, hdr, body, 20, &keyid, &ipn) && keyid == 4 && ipn == 0xa1);
+    hdr[1] = 0x08; /* Retry masked */
+    assert(wsec_bip_check(igtk, hdr, body, 20, &keyid, &ipn));
+    body[0] = 4;   /* another reason: the MIC fails */
+    assert(!wsec_bip_check(igtk, hdr, body, 20, &keyid, &ipn));
+    body[0] = 3, body[2] = 0xdd;
+    assert(!wsec_bip_check(igtk, hdr, body, 20, &keyid, &ipn)); /* not an MMIE */
+    assert(!wsec_bip_check(igtk, hdr, body, 17, &keyid, &ipn));
+    printf("ccmp and bip ok\n");
+}
+
 int main(void)
 {
     rc4_vectors();
@@ -194,6 +257,7 @@ int main(void)
     tkip_mix_vectors();
     wep_vectors();
     tkip_vectors();
+    pmf_vectors();
     printf("wsec: all passed\n");
     return 0;
 }

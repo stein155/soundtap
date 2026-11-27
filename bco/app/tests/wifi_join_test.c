@@ -746,6 +746,162 @@ static void wep_network(void)
     printf("ok: WEP joins with shared key (also after auto's open system), data both ways\n");
 }
 
+/* A management frame from the AP to dst (us or everybody), as the core passes it up. */
+static unsigned char rxm[0xcc + 64];
+static unsigned rx_from_ap(unsigned fc, const unsigned char *dst, const unsigned char *body, unsigned n)
+{
+    memset(rxm, 0, sizeof rxm);
+    rxm[0x94] = 0x18, rxm[0x97] = 0xc4;
+    rxm[0xac] = (unsigned char)fc, rxm[0xad] = (unsigned char)(fc >> 8);
+    memcpy(rxm + 0xac + 4, dst, 6), memcpy(rxm + 0xac + 10, AP, 6), memcpy(rxm + 0xac + 16, AP, 6);
+    rxm[0xac + 22] = 0x40;
+    memcpy(rxm + 0xcc, body, n);
+    return 0xcc + n;
+}
+
+/* The AP's robust frame under PMF: CCMP under tk with PN pn (unicast), or BIP under the IGTK. */
+static unsigned rx_protected(unsigned fc, const unsigned char *body, unsigned n, const unsigned char *tk,
+                             unsigned long long pn)
+{
+    unsigned char f[64];
+    unsigned len = rx_from_ap(fc | 0x4000, own, body, n);
+    memcpy(f + 8, body, n);
+    unsigned m = wsec_ccmp_protect(tk, rxm + 0xac, pn, f, n);
+    memcpy(rxm + 0xcc, f, m);
+    (void)len;
+    return 0xcc + m;
+}
+
+/* WPA3 (ADR 0136): an SAE profile asks the SCM for SAE with the AP's BSSID and SSID, passes the
+ * AP's SAE frames up and sends the SCM's; with the PMK and the result it associates with AKM 8 and
+ * MFPC, and runs the 4-way with that PMK. Under PMF an unprotected deauthentication starts an SA
+ * Query (protected) instead of ending the link, which a protected answer stops and silence ends;
+ * a protected one (CCMP) ends it, a replayed one does not; a deauthentication to everybody needs a
+ * valid MMIE; the AP's SA Query is answered, protected. */
+static void wpa3_and_pmf(void)
+{
+    static const unsigned char own_mac[6] = {0x02, 0x11, 0x22, 0x33, 0x44, 0x55};
+    static const unsigned char ies[] = {0, 3, 'w', 'p', '3', 1, 4, 0x82, 0x84, 0x8b, 0x96, 3, 1, 6};
+    unsigned char seed0[32] = {0}, msg[600], spmk[32];
+    copy(own, own_mac, 6);
+    cmd_ring(63);
+    tx_frames();
+    nbss = 1;
+    memset(&bsstab[0], 0, sizeof bsstab[0]);
+    memcpy(bsstab[0].bssid, AP, 6), memcpy(bsstab[0].ssid, "wp3", 3);
+    bsstab[0].ssidlen = 3, bsstab[0].chan = 6, bsstab[0].caps = 0x0411, bsstab[0].rssi = -50;
+    bsstab[0].rsn = 1, bsstab[0].grp = 4, bsstab[0].rpair = BSS_CCMP, bsstab[0].rakm = BSS_SAE, bsstab[0].rcaps = 0xc0;
+    memcpy(bsstab[0].ies, ies, sizeof ies), bsstab[0].ielen = sizeof ies;
+    state = WIFI_IDLE, now = 90000;
+    /* a PSK profile does not join a WPA3-only network: it says so */
+    const unsigned char k[32] = {1};
+    assert(wifi_join((const unsigned char *)"wp3", 3, WIFI_SEC_PSK, k, 32, seed0, 0, 0) == 0 && state == WIFI_SCANNING);
+    state = WIFI_JOINING;
+    join_attempt();
+    assert(state == WIFI_FAILED && fail_step == WIFI_FAIL_SECURITY);
+    state = WIFI_IDLE;
+    assert(wifi_join((const unsigned char *)"wp3", 3, WIFI_SEC_SAE, 0, 0, seed0, 0, 0) == 0);
+    assert(state == WIFI_JOINING && cur.akm == WPA_AKM_SAE && cur.mfp);
+    corebd = 1;
+    join_step();
+    assert(jstep == J_SAE);
+    int n = wifi_sae_next(msg, sizeof msg);
+    assert(n == 1 + 6 + 1 + 3 && msg[0] == WIFI_SAE_START && !memcmp(msg + 1, AP, 6) && msg[7] == 3 &&
+           !memcmp(msg + 8, "wp3", 3));
+    /* the AP's commit goes up whole; another algorithm is not SAE's */
+    unsigned char commit[6 + 2 + 32 + 64] = {3, 0, 1, 0, 0, 0, 19, 0};
+    rx_station(rxm, rx_from_ap(0xb0, own, commit, sizeof commit));
+    n = wifi_sae_next(msg, sizeof msg);
+    assert(n == 1 + 24 + (int)sizeof commit && msg[0] == WIFI_SAE_FRAME && msg[1] == 0xb0 && msg[25] == 3);
+    /* the SCM's commit goes out to the AP */
+    tx_frames();
+    assert(wifi_sae_tx(commit, sizeof commit) == 0);
+    const unsigned char *d = last_frame() + 8;
+    assert(d[0x18] == 0xb0 && !memcmp(d + 0x1c, AP, 6) && d[0xc4] == 3 && d[0xc4 + 2] == 1);
+    assert(wifi_sae_tx(ies, 6) == -1);                      /* not an SAE frame body */
+    /* the PMK, then the result: association with AKM 8 and MFPC */
+    for (unsigned i = 0; i < 32; i++)
+        spmk[i] = (unsigned char)(0x90 + i);
+    static const unsigned char other[6] = {2, 0, 0, 0, 0, 9};
+    assert(wifi_set_pmk(other, spmk) == -1);
+    assert(wifi_set_pmk(AP, spmk) == 0 && !memcmp(pmk, spmk, 32));
+    assert(wifi_sae_done(0, AP) == 0);
+    tx_frames();
+    join_step();
+    assert(jstep == J_ASSOC);
+    d = last_frame() + 8;
+    unsigned char ie[WPA_IE_MAX];
+    unsigned iel = wpa_own_ie(ie, WPA_PROTO_RSN, 4, 4, WPA_AKM_SAE, WPA_CAP_MFPC | WPA_CAP_MFPR);
+    assert(d[0x18] == 0x00 && !memcmp(d + 0xc4 + 4 + 5 + 10 + 6, ie, iel));
+    rxassocok = 1;
+    join_step();
+    assert(jstep == J_4WAY && sm.akm == WPA_AKM_SAE && sm.mfp && sm.ver == 0 && !memcmp(sm.pmk, spmk, 32));
+    /* a refused SAE: the attempt fails with the status */
+    jstep = J_SAE, sae_result = 0, deadline = now + 1000;
+    assert(wifi_sae_done(1, AP) == 0 && sae_result == 2);
+
+    /* ---- PMF, the link up ---- */
+    unsigned char tk[16], gk[16];
+    for (unsigned i = 0; i < 16; i++)
+        tk[i] = (unsigned char)(0x30 + i), gk[i] = (unsigned char)(0x70 + i);
+    state = WIFI_UP, keyed = 1, kicked = 0, pmf = 1, saq_on = 0;
+    memcpy(mgmt_tk, tk, 16), mgmt_pn = MGMT_PN0, mgmt_rxpn = 0;
+    memcpy(igtk, gk, 16), igtk_id = 4, ipn = 10;
+    const unsigned char reason[2] = {7, 0};
+    /* an unprotected deauthentication: an SA Query, not the end */
+    tx_frames();
+    rx_station(rxm, rx_from_ap(0xc0, own, reason, 2));
+    assert(!kicked && saq_on);
+    d = last_frame() + 8;
+    unsigned char q[8 + 4 + 8], hq[24];
+    memcpy(hq, d + 0x18, 24), memcpy(q, d + 0xc4, sizeof q);
+    assert(d[0x18] == 0xd0 && d[0x19] == 0x40 && d[0x13] == 1);
+    assert(wsec_ccmp_open(tk, hq, q, sizeof q) == 4 && q[8] == 8 && q[9] == 0 && wsec_ccmp_pn(q) == MGMT_PN0 + 1);
+    /* the AP's protected answer with that id: the frame was forged, the link stays */
+    const unsigned char ans[4] = {8, 1, q[10], q[11]};
+    rx_station(rxm, rx_protected(0xd0, ans, 4, tk, 1));
+    assert(!saq_on && !kicked);
+    /* again, and no answer: after SAQ_MS the link ends with the frame's reason */
+    rx_station(rxm, rx_from_ap(0xc0, own, reason, 2));
+    assert(saq_on);
+    now += SAQ_MS;
+    saq_check();
+    assert(kicked && kick_sub == 0xc0 && kick_reason == 7 && !saq_on);
+    kicked = 0;
+    /* a protected deauthentication ends it; the same PN again does not */
+    rx_station(rxm, rx_protected(0xc0, reason, 2, tk, 2));
+    assert(kicked && kick_reason == 7);
+    kicked = 0;
+    rx_station(rxm, rx_protected(0xc0, reason, 2, tk, 2));
+    assert(!kicked);
+    /* a deauthentication to everybody: only with a valid MMIE and a newer IPN */
+    rx_station(rxm, rx_from_ap(0xc0, ap_bcast, reason, 2));
+    assert(!kicked && !saq_on);
+    unsigned char bb[2 + WSEC_MMIE_LEN] = {3, 0};
+    rx_from_ap(0xc0, ap_bcast, reason, 2);
+    wsec_bip_protect(gk, 4, 11, rxm + 0xac, bb, 2);
+    unsigned bl = rx_from_ap(0xc0, ap_bcast, bb, sizeof bb);
+    rx_station(rxm, bl);
+    assert(kicked && kick_reason == 3 && ipn == 11);
+    kicked = 0;
+    rx_station(rxm, bl);
+    assert(!kicked); /* the same IPN */
+    /* the AP asks (protected): a protected answer with its id */
+    tx_frames();
+    const unsigned char ask[4] = {8, 0, 0x34, 0x12};
+    rx_station(rxm, rx_protected(0xd0, ask, 4, tk, 3));
+    d = last_frame() + 8;
+    memcpy(hq, d + 0x18, 24), memcpy(q, d + 0xc4, sizeof q);
+    assert(wsec_ccmp_open(tk, hq, q, sizeof q) == 4 && q[8] == 8 && q[9] == 1 && q[10] == 0x34 && q[11] == 0x12);
+    /* without PMF a protected management frame is not looked at */
+    pmf = 0;
+    rx_station(rxm, rx_protected(0xc0, reason, 2, tk, 9));
+    assert(!kicked);
+    wifi_leave();
+    nbss = 0, state = WIFI_IDLE;
+    printf("ok: WPA3 over the SCM's SAE, PMF with SA Query, CCMP and BIP on management frames\n");
+}
+
 int main(void)
 {
     /* a full ring: no PEER_ADD and no 4-way yet; the next poll still has the step */
@@ -788,5 +944,6 @@ int main(void)
     tkip_frames();
     choose_security();
     wep_network();
+    wpa3_and_pmf();
     return 0;
 }

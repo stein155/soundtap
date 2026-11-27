@@ -31,6 +31,15 @@ void wpa_sha1_prf(const uint8_t *key, size_t key_len, const char *label, const u
                   size_t data_len, uint8_t *out, size_t out_len);
 /* The AES S-box, which TKIP's key mixing derives its own from (wsec.c). */
 uint8_t wpa_aes_sbox(unsigned i);
+/* FIPS 180-4 SHA-256, HMAC-SHA256 and IEEE 802.11's KDF (the SHA-256 AKMs' PTK). */
+void wpa_sha256(const uint8_t *msg, size_t len, uint8_t out[32]);
+void wpa_hmac_sha256(const uint8_t *key, size_t key_len, const uint8_t *data, size_t data_len,
+                     uint8_t out[32]);
+void wpa_kdf_sha256(const uint8_t *key, size_t key_len, const char *label, const uint8_t *ctx,
+                    size_t ctx_len, uint8_t *out, size_t out_len);
+/* AES-128 single-block encrypt and AES-CMAC (RFC 4493). */
+void wpa_aes128_enc(const uint8_t key[16], const uint8_t in[16], uint8_t out[16]);
+void wpa_cmac(const uint8_t key[16], const uint8_t *msg, size_t len, uint8_t mac[16]);
 /* RFC 1321 MD5 and RFC 2104 HMAC-MD5: key descriptor version 1's MIC. */
 void wpa_md5(const uint8_t *msg, size_t len, uint8_t out[16]);
 void wpa_hmac_md5(const uint8_t *key, size_t key_len, const uint8_t *data, size_t data_len,
@@ -51,7 +60,10 @@ int wpa_extract_gtk(const uint8_t *kd, unsigned plen, uint8_t gtk[32], unsigned 
 /* What the association negotiated: protocol, cipher suite types and AKM suite type. */
 enum { WPA_PROTO_RSN = 1, WPA_PROTO_WPA = 2 };
 enum { WPA_CIPHER_TKIP = 2, WPA_CIPHER_CCMP = 4 };
-enum { WPA_AKM_PSK = 2 };
+enum { WPA_AKM_PSK = 2, WPA_AKM_PSK_SHA256 = 6, WPA_AKM_SAE = 8 };
+/* RSN capabilities (low byte): management frame protection required, capable (ADR 0136). */
+#define WPA_CAP_MFPR 0x40u
+#define WPA_CAP_MFPC 0x80u
 
 /* The security IE this station sends in its association request and in Message 2 (the AP compares
  * the two): an RSN IE (WPA_RSN_IE_LEN bytes: version 1, the group, one pairwise suite, one AKM,
@@ -75,6 +87,9 @@ void wpa_pbkdf2(const uint8_t *pass, size_t pass_len, const uint8_t *ssid, size_
  * (TKIP: the TK, then the MIC key the AP sends with, then the one the station sends with). */
 void wpa_pmk_to_ptk(const uint8_t pmk[32], const uint8_t aa[6], const uint8_t spa[6],
                     const uint8_t anonce[32], const uint8_t snonce[32], uint8_t *ptk, unsigned ptk_len);
+/* The same under the SHA-256 AKMs (PSK-SHA256, SAE): IEEE 802.11's KDF-SHA256. */
+void wpa_pmk_to_ptk_sha256(const uint8_t pmk[32], const uint8_t aa[6], const uint8_t spa[6],
+                           const uint8_t anonce[32], const uint8_t snonce[32], uint8_t *ptk, unsigned ptk_len);
 
 /* --- 4-way state machine --- */
 enum { WPA_IDLE, WPA_GOT_MSG1, WPA_DONE };
@@ -99,7 +114,11 @@ struct wpa_sm {
     uint8_t group;     /* group cipher suite type in our IE: 4 CCMP (wpa_sm_init), 2 TKIP */
     uint8_t req_replay[8]; /* the counter of our last request (a MIC failure report) */
     uint8_t proto, pairwise, akm; /* WPA_PROTO_*, WPA_CIPHER_*, WPA_AKM_* (wpa_sm_config) */
-    uint8_t ver;       /* key descriptor version: 1 under pairwise TKIP, 2 under CCMP */
+    uint8_t ver;       /* key descriptor version: 1 under pairwise TKIP, 2 under CCMP, 3 under
+                        * PSK-SHA256, 0 (AKM-defined: CMAC and AES key wrap) under SAE */
+    uint8_t mfp;       /* management frame protection negotiated: an IGTK comes with the GTK */
+    uint8_t igtk[16], ipn[6], igtk_set;
+    int igtk_idx;      /* 4 or 5 */
     uint8_t ptk_len;   /* 48 under CCMP, 64 under TKIP */
     uint8_t ie[WPA_IE_MAX], ielen; /* our IE, as in the association request */
 };
@@ -112,7 +131,8 @@ void wpa_sm_init(struct wpa_sm *sm, const uint8_t pmk[32], const uint8_t aa[6],
 void wpa_sm_config(struct wpa_sm *sm, unsigned proto, unsigned pairwise, unsigned group, unsigned akm,
                    unsigned caps);
 
-/* Result bits from wpa_sm_rx. */
+/* Result bits from wpa_sm_rx (WPA_RX_INSTALL_IGTK: igtk, igtk_idx and ipn are new). */
+#define WPA_RX_INSTALL_IGTK 0x20
 #define WPA_RX_SEND        0x01 /* an EAPOL-Key frame was written to out/out_len, send it to aa */
 #define WPA_RX_INSTALL_PTK 0x02 /* install ptk (TK = ptk[32..47]) as the pairwise CCMP key */
 #define WPA_RX_INSTALL_GTK 0x04 /* install gtk[0..gtk_len-1] as the group key at gtk_idx */

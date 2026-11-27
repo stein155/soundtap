@@ -11,6 +11,8 @@
 #define BSS_CCMP 0x1u
 #define BSS_TKIP 0x2u
 #define BSS_PSK 0x1u
+#define BSS_PSK256 0x2u /* AKM 6, PSK-SHA256 */
+#define BSS_SAE 0x4u    /* AKM 8, SAE (WPA3) */
 struct bss {
     unsigned char bssid[6], ssid[33], ssidlen, chan, rsn, wpa;
     unsigned char grp;   /* RSN group cipher suite type (00-0F-AC:2 TKIP, :4 CCMP), 0 = other */
@@ -19,6 +21,7 @@ struct bss {
     unsigned char rsnok; /* the RSN IE lets this station join (rsn_parse) */
     unsigned char wpaok; /* the WPA IE does (wpa_parse) */
     unsigned char proto, pair; /* the network joined (wifi.c cur): WPA_PROTO_*, pairwise WPA_CIPHER_* */
+    unsigned char akm, mfp;    /* and its AKM (WPA_AKM_*) and whether management frame protection is on */
     signed char rssi; /* dBm from the RX descriptor of its last beacon, 0 = not heard yet */
     unsigned short seen;
     unsigned short gen;  /* scan generation last heard in; older than scan_gen - BSS_KEEP = aged out */
@@ -117,7 +120,7 @@ static unsigned suite_lists(const unsigned char *p, unsigned n, unsigned o,
     if (cnt > (n - o) / 4)
         return 0;
     for (i = 0; i < cnt; i++, o += 4)
-        *akm |= suite(p + o) == 2 ? BSS_PSK : 0;
+        *akm |= suite(p + o) == 2 ? BSS_PSK : suite(p + o) == 6 ? BSS_PSK256 : suite(p + o) == 8 ? BSS_SAE : 0;
     return o;
 }
 
@@ -130,10 +133,11 @@ static int ciphers_ok(unsigned group, unsigned pair)
 
 /* An RSN IE's body (IEEE 802.11-2020 9.4.2.24): version 1, group suite, pairwise suites, AKM
  * suites, capabilities; missing capabilities are 0. Fills the group, the sets and the
- * capabilities, and returns 1 when this station can join with PSK: a cipher combination it joins
- * (ciphers_ok), AKM PSK offered, and management frame protection not required (MFPR,
- * capabilities bit 6; bit 7 is MFPC). A WPA2/WPA3 transition network (PSK and SAE, MFPC set, MFPR
- * clear) qualifies; WPA3-only or PMF-required does not. */
+ * capabilities, and returns 1 when this station can join with a password over PSK: a cipher
+ * combination it joins (ciphers_ok), AKM PSK or PSK-SHA256 offered, and when management frame
+ * protection is required (MFPR, capabilities bit 6; bit 7 is MFPC) pairwise CCMP, which PMF needs
+ * (ADR 0136). A WPA2/WPA3 transition network qualifies; a WPA3-only one joins over SAE instead
+ * (wifi.c match). */
 static int rsn_parse(const unsigned char *p, unsigned n, struct bss *b)
 {
     unsigned o, g;
@@ -148,7 +152,8 @@ static int rsn_parse(const unsigned char *p, unsigned n, struct bss *b)
     if (g != 2 && g != 4)
         return 0;
     b->grp = (unsigned char)g;
-    return ciphers_ok(g, b->rpair) && (b->rakm & BSS_PSK) && !(b->rcaps & 0x40);
+    return ciphers_ok(g, b->rpair) && (b->rakm & (BSS_PSK | BSS_PSK256)) &&
+           (!(b->rcaps & 0x40) || (b->rpair & BSS_CCMP));
 }
 
 /* A WPA IE's body after its OUI and type (00-50-F2 1): version 1, group suite, pairwise suites,

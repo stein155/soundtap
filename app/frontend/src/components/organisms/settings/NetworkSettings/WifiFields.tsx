@@ -46,7 +46,7 @@ export function ManualFields({
           value={security}
           options={[
             { value: 'none', label: t('wifiSecurityNone') },
-            { value: 'wpa_or_wpa2', label: 'WPA / WPA2' },
+            { value: 'wpa_or_wpa2', label: 'WPA / WPA2 / WPA3' },
             { value: 'wep', label: 'WEP' },
           ]}
           onChange={onSecurity}

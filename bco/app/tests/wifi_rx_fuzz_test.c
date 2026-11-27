@@ -377,6 +377,66 @@ static void fuzz_soft(void)
     CHECK(mics > 0, "Michael failures seen (%u)", mics);
 }
 
+/* Robust management frames under PMF and SAE frames (ADR 0136): protected deauthentications,
+ * disassociations and SA Queries under CCMP, deauthentications to everybody with an MMIE, SAE
+ * authentication frames while SAE runs, valid and then mutated and cut, through rx_station's
+ * mgmt_open, bip_open and SAE paths. */
+static void fuzz_pmf(void)
+{
+    static const unsigned char subs[3] = {0xc0, 0xa0, 0xd0};
+    unsigned char f[0xcc + 8 + 64 + 8 + WSEC_MMIE_LEN], tk[16], gk[16], fbody[64];
+    unsigned kicks = 0, queued = 0;
+    for (unsigned i = 0; i < 16; i++)
+        tk[i] = (unsigned char)(i * 3), gk[i] = (unsigned char)(i * 5 + 1);
+    for (unsigned it = 0; it < 20000 && !fails; it++) {
+        if (it % 64 == 0) {
+            rings_fresh();
+            state = WIFI_UP, keyed = 1, have_cur = 1, kicked = 0, pmf = 1, saq_on = 0;
+            memcpy(mgmt_tk, tk, 16), mgmt_rxpn = 0, memcpy(igtk, gk, 16), igtk_id = 4, ipn = 0;
+        }
+        unsigned kind = rnd() % 4, sub = subs[rnd() % 3], n = 2 + rnd() % 40, len;
+        for (unsigned i = 0; i < n; i++)
+            fbody[i] = (unsigned char)rnd();
+        if (sub == 0xd0)
+            fbody[0] = 8, fbody[1] = rnd() % 3;
+        memset(f, 0, 0xcc);
+        f[0x94] = 0x18, f[0x97] = 0xc4;
+        memcpy(f + 0xac + 10, BSS, 6), memcpy(f + 0xac + 16, BSS, 6);
+        if (kind == 3) { /* SAE while it runs */
+            state = WIFI_JOINING, jstep = J_SAE;
+            f[0xac] = 0xb0, memcpy(f + 0xac + 4, OWN, 6);
+            fbody[0] = 3, fbody[1] = 0;
+            memcpy(f + 0xcc, fbody, n);
+            len = 0xcc + n;
+        } else if (kind == 2) { /* to everybody, with an MMIE */
+            f[0xac] = (unsigned char)(sub == 0xd0 ? 0xc0 : sub), memset(f + 0xac + 4, 0xff, 6);
+            memcpy(f + 0xcc, fbody, n);
+            len = 0xcc + wsec_bip_protect(gk, 4, it + 1, f + 0xac, f + 0xcc, n);
+        } else { /* to us, under CCMP (or now and then in the clear) */
+            f[0xac] = (unsigned char)sub, f[0xad] = 0x40, memcpy(f + 0xac + 4, OWN, 6);
+            memcpy(f + 0xcc + 8, fbody, n);
+            len = 0xcc + wsec_ccmp_protect(tk, f + 0xac, it + 1, f + 0xcc, n);
+            if (kind == 1 && rnd() % 2)
+                f[0xad] = 0, len = 0xcc + n, memcpy(f + 0xcc, fbody, n);
+        }
+        if (rnd() % 3 == 0)
+            mutate(f + 0xac, len - 0xac, 1 + rnd() % 3);
+        if (rnd() % 8 == 0)
+            len = 0xcc + rnd() % (len - 0xcc + 1);
+        unsigned char *p = exact(f, len);
+        rx_station(p, len);
+        free(p);
+        kicks += kicked, kicked = 0;
+        unsigned char m[1 + WIFI_SAE_MAX];
+        while (wifi_sae_next(m, sizeof m) > 0)
+            queued++;
+        if (state != WIFI_UP && state != WIFI_JOINING)
+            it |= 63;
+    }
+    CHECK(kicks > 100, "protected deauthentications reach the station (%u)", kicks);
+    CHECK(queued > 100, "SAE frames go to the SCM (%u)", queued);
+}
+
 int main(void)
 {
     copy(own, OWN, 6);
@@ -386,6 +446,7 @@ int main(void)
     have_cur = 1;
     fuzz_data();
     fuzz_soft();
+    fuzz_pmf();
     printf("wifi rx fuzz: %s (%u frames to the SCM)\n", fails ? "FAILED" : "ok", to_scm);
     return fails != 0;
 }

@@ -299,8 +299,9 @@ var (
 )
 
 // decode turns a stored network into what wpa_supplicant gets. A passphrase becomes its
-// key here (PBKDF2-SHA1 over the name, as wpa_passphrase), so no passphrase reaches the
-// supplicant, a file or a log.
+// key here (PBKDF2-SHA1 over the name, as wpa_passphrase); it reaches the supplicant only as
+// SAE's password over the control socket (WPA3 needs the password itself, ADR 0136), never a
+// file or a log.
 func decode(rec Record) (network, error) {
 	var none network
 
@@ -340,6 +341,7 @@ func decode(rec Record) (network, error) {
 		}
 
 		decoded.keyHex = hex.EncodeToString(key)
+		decoded.passphrase = string(pass)
 	default:
 		// An open network: no key.
 	}

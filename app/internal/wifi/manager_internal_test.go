@@ -6,6 +6,7 @@ package wifi
 import (
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -118,6 +119,26 @@ func TestWEPRecord(t *testing.T) {
 }
 
 //nolint:paralleltest // its rig points wpactrl.ClientDir, a package variable, at a directory of its own
+func TestRawKeyJoinsWithoutSAE(t *testing.T) {
+	bench := newRig(t, "rhino")
+	bench.save("home", strings.Repeat("ab", 32))
+	bench.sys.where["home"] = "ok"
+	bench.start()
+	bench.eventually("network-ready", func() bool { return bench.exists("network-ready") })
+
+	cmds := bench.sys.sup.srv.Commands()
+	if !slices.Contains(cmds, "SET_NETWORK 0 key_mgmt WPA-PSK WPA-PSK-SHA256") {
+		t.Errorf("a raw key's network: %q", cmds)
+	}
+
+	for _, c := range cmds {
+		if strings.Contains(c, "sae_password") {
+			t.Errorf("a raw key has no SAE password: %q", c)
+		}
+	}
+}
+
+//nolint:paralleltest // its rig points wpactrl.ClientDir, a package variable, at a directory of its own
 func TestWEPNetworkJoins(t *testing.T) {
 	bench := newRig(t, "rhino")
 
@@ -158,8 +179,8 @@ func TestJoinSavedNetwork(t *testing.T) {
 	bench.eventually("the join's bookkeeping", func() bool { return bench.joinCount() == 1 })
 
 	conf := bench.read(filepath.Join(bench.p.Tmp, "wpa_supplicant.conf"))
-	if conf != "ctrl_interface="+bench.p.CtrlDir+"\n" {
-		t.Fatalf("wpa_supplicant.conf = %q; want the control socket alone", conf)
+	if conf != "ctrl_interface="+bench.p.CtrlDir+"\npmf=1\nsae_check_mfp=1\n" {
+		t.Fatalf("wpa_supplicant.conf = %q; want the control socket and PMF where possible, no key", conf)
 	}
 
 	cmds := bench.sys.sup.srv.Commands()
@@ -174,7 +195,17 @@ func TestJoinSavedNetwork(t *testing.T) {
 
 	for _, c := range cmds {
 		if strings.Contains(c, "homepass1") {
-			t.Errorf("the passphrase reached wpa_supplicant: %q", c)
+			t.Errorf("the passphrase reached wpa_supplicant in the clear: %q", c)
+		}
+	}
+	// every PSK network type (ADR 0136): WPA/WPA2, PSK-SHA256 and WPA3's SAE with its password in
+	// hex; management frame protection is the global pmf=1 above
+	for _, want := range []string{
+		"SET_NETWORK 0 key_mgmt WPA-PSK WPA-PSK-SHA256 SAE",
+		"SET_NETWORK 0 sae_password " + hex.EncodeToString([]byte("homepass1")),
+	} {
+		if !slices.Contains(cmds, want) {
+			t.Errorf("wpa_supplicant never got %q: %q", want, cmds)
 		}
 	}
 

@@ -74,6 +74,15 @@ void netcard_event_poll(void)
         mgmt_event_lost();
 }
 
+/* WPA3-SAE messages (mgmt.h, ADR 0136): send the one that is due, once per main-loop pass. */
+void netcard_sae_poll(void)
+{
+    static unsigned char r[MGMT_HDR + 1 + 24 + MGMT_SAE_MAX];
+    unsigned m = mgmt_sae_due(r);
+    if (m && usblink_send(BCOLINK_CH_CTRL, r, m))
+        mgmt_sae_lost();
+}
+
 #ifdef NETCARD_HW
 #include "board.h"
 #include "persparam.h"
@@ -145,6 +154,7 @@ void app_main(void)
             wifi_poll(mgmt_uptime);
         netcard_flow_poll();
         netcard_event_poll();
+        netcard_sae_poll();
         wired_poll(mgmt_uptime);
     }
 }

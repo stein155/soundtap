@@ -222,6 +222,36 @@ class BcoLinkContract(unittest.TestCase):
         self.assertRegex(status, r"\*o\+\+ = b\.sec;\s*o = put_detail\(o, &b\);")
         self.assertIn("at = 3 + r[2] + 8 + 3 + 1 + 1;", funcs["bco_status_detail"])
 
+    def test_wpa3(self) -> None:
+        """ADR 0136's WPA3 messages have the same numbers on both sides, and stay behind their bit.
+
+        SAE runs in wpa_supplicant over cfg80211's external authentication: the driver offers it
+        (NL80211_FEATURE_SAE, the station's authentication frames, BIP, optional MFP) only to an app
+        that announces BCOLINK_CAP_WPA3, and every operation that sends one of the messages checks
+        the bit.
+        """
+        self.assertEqual(self.app["BCOLINK_CAP_WPA3"], self.drv["BCOLINK_CAP_WPA3"])
+        for app, drv in (("MGMT_EXT_AUTH_START", "BCO_EXT_AUTH_START"), ("MGMT_EXT_AUTH_ABORT", "BCO_EXT_AUTH_ABORT"),
+                         ("MGMT_SAE_MAX", "BCO_SAE_MAX")):
+            self.assertEqual(self.app[app], self.drv[drv], app)
+        wifi = defines((APP / "wifi.h").read_text())
+        for name in ("PSK256", "SAE"):
+            self.assertEqual(wifi[f"WIFI_SET_{name}"], self.drv[f"BCO_SET_{name}"], name)
+        # the request types: 18 EXT_AUTH, 19 AUTH_FRAME, 20 SET_PMK on both sides
+        mgmt = (APP / "mgmt.c").read_text()
+        for num, name in ((18, "EXT_AUTH"), (19, "AUTH_FRAME"), (20, "SET_PMK")):
+            self.assertRegex(mgmt, rf"case {num}: /\* {name}")
+        self.assertIn("T_NV_INFO, T_EXT_AUTH,\n+\tT_AUTH_FRAME, T_SET_PMK };", self.patch)
+        funcs = dict(re.findall(r"\n\+static [^\n]*\b(\w+)\([^)]*\)\n\+\{(.*?)\n\+\}", self.patch, re.DOTALL))
+        for name in ("bco_mgmt_tx", "bco_external_auth", "bco_set_pmksa"):
+            self.assertIn("BCOLINK_CAP_WPA3", funcs[name], name)
+        self.assertRegex(funcs["bco_connect"], r"sae && !\(caps & BCOLINK_CAP_WPA3\)")
+        gate = re.search(r"if \(b->caps & BCOLINK_CAP_WPA3\) \{(.*?)\} else if", self.patch, re.DOTALL)[1]
+        for line in ("NL80211_FEATURE_SAE", "bco_mgmt_stypes", "NL80211_EXT_FEATURE_MFP_OPTIONAL", "bco_ciphers_wpa3"):
+            self.assertIn(line, gate, line)
+        # the PMK never stays in the driver's request buffer
+        self.assertIn("memzero_explicit(pl, sizeof(pl));", funcs["bco_set_pmksa"])
+
     def test_hunk_count(self) -> None:
         """The driver patch's hunk header counts the lines the new file has."""
         lines = self.patch.split("\n")

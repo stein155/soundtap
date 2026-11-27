@@ -11,6 +11,8 @@ _Static_assert(MGMT_EV_DEAUTH == WIFI_EV_DEAUTH && MGMT_EV_DISASSOC == WIFI_EV_D
                MGMT_EV_BEACON_LOSS == WIFI_EV_BEACON_LOSS && MGMT_EV_TX_WEDGE == WIFI_EV_TX_WEDGE &&
                MGMT_EV_ROAMED == WIFI_EV_ROAMED && MGMT_EV_ROAM_FAILED == WIFI_EV_ROAM_FAILED,
                "the link's event numbers are the station's");
+_Static_assert(MGMT_EXT_AUTH_START == WIFI_SAE_START && MGMT_EXT_AUTH_ABORT == WIFI_SAE_ABORT &&
+               MGMT_SAE_MAX == WIFI_SAE_MAX, "the link's SAE messages are the station's");
 _Static_assert(MGMT_PROFILE_BSSID_FIXED == WIFI_BSSID_FIXED && MGMT_PROFILE_BSSID_HINT == WIFI_BSSID_HINT &&
                MGMT_PROFILE_ROAM == WIFI_ROAM, "SET_PROFILE's flags are the station's");
 
@@ -85,6 +87,37 @@ void mgmt_event_lost(void)
     ev_held = 1;
 }
 
+/* ---- WPA3-SAE messages for the driver (mgmt.h) ---- */
+static unsigned char sae_msg[1 + 24 + MGMT_SAE_MAX];
+static unsigned sae_len, sae_sent; /* due now; the last one built, due again when the link lost it */
+
+unsigned mgmt_sae_due(unsigned char *r)
+{
+    if (!sae_len) {
+        int n = wifi_sae_next(sae_msg, sizeof sae_msg);
+        if (n <= 0)
+            return 0;
+        sae_len = (unsigned)n;
+    }
+    /* kind START/ABORT -> EXT_AUTH {0, action, ...}; FRAME -> AUTH_FRAME {0, frame} */
+    unsigned frame = sae_msg[0] == WIFI_SAE_FRAME, plen = frame ? sae_len : sae_len + 1;
+    unsigned char *o = r + MGMT_HDR;
+    *o++ = 0;
+    if (!frame)
+        *o++ = sae_msg[0];
+    for (unsigned i = 1; i < sae_len; i++)
+        *o++ = sae_msg[i];
+    r[0] = 1, r[1] = (frame ? 19 : 18) | 0x80, r[2] = 0, r[3] = 0;
+    r[4] = (unsigned char)(plen >> 8), r[5] = (unsigned char)plen;
+    sae_sent = sae_len, sae_len = 0;
+    return MGMT_HDR + plen;
+}
+
+void mgmt_sae_lost(void)
+{
+    sae_len = sae_sent; /* still in sae_msg: built again on the next call */
+}
+
 /* The PersParam sector NV_INFO reads (netcard.c maps the NOR on hardware); the weak default has
  * none. */
 __attribute__((weak)) const volatile unsigned char *mgmt_nv(void)
@@ -125,7 +158,8 @@ static unsigned last_len, last_key; /* type << 16 | seq; 0 = nothing kept */
 
 static int changes_state(unsigned type)
 {
-    return type == 3 || type == 4 || type == 6 || type == 7 || type == 15;
+    return type == 3 || type == 4 || type == 6 || type == 7 || type == 15 || type == 18 || type == 19 ||
+           type == 20;
 }
 
 unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
@@ -194,14 +228,15 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
     }
     case 3: { /* SET_PROFILE: ssid_len, ssid, security, key_len, key, 32-byte seed [, flags, bssid].
                * security WIFI_SEC_*: 0 open (no key), 1 PSK (the 32-byte PMK), 2 WEP (key index,
-               * authentication, then a 5- or 13-byte key: 7 or 15 bytes); any other, or a key
-               * length that does not fit it, is unsupported (status 2). */
+               * authentication, then a 5- or 13-byte key: 7 or 15 bytes), 3 SAE (no key: the SCM
+               * runs SAE, mgmt.h); any other, or a key length that does not fit it, is unsupported
+               * (status 2). */
         unsigned base = len >= 1 && len >= 1u + a[0] + 2 ? 1u + a[0] + 2 + a[1 + a[0] + 1] + 32 : 0;
         unsigned sec = base ? a[1 + a[0]] : 0, klen = base ? a[1 + a[0] + 1] : 0;
         if (len < 1 || a[0] < 1 || a[0] > 32 || !base || (len != base && len != base + MGMT_PROFILE_TAIL))
             st = 1;
         else if (!(sec == WIFI_SEC_OPEN && klen == 0) && !(sec == WIFI_SEC_PSK && klen == 32) &&
-                 !(sec == WIFI_SEC_WEP && (klen == 7 || klen == 15)))
+                 !(sec == WIFI_SEC_WEP && (klen == 7 || klen == 15)) && !(sec == WIFI_SEC_SAE && klen == 0))
             st = 2;
         else { /* without the tail (an older driver): any BSSID, no roaming */
             const unsigned char *tail = len > base ? a + base : 0;
@@ -286,6 +321,15 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
         *o++ = res < 0, *o++ = res > 0;
         break;
     }
+    case 18: /* EXT_AUTH: le16 status, bssid: SAE's result from the SCM (mgmt.h) */
+        *o++ = len != 8 || wifi_sae_done((unsigned)(a[0] | a[1] << 8), a + 2) ? 1 : 0;
+        break;
+    case 19: /* AUTH_FRAME: wpa_supplicant's SAE frame body to send */
+        *o++ = !len || len > MGMT_SAE_MAX || wifi_sae_tx(a, len) ? 1 : 0;
+        break;
+    case 20: /* SET_PMK: bssid, the PMK SAE derived. Never echoed, never kept for a resend. */
+        *o++ = len != 6 + 32 || wifi_set_pmk(a, a + 6) ? 1 : 0;
+        break;
     case 17: { /* NV_INFO: status, count, entries (mgmt.h); read-only */
         static uint32_t keys[MGMT_NV_MAX];
         static unsigned lens[MGMT_NV_MAX];

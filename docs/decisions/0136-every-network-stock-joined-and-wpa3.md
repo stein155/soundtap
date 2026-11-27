@@ -16,6 +16,10 @@ and TKIP too; the modes are read out of stock
 ([the engine modes](../hardware/st20/bco-network-card.md#wep-and-tkip-stocks-engine-modes-and-where-soundtap-runs-them)),
 but SoundTap has run none of them.
 
+Stock joined no WPA3 network and protected no management frame. Routers now ship WPA2/WPA3
+transition networks, WPA3-only ones and networks that require management frame protection
+(IEEE 802.11w, PMF); a speaker that refuses them has to be moved to a guest network.
+
 ## Decision
 
 ### The link asks for each security in SET_PROFILE
@@ -58,6 +62,47 @@ and WPA, and a surveyed network without a WPA or RSN IE asks for a WEP key. The 
 takes a WEP network stock saved, on the ST20 from its BCO's settings, elsewhere from stock's
 network profiles.
 
+### WPA3 and PMF: SAE on the SCM, the rest on the BCO
+
+WPA3-Personal's SAE is a password exchange with elliptic-curve arithmetic. wpa_supplicant already
+has it, on every model; the BCO has neither the code nor the CPU for it. So on the ST20 SAE runs
+in wpa_supplicant over cfg80211's external authentication, as `brcmfmac` does: an SAE profile
+(SET_PROFILE security 3, no key) makes the BCO ask the driver for SAE with the access point's BSSID
+and SSID (`EXT_AUTH`), pass up the access point's authentication frames and send
+wpa_supplicant's (`AUTH_FRAME`); the driver hands the PMK wpa_supplicant derived (`SET_PMK`, from
+its PMKSA entry) and SAE's result (`EXT_AUTH`). The BCO then associates with AKM 8 and runs the
+4-way with that PMK, the keys never leaving it. All of it is behind `BCOLINK_CAP_WPA3`.
+
+The BCO runs the rest of WPA3 and PMF itself: the 4-way under the SHA-256 AKMs (SAE and
+PSK-SHA256: the 802.11 KDF, AES-CMAC MICs, AES key wrap, key descriptor versions 0 and 3), MFPC
+in its RSN IE whenever the access point offers PMF and MFPR when it requires it, the IGTK from
+Message 3 and group rekeys, robust unicast management frames (deauthentication, disassociation,
+action) protected and checked in software CCMP under the PTK's TK with the nonce's Management
+flag and packet numbers of their own, group-addressed ones checked with BIP-CMAC-128, and the SA
+Query: an unprotected deauthentication or disassociation is answered with a protected SA Query and
+ends the link only when no protected answer comes within a second; the access point's SA Query
+is answered. A PSK profile prefers PSK-SHA256 where it is offered, as wpa_supplicant does.
+
+On every model soundtapd writes `key_mgmt=WPA-PSK WPA-PSK-SHA256 SAE` and SAE's password (as hex)
+beside the PSK for a saved password, so wpa_supplicant picks WPA2, WPA3 or the transition by
+itself. Management frame protection is wpa_supplicant's global `pmf=1` rather than each network's
+`ieee80211w=1`: only the global default is dropped for a driver without BIP, and mainline's
+`wlcore` (the WL1835) lists no BIP cipher and no MFP capability, where a network's `ieee80211w=1`
+would ask for PMF the radio cannot do. With `sae_check_mfp=1` wpa_supplicant uses SAE only where
+PMF can be used, so on the WL1835 a WPA2/WPA3 router is joined over PSK as before, and a WPA3-only
+or PMF-required one is not, until the radio's driver gains it. SAE needs the password itself: a
+network saved as a raw 64-digit key joins over PSK only. wpa_supplicant is built with Buildroot's
+WPA3 option; hostapd is not, since the setup network stays open
+([the hardware checklist](../hardware/hardware-test.md) has each model's runs).
+
+Alternatives that lost:
+
+- **SAE on the BCO.** A big-number and elliptic-curve library on a 200 MHz ARM926 in an app that
+  must stay small, for a few round trips per join that wpa_supplicant already does right.
+- **Only the transition network's PSK side.** Leaves WPA3-only and PMF-required networks out.
+- **PMF frames on the core's engine.** The engine takes its nonce and AAD from the header and has
+  no Management flag; robust management frames are a few per hour, cheap in software.
+
 ### WEP and TKIP run in software in the BCO app
 
 The BCO app enciphers and deciphers WEP and TKIP frames itself: RC4, the CRC-32 ICV, TKIP's key
@@ -79,6 +124,12 @@ Alternatives that lost:
 
 ## Consequences
 
+- WPA3 on the ST20 needs the driver and the app of one build or newer; with an older app the
+  driver offers no SAE and wpa_supplicant joins the PSK side of a transition network.
+- On the WL1835 models (WLA, ST10, ST300) WPA3-only and PMF-required networks stay out of reach
+  with mainline's `wlcore`; transition networks join over PSK.
+- soundtapd hands wpa_supplicant SAE's password over the control socket, the one place a
+  passphrase now goes beside the PSK (ADR 0063); never into a file or a log.
 - A WEP or TKIP network costs the app's CPU per frame; RC4 and Michael are far cheaper than the
   software AES that already moved data at nearly the engine's speed.
 - The engine modes stay documented facts until they are measured
@@ -91,6 +142,12 @@ Alternatives that lost:
 - `os/board/rootfs/linux-patches/0007-net-usb-add-soundtap-bco-link-driver.patch`: `bco_connect`
   and `bco_status_sec` in the driver.
 - `app/internal/bco/stockprofile.go`: `stockProfileFrom` takes stock's open profile.
+- WPA3 and PMF: `bco/app/src/wpa.c` (`wpa_kdf_sha256`, `wpa_cmac`, `extract_igtk`),
+  `bco/app/src/wsec.c` (`wsec_ccmp_protect`, `wsec_bip_check`), `bco/app/src/wifi.c` (`sae_start`,
+  `wifi_sae_tx`, `send_protected`, `saq_start`, `mgmt_open`, `bip_open`), `bco/app/src/mgmt.c`
+  (`EXT_AUTH`, `AUTH_FRAME`, `SET_PMK`, `mgmt_sae_due`), the driver's `bco_mgmt_tx`,
+  `bco_external_auth` and `bco_set_pmksa`, `app/internal/wifi/station.go` (`configure`) and
+  `os/package/soundtap-runtime/Config.in` (wpa_supplicant's WPA3).
 - `bco/app/src/wifi.c` (`send_challenge`, the `J_KEYS` step), `app/internal/wifi/conf.go`
   (`SecurityWEP`, `IsWEPKey`), `app/internal/wifi/station.go` (`configure`),
   `app/internal/speakerstate/backend_wifi.go` (`CheckWifi`), `app/cmd/soundtapd/stock_wifi.go`,

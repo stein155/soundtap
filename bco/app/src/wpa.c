@@ -173,6 +173,152 @@ void wpa_pbkdf2(const uint8_t *pass, size_t pass_len, const uint8_t *ssid, size_
     }
 }
 
+/* ============================ SHA-256 (FIPS 180-4), HMAC-SHA256, KDF ============================ */
+/* For the AKMs with SHA-256 (PSK-SHA256 and SAE, ADR 0136): the 802.11 KDF that derives the PTK. */
+struct sha256 {
+    uint32_t h[8];
+    uint64_t len;
+    uint8_t buf[64];
+    unsigned n;
+};
+static uint32_t ror32(uint32_t v, unsigned s) { return (v >> s) | (v << (32 - s)); }
+static void sha256_block(struct sha256 *c, const uint8_t *p)
+{
+    static const uint32_t k[64] = {
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2};
+    uint32_t w[64], v[8];
+    unsigned i;
+    for (i = 0; i < 16; i++)
+        w[i] = (uint32_t)p[4 * i] << 24 | (uint32_t)p[4 * i + 1] << 16 | (uint32_t)p[4 * i + 2] << 8 |
+               p[4 * i + 3];
+    for (i = 16; i < 64; i++) {
+        uint32_t s0 = ror32(w[i - 15], 7) ^ ror32(w[i - 15], 18) ^ (w[i - 15] >> 3);
+        uint32_t s1 = ror32(w[i - 2], 17) ^ ror32(w[i - 2], 19) ^ (w[i - 2] >> 10);
+        w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+    }
+    for (i = 0; i < 8; i++)
+        v[i] = c->h[i];
+    for (i = 0; i < 64; i++) {
+        uint32_t t1 = v[7] + (ror32(v[4], 6) ^ ror32(v[4], 11) ^ ror32(v[4], 25)) +
+                      ((v[4] & v[5]) ^ (~v[4] & v[6])) + k[i] + w[i];
+        uint32_t t2 = (ror32(v[0], 2) ^ ror32(v[0], 13) ^ ror32(v[0], 22)) +
+                      ((v[0] & v[1]) ^ (v[0] & v[2]) ^ (v[1] & v[2]));
+        v[7] = v[6], v[6] = v[5], v[5] = v[4], v[4] = v[3] + t1;
+        v[3] = v[2], v[2] = v[1], v[1] = v[0], v[0] = t1 + t2;
+    }
+    for (i = 0; i < 8; i++)
+        c->h[i] += v[i];
+}
+static void sha256_init(struct sha256 *c)
+{
+    static const uint32_t iv[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+                                   0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
+    for (unsigned i = 0; i < 8; i++)
+        c->h[i] = iv[i];
+    c->len = 0, c->n = 0;
+}
+static void sha256_update(struct sha256 *c, const uint8_t *p, size_t n)
+{
+    c->len += (uint64_t)n * 8;
+    while (n) {
+        unsigned r = 64 - c->n, k = n < r ? (unsigned)n : r;
+        cp(c->buf + c->n, p, k);
+        c->n += k, p += k, n -= k;
+        if (c->n == 64)
+            sha256_block(c, c->buf), c->n = 0;
+    }
+}
+static void sha256_final(struct sha256 *c, uint8_t out[32])
+{
+    uint64_t bits = c->len;
+    uint8_t pad = 0x80;
+    unsigned i;
+    sha256_update(c, &pad, 1);
+    pad = 0;
+    while (c->n != 56)
+        sha256_update(c, &pad, 1);
+    for (i = 0; i < 8; i++) {
+        uint8_t b = (uint8_t)(bits >> (56 - 8 * i));
+        sha256_update(c, &b, 1);
+    }
+    for (i = 0; i < 32; i++)
+        out[i] = (uint8_t)(c->h[i / 4] >> (24 - 8 * (i % 4)));
+}
+void wpa_sha256(const uint8_t *msg, size_t len, uint8_t out[32])
+{
+    struct sha256 c;
+    sha256_init(&c);
+    sha256_update(&c, msg, len);
+    sha256_final(&c, out);
+}
+/* HMAC-SHA256 over the concatenation of up to three parts (the KDF's counter, label and context
+ * go in without being copied together). */
+static void hmac_sha256_v(const uint8_t *key, size_t key_len, const uint8_t *const part[3], const size_t plen[3],
+                          uint8_t out[32])
+{
+    uint8_t k[64], pad[64], inner[32];
+    struct sha256 c;
+    unsigned i;
+    zero(k, 64);
+    if (key_len > 64)
+        wpa_sha256(key, key_len, k);
+    else
+        cp(k, key, key_len);
+    for (i = 0; i < 64; i++)
+        pad[i] = k[i] ^ 0x36;
+    sha256_init(&c);
+    sha256_update(&c, pad, 64);
+    for (i = 0; i < 3; i++)
+        if (plen[i])
+            sha256_update(&c, part[i], plen[i]);
+    sha256_final(&c, inner);
+    for (i = 0; i < 64; i++)
+        pad[i] = k[i] ^ 0x5c;
+    sha256_init(&c);
+    sha256_update(&c, pad, 64);
+    sha256_update(&c, inner, 32);
+    sha256_final(&c, out);
+}
+void wpa_hmac_sha256(const uint8_t *key, size_t key_len, const uint8_t *data, size_t data_len,
+                     uint8_t out[32])
+{
+    const uint8_t *part[3] = {data, 0, 0};
+    const size_t plen[3] = {data_len, 0, 0};
+    hmac_sha256_v(key, key_len, part, plen, out);
+}
+/* IEEE 802.11-2020 12.7.1.6.2: HMAC-SHA256(K, i || label || context || length), i and length
+ * (in bits) as little-endian u16, as many rounds as length needs. */
+void wpa_kdf_sha256(const uint8_t *key, size_t key_len, const char *label, const uint8_t *ctx,
+                    size_t ctx_len, uint8_t *out, size_t out_len)
+{
+    uint8_t buf[2 + 64 + 2], d[32];
+    size_t label_len = 0, pos = 0;
+    unsigned i = 1;
+    while (label[label_len])
+        label_len++;
+    if (label_len > 64)
+        return;
+    cp(buf + 2, (const uint8_t *)label, label_len);
+    for (; pos < out_len; i++, pos += 32) {
+        const uint8_t *part[3];
+        size_t plen[3];
+        uint8_t len[2] = {(uint8_t)(out_len * 8), (uint8_t)(out_len * 8 >> 8)};
+        buf[0] = (uint8_t)i, buf[1] = (uint8_t)(i >> 8);
+        part[0] = buf, plen[0] = 2 + label_len;
+        part[1] = ctx, plen[1] = ctx_len;
+        part[2] = len, plen[2] = 2;
+        hmac_sha256_v(key, key_len, part, plen, d);
+        cp(out + pos, d, out_len - pos < 32 ? out_len - pos : 32);
+    }
+}
+
 /* ============================ MD5 (RFC 1321), HMAC-MD5 (RFC 2104) ============================ */
 /* Only for WPA's key descriptor version 1 (TKIP pairwise): its EAPOL-Key MIC is HMAC-MD5. */
 struct md5 {
@@ -423,12 +569,91 @@ int wpa_aes_unwrap(const uint8_t kek[16], unsigned n, const uint8_t *cipher, uin
     return eq(a, iv, 8);
 }
 
+/* ============================ AES-128 encrypt, AES-CMAC (RFC 4493) ============================ */
+/* For PMF (ADR 0136): CCMP of the management frames the app protects itself, BIP's MIC, and the
+ * EAPOL-Key MIC under the SHA-256 AKMs. */
+void wpa_aes128_enc(const uint8_t key[16], const uint8_t in[16], uint8_t out[16])
+{
+    static const uint8_t sr[16] = {0, 5, 10, 15, 4, 9, 14, 3, 8, 13, 2, 7, 12, 1, 6, 11};
+    uint8_t rk[176], st[16], t[16];
+    unsigned round, i;
+    aes128_expand(key, rk);
+    for (i = 0; i < 16; i++)
+        st[i] = in[i] ^ rk[i];
+    for (round = 1; round <= 10; round++) {
+        for (i = 0; i < 16; i++)
+            t[i] = sbox[st[sr[i]]];
+        for (i = 0; round < 10 && i < 16; i += 4) {
+            uint8_t a0 = t[i], a1 = t[i + 1], a2 = t[i + 2], a3 = t[i + 3];
+            t[i] = xtime(a0) ^ xtime(a1) ^ a1 ^ a2 ^ a3;
+            t[i + 1] = a0 ^ xtime(a1) ^ xtime(a2) ^ a2 ^ a3;
+            t[i + 2] = a0 ^ a1 ^ xtime(a2) ^ xtime(a3) ^ a3;
+            t[i + 3] = xtime(a0) ^ a0 ^ a1 ^ a2 ^ xtime(a3);
+        }
+        for (i = 0; i < 16; i++)
+            st[i] = t[i] ^ rk[round * 16 + i];
+    }
+    cp(out, st, 16);
+}
+
+static void cmac_double(uint8_t b[16])
+{
+    uint8_t carry = b[0] >> 7;
+    for (unsigned i = 0; i < 15; i++)
+        b[i] = (uint8_t)(b[i] << 1 | b[i + 1] >> 7);
+    b[15] = (uint8_t)(b[15] << 1 ^ (carry ? 0x87 : 0));
+}
+
+void wpa_cmac(const uint8_t key[16], const uint8_t *msg, size_t len, uint8_t mac[16])
+{
+    uint8_t l[16], x[16], y[16];
+    size_t blocks = len ? (len + 15) / 16 : 1, i, j;
+    int whole = len && len % 16 == 0;
+    zero(l, 16);
+    wpa_aes128_enc(key, l, l);
+    cmac_double(l);          /* K1 */
+    if (!whole)
+        cmac_double(l);      /* K2 */
+    zero(x, 16);
+    for (i = 0; i < blocks; i++) {
+        size_t off = i * 16, n = len - off < 16 ? len - off : 16;
+        for (j = 0; j < 16; j++)
+            y[j] = j < n ? msg[off + j] : (j == n ? 0x80 : 0);
+        if (i == blocks - 1)
+            for (j = 0; j < 16; j++)
+                y[j] ^= l[j];
+        for (j = 0; j < 16; j++)
+            x[j] ^= y[j];
+        wpa_aes128_enc(key, x, x);
+    }
+    cp(mac, x, 16);
+}
+
 /* ============================ PTK ============================ */
+static void ptk_data(const uint8_t aa[6], const uint8_t spa[6], const uint8_t anonce[32],
+                     const uint8_t snonce[32], uint8_t data[76]);
+
 void wpa_pmk_to_ptk(const uint8_t pmk[32], const uint8_t aa[6], const uint8_t spa[6],
                     const uint8_t anonce[32], const uint8_t snonce[32], uint8_t *ptk, unsigned ptk_len)
 {
-    uint8_t data[76]; /* min||max MAC (12) + min||max nonce (64) */
-    /* min/max by byte compare */
+    uint8_t data[76];
+    ptk_data(aa, spa, anonce, snonce, data);
+    wpa_sha1_prf(pmk, 32, "Pairwise key expansion", data, 76, ptk, ptk_len);
+}
+
+/* Under the SHA-256 AKMs (PSK-SHA256, SAE) the PTK comes from the KDF over the same data. */
+void wpa_pmk_to_ptk_sha256(const uint8_t pmk[32], const uint8_t aa[6], const uint8_t spa[6],
+                           const uint8_t anonce[32], const uint8_t snonce[32], uint8_t *ptk, unsigned ptk_len)
+{
+    uint8_t data[76];
+    ptk_data(aa, spa, anonce, snonce, data);
+    wpa_kdf_sha256(pmk, 32, "Pairwise key expansion", data, 76, ptk, ptk_len);
+}
+
+static void ptk_data(const uint8_t aa[6], const uint8_t spa[6], const uint8_t anonce[32],
+                     const uint8_t snonce[32], uint8_t data[76])
+{
+    /* min||max MAC (12) + min||max nonce (64), by byte compare */
     {
         int maccmp = 0, noncecmp = 0;
         unsigned i;
@@ -449,7 +674,6 @@ void wpa_pmk_to_ptk(const uint8_t pmk[32], const uint8_t aa[6], const uint8_t sp
         cp(data + 12, noncecmp <= 0 ? anonce : snonce, 32);
         cp(data + 44, noncecmp <= 0 ? snonce : anonce, 32);
     }
-    wpa_sha1_prf(pmk, 32, "Pairwise key expansion", data, 76, ptk, ptk_len);
 }
 
 /* ============================ 4-way state machine ============================ */
@@ -520,6 +744,7 @@ void wpa_sm_init(struct wpa_sm *sm, const uint8_t pmk[32], const uint8_t aa[6], 
     cp(sm->snonce, snonce, 32);
     sm->state = WPA_IDLE;
     sm->gtk_idx = -1;
+    sm->igtk_idx = -1;
     wpa_sm_config(sm, WPA_PROTO_RSN, WPA_CIPHER_CCMP, WPA_CIPHER_CCMP, WPA_AKM_PSK, 0);
 }
 
@@ -530,8 +755,10 @@ void wpa_sm_config(struct wpa_sm *sm, unsigned proto, unsigned pairwise, unsigne
     sm->akm = (uint8_t)akm;
     sm->ielen = (uint8_t)wpa_own_ie(sm->ie, proto, group, pairwise, akm, caps);
     /* the key descriptor version: HMAC-MD5 and RC4 under TKIP, HMAC-SHA1 and AES key wrap under
-     * CCMP (IEEE 802.11-2020 12.7.2) */
-    sm->ver = pairwise == WPA_CIPHER_TKIP ? 1 : 2;
+     * CCMP; under PSK-SHA256 version 3 and under SAE 0 (AKM-defined), both AES-CMAC and AES key
+     * wrap (IEEE 802.11-2020 12.7.2) */
+    sm->ver = akm == WPA_AKM_SAE ? 0 : akm == WPA_AKM_PSK_SHA256 ? 3 : pairwise == WPA_CIPHER_TKIP ? 1 : 2;
+    sm->mfp = (caps & WPA_CAP_MFPC) != 0;
     sm->ptk_len = pairwise == WPA_CIPHER_TKIP ? 64 : 48;
 }
 
@@ -561,6 +788,30 @@ int wpa_extract_gtk(const uint8_t *kd, unsigned plen, uint8_t gtk[32], unsigned 
     return 0;
 }
 
+/* The IGTK KDE (00-0F-AC:9: key id, IPN, IGTK) of decrypted key data, under management frame
+ * protection. Returns 1 with the key taken. */
+static int extract_igtk(struct wpa_sm *sm, const uint8_t *kd, unsigned plen)
+{
+    for (unsigned p = 0; p + 2 <= plen;) {
+        unsigned l = kd[p + 1];
+        if (l == 0 || p + 2 + l > plen)
+            break;
+        if (kd[p] == 0xdd && l >= 4 + 2 + 6 + 16 && kd[p + 2] == 0x00 && kd[p + 3] == 0x0f &&
+            kd[p + 4] == 0xac && kd[p + 5] == 0x09) {
+            unsigned id = kd[p + 6] | kd[p + 7] << 8;
+            if (id != 4 && id != 5)
+                return 0;
+            sm->igtk_idx = (int)id;
+            cp(sm->ipn, kd + p + 8, 6);
+            cp(sm->igtk, kd + p + 14, 16);
+            sm->igtk_set = 1;
+            return 1;
+        }
+        p += 2 + l;
+    }
+    return 0;
+}
+
 /* 1 when the 8-byte big-endian replay counter a is newer than b. */
 static int replay_newer(const uint8_t *a, const uint8_t *b)
 {
@@ -575,6 +826,10 @@ static void mic_calc(const struct wpa_sm *sm, const uint8_t kck[16], const uint8
                      uint8_t mic[16])
 {
     uint8_t d[20];
+    if (sm->ver == 0 || sm->ver == 3) {
+        wpa_cmac(kck, f, n, mic);
+        return;
+    }
     if (sm->ver == 1)
         wpa_hmac_md5(kck, 16, f, n, d);
     else
@@ -638,13 +893,16 @@ static unsigned key_data(const struct wpa_sm *sm, const uint8_t *kek, const uint
     return kdlen - 8;
 }
 
-/* RSN: the GTK KDE out of encrypted key data. */
+/* RSN: the GTK KDE out of encrypted key data, and under management frame protection the IGTK
+ * KDE beside it, which must be there. */
 static int unwrap_gtk(struct wpa_sm *sm, const uint8_t *kek, uint16_t ki, const uint8_t *in,
                       uint16_t kdlen)
 {
     uint8_t kd[128];
     unsigned n;
     if (!(ki & KI_ENCRYPTED) || !(n = key_data(sm, kek, in, kdlen, kd)))
+        return 0;
+    if (sm->mfp && !extract_igtk(sm, kd, n))
         return 0;
     return wpa_extract_gtk(kd, n, sm->gtk, &sm->gtk_len, &sm->gtk_idx, &sm->gtk_tx);
 }
@@ -712,7 +970,7 @@ int wpa_sm_rx(struct wpa_sm *sm, const uint8_t *in, size_t in_len, uint8_t *out,
         cp(sm->replay, in + O_REPLAY, 8);
         cp(sm->rx_replay, in + O_REPLAY, 8);
         *out_len = reply(sm, in, (uint16_t)(KI_MIC | KI_SECURE | (wpa1 ? ki & KI_KEYIDX : 0)), out);
-        return WPA_RX_SEND | WPA_RX_INSTALL_GTK;
+        return WPA_RX_SEND | WPA_RX_INSTALL_GTK | (sm->mfp ? WPA_RX_INSTALL_IGTK : 0);
     }
 
     if (!(ki & KI_MIC)) {
@@ -726,7 +984,10 @@ int wpa_sm_rx(struct wpa_sm *sm, const uint8_t *in, size_t in_len, uint8_t *out,
         if (sm->state == WPA_DONE)
             wpa_sha1_prf(sm->snonce, 32, "SoundTap SNonce", in + O_NONCE, 32, sm->snonce, 32);
         cp(sm->anonce, in + O_NONCE, 32);
-        wpa_pmk_to_ptk(sm->pmk, sm->aa, sm->spa, sm->anonce, sm->snonce, sm->tptk, sm->ptk_len);
+        if (sm->akm == WPA_AKM_SAE || sm->akm == WPA_AKM_PSK_SHA256)
+            wpa_pmk_to_ptk_sha256(sm->pmk, sm->aa, sm->spa, sm->anonce, sm->snonce, sm->tptk, sm->ptk_len);
+        else
+            wpa_pmk_to_ptk(sm->pmk, sm->aa, sm->spa, sm->anonce, sm->snonce, sm->tptk, sm->ptk_len);
         cp(sm->replay, in + O_REPLAY, 8);
         head(sm, in, (uint16_t)(sm->ver | KI_PAIRWISE | KI_MIC), sm->replay, sm->ielen, out);
         cp(out + O_NONCE, sm->snonce, 32);
@@ -760,5 +1021,6 @@ int wpa_sm_rx(struct wpa_sm *sm, const uint8_t *in, size_t in_len, uint8_t *out,
     sm->rx_replay_set = 1, sm->ptk_set = 1;
     *out_len = reply(sm, in, (uint16_t)(KI_PAIRWISE | KI_MIC | (ki & KI_SECURE)), out);
     sm->state = WPA_DONE;
-    return WPA_RX_SEND | WPA_RX_INSTALL_PTK | (wpa1 ? 0 : WPA_RX_INSTALL_GTK) | WPA_RX_DONE;
+    return WPA_RX_SEND | WPA_RX_INSTALL_PTK | (wpa1 ? 0 : WPA_RX_INSTALL_GTK) |
+           (sm->mfp ? WPA_RX_INSTALL_IGTK : 0) | WPA_RX_DONE;
 }

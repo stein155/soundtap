@@ -28,8 +28,9 @@ that names its channel: 0 control, 1 Wi-Fi, 2 the wired port; data messages are 
 frames.
 
 - `wlan0` is a cfg80211 FullMAC station with the device's own Wi-Fi MAC. `wpa_supplicant` hands
-  the driver a PMK (no key for an open network, [ADR 0136](0136-every-network-stock-joined-and-wpa3.md));
-  the PSK never leaves the SCM. The BCO runs the 4-way and group handshakes,
+  the driver a PMK (no key for an open network, a WEP key for a WEP one, and for WPA3 the PMK of the
+  SAE it ran over the driver, [ADR 0136](0136-every-network-stock-joined-and-wpa3.md)); the PSK
+  never leaves the SCM. The BCO runs the 4-way and group handshakes,
   reports a lost link at once, roams within the SSID, keeps to the regulatory domain and probes
   for the scan's SSID ([ADR 0135](0135-bco-standard-firmware-features.md)).
 - `eth0` is the wired port. Neither interface is a bridge of the other, and the SCM must not

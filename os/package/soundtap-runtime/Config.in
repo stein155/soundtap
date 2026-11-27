@@ -35,6 +35,9 @@ config BR2_PACKAGE_SOUNDTAP_RUNTIME
 	select BR2_PACKAGE_WPA_SUPPLICANT_CTRL_IFACE
 	select BR2_PACKAGE_WPA_SUPPLICANT_NL80211
 	select BR2_PACKAGE_WPA_SUPPLICANT_PASSPHRASE
+	# WPA3's SAE and PMF on every model; the soundtapd Wi-Fi manager asks for SAE beside PSK
+	# for every saved password (ADR 0136). hostapd stays without: the setup network is open.
+	select BR2_PACKAGE_WPA_SUPPLICANT_WPA3
 	help
 	  Runtime scripts and network/audio receiver configuration for
 	  supported SoundTap products.

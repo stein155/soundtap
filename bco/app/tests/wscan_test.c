@@ -60,10 +60,20 @@ static void rsn_cases(void)
     static const unsigned char sae[] = {1, 0, 0, 0x0f, 0xac, 4, 1, 0, 0, 0x0f, 0xac, 4,
                                         1, 0, 0, 0x0f, 0xac, 8, 0xc0, 0};
     assert(rsn(sae, sizeof sae, &g) == 0);
-    /* PSK but management frame protection required (MFPR, bit 6) */
+    assert(last.rakm == BSS_SAE && last.rcaps == 0xc0);
+    /* PSK with management frame protection required (MFPR, bit 6): joined with PMF (ADR 0136) */
     static const unsigned char mfpr[] = {1, 0, 0, 0x0f, 0xac, 4, 1, 0, 0, 0x0f, 0xac, 4,
-                                         1, 0, 0, 0x0f, 0xac, 2, 0x40, 0};
-    assert(rsn(mfpr, sizeof mfpr, &g) == 0);
+                                         1, 0, 0, 0x0f, 0xac, 2, 0xc0, 0};
+    assert(rsn(mfpr, sizeof mfpr, &g) == 1 && last.rcaps == 0xc0);
+    /* ... but not with TKIP pairwise, which PMF does not allow */
+    static const unsigned char mfpr_tkip[] = {1, 0, 0, 0x0f, 0xac, 2, 1, 0, 0, 0x0f, 0xac, 2,
+                                              1, 0, 0, 0x0f, 0xac, 2, 0xc0, 0};
+    assert(rsn(mfpr_tkip, sizeof mfpr_tkip, &g) == 0);
+    /* PSK-SHA256 alone */
+    static const unsigned char sha[] = {1, 0, 0, 0x0f, 0xac, 4, 1, 0, 0, 0x0f, 0xac, 4,
+                                        1, 0, 0, 0x0f, 0xac, 6, 0x80, 0};
+    assert(rsn(sha, sizeof sha, &g) == 1 && last.rakm == BSS_PSK256);
+    assert(rsn(trans, sizeof trans, &g) == 1 && last.rakm == (BSS_PSK | BSS_SAE));
     assert(rsn(mixed, sizeof mixed, &g) && last.rpair == (BSS_CCMP | BSS_TKIP) && last.rakm == BSS_PSK);
     /* TKIP pairwise only, TKIP group: WPA2 with TKIP (ADR 0136) */
     static const unsigned char tkip[] = {1, 0, 0, 0x0f, 0xac, 2, 1, 0, 0, 0x0f, 0xac, 2,

@@ -126,3 +126,31 @@ int wifi_set_regdom(const unsigned char cc[2], unsigned chans, unsigned passive,
     memcpy(fake_cc, cc, 2), fake_chans = chans, fake_passive = passive, fake_dbm = max_dbm;
     return 0;
 }
+
+/* WPA3-SAE (mgmt.c's EXT_AUTH, AUTH_FRAME, SET_PMK): one queued message, and what was asked. */
+unsigned char fake_sae_out[600], fake_sae_tx[600], fake_sae_pmk[32], fake_sae_bssid[6];
+unsigned fake_sae_out_len, fake_sae_tx_len, fake_sae_status = 0xffff, fake_sae_pmks;
+int wifi_sae_next(unsigned char *o, unsigned max)
+{
+    unsigned n = fake_sae_out_len;
+    if (!n || n > max)
+        return 0;
+    memcpy(o, fake_sae_out, n);
+    fake_sae_out_len = 0;
+    return (int)n;
+}
+int wifi_sae_tx(const unsigned char *body, unsigned n)
+{
+    memcpy(fake_sae_tx, body, n), fake_sae_tx_len = n;
+    return 0;
+}
+int wifi_set_pmk(const unsigned char bssid[6], const unsigned char pmk_in[32])
+{
+    memcpy(fake_sae_bssid, bssid, 6), memcpy(fake_sae_pmk, pmk_in, 32), fake_sae_pmks++;
+    return 0;
+}
+int wifi_sae_done(unsigned status, const unsigned char bssid[6])
+{
+    fake_sae_status = status, memcpy(fake_sae_bssid, bssid, 6);
+    return 0;
+}

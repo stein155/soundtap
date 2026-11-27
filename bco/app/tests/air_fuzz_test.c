@@ -76,19 +76,41 @@ static unsigned beacon(uint8_t *h)
     for (unsigned i = 0; i < 8; i++)
         h[n++] = 0x82 + i;
     h[n++] = 3, h[n++] = 1, h[n++] = 1 + rnd() % 13;
-    h[n++] = 48, h[n++] = 20;
-    for (unsigned i = 0; i < 20; i++)
-        h[n++] = rnd();
-    h[n++] = 221, h[n++] = 8, h[n++] = 0, h[n++] = 0x50, h[n++] = 0xf2, h[n++] = 1;
-    for (unsigned i = 0; i < 4; i++)
-        h[n++] = rnd();
+    /* an RSN IE and a WPA IE (ADR 0136), half of them well formed with suites drawn from what
+     * the parsers know (TKIP, CCMP, PSK, PSK-SHA256, SAE) and a few they do not, the other half
+     * random bytes */
+    static const uint8_t types[] = {1, 2, 4, 5, 6, 8, 2, 4};
+    for (unsigned w = 0; w < 2; w++) {
+        unsigned at;
+        const uint8_t *oui = w ? (const uint8_t *)"\x00\x50\xf2" : (const uint8_t *)"\x00\x0f\xac";
+        h[n++] = w ? 221 : 48;
+        at = n++;
+        if (w)
+            h[n++] = 0, h[n++] = 0x50, h[n++] = 0xf2, h[n++] = 1;
+        if (rnd() % 2) {
+            for (unsigned i = 0; i < 20; i++)
+                h[n++] = rnd();
+        } else {
+            h[n++] = 1, h[n++] = 0;
+            memcpy(h + n, oui, 3), h[n + 3] = types[rnd() % 8], n += 4;
+            for (unsigned list = 0; list < 2; list++) {
+                unsigned cnt = rnd() % 4;
+                h[n++] = cnt, h[n++] = 0;
+                for (unsigned i = 0; i < cnt; i++)
+                    memcpy(h + n, oui, 3), h[n + 3] = types[rnd() % 8], n += 4;
+            }
+            if (!w)
+                h[n++] = rnd() % 2 ? 0x80 : 0xc0, h[n++] = 0;
+        }
+        h[at] = (uint8_t)(n - at - 1);
+    }
     return n;
 }
 
 static void fuzz_scan(void)
 {
     uint8_t f[600];
-    unsigned added = 0;
+    unsigned added = 0, joinable = 0;
     for (unsigned it = 0; it < 20000; it++) {
         unsigned len = beacon(f);
         mutate(f + RXBODY + 12, len - RXBODY - 12, rnd() % 8);
@@ -101,14 +123,21 @@ static void fuzz_scan(void)
             added++;
         free(h);
         CHECK(nbss <= NBSS, "scan table %u", nbss);
-        for (unsigned i = 0; i < nbss; i++)
-            CHECK(bsstab[i].ssidlen <= 32 && bsstab[i].ielen <= 255, "entry %u", i);
+        for (unsigned i = 0; i < nbss; i++) {
+            const struct bss *b = &bsstab[i];
+            CHECK(b->ssidlen <= 32 && b->ielen <= 255, "entry %u", i);
+            CHECK(!b->rsnok || ((b->grp == 2 || b->grp == 4) && b->rpair && (b->rakm & (BSS_PSK | BSS_PSK256))),
+                  "rsnok entry %u", i);
+            CHECK(!b->wpaok || ((b->wgrp == 2 || b->wgrp == 4) && b->wpair && (b->wakm & BSS_PSK)), "wpaok entry %u", i);
+            joinable += b->rsnok + b->wpaok;
+        }
         if (fails)
             return;
         if (rnd() % 500 == 0)
             nbss = 0;
     }
     CHECK(added > 1000, "bss_add accepts most frames (%u)", added);
+    CHECK(joinable > 1000, "RSN and WPA IEs the station joins come through (%u)", joinable);
 }
 
 static void fuzz_rates(void)

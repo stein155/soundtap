@@ -318,7 +318,7 @@ power cycle is the last resort when the HTTP server itself is gone.
   ST20, `country_code` with `ieee80211d=1`; a WLA without a country opens no AP.
   Test a 2.4 GHz channel 12/13 network. Repeat five times and confirm one network daemon per role.
   Since soundtapd manages Wi-Fi (ADR 0063, `app/internal/wifi`): `/tmp/wpa_supplicant.conf` holds
-  only `ctrl_interface=`, no `wpa_cli` runs, and the log names each `wpa_state` of a join under
+  only `ctrl_interface=`, `pmf=1` and `sae_check_mfp=1` (no key, ADR 0136), no `wpa_cli` runs, and the log names each `wpa_state` of a join under
   `comp=wifi`. A wrong password on new settings returns to the last network that worked and the
   setup page says so once. `kill $(pidof soundtapd)` while joined, and again while the setup AP
   is up, keeps the network: wpa_supplicant (or hostapd) keeps its pid and the next soundtapd logs
@@ -527,7 +527,7 @@ prohibited and historical results are not silently counted as pending executable
 | a new slot confirms with the router switched off: the boot confirm checks no network (ADR 0010) | open |
 | ROM-USB restore of the release's boot chain (`tools/recovery/rom-usb-restore.py`, [recovery tools](install-records.md#repairing-the-boot-chain-over-rom-usb)) | open |
 
-### ST20 (54 open)
+### ST20 (55 open)
 
 | Prove on the speaker | Status |
 |---|---|
@@ -553,6 +553,7 @@ prohibited and historical results are not silently counted as pending executable
 | BCO TKIP countermeasures (ADR 0136), only with a means to send frames under a wrong Michael key (hostapd built with `CONFIG_TESTING_OPTIONS`, or a second station that knows the key): one failure makes the AP log a Michael MIC failure report from the speaker and the link stays; a second within 60 s makes the speaker deauthenticate (reason 14, kernel log `BCO link lost`) and it rejoins the network no sooner than 60 s later | open |
 | BCO WPA and TKIP (ADR 0136), each on a bench hostapd joined through the setup page: (a) `wpa=1`, `wpa_key_mgmt=WPA-PSK`, `wpa_pairwise=TKIP`; (b) `wpa=1`, `wpa_pairwise=CCMP`; (c) `wpa=2`, `rsn_pairwise=TKIP`: `iw dev wlan0 link` shows the BSSID, DHCP gives an address, mDNS finds the speaker, a 10-minute radio stream and a 4 MB upload run; hostapd's log shows the WPA IE (a, b) or the RSN IE with TKIP (c) in the association and the group key handshake; after `hostapd_cli rekey_ptk`/`rekey_gtk` traffic goes on; record the upload time against a WPA2-CCMP run on the same access point (the app's software TKIP) | open |
 | BCO WEP (ADR 0136), on a bench hostapd joined through the setup page with the WEP choice: (a) `wep_key0="abcde"`, `wep_default_key=0`, `auth_algs=1` (open system); (b) a 104-bit hex key `wep_key1=0102030405060708090a0b0c0d`, `wep_default_key=1`, `auth_algs=2` (shared key): `iw dev wlan0 link` shows the BSSID, DHCP gives an address, mDNS finds the speaker, a radio stream plays at the agreed volume for 10 minutes; hostapd's log shows shared key authentication succeeding in (b); a wrong key fails the join and the speaker falls back to its last network | open |
+| BCO WPA3 and PMF (ADR 0136), each on a bench hostapd (built with `CONFIG_SAE`, `CONFIG_IEEE80211W`) joined through the setup page with the same password: (a) WPA3 only: `wpa=2`, `wpa_key_mgmt=SAE`, `rsn_pairwise=CCMP`, `ieee80211w=2`, `sae_password=…`; (b) transition: `wpa_key_mgmt=WPA-PSK SAE`, `ieee80211w=1`, `wpa_passphrase=…`, `sae_password=…`; (c) PMF required with PSK: `wpa_key_mgmt=WPA-PSK-SHA256`, `ieee80211w=2`: the kernel log shows the external authentication (`wpa_supplicant -dd`: `SME: External authentication`, the PMK set) for (a) and (b), `iw dev wlan0 link` the BSSID, DHCP an address, mDNS finds the speaker, a radio stream plays at the agreed volume; hostapd logs the IGTK handshake; `hostapd_cli deauthenticate <speaker MAC>` (protected) ends the link and the speaker rejoins; an unprotected deauthentication injected from a second station (`aireplay-ng -0 1 -a <BSSID> -c <speaker MAC>`, where the owner permits it on their own network) does not: hostapd logs the speaker's SA Query; `hostapd_cli rekey_gtk` keeps the link | open |
 | BCO setup access point clients (ADR 0031): with six phones on the setup network a seventh is refused and none of the six drops | open |
 | BCO regulatory domain (ADR 0135): after soundtapd's `iw reg set`, the kernel log says `BCO regulatory domain` with the speaker's country, its channels and passive channels, and that the TX power limit is not enforced; under `iw reg set 00` an access point on channel 12 or 13 is still found by the passive listen, and a setup access point is never started on a passive channel | open |
 | BCO antenna setting (ADR 0135), a read-only check with the owner's OK for this read alone, on an alpha image whose BCO app announces `BCOLINK_CAP_NVINFO`: `cat /sys/class/net/bcolink0/bco/nv_keys` as root lists the PersParam keys with their lengths; record which key holds the antenna setting and its value in [the BCO network card](st20/bco-network-card.md#antenna-setting); nothing is written | open |

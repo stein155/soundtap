@@ -21,8 +21,9 @@ observation on one board, not approval of a later image: release evidence belong
 9. [The setup access point on the WiLD core](#the-setup-access-point-on-the-wild-core)
 10. [CCMP on the core's cipher engine](#ccmp-on-the-cores-cipher-engine)
 11. [WEP and TKIP: stock's engine modes, and where SoundTap runs them](#wep-and-tkip-stocks-engine-modes-and-where-soundtap-runs-them)
-12. [Medium access and rate adaptation](#medium-access-and-rate-adaptation)
-13. [Measurements on the bench ST20](#measurements-on-the-bench-st20)
+12. [WPA3 and PMF](#wpa3-and-pmf)
+13. [Medium access and rate adaptation](#medium-access-and-rate-adaptation)
+14. [Measurements on the bench ST20](#measurements-on-the-bench-st20)
 
 ## The link
 
@@ -84,7 +85,8 @@ and the BCO answers with the same `seq` and `type|0x80`, status first.
   ([ADR 0136](../../decisions/0136-every-network-stock-joined-and-wpa3.md)) security 0 is an open
   network, without a key, and 2 is WEP: the key index (0-3), the authentication (0 open system, 1
   shared key, 2 open system first and shared key when the access point refuses it with status
-  13) and the 5- or 13-byte key. Anything else, or a key length that does not fit the security, is
+  13) and the 5- or 13-byte key. With `BCOLINK_CAP_WPA3` security 3 is WPA3-SAE, without a key
+  ([WPA3 and PMF](#wpa3-and-pmf)). Anything else, or a key length that does not fit the security, is
   answered "unsupported" (status 2). 2.4 GHz only. The key is never echoed or logged.
 - `FORGET` leaves the network without sending deauthentication and drops the profile; the WiLD
   core keeps running (a core reboot recalibrates the radio in busy waits that stall USB; the app
@@ -455,6 +457,44 @@ How it runs (`bco/app/src/wsec.c`, `bco/app/src/wifi.c`, the core's `sta.c` and 
    network with a TKIP group or pairwise cipher joined for 60 s.
 5. The receive and transmit buffers grew by the 20 bytes of a TKIP frame
    ([the SRAM budget](#the-sram-budget)).
+
+## WPA3 and PMF
+
+[ADR 0136](../../decisions/0136-every-network-stock-joined-and-wpa3.md) records the decision; the
+messages and steps (`BCOLINK_CAP_WPA3`):
+
+1. SET_PROFILE security 3 (SAE). The BCO picks an access point whose RSN IE offers AKM 8 with
+   pairwise and group CCMP and MFPC, sets the BSS up and sends JOIN_DONE, then asks unasked
+   `EXT_AUTH` (18 | 0x80, seq 0): `status 0, action 1, bssid[6], ssid_len, ssid`. The driver calls
+   `cfg80211_external_auth_request`, and wpa_supplicant starts SAE.
+2. wpa_supplicant's SAE frames come to the driver's `mgmt_tx` and go down as `AUTH_FRAME` (19:
+   the authentication body, algorithm 3); the BCO sends each to the access point. The access
+   point's authentication frames of algorithm 3 go up unasked as `AUTH_FRAME` (19 | 0x80, seq 0:
+   `status 0`, the 24-byte header and the body) and to wpa_supplicant through
+   `cfg80211_rx_mgmt`. The driver reports each sent frame's status once its request was answered.
+3. wpa_supplicant puts the PMK in its PMKSA cache; the driver's `set_pmksa` sends it as `SET_PMK`
+   (20: `bssid[6]`, the 32-byte PMK). Then `external_auth` sends SAE's result as `EXT_AUTH` (18:
+   `le16 status, bssid[6]`). With status 0 and the PMK the BCO associates with AKM 8 and MFPC
+   (MFPR where the access point requires it) and runs the 4-way with that PMK: the 802.11
+   KDF-SHA256 PTK, AES-CMAC MICs, key descriptor version 0. A refusal fails the attempt with
+   wpa_supplicant's status; 15 s without a result is an authentication timeout; either sends
+   `EXT_AUTH` with action 2 and tries again.
+4. A PSK profile takes PSK-SHA256 (AKM 6, key descriptor version 3) where the access point offers
+   it, and PMF wherever the access point offers it with pairwise CCMP; a network that requires
+   PMF needs pairwise CCMP.
+5. Under PMF the BCO keeps the IGTK from Message 3 and each group rekey. A robust management frame
+   from the access point (deauthentication, disassociation, action) counts only protected:
+   unicast under software CCMP with the PTK's TK, the nonce's Management flag set and a packet
+   number above the last one; group-addressed with an MMIE that checks out under BIP-CMAC-128 with
+   a newer IPN. An unprotected deauthentication or disassociation sends a protected SA Query
+   (action category 8) and ends the link with its reason only when no protected answer with the
+   same transaction id comes within 1 s. The access point's SA Query gets a protected answer. The
+   BCO's own protected management frames count their packet numbers from 2^40, so they never meet
+   the core's data packet numbers under the same key; receivers keep separate replay counters for
+   management frames.
+6. The driver offers SAE (`NL80211_FEATURE_SAE`), authentication frames on the station, BIP and
+   optional PMF only with the capability; the access point's interface keeps no management frame
+   types, as before.
 
 ## Medium access and rate adaptation
 

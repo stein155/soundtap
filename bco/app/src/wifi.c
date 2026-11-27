@@ -302,8 +302,31 @@ static unsigned mic_fail_t, mic_fail_seen, cm_until, cm_on;
 #define CM_WINDOW_MS 60000u
 #define CM_HOLD_MS 60000u
 
+/* Management frame protection (IEEE 802.11w, ADR 0136), once the 4-way negotiated it: the PTK's
+ * TK for the robust unicast management frames the app protects and opens in software (CCMP with
+ * the nonce's Management flag), their packet numbers (sent from MGMT_PN0 up, so they never meet
+ * the core's data PNs under the same key; received checked apart from data, as the standard
+ * keeps them), the IGTK for BIP on group-addressed ones, and an SA Query in flight after an
+ * unprotected deauthentication or disassociation. */
+static unsigned pmf;
+static unsigned char mgmt_tk[16], igtk[16];
+static unsigned long long mgmt_pn, mgmt_rxpn, ipn;
+static unsigned igtk_id;
+static unsigned saq_on, saq_deadline, saq_id, saq_sub, saq_reason;
+#define MGMT_PN0 (1ull << 40)
+#define SAQ_MS 1000u /* wpa_supplicant's SA Query limit: no protected answer in this long, the link is gone */
+
+/* WPA3-SAE (ADR 0136): messages for the SCM (wifi_sae_next), and how the external authentication
+ * stands: the PMK the SCM sent for the access point being joined, and its result. */
+#define SAE_Q 4u
+static unsigned char saeq[SAE_Q][1 + WIFI_SAE_MAX];
+static unsigned short saeq_len[SAE_Q];
+static unsigned saeq_in, saeq_out, sae_pmk, sae_result; /* sae_result: 0 waiting, 1 done, 2 refused */
+#define SAE_MS 15000u /* SAE's commit and confirm, with anti-clogging, well inside this */
+#define AUTH_SAE 3
+
 /* join sub-steps */
-enum { J_SCAN, J_SETUP, J_AUTH, J_ASSOC, J_4WAY, J_KEYS };
+enum { J_SCAN, J_SETUP, J_AUTH, J_ASSOC, J_4WAY, J_KEYS, J_SAE };
 static unsigned jstep, jtries, deadline, join_pending, corebd, rxauthok, rxassocok, kicked;
 static unsigned kick_sub, kick_reason; /* the deauthentication (0xc0) or disassociation (0xa0) and its reason */
 /* Why the last join failed, for STATUS (wifi_fail): the step and the AP's status or reason code. */
@@ -544,6 +567,13 @@ static int send_challenge(void)
     return 1;
 }
 
+/* The RSN capabilities this station asks for: MFPC when management frame protection is on, and
+ * MFPR when the access point requires it. */
+static unsigned rsn_caps(void)
+{
+    return cur.mfp ? WPA_CAP_MFPC | (cur.rcaps & WPA_CAP_MFPR) : 0;
+}
+
 static int send_assoc(void)
 {
     unsigned a = tx_buf();
@@ -554,8 +584,8 @@ static int send_assoc(void)
      * what join_attempt chose */
     unsigned char ie[WPA_IE_MAX];
     unsigned ielen = 0;
-    if (prof_sec == WIFI_SEC_PSK)
-        ielen = wpa_own_ie(ie, cur.proto, cur.grp, cur.pair, WPA_AKM_PSK, 0);
+    if (prof_sec == WIFI_SEC_PSK || prof_sec == WIFI_SEC_SAE)
+        ielen = wpa_own_ie(ie, cur.proto, cur.grp, cur.pair, cur.akm, rsn_caps());
     body = wstation_assoc((volatile uint8_t *)a, TXFBUF, own, cur.bssid, rates,
                           (const char *)cur.ssid, cur.ssidlen, cur.caps, ie, ielen,
                           prof_sec != WIFI_SEC_OPEN);
@@ -563,6 +593,157 @@ static int send_assoc(void)
         return 0;
     tx_push(a, (unsigned)body, PEER_NONE, 0xffff);
     return 1;
+}
+
+/* ---- WPA3-SAE through the SCM, and protected management frames (ADR 0136) ---- */
+
+/* A message for the SCM (wifi_sae_next): the newest SAE_Q are kept. */
+static void sae_queue(unsigned kind, const unsigned char *p, unsigned n)
+{
+    unsigned i = saeq_in % SAE_Q;
+    if (n > WIFI_SAE_MAX)
+        return;
+    saeq[i][0] = (unsigned char)kind;
+    copy(saeq[i] + 1, p, n);
+    saeq_len[i] = (unsigned short)(1 + n);
+    if (saeq_in - saeq_out == SAE_Q)
+        saeq_out++;
+    saeq_in++;
+}
+
+/* Ask the SCM to run SAE with the access point being joined (or to stop): its BSSID and SSID. */
+static void sae_start(unsigned kind)
+{
+    unsigned char m[6 + 1 + 32];
+    copy(m, cur.bssid, 6);
+    m[6] = cur.ssidlen;
+    copy(m + 7, cur.ssid, cur.ssidlen);
+    if (kind == WIFI_SAE_START)
+        sae_pmk = 0, sae_result = 0;
+    sae_queue(kind, m, 7u + cur.ssidlen);
+}
+
+int wifi_sae_next(unsigned char *o, unsigned max)
+{
+    unsigned i = saeq_out % SAE_Q, n;
+    if (saeq_in == saeq_out || saeq_len[i] > max)
+        return 0;
+    n = saeq_len[i];
+    copy(o, saeq[i], n);
+    saeq_out++;
+    return (int)n;
+}
+
+/* wpa_supplicant's SAE frame (algorithm 3) to the access point being joined, as it built the body. */
+int wifi_sae_tx(const unsigned char *body, unsigned n)
+{
+    unsigned a;
+    if (state != WIFI_JOINING || jstep != J_SAE || n < 6 || n > WIFI_SAE_MAX || body[0] != AUTH_SAE || body[1])
+        return -1;
+    if (!(a = tx_buf()) || wframe((volatile uint8_t *)a, TXFBUF, 0xb0, cur.bssid, own, cur.bssid, rates, 0,
+                                  body, n) <= 0)
+        return -1;
+    tx_push(a, n, PEER_NONE, 0xffff);
+    return 0;
+}
+
+int wifi_set_pmk(const unsigned char bssid[6], const unsigned char pmk_in[32])
+{
+    if (prof_sec != WIFI_SEC_SAE || !have_cur || !same(bssid, cur.bssid, 6))
+        return -1;
+    copy(pmk, pmk_in, 32);
+    sae_pmk = 1;
+    return 0;
+}
+
+int wifi_sae_done(unsigned status, const unsigned char bssid[6])
+{
+    if (state != WIFI_JOINING || jstep != J_SAE || !same(bssid, cur.bssid, 6))
+        return -1;
+    sae_result = status ? 2 : 1;
+    if (status)
+        fail_step = WIFI_FAIL_AUTH, fail_code = status;
+    return 0;
+}
+
+/* A robust management frame to the AP under PMF: action, deauthentication or disassociation,
+ * enciphered by the app as CCMP under the PTK's TK, sent TX_RAW. */
+static int send_protected(unsigned fc, const unsigned char *body, unsigned n)
+{
+    unsigned a = tx_buf(), len;
+    unsigned char hdr[24];
+    volatile unsigned char *b = (volatile unsigned char *)a;
+    if (!a || !pmf || n > 64)
+        return 0;
+    for (unsigned i = 0; i < 24; i++)
+        hdr[i] = 0;
+    hdr[0] = (unsigned char)fc, hdr[1] = 0x40;
+    copy(hdr + 4, cur.bssid, 6), copy(hdr + 10, own, 6), copy(hdr + 16, cur.bssid, 6);
+    copy(secbuf + WSEC_CCMP_HDR, body, n);
+    /* The core writes the sequence number from its timer after this; CCMP's AAD masks it. */
+    len = wsec_ccmp_protect(mgmt_tk, hdr, ++mgmt_pn, secbuf, n);
+    if (wframe(b, TXFBUF, fc | 0x4000, cur.bssid, own, cur.bssid, rates, 0, secbuf, len) <= 0)
+        return 0;
+    b[8 + 0x13] = b[0x94 + 0x13] = 1; /* TX_RAW */
+    tx_push(a, len, PEER_NONE, 0xffff);
+    return 1;
+}
+
+/* An unprotected deauthentication or disassociation under PMF may be forged: ask the AP over a
+ * protected SA Query whether it still has the association; no answer within SAQ_MS ends the link
+ * with the frame's reason (IEEE 802.11-2020 11.13). */
+static void saq_start(unsigned sub, unsigned reason)
+{
+    unsigned char q[4] = {8, 0, 0, 0};
+    if (saq_on)
+        return;
+    saq_id = (now ^ WREG[0x580 / 4]) & 0xffff;
+    q[2] = (unsigned char)saq_id, q[3] = (unsigned char)(saq_id >> 8);
+    saq_on = 1, saq_deadline = now + SAQ_MS, saq_sub = sub, saq_reason = reason;
+    send_protected(0xd0, q, 4);
+}
+
+/* An SA Query that got no protected answer within SAQ_MS: the AP did send us away. */
+static void saq_check(void)
+{
+    if (saq_on && due(saq_deadline))
+        saq_on = 0, kicked = 1, kick_sub = saq_sub, kick_reason = saq_reason,
+        fail_step = WIFI_FAIL_KICKED, fail_code = saq_reason;
+}
+
+/* Open a protected management frame from the AP (the body at body, n bytes) into secbuf: CCMP
+ * under the PTK's TK, its PN above the last one. Returns the plaintext's length, -1 to drop. */
+static int mgmt_open(const volatile unsigned char *h, const volatile unsigned char *body, unsigned n)
+{
+    unsigned char hh[24];
+    unsigned long long pn;
+    int r;
+    if (n < WSEC_CCMP_HDR + WSEC_CCMP_MIC || n > sizeof secbuf)
+        return -1;
+    copy(hh, h, 24);
+    copy(secbuf, body, n);
+    pn = wsec_ccmp_pn(secbuf);
+    if (pn <= mgmt_rxpn || (r = wsec_ccmp_open(mgmt_tk, hh, secbuf, n)) < 0)
+        return -1;
+    mgmt_rxpn = pn;
+    return r;
+}
+
+/* A group-addressed robust management frame under PMF: it must end in an MMIE whose MIC holds
+ * under the IGTK, with a newer IPN. Returns the body's length without the MMIE, -1 to drop. */
+static int bip_open(const volatile unsigned char *h, const volatile unsigned char *body, unsigned n)
+{
+    unsigned char hh[24];
+    unsigned keyid;
+    uint64_t got;
+    if (n > sizeof secbuf || n < WSEC_MMIE_LEN)
+        return -1;
+    copy(hh, h, 24);
+    copy(secbuf, body, n);
+    if (!wsec_bip_check(igtk, hh, secbuf, n, &keyid, &got) || keyid != igtk_id || got <= ipn)
+        return -1;
+    ipn = got;
+    return (int)(n - WSEC_MMIE_LEN);
 }
 
 /* A data frame to the AP under the app's own pairwise key (TKIP, ADR 0136): the MSDU (LLC/SNAP for
@@ -785,6 +966,42 @@ static void rx_station(const volatile unsigned char *b, unsigned len)
         int all = (sub == 0xc0 || sub == 0xa0) && same(h + 4, ap_bcast, 6) && same(h + 16, cur.bssid, 6);
         if ((!all && !same(h + 4, own, 6)) || (fc & 0x0300) || len < 0xcc + 2)
             return;
+        /* WPA3-SAE: the access point's authentication frames go to the SCM, whose wpa_supplicant
+         * runs SAE (ADR 0136) */
+        if (sub == 0xb0 && !(fc & 0x4000) && len >= 0xcc + 6 && le16(body) == AUTH_SAE) {
+            unsigned char fr[24 + WIFI_SAE_MAX - 24];
+            /* the header, then the body (the record keeps 8 bytes of cipher room between them) */
+            if (state == WIFI_JOINING && jstep == J_SAE && 24 + len - 0xcc <= sizeof fr) {
+                copy(fr, h, 24);
+                copy(fr + 24, body, len - 0xcc);
+                sae_queue(WIFI_SAE_FRAME, fr, 24 + len - 0xcc);
+            }
+            return;
+        }
+        /* Under PMF (ADR 0136) a robust frame from the AP (deauthentication, disassociation,
+         * action) counts only protected: unicast under CCMP, group-addressed with BIP. An
+         * unprotected deauthentication or disassociation starts an SA Query instead, an
+         * unprotected action frame is dropped; any other protected frame is dropped too. */
+        if (pmf && (sub == 0xc0 || sub == 0xa0 || sub == 0xd0)) {
+            int m = all ? bip_open(h, body, len - 0xcc) : (fc & 0x4000) ? mgmt_open(h, body, len - 0xcc) : -2;
+            if (m == -2 && sub != 0xd0)
+                saq_start(sub, le16(body));
+            if (m < 0)
+                return;
+            body = secbuf + (all ? 0 : WSEC_CCMP_HDR), len = 0xcc + (unsigned)m;
+            if (len < 0xcc + 2)
+                return;
+        } else if (fc & 0x4000) {
+            return;
+        }
+        if (sub == 0xd0 && pmf && len >= 0xcc + 4 && body[0] == 8) { /* SA Query (protected) */
+            if (body[1] == 0) {        /* the AP asks: answer with its transaction id */
+                const unsigned char r[4] = {8, 1, body[2], body[3]};
+                send_protected(0xd0, r, 4);
+            } else if (body[1] == 1 && saq_on && le16(body + 2) == saq_id)
+                saq_on = 0;            /* it still has us: the unprotected frame was forged */
+            return;
+        }
         if (sub == 0xc0 || sub == 0xa0) { /* deauth / disassoc: keep the reason */
             kicked = 1, kick_sub = sub, kick_reason = le16(body);
             fail_step = WIFI_FAIL_KICKED, fail_code = le16(body);
@@ -1391,6 +1608,13 @@ static int named(const struct bss *b)
  * this station join (wscan.h rsn_parse, wpa_parse). */
 static int choose(const struct bss *b, unsigned *proto, unsigned *pair, unsigned *grp)
 {
+    if (prof_sec == WIFI_SEC_SAE) { /* SAE: RSN, CCMP, PMF capable (WPA3 requires it) */
+        if (!b->rsn || !(b->rakm & BSS_SAE) || !(b->rpair & BSS_CCMP) || b->grp != WPA_CIPHER_CCMP ||
+            !(b->rcaps & WPA_CAP_MFPC))
+            return 0;
+        *proto = WPA_PROTO_RSN, *pair = WPA_CIPHER_CCMP, *grp = b->grp;
+        return 1;
+    }
     if (b->rsnok)
         *proto = WPA_PROTO_RSN, *pair = (b->rpair & BSS_CCMP) ? WPA_CIPHER_CCMP : WPA_CIPHER_TKIP,
         *grp = b->grp;
@@ -1414,6 +1638,7 @@ static int match(const struct bss *b)
         return !(b->caps & 0x10) && !b->rsn && !b->wpa;
     if (prof_sec == WIFI_SEC_WEP) /* the Privacy bit without an RSN or WPA IE */
         return (b->caps & 0x10) && !b->rsn && !b->wpa;
+    /* SAE and PSK both take what choose takes: SAE a WPA3 or transition network, PSK its PSK side */
     if (!choose(b, &proto, &pair, &grp))
         return 0;
     return !(cm_on && !due(cm_until) && (pair == WPA_CIPHER_TKIP || grp == WPA_CIPHER_TKIP));
@@ -1512,6 +1737,11 @@ static void join_attempt(void)
         unsigned proto = 0, pair = 0, grp = 0;
         choose(&bsstab[i], &proto, &pair, &grp);
         cur.proto = (unsigned char)proto, cur.pair = (unsigned char)pair, cur.grp = (unsigned char)grp;
+        /* the AKM wpa_supplicant would take: SAE for an SAE profile, PSK-SHA256 over PSK; PMF
+         * whenever the access point can and the pairwise cipher is CCMP */
+        cur.akm = prof_sec == WIFI_SEC_SAE ? WPA_AKM_SAE :
+                  proto == WPA_PROTO_RSN && (bsstab[i].rakm & BSS_PSK256) ? WPA_AKM_PSK_SHA256 : WPA_AKM_PSK;
+        cur.mfp = proto == WPA_PROTO_RSN && pair == WPA_CIPHER_CCMP && (bsstab[i].rcaps & WPA_CAP_MFPC);
     }
     cur.rsn = bsstab[i].rsn, cur.wpa = bsstab[i].wpa; /* what STATUS reports it offers */
     cur.rpair = bsstab[i].rpair, cur.rakm = bsstab[i].rakm, cur.rcaps = bsstab[i].rcaps;
@@ -1520,8 +1750,9 @@ static void join_attempt(void)
         rates[r] = lo;
     keyed = ap_keyed = 0, keys_due = 0, rxauthok = rxassocok = kicked = 0, eappend = 0;
     /* WEP shared key asks with algorithm 1 at once; "auto" starts with open system */
-    auth_alg = prof_sec == WIFI_SEC_WEP && wep_auth == WIFI_WEP_SHARED ? AUTH_SHARED_KEY : 0;
-    challenge_due = 0;
+    auth_alg = prof_sec == WIFI_SEC_WEP && wep_auth == WIFI_WEP_SHARED ? AUTH_SHARED_KEY :
+               prof_sec == WIFI_SEC_SAE ? AUTH_SAE : 0;
+    challenge_due = 0, sae_result = 0;
     build_join_bc(bc, cur.bssid, cur.chan);
     corebd = 0;
     wr_cmd_checked(&tx, 0xbc, MGMT_MODULE, 11, bc, sizeof bc);
@@ -1572,6 +1803,11 @@ static void join_step(void)
         if (!wr_cmd_checked(&tx, CMD_JOIN_DONE, 0x12, 11, jd, sizeof jd))
             return; /* ring full: still J_SETUP, the next poll tries again */
         DOORBELL();
+        if (prof_sec == WIFI_SEC_SAE) { /* the SCM runs SAE (sae_start); then J_SAE */
+            sae_start(WIFI_SAE_START);
+            jstep = J_SAE, deadline = now + SAE_MS;
+            return;
+        }
         if (!send_auth()) {
             retry();
             return;
@@ -1579,6 +1815,17 @@ static void join_step(void)
         jstep = J_AUTH, deadline = now + 2000;
         return;
     }
+    case J_SAE: /* the SCM's SAE: done once it sent the PMK and the result, then associate */
+        if (sae_result == 1 && sae_pmk) {
+            rxauthok = 1, jstep = J_AUTH;
+            join_step();
+        } else if (sae_result == 2 || due(deadline)) {
+            if (sae_result != 2)
+                fail_step = WIFI_FAIL_AUTH_TIMEOUT, fail_code = 0;
+            sae_start(WIFI_SAE_ABORT);
+            retry();
+        }
+        return;
     case J_AUTH:
         /* WEP shared key: answer the challenge, then wait for transaction 4. With "auto" an AP
          * that refuses open system for its algorithm gets shared key, in the same attempt. */
@@ -1643,7 +1890,7 @@ static void join_step(void)
             snonce(sn);
             wpa_sm_init(&sm, pmk, cur.bssid, own, sn);
             /* Message 2 repeats the IE of the request */
-            wpa_sm_config(&sm, cur.proto, cur.pair, cur.grp, WPA_AKM_PSK, 0);
+            wpa_sm_config(&sm, cur.proto, cur.pair, cur.grp, cur.akm, rsn_caps());
             jstep = J_4WAY, deadline = now + 8000;
         } else if (due(deadline)) {
             if (fail_step != WIFI_FAIL_ASSOC)
@@ -1678,10 +1925,22 @@ static void join_step(void)
  * leaves a key due, tried again on the next poll instead of being lost. */
 static void install_keys(void)
 {
+    /* the IGTK stays in the app: BIP runs in software (ADR 0136) */
+    if ((keys_due & WPA_RX_INSTALL_IGTK) && sm.igtk_set) {
+        copy(igtk, sm.igtk, 16);
+        igtk_id = (unsigned)sm.igtk_idx, ipn = 0;
+        for (unsigned i = 0; i < 6; i++)
+            ipn |= (unsigned long long)sm.ipn[i] << (8 * i);
+        keys_due &= ~WPA_RX_INSTALL_IGTK;
+    }
     /* A CCMP PTK's TK goes to the engine; a TKIP one (TK and both MIC keys) stays here */
     if ((keys_due & WPA_RX_INSTALL_PTK) &&
         !set_key(1, 0, sm.ptk + 32, sm.pairwise == WPA_CIPHER_TKIP ? WSEC_TKIP : WSEC_CCMP)) {
         keys_due &= ~WPA_RX_INSTALL_PTK, keyed = 1;
+        /* PMF: the same TK protects the robust management frames, in software */
+        pmf = sm.mfp && sm.pairwise == WPA_CIPHER_CCMP;
+        if (pmf)
+            copy(mgmt_tk, sm.ptk + 32, 16), mgmt_pn = MGMT_PN0, mgmt_rxpn = 0;
         sw_pair.cipher = 0;
         if (sm.pairwise == WPA_CIPHER_TKIP) {
             copy(sw_pair.key, sm.ptk + 32, 32);
@@ -1726,7 +1985,7 @@ static void eapol(void)
         return;
     if (r & WPA_RX_SEND)
         send_eapol(out, (unsigned)ol);
-    keys_due |= (unsigned)r & (WPA_RX_INSTALL_PTK | WPA_RX_INSTALL_GTK);
+    keys_due |= (unsigned)r & (WPA_RX_INSTALL_PTK | WPA_RX_INSTALL_GTK | WPA_RX_INSTALL_IGTK);
     install_keys();
 }
 
@@ -1754,6 +2013,9 @@ static void drop_link(void)
         ((volatile unsigned char *)&sw_pair)[i] = 0;
     for (unsigned i = 0; i < sizeof sw_grp; i++)
         ((volatile unsigned char *)sw_grp)[i] = 0;
+    pmf = saq_on = 0;
+    for (unsigned i = 0; i < 16; i++)
+        ((volatile unsigned char *)mgmt_tk)[i] = ((volatile unsigned char *)igtk)[i] = 0;
 }
 
 /* ---- background scan and roam (ADR 0135) ---- */
@@ -1878,7 +2140,8 @@ int wifi_join(const unsigned char *ssid, unsigned ssid_len, unsigned sec, const 
 {
     if (ssid_len < 1 || ssid_len > 32 || state == WIFI_AP ||
         !((sec == WIFI_SEC_OPEN && !key_len) || (sec == WIFI_SEC_PSK && key_len == 32) ||
-          (sec == WIFI_SEC_WEP && (key_len == 7 || key_len == 15) && key[0] < 4 && key[1] <= WIFI_WEP_AUTO)))
+          (sec == WIFI_SEC_WEP && (key_len == 7 || key_len == 15) && key[0] < 4 && key[1] <= WIFI_WEP_AUTO) ||
+          (sec == WIFI_SEC_SAE && !key_len)))
         return -1;
     drop_link();
     copy(cur.ssid, ssid, ssid_len);
@@ -2090,6 +2353,7 @@ void wifi_poll(unsigned t)
         /* The AP sent us away, or went quiet (only judged once its beacons were seen at all, and
          * not while a background scan has the radio on another channel). The SCM hears of it at
          * once (ADR 0135). */
+        saq_check();
         if (kicked || (beacons_up && bg_phase != BG_OFF && due(last_beacon + WIFI_BEACON_LOSS_MS))) {
             hex("link lost kicked ", kicked);
             if (kicked)

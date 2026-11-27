@@ -21,6 +21,20 @@ struct wifi_bss {
 #define WIFI_SET_CCMP 0x1u /* pairwise sets */
 #define WIFI_SET_TKIP 0x2u
 #define WIFI_SET_PSK 0x1u  /* AKM sets */
+#define WIFI_SET_PSK256 0x2u
+#define WIFI_SET_SAE 0x4u
+
+/* WPA3-SAE through the SCM (ADR 0136): wpa_supplicant computes SAE over cfg80211's external
+ * authentication; the station asks for it, passes the access point's authentication frames up,
+ * sends wpa_supplicant's, takes the PMK it derived and then associates and runs the 4-way with it.
+ * wifi_sae_next: the next message for the SCM, kind first: WIFI_SAE_START or WIFI_SAE_ABORT with
+ * bssid[6], ssid_len, ssid; WIFI_SAE_FRAME with the frame (24-byte header, body). 0 when none. */
+#define WIFI_SAE_MAX 512u
+enum { WIFI_SAE_START = 1, WIFI_SAE_ABORT, WIFI_SAE_FRAME };
+int wifi_sae_next(unsigned char *o, unsigned max);
+int wifi_sae_tx(const unsigned char *body, unsigned n);                    /* 0 when sent */
+int wifi_set_pmk(const unsigned char bssid[6], const unsigned char pmk_in[32]); /* 0 when taken */
+int wifi_sae_done(unsigned status, const unsigned char bssid[6]);         /* 0 when taken */
 
 /* What a scanned network offers (wifi_bss.sec, SCAN's security byte): open, an RSN IE, only a WPA
  * IE, or the Privacy bit without either (WEP). */
@@ -43,7 +57,7 @@ int wifi_bss(unsigned i, struct wifi_bss *o);
  * flags (WIFI_BSSID_*, WIFI_ROAM) and bssid come from SET_PROFILE's tail (ADR 0135); flags 0
  * joins the strongest access point of the SSID and never roams.
  * Returns 0 when the join started (state goes JOINING, then UP or FAILED), -1 when refused. */
-enum { WIFI_SEC_OPEN, WIFI_SEC_PSK, WIFI_SEC_WEP };
+enum { WIFI_SEC_OPEN, WIFI_SEC_PSK, WIFI_SEC_WEP, WIFI_SEC_SAE };
 enum { WIFI_WEP_OPEN, WIFI_WEP_SHARED, WIFI_WEP_AUTO }; /* WEP authentication: open system first */
 #define WIFI_BSSID_FIXED 0x1u /* only this BSSID */
 #define WIFI_BSSID_HINT 0x2u  /* this BSSID first, when it is heard */
@@ -95,7 +109,8 @@ void wifi_tx_counters(unsigned c[3]);
 enum {
     WIFI_FAIL_NONE,
     WIFI_FAIL_NOT_FOUND,     /* no BSS with this SSID heard */
-    WIFI_FAIL_SECURITY,      /* only with security this station cannot join (WPA3 only, PMF required) */
+    WIFI_FAIL_SECURITY,      /* only with security this station cannot join with the profile (enterprise, another
+                              * security than the profile's) */
     WIFI_FAIL_AUTH,          /* authentication refused: code = status */
     WIFI_FAIL_AUTH_TIMEOUT,  /* no authentication response */
     WIFI_FAIL_ASSOC,         /* association refused: code = status */
