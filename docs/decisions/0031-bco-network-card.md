@@ -114,7 +114,8 @@ every protected frame it receives, drops a frame it cannot encipher rather than 
 clear, and checks the PN. The temporal keys never leave the BCO; the SCM driver never sees a key.
 The core contends for the medium with an 802.11 DCF backoff on the queue it transmits on and
 adapts the data rate between 54 and 24 Mb/s. An OFDM frame is ACKed at the highest basic
-rate at or below its own, or else the highest mandatory one (6, 12, 24 Mb/s). Stock's transmit code stays unread. It ACKs every
+rate at or below its own, or else the highest mandatory one (6, 12, 24 Mb/s), and answers an RTS to
+its own address with a CTS on the ACK's queue (the setup AP, or the station once joined). Stock's transmit code stays unread. It ACKs every
 unicast data frame to the station once joined, null-data and QoS frames included (QoS only with the
 Normal Ack policy), also those it does not keep: an access point disassociates a station that does
 not answer its idle check. It never ACKs a frame addressed to a group, and it passes a

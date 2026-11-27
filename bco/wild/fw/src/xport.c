@@ -261,7 +261,7 @@ static unsigned data_cls(unsigned max)
  * it never comes out short: DSSS/CCK 192 us long (96 us short) preamble and header, then the bits
  * at the rate; OFDM 20 us preamble and SIGNAL, 4 us symbols of 16 service + 8 len + 6 tail bits,
  * and the 6 us signal extension of 2.4 GHz. 1024 / rate in Mb/s, rounded up, saves a division. */
-static unsigned airtime(unsigned cls, unsigned len)
+unsigned airtime(unsigned cls, unsigned len)
 {
     static const unsigned short us1024[16] = {0, 512, 187, 94, 0, 512, 187, 94, 22, 43, 86, 171, 19, 29, 57, 114};
     cls &= 15;

@@ -88,7 +88,7 @@ enum { RC_POLL, RC_PHASE, RC_SCHED, RC_WIN, RC_LIMPOS = RC_WIN + 8, RC_DMAGO, RC
        RC_FIQOUT, RC_FAULTLR, RC_FAULT, RC_CMD, RC_CMDBAD, RC_EVDROP, RC_APIN, RC_APNOFILT,
        RC_APKEEP, RC_APFCS, RC_APFRATE, RC_APDATA, RC_APDRATE, RC_APNOROOM,
        RC_APACK, RC_APACKLAST, RC_APTYPE, RC_APNFTYPE = RC_APTYPE + RC_APTYPES,
-       RC_APBLOST = RC_APNFTYPE + RC_APTYPES, RC_N };
+       RC_APBLOST = RC_APNFTYPE + RC_APTYPES, RC_CTS, RC_N };
 _Static_assert(RC_APIN == 29 && RC_APNOFILT == 30 && RC_APKEEP == 31 && RC_APNOROOM == 36 && RC_APACKLAST == 38 &&
                RC_APTYPE == 39 && RC_APNFTYPE == 45 && RC_APBLOST == 51,
                "bco/app/src/wifi.c (CORE_RC_APIN, CORE_RC_APTYPE) reads the ap_mode counters at these indices");
@@ -103,7 +103,8 @@ _Static_assert(RC_APIN == 29 && RC_APNOFILT == 30 && RC_APKEEP == 31 && RC_APNOR
  * RC_APACKLAST the last one's {rate class, received rate index, frame control acknowledged};
  * RC_APTYPE + k the frames to our address of kind k (RC_APIN by kind) and RC_APNFTYPE + k those of
  * them the address filter did not flag (RC_APNOFILT by kind); RC_APBLOST the beacons given back
- * as failed because the MAC raised no TX-done for them (xport.c TX_LOST). The app reads these
+ * as failed because the MAC raised no TX-done for them (xport.c TX_LOST); RC_CTS the CTS frames
+ * sent in answer to an RTS (mac.c, not reported to the app). The app reads these
  * through HOST_FLAG2 for AP_STATUS (bco/app/src/wifi.c), at the offsets named there. */
 extern volatile unsigned rec[RC_N];
 void route(unsigned type, unsigned module, unsigned src, const void *payload, unsigned len);
@@ -137,6 +138,7 @@ extern unsigned sta_mgmt_cls;
 void dwell_extend(void);
 extern unsigned short resp_class[16];
 unsigned rate_code(unsigned r, int long_pre);
+unsigned airtime(unsigned cls, unsigned len); /* xport.c: us on air of len bytes at rate code cls */
 const unsigned char *rx_peek(void);
 void rx_pop(void);
 void tx_mac_start(unsigned q, void *desc);  /* mac.c: hand a software descriptor to queue q */

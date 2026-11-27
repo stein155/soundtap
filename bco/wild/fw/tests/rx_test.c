@@ -584,6 +584,56 @@ static void ap_clients(void)
     ap_mode = 0, joined = 0;
 }
 
+/* An RTS to us gets a CTS a SIFS later: the ACK's queue, frame control 0xc4, RA = the RTS's TA,
+ * the RTS's duration less the SIFS and the CTS (at 6 Mb/s for an RTS at 6 Mb/s: 50 us), at the
+ * control-response rate; as the setup AP and as a joined station. Not for anybody else, not to a
+ * group, not before the join; a duration shorter than the CTS gives 0. */
+static void rts_cts(void)
+{
+    static const unsigned char PHONE[6] = {0x02, 0x99, 0x88, 0x77, 0x66, 0x55};
+    unsigned char rts[20] = {0xb4, 0, 300 & 0xff, 300 >> 8};
+    memcpy(rts + 4, OWN, 6), memcpy(rts + 10, PHONE, 6);
+    setup(0);
+    air_put(rts, 20, -50, 11);
+    air_fiq(0xb4, ST_IN | ST_ADDR);
+    CHECK(!acked() && !rec[RC_CTS], "no CTS before the join or the access point");
+    ap_mode = joined = 1;
+    air_put(rts, 20, -50, 11);
+    air_fiq(0xb4, ST_IN);
+    CHECK(acked() && rec[RC_CTS] == 1 && ack_hdr[0] == 0xc4 && ack_hdr[1] == 0, "the setup AP answers with a CTS");
+    CHECK((ack_hdr[2] | ack_hdr[3] << 8) == 300 - 10 - 50 && airtime(11, 14) == 50,
+          "duration %u: the RTS's less SIFS and the CTS", ack_hdr[2] | ack_hdr[3] << 8);
+    CHECK(!memcmp(ack_desc.p1, PHONE, 6) && ack_desc.len == 14 && ack_desc.cls == resp_class[11],
+          "to the RTS's TA, at the response rate");
+    CHECK(rec[RC_APTYPE + AP_RTS] == 1 && rec[RC_APNFTYPE + AP_RTS] == 1, "counted as an RTS to us");
+    rts[2] = 40, rts[3] = 0;
+    air_put(rts, 20, -50, 11);
+    air_fiq(0xb4, ST_IN);
+    CHECK(acked() && ack_hdr[2] == 0 && ack_hdr[3] == 0, "a short duration gives 0");
+    memcpy(rts + 4, OTHER, 6);
+    air_put(rts, 20, -50, 11);
+    air_fiq(0xb4, ST_IN);
+    CHECK(!acked() && rec[RC_CTS] == 2, "an RTS for another station gets none");
+    memcpy(rts + 4, BCAST, 6);
+    air_put(rts, 20, -50, 11);
+    air_fiq(0xb4, ST_IN);
+    CHECK(!acked(), "nor one to a group");
+    memcpy(rts + 4, OWN, 6);
+    air_put(rts, 20, -50, 11);
+    air_fiq(0xb4, ST_IN | ST_FCS);
+    CHECK(!acked(), "nor a damaged one");
+    /* a joined station; and an ACK after a CTS is an ACK again */
+    ap_mode = 0;
+    rts[2] = 200;
+    air_put(rts, 20, -50, 11);
+    air_fiq(0xb4, ST_IN | ST_ADDR);
+    CHECK(acked() && ack_hdr[0] == 0xc4 && ack_hdr[2] == 200 - 60, "the station answers too");
+    unsigned n = hdr(fbuf, 0x08, 0x02, OWN, BSSID, BSSID);
+    air_rx(fbuf, n + 40 + 4, ST_IN | ST_ADDR);
+    CHECK(acked() && ack_hdr[0] == 0xd4 && !ack_hdr[2] && !ack_hdr[3], "then an ACK with duration 0");
+    joined = 0;
+}
+
 /* Frames under the app's keys (ADR 0136) go up as they came: TKIP unicast under the soft pairwise
  * key, TKIP group under a soft group key, WEP (no ExtIV) under a default key in the group table,
  * cipher header and trailer kept, protected bit set, record byte 7 = RX_SOFT. A frame for a key id
@@ -647,6 +697,7 @@ static void soft_frames(void)
 int main(void)
 {
     soft_frames();
+    rts_cts();
     keep_filter();
     ap_clients();
     ack_unicast_data();

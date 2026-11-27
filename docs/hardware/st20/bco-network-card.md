@@ -602,6 +602,11 @@ itself (`tx_kick`, `ACK_LATE`, `rate_cls` in `bco/wild/fw/src/xport.c`):
 6. The core ACKs an OFDM frame at the highest basic rate at or below its own, or else at the
    highest mandatory rate (6, 12 or 24 Mb/s) at or below it (IEEE 802.11-2020 10.6.6.5.2;
    `resp_classes` in `scan.c`).
+7. An RTS to the BCO's own address (the setup AP, or the station once joined) gets a CTS a SIFS
+   later on the ACK's queue 8, to the RTS's TA, with the RTS's duration less the SIFS and the
+   CTS's airtime (`send_resp` in `mac.c`). The NAV is not kept. Whether RTS frames reach the FIQ
+   on hardware is not measured yet: `core_to_us_rts/...` in the setup AP's log shows it, and
+   `rec[RC_CTS]` counts the CTS frames sent.
 
 Limits: 24 Mb/s is the floor of the adaptation, because below it a frame outlasts `ACK_LATE`; a
 weaker link falls back to the basic rate on the last tries. 9 us assumes a BSS with short slots

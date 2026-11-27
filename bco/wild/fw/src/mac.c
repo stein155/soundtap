@@ -117,8 +117,10 @@ static unsigned short rxq_len[RXQ];     /* each frame's length when queued (rx_p
 static volatile unsigned rxq_in, rxq_out;
 
 /* The ACK (stock 0xaa10 + 0xc218): queue 8 from 0x698, started by 0x670 bit 23. The MAC fetches
- * it a SIFS later, so it may start before the header is final. Response class by received rate:
- * DSSS/CCK (index < 8) 5, OFDM 11 (stock per-rate table, default basic-rate set). */
+ * it a SIFS later. Response class by received rate: resp_class (scan.c), the control-response
+ * rate rule. A CTS has the ACK's layout (frame control, duration, RA; 14 bytes with FCS) and goes
+ * the same way (send_resp). The header is complete before the start: one buffer serves both, and
+ * an ACK started before its frame control was written could have gone out as the CTS before it. */
 static unsigned char ack_hdr[4];
 static struct {
     unsigned short len, z0, rate, cls; /* cppcheck-suppress unusedStructMember ; the MAC reads this descriptor */
@@ -129,18 +131,25 @@ static struct {
     unsigned l2; /* no second segment */ /* cppcheck-suppress unusedStructMember ; the MAC reads this descriptor */
 } ack_desc;
 
-static void send_ack(const unsigned char *e)
+static void send_resp(const unsigned char *e, unsigned fc, unsigned dur)
 {
     ack_desc.len = 14;
     ack_desc.hdrlen = 4;
     ack_desc.hdr = ack_hdr;
     ack_desc.l1 = 6;
-    ack_desc.p1 = e + 8 + 10;                   /* RA = the frame's transmitter (A2) */
+    ack_desc.p1 = e + 8 + 10;                   /* RA = the frame's transmitter (A2, an RTS's TA) */
     ack_desc.cls = resp_class[e[6] & 15] & 15;
+    ack_desc.rate = 8;
+    ack_hdr[0] = (unsigned char)fc, ack_hdr[1] = 0;
+    ack_hdr[2] = (unsigned char)dur, ack_hdr[3] = (unsigned char)(dur >> 8);
     REG(0x698) = (unsigned)&ack_desc;
     REG(0x670) = 0x800000;
-    ack_desc.rate = 8;
-    ack_hdr[0] = 0xd4;                          /* duration 0, no fragment bursts */
+}
+
+/* An ACK: duration 0, no fragment bursts. */
+static void send_ack(const unsigned char *e)
+{
+    send_resp(e, 0xd4, 0);
     if (ap_mode) {                              /* diag: what the setup AP acknowledges, and how */
         rec[RC_APACK]++;
         rec[RC_APACKLAST] = ack_desc.cls | (e[6] & 15u) << 8 | (unsigned)e[8] << 16;
@@ -285,6 +294,17 @@ void mac_fiq(void)
          * frame is never ACKed, also while a scan lets everything through the address filter. */
         if (hit && !group && len >= minlen && (fc == 0x50 || (mgmt && room) || ack_data || pspoll))
             send_ack(e);
+        /* An RTS to us (RA = own address; the setup AP, or the station once joined) gets a CTS a
+         * SIFS later, to its TA, at the control-response rate, with the RTS's duration less the
+         * SIFS and the CTS itself (IEEE 802.11-2020 9.3.1.3; 0 if that leaves nothing). Without
+         * it a client that protects its frames with RTS never sends them. The NAV is not kept, so
+         * the CTS goes whatever the medium was reserved for. rec[RC_APTYPE + AP_RTS] shows
+         * whether RTS frames reach the FIQ at all. */
+        if (fc == 0xb4 && (ap_mode || joined) && !group && len >= 20 && same_mac(e + 12, own_mac)) {
+            unsigned dur = e[10] | (unsigned)e[11] << 8, cost = 10 + airtime(resp_class[e[6] & 15], 14);
+            send_resp(e, 0xc4, dur & 0x8000 || dur <= cost ? 0 : dur - cost);
+            rec[RC_CTS]++;
+        }
         if (keep && fc == 0x50 && (st & 0x40000))
             dwell_extend();
     } else if ((st & 4) && ap_mode) {
