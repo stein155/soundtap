@@ -233,7 +233,7 @@ static void ack_unicast_data(void)
     fbuf[24] = 0x65; /* ack policy Block Ack, without an agreement */
     air_rx(fbuf, len, ST_IN | ST_ADDR);
     CHECK(!acked() && rxq_in == 0, "QoS block-ack policy: not ACKed");
-    len = data_frame(OWN, BSSID, 0, 0, 0, 0);
+    data_frame(OWN, BSSID, 0, 0, 0, 0); /* cut to 28 bytes below: no room for the QoS control */
     fbuf[0] = 0xc8;
     air_rx(fbuf, 28, ST_IN | ST_ADDR);
     CHECK(!acked() && rxq_in == 0, "QoS-null without its QoS control: not ACKed");
