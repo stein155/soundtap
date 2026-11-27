@@ -202,7 +202,7 @@ func TestWrongPasswordWithoutALastGoodOpensTheSetupAP(t *testing.T) {
 
 	for _, c := range []string{
 		"iw phy phy0 interface add wlan1 type __ap", "ip addr add 192.168.42.1/24 dev wlan1",
-		"lan-allow add wlan1 192.168.42.1 24", "dnsd -i 192.168.42.1", "udhcpd -f",
+		"lan-allow add wlan1 192.168.42.1 24", "dnsd -i 192.168.42.1", "udhcpd -f -v",
 	} {
 		if !bench.sys.called(c) {
 			t.Errorf("setup AP step %q missing", c)

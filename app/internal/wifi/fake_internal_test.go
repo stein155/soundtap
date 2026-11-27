@@ -487,7 +487,7 @@ func newRig(t *testing.T, variant string) *rig {
 			Ready: 200 * time.Millisecond, Settle: 5 * time.Millisecond, Scan: time.Second,
 			ScanRetry: 5 * time.Millisecond, ShortPause: 30 * time.Millisecond, LongPause: 60 * time.Millisecond,
 			Hold: 90 * time.Millisecond, Release: 5 * time.Millisecond, Watch: 10 * time.Millisecond,
-			Gone: 10 * time.Millisecond,
+			Gone: 10 * time.Millisecond, APWatch: 10 * time.Millisecond,
 		},
 		Hostname:  func() string { return "soundtap-test" },
 		SetupSSID: func() string { return "SoundTap ST10 C3D411" },

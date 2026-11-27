@@ -134,6 +134,8 @@ func (m *Manager) openAP(ctx context.Context, reason string) error {
 	ssid := m.setupSSID()
 	m.log.Info("starting the setup AP", "reason", reason, "iface", m.cfg.AP, "ssid", ssid, "ip", APAddress)
 
+	started := time.Now()
+
 	scan, err := m.stationForAP(ctx)
 	if err != nil {
 		return err
@@ -144,7 +146,12 @@ func (m *Manager) openAP(ctx context.Context, reason string) error {
 		return err
 	}
 
-	return m.startPortal(ctx, stopAP)
+	err = m.startPortal(ctx, stopAP)
+	if err == nil {
+		m.watchAP(ctx, started)
+	}
+
+	return err
 }
 
 // stationForAP stops the station and keeps wlan0 managed and up for the scan the setup
@@ -283,7 +290,10 @@ func (m *Manager) startPortal(ctx context.Context, stopAP func()) error {
 		return fmt.Errorf("udhcpd.conf: %w", err)
 	}
 
-	err = m.startDaemon(ctx, "udhcpd", "udhcpd", "-f", dhcpConf)
+	// -v: each DISCOVER and REQUEST in the log next to the OFFER and ACK udhcpd always logs
+	// (busybox UDHCP_DEBUG, board/rootfs/busybox.fragment), so a phone without an address
+	// shows whether its request arrived.
+	err = m.startDaemon(ctx, "udhcpd", "udhcpd", "-f", "-v", dhcpConf)
 	if err != nil {
 		remove(m.state("setup-ap"), m.state("network-ready"))
 		stopAP()
