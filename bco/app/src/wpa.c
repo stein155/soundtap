@@ -444,16 +444,22 @@ int wpa_sm_rx(struct wpa_sm *sm, const uint8_t *in, size_t in_len, uint8_t *out,
     kdlen = be16(in + O_KDLEN);
     if ((size_t)O_KD + kdlen > in_len)
         return WPA_RX_FAIL;
-    /* Every frame after the first must count up: a replayed one is dropped unanswered. */
-    if (sm->state != WPA_IDLE && !replay_newer(in + O_REPLAY, sm->replay))
+    /* A replayed frame is dropped unanswered: the counter must be above that of the last frame
+     * whose MIC verified (IEEE 802.11-2020 12.7.2, as wpa_supplicant does). Only a verified frame
+     * moves that counter: Message 1 has no MIC, so a forged one with a huge counter would otherwise
+     * shut out the real handshake, and an AP that resends Message 1 with the same counter must
+     * still get its Message 2. */
+    if (sm->rx_replay_set && !replay_newer(in + O_REPLAY, sm->rx_replay))
         return WPA_RX_FAIL;
 
     if (!(ki & KI_PAIRWISE)) {
-        /* ---- Group Message 1 (GTK rekey): only once keyed, answered with group Message 2 ---- */
-        if (sm->state != WPA_DONE || !(ki & KI_MIC) || !mic_ok(sm->ptk, in, in_len) ||
+        /* ---- Group Message 1 (GTK rekey): only once keyed, answered with group Message 2. It
+         * verifies under the PTK in use, also while a PTK rekey waits for its Message 3. ---- */
+        if (!sm->ptk_set || !(ki & KI_MIC) || !mic_ok(sm->ptk, in, in_len) ||
             !unwrap_gtk(sm, sm->ptk + 16, ki, in, kdlen))
             return WPA_RX_FAIL;
         cp(sm->replay, in + O_REPLAY, 8);
+        cp(sm->rx_replay, in + O_REPLAY, 8);
         *out_len = reply(sm, in, 2 | KI_MIC | KI_SECURE, out);
         return WPA_RX_SEND | WPA_RX_INSTALL_GTK;
     }
@@ -462,7 +468,9 @@ int wpa_sm_rx(struct wpa_sm *sm, const uint8_t *in, size_t in_len, uint8_t *out,
         /* ---- Message 1: ANonce in, build Message 2 ----
          * The new PTK waits in tptk until a MICed Message 3 proves it: Message 1 carries no MIC, so
          * a forged one must not replace the keys in use. A rekey (Message 1 while DONE) gets a fresh
-         * SNonce derived from the old one and the new ANonce. */
+         * SNonce derived from the old one and the new ANonce; a resent Message 1 of the same
+         * handshake keeps the SNonce and takes the (possibly new) ANonce. Message 2 echoes this
+         * Message 1's counter, which is not stored as verified. */
         uint8_t *o = out, ie[WPA_RSN_IE_LEN];
         unsigned total = O_KD + sizeof ie;
         uint8_t mic[20];
@@ -496,6 +504,7 @@ int wpa_sm_rx(struct wpa_sm *sm, const uint8_t *in, size_t in_len, uint8_t *out,
         if (!mic_ok(sm->ptk, in, in_len))
             return WPA_RX_FAIL;
         cp(sm->replay, in + O_REPLAY, 8);
+        cp(sm->rx_replay, in + O_REPLAY, 8);
         *out_len = reply(sm, in, 2 | KI_PAIRWISE | KI_MIC | KI_SECURE, out);
         return WPA_RX_SEND;
     }
@@ -506,6 +515,8 @@ int wpa_sm_rx(struct wpa_sm *sm, const uint8_t *in, size_t in_len, uint8_t *out,
         return WPA_RX_FAIL;
     cp(sm->ptk, sm->tptk, 48);
     cp(sm->replay, in + O_REPLAY, 8);
+    cp(sm->rx_replay, in + O_REPLAY, 8);
+    sm->rx_replay_set = 1, sm->ptk_set = 1;
     *out_len = reply(sm, in, 2 | KI_PAIRWISE | KI_MIC | KI_SECURE, out);
     sm->state = WPA_DONE;
     return WPA_RX_SEND | WPA_RX_INSTALL_PTK | WPA_RX_INSTALL_GTK | WPA_RX_DONE;

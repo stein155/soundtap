@@ -86,7 +86,22 @@ and the BCO answers with the same `seq` and `type|0x80`, status first.
   wpa_supplicant as the connect result: the AP's own status for a refusal, 15 for a handshake that
   did not complete (wpa_supplicant never sees a wrong password itself with the handshake
   offloaded), 43 for security it cannot join, and a scan, authentication or association timeout.
-  soundtapd reads 15 as a wrong password.
+  soundtapd reads 15 as a wrong password. Last comes the network's RSN group cipher (2 TKIP, 4
+  CCMP, 0 unknown), which the driver reads only when present and logs with the join result
+  (`BCO joined …, group cipher …` or `BCO join failed: step …, code …, group cipher …`): with a
+  TKIP group the core drops the router's broadcasts. `SCAN` lists what fits in one reply (1536
+  bytes: 36 networks when every SSID is 32 bytes long), its count matching. A join that runs past
+  90 s, above the app's worst case of about 68 s (scan, then five tries of authentication,
+  association and handshake), makes the driver send `FORGET` and report a timeout, so the BCO
+  never keeps joining behind a new connect.
+- The scan table always makes room for the profile's SSID and the directed scan's: a full table of
+  neighbours drops a stranger, never the owner's network. The 4-way takes only a frame whose MIC
+  verified as the replay reference: a resent Message 1 is answered, and a forged one cannot lock
+  the handshake out. EAPOL goes in the clear until the AP is seen using the pairwise key, so a
+  Message 4 resent after a lost one stays readable. A deauthentication or disassociation to every
+  station from the joined BSS ends the link. The setup access point keeps an associated client's
+  slot: a seventh newcomer gets status 17, and only an authenticated-only client or one silent for
+  300 s gives its slot up.
 - `AP_START` (6: channel, beacon interval in TU, beacon body), `AP_STOP` (7) and `AP_STATUS` (8:
   the associated clients) drive the setup access point.
 - `FLOW` (13: `1` on, `0` off) switches the credit reports of

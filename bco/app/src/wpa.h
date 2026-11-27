@@ -70,7 +70,10 @@ struct wpa_sm {
     int gtk_idx;
     int gtk_tx;
     int state;
-    uint8_t replay[8]; /* last replay counter echoed back */
+    uint8_t replay[8];    /* the replay counter of the frame answered last, echoed in the reply */
+    uint8_t rx_replay[8]; /* the counter of the last frame whose MIC verified; later ones count up */
+    uint8_t rx_replay_set;
+    uint8_t ptk_set;   /* a handshake completed: ptk is in use (group key messages verify under it) */
     uint8_t group;     /* group cipher suite type in our RSN IE: 4 CCMP (wpa_sm_init), 2 TKIP */
 };
 
@@ -88,8 +91,10 @@ void wpa_sm_init(struct wpa_sm *sm, const uint8_t pmk[32], const uint8_t aa[6],
 
 /* Feed one received EAPOL frame (starting at the 802.1X header byte). On msg1 produces msg2, on
  * msg3 produces msg4 plus install flags, on a group msg1 (GTK rekey) group msg2 plus
- * WPA_RX_INSTALL_GTK. A PTK rekey is a new msg1/msg3 pair while DONE. Frames whose replay counter
- * does not count up are dropped. out must hold >= 155 bytes. Never touches global state. */
+ * WPA_RX_INSTALL_GTK. A PTK rekey is a new msg1/msg3 pair while DONE. A frame whose replay counter
+ * is not above that of the last frame whose MIC verified is dropped; msg1 has no MIC, so it never
+ * moves that counter (a resent msg1 with the same counter is answered). out must hold >= 155
+ * bytes. Never touches global state. */
 int wpa_sm_rx(struct wpa_sm *sm, const uint8_t *in, size_t in_len, uint8_t *out, size_t *out_len);
 
 #define WPA_EAPOL_ETHERTYPE 0x888e

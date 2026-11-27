@@ -6,6 +6,7 @@
 #include "wifi.h"
 
 unsigned fake_state, fake_scanning, fake_nbss, fake_joins, fake_leaves;
+unsigned fake_ssid_max; /* 1: every scan entry has a 32-byte SSID, the longest a reply carries */
 unsigned char fake_ssid[32], fake_pmk[32], fake_seed[32];
 unsigned fake_ssid_len;
 
@@ -22,6 +23,8 @@ int wifi_bss(unsigned i, struct wifi_bss *o)
         return -1;
     memset(o, 0, sizeof *o);
     o->ssid_len = 3, memcpy(o->ssid, "ap0", 3), o->ssid[2] += i;
+    if (fake_ssid_max)
+        o->ssid_len = 32, memset(o->ssid + 3, 'x', 29);
     memcpy(o->bssid, "\x02\x00\x00\x00\x00\x10", 6), o->bssid[5] += i;
     o->chan = 1 + i, o->rssi = -40 - (int)i, o->sec = 1;
     return 0;
@@ -41,6 +44,7 @@ int wifi_join(const unsigned char *ssid, unsigned ssid_len, const unsigned char 
 }
 void wifi_leave(void) { fake_leaves++, fake_state = WIFI_IDLE, fake_ssid_len = 0; }
 unsigned fake_resets;
+unsigned fake_grp; /* the group cipher wifi_current reports */
 int wifi_reset_core(void) { fake_resets++, fake_state = WIFI_IDLE; return 0; }
 int wifi_current(struct wifi_bss *o)
 {
@@ -49,6 +53,7 @@ int wifi_current(struct wifi_bss *o)
         return 0;
     o->ssid_len = fake_ssid_len, memcpy(o->ssid, fake_ssid, fake_ssid_len);
     memcpy(o->bssid, "\x02\x00\x00\x00\x00\x10", 6), o->chan = 6, o->rssi = -50;
+    o->grp = (unsigned char)fake_grp;
     return 1;
 }
 

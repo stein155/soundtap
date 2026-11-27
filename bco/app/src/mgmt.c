@@ -169,8 +169,13 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
         *o++ = found < 0 ? 3 : 0;
         unsigned char *cnt = o++;
         *cnt = 0;
-        for (int i = 0; i < found && wifi_bss(i, &b) == 0; i++) {
-            o = put_bss(o, &b); /* 42 bytes at most, 24 entries fit MGMT_MAX */
+        /* An entry is up to 43 bytes (put_bss, then sec) and the table holds 40, more than the reply
+         * buffer (MGMT_MAX) takes: a beacon flood from anyone in range fills the table. The list
+         * stops before the first entry that no longer fits; the count says how many went in. */
+        for (int i = 0; i < found && *cnt < 255 && wifi_bss(i, &b) == 0; i++) {
+            if ((unsigned)(o - r) + 1u + b.ssid_len + 6 + 1 + 1 + 1 > MGMT_MAX)
+                break;
+            o = put_bss(o, &b);
             *o++ = b.sec;
             ++*cnt;
         }
@@ -198,7 +203,10 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
         break;
     case 5: { /* STATUS: status, state, ssid_len, ssid, bssid, channel, rssi, then why the last
                * join failed: step (WIFI_FAIL_*), le16 IEEE status or reason code. The driver reads
-               * the failure only when the reply is long enough, so an older driver is unaffected. */
+               * the failure only when the reply is long enough, so an older driver is unaffected.
+               * Last, the BSS's RSN group cipher suite type (2 TKIP, 4 CCMP, 0 unknown): with TKIP
+               * the core drops the router's broadcasts (wifi.c install_keys), which the SCM logs.
+               * Again read only when present. */
         struct wifi_bss b;
         unsigned step, code;
         *o++ = 0; *o++ = wifi_state();
@@ -207,6 +215,7 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
         wifi_fail(&step, &code);
         *o++ = step;
         *o++ = code, *o++ = code >> 8;
+        *o++ = b.grp;
         break;
     }
     case 6: /* AP_START: channel, beacon interval (TU, network order), beacon body */

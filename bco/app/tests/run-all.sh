@@ -15,6 +15,7 @@ for t in tests/*_test.c; do
 	case $name in
 	mgmt) extra="tests/wifi_fake.c src/mgmt.c" ;;
 	netcard) extra="tests/wifi_fake.c src/netcard.c src/mgmt.c" ;;
+	wifi_rx_fuzz) extra="-g -fsanitize=address,undefined -fno-sanitize-recover=all -no-pie" ;; # wifi.c, as wifi_join
 	*_fuzz) extra="-g -fsanitize=address,undefined -fno-sanitize-recover=all" ;;
 	wifi_join) extra="-no-pie" ;; # includes wifi.c, whose 32-bit addresses must reach the globals
 	wifi_poll|wifi_roam) extra="-no-pie -DWILD_OWN" ;; # the same, with the defines of the shipped image

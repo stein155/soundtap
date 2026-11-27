@@ -156,6 +156,7 @@ volatile unsigned dwell_fired;
 volatile unsigned dwell_state;
 unsigned joined;                 /* 1 after a join: keep and ACK the BSS's data frames */
 unsigned ap_mode;                /* 1 after a join on our own address: the app runs an access point */
+unsigned char join_bssid[6];     /* the joined BSS: a group deauth/disassoc from it reaches the host */
 unsigned sta_mgmt_cls = 4;       /* PHY rate-class for host mgmt/EAPOL TX: 4 = 2.4 GHz basic, set at join */
 static unsigned probe_listen, probe_extend, probe_backoff, rand_state;
 
@@ -274,7 +275,8 @@ static void resp_classes(const unsigned char *rates)
 }
 
 /* Join (stock 0x10b08 -> 0x10354). Payload: [0..5] BSSID (kept by stock for beacon tracking; here
- * only compared with our own address: a BSS of our own is the app's access point, ap_mode),
+ * compared with our own address: a BSS of our own is the app's access point, ap_mode; and kept
+ * for mac.c, which passes a group deauth/disassoc from this BSS to the host),
  * [6..7] beacon interval (1024 ticks),
  * [8] channel, [9..21] {count, rates}, [26] band code. Same MAC prep and station filter as a
  * scan, the BSS's response rates, the tune, then the receiver on (0x604 bit 0 clear) when the
@@ -290,6 +292,7 @@ static void join(const unsigned char *p)
     while (k < 6 && p[k] == own_mac[k])
         k++;
     ap_mode = k == 6;
+    copy_bytes(join_bssid, p, 6);
     mac_prep();
     /* Backoff slot time - 1 (us). mac_prep leaves 0xffffffff, with which a queue-9 start with
      * backoff slots never went out (ST20): the slots never elapse. 9 us is the OFDM/ERP

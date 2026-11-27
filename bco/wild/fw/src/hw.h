@@ -111,6 +111,7 @@ void scan_poll(void);
 extern volatile unsigned dwell_fired, dwell_state;
 extern unsigned joined;
 extern unsigned ap_mode;
+extern unsigned char join_bssid[6];
 extern unsigned sta_mgmt_cls;
 void dwell_extend(void);
 extern unsigned short resp_class[16];

@@ -202,6 +202,117 @@ static void keep_filter(void)
     CHECK(!delivered(&d), "nothing more");
 }
 
+/* Unicast data of every kind is ACKed once joined, kept or not: null-data and QoS-null (the AP's
+ * inactivity probe, disassociation if unanswered), QoS data (otherwise retried without end).
+ * Only non-QoS data with a body goes to the host. Group-addressed ones are never ACKed. */
+static void ack_unicast_data(void)
+{
+    struct rxd d;
+    unsigned len;
+    setup(0);
+    joined = 1;
+
+    len = data_frame(OWN, BSSID, 0, 0, 0, 0);
+    CHECK(len == 28, "null-data is 24 + FCS (%u)", len);
+    fbuf[0] = 0x48;
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
+    CHECK(acked() && rxq_in == 0, "unicast null-data ACKed, not kept");
+    len = data_frame(OWN, BSSID, 0, 0, 0, 2); /* QoS control 0: TID 0, Normal Ack */
+    fbuf[0] = 0xc8;
+    fbuf[24] = fbuf[25] = 0;
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
+    CHECK(acked() && rxq_in == 0, "unicast QoS-null ACKed, not kept");
+    len = data_frame(OWN, BSSID, 0, 0, 0, 40);
+    fbuf[0] = 0x88;
+    fbuf[24] = 5, fbuf[25] = 0;
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
+    CHECK(acked() && rxq_in == 0, "unicast QoS data ACKed, not kept");
+    fbuf[24] = 0x25; /* ack policy No Ack */
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
+    CHECK(!acked() && rxq_in == 0, "QoS No Ack policy: not ACKed");
+    fbuf[24] = 0x65; /* ack policy Block Ack, without an agreement */
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
+    CHECK(!acked() && rxq_in == 0, "QoS block-ack policy: not ACKed");
+    len = data_frame(OWN, BSSID, 0, 0, 0, 0);
+    fbuf[0] = 0xc8;
+    air_rx(fbuf, 28, ST_IN | ST_ADDR);
+    CHECK(!acked() && rxq_in == 0, "QoS-null without its QoS control: not ACKed");
+    len = data_frame(OWN, BSSID, 0, 0, 0, 0);
+    fbuf[0] = 0x58; /* CF-Ack + null: not answered */
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
+    CHECK(!acked() && rxq_in == 0, "CF subtype not ACKed");
+
+    /* group-addressed: no ACK, and the null kinds are not kept */
+    for (unsigned k = 0; k < 3; k++) {
+        static const unsigned char fcs[3] = {0x48, 0xc8, 0x88};
+        len = data_frame(BCAST, BSSID, 0, 0, 0, fcs[k] == 0x48 ? 0 : 20);
+        fbuf[0] = fcs[k];
+        air_rx(fbuf, len, ST_IN | ST_ADDR);
+        CHECK(!acked() && rxq_in == 0, "group fc %#x: neither ACKed nor kept", fcs[k]);
+    }
+
+    /* before the join none of them is ACKed */
+    joined = 0;
+    len = data_frame(OWN, BSSID, 0, 0, 0, 0);
+    fbuf[0] = 0x48;
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
+    CHECK(!acked(), "null-data before the join not ACKed");
+    pump(4);
+    CHECK(!delivered(&d), "nothing reached the host ring");
+}
+
+/* A deauth or disassoc to everybody from the joined BSS reaches the host without an ACK; from
+ * another BSS, before the join or in ap_mode it does not. */
+static void group_leave(void)
+{
+    struct rxd d;
+    unsigned len;
+    for (unsigned k = 0; k < 2; k++) {
+        unsigned fc = k ? 0xa0 : 0xc0;
+        setup(0);
+        len = mgmt_frame(fc, BCAST, 2);
+        air_rx(fbuf, len, ST_IN);
+        CHECK(rxq_in == 0, "fc %#x before the join: not kept", fc);
+        joined = 1;
+        memcpy(join_bssid, BSSID, 6);
+        air_rx(fbuf, len, ST_IN);
+        CHECK(rxq_in == 1 && !acked(), "fc %#x to everybody from our BSS: kept, not ACKed", fc);
+        int got = delivered(&d);
+        CHECK(got && !memcmp(d.buf + 0xac, fbuf, 24), "fc %#x delivered", fc);
+        if (got)
+            recycle(&d);
+        hdr(fbuf, fc, 0, BCAST, OTHER, OTHER);
+        air_rx(fbuf, len, ST_IN);
+        CHECK(rxq_in == 1, "fc %#x from another BSS: not kept", fc);
+        hdr(fbuf, fc, 0, BCAST, OTHER, BSSID);
+        air_rx(fbuf, len, ST_IN);
+        CHECK(rxq_in == 1, "fc %#x with another transmitter: not kept", fc);
+        hdr(fbuf, fc, 0, BCAST, BSSID, BSSID);
+        ap_mode = 1;
+        air_rx(fbuf, len, ST_IN);
+        CHECK(rxq_in == 1, "fc %#x in ap_mode: not kept", fc);
+        ap_mode = 0;
+        /* a scan lets group frames through the address filter: still never ACKed */
+        air_rx(fbuf, len, ST_IN | ST_ADDR);
+        CHECK(rxq_in == 2 && !acked(), "fc %#x through the filter: kept, not ACKed", fc);
+    }
+    /* other group management frames from our BSS stay out */
+    setup(0);
+    joined = 1;
+    memcpy(join_bssid, BSSID, 6);
+    len = mgmt_frame(0xd0, BCAST, 6);
+    air_rx(fbuf, len, ST_IN);
+    CHECK(rxq_in == 0, "group action frame not kept");
+    /* the join records the BSSID */
+    {
+        unsigned char bc[28] = {0};
+        memcpy(bc, OTHER, 6);
+        bc[8] = 6, bc[26] = 6;
+        scan_cmd(C_JOIN, bc, 28);
+        CHECK(!memcmp(join_bssid, OTHER, 6) && joined && !ap_mode, "join keeps the BSSID");
+    }
+}
+
 static void read_pointer(void)
 {
     struct rxd d;
@@ -356,6 +467,8 @@ static void ccmp(void)
 int main(void)
 {
     keep_filter();
+    ack_unicast_data();
+    group_leave();
     read_pointer();
     record_fields();
     ccmp();

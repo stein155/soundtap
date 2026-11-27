@@ -36,6 +36,14 @@ The sixth alpha of SoundTap Core 0.1.0.
 - **The first install keeps your name and radio presets even when the first start is cut
   short**: the takeover from the original software is only marked as done once everything is
   stored, and the log says what was found and why a preset was left out.
+- **SoundTouch 20: Wi-Fi stays connected while idle**: routers that check an idle speaker no
+  longer drop it, so AirPlay and the display stop flipping to "Connecting".
+- **SoundTouch 20: finds your network among many**: in a street full of networks your own is never
+  pushed out of the list, and the network list no longer breaks with very many networks around.
+- **SoundTouch 20: steadier joins**: a router that resends a step of the handshake, or that
+  restarts, is handled; a join that takes long is stopped cleanly instead of repeating.
+- **SoundTouch 20: setup network**: a phone on the setup network keeps its place when others try to
+  join.
 - **With a network cable in, the settings show the wired connection**, not the setup network.
 - **The install page finds your speaker**: it names each model's own setup address (the
   SoundTouch 20's included), waits long enough for the SoundTouch 20, and finds a speaker that

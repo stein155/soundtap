@@ -12,7 +12,15 @@
  * status code for STATUS.
  *
  * The access point: our core has no beacon timer, so wifi.c sends a beacon every interval once the
- * BSS is up, and answers a wildcard probe request with the beacon body minus its TIM.
+ * BSS is up, and answers a wildcard probe request with the beacon body minus its TIM. With every
+ * client slot held by an associated client, an authentication from a new address is refused
+ * (status 17) instead of throwing one of them off; only an authenticated-only client, or one
+ * silent past AP_IDLE_MS, gives up its slot.
+ *
+ * The link: a deauthentication or disassociation sent to everyone by our access point ends the
+ * link as a unicast one does. Message 4 answering a resent Message 3 goes in the clear, as the
+ * first did, until a unicast frame the core deciphered shows the AP uses the PTK; the resent
+ * Message 3 itself comes in the clear and is let through to the supplicant.
  *
  * wifi.c keeps addresses in 32-bit words, so the test links without PIE (globals below 4 GiB, as
  * bco/wild/fw/tests/host.h does) and maps the one page of WiLD registers the step touches (the
@@ -202,6 +210,151 @@ static void access_point(void)
     printf("ok: the access point beacons every interval and answers probe requests\n");
 }
 
+/* A data frame from the AP (fromDS) to us carrying an EAPOL frame, as the core hands it over;
+ * deciphered marks it as the core marks a frame it deciphered (RX_DECIPHERED). */
+static unsigned char rxd[0xcc + 8 + 160];
+static unsigned rx_eapol(const unsigned char *e, unsigned n, int deciphered)
+{
+    static const unsigned char llc[8] = {0xaa, 0xaa, 3, 0, 0, 0, 0x88, 0x8e};
+    memset(rxd, 0, sizeof rxd);
+    rxd[0x94] = 0x18, rxd[0x97] = 0xc4, rxd[0x94 + 7] = deciphered ? RX_DECIPHERED : 0;
+    rxd[0xac] = 0x08, rxd[0xad] = 0x02;
+    memcpy(rxd + 0xac + 4, own, 6), memcpy(rxd + 0xac + 10, AP, 6), memcpy(rxd + 0xac + 16, AP, 6);
+    memcpy(rxd + 0xcc, llc, 8);
+    memcpy(rxd + 0xcc + 8, e, n);
+    return 0xcc + 8 + n;
+}
+
+/* A resent Message 3 (counter ctr) MICed under the PTK in use: what the AP sends when our Message 4
+ * got lost. Key data is not looked at on this path. */
+static unsigned resent_msg3(unsigned char *m, unsigned ctr)
+{
+    unsigned char mic[20];
+    memset(m, 0, O_KD);
+    m[0] = 2, m[1] = 3, m[3] = O_KD - 4, m[4] = 2;
+    wbe16(m + O_KEYINFO, 2 | KI_PAIRWISE | KI_MIC | KI_ACK | KI_INSTALL | KI_SECURE | KI_ENCRYPTED);
+    m[O_KEYLEN + 1] = 16, m[O_REPLAY + 7] = (unsigned char)ctr;
+    wpa_hmac_sha1(sm.ptk, 16, m, O_KD, mic);
+    memcpy(m + O_MIC, mic, 16);
+    return O_KD;
+}
+
+static void link_frames(void)
+{
+    static const unsigned char own_mac[6] = {0x02, 0x11, 0x22, 0x33, 0x44, 0x55};
+    static const unsigned char other[6] = {0x02, 0x77, 0x77, 0x77, 0x77, 0x77};
+    static const unsigned char all[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+    unsigned char reason[2] = {3, 0}, m[O_KD] = {0};
+    copy(own, own_mac, 6);
+    copy(cur.bssid, AP, 6), have_cur = 1;
+    state = WIFI_UP, kicked = 0, rxauthok = 0, fail_step = fail_code = 0;
+
+    /* deauthentication / disassociation to everyone: only from our BSS, only those two subtypes */
+    rx_station(rxf, rx_mgmt(0xc0, all, AP, other, reason, sizeof reason));
+    assert(!kicked);                                           /* BSSID (addr3) not ours */
+    rx_station(rxf, rx_mgmt(0xc0, all, other, AP, reason, sizeof reason));
+    assert(!kicked);                                           /* transmitter (addr2) not ours */
+    unsigned char au[6] = {0, 0, 2, 0, 0, 0};
+    rx_station(rxf, rx_mgmt(0xb0, all, AP, AP, au, sizeof au));
+    assert(!rxauthok);                                         /* a broadcast authentication: no */
+    rx_station(rxf, rx_mgmt(0xa0, all, AP, AP, (const unsigned char *)"\x08\x00", 2));
+    assert(kicked && kick_sub == 0xa0 && kick_reason == 8 && fail_step == WIFI_FAIL_KICKED);
+    kicked = 0;
+    rx_station(rxf, rx_mgmt(0xc0, all, AP, AP, reason, sizeof reason));
+    assert(kicked && kick_sub == 0xc0 && kick_reason == 3 && fail_code == 3);
+    kicked = 0;
+    printf("ok: a deauthentication or disassociation to everyone from our BSS ends the link\n");
+
+    /* the 4-way is done on our side: PTK in the core, Message 4 sent; the AP never got it */
+    static const unsigned char pmk0[32] = {1}, sn0[32] = {2};
+    wpa_sm_init(&sm, pmk0, AP, own, sn0);
+    for (unsigned i = 0; i < 48; i++)
+        sm.ptk[i] = (unsigned char)(0x60 + i);
+    sm.state = WPA_DONE, sm.ptk_set = 1, sm.rx_replay_set = 1, sm.rx_replay[7] = 2;
+    keyed = 1, ap_keyed = 0, keys_due = 0, eappend = 0;
+    cmd_ring(32);
+    tx_frames();
+    unsigned before = wifi_tx_frames, drops = wifi_rx_drop;
+    rx_station(rxd, rx_eapol(m, resent_msg3(m, 3), 0));       /* in the clear: the AP has no key */
+    assert(eappend == O_KD && wifi_rx_drop == drops);
+    eapol();
+    assert(wifi_tx_frames == before + 1);
+    const unsigned char *d = last_frame() + 8;
+    assert(d[0x18] == 0x08 && !(d[0x19] & 0x40));              /* Message 4 again, in the clear */
+    /* a clear frame that is not EAPOL is still dropped once keyed */
+    unsigned len = rx_eapol(m, resent_msg3(m, 4), 0);
+    rxd[0xcc + 7] = 0x00;                                       /* ethertype 0x8800 */
+    rx_station(rxd, len);
+    assert(wifi_rx_drop == drops + 1 && !eappend);
+    /* a group frame the core deciphered proves only the GTK: still in the clear */
+    len = rx_eapol(m, resent_msg3(m, 4), 1);
+    rxd[0xac + 4] = 0x01;
+    rx_station(rxd, len);
+    assert(!ap_keyed);
+    eappend = 0;
+    /* a unicast frame it deciphered: the AP uses the PTK, so a later rekey's EAPOL is protected */
+    rx_station(rxd, rx_eapol(m, resent_msg3(m, 4), 1));
+    assert(ap_keyed && eappend == O_KD);
+    tx_frames();
+    eapol();
+    d = last_frame() + 8;
+    assert(d[0x18] == 0x08 && (d[0x19] & 0x40));
+    keyed = ap_keyed = 0, have_cur = 0, state = WIFI_IDLE;
+    printf("ok: Message 4 for a resent Message 3 goes in the clear until the AP uses the key\n");
+}
+
+/* Six phones associated with the setup network: a seventh address is refused, nobody is thrown
+ * off; an authenticated-only client or one silent past AP_IDLE_MS makes room. */
+static void ap_full(void)
+{
+    static const unsigned char body[] = {0, 0, 0, 0, 0, 0, 0, 0, 100, 0, 0x01, 0x00,
+                                         0, 8, 'S', 'o', 'u', 'n', 'd', 'T', 'a', 'p',
+                                         1, 4, 0x82, 0x84, 0x8b, 0x96};
+    static const unsigned char au[6] = {0, 0, 1, 0, 0, 0};
+    static const unsigned char as[] = {0x01, 0x00, 0x0a, 0x00, 1, 4, 0x82, 0x84, 0x8b, 0x96};
+    unsigned char phone[6] = {0x02, 0x50, 0, 0, 0, 0}, macs[WIFI_AP_CLIENTS][6];
+    cmd_ring(63);
+    tx_frames();
+    state = WIFI_IDLE, now = 20000;
+    assert(wifi_ap_start(6, 100, body, sizeof body) == 0);
+    corebd = 1;
+    ap_step();
+    assert(ap_ready);
+    for (unsigned i = 0; i < WIFI_AP_CLIENTS; i++) {
+        phone[5] = (unsigned char)i;
+        tx_frames();
+        rx_ap(rxf, rx_mgmt(0xb0, own, phone, own, au, sizeof au));
+        rx_ap(rxf, rx_mgmt(0x00, own, phone, own, as, sizeof as));
+        now += 10;
+    }
+    assert(wifi_ap_clients(macs) == WIFI_AP_CLIENTS);
+    /* a made-up address: refused with status 17, every phone stays */
+    static const unsigned char stranger[6] = {0x02, 0xde, 0xad, 0xbe, 0xef, 0x01};
+    tx_frames();
+    rx_ap(rxf, rx_mgmt(0xb0, own, stranger, own, au, sizeof au));
+    const unsigned char *d = last_frame() + 8, *b = d + 0xc4;
+    assert(d[0x18] == 0xb0 && !memcmp(d + 0x1c, stranger, 6) && b[2] == 2 && b[4] == 17 && b[5] == 0);
+    assert(wifi_ap_clients(macs) == WIFI_AP_CLIENTS && !ap_client(stranger, 0));
+    /* phone 2 left without a word: silent past AP_IDLE_MS, its slot goes to the newcomer */
+    now += 1000;
+    for (unsigned i = 0; i < WIFI_AP_CLIENTS; i++)
+        cl[i].seen = now;
+    cl[2].seen = now - AP_IDLE_MS;
+    tx_frames();
+    rx_ap(rxf, rx_mgmt(0xb0, own, stranger, own, au, sizeof au));
+    d = last_frame() + 8, b = d + 0xc4;
+    assert(d[0x18] == 0xb0 && b[4] == 0 && ap_client(stranger, 0) == &cl[2] && cl[2].state == 1);
+    assert(wifi_ap_clients(macs) == WIFI_AP_CLIENTS - 1);
+    /* the newcomer only authenticated: the next new address takes its slot, the phones stay */
+    static const unsigned char third[6] = {0x02, 0xde, 0xad, 0xbe, 0xef, 0x02};
+    tx_frames();
+    rx_ap(rxf, rx_mgmt(0xb0, own, third, own, au, sizeof au));
+    assert(ap_client(third, 0) == &cl[2] && !ap_client(stranger, 0));
+    assert(wifi_ap_clients(macs) == WIFI_AP_CLIENTS - 1);
+    wifi_ap_stop();
+    printf("ok: a full access point refuses a new address instead of dropping a phone\n");
+}
+
 int main(void)
 {
     /* a full ring: no PEER_ADD and no 4-way yet; the next poll still has the step */
@@ -238,5 +391,7 @@ int main(void)
     printf("ok: PEER_ADD waits for room in the command ring before the 4-way\n");
     security_and_status();
     access_point();
+    ap_full();
+    link_frames();
     return 0;
 }

@@ -266,6 +266,7 @@ static int cur_rssi(void)
 
 static struct wpa_sm sm;
 static int keyed;                      /* PTK installed in the core */
+static int ap_keyed;                   /* and the AP uses it: a unicast frame from it deciphered */
 static unsigned keys_due;              /* WPA_RX_INSTALL_PTK/GTK not yet in the command ring */
 
 /* join sub-steps */
@@ -493,7 +494,11 @@ static int send_assoc(void)
     return 1;
 }
 
-/* EAPOL-Key to the AP. Once a PTK is in the core it goes out Protected, as stock sends it. */
+/* EAPOL-Key to the AP. Once the AP uses the PTK it goes out Protected, as stock sends it (a later
+ * rekey's messages). Before that it goes in the clear, also when the PTK is already in our core:
+ * the AP installs its key only on our Message 4, so when that got lost and it resends Message 3,
+ * the second Message 4 must be readable without the key. An AP accepts EAPOL in the clear at any
+ * time (802.1X control port), so the clear one is never the wrong choice. */
 static int send_eapol(const unsigned char *f, unsigned n)
 {
     unsigned a = tx_buf();
@@ -503,7 +508,7 @@ static int send_eapol(const unsigned char *f, unsigned n)
     body = wstation_eapol((volatile uint8_t *)a, TXFBUF, own, cur.bssid, rates, f, n);
     if (body <= 0)
         return 0;
-    if (keyed) {
+    if (keyed && ap_keyed) {
         volatile unsigned char *b = (volatile unsigned char *)a;
         b[8 + 0x19] |= 0x40, b[0x94 + 0x19] |= 0x40;
     }
@@ -537,6 +542,7 @@ int radio_tx_eth(const unsigned char *f, unsigned n)
 
 /* ---- RX ---- */
 
+static const unsigned char ap_bcast[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff}; /* every station */
 static unsigned char eapframe[WPA_EAPOL_RX_MAX];
 static unsigned eappend;
 static unsigned char eth[14 + 1500];
@@ -558,8 +564,9 @@ static void rx_data(const volatile unsigned char *da, const volatile unsigned ch
     et = body[6] << 8 | body[7];
     pl = n - 8;
     if (et == WPA_EAPOL_ETHERTYPE) {
-        unsigned k = 4 + (body[10] << 8 | body[11]);
-        if (pl >= 4 && k <= pl && k <= sizeof eapframe) {
+        /* the 802.1X header (version, type, length) first: its length is read only once it is there */
+        unsigned k = pl >= 4 ? 4 + (body[10] << 8 | body[11]) : ~0u;
+        if (k <= pl && k <= sizeof eapframe) {
             copy(eapframe, body + 8, k);
             eappend = k;
         }
@@ -596,7 +603,11 @@ static void rx_station(const volatile unsigned char *b, unsigned len)
     if (!same(h + 10, cur.bssid, 6))
         return;
     if ((fc & 0x0c) == 0) { /* management, addressed to us */
-        if (!same(h + 4, own, 6) || (fc & 0x0300) || len < 0xcc + 2)
+        /* A deauthentication or disassociation may also go to everyone: an AP that restarts or
+         * shuts its BSS down sends one broadcast instead of one per station. From our BSS (addr2
+         * and addr3) it ends the link as a unicast one does. */
+        int all = (sub == 0xc0 || sub == 0xa0) && same(h + 4, ap_bcast, 6) && same(h + 16, cur.bssid, 6);
+        if ((!all && !same(h + 4, own, 6)) || (fc & 0x0300) || len < 0xcc + 2)
             return;
         if (sub == 0xc0 || sub == 0xa0) { /* deauth / disassoc: keep the reason */
             kicked = 1, kick_sub = sub, kick_reason = le16(body);
@@ -619,11 +630,16 @@ static void rx_station(const volatile unsigned char *b, unsigned len)
         !(same(h + 4, own, 6) || (h[4] & 1)))
         return;
     /* The core deciphers protected frames (ADR 0031) and marks them in record byte 7. Once keyed,
-     * take nothing else: a frame still protected had no key, an unmarked one came in clear. */
-    if ((fc & 0x4000) || (keyed && b[0x94 + 7] != RX_DECIPHERED)) {
+     * take nothing else: a frame still protected had no key, an unmarked one came in clear. One
+     * exception: EAPOL to us in the clear (802.1X control port). An AP that missed our Message 4
+     * has no key yet and resends Message 3 unprotected; the supplicant checks its MIC. */
+    int clear_eapol = same(h + 4, own, 6) && len >= 0xcc + 8 && body[6] == 0x88 && body[7] == 0x8e;
+    if ((fc & 0x4000) || (keyed && b[0x94 + 7] != RX_DECIPHERED && !clear_eapol)) {
         wifi_rx_drop++;
         return;
     }
+    if (keyed && b[0x94 + 7] == RX_DECIPHERED && same(h + 4, own, 6))
+        ap_keyed = 1; /* a group frame proves only the GTK, which the AP uses regardless */
     rx_data(h + 4, h + 16, body, len - 0xcc);
 }
 
@@ -636,7 +652,6 @@ static struct client {
 static unsigned char ap_body[WIFI_AP_BODY_MAX];
 static unsigned ap_len, ap_ready, ap_deadline, ap_probes, ap_rx;
 static unsigned ap_bint, ap_next, ap_beacons; /* beacon interval (TU), next beacon due (ms), sent */
-static const unsigned char ap_bcast[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 static const unsigned char ap_mrates[8] = {2, 2, 2, 2, 2, 2, 2, 2}; /* 1 Mb/s: every client hears it */
 
 /* A client's core peer slot is its index: unicast to a client goes through its slot, as the
@@ -683,6 +698,10 @@ static const unsigned char *ap_ie(unsigned id)
     return 0;
 }
 
+#define AP_IDLE_MS 300000u /* an associated client silent this long may lose its slot (hostapd's
+                            * ap_max_inactivity) */
+
+/* The client with this address; with add, a slot for a new one (an authentication), 0 if none. */
 static struct client *ap_client(const volatile unsigned char *mac, int add)
 {
     struct client *old = 0;
@@ -694,10 +713,17 @@ static struct client *ap_client(const volatile unsigned char *mac, int add)
     for (unsigned i = 0; i < WIFI_AP_CLIENTS && !old; i++)
         if (!cl[i].state)
             old = &cl[i];
-    if (!old) /* full: the longest silent client goes */
+    /* Full: the longest silent client that is only authenticated goes, or an associated one that
+     * has been silent past AP_IDLE_MS (it left without a deauthentication). An associated client
+     * that is still there keeps its slot: else an authentication from any made-up address would
+     * throw the owner's phone off the setup network. None to spare: 0, the caller refuses. */
+    if (!old) {
         for (unsigned i = 0, age = 0; i < WIFI_AP_CLIENTS; i++)
-            if (now - cl[i].seen >= age)
+            if ((cl[i].state == 1 || now - cl[i].seen >= AP_IDLE_MS) && (!old || now - cl[i].seen >= age))
                 age = now - cl[i].seen, old = &cl[i];
+        if (!old)
+            return 0;
+    }
     ap_drop(old);
     old->seen = now;
     return old;
@@ -773,11 +799,19 @@ static void rx_ap(const volatile unsigned char *b, unsigned len)
         }
         if (!same(h + 4, own, 6) || !same(h + 16, own, 6))
             return;
-        c = ap_client(h + 10, sub == 0xb0);
+        unsigned auth = sub == 0xb0 && n >= 6 && le16(body) == 0 && le16(body + 2) == 1; /* open system, seq 1 */
+        c = ap_client(h + 10, auth);
+        if (!c && auth) { /* every slot holds an associated client: status 17, too many stations */
+            static const unsigned char full[6] = {0, 0, 2, 0, 17, 0};
+            unsigned char to[6];
+            copy(to, h + 10, 6);
+            ap_send(0, 0xb0, to, own, ap_mrates, 0, full, sizeof full);
+            return;
+        }
         if (!c)
             return;
         c->seen = now;
-        if (sub == 0xb0 && n >= 6 && le16(body) == 0 && le16(body + 2) == 1) {
+        if (auth) {
             static const unsigned char ok[6] = {0, 0, 2, 0, 0, 0}; /* open system, seq 2, success */
             if (!c->state) {
                 copy(c->mac, (const unsigned char *)h + 10, 6);
@@ -966,6 +1000,7 @@ void wifi_scan_ssid(const unsigned char *ssid, unsigned n)
 {
     scan_ssidlen = ssid && n <= 32 ? n : 0;
     copy(scan_ssid, ssid, scan_ssidlen);
+    bss_want(1, scan_ssid, scan_ssidlen);
 }
 
 /* One probe request on chan ([6] SSID length, [7..] SSID, the core's probe_req; n = 0 is the
@@ -1116,6 +1151,7 @@ int wifi_bss(unsigned i, struct wifi_bss *o)
     copy(o->bssid, b->bssid, 6);
     o->chan = b->chan;
     o->sec = b->rsn ? 1 : b->wpa ? 2 : 0;
+    o->grp = b->grp;
     /* the joined BSS: the core's own level (MIB 20:11); the rest: their last beacon */
     o->rssi = have_cur && state == WIFI_UP && same(cur.bssid, b->bssid, 6) ? link_rssi() : b->rssi;
     return 0;
@@ -1238,7 +1274,7 @@ static void join_attempt(void)
     cur.grp = bsstab[i].grp;   /* and carries the RSN IE with its group cipher */
     for (unsigned r = 0; r < 8; r++)
         rates[r] = lo;
-    keyed = 0, keys_due = 0, rxauthok = rxassocok = kicked = 0, eappend = 0;
+    keyed = ap_keyed = 0, keys_due = 0, rxauthok = rxassocok = kicked = 0, eappend = 0;
     build_join_bc(bc, cur.bssid, cur.chan);
     corebd = 0;
     wr_cmd_checked(&tx, 0xbc, MGMT_MODULE, 11, bc, sizeof bc);
@@ -1388,7 +1424,7 @@ static void drop_link(void)
         wr_cmd_checked(&tx, CMD_PEER_DEL, 0x12, 0x11, pd, sizeof pd);
         DOORBELL();
     }
-    keyed = 0, keys_due = 0;
+    keyed = ap_keyed = 0, keys_due = 0;
     for (unsigned i = 0; i < sizeof sm; i++)
         ((volatile unsigned char *)&sm)[i] = 0;
 }
@@ -1518,6 +1554,8 @@ int wifi_join(const unsigned char *ssid, unsigned ssid_len, const unsigned char 
     drop_link();
     copy(cur.ssid, ssid, ssid_len);
     cur.ssidlen = ssid_len;
+    cur.grp = 0; /* STATUS reports no group cipher of an earlier network until one is picked */
+    bss_want(0, ssid, ssid_len);
     copy(pmk, k, 32);
     copy(seed, s, 32);
     prof_flags = bssid ? flags & (WIFI_BSSID_FIXED | WIFI_BSSID_HINT | WIFI_ROAM) : 0;
@@ -1544,6 +1582,7 @@ void wifi_leave(void)
     drop_link();
     for (unsigned i = 0; i < 32; i++)
         pmk[i] = seed[i] = 0;
+    bss_want(0, 0, 0);
     have_cur = 0, join_pending = 0;
     prof_flags = roam_on = roaming = 0, bg_phase = BG_IDLE, tx_hold = TX_OPEN;
     if (state != WIFI_SCANNING && state != WIFI_AP)
@@ -1641,7 +1680,7 @@ void wifi_fail(unsigned *step, unsigned *code)
 int wifi_current(struct wifi_bss *o)
 {
     if (!have_cur) {
-        o->ssid_len = o->chan = o->sec = 0, o->rssi = 0;
+        o->ssid_len = o->chan = o->sec = o->grp = 0, o->rssi = 0;
         for (unsigned i = 0; i < 6; i++)
             o->bssid[i] = 0;
         return 0;
@@ -1650,6 +1689,7 @@ int wifi_current(struct wifi_bss *o)
     copy(o->ssid, cur.ssid, cur.ssidlen);
     copy(o->bssid, cur.bssid, 6);
     o->chan = cur.chan, o->sec = 1, o->rssi = state == WIFI_UP ? link_rssi() : 0;
+    o->grp = cur.grp; /* the target's from join_attempt on, 0 before */
     return 1;
 }
 

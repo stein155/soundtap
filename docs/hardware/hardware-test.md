@@ -526,7 +526,7 @@ prohibited and historical results are not silently counted as pending executable
 | a new slot confirms with the router switched off: the boot confirm checks no network (ADR 0010) | open |
 | ROM-USB restore of the release's boot chain (`tools/recovery/rom-usb-restore.py`, [recovery tools](install-records.md#repairing-the-boot-chain-over-rom-usb)) | open |
 
-### ST20 (45 open)
+### ST20 (48 open)
 
 | Prove on the speaker | Status |
 |---|---|
@@ -544,6 +544,9 @@ prohibited and historical results are not silently counted as pending executable
 | BCO network choice (ADR 0031, [choosing the network](st20/bco-network-card.md#choosing-the-network)): with two access points of one SSID in range, `iw dev wlan0 link` names the stronger one's BSSID (compare the levels in `iw dev wlan0 scan`), also when the weaker one was heard more often; the access point's station list shows the speaker with short slot time and short preamble, and the BSS stays on the short slot | open |
 | BCO link events (ADR 0135, BCO app and driver of one build): the kernel log says nothing of refused link events; the router's own "disconnect this client" makes `iw event` show the disconnect with the router's reason within a second and the kernel log `BCO link lost: event 1` (or 2); switching the access point off shows `event 3` about 8 s later instead of at the next 5 s poll; `wpa_supplicant` joins again once the access point is back | open |
 | BCO roaming (ADR 0135): two access points of one SSID on different channels; with the ST20's level below -70 dBm on the one it joined (`iw dev wlan0 link`), it scans one channel at a time, and a ping from the LAN every 100 ms loses no run of replies longer than a second while it does (so the keys survive the core's return to its channel); with the other access point 8 dB or more stronger, the kernel log says `BCO roamed to` its BSSID, `iw event` shows the roam, and DHCP and the stream on `wlan0` go on; with the level above -65 dBm it never leaves its channel | open |
+| BCO idle check (ADR 0031): left idle past the access point's inactivity time (hostapd `ap_max_inactivity`, 300 s), the ST20 stays associated: no reason-4 disassociation in the AP's log, no disconnect in `iw event`; a capture shows ACKs to the AP's null-data | open |
+| BCO join details (ADR 0031): a TKIP-group network logs `group cipher TKIP` on the join line, a CCMP one `CCMP`; an AP that stops its BSS (a broadcast deauthentication) makes `iw event` show the disconnect at once; a join that runs past 90 s logs `BCO join timed out` and wpa_supplicant tries once more, no loop; in an environment of 40 or more 2.4 GHz networks the owner's network is still found | open |
+| BCO setup access point clients (ADR 0031): with six phones on the setup network a seventh is refused and none of the six drops | open |
 | BCO regulatory domain (ADR 0135): after soundtapd's `iw reg set`, the kernel log says `BCO regulatory domain` with the speaker's country, its channels and passive channels, and that the TX power limit is not enforced; under `iw reg set 00` an access point on channel 12 or 13 is still found by the passive listen, and a setup access point is never started on a passive channel | open |
 | BCO antenna setting (ADR 0135), a read-only check with the owner's OK for this read alone, on an alpha image whose BCO app announces `BCOLINK_CAP_NVINFO`: `cat /sys/class/net/bcolink0/bco/nv_keys` as root lists the PersParam keys with their lengths; record which key holds the antenna setting and its value in [the BCO network card](st20/bco-network-card.md#antenna-setting); nothing is written | open |
 | phone volume slider follows speaker volume (AVRCP) | unavailable: Series I; Series III has offline coverage only (scope above) |

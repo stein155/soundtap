@@ -143,6 +143,14 @@ static void send_ack(const unsigned char *e)
     ack_hdr[0] = 0xd4;                          /* duration 0, no fragment bursts */
 }
 
+static int same_mac(const unsigned char *a, const unsigned char *b)
+{
+    unsigned d = 0;
+    for (unsigned i = 0; i < 6; i++)
+        d |= a[i] ^ b[i];
+    return !d;
+}
+
 void mac_fiq(void)
 {
     unsigned st = REG(0x620);
@@ -169,10 +177,27 @@ void mac_fiq(void)
          * data frames come with the peer table; beacons after the join stay in stock's
          * core (TSF/TIM) and are dropped here. */
         int mgmt = (fc & 0x0c) == 0 && (0x3e0fu >> (fc >> 4) & 1);
+        int group = e[12] & 1;  /* A1 group bit: such frames are never ACKed */
         /* Non-QoS data (type 10, bit 0x80 = QoS clear) from the BSS once joined: it arrives still enciphered
          * and goes to the host like a management frame; the app deciphers it (wifi.c rx_station).
          * QoS/HT data, A-MSDU and null-data (no body) are later work. */
         int data = (fc & 0x8c) == 0x08 && joined && len > 28;
+        /* Every unicast data frame to us is ACKed once joined, kept or not: data, null-data (0x48),
+         * QoS data (0x88) and QoS-null (0xc8). APs probe an idle station with null-data and
+         * disassociate one that does not ACK it (hostapd after ap_max_inactivity, reason 4), and
+         * QoS data that is not ACKed is retried until the AP gives up. QoS data is still dropped
+         * here (not kept); its ACK only stops the retries. A QoS frame whose ack policy (QoS
+         * control bits 5-6, after a 3- or 4-address header) is not Normal Ack is not ACKed:
+         * No Ack forbids it, and we hold no block-ack agreement. CF-Ack/CF-Poll subtypes are
+         * not answered. */
+        unsigned hl = (e[9] & 3) == 3 ? 30 : 24;     /* ToDS and FromDS: 4-address header */
+        int ack_data = (fc & 0x3c) == 0x08 && joined && !group &&
+                       (!(fc & 0x80) || (len >= hl + 2 + 4 && !(e[8 + hl] & 0x60)));
+        /* A deauth or disassoc to everybody from the BSS we joined (both A2 and A3 its BSSID): it
+         * ends the association for every station, so the host must see it although it does not
+         * pass the address filter. Not ACKed (group). Not in ap_mode, where the BSS is our own. */
+        int leave = (fc == 0xc0 || fc == 0xa0) && joined && !ap_mode && group &&
+                    same_mac(e + 18, join_bssid) && same_mac(e + 24, join_bssid);
         /* A probe request while the app runs its access point (ap_mode): it answers with a probe
          * response. Wildcard ones are addressed to everybody, so like group data they need not
          * pass the address filter. */
@@ -192,7 +217,7 @@ void mac_fiq(void)
          * The frame must also be the one the MAC latched (0x630) with a length that fits: after
          * such an overwrite the next frame-in found stale bytes at 0x644, and their length sent
          * the pointer anywhere. */
-        if (((st & 0x40000) || ((data || probe) && (e[12] & 1))) && keep && room && len >= 28 &&
+        if (((st & 0x40000) || ((data || probe || leave) && group)) && keep && room && len >= 28 &&
             len <= sizeof rxarea - RX_WRAP && (e[8] & 0xfc) == fc) {
             rxq[rxq_in % RXQ] = (unsigned)e;
             rxq_len[rxq_in % RXQ] = len;
@@ -204,9 +229,9 @@ void mac_fiq(void)
         }
         /* Unicast data is ACKed even when the queue is full (802.11: the ACK answers a good FCS,
          * not buffer space) and then dropped; TCP recovers. Withholding the ACK made the AP retry,
-         * back off and fall back to slower rates: 30-40 % of a download on the ST20. */
-        if ((st & 0x40000) && len >= 28 && (fc == 0x50 || (mgmt && room) ||
-                                            (data && !(e[12] & 1))))
+         * back off and fall back to slower rates: 30-40 % of a download on the ST20. A group
+         * frame is never ACKed, also while a scan lets everything through the address filter. */
+        if ((st & 0x40000) && !group && len >= 28 && (fc == 0x50 || (mgmt && room) || ack_data))
             send_ack(e);
         if (keep && fc == 0x50 && (st & 0x40000))
             dwell_extend();

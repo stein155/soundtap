@@ -77,6 +77,126 @@ static void aes_wrap(const uint8_t kek[16], unsigned n, const uint8_t *plain, ui
     cp(cipher + 8, r, n * 8);
 }
 
+/* An EAPOL-Key frame from the AP into m: key info, replay counter, ANonce (0: none). With a PTK
+ * it carries a GTK KDE (key id 1) wrapped under its KEK and a MIC under its KCK. Returns the
+ * length. */
+static unsigned ap_key(uint8_t *m, uint16_t ki, uint64_t ctr, const uint8_t *anonce, const uint8_t *ptk)
+{
+    unsigned kdlen = ptk ? 32 : 0, total = O_KD + kdlen, i;
+    memset(m, 0, total);
+    m[0] = 2, m[1] = 3, m[2] = (uint8_t)((total - 4) >> 8), m[3] = (uint8_t)(total - 4), m[4] = 2;
+    wbe16(m + O_KEYINFO, ki);
+    m[O_KEYLEN + 1] = 16;
+    for (i = 0; i < 8; i++)
+        m[O_REPLAY + i] = (uint8_t)(ctr >> (56 - 8 * i));
+    if (anonce)
+        memcpy(m + O_NONCE, anonce, 32);
+    if (ptk) {
+        uint8_t kde[24] = {0xdd, 22, 0x00, 0x0f, 0xac, 0x01, 1}, mic[20];
+        for (i = 0; i < 16; i++)
+            kde[8 + i] = 0xd0 + i;
+        aes_wrap(ptk + 16, 3, kde, m + O_KD);
+        wbe16(m + O_KDLEN, 32);
+        wpa_hmac_sha1(ptk, 16, m, total, mic);
+        memcpy(m + O_MIC, mic, 16);
+    }
+    return total;
+}
+
+#define M1_KI (2 | KI_PAIRWISE | KI_ACK)
+#define M3_KI (2 | KI_PAIRWISE | KI_MIC | KI_ACK | KI_INSTALL | KI_SECURE | KI_ENCRYPTED)
+#define G1_KI (2 | KI_MIC | KI_ACK | KI_SECURE | KI_ENCRYPTED)
+
+static uint64_t replay_of(const uint8_t *m)
+{
+    uint64_t v = 0;
+    for (unsigned i = 0; i < 8; i++)
+        v = v << 8 | m[O_REPLAY + i];
+    return v;
+}
+
+/* Replay counters (IEEE 802.11-2020 12.7.2, as wpa_supplicant): Message 1 has no MIC, so it never
+ * moves the counter later frames are checked against; only a frame whose MIC verified does. */
+static void replay_cases(void)
+{
+    static const uint8_t aa[6] = {2, 0, 0, 0, 0, 0xa}, spa[6] = {2, 0, 0, 0, 0, 0xb};
+    uint8_t pmk[32], sn[32], an[32], an2[32], forged[32], ptk[48], ptk2[48];
+    uint8_t m[O_KD + 32], out[WPA_EAPOL_MAX];
+    struct wpa_sm sm;
+    size_t ol;
+    unsigned n, i;
+    int r;
+    for (i = 0; i < 32; i++)
+        pmk[i] = 0x11 + i, sn[i] = 0x22 + i, an[i] = 0x33 + i, an2[i] = 0x44 + i, forged[i] = 0x55 + i;
+    wpa_pmk_to_ptk(pmk, aa, spa, an, sn, ptk);
+    wpa_pmk_to_ptk(pmk, aa, spa, an2, sn, ptk2);
+
+    /* (a) an AP that resends Message 1 with the same counter (its Message 2 got lost) */
+    wpa_sm_init(&sm, pmk, aa, spa, sn);
+    n = ap_key(m, M1_KI, 1, an, 0);
+    check(wpa_sm_rx(&sm, m, n, out, &ol) == WPA_RX_SEND && replay_of(out) == 1, "msg1 -> msg2");
+    check(wpa_sm_rx(&sm, m, n, out, &ol) == WPA_RX_SEND && replay_of(out) == 1,
+          "msg1 resent with the same counter -> msg2 again");
+    n = ap_key(m, M3_KI, 2, an, ptk);
+    r = wpa_sm_rx(&sm, m, n, out, &ol);
+    check((r & WPA_RX_DONE) && replay_of(out) == 2 && !memcmp(sm.ptk, ptk, 48),
+          "msg3 after a resent msg1 completes the handshake");
+    /* ... and one that takes a new ANonce with it: the 4-way restarts on it */
+    wpa_sm_init(&sm, pmk, aa, spa, sn);
+    n = ap_key(m, M1_KI, 1, an, 0);
+    wpa_sm_rx(&sm, m, n, out, &ol);
+    n = ap_key(m, M1_KI, 1, an2, 0);
+    check(wpa_sm_rx(&sm, m, n, out, &ol) == WPA_RX_SEND, "msg1 resent with a new anonce -> msg2");
+    n = ap_key(m, M3_KI, 2, an2, ptk2);
+    r = wpa_sm_rx(&sm, m, n, out, &ol);
+    check((r & WPA_RX_DONE) && !memcmp(sm.ptk, ptk2, 48), "msg3 of the new anonce completes");
+
+    /* (b) a forged Message 1 with a huge counter (anyone in range can send one) */
+    wpa_sm_init(&sm, pmk, aa, spa, sn);
+    n = ap_key(m, M1_KI, 1, an, 0);
+    wpa_sm_rx(&sm, m, n, out, &ol);
+    n = ap_key(m, M1_KI, 0xffffffffffffff00ull, an, 0); /* the real one replayed, counter raised */
+    check(wpa_sm_rx(&sm, m, n, out, &ol) == WPA_RX_SEND && replay_of(out) == 0xffffffffffffff00ull,
+          "forged msg1: msg2 echoes its counter");
+    n = ap_key(m, M3_KI, 2, an, ptk);
+    r = wpa_sm_rx(&sm, m, n, out, &ol);
+    check((r & WPA_RX_DONE) && replay_of(out) == 2, "msg3 with the normal counter still completes");
+    /* a forged one with its own ANonce spoils the PTK the real msg3 needs (it has no MIC to tell),
+     * but no longer shuts out what follows: the AP's resent msg1 and msg3 complete */
+    wpa_sm_init(&sm, pmk, aa, spa, sn);
+    n = ap_key(m, M1_KI, 1, an, 0);
+    wpa_sm_rx(&sm, m, n, out, &ol);
+    n = ap_key(m, M1_KI, 0xffffffffffffff00ull, forged, 0);
+    wpa_sm_rx(&sm, m, n, out, &ol);
+    n = ap_key(m, M3_KI, 2, an, ptk);
+    check(wpa_sm_rx(&sm, m, n, out, &ol) == WPA_RX_FAIL, "msg3 against a forged anonce fails");
+    n = ap_key(m, M1_KI, 3, an, 0);
+    check(wpa_sm_rx(&sm, m, n, out, &ol) == WPA_RX_SEND, "the AP's resent msg1 is answered");
+    n = ap_key(m, M3_KI, 4, an, ptk);
+    r = wpa_sm_rx(&sm, m, n, out, &ol);
+    check((r & WPA_RX_DONE) && !memcmp(sm.ptk, ptk, 48), "and its msg3 completes");
+
+    /* (c) after a verified frame (msg3, counter 4) older counters are dropped */
+    n = ap_key(m, M3_KI, 4, an, ptk);
+    check(wpa_sm_rx(&sm, m, n, out, &ol) == WPA_RX_FAIL, "replayed msg3 (same counter) dropped");
+    n = ap_key(m, M3_KI, 3, an, ptk);
+    check(wpa_sm_rx(&sm, m, n, out, &ol) == WPA_RX_FAIL, "msg3 with an older counter dropped");
+    n = ap_key(m, G1_KI, 4, 0, ptk);
+    check(wpa_sm_rx(&sm, m, n, out, &ol) == WPA_RX_FAIL, "group msg1 with an old counter dropped");
+    n = ap_key(m, G1_KI, 5, 0, ptk);
+    check(wpa_sm_rx(&sm, m, n, out, &ol) == (WPA_RX_SEND | WPA_RX_INSTALL_GTK) && replay_of(out) == 5,
+          "group msg1 counting up -> group msg2");
+    check(wpa_sm_rx(&sm, m, n, out, &ol) == WPA_RX_FAIL, "replayed group msg1 dropped");
+    n = ap_key(m, M1_KI, 2, an2, 0);
+    check(wpa_sm_rx(&sm, m, n, out, &ol) == WPA_RX_FAIL, "msg1 below the verified counter dropped");
+    /* a rekey's msg1 (or a forged one) leaves the PTK in use, so a group rekey still verifies */
+    n = ap_key(m, M1_KI, 6, an2, 0);
+    check(wpa_sm_rx(&sm, m, n, out, &ol) == WPA_RX_SEND && !memcmp(sm.ptk, ptk, 48), "rekey msg1");
+    n = ap_key(m, G1_KI, 7, 0, ptk);
+    check(wpa_sm_rx(&sm, m, n, out, &ol) == (WPA_RX_SEND | WPA_RX_INSTALL_GTK),
+          "group msg1 while a ptk rekey waits for msg3");
+}
+
 int main(void)
 {
     uint8_t out[32];
@@ -389,6 +509,7 @@ int main(void)
         wpa_rsn_ie(ie, 9);
         check(ie[7] == 4, "unknown group -> ccmp");
     }
+    replay_cases();
     printf(fails ? "\n%d FAILED\n" : "\nall passed\n", fails);
     return fails ? 1 : 0;
 }

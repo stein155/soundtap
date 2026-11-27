@@ -2,7 +2,8 @@
 /* SPDX-FileCopyrightText: 2026 SoundTap contributors */
 
 /* Host unit test for the scan table (wscan.h): a beacon's RSSI from its RX descriptor, which RSN IEs
- * this station can join, hidden SSIDs, and a full table evicting the entry heard longest ago.
+ * this station can join, hidden SSIDs, and a full table evicting the entry heard longest ago, with
+ * room always made for the profile's network.
  *
  *   cc -Wall -Werror -Isrc -o wscan_test tests/wscan_test.c && ./wscan_test
  */
@@ -101,7 +102,7 @@ static void table_cases(void)
         assert(bss_add(buf + 0x14, len, 1, -60));
     }
     assert(nbss == NBSS);
-    /* still scan 10: every entry is current, the newcomer is dropped */
+    /* still scan 10: every entry is current, a stranger is dropped */
     len = beacon_from(buf, 999, "Home", 4);
     assert(!bss_add(buf + 0x14, len, 1, -60) && nbss == NBSS);
     /* scan 11: entry 3 heard again, the rest not yet; the newcomer takes an old slot */
@@ -116,6 +117,52 @@ static void table_cases(void)
         assert(!(bsstab[i].bssid[4] == 0 && bsstab[i].bssid[5] == 103) || bsstab[i].gen == 11);
     }
     assert(found == 1);
+    nbss = 0;
+}
+
+static int in_table(unsigned id)
+{
+    for (unsigned i = 0; i < nbss; i++)
+        if (bsstab[i].bssid[4] == (unsigned char)(id >> 8) && bsstab[i].bssid[5] == (unsigned char)id)
+            return (int)i;
+    return -1;
+}
+
+/* Dense housing: 40 neighbours on the low channels fill the table in one scan before the owner's
+ * access point on channel 13 is heard. The profile's SSID (and the one the SCM's SCAN named) gets
+ * in anyway, in the weakest neighbour's slot; a stranger still does not, and no stranger takes a
+ * wanted entry's slot. */
+static void wanted_cases(void)
+{
+    unsigned char buf[0x14 + 128];
+    unsigned len;
+    nbss = 0, scan_gen = 20;
+    bss_want(0, (const unsigned char *)"Home", 4);
+    for (unsigned i = 0; i < NBSS; i++) {
+        len = beacon_from(buf, 200 + i, "neighbour", 9);
+        assert(bss_add(buf + 0x14, len, 1, (signed char)(-40 - (i == 7 ? 50 : i % 20))));
+    }
+    assert(nbss == NBSS);
+    len = beacon_from(buf, 300, "stranger", 8);
+    assert(!bss_add(buf + 0x14, len, 1, -30) && in_table(300) < 0);
+    len = beacon_from(buf, 999, "Home", 4);
+    assert(bss_add(buf + 0x14, len, 13, -75) && nbss == NBSS);
+    assert(in_table(999) >= 0 && in_table(207) < 0);           /* the weakest neighbour (-90 dBm) went */
+    len = beacon_from(buf, 998, "Home", 4);                     /* a second access point of it */
+    assert(bss_add(buf + 0x14, len, 13, -80) && in_table(998) >= 0 && in_table(999) >= 0);
+    /* a later scan: the old entries may go, but never to a stranger at the cost of "Home" */
+    scan_gen = 21;
+    for (unsigned i = 0; i < NBSS; i++) {
+        len = beacon_from(buf, 400 + i, "other", 5);
+        bss_add(buf + 0x14, len, 1, -50);
+    }
+    assert(in_table(999) >= 0 && in_table(998) >= 0 && nbss == NBSS);
+    /* the directed scan's SSID counts too; FORGET and a SCAN without one clear them */
+    bss_want(1, (const unsigned char *)"Hid", 3);
+    len = beacon_from(buf, 500, "Hid", 3);
+    assert(bss_add(buf + 0x14, len, 6, -70) && in_table(500) >= 0);
+    bss_want(1, 0, 0), bss_want(0, 0, 0);
+    assert(!bss_wanted((const unsigned char *)"Home", 4) && !bss_wanted((const unsigned char *)"Hid", 3));
     nbss = 0;
 }
 
@@ -159,6 +206,7 @@ int main(void)
     assert(bsstab[1].ssidlen == 0 && bsstab[1].rssi == 0 && bsstab[1].seen == 1);
     rsn_cases();
     table_cases();
+    wanted_cases();
     puts("wscan ok");
     return 0;
 }

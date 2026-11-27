@@ -12,6 +12,7 @@ enum { WIFI_IDLE, WIFI_SCANNING, WIFI_JOINING, WIFI_UP, WIFI_FAILED, WIFI_AP };
 struct wifi_bss {
     unsigned char ssid_len, ssid[32], bssid[6], chan, sec; /* sec: 0 open, 1 RSN, 2 WPA1 only */
     signed char rssi;
+    unsigned char grp; /* RSN group cipher suite type: 2 TKIP, 4 CCMP, 0 unknown (STATUS only) */
 };
 
 int wifi_init(const unsigned char mac[6]);  /* boot the core (blocking, ~1 s); 0 when up */

@@ -139,6 +139,47 @@ class BcoLinkContract(unittest.TestCase):
         app = {int(m[1]): m[2] for m in re.finditer(r"case (\d+):(?: \{)? /\* (\w+)", mgmt)}
         self.assertEqual(driver, app)
 
+    def test_join_timeout_covers_the_app(self) -> None:
+        """The driver waits longer for a join than the BCO app can take for one.
+
+        The app scans once, then makes JOIN_TRIES attempts, each step with its own deadline
+        (bco/app/src/wifi.c join_attempt and join_step). A driver that gave up earlier reported a
+        failure while the BCO still joined, and wpa_supplicant's next connect raced that attempt.
+        """
+        wifi = (APP / "wifi.c").read_text()
+        app = defines(wifi)
+        steps = dict(re.findall(r"jstep = J_(SETUP|AUTH|ASSOC|4WAY), deadline = now \+ (\d+);", wifi))
+        self.assertEqual(set(steps), {"SETUP", "AUTH", "ASSOC", "4WAY"})
+        attempt_ms = sum(int(v) for v in steps.values())
+        # the scan's last command (0xe4) is followed by one more wait before the scan ends
+        tail_ms = int(re.search(r"0xe4, 0x13,.*?scan_next = now \+ (\d+);", wifi, re.DOTALL)[1])
+        scan_ms = app["SCAN_PASSES"] * app["NCHAN"] * app["DWELL_MS"] + tail_ms
+        budget_ms = scan_ms + app["JOIN_TRIES"] * attempt_ms
+        drv = int(re.search(r"#define BCO_JOIN_TIMEOUT\s+\((\d+) \* HZ\)", self.patch)[1])
+        self.assertGreater(drv * 1000, budget_ms + 10_000, f"app budget {budget_ms} ms, driver {drv} s")
+
+    def test_join_timeout_stops_the_bco(self) -> None:
+        """A join the driver gives up on is ended on the BCO too, and reported as a timeout."""
+        funcs = dict(re.findall(r"\n\+static [^\n]*\b(\w+)\([^)]*\)\n\+\{(.*?)\n\+\}", self.patch, re.DOTALL))
+        branch = re.search(r"\} else if \(timeout\) \{(.*?)\} else \{", funcs["bco_join_poll"], re.DOTALL)
+        self.assertIsNotNone(branch)
+        self.assertIn("bco_req(b, T_FORGET, NULL, 0)", branch[1])
+        self.assertIn("cr.status = -1", branch[1])
+
+    def test_status_group_cipher(self) -> None:
+        """The driver reads STATUS's group cipher byte where the app writes it, and only when present.
+
+        The app writes it right after the join failure's step and le16 code; an older app does not.
+        """
+        mgmt = (APP / "mgmt.c").read_text()
+        status = re.search(r"case 5: \{ /\* STATUS(.*?)break;", mgmt, re.DOTALL)[1]
+        self.assertRegex(status, r"\*o\+\+ = step;\s*\*o\+\+ = code, \*o\+\+ = code >> 8;\s*\*o\+\+ = b\.grp;")
+        funcs = dict(re.findall(r"\n\+static [^\n]*\b(\w+)\([^)]*\)\n\+\{(.*?)\n\+\}", self.patch, re.DOTALL))
+        body = funcs["bco_group_cipher"]
+        self.assertIn("at = 3 + r[2] + 8 + 3;", body)
+        self.assertIn("if (b->rsp_len < at + 1)\n+\t\treturn NULL;", body)
+        self.assertIn("bco_group_cipher(b)", funcs["bco_join_result"])
+
     def test_hunk_count(self) -> None:
         """The driver patch's hunk header counts the lines the new file has."""
         lines = self.patch.split("\n")

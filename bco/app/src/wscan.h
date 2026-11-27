@@ -19,8 +19,11 @@ struct bss {
     unsigned char ielen; /* 255 B cap; keep the RSN IE separately for the assoc request */
 };
 /* Dense housing hears 30-40 BSSes on 2.4 GHz (an ISP router alone beacons its main, guest and
- * mesh-backhaul BSSIDs). A full table evicts the entry heard longest ago instead of dropping the
- * newcomer, so the owner's network is never shut out by the neighbours. */
+ * mesh-backhaul BSSIDs). A full table evicts the entry heard longest ago; when every entry is from
+ * this scan a stranger is dropped. Channels are scanned 1..13 in order, so in a crowd the table
+ * can fill before a high channel is reached: a BSS of a wanted SSID (bss_want: the profile's and
+ * the directed scan's) then takes the weakest stranger's slot, and no stranger ever takes a wanted
+ * entry's slot. So the owner's network is not shut out by the neighbours. */
 #define NBSS 40
 /* A weak AP (the target, co-channel with a far stronger one) answers a probe only now and then, so
  * it is not in every scan. Keep the table across scans and age entries by scan generation, so a BSS
@@ -28,6 +31,31 @@ struct bss {
 #define BSS_KEEP 5u
 static struct bss bsstab[NBSS];
 static unsigned nbss, bssdrop, scan_gen;
+
+/* The SSIDs whose BSSes always get a slot: 0 the profile's, 1 the one the SCM's SCAN named.
+ * wifi.c sets them; n = 0 clears one. */
+static unsigned char want_ssid[2][32], want_len[2];
+
+static void bss_want(unsigned i, const unsigned char *ssid, unsigned n)
+{
+    want_len[i] = n <= 32 ? (unsigned char)n : 0;
+    for (unsigned k = 0; k < want_len[i]; k++)
+        want_ssid[i][k] = ssid[k];
+}
+
+static int bss_wanted(const unsigned char *ssid, unsigned n)
+{
+    for (unsigned i = 0; i < 2; i++) {
+        unsigned k = 0;
+        if (!want_len[i] || want_len[i] != n)
+            continue;
+        while (k < n && ssid[k] == want_ssid[i][k])
+            k++;
+        if (k == n)
+            return 1;
+    }
+    return 0;
+}
 #ifdef BCO_DEBUG_TRACE
 static unsigned dg_bss_short, dg_bss_nossid; /* bss_add rejects: frame too short / no SSID IE at +44 */
 #endif
@@ -85,15 +113,25 @@ static int rsn_parse(const unsigned char *p, unsigned n, unsigned char *grp)
     return pccmp && psk && !(caps & 0x40);
 }
 
-/* The slot a newcomer takes in a full table: the entry heard in the oldest scan, never one heard in
- * this scan (then the newcomer is dropped). -1 when every entry is current. */
-static int bss_evict(void)
+/* A level to compare: a BSS without one counts as the weakest. */
+static int bss_level(const struct bss *b)
+{
+    return b->rssi < 0 ? b->rssi : -128;
+}
+
+/* The slot a newcomer takes in a full table, -1 when it is dropped: never a wanted SSID's entry;
+ * of the others the one heard in the oldest scan, on a tie the weakest. A stranger never takes
+ * one heard in this scan; a wanted newcomer does when every other entry is current. */
+static int bss_evict(int wanted)
 {
     int old = -1;
     unsigned age = 0;
     for (unsigned i = 0; i < nbss; i++) {
-        unsigned a = (unsigned short)(scan_gen - bsstab[i].gen);
-        if (a > age || (a == age && old >= 0 && a && bsstab[i].rssi < bsstab[old].rssi))
+        const struct bss *b = &bsstab[i];
+        unsigned a = (unsigned short)(scan_gen - b->gen);
+        if (bss_wanted(b->ssid, b->ssidlen) || (!a && !wanted))
+            continue;
+        if (old < 0 || a > age || (a == age && bss_level(b) < bss_level(&bsstab[old])))
             age = a, old = (int)i;
     }
     return old;
@@ -140,7 +178,7 @@ static int bss_add(const unsigned char *h, unsigned len, unsigned rxchan, signed
     }
     if (!b) {
         if (nbss == NBSS) {
-            int e = bss_evict();
+            int e = bss_evict(bss_wanted(ssid, ssidlen));
             if (e < 0)
                 return ++bssdrop, 0;
             b = &bsstab[e];

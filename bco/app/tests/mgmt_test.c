@@ -71,8 +71,8 @@ int main(void)
                             BCOLINK_CAP_EVENTS | BCOLINK_CAP_ROAM | BCOLINK_CAP_REGDOM |
                             BCOLINK_CAP_SCAN_SSID | BCOLINK_CAP_NVINFO)) == BCOLINK_CAPS &&
            BCOLINK_CAPS == 0x1ff);
-    n = ask(5, 0, 0, r); assert(r[6] == 0 && r[7] == WIFI_IDLE && r[8] == 0 && n == MGMT_HDR + 14 &&
-                                r[17] == WIFI_FAIL_NONE && r[18] == 0 && r[19] == 0);
+    n = ask(5, 0, 0, r); assert(r[6] == 0 && r[7] == WIFI_IDLE && r[8] == 0 && n == MGMT_HDR + 15 &&
+                                r[17] == WIFI_FAIL_NONE && r[18] == 0 && r[19] == 0 && r[20] == 0);
     /* a refused association: the step and the AP's status code (le16) follow the BSS */
     extern unsigned fake_fail_step, fake_fail_code;
     fake_fail_step = WIFI_FAIL_ASSOC, fake_fail_code = 0x0131;
@@ -91,6 +91,23 @@ int main(void)
     assert(r[21] == 3 && !memcmp(r + 22, "ap1", 3) && r[31] == 2);     /* entry 1 */
     fake_nbss = 24;
     n = ask(2, 0, 0, r); assert(r[7] == 24 && n <= MGMT_MAX);
+    /* a full table of 32-byte SSIDs (a beacon flood) is more than one reply holds: the list stops
+     * before the entry that would not fit, the count matches, nothing lands past the buffer */
+    {
+        static struct { unsigned char r[MGMT_MAX], guard[64]; } big;
+        extern unsigned fake_ssid_max;
+        memset(big.guard, 0x5c, sizeof big.guard);
+        fake_ssid_max = 1, fake_nbss = 40;
+        n = ask(2, 0, 0, big.r);
+        unsigned at = MGMT_HDR + 2, k = 0;
+        while (at < n)
+            at += 1 + big.r[at] + 6 + 1 + 1 + 1, k++;
+        assert(big.r[6] == 0 && big.r[7] == 36 && k == 36 && at == n && n == MGMT_HDR + 2 + 36 * 42 &&
+               n <= MGMT_MAX && (big.r[4] << 8 | big.r[5]) == n - MGMT_HDR);
+        for (unsigned i = 0; i < sizeof big.guard; i++)
+            assert(big.guard[i] == 0x5c);
+        fake_ssid_max = 0;
+    }
     /* SCAN naming an SSID (BCOLINK_CAP_SCAN_SSID): the directed probe looks for it */
     extern unsigned char fake_scan_ssid[32];
     extern unsigned fake_scan_ssid_len;
@@ -116,9 +133,13 @@ int main(void)
     n = again(3, sp, sizeof sp, r);
     assert(fake_joins == 1 && n == MGMT_HDR + 1 && !memcmp(r, first, n));
     again(5, 0, 0, r); assert(r[7] == WIFI_JOINING); /* a query with a stale seq still runs */
+    /* the target's RSN group cipher comes last (2 = TKIP, a mixed-mode router) */
+    extern unsigned fake_grp;
+    fake_grp = 2;
     n = ask(5, 0, 0, r);
     assert(r[7] == WIFI_JOINING && r[8] == 4 && !memcmp(r + 9, "test", 4) && r[19] == 6 &&
-           (signed char)r[20] == -50);
+           (signed char)r[20] == -50 && n == MGMT_HDR + 15 + 4 && r[24] == 2);
+    fake_grp = 0;
     for (unsigned i = 0; i + 4 <= n; i++) assert(memcmp(r + i, "\xab\xab\xab\xab", 4)); /* PMK never echoed */
     ask(3, sp, sizeof sp - 1, r); assert(r[6] == 1);              /* no seed */
     /* the tail (BCOLINK_CAP_ROAM): flags and the BSSID */
