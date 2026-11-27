@@ -1180,11 +1180,32 @@ static void wpa3_and_pmf(void)
     saq_check();
     assert(kicked && kick_sub == 0xc0 && kick_reason == 7 && !saq_on);
     kicked = 0;
+    /* every TX buffer taken: the query waits for one, and SAQ_MS counts from when it went out,
+     * so a forged frame while the transmit queue is full is no disconnect */
+    unsigned held_free = txnfree, sent = wifi_tx_frames;
+    txnfree = 0;
+    rx_station(rxm, rx_from_ap(0xc0, own, reason, 2));
+    assert(saq_on && !saq_sent && wifi_tx_frames == sent);
+    now += 3 * SAQ_MS;
+    saq_check();
+    assert(!kicked && saq_on && !saq_sent);
+    txnfree = held_free;
+    saq_check();
+    assert(saq_sent && wifi_tx_frames == sent + 1);
+    d = last_frame() + 8;
+    memcpy(hq, d + 0x18, 24), memcpy(q, d + 0xc4, sizeof q);
+    assert(wsec_ccmp_open(tk, hq, q, sizeof q) == 4 && q[8] == 8 && q[9] == 0);
+    now += SAQ_MS - 1;
+    saq_check();
+    assert(!kicked && saq_on);
+    const unsigned char ans2[4] = {8, 1, q[10], q[11]};
+    rx_station(rxm, rx_protected(0xd0, ans2, 4, tk, 3));
+    assert(!saq_on && !kicked);
     /* a protected deauthentication ends it; the same PN again does not */
-    rx_station(rxm, rx_protected(0xc0, reason, 2, tk, 2));
+    rx_station(rxm, rx_protected(0xc0, reason, 2, tk, 4));
     assert(kicked && kick_reason == 7);
     kicked = 0;
-    rx_station(rxm, rx_protected(0xc0, reason, 2, tk, 2));
+    rx_station(rxm, rx_protected(0xc0, reason, 2, tk, 4));
     assert(!kicked);
     /* a deauthentication to everybody: only with a valid MMIE and a newer IPN */
     rx_station(rxm, rx_from_ap(0xc0, ap_bcast, reason, 2));
@@ -1201,7 +1222,7 @@ static void wpa3_and_pmf(void)
     /* the AP asks (protected): a protected answer with its id */
     tx_frames();
     const unsigned char ask[4] = {8, 0, 0x34, 0x12};
-    rx_station(rxm, rx_protected(0xd0, ask, 4, tk, 3));
+    rx_station(rxm, rx_protected(0xd0, ask, 4, tk, 5));
     d = last_frame() + 8;
     memcpy(hq, d + 0x18, 24), memcpy(q, d + 0xc4, sizeof q);
     assert(wsec_ccmp_open(tk, hq, q, sizeof q) == 4 && q[8] == 8 && q[9] == 1 && q[10] == 0x34 && q[11] == 0x12);

@@ -72,6 +72,8 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
   between its network chip and its main processor.
 - **SoundTouch 20: a phone that rejoins the setup network gets its answers at once**, also
   when it had gone to sleep on it before.
+- **SoundTouch 20 with protected management frames: a fake "disconnect" no longer knocks it off
+  your Wi-Fi** while it is busy sending.
 
 ## [app-v0.1.0-alpha.6] - 2026-11-27
 

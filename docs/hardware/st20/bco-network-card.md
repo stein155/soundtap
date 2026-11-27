@@ -547,10 +547,11 @@ messages and steps (`BCOLINK_CAP_WPA3`):
    number above the last one; group-addressed with an MMIE that checks out under BIP-CMAC-128 with
    a newer IPN. An unprotected deauthentication or disassociation sends a protected SA Query
    (action category 8) and ends the link with its reason only when no protected answer with the
-   same transaction id comes within 1 s. The access point's SA Query gets a protected answer. The
-   BCO's own protected management frames count their packet numbers from 2^40, so they never meet
-   the core's data packet numbers under the same key; receivers keep separate replay counters for
-   management frames.
+   same transaction id comes within 1 s of the query going out; a query that finds every transmit
+   buffer taken is sent on a later poll, and the second counts from then. The access point's SA
+   Query gets a protected answer. The BCO's own protected management frames count their packet
+   numbers from 2^40, so they never meet the core's data packet numbers under the same key;
+   receivers keep separate replay counters for management frames.
 6. The driver offers SAE (`NL80211_FEATURE_SAE`), authentication frames on the station, BIP and
    optional PMF only with the capability; the access point's interface keeps no management frame
    types, as before.

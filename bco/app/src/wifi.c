@@ -328,7 +328,7 @@ static unsigned pmf;
 static unsigned char mgmt_tk[16], igtk[16];
 static unsigned long long mgmt_pn, mgmt_rxpn, ipn;
 static unsigned igtk_id;
-static unsigned saq_on, saq_deadline, saq_id, saq_sub, saq_reason;
+static unsigned saq_on, saq_sent, saq_deadline, saq_id, saq_sub, saq_reason;
 #define MGMT_PN0 (1ull << 40)
 #define SAQ_MS 1000u /* wpa_supplicant's SA Query limit: no protected answer in this long, the link is gone */
 
@@ -711,24 +711,34 @@ static int send_protected(unsigned fc, const unsigned char *body, unsigned n)
     return 1;
 }
 
+/* The SA Query request; SAQ_MS counts from when it went out. With every TX buffer taken it is
+ * tried again on the next poll: counted from the forged frame, an unsent query became a
+ * disconnect whenever the transmit queue was full. */
+static void saq_send(void)
+{
+    const unsigned char q[4] = {8, 0, (unsigned char)saq_id, (unsigned char)(saq_id >> 8)};
+    if (send_protected(0xd0, q, 4))
+        saq_sent = 1, saq_deadline = now + SAQ_MS;
+}
+
 /* An unprotected deauthentication or disassociation under PMF may be forged: ask the AP over a
  * protected SA Query whether it still has the association; no answer within SAQ_MS ends the link
  * with the frame's reason (IEEE 802.11-2020 11.13). */
 static void saq_start(unsigned sub, unsigned reason)
 {
-    unsigned char q[4] = {8, 0, 0, 0};
     if (saq_on)
         return;
     saq_id = (now ^ WREG[0x580 / 4]) & 0xffff;
-    q[2] = (unsigned char)saq_id, q[3] = (unsigned char)(saq_id >> 8);
-    saq_on = 1, saq_deadline = now + SAQ_MS, saq_sub = sub, saq_reason = reason;
-    send_protected(0xd0, q, 4);
+    saq_on = 1, saq_sent = 0, saq_sub = sub, saq_reason = reason;
+    saq_send();
 }
 
-/* An SA Query that got no protected answer within SAQ_MS: the AP did send us away. */
+/* An SA Query that got no protected answer within SAQ_MS of going out: the AP did send us away. */
 static void saq_check(void)
 {
-    if (saq_on && due(saq_deadline))
+    if (saq_on && !saq_sent)
+        saq_send();
+    else if (saq_on && due(saq_deadline))
         saq_on = 0, kicked = 1, kick_sub = saq_sub, kick_reason = saq_reason,
         fail_step = WIFI_FAIL_KICKED, fail_code = saq_reason;
 }
