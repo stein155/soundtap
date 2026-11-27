@@ -24,6 +24,10 @@ takes stock's clock: off when stock had it off or at brightness 0, 12 or 24 hour
 (`timezoneInfo`, else the `localtime` link) when this build knows it; stock's other brightness
 levels, which it never used to dim, change nothing
 ([standby clock](../hardware/st20/standby-clock.md#where-stock-keeps-the-clocks-settings)).
+It records the takeover (`.stock-imported` in its home) only after the name, the presets and the
+clock are stored, so a first start that stops half-way takes them over again on the next start.
+It logs what each of stock's files gave: no file, a file it could not read or parse, how many
+presets it took over, and each preset it left out with the reason.
 
 For the Wi-Fi, the installer runs under stock, so it reads the key and IV from the NetManager
 that is running: of all its runs of 12 or more ASCII digits there must be exactly two, one of 32
@@ -49,6 +53,7 @@ bytes in git); the owner typing the password again after the install.
 
 ## Consequences
 
+- A first boot that brings nothing over says why in its log, file by file and preset by preset.
 - No Bose byte enters the repository or the image, and no Bose code runs under SoundTap: the
   installer only reads stock's binary as a file, once, while stock is still the running system.
 - On the ST20 the first boot from stock confirms up to 5 minutes later, while the read is tried

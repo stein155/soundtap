@@ -245,7 +245,7 @@ func runDaemon(opt options, serial string, log *slog.Logger) {
 	spot := spotify.New()
 	disp := display.New(ctx, displayPath(), func(context.Context) bool { return speakerState.IsStandby() },
 		log.With("comp", "display"))
-	takeStockClock(set, leftovers.clockFor(disp), log)
+	leftovers.finishWithClock(set, disp, log)
 
 	gate := newBootGate()
 	wifiConf := filepath.Join(filepath.Dir(opt.home), "wifi.conf")
@@ -343,6 +343,13 @@ func serveUntilDone(ctx context.Context, target *serveTarget, log *slog.Logger) 
 	for _, server := range servers {
 		_ = server.Shutdown(sctx)
 	}
+}
+
+// finishWithClock takes stock's clock over on a speaker with a panel, the last part of the
+// takeover, and then records that the takeover is behind this home.
+func (s stockLeftovers) finishWithClock(set *settings.Store, disp *display.Manager, log *slog.Logger) {
+	takeStockClock(set, s.clockFor(disp), log)
+	s.finish(log)
 }
 
 // clockFor is stock's clock for a speaker with disp: nil without a panel, which shows no clock.
@@ -626,6 +633,10 @@ func loadPresets(
 	// replace the owner's presets with this empty set; a corrupt one was moved aside.
 	presets, err := store.Open(path)
 	atomicjson.LogLoad(log, "presets", path, err)
+
+	if stockPresets != nil && statErr == nil {
+		log.Info("stock presets not taken over: this speaker has presets of its own", "path", path)
+	}
 
 	if stockPresets != nil && errors.Is(statErr, fs.ErrNotExist) {
 		for _, preset := range stockPresets() {

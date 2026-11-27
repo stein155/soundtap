@@ -4,11 +4,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stein155/soundtap/app/internal/hw/model"
@@ -482,11 +484,13 @@ func TestStockTakenOverOnceNotAfterReset(t *testing.T) {
 		leftovers := stockTakeover(home, log)
 		set := settings.Open(filepath.Join(home, "presets.json.settings"))
 		name := initialName(set, "", "SoundTap ST10", leftovers.name, log)
-		st := loadPresets(context.Background(), speakerstate.New(), filepath.Join(home, "presets.json"),
+		stored := loadPresets(context.Background(), speakerstate.New(), filepath.Join(home, "presets.json"),
 			leftovers.presets, log)
-		n := len(st.All())
+		leftovers.finish(log)
+
+		n := len(stored.All())
 		_ = set.Close()
-		_ = st.Close()
+		_ = stored.Close()
 
 		return name, n
 	}
@@ -529,5 +533,118 @@ func TestNewSpeakerReportsThisDeviceAndBuild(t *testing.T) {
 	// The address comes from maintainIP once the network has one, not from a default.
 	if info.IP != "" {
 		t.Fatalf("IP before the network reported one = %q, want empty", info.IP)
+	}
+}
+
+// A start that stops after reading stock's leftovers but before storing them (a crash, the
+// watchdog, a reboot) takes them over again on the next start: the takeover is recorded
+// only once its name, presets and clock are stored.
+//
+//nolint:paralleltest // swaps package variables other tests read: stockConfigPath
+func TestStockTakeoverRecordedOnlyWhenFinished(t *testing.T) {
+	dir := t.TempDir()
+	old := stockConfigPath
+
+	t.Cleanup(func() { stockConfigPath = old })
+
+	stockConfigPath = filepath.Join(dir, "SystemConfigurationDB.xml")
+	must(t, os.WriteFile(stockConfigPath,
+		[]byte("<SystemConfiguration><DeviceName>Woonkamer</DeviceName></SystemConfiguration>"), 0o600))
+
+	home := t.TempDir()
+	log := slog.New(slog.DiscardHandler)
+
+	first := stockTakeover(home, log)
+	if first.name == nil || first.name() != "Woonkamer" {
+		t.Fatal("the first start does not take stock's name over")
+	}
+
+	if stockTaken(home) {
+		t.Fatal("the takeover is recorded before it was stored")
+	}
+
+	again := stockTakeover(home, log) // the first start stopped before finish
+	if again.name == nil {
+		t.Fatal("a start after one that stopped half-way does not take stock over again")
+	}
+
+	again.finish(log)
+
+	if !stockTaken(home) {
+		t.Fatal("finish did not record the takeover")
+	}
+
+	if after := stockTakeover(home, log); after.name != nil || after.presets != nil || after.clock != nil {
+		t.Fatal("a start after a finished takeover takes stock over again")
+	}
+
+	stockTakeover(home, log).finish(log) // nothing to record: no error, still recorded
+
+	if !stockTaken(home) {
+		t.Fatal("the record went away")
+	}
+}
+
+// The takeover logs what each of stock's files gave, so a first start that brings nothing
+// over says why: a missing file, a file that does not parse, a preset left out.
+//
+//nolint:paralleltest // swaps package variables other tests read: stockConfigPath, stockPresetsPath, stockClockPath
+func TestStockTakeoverLogsWhy(t *testing.T) {
+	dir := t.TempDir()
+	oldConfig, oldPresets, oldClock := stockConfigPath, stockPresetsPath, stockClockPath
+
+	t.Cleanup(func() { stockConfigPath, stockPresetsPath, stockClockPath = oldConfig, oldPresets, oldClock })
+
+	stockConfigPath = filepath.Join(dir, "SystemConfigurationDB.xml")
+	stockPresetsPath = filepath.Join(dir, "Presets.xml")
+	stockClockPath = filepath.Join(dir, "ClockDisplay.xml")
+
+	must(t, os.WriteFile(stockConfigPath, []byte("<SystemConfiguration><DeviceName>"), 0o600))
+	must(t, os.WriteFile(stockPresetsPath, []byte(`<presets>`+
+		`<preset id="1"><ContentItem source="TUNEIN" location="/v1/playback/station/s17523">`+
+		`<itemName>NPO Radio 1</itemName></ContentItem></preset>`+
+		`<preset id="2"><ContentItem source="SPOTIFY" location="/playback/x">`+
+		`<itemName>Mix</itemName></ContentItem></preset>`+
+		`<preset id="3"><ContentItem source="TUNEIN" location="/v1/other/s1">`+
+		`<itemName>Odd</itemName></ContentItem></preset>`+
+		`</presets>`), 0o600))
+
+	var buf bytes.Buffer
+
+	log := slog.New(slog.NewTextHandler(&buf, nil))
+	leftovers := stockTakeover(t.TempDir(), log)
+
+	if got := leftovers.name(); got != "" {
+		t.Fatalf("a broken configuration gave the name %q", got)
+	}
+
+	if got := leftovers.presets(); len(got) != 1 || got[0].Slot != 1 {
+		t.Fatalf("presets = %+v", got)
+	}
+
+	_, ok := leftovers.clock()
+	if ok {
+		t.Fatal("no clock file gave clock settings")
+	}
+
+	out := buf.String()
+	for _, want := range []string{
+		`level=WARN msg="stock name: not read"`,
+		`msg="stock preset not taken over" slot=2 source=SPOTIFY why="not a TuneIn station"`,
+		`msg="stock preset not taken over" slot=3 source=TUNEIN why="unknown TuneIn location /v1/other/s1"`,
+		`msg="stock presets read" taken=1 skipped=2`,
+		`msg="stock clock settings: none to take over"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log lacks %s:\n%s", want, out)
+		}
+	}
+
+	must(t, os.Remove(stockPresetsPath))
+	buf.Reset()
+	stockTakeover(t.TempDir(), log).presets()
+
+	if !strings.Contains(buf.String(), `level=INFO msg="stock presets: no file"`) {
+		t.Errorf("a missing Presets.xml is not logged as such:\n%s", buf.String())
 	}
 }

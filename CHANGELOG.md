@@ -33,6 +33,9 @@ The sixth alpha of SoundTap Core 0.1.0.
   instead of staying at 1%.
 - **SoundTouch 20: a two-second press confirms**, as on the other speakers, instead of four
   seconds.
+- **The first install keeps your name and radio presets even when the first start is cut
+  short**: the takeover from the original software is only marked as done once everything is
+  stored, and the log says what was found and why a preset was left out.
 - **With a network cable in, the settings show the wired connection**, not the setup network.
 - **The install page finds your speaker**: it names each model's own setup address (the
   SoundTouch 20's included), waits long enough for the SoundTouch 20, and finds a speaker that

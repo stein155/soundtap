@@ -515,7 +515,7 @@ func loadNV(t *testing.T, nvDir string, wantSettings *settings.Settings) {
 
 	recovery := install.LoadRecovery(home, func() (string, error) { return "ubi.mtd=9,2048", nil })
 	check("firmware-pending", []any{recovery.Status, recovery.Pending}, []any{"booted", nvPendingFixture()})
-	check(".stock-imported keeps stock's name and presets out", takeStockOnce(home, quietLog()), false)
+	check(".stock-imported keeps stock's name and presets out", stockTaken(home), true)
 
 	streams := &player.StreamCache{}
 	streams.Load(filepath.Join(home, "tunein-streams.json"))

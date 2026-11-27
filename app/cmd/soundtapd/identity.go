@@ -393,20 +393,30 @@ func speakerIdentity(serial, deviceID string) string {
 
 // stockDeviceName is the name stock knew the speaker by, or "" when there is none.
 func stockDeviceName() string {
+	name, _ := readStockDeviceName()
+
+	return name
+}
+
+// readStockDeviceName reads the name from stock's SystemConfigurationDB.xml: "" with the
+// reason when there is none (fs.ErrNotExist for no file), "" and nil for an empty name.
+func readStockDeviceName() (string, error) {
 	file, err := os.Open(stockConfigPath)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("open stock configuration: %w", err)
 	}
 	defer file.Close()
 
 	var config struct {
 		DeviceName string `xml:"DeviceName"`
 	}
-	if xml.NewDecoder(io.LimitReader(file, stockXMLLimit)).Decode(&config) != nil {
-		return ""
+
+	err = xml.NewDecoder(io.LimitReader(file, stockXMLLimit)).Decode(&config)
+	if err != nil {
+		return "", fmt.Errorf("parse stock configuration: %w", err)
 	}
 
-	return strings.TrimSpace(config.DeviceName)
+	return strings.TrimSpace(config.DeviceName), nil
 }
 
 // stockTakenName marks a home whose first start after an install from stock is behind it.
@@ -415,37 +425,93 @@ func stockDeviceName() string {
 const stockTakenName = ".stock-imported"
 
 // stockLeftovers reads what stock left behind for this start to take over: its name, its
-// presets and its clock settings. Each is nil when there is nothing to take over.
+// presets and its clock settings. Each is nil when there is nothing to take over. home is
+// set only on the first start after an install from stock: finish then records that the
+// takeover is behind it.
 type stockLeftovers struct {
 	name    func() string
 	presets func() []store.Preset
 	clock   func() (settings.Display, bool)
+	home    string
 }
 
 // stockTakeover is what this start takes over from stock: everything on the first start
-// after an install from Bose's software (takeStockOnce), nothing otherwise.
+// after an install from Bose's software, nothing otherwise. Each part logs what stock's
+// file gave, so a takeover that brings nothing says why.
 func stockTakeover(home string, log *slog.Logger) stockLeftovers {
-	if !takeStockOnce(home, log) {
-		return stockLeftovers{name: nil, presets: nil, clock: nil}
+	if stockTaken(home) {
+		return stockLeftovers{name: nil, presets: nil, clock: nil, home: ""}
 	}
 
-	return stockLeftovers{name: stockDeviceName, presets: stockPresets, clock: stockClock}
+	log.Info("first start after an install from stock: taking over its name, presets and clock")
+
+	return stockLeftovers{
+		name: func() string {
+			name, err := readStockDeviceName()
+			logStockRead(log, "name", stockConfigPath, err)
+
+			return name
+		},
+		presets: func() []store.Preset {
+			presets, skipped, err := readStockPresets()
+			logStockRead(log, "presets", stockPresetsPath, err)
+
+			for _, skip := range skipped {
+				log.Info("stock preset not taken over", "slot", skip.slot, "source", skip.source, "why", skip.why)
+			}
+
+			if err == nil {
+				log.Info("stock presets read", "taken", len(presets), "skipped", len(skipped))
+			}
+
+			return presets
+		},
+		clock: func() (settings.Display, bool) {
+			display, ok := stockClock()
+			if !ok {
+				log.Info("stock clock settings: none to take over", "path", stockClockPath)
+			}
+
+			return display, ok
+		},
+		home: home,
+	}
 }
 
-// takeStockOnce reports whether stock's name and presets may still be taken over, and
-// records that they now have been.
-func takeStockOnce(home string, log *slog.Logger) bool {
-	_, err := os.Stat(filepath.Join(home, stockTakenName))
-	if !errors.Is(err, fs.ErrNotExist) {
-		return false
+// finish records that the takeover is behind this home, after its name, presets and clock
+// were stored: a start that stops before that takes them over again next time.
+func (s stockLeftovers) finish(log *slog.Logger) {
+	if s.home == "" {
+		return
 	}
 
-	err = markStockTaken(home)
+	err := markStockTaken(s.home)
 	if err != nil {
 		log.Warn("record stock takeover", "err", err)
+
+		return
 	}
 
-	return true
+	log.Info("stock takeover recorded")
+}
+
+// logStockRead logs why reading one of stock's files gave nothing; a missing file is no
+// fault (stock may never have written it), anything else is.
+func logStockRead(log *slog.Logger, what, path string, err error) {
+	switch {
+	case err == nil:
+	case errors.Is(err, fs.ErrNotExist):
+		log.Info("stock "+what+": no file", "path", path)
+	default:
+		log.Warn("stock "+what+": not read", "path", path, "err", err)
+	}
+}
+
+// stockTaken reports whether stock's name and presets were taken over already.
+func stockTaken(home string) bool {
+	_, err := os.Stat(filepath.Join(home, stockTakenName))
+
+	return !errors.Is(err, fs.ErrNotExist)
 }
 
 func markStockTaken(home string) error {
@@ -474,26 +540,49 @@ type stockPreset struct {
 // stockPresets reads the radio presets stock left behind. Only TuneIn stations:
 // stock's other sources need its accounts or cloud, so those slots stay empty.
 func stockPresets() []store.Preset {
+	presets, _, _ := readStockPresets()
+
+	return presets
+}
+
+// stockSkip is a preset in stock's file that is not taken over, and why.
+type stockSkip struct {
+	slot   int
+	source string
+	why    string
+}
+
+// readStockPresets reads stock's Presets.xml: the TuneIn presets to take over, the others
+// with the reason each is left out, and why the file gave nothing (fs.ErrNotExist for no file).
+func readStockPresets() ([]store.Preset, []stockSkip, error) {
 	file, err := os.Open(stockPresetsPath)
 	if err != nil {
-		return nil
+		return nil, nil, fmt.Errorf("open stock presets: %w", err)
 	}
 	defer file.Close()
 
 	var doc struct {
 		Presets []stockPreset `xml:"preset"`
 	}
-	if xml.NewDecoder(io.LimitReader(file, stockXMLLimit)).Decode(&doc) != nil {
-		return nil
+
+	err = xml.NewDecoder(io.LimitReader(file, stockXMLLimit)).Decode(&doc)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse stock presets: %w", err)
 	}
 
-	var out []store.Preset
+	var (
+		out     []store.Preset
+		skipped []stockSkip
+	)
 
 	for _, preset := range doc.Presets {
 		name, art := strings.TrimSpace(preset.Item.Name), strings.TrimSpace(preset.Item.Art)
+		station := stockStation(preset.Item.Location)
 
-		station, ok := strings.CutPrefix(preset.Item.Location, "/v1/playback/station/")
-		if preset.Item.Source != sourceTuneIn || !ok || station == "" || speaker.CheckPreset(name, art) != nil {
+		why := stockPresetProblem(preset.Item, station, name, art)
+		if why != "" {
+			skipped = append(skipped, stockSkip{slot: preset.Slot, source: preset.Item.Source, why: why})
+
 			continue
 		}
 
@@ -503,7 +592,35 @@ func stockPresets() []store.Preset {
 		})
 	}
 
-	return out
+	return out, skipped, nil
+}
+
+// stockStation is the TuneIn station a stock preset's location names, "" for none.
+func stockStation(location string) string {
+	station, found := strings.CutPrefix(location, "/v1/playback/station/")
+	if !found {
+		return ""
+	}
+
+	return station
+}
+
+// stockPresetProblem is why a preset in stock's file is not taken over, "" when it is.
+func stockPresetProblem(item stockPresetItem, station, name, art string) string {
+	if item.Source != sourceTuneIn {
+		return "not a TuneIn station"
+	}
+
+	if station == "" {
+		return "unknown TuneIn location " + item.Location
+	}
+
+	err := speaker.CheckPreset(name, art)
+	if err != nil {
+		return err.Error()
+	}
+
+	return ""
 }
 
 // stockClock is the ST20 standby clock as stock left it (ClockDisplay.xml, every field an
