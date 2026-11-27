@@ -140,16 +140,42 @@ func recreateBluetoothStateDirs(persistentRoot string, log *slog.Logger) {
 	}
 }
 
-// removeAtomicTemps deletes what an interrupted atomicjson.WriteFile leaves beside each
-// path (".<name>.tmp-<random>"): a complete copy of the credentials the reset is meant to clear.
+// removeAtomicTemps deletes what an interrupted atomicjson.WriteFile leaves in the directory
+// of each path (".<name>.tmp-<random>"): it can be a complete copy of the credentials the
+// reset is meant to clear.
 func removeAtomicTemps(paths []string, log *slog.Logger) {
+	dirs := map[string]bool{}
+
 	for _, path := range paths {
-		orphans, _ := filepath.Glob(filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*"))
-		for _, orphan := range orphans {
-			err := os.Remove(orphan)
-			if err != nil {
-				log.Error("factory reset: remove temp file", "path", orphan, "err", err)
-			}
+		dir := filepath.Dir(path)
+		if dirs[dir] {
+			continue
+		}
+
+		dirs[dir] = true
+
+		err := atomicjson.CleanTemps(dir)
+		if err != nil {
+			log.Error("factory reset: remove temp files", "dir", dir, "err", err)
+		}
+	}
+}
+
+// atomicStateDirs are the directories on /mnt/nv soundtapd writes with atomicjson: home, the
+// volume above it (wifi.conf and its companions), snapserver's kept state and the codec
+// script's backup (web's codecDir).
+func atomicStateDirs(home string) []string {
+	return []string{home, filepath.Dir(home), layoutFor(home).snapserverKeepDir, filepath.Join(home, "codec")}
+}
+
+// cleanAtomicTemps removes, at start and before anything writes, what writes a power cut
+// interrupted left in atomicStateDirs. An interrupted firmware upload's can be several
+// megabytes, on a volume of a few dozen.
+func cleanAtomicTemps(home string, log *slog.Logger) {
+	for _, dir := range atomicStateDirs(home) {
+		err := atomicjson.CleanTemps(dir)
+		if err != nil {
+			log.Warn("remove interrupted writes", "dir", dir, "err", err)
 		}
 	}
 }

@@ -583,6 +583,8 @@ func prepareHome(home string, log *slog.Logger) {
 		log.Warn("remove retired files", "err", err)
 	}
 
+	cleanAtomicTemps(home, log)
+
 	if devMode.Load() {
 		return // no boot watchdog to disarm on a computer
 	}

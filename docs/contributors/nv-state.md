@@ -20,6 +20,9 @@ The four JSON stores below (settings, presets, favorites, recent) open by one ru
 logged once at error level, so no save replaces a file that may still be intact; malformed
 JSON is moved aside before anything is written. The support bundle (`/api/debug`, "on-box
 stores") has a line per store, and a factory reset removes the `.corrupt` copies with the rest.
+A file soundtapd replaces atomically (`atomicjson`) is first written as a temporary
+`.<name>.tmp-<digits>` beside it and then renamed; a temporary file a power cut left behind is removed at the next start, before anything is
+written, from soundtapd's home, the volume root, `soundtap/snapserver` and `soundtap/codec`.
 Before 0.1.0, fixture files describe the current development format; the 0.1.0 tag freezes
 them ([ADR 0120](../decisions/0120-on-box-state-migrates.md)).
 
@@ -77,7 +80,7 @@ also decides whether a flash is attempted, so deleting it can cause another hard
 | --- | --- | --- | --- | --- |
 | `wifi.conf` | User | soundtapd: the Wi-Fi manager (`app/internal/wifi`) reads it and rewrites it when another saved network joined; written on setup, on adopting stock's network and on a factory reset | `SSID_B64=`, `PSK_B64=` (empty: open network), optional `PSK_HEX=` lines; optional `SECURITY=wep`, `PSK_B64` then holding the WEP key as typed, and `WEP_KEYIDX=` (1 to 3) for a WEP key at another index than 0 (ADR 0136; a file without them reads as before, its WEP key at index 0) | none |
 | `wifi.conf.good` | User | soundtapd's Wi-Fi manager | A copy of the last `wifi.conf` that joined | none |
-| `wifi.conf.known` | User | soundtapd's Wi-Fi manager; the API lists and forgets entries | Up to 5 lines, newest first: `SSID_B64 PSK_B64\|- PSK_HEX\|-`, then `wep` for a WEP network and, for a WEP key at another index than 0, that index (ADR 0136) | none |
+| `wifi.conf.known` | User | soundtapd's Wi-Fi manager; the API lists and forgets entries; written with every network stock saved on adopting stock's networks | Up to 5 lines, newest first: `SSID_B64 PSK_B64\|- PSK_HEX\|-`, then `wep` for a WEP network and, for a WEP key at another index than 0, that index (ADR 0136) | none |
 | `ir.map` | User, written by hand | soundtapd (`internal/hw/ir.go`) | `code = ACTION` lines, code decimal or `0x` hex, `#` comments | none |
 | `buttons.map` | User, written by hand | soundtapd (`internal/hw/keymap.go`) | `index = ACTION` lines, `#` comments | none |
 | `ntp-servers` | User, written by hand | `clock.sh` | NTP host names or addresses separated by white space, `#` comments. Asked after the DHCP lease's servers, instead of the default; a word that is not a name or an address is ignored. Absent or without a name: the default | none |

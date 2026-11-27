@@ -137,3 +137,71 @@ func TestWriteStreamReplacesOnlyOnSuccess(t *testing.T) {
 		t.Fatalf("content %q, mode %v, err %v", got, info.Mode(), err)
 	}
 }
+
+// TestCleanTemps holds that what a write cut short leaves behind goes, and nothing else: not
+// the files themselves, not other files whose names start with a dot.
+func TestCleanTemps(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	write := func(name string) string {
+		t.Helper()
+
+		path := filepath.Join(dir, name)
+
+		err := os.WriteFile(path, []byte("x"), 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		return path
+	}
+
+	// An orphan named the way WriteStream names its temporary file, by the same call.
+	orphan, err := os.CreateTemp(dir, ".wifi.conf.tmp-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_ = orphan.Close()
+
+	sub := filepath.Join(dir, ".dir.tmp-1")
+
+	err = os.Mkdir(sub, 0o700)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	nested := filepath.Join(sub, ".x.tmp-2")
+	_ = os.WriteFile(nested, nil, 0o600)
+
+	gone := []string{orphan.Name(), write(".presets.json.settings.tmp-123456"), write(".soundtapd.override.gz.tmp-7")}
+	kept := []string{
+		write("presets.json"), write("wifi.conf"), write(".sessions"), write(".hidden"),
+		write(".notes.tmp-draft"), write(".tmp-1"), write("plain.tmp-1"), write(".a.tmp-"), sub, nested,
+	}
+
+	err = atomicjson.CleanTemps(dir)
+	if err != nil {
+		t.Fatalf("CleanTemps: %v", err)
+	}
+
+	for _, path := range gone {
+		_, statErr := os.Stat(path)
+		if !errors.Is(statErr, os.ErrNotExist) {
+			t.Errorf("%s left behind: %v", filepath.Base(path), statErr)
+		}
+	}
+
+	for _, path := range kept {
+		_, statErr := os.Stat(path)
+		if statErr != nil {
+			t.Errorf("%s removed: %v", filepath.Base(path), statErr)
+		}
+	}
+
+	err = atomicjson.CleanTemps(filepath.Join(dir, "missing"))
+	if err != nil {
+		t.Errorf("CleanTemps of a missing directory: %v", err)
+	}
+}

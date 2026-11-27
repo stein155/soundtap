@@ -747,7 +747,7 @@ func (m *Manager) rememberJoined(ctx context.Context, sess *session, confPath st
 		}
 	}
 
-	err = remember(confPath+".known", rec)
+	err = Remember(confPath+".known", rec)
 	if err != nil {
 		m.log.Warn("could not remember the network", "err", err)
 	}

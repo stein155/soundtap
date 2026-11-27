@@ -5,6 +5,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -17,6 +18,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -38,6 +40,11 @@ const (
 
 // stockProfilesLimit bounds how much of stock's NetworkProfiles.xml is read.
 const stockProfilesLimit = 256 << 10
+
+// stockStampPlausible is 2016-01-01 in Unix seconds. Stock stamps lastConnected from the system
+// clock, and with no battery-backed clock a join at boot, before NTP, gets the build's time of
+// July 2015: a stamp before this date says nothing about when the network was last joined.
+const stockStampPlausible = 1451606400
 
 // Bounds of the ST20's take-over from stock's BCO. Stock's BCO app may still be starting,
 // or busy on its console, when the first look comes: a read that gets no reply or a garbled
@@ -73,9 +80,11 @@ type stockNetwork struct {
 	wepIndex               int
 }
 
-// adoptStockWifi turns the network stock was on into wifi.conf on the first boot after an
-// install from Bose's software, so the speaker joins the home network instead of opening
-// its setup AP. It runs before the Wi-Fi manager starts and reports whether it wrote
+// adoptStockWifi turns the networks stock saved into wifi.conf and wifi.conf.known on the
+// first boot after an install from Bose's software, so the speaker joins the home network
+// instead of opening its setup AP. Every network is taken, because stock's lastConnected
+// cannot tell which one the speaker was on (see stockStampPlausible): wpa_supplicant joins
+// whichever is in range. It runs before the Wi-Fi manager starts and reports whether it wrote
 // wifi.conf. The key file is removed either way.
 func adoptStockWifi(home, wifiConf string, log *slog.Logger) bool {
 	src := filepath.Join(home, stockWifiKeyName)
@@ -110,28 +119,72 @@ func adoptStockWifi(home, wifiConf string, log *slog.Logger) bool {
 	}
 	defer profiles.Close()
 
-	network, err := readStockNetwork(io.LimitReader(profiles, stockProfilesLimit),
+	networks, err := readStockNetworks(io.LimitReader(profiles, stockProfilesLimit),
 		key[:stockWifiKeyLen], key[stockWifiKeyLen:])
-	if err != nil {
+	if len(networks) == 0 {
 		log.Warn("stock wifi not taken over", "err", err)
 
 		return false
 	}
 
-	saveErr := saveStockNetwork(wifiConf, network)
+	if err != nil {
+		log.Warn("some stock networks not taken over", "err", err)
+	}
+
+	if len(networks) > wifi.KnownMax {
+		log.Warn("stock wifi: more networks saved than are kept", "dropped", len(networks)-wifi.KnownMax)
+		networks = networks[:wifi.KnownMax]
+	}
+
+	saveErr := saveStockNetworks(wifiConf, networks)
 	if saveErr != nil {
 		log.Warn("stock wifi save", "err", saveErr)
 
 		return false
 	}
 
-	log.Info("wifi taken over from stock", "ssid", network.ssid)
+	for _, network := range networks {
+		log.Info("wifi taken over from stock", "ssid", network.ssid)
+	}
 
 	return true
 }
 
+// saveStockNetworks writes networks, the first tried first, as the Wi-Fi manager reads them:
+// all of them in wifi.conf.known, then the first as wifi.conf. wifi.conf comes last because it
+// marks the take-over as done; a known list alone is not joined. Every network stays in the
+// known list, so one that does not join is still tried when another becomes wifi.conf.
+func saveStockNetworks(wifiConf string, networks []stockNetwork) error {
+	recs := make([]wifi.Record, 0, len(networks))
+	for _, network := range networks {
+		recs = append(recs, stockRecord(network))
+	}
+
+	err := wifi.Remember(wifiConf+".known", recs...)
+	if err != nil {
+		return fmt.Errorf("write wifi.conf.known: %w", err)
+	}
+
+	err = wifi.WriteConf(wifiConf, recs[0])
+	if err != nil {
+		return fmt.Errorf("write wifi.conf: %w", err)
+	}
+
+	return nil
+}
+
 // saveStockNetwork writes network as wifi.conf, the form the Wi-Fi manager reads.
 func saveStockNetwork(wifiConf string, network stockNetwork) error {
+	err := wifi.WriteConf(wifiConf, stockRecord(network))
+	if err != nil {
+		return fmt.Errorf("write wifi.conf: %w", err)
+	}
+
+	return nil
+}
+
+// stockRecord is network as the Wi-Fi manager stores it.
+func stockRecord(network stockNetwork) wifi.Record {
 	rec := wifi.Record{
 		SSIDB64:     base64.StdEncoding.EncodeToString([]byte(network.ssid)),
 		PSKB64:      base64.StdEncoding.EncodeToString([]byte(network.psk)),
@@ -144,12 +197,7 @@ func saveStockNetwork(wifiConf string, network stockNetwork) error {
 		rec.WEPKeyIndex = network.wepIndex
 	}
 
-	err := wifi.WriteConf(wifiConf, rec)
-	if err != nil {
-		return fmt.Errorf("write wifi.conf: %w", err)
-	}
-
-	return nil
+	return rec
 }
 
 // adoptStockBCOWifi is adoptStockWifi for the ST20, where Bose's software keeps the network
@@ -235,7 +283,8 @@ func saveStockBCOProfile(wifiConf string, profile bco.StockProfile, try int, log
 	log.Info("wifi taken over from stock's BCO", "ssid", profile.SSID, "try", try)
 }
 
-// readStockNetwork picks the network stock joined last from its NetworkProfiles.xml:
+// readStockNetworks reads every network stock saved in its NetworkProfiles.xml, in the order
+// to try them (stockProfileOrder):
 //
 //	<WiFiProfiles><profile SSID="…" security="wpa_or_wpa2" passphrase="…" encrypted="true"
 //	  lastConnected="…" priority="…" /></WiFiProfiles>
@@ -245,26 +294,52 @@ func saveStockBCOProfile(wifiConf string, profile bco.StockProfile, try int, log
 // as hex digits stock's own scripts write (set-wifi.sh, override-wifi-profile): taken as it
 // is when it is a WEP key, else decrypted like a passphrase when the profile is encrypted
 // (ADR 0136).
-func readStockNetwork(src io.Reader, key, initVector []byte) (stockNetwork, error) {
+//
+// A profile that cannot be taken is left out and its reason joined into the error, so the
+// error can come with networks: only when none is returned was nothing taken.
+func readStockNetworks(src io.Reader, key, initVector []byte) ([]stockNetwork, error) {
 	var doc stockWifiProfiles
 
 	err := xml.NewDecoder(src).Decode(&doc)
 	if err != nil {
-		return stockNetwork{}, fmt.Errorf("stock's network profiles: %w", err)
+		return nil, fmt.Errorf("stock's network profiles: %w", err)
 	}
 
-	profile, ok := lastJoinedProfile(doc.Profiles)
-	if !ok {
-		return stockNetwork{}, errStockNoNetwork
+	ordered := stockProfileOrder(doc.Profiles)
+	if len(ordered) == 0 {
+		return nil, errStockNoNetwork
 	}
 
+	var (
+		networks []stockNetwork
+		skipped  []error
+	)
+
+	for index := range ordered {
+		network, err := readStockProfile(&ordered[index], key, initVector)
+		if err != nil {
+			skipped = append(skipped, fmt.Errorf("%q: %w", ordered[index].SSID, err))
+
+			continue
+		}
+
+		networks = append(networks, network)
+	}
+
+	return networks, errors.Join(skipped...)
+}
+
+// readStockProfile is one stock profile's network.
+func readStockProfile(profile *stockWifiProfile, key, initVector []byte) (stockNetwork, error) {
 	if strings.EqualFold(profile.Security, "open") {
 		return stockNetwork{ssid: profile.SSID, psk: "", hexPSK: "", wep: "", wepIndex: 0}, nil
 	}
 
 	if strings.EqualFold(profile.Security, "wep") {
-		return stockWEPNetwork(&profile, key, initVector)
+		return stockWEPNetwork(profile, key, initVector)
 	}
+
+	var err error
 
 	pass := profile.Passphrase
 	if profile.Encrypted == "true" || profile.Encrypted == "1" {
@@ -319,28 +394,37 @@ type stockWifiProfile struct {
 	LastConnected string `xml:"lastConnected,attr"`
 }
 
-// lastJoinedProfile is the network stock joined last; false without one.
-func lastJoinedProfile(profiles []stockWifiProfile) (stockWifiProfile, bool) {
-	best, bestAt := -1, uint64(0)
+// stockProfileOrder is every profile with a network name in the order to try them: those with
+// a plausible lastConnected (stockStampPlausible) newest first, then the rest as stock lists
+// them, their age unknown. A name saved twice counts once, at its first place in that order.
+func stockProfileOrder(profiles []stockWifiProfile) []stockWifiProfile {
+	stamp := func(profile *stockWifiProfile) uint64 {
+		at, err := strconv.ParseUint(profile.LastConnected, 10, 64)
+		if err != nil || at < stockStampPlausible {
+			return 0
+		}
 
-	for index, profile := range profiles {
-		if profile.SSID == "" {
+		return at
+	}
+
+	sorted := slices.Clone(profiles)
+	slices.SortStableFunc(sorted, func(a, b stockWifiProfile) int {
+		return cmp.Compare(stamp(&b), stamp(&a))
+	})
+
+	ordered := make([]stockWifiProfile, 0, len(sorted))
+	seen := map[string]bool{}
+
+	for _, profile := range sorted {
+		if profile.SSID == "" || seen[profile.SSID] {
 			continue
 		}
 
-		at, _ := strconv.ParseUint(profile.LastConnected, 10, 64)
-		if best < 0 || at > bestAt {
-			best, bestAt = index, at
-		}
+		seen[profile.SSID] = true
+		ordered = append(ordered, profile)
 	}
 
-	if best < 0 {
-		var none stockWifiProfile
-
-		return none, false
-	}
-
-	return profiles[best], true
+	return ordered
 }
 
 // decryptStockPassphrase undoes stock's base64 and AES-256-CBC. A wrong key shows up as bad

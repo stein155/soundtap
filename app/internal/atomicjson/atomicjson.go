@@ -14,12 +14,18 @@ package atomicjson
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
+
+// tempMark is what WriteStream puts between the target's name and the temporary file's
+// random digits: ".<name>.tmp-<digits>".
+const tempMark = ".tmp-"
 
 // Write marshals v as indented JSON and atomically replaces path with it, creating
 // path with the given file mode.
@@ -52,7 +58,7 @@ func WriteStream(path string, mode fs.FileMode, write func(io.Writer) error) err
 	// fsync the data before the rename, else power loss (a speaker's normal
 	// off-switch) can journal the rename ahead of the data blocks and leave a
 	// zero-length/truncated target — the very corruption this package prevents.
-	file, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	file, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+tempMark+"*")
 	if err != nil {
 		return fmt.Errorf("create temporary file for %s: %w", path, err)
 	}
@@ -87,6 +93,63 @@ func WriteStream(path string, mode fs.FileMode, write func(io.Writer) error) err
 	syncDir(filepath.Dir(path))
 
 	return nil
+}
+
+// CleanTemps removes from dir the temporary files a write cut short left behind: a power cut
+// before the rename leaves one, and nothing else ever removes it. It is called before
+// anything writes in dir, since it cannot tell such a file from one a write still holds open.
+// Only regular files named as WriteStream names them go; dir's subdirectories are not
+// looked into. A missing dir has nothing to clean.
+func CleanTemps(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("clean temporary files: %w", err)
+	}
+
+	var errs []error
+
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() || !isTempName(entry.Name()) {
+			continue
+		}
+
+		err := os.Remove(filepath.Join(dir, entry.Name()))
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			errs = append(errs, err)
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("clean temporary files: %w", errors.Join(errs...))
+	}
+
+	return nil
+}
+
+// isTempName reports a name WriteStream gives its temporary file: a dot, the target's name,
+// tempMark and os.CreateTemp's random digits.
+func isTempName(name string) bool {
+	cut := strings.LastIndex(name, tempMark)
+	if cut < 2 || name[0] != '.' {
+		return false
+	}
+
+	digits := name[cut+len(tempMark):]
+	if digits == "" {
+		return false
+	}
+
+	for _, c := range digits {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+
+	return true
 }
 
 func syncDir(dir string) {

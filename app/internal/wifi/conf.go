@@ -226,15 +226,28 @@ func parseWEPKeyIndex(value string) int {
 	return index
 }
 
-// remember puts r in front of the known list in path, drops an older line for the same
-// network and keeps the newest KnownMax.
-func remember(path string, rec Record) error {
-	b, _ := os.ReadFile(path) // no list yet: rec starts one
-	lines := []string{rec.Line()}
+// Remember puts recs, in their order, in front of the known list in path: the first is the
+// newest. A later record or an older line for a network already listed is dropped, and the
+// newest KnownMax are kept.
+func Remember(path string, recs ...Record) error {
+	old, _ := os.ReadFile(path) // no list yet: recs start one
+	lines := make([]string, 0, len(recs)+KnownMax)
+	seen := map[string]bool{}
 
-	for line := range strings.Lines(string(b)) {
+	for _, rec := range recs {
+		if seen[rec.SSIDB64] {
+			continue
+		}
+
+		seen[rec.SSIDB64] = true
+		lines = append(lines, rec.Line())
+	}
+
+	for line := range strings.Lines(string(old)) {
 		line = strings.TrimRight(line, "\n")
-		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, rec.SSIDB64+" ") {
+
+		ssid, _, _ := strings.Cut(strings.TrimSpace(line), " ")
+		if ssid == "" || seen[ssid] {
 			continue
 		}
 

@@ -15,11 +15,13 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stein155/soundtap/app/internal/bco"
+	"github.com/stein155/soundtap/app/internal/wifi"
 )
 
 // A made-up key and IV of the same shape as stock's. Stock's own never appear in this repo:
@@ -59,7 +61,7 @@ func network(ssid, psk, hexPSK string) stockNetwork {
 	return stockNetwork{ssid: ssid, psk: psk, hexPSK: hexPSK, wep: "", wepIndex: 0}
 }
 
-func TestReadStockNetwork(t *testing.T) {
+func TestReadStockNetworks(t *testing.T) {
 	t.Parallel()
 
 	const hexKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -108,22 +110,9 @@ func TestReadStockNetwork(t *testing.T) {
 			want: network("Café", "wachtwoord€", ""), bad: false,
 		},
 		{
-			name: "the network joined last wins",
-			xml: profiles(
-				`<profile SSID="Oud" `+wpa+` passphrase="`+enc("oudoudoud")+
-					`" encrypted="true" lastConnected="100" />`,
-				`<profile SSID="Nieuw" `+wpa+` passphrase="`+enc("nieuwnieuw")+
-					`" encrypted="true" lastConnected="200" />`,
-				`<profile SSID="Nooit" `+wpa+` passphrase="`+enc("nooitnooit")+`" encrypted="true" />`),
-			want: network("Nieuw", "nieuwnieuw", ""), bad: false,
-		},
-		{
-			name: "wep joined last: its encrypted key (ADR 0136)",
-			xml: profiles(
-				`<profile SSID="Oud" security="wep" wepKey="`+enc("1234567890")+
-					`" encrypted="true" lastConnected="300" />`,
-				`<profile SSID="Thuis" `+wpa+` passphrase="`+enc("geheim123")+
-					`" encrypted="true" lastConnected="1" />`),
+			name: "wep with an encrypted key (ADR 0136)",
+			xml: profiles(`<profile SSID="Oud" security="wep" wepKey="` + enc("1234567890") +
+				`" encrypted="true" lastConnected="300" />`),
 			want: stockNetwork{ssid: "Oud", psk: "", hexPSK: "", wep: "1234567890", wepIndex: 0}, bad: false,
 		},
 		{
@@ -158,16 +147,94 @@ func TestReadStockNetwork(t *testing.T) {
 		{name: "no profiles", bad: true, want: none, xml: profiles()},
 		{name: "not xml", bad: true, want: none, xml: "Thuis geheim123"},
 	} {
-		got, err := readStockNetwork(strings.NewReader(test.xml), testWifiKey(), testWifiIV())
+		got, err := readStockNetworks(strings.NewReader(test.xml), testWifiKey(), testWifiIV())
 		if test.bad {
-			if err == nil {
+			if err == nil || len(got) != 0 {
 				t.Errorf("%s: read %+v, want an error", test.name, got)
 			}
 
 			continue
 		}
 
-		if err != nil || got != test.want {
+		if err != nil || len(got) != 1 || got[0] != test.want {
+			t.Errorf("%s: got %+v %v, want %+v", test.name, got, err, test.want)
+		}
+	}
+}
+
+// TestReadStockNetworksTakesEvery holds that every network stock saved is taken, in the order
+// to try them. Stock stamps lastConnected from a clock that NTP may not have set yet, so a join
+// at boot gets July 2015: such a stamp cannot rank a network below one with a real date.
+func TestReadStockNetworksTakesEvery(t *testing.T) {
+	t.Parallel()
+
+	enc := func(pass string) string { return encryptStock(t, testWifiKey(), testWifiIV(), pass) }
+	wpa := func(ssid, pass, stamp string) string {
+		profile := `<profile SSID="` + ssid + `" security="wpa_or_wpa2" passphrase="` + enc(pass) + `" encrypted="true"`
+		if stamp != "" {
+			profile += ` lastConnected="` + stamp + `"`
+		}
+
+		return profile + " />"
+	}
+
+	for _, test := range []struct {
+		name, xml string
+		want      []stockNetwork
+		skipped   bool
+	}{
+		{
+			// The field report: the network the speaker was on was joined at boot, before NTP.
+			name:    "a pre-2016 stamp is taken as well, after the dated ones",
+			xml:     profiles(wpa("Nieuw", "nieuwnieuw", "1436213725"), wpa("Oud", "oudoudoud", "1748502923")),
+			want:    []stockNetwork{network("Oud", "oudoudoud", ""), network("Nieuw", "nieuwnieuw", "")},
+			skipped: false,
+		},
+		{
+			name: "dated ones newest first, then the rest as stock lists them",
+			xml: profiles(
+				wpa("Nooit", "nooitnooit", ""),
+				wpa("Boot", "bootboot", "1436213720"),
+				wpa("Vorig jaar", "vorigjaar", "1735689600"),
+				wpa("Rommel", "rommelrommel", "gisteren"),
+				wpa("Dit jaar", "ditjaar1", "1767225600")),
+			want: []stockNetwork{
+				network("Dit jaar", "ditjaar1", ""), network("Vorig jaar", "vorigjaar", ""),
+				network("Nooit", "nooitnooit", ""), network("Boot", "bootboot", ""),
+				network("Rommel", "rommelrommel", ""),
+			},
+			skipped: false,
+		},
+		{
+			name: "every kind: wep, open and wpa",
+			xml: profiles(
+				`<profile SSID="Oud" security="wep" wepKey="`+enc("1234567890")+`" encrypted="true" />`,
+				`<profile SSID="Gast" security="open" lastConnected="1748502923" />`,
+				wpa("Thuis", "geheim123", "1")),
+			want: []stockNetwork{
+				network("Gast", "", ""),
+				{ssid: "Oud", psk: "", hexPSK: "", wep: "1234567890", wepIndex: 0},
+				network("Thuis", "geheim123", ""),
+			},
+			skipped: false,
+		},
+		{
+			name: "a profile that cannot be taken is left out, the others are not",
+			xml: profiles(wpa("Kort", "kort", "1748502923"), `<profile SSID="" security="open" />`,
+				wpa("Thuis", "geheim123", "")),
+			want:    []stockNetwork{network("Thuis", "geheim123", "")},
+			skipped: true,
+		},
+		{
+			name: "a name saved twice counts once, the newer",
+			xml: profiles(wpa("Thuis", "oudwachtwoord", "1436213725"),
+				wpa("Thuis", "nieuwwachtwoord", "1748502923")),
+			want:    []stockNetwork{network("Thuis", "nieuwwachtwoord", "")},
+			skipped: false,
+		},
+	} {
+		got, err := readStockNetworks(strings.NewReader(test.xml), testWifiKey(), testWifiIV())
+		if !slices.Equal(got, test.want) || (err != nil) != test.skipped {
 			t.Errorf("%s: got %+v %v, want %+v", test.name, got, err, test.want)
 		}
 	}
@@ -227,6 +294,12 @@ func TestAdoptStockWifi(t *testing.T) {
 		t.Fatal("the key file was left behind")
 	}
 
+	// Only the one network stock saved is in the known list.
+	known, _ := os.ReadFile(conf + ".known")
+	if string(known) != "VGh1aXM= Z2VoZWltMTIz -\n" {
+		t.Fatalf("wifi.conf.known = %q", known)
+	}
+
 	// A speaker that already has a network keeps it, and the key file still goes.
 	_ = os.WriteFile(keyPath, key, 0o600)
 
@@ -241,6 +314,76 @@ func TestAdoptStockWifi(t *testing.T) {
 	_, err = os.Stat(keyPath)
 	if !os.IsNotExist(err) {
 		t.Fatal("key file left behind when wifi.conf existed")
+	}
+}
+
+// TestAdoptStockWifiEveryNetwork is the field report: an ST10 with a few saved networks, the
+// one it was on joined at boot with a 2015 stamp. Every network goes into wifi.conf.known, so
+// wpa_supplicant joins the one in range; wifi.conf is the one with the newest real date.
+//
+//nolint:paralleltest // swaps package variables other tests read: stockProfilesPath
+func TestAdoptStockWifiEveryNetwork(t *testing.T) {
+	log := slog.New(slog.DiscardHandler)
+	volume := t.TempDir()
+	home := filepath.Join(volume, "soundtap")
+	_ = os.MkdirAll(home, 0o755)
+	conf := filepath.Join(volume, "wifi.conf")
+	old := stockProfilesPath
+
+	t.Cleanup(func() { stockProfilesPath = old })
+
+	stockProfilesPath = filepath.Join(volume, "NetworkProfiles.xml")
+	enc := func(pass string) string { return encryptStock(t, testWifiKey(), testWifiIV(), pass) }
+	wpa := func(ssid, pass, stamp string) string {
+		return `<profile SSID="` + ssid + `" security="wpa_or_wpa2" passphrase="` + enc(pass) +
+			`" encrypted="true" lastConnected="` + stamp + `" />`
+	}
+	b64 := func(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
+	adopt := func(entries ...string) []wifi.Record {
+		t.Helper()
+
+		_ = os.Remove(conf)
+		_ = os.Remove(conf + ".known")
+		_ = os.WriteFile(stockProfilesPath, []byte(profiles(entries...)), 0o644)
+		_ = os.WriteFile(filepath.Join(home, stockWifiKeyName), slices.Concat(testWifiKey(), testWifiIV()), 0o600)
+
+		if !adoptStockWifi(home, conf, log) {
+			t.Fatal("stock networks not adopted")
+		}
+
+		known, _ := os.ReadFile(conf + ".known")
+
+		st, err := os.Stat(conf + ".known")
+		if err != nil || st.Mode().Perm() != 0o600 {
+			t.Fatalf("wifi.conf.known: %v", err)
+		}
+
+		return wifi.ParseKnown(known)
+	}
+
+	known := adopt(wpa("Oud", "oudoudoud", "1748502923"), wpa("Nieuw", "nieuwnieuw", "1436213725"))
+
+	got, _ := os.ReadFile(conf)
+	if string(got) != "SSID_B64="+b64("Oud")+"\nPSK_B64="+b64("oudoudoud")+"\n" {
+		t.Fatalf("wifi.conf = %q", got)
+	}
+
+	want := []wifi.Record{
+		wifi.NewRecord("Oud", "", "oudoudoud"), wifi.NewRecord("Nieuw", "", "nieuwnieuw"),
+	}
+	if !slices.Equal(known, want) {
+		t.Fatalf("wifi.conf.known = %+v, want %+v", known, want)
+	}
+
+	// More networks than the Wi-Fi manager keeps: the first wifi.KnownMax in the order to try.
+	entries := make([]string, 0, wifi.KnownMax+2)
+	for n := range wifi.KnownMax + 2 {
+		entries = append(entries, wpa(fmt.Sprintf("Net %d", n), "wachtwoord", strconv.Itoa(1748502923+n)))
+	}
+
+	known = adopt(entries...)
+	if len(known) != wifi.KnownMax || known[0].SSIDB64 != b64(fmt.Sprintf("Net %d", wifi.KnownMax+1)) {
+		t.Fatalf("wifi.conf.known = %+v", known)
 	}
 }
 

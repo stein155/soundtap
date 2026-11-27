@@ -68,9 +68,15 @@ For the Wi-Fi, the installer runs under stock, so it reads the key and IV from t
 that is running: of all its runs of 12 or more ASCII digits there must be exactly two, one of 32
 and one of 16; any other pattern gives nothing. It leaves them in
 `/mnt/nv/soundtap/stock-wifi-key` (0600) only when SoundTap has no `wifi.conf` yet and stock saved
-a profile. On the first boot soundtapd decrypts the profile stock joined last (`lastConnected`)
-with Go's own AES, writes `wifi.conf`, deletes the key file and restarts Wi-Fi through its
-Wi-Fi manager. WPA, WEP and open networks are taken
+a profile. On the first boot soundtapd decrypts every profile stock saved with Go's own AES,
+writes them all to `wifi.conf.known` and the first to `wifi.conf`, deletes the key file and
+restarts Wi-Fi through its Wi-Fi manager, so wpa_supplicant joins whichever network is in range.
+Stock's `lastConnected` cannot pick the one network the speaker was on: stock stamps it from a
+clock without a battery, so a join at boot, before NTP, is dated July 2015 and loses against an
+older join with a real date. The order is therefore only the order of trying: profiles stamped
+2016 or later newest first, then the rest in stock's order; a profile that cannot be decrypted
+is left out and the others are still taken, up to the 5 networks `wifi.conf.known` keeps.
+WPA, WEP and open networks are taken
 ([ADR 0136](0136-every-network-stock-joined-and-wpa3.md)): a WEP profile's `wepKey`, as stock's
 own scripts write it, or decrypted when the profile is encrypted.
 
