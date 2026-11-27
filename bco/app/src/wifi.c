@@ -1103,11 +1103,14 @@ static struct client {
     signed char rssi;           /* and its level */
     struct hold h;
     unsigned seen, rx_data, rx_null, tx_ok, tx_failed;
+    unsigned retries, repeats, seq; /* frames with Retry, repeated sequence numbers, the last one */
 } cl[WIFI_AP_CLIENTS];
 static struct hold ap_gh;              /* group frames held */
 static unsigned char ap_body[WIFI_AP_BODY_MAX];
 static unsigned ap_len, ap_ready, ap_deadline, ap_probes, ap_rx;
-static unsigned ap_bint, ap_next, ap_beacons; /* beacon interval (TU), next beacon due (ms), sent */
+static unsigned ap_bint, ap_beacons;   /* beacon interval (TU), beacons sent */
+static unsigned ap_t0;                 /* ms when the BSS came up: its TSF 0 */
+static unsigned long long ap_tbtt;     /* TSF (us) of the next beacon, a multiple of the interval */
 static unsigned ap_tim;                /* the TIM's offset in ap_body, 0 if it has none */
 static unsigned ap_first, ap_hdrop;    /* ms from AP_START to the first beacon; held frames lost */
 static const unsigned char ap_mrates[8] = {2, 2, 2, 2, 2, 2, 2, 2}; /* 1 Mb/s: every client hears it */
@@ -1153,6 +1156,7 @@ static void ap_drop(struct client *c)
     c->state = c->dozing = 0;
     c->h.n = 0;
     c->rx_data = c->rx_null = c->tx_ok = c->tx_failed = 0;
+    c->retries = c->repeats = c->seq = 0;
 }
 
 /* to a client (its peer slot) or, with c = 0, to every client */
@@ -1212,18 +1216,25 @@ static struct client *ap_client(const volatile unsigned char *mac, int add)
     return old;
 }
 
-/* The timestamp field of the AP's beacons and probe responses, in microseconds since the AP came
- * up. The core keeps no TSF for us; a client only needs it to count up. */
-static void ap_stamp(unsigned char *b)
+/* The timestamp field of the AP's beacons and probe responses: its TSF, in microseconds since
+ * the BSS came up. The core keeps no TSF for us. */
+static void ap_stamp(unsigned char *b, unsigned long long us)
 {
-    unsigned long long us = (unsigned long long)(now - ap_deadline + 1000u) * 1000u;
     for (unsigned i = 0; i < 8; i++)
         b[i] = (unsigned char)(us >> 8 * i);
 }
 
-/* One beacon: hostapd's body (with its TIM) behind a broadcast header, at 1 Mb/s so every client
- * hears it. The core has no TBTT timer of its own (bco/wild/fw scan.c join), so ap_step sends one
- * every beacon interval from the main loop. */
+/* The TSF now, to the millisecond, and the ms at which the TSF reaches us. */
+static unsigned long long ap_tsf(void)
+{
+    return (unsigned long long)(now - ap_t0) * 1000u;
+}
+
+static unsigned ap_ms(unsigned long long us)
+{
+    return ap_t0 + (unsigned)((us + 999u) / 1000u);
+}
+
 /* A frame from the SCM held in row q (a client's index, or WIFI_AP_CLIENTS for group frames). */
 static void ap_hold(unsigned q, struct hold *h, const unsigned char *f, unsigned n)
 {
@@ -1278,7 +1289,7 @@ static void ap_beacon(void)
 {
     static unsigned char b[WIFI_AP_BODY_MAX];
     copy(b, ap_body, ap_len);
-    ap_stamp(b);
+    ap_stamp(b, ap_tbtt);
     if (ap_tim) {
         unsigned pvb = 0;
         for (unsigned i = 0; i < WIFI_AP_CLIENTS; i++)
@@ -1321,7 +1332,7 @@ static void ap_probe_rsp(const volatile unsigned char *sa, const volatile unsign
             copy(r + k, ap_body + o, l), k += l;
         o += l;
     }
-    ap_stamp(r);
+    ap_stamp(r, ap_tsf());
     ap_send(0, 0x50, to, own, ap_mrates, 0, r, k);
 }
 
@@ -1400,6 +1411,12 @@ static void rx_ap(const volatile unsigned char *b, unsigned len)
         !(c = ap_client(h + 10, 0)) || c->state != 2)
         return;
     c->seen = now, c->rssi = (signed char)b[0x94 + 4], c->rate = b[0x94 + 6];
+    unsigned seq = le16(h + 22);
+    if (fc & 0x0800)
+        c->retries++;
+    if (seq >> 4 == c->seq >> 4 && (c->rx_data || c->rx_null))
+        c->repeats++;
+    c->seq = seq;
     if (sub & 0x40) {
         c->rx_null++;
     } else {
@@ -2432,6 +2449,7 @@ unsigned wifi_ap_client_info(struct wifi_ap_client o[WIFI_AP_CLIENTS])
         o[n].dozing = c->dozing, o[n].held = c->h.n, o[n].rssi = c->rssi, o[n].rate = c->rate;
         o[n].idle_ms = now - c->seen, o[n].rx_data = c->rx_data, o[n].rx_null = c->rx_null;
         o[n].tx_ok = c->tx_ok, o[n].tx_failed = c->tx_failed;
+        o[n].retries = c->retries, o[n].repeats = c->repeats, o[n].seq = c->seq;
         n++;
     }
     return n;
@@ -2447,7 +2465,7 @@ static void ap_step(void)
             return; /* ring full: the next poll tries again */
         DOORBELL();
         ap_ready = 1;
-        ap_next = now;
+        ap_t0 = now, ap_tbtt = 0;
     }
     /* what is still held for a client that woke up, and group frames once nobody dozes, go as
      * transmit buffers free up */
@@ -2456,12 +2474,16 @@ static void ap_step(void)
             ap_release(i, &cl[i].h, &cl[i], AP_HOLD);
     if (ap_gh.n && !ap_anyone_dozing())
         ap_release(WIFI_AP_CLIENTS, &ap_gh, 0, AP_HOLD);
-    /* one beacon per interval (1 TU = 1.024 ms); a late poll sends one, not a burst */
-    if (due(ap_next)) {
+    /* One beacon at each target beacon transmission time: a TSF that is a multiple of the
+     * interval (1 TU = 1024 us), stamped with that TSF. A dozing phone wakes at those times to
+     * hear it. Before, beacons went every 102 ms instead of 102.4 and carried the ms clock, so
+     * they drifted 0.4 ms a beacon against the times a phone wakes at (it missed most of them).
+     * A late poll sends one, not a burst: the missed times are skipped. */
+    if (due(ap_ms(ap_tbtt))) {
         ap_beacon();
-        ap_next += ap_bint + ap_bint * 24 / 1000;
-        if (due(ap_next))
-            ap_next = now + ap_bint;
+        do
+            ap_tbtt += ap_bint * 1024ull;
+        while (due(ap_ms(ap_tbtt)));
     }
 }
 

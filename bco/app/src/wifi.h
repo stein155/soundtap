@@ -143,8 +143,9 @@ void wifi_ap_counters(unsigned c[WIFI_AP_COUNTERS]);
 void wifi_ap_diag(unsigned d[WIFI_AP_DIAG]);
 /* More of the core's ap_mode counters, sent after the clients: frames to our address with a bad
  * FCS and the last one's {rate index, level, frame control}, a client's frames with a body and
- * the last one's, and those that found the core's receive queue full. */
-#define WIFI_AP_EXTRA 5u
+ * the last one's, those that found the core's receive queue full, and the ACKs the core sent and
+ * the last one's {rate class, received rate index, frame control}. */
+#define WIFI_AP_EXTRA 7u
 void wifi_ap_extra(unsigned d[WIFI_AP_EXTRA]);
 /* One associated client heard within WIFI_AP_GONE_MS: dozing (power-management bit set), frames
  * held for it, the level (dBm) and rate code (500 kb/s units) of its last frame, ms since it was
@@ -156,6 +157,9 @@ struct wifi_ap_client {
     signed char rssi;
     unsigned char rate;
     unsigned idle_ms, rx_data, rx_null, tx_ok, tx_failed;
+    /* its frames with the Retry bit (it missed our ACK to the first try), those that repeat the
+     * sequence number of the frame before (the same frame again), and its last sequence control */
+    unsigned retries, repeats, seq;
 };
 unsigned wifi_ap_client_info(struct wifi_ap_client o[WIFI_AP_CLIENTS]);
 

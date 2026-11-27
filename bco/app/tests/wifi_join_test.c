@@ -195,11 +195,30 @@ static void access_point(void)
     now += 53;
     ap_step();
     assert(ap_beacons == 2);                                   /* 100 TU = 102.4 ms */
+    f = last_frame(), d = f + 8, b = d + 0xc4;
+    assert(b[0] == (102400 & 0xff) && b[1] == (102400 >> 8 & 0xff) && b[2] == 102400 >> 16 && !b[3]);
+    /* the target times stay multiples of 102.4 ms: the 11th beacon is due at 1024 ms, not 1020 */
+    for (unsigned k = 3; k <= 10; k++) {
+        now = ap_t0 + (k - 1) * 1024 / 10 + 1;
+        tx_frames(); /* the test never reclaims a transmit buffer */
+        ap_step();
+    }
+    assert(ap_beacons == 10 && ap_tbtt == 10 * 102400ull);
+    now = ap_t0 + 1023;
+    ap_step();
+    assert(ap_beacons == 10);
+    now = ap_t0 + 1024;
+    tx_frames();
+    ap_step();
+    assert(ap_beacons == 11);
+    f = last_frame(), d = f + 8, b = d + 0xc4;
+    assert((b[0] | b[1] << 8 | b[2] << 16) == 1024000);        /* stamped with its target time */
     now += 5000;
+    tx_frames();
     ap_step();
-    assert(ap_beacons == 3);                                   /* late: one beacon, not a burst */
+    assert(ap_beacons == 12);                                  /* late: one beacon, not a burst */
     ap_step();
-    assert(ap_beacons == 3);
+    assert(ap_beacons == 12 && ap_tbtt % 102400 == 0);
 
     /* a wildcard probe request: a probe response to the phone, the body without the TIM */
     unsigned char pq[] = {0, 0, 1, 2, 0x82, 0x84};
@@ -418,6 +437,14 @@ static void ap_data(void)
     assert(scm_count == 1 && scm_ch == BCOLINK_CH_WIFI && scm_n == 14 + 28);
     assert(!memcmp(scm, ap_bcast, 6) && !memcmp(scm + 6, phone, 6) && scm[12] == 0x08 && scm[13] == 0);
     assert(c->rx_data == 1 && !c->dozing && c->rssi == -41 && c->rate == 0x6c);
+    /* the same frame again, with Retry: it missed our ACK */
+    df[0xad] = 0x09, df[0xac + 22] = 0x50, df[0xac + 23] = 0x01;
+    c->seq = 0x150;
+    rx_ap(df, 0xcc + 8 + 28);
+    assert(c->retries == 1 && c->repeats == 1 && c->seq == 0x150 && c->rx_data == 2);
+    df[0xad] = 0x01, df[0xac + 22] = 0x60;
+    rx_ap(df, 0xcc + 8 + 28);
+    assert(c->retries == 1 && c->repeats == 1 && c->seq == 0x160);
 
     /* the offer, unicast to it: fromDS, A1 = phone, A2 = BSSID = A3 = us, its peer slot */
     static unsigned char pkt[14 + 300];
@@ -458,7 +485,7 @@ static void ap_data(void)
     pkt[14] = 0x77;
     assert(radio_tx_eth(pkt, sizeof pkt) == 0 && wifi_tx_frames == before && ap_gh.n == 1);
     /* the beacon: its AID bit, the group bit; the group frame right behind it */
-    now = ap_next;
+    now = ap_ms(ap_tbtt);
     ap_step();
     assert(wifi_tx_frames == before + 2 && ap_gh.n == 0);
     const unsigned char *bcn = (const unsigned char *)(uintptr_t)txfbuf[txnfree + 1] + 8, *g = last_frame() + 8;
@@ -497,8 +524,9 @@ static void ap_data(void)
     now += 40;
     c->seen = now - 40;
     assert(wifi_ap_client_info(info) == 1 && !memcmp(info[0].mac, phone, 6) && !info[0].dozing &&
-           info[0].held == 0 && info[0].idle_ms == 40 && info[0].rx_data == 1 && info[0].rx_null == 2 &&
-           info[0].tx_ok == 1 && info[0].tx_failed == 1);
+           info[0].held == 0 && info[0].idle_ms == 40 && info[0].rx_data == 3 && info[0].rx_null == 2 &&
+           info[0].tx_ok == 1 && info[0].tx_failed == 1 && info[0].retries == 1 &&
+           info[0].repeats == 2); /* the two null-data frames above both carry sequence 0 */
     volatile unsigned *corerec = (volatile unsigned *)(uintptr_t)(0x30000000u + 0x100);
     corerec[CORE_RC_APIN] = 9, corerec[CORE_RC_APIN + 1] = 4, corerec[CORE_RC_APIN + 2] = 8;
     MB16(-8) = 0x100 >> 2;

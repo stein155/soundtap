@@ -104,6 +104,7 @@ unsigned wifi_ap_client_info(struct wifi_ap_client o[WIFI_AP_CLIENTS])
     memcpy(o[0].mac, "\x02\x00\x00\x00\x00\x77", 6);
     o[0].dozing = 1, o[0].held = 2, o[0].rssi = -45, o[0].rate = 0x6c;
     o[0].idle_ms = 250, o[0].rx_data = 7, o[0].rx_null = 3, o[0].tx_ok = 5, o[0].tx_failed = 1;
+    o[0].retries = 0x31, o[0].repeats = 0x12, o[0].seq = 0x1230;
     return 1;
 }
 

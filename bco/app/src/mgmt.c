@@ -21,7 +21,7 @@ unsigned char mgmt_wifi_mac[6];
 volatile unsigned mgmt_uptime;
 
 _Static_assert(MGMT_AP_COUNTERS == WIFI_AP_COUNTERS && MGMT_AP_DIAG == WIFI_AP_DIAG &&
-               MGMT_AP_CLIENT == 4 + 5 * 4 && MGMT_AP_EXTRA == WIFI_AP_EXTRA,
+               MGMT_AP_CLIENT == 4 + 5 * 4 && MGMT_AP_EXTRA == WIFI_AP_EXTRA && MGMT_AP_CLIENT2 == 4 + 2 + 2,
                "AP_STATUS's layout (mgmt.h) is what case 8 writes");
 
 static unsigned char *put32(unsigned char *o, unsigned v)
@@ -301,6 +301,11 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
         unsigned x[WIFI_AP_EXTRA];
         wifi_ap_extra(x);
         for (unsigned i = 0; i < WIFI_AP_EXTRA; i++) o = put32(o, x[i]);
+        for (unsigned i = 0; i < c; i++) {
+            o = put32(o, cl[i].retries);
+            *o++ = cl[i].repeats, *o++ = cl[i].repeats >> 8;
+            *o++ = cl[i].seq, *o++ = cl[i].seq >> 8;
+        }
         break;
     }
     case 13: /* FLOW: on (1) or off (0); the reply is a credit report (mgmt.h) */

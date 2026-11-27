@@ -99,7 +99,10 @@ void mgmt_sae_lost(void);
 #define MGMT_AP_COUNTERS 8
 #define MGMT_AP_DIAG 5
 #define MGMT_AP_CLIENT 24
-#define MGMT_AP_EXTRA 5
+#define MGMT_AP_EXTRA 7
+/* and, per client in the same order, MGMT_AP_CLIENT2 bytes: le32 frames with the Retry bit, le16
+ * frames repeating the sequence number before, le16 the last sequence control */
+#define MGMT_AP_CLIENT2 8
 
 /* NV_INFO (17, BCOLINK_CAP_NVINFO): read-only. Reply: status (1 = no PersParam sector), count, then
  * count entries of key (FourCC as stored, le32), le16 value length, and the value's first 4 bytes
