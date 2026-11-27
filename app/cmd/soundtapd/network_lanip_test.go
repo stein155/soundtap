@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 SoundTap contributors
+
 package main
 
 import (
@@ -14,12 +17,18 @@ func TestLANIPv4WithoutDefaultRoute(t *testing.T) {
 
 	const live = net.FlagUp | net.FlagRunning
 
-	loopback := ifaceIPs{name: "lo", flags: live | net.FlagLoopback, ips: []net.IP{net.ParseIP("127.0.0.1")}}
+	loopback := ifaceIPs{
+		name: "lo", flags: live | net.FlagLoopback, ips: []net.IP{net.ParseIP("127.0.0.1")},
+	}
 	setupAP := ifaceIPs{name: "wlan1", flags: live, ips: []net.IP{net.ParseIP(wifi.APAddress)}}
 	gadget := ifaceIPs{name: "usb0", flags: live, ips: []net.IP{net.ParseIP("192.168.7.2")}}
 	noCarrier := ifaceIPs{name: "eth0", flags: net.FlagUp, ips: []net.IP{net.ParseIP("10.0.0.5")}}
-	linkLocal := ifaceIPs{name: "wlan0", flags: live, ips: []net.IP{net.ParseIP("169.254.10.2"), net.ParseIP("fe80::1")}}
-	joined := ifaceIPs{name: "wlan0", flags: live, ips: []net.IP{net.ParseIP("fe80::2"), net.ParseIP("192.168.8.20")}}
+	linkLocal := ifaceIPs{
+		name: "wlan0", flags: live, ips: []net.IP{net.ParseIP("169.254.10.2"), net.ParseIP("fe80::1")},
+	}
+	joined := ifaceIPs{
+		name: "wlan0", flags: live, ips: []net.IP{net.ParseIP("fe80::2"), net.ParseIP("192.168.8.20")},
+	}
 	wired := ifaceIPs{name: "eth0", flags: live, ips: []net.IP{net.ParseIP("192.168.8.30")}}
 
 	cases := []struct {

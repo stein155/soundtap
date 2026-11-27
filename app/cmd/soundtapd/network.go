@@ -270,6 +270,12 @@ func routedIPv4() string {
 	return ""
 }
 
+// The station and wired interfaces, the only ones lanIPv4 reads.
+const (
+	stationIface = "wlan0"
+	wiredIface   = "eth0"
+)
+
 // ifaceIPs is one interface's flags and addresses, as lanIPv4 reads them.
 type ifaceIPs struct {
 	name  string
@@ -291,7 +297,7 @@ func interfaceIPs() []ifaceIPs {
 			continue
 		}
 
-		entry := ifaceIPs{name: iface.Name, flags: iface.Flags}
+		entry := ifaceIPs{name: iface.Name, flags: iface.Flags, ips: nil}
 
 		for _, addr := range addrs {
 			if ipNet, ok := addr.(*net.IPNet); ok {
@@ -313,7 +319,7 @@ func lanIPv4(ifaces []ifaceIPs) string {
 	const live = net.FlagUp | net.FlagRunning
 
 	for _, iface := range ifaces {
-		if (iface.name != "wlan0" && iface.name != "eth0") || iface.flags&live != live {
+		if (iface.name != stationIface && iface.name != wiredIface) || iface.flags&live != live {
 			continue
 		}
 

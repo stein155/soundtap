@@ -224,9 +224,9 @@ var netSysDir = "/sys/class/net"
 // stock's deviceID; this order is its fallback when that cannot be read. The ST20 has
 // a wired port that stock itself reports, the others do not.
 func macDeviceID(speakerModel *model.Model) string {
-	order := []string{"wlan0", "eth0"}
+	order := []string{stationIface, wiredIface}
 	if speakerModel.Name == model.ST20 {
-		order = []string{"eth0", "wlan0"}
+		order = []string{wiredIface, stationIface}
 	}
 
 	for _, iface := range order {
