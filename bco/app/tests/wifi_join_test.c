@@ -43,17 +43,22 @@
 #undef memset
 #include "../src/wpa.c"
 
+/* What went to the SCM: the last frame, its channel and how many. */
+static unsigned char scm[14 + 1500];
+static unsigned scm_n, scm_ch, scm_count;
 void netcard_from_port(unsigned ch, const unsigned char *f, unsigned n)
 {
-    (void)ch, (void)f, (void)n;
+    scm_ch = ch, scm_n = n < sizeof scm ? n : sizeof scm, scm_count++;
+    memcpy(scm, f, scm_n);
 }
 
 __attribute__((constructor)) static void map_wreg(void)
 {
     static int probe;
-    /* the WiLD registers, and the UART page: a failed join says so in one line (board.h say) */
-    static const unsigned long at[2] = {(unsigned long)WREG, 0xb1001000ul};
-    for (int i = 0; i < 2; i++)
+    /* the WiLD registers, and the UART page: a failed join says so in one line (board.h say);
+     * the core's SRAM page with the mailbox (HOST_FLAG2) and its first page (a flight recorder) */
+    static const unsigned long at[4] = {(unsigned long)WREG, 0xb1001000ul, 0x3001f000ul, 0x30000000ul};
+    for (int i = 0; i < 4; i++)
         if (mmap((void *)at[i], 0x1000, PROT_READ | PROT_WRITE,
                  MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0) != (void *)at[i]) {
             perror("wifi_join: map the WiLD registers and the UART");
@@ -355,6 +360,149 @@ static void ap_full(void)
     printf("ok: a full access point refuses a new address instead of dropping a phone\n");
 }
 
+/* The setup AP's data path with a phone on it (ST20, 2026-11-27: the phone joined and got no
+ * address). Its DHCP request (toDS, to everybody) goes to the SCM as an Ethernet broadcast from
+ * the phone; the answer goes fromDS, unicast at its rates or to everybody. Once the phone dozes
+ * (power-management bit in a null-data frame) unicast frames for it wait, its AID bit shows in
+ * the beacon's TIM, a PS-Poll fetches one with More Data while more wait, and waking up fetches
+ * the rest; group frames wait for the next beacon, which carries the group bit, and follow it.
+ * AP_STATUS's counters see all of it. */
+static void ap_data(void)
+{
+    static const unsigned char body[] = {0, 0, 0, 0, 0, 0, 0, 0, 100, 0, 0x01, 0x00,
+                                         0, 8, 'S', 'o', 'u', 'n', 'd', 'T', 'a', 'p',
+                                         1, 4, 0x82, 0x84, 0x8b, 0x96,
+                                         3, 1, 6,
+                                         5, 4, 0, 2, 0, 0}; /* the TIM as soundtap_bco adds it */
+    static const unsigned char au[6] = {0, 0, 1, 0, 0, 0};
+    static const unsigned char as[] = {0x01, 0x00, 0x0a, 0x00, 1, 4, 0x82, 0x84, 0x8b, 0x96};
+    static const unsigned char phone[6] = {0x02, 0x99, 0x88, 0x77, 0x66, 0x55};
+    static unsigned char df[0xcc + 64];
+    const unsigned char *d;
+    unsigned before;
+    cmd_ring(63);
+    tx_frames();
+    state = WIFI_IDLE, now = 40000;
+    assert(wifi_ap_start(6, 100, body, sizeof body) == 0 && ap_tim == sizeof body - 6);
+    corebd = 1, now += 3;
+    ap_step();
+    assert(ap_ready && ap_beacons == 1);
+    unsigned dg[WIFI_AP_DIAG];
+    wifi_ap_diag(dg);
+    assert(dg[0] == 3 && dg[1] == 0 && dg[4] == 0); /* first beacon 3 ms after AP_START; no recorder yet */
+    d = last_frame() + 8;
+    assert(d[0xc4 + ap_tim + 2] == 0 && d[0xc4 + ap_tim + 3] == 1 && d[0xc4 + ap_tim + 4] == 0 &&
+           d[0xc4 + ap_tim + 5] == 0); /* a DTIM beacon, nothing held */
+    rx_ap(rxf, rx_mgmt(0xb0, own, phone, own, au, sizeof au));
+    rx_ap(rxf, rx_mgmt(0x00, own, phone, own, as, sizeof as));
+    struct client *c = ap_client(phone, 0);
+    assert(c == &cl[0] && c->state == 2);
+
+    /* its DHCP discover: toDS, A1 = us, A3 = everybody; to the SCM from the phone */
+    static const unsigned char llc[8] = {0xaa, 0xaa, 3, 0, 0, 0, 0x08, 0x00};
+    memset(df, 0, sizeof df);
+    df[0x94] = 0x18, df[0x97] = 0xc4;
+    df[0xac] = 0x08, df[0xad] = 0x01;
+    memcpy(df + 0xac + 4, own, 6), memcpy(df + 0xac + 10, phone, 6), memcpy(df + 0xac + 16, ap_bcast, 6);
+    memcpy(df + 0xcc, llc, 8);
+    df[0xcc + 8] = 0x45, df[0xcc + 8 + 3] = 28; /* IPv4, 28 bytes: header + UDP */
+    scm_count = 0;
+    rx_ap(df, 0xcc + 8 + 28);
+    assert(scm_count == 1 && scm_ch == BCOLINK_CH_WIFI && scm_n == 14 + 28);
+    assert(!memcmp(scm, ap_bcast, 6) && !memcmp(scm + 6, phone, 6) && scm[12] == 0x08 && scm[13] == 0);
+    assert(c->rx_data == 1 && !c->dozing);
+
+    /* the offer, unicast to it: fromDS, A1 = phone, A2 = BSSID = A3 = us, its peer slot */
+    static unsigned char pkt[14 + 300];
+    memset(pkt, 0x5a, sizeof pkt);
+    memcpy(pkt, phone, 6), memcpy(pkt + 6, own, 6), pkt[12] = 0x08, pkt[13] = 0;
+    before = wifi_tx_frames;
+    assert(radio_tx_eth(pkt, sizeof pkt) == 0 && wifi_tx_frames == before + 1);
+    d = last_frame() + 8;
+    assert(d[0x18] == 0x08 && d[0x19] == 0x02 && !memcmp(d + 0x1c, phone, 6) && !memcmp(d + 0x22, own, 6) &&
+           !memcmp(d + 0x28, own, 6) && !memcmp(d + 0xc4 + 8, pkt + 14, 300));
+    /* and to everybody */
+    memcpy(pkt, ap_bcast, 6);
+    assert(radio_tx_eth(pkt, sizeof pkt) == 0 && wifi_tx_frames == before + 2);
+    d = last_frame() + 8;
+    assert(d[0x18] == 0x08 && d[0x19] == 0x02 && !memcmp(d + 0x1c, ap_bcast, 6));
+    /* a frame not from us is not sent */
+    memcpy(pkt + 6, phone, 6);
+    assert(radio_tx_eth(pkt, sizeof pkt) == -1);
+    memcpy(pkt + 6, own, 6);
+
+    /* reports from the core count for the client they were for */
+    ap_tx_report(0x11u << 16, 0), ap_tx_report(0x11u << 16, 1); /* slot 0 */
+    ap_tx_report(PEER_NONE | 0xffffu << 16, 1);
+    assert(c->tx_ok == 1 && c->tx_failed == 1);
+
+    /* it dozes: null-data with the power-management bit */
+    rx_ap(rxf, rx_mgmt(0x48 | 0x1100, own, phone, own, au, 0));
+    assert(c->dozing && c->rx_null == 1);
+    tx_frames();
+    before = wifi_tx_frames;
+    memcpy(pkt, phone, 6);
+    for (unsigned i = 0; i < 3; i++) {
+        pkt[14] = (unsigned char)i;
+        assert(radio_tx_eth(pkt, sizeof pkt) == 0);
+    }
+    assert(wifi_tx_frames == before && c->h.n == 3); /* held, not sent */
+    memcpy(pkt, ap_bcast, 6);
+    pkt[14] = 0x77;
+    assert(radio_tx_eth(pkt, sizeof pkt) == 0 && wifi_tx_frames == before && ap_gh.n == 1);
+    /* the beacon: its AID bit, the group bit; the group frame right behind it */
+    now = ap_next;
+    ap_step();
+    assert(wifi_tx_frames == before + 2 && ap_gh.n == 0);
+    const unsigned char *bcn = (const unsigned char *)(uintptr_t)txfbuf[txnfree + 1] + 8, *g = last_frame() + 8;
+    assert(bcn[0x18] == 0x80 && bcn[0xc4 + ap_tim + 4] == 1 && bcn[0xc4 + ap_tim + 5] == 2);
+    assert(g[0x18] == 0x08 && g[0x19] == 0x02 && !memcmp(g + 0x1c, ap_bcast, 6) && g[0xc4 + 8] == 0x77);
+    /* a PS-Poll: the oldest held frame, More Data since two more wait */
+    memset(rxf, 0, 0xcc);
+    rxf[0x94] = 0x18, rxf[0x97] = 0xc4, rxf[0xac] = 0xa4, rxf[0xad] = 0x10, rxf[0xae] = 1, rxf[0xaf] = 0xc0;
+    memcpy(rxf + 0xac + 4, own, 6), memcpy(rxf + 0xac + 10, phone, 6);
+    rx_ap(rxf, 0xcc);
+    d = last_frame() + 8;
+    assert(wifi_tx_frames == before + 3 && c->h.n == 2 && c->dozing);
+    assert(d[0x18] == 0x08 && d[0x19] == 0x22 && !memcmp(d + 0x1c, phone, 6) && d[0xc4 + 8] == 0);
+    /* a full hold loses its oldest frame */
+    for (unsigned i = 3; i < 6; i++) {
+        pkt[14] = (unsigned char)i;
+        memcpy(pkt, phone, 6);
+        assert(radio_tx_eth(pkt, sizeof pkt) == 0);
+    }
+    assert(c->h.n == AP_HOLD && ap_hdrop == 1);
+    /* awake again: everything held goes, in order, More Data on all but the last */
+    tx_frames();
+    before = wifi_tx_frames;
+    rx_ap(rxf, rx_mgmt(0x48 | 0x0100, own, phone, own, au, 0));
+    assert(!c->dozing && c->h.n == 0 && wifi_tx_frames == before + AP_HOLD && c->rx_null == 2);
+    for (unsigned i = 0; i < AP_HOLD; i++) {
+        const unsigned char *f = (const unsigned char *)(uintptr_t)txfbuf[txnfree + AP_HOLD - 1 - i] + 8;
+        assert(f[0xc4 + 8] == 2 + i && f[0x19] == (i < AP_HOLD - 1 ? 0x22 : 0x02));
+    }
+    /* awake, nothing held: straight out again */
+    memcpy(pkt, phone, 6);
+    assert(radio_tx_eth(pkt, sizeof pkt) == 0 && wifi_tx_frames == before + AP_HOLD + 1);
+
+    /* AP_STATUS: the client's counters and the core's ap_mode counters through HOST_FLAG2 */
+    struct wifi_ap_client info[WIFI_AP_CLIENTS];
+    now += 40;
+    c->seen = now - 40;
+    assert(wifi_ap_client_info(info) == 1 && !memcmp(info[0].mac, phone, 6) && !info[0].dozing &&
+           info[0].held == 0 && info[0].idle_ms == 40 && info[0].rx_data == 1 && info[0].rx_null == 2 &&
+           info[0].tx_ok == 1 && info[0].tx_failed == 1);
+    volatile unsigned *corerec = (volatile unsigned *)(uintptr_t)(0x30000000u + 0x100);
+    corerec[CORE_RC_APIN] = 9, corerec[CORE_RC_APIN + 1] = 4, corerec[CORE_RC_APIN + 2] = 8;
+    MB16(-8) = 0x100 >> 2;
+    wifi_ap_diag(dg);
+    assert(dg[0] == 3 && dg[1] == 9 && dg[2] == 4 && dg[3] == 8 && dg[4] == 1);
+    MB16(-8) = 0;
+    wifi_ap_stop();
+    assert(wifi_ap_client_info(info) == 0);
+    printf("ok: the setup AP carries a phone's DHCP both ways and holds frames while it dozes\n");
+}
+
 int main(void)
 {
     /* a full ring: no PEER_ADD and no 4-way yet; the next poll still has the step */
@@ -392,6 +540,7 @@ int main(void)
     security_and_status();
     access_point();
     ap_full();
+    ap_data();
     link_frames();
     return 0;
 }

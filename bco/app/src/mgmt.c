@@ -18,6 +18,9 @@ _Static_assert(MGMT_PROFILE_BSSID_FIXED == WIFI_BSSID_FIXED && MGMT_PROFILE_BSSI
 unsigned char mgmt_wifi_mac[6];
 volatile unsigned mgmt_uptime;
 
+_Static_assert(MGMT_AP_COUNTERS == WIFI_AP_COUNTERS && MGMT_AP_DIAG == WIFI_AP_DIAG &&
+               MGMT_AP_CLIENT == 4 + 5 * 4, "AP_STATUS's layout (mgmt.h) is what case 8 writes");
+
 static unsigned char *put32(unsigned char *o, unsigned v)
 {
     for (unsigned i = 0; i < 32; i += 8)
@@ -225,13 +228,20 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
         wifi_ap_stop();
         *o++ = 0;
         break;
-    case 8: { /* AP_STATUS: status, count, client MACs, le32 counters (wifi_ap_counters) */
-        unsigned char m[WIFI_AP_CLIENTS][6];
-        unsigned c = wifi_ap_clients(m), k[WIFI_AP_COUNTERS];
+    case 8: { /* AP_STATUS: status, count, client MACs, counters, diagnostics, per client (mgmt.h) */
+        struct wifi_ap_client cl[WIFI_AP_CLIENTS];
+        unsigned c = wifi_ap_client_info(cl), k[WIFI_AP_COUNTERS], d[WIFI_AP_DIAG];
         *o++ = 0; *o++ = c;
-        for (unsigned i = 0; i < c * 6; i++) *o++ = m[i / 6][i % 6];
+        for (unsigned i = 0; i < c * 6; i++) *o++ = cl[i / 6].mac[i % 6];
         wifi_ap_counters(k);
-        for (unsigned i = 0; i < WIFI_AP_COUNTERS * 32; i += 8) *o++ = k[i / 32] >> i % 32;
+        for (unsigned i = 0; i < WIFI_AP_COUNTERS; i++) o = put32(o, k[i]);
+        wifi_ap_diag(d);
+        for (unsigned i = 0; i < WIFI_AP_DIAG; i++) o = put32(o, d[i]);
+        for (unsigned i = 0; i < c; i++) {
+            const unsigned v[5] = {cl[i].idle_ms, cl[i].rx_data, cl[i].rx_null, cl[i].tx_ok, cl[i].tx_failed};
+            *o++ = cl[i].dozing, *o++ = cl[i].held, *o++ = 0, *o++ = 0;
+            for (unsigned j = 0; j < 5; j++) o = put32(o, v[j]);
+        }
         break;
     }
     case 13: /* FLOW: on (1) or off (0); the reply is a credit report (mgmt.h) */

@@ -66,6 +66,15 @@ void mgmt_event_lost(void);
  * holds the TX power limit; 0: the limit is recorded, the core has no TX power control yet). */
 #define MGMT_REGDOM_LEN 7
 
+/* AP_STATUS (8): status, count, count client MACs, MGMT_AP_COUNTERS le32 counters (wifi.h
+ * wifi_ap_counters); with BCOLINK_CAP_APDIAG then MGMT_AP_DIAG le32 (wifi_ap_diag) and, per
+ * client in the same order, MGMT_AP_CLIENT bytes: u8 flags (bit 0 dozing), u8 frames held, two
+ * zero bytes, le32 ms since last heard, data frames from it, null-data from it, unicast frames to
+ * it ACKed, and lost. A driver without the capability reads up to the MACs, as before. */
+#define MGMT_AP_COUNTERS 8
+#define MGMT_AP_DIAG 5
+#define MGMT_AP_CLIENT 24
+
 /* NV_INFO (17, BCOLINK_CAP_NVINFO): read-only. Reply: status (1 = no PersParam sector), count, then
  * count entries of key (FourCC as stored, le32), le16 value length, and the value's first 4 bytes
  * when the value is at most 4 bytes long (else zeros): no longer value, and so no passphrase or

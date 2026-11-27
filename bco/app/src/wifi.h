@@ -105,5 +105,18 @@ unsigned wifi_ap_clients(unsigned char macs[][6]);
  * TX acknowledged, TX failed, TX dropped, data frames to the SCM, beacons sent. */
 #define WIFI_AP_COUNTERS 8u
 void wifi_ap_counters(unsigned c[WIFI_AP_COUNTERS]);
+/* AP_STATUS's tail (BCOLINK_CAP_APDIAG): ms from AP_START to the first beacon (valid once a
+ * beacon was sent), then the core's ap_mode counters: frames to our address, those of them its
+ * address filter missed, a client's data frames kept for the app; then frames held for dozing
+ * clients that were dropped because the hold was full. */
+#define WIFI_AP_DIAG 5u
+void wifi_ap_diag(unsigned d[WIFI_AP_DIAG]);
+/* One associated client: dozing (power-management bit set), frames held for it, ms since it was
+ * last heard, data and null-data frames from it, unicast frames to it ACKed and lost. */
+struct wifi_ap_client {
+    unsigned char mac[6], dozing, held;
+    unsigned idle_ms, rx_data, rx_null, tx_ok, tx_failed;
+};
+unsigned wifi_ap_client_info(struct wifi_ap_client o[WIFI_AP_CLIENTS]);
 
 #endif

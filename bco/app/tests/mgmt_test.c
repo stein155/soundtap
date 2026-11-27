@@ -69,8 +69,8 @@ int main(void)
            r[24] == 1 && r[25] == BCOLINK_PROTO && le32(r + 26) == BCOLINK_CAPS &&
            (BCOLINK_CAPS & (BCOLINK_CAP_AP | BCOLINK_CAP_REPLAY | BCOLINK_CAP_FLOW | BCOLINK_CAP_STATS |
                             BCOLINK_CAP_EVENTS | BCOLINK_CAP_ROAM | BCOLINK_CAP_REGDOM |
-                            BCOLINK_CAP_SCAN_SSID | BCOLINK_CAP_NVINFO)) == BCOLINK_CAPS &&
-           BCOLINK_CAPS == 0x1ff);
+                            BCOLINK_CAP_SCAN_SSID | BCOLINK_CAP_NVINFO | BCOLINK_CAP_APDIAG)) == BCOLINK_CAPS &&
+           BCOLINK_CAPS == 0x3ff);
     n = ask(5, 0, 0, r); assert(r[6] == 0 && r[7] == WIFI_IDLE && r[8] == 0 && n == MGMT_HDR + 15 &&
                                 r[17] == WIFI_FAIL_NONE && r[18] == 0 && r[19] == 0 && r[20] == 0);
     /* a refused association: the step and the AP's status code (le16) follow the BSS */
@@ -164,8 +164,14 @@ int main(void)
     ask(6, ap, sizeof ap, r);
     assert(r[6] == 0 && fake_ap_chan == 6 && fake_ap_bint == 100 && fake_ap_len == 40);
     n = ask(8, 0, 0, r);
-    assert(r[6] == 0 && r[7] == 1 && r[13] == 0x77 && n == MGMT_HDR + 8 + 4 * WIFI_AP_COUNTERS &&
+    assert(r[6] == 0 && r[7] == 1 && r[13] == 0x77 &&
+           n == MGMT_HDR + 8 + 4 * MGMT_AP_COUNTERS + 4 * MGMT_AP_DIAG + MGMT_AP_CLIENT &&
            r[14] == 0x11 && r[18] == 0x22);
+    /* the diagnostics tail (BCOLINK_CAP_APDIAG), then the one client's block */
+    const unsigned char *t = r + 14 + 4 * MGMT_AP_COUNTERS, *k = t + 4 * MGMT_AP_DIAG;
+    assert(le32(t) == 0x1000 && le32(t + 4 * (MGMT_AP_DIAG - 1)) == 0x1000 + MGMT_AP_DIAG - 1);
+    assert(k[0] == 1 && k[1] == 2 && k[2] == 0 && k[3] == 0 && le32(k + 4) == 250 && le32(k + 8) == 7 &&
+           le32(k + 12) == 3 && le32(k + 16) == 5 && le32(k + 20) == 1);
     ask(7, 0, 0, r); assert(r[6] == 0 && fake_ap_stops == 1);
     ask(8, 0, 0, r); assert(r[7] == 0);
     ap[0] = 14; ask(6, ap, sizeof ap, r); assert(r[6] == 1);       /* no channel 14 */

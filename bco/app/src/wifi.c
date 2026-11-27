@@ -185,9 +185,10 @@ static void rx_refill(void)
         DOORBELL();
 }
 
+static void ap_tx_report(unsigned rec4, unsigned bad);
+
 static void tx_reclaim(void)
 {
-    unsigned ok = 0, failed = 0;
     for (unsigned c = 0; c < 4; c++) {
         while (wr_avail(&frm[c], 3)) {
             const volatile unsigned *e = wr_reserve(&frm[c], 3, 1);
@@ -199,9 +200,18 @@ static void tx_reclaim(void)
                 txfbuf[txnfree++] = buf;
             }
         }
-        wr_tx_status(&frm[c], &ok, &failed);
+        /* the TX reports (wring.h wr_tx_status), each also to the setup AP's client it was for */
+        for (unsigned n = wr_avail(&frm[c], 4); n--;) {
+            const volatile unsigned *e = wr_reserve(&frm[c], 4, 1);
+            unsigned bad = (e[3] & 0xffff) != 0;
+            if (bad)
+                wifi_tx_failed++;
+            else
+                wifi_tx_ok++;
+            ap_tx_report(e[4], bad);
+            wr_commit(&frm[c], 4, 1);
+        }
     }
-    wifi_tx_ok += ok, wifi_tx_failed += failed;
 }
 
 /* A background scan's hold on the SCM's frames (ADR 0135): TX_DRAIN gives no new credit while the
@@ -645,14 +655,56 @@ static void rx_station(const volatile unsigned char *b, unsigned len)
 
 /* ---- access point (ADR 0031): open only, BSSID = own MAC ---- */
 
+/* Frames held for clients that doze (802.11 power save): a client that sets the power-management
+ * bit listens only for beacons, so unicast frames for it wait here and its bit in the beacons' TIM
+ * says so; it comes back for them with a PS-Poll (one frame each) or by clearing the bit (all of
+ * them). While any client dozes, group frames wait for the next beacon, which is a DTIM beacon
+ * with its group bit set, and follow it. Without this a phone that dozed after its DHCP request
+ * never heard the answer. AP_HOLD frames per queue: a full queue loses its oldest frame. */
+#define AP_HOLD 4u
+struct hold {
+    unsigned char head, n;
+};
+static struct held {
+    unsigned short n;
+    unsigned char f[14 + 1500];
+} ap_held[WIFI_AP_CLIENTS + 1][AP_HOLD] /* the last row is the group frames' */
+#ifdef NETCARD_HW
+    /* 42 KB: in SDRAM past the image (app.ld .noinit), not in the image as zeros; only the
+     * counts say what is in it */
+    __attribute__((section(".noinit")))
+#endif
+    ;
+
 static struct client {
     unsigned char mac[6], state, rates[8]; /* state 1 authenticated, 2 associated */
-    unsigned seen;
+    unsigned char dozing;
+    struct hold h;
+    unsigned seen, rx_data, rx_null, tx_ok, tx_failed;
 } cl[WIFI_AP_CLIENTS];
+static struct hold ap_gh;              /* group frames held */
 static unsigned char ap_body[WIFI_AP_BODY_MAX];
 static unsigned ap_len, ap_ready, ap_deadline, ap_probes, ap_rx;
 static unsigned ap_bint, ap_next, ap_beacons; /* beacon interval (TU), next beacon due (ms), sent */
+static unsigned ap_tim;                /* the TIM's offset in ap_body, 0 if it has none */
+static unsigned ap_first, ap_hdrop;    /* ms from AP_START to the first beacon; held frames lost */
 static const unsigned char ap_mrates[8] = {2, 2, 2, 2, 2, 2, 2, 2}; /* 1 Mb/s: every client hears it */
+
+/* The core's ap_mode counters in its flight recorder, which HOST_FLAG2 (core 0x1fddc) locates:
+ * bco/wild/fw/src/hw.h RC_APIN, RC_APNOFILT, RC_APKEEP (the core asserts these indices). */
+#define CORE_RC_APIN 29u
+#define CORE_RC_N 3u
+
+static void ap_tx_report(unsigned rec4, unsigned bad)
+{
+    unsigned slot = rec4 & 0xffff;
+    if (state != WIFI_AP || rec4 >> 16 != 0x11 || slot >= WIFI_AP_CLIENTS || !cl[slot].state)
+        return;
+    if (bad)
+        cl[slot].tx_failed++;
+    else
+        cl[slot].tx_ok++;
+}
 
 /* A client's core peer slot is its index: unicast to a client goes through its slot, as the
  * station's frames go through PEER_AP; a PEER_NONE frame goes to the BSS, which is us. */
@@ -669,7 +721,9 @@ static void ap_drop(struct client *c)
 {
     if (c->state)
         ap_peer(c, CMD_PEER_DEL);
-    c->state = 0;
+    c->state = c->dozing = 0;
+    c->h.n = 0;
+    c->rx_data = c->rx_null = c->tx_ok = c->tx_failed = 0;
 }
 
 /* to a client (its peer slot) or, with c = 0, to every client */
@@ -741,13 +795,74 @@ static void ap_stamp(unsigned char *b)
 /* One beacon: hostapd's body (with its TIM) behind a broadcast header, at 1 Mb/s so every client
  * hears it. The core has no TBTT timer of its own (bco/wild/fw scan.c join), so ap_step sends one
  * every beacon interval from the main loop. */
+/* A frame from the SCM held in row q (a client's index, or WIFI_AP_CLIENTS for group frames). */
+static void ap_hold(unsigned q, struct hold *h, const unsigned char *f, unsigned n)
+{
+    if (h->n == AP_HOLD) {
+        h->head = (unsigned char)((h->head + 1) % AP_HOLD), h->n--;
+        ap_hdrop++;
+    }
+    struct held *s = &ap_held[q][(h->head + h->n) % AP_HOLD];
+    s->n = (unsigned short)n;
+    copy(s->f, f, n);
+    h->n++;
+}
+
+/* Up to max held frames of row q out, fromDS to c (0: to everybody), More Data on each but the
+ * row's last. What finds no transmit buffer stays for the next poll. */
+static void ap_release(unsigned q, struct hold *h, const struct client *c, unsigned max)
+{
+    while (h->n && max-- && tx_buf()) {
+        const struct held *s = &ap_held[q][h->head];
+        unsigned fc = 0x0208 | (h->n > 1 ? 0x2000 : 0);
+        if (!ap_send(c, fc, s->f, s->f + 6, c ? c->rates : ap_mrates, s->f[12] << 8 | s->f[13],
+                     s->f + 14, s->n - 14u))
+            return;
+        h->head = (unsigned char)((h->head + 1) % AP_HOLD), h->n--;
+    }
+}
+
+static int ap_anyone_dozing(void)
+{
+    for (unsigned i = 0; i < WIFI_AP_CLIENTS; i++)
+        if (cl[i].state == 2 && cl[i].dozing)
+            return 1;
+    return 0;
+}
+
+/* A client's power-management bit, from a data or null-data frame of it: waking up (bit clear)
+ * releases what was held for it. */
+static void ap_pm(struct client *c, unsigned fc)
+{
+    unsigned dozing = fc >> 12 & 1;
+    c->dozing = (unsigned char)dozing;
+    if (!dozing)
+        ap_release((unsigned)(c - cl), &c->h, c, AP_HOLD);
+}
+
+/* One beacon: hostapd's body behind a broadcast header, at 1 Mb/s so every client hears it. The
+ * core has no TBTT timer of its own (bco/wild/fw scan.c join), so ap_step sends one every beacon
+ * interval from the main loop. Every beacon is a DTIM beacon (count 0, period 1): its TIM has the
+ * group bit when group frames are held, which then follow it, and the bit of each client (AID =
+ * slot + 1, one octet from offset 0) that has frames held. */
 static void ap_beacon(void)
 {
     static unsigned char b[WIFI_AP_BODY_MAX];
     copy(b, ap_body, ap_len);
     ap_stamp(b);
-    if (ap_send(0, 0x80, ap_bcast, own, ap_mrates, 0, b, ap_len))
-        ap_beacons++;
+    if (ap_tim) {
+        unsigned pvb = 0;
+        for (unsigned i = 0; i < WIFI_AP_CLIENTS; i++)
+            if (cl[i].state == 2 && cl[i].h.n)
+                pvb |= 2u << i;
+        b[ap_tim + 2] = 0, b[ap_tim + 3] = 1, b[ap_tim + 4] = ap_gh.n ? 1 : 0;
+        b[ap_tim + 5] = (unsigned char)pvb;
+    }
+    if (ap_send(0, 0x80, ap_bcast, own, ap_mrates, 0, b, ap_len)) {
+        if (!ap_beacons++)
+            ap_first = now - (ap_deadline - 1000);
+        ap_release(WIFI_AP_CLIENTS, &ap_gh, 0, AP_HOLD);
+    }
 }
 
 /* The probe request's SSID IE is a wildcard (length 0) or our SSID. */
@@ -791,6 +906,13 @@ static void rx_ap(const volatile unsigned char *b, unsigned len)
         return;
     fc = le16(h), sub = fc & 0xfc, n = len - 0xcc;
     ap_rx++;
+    if (sub == 0xa4) { /* PS-Poll (the core pads it to a header): one held frame to its sender */
+        if (same(h + 4, own, 6) && (c = ap_client(h + 10, 0)) && c->state == 2) {
+            c->seen = now, c->dozing = 1;
+            ap_release((unsigned)(c - cl), &c->h, c, 1);
+        }
+        return;
+    }
     if ((fc & 0x0c) == 0) {
         if (sub == 0x40) { /* probe request: answer a wildcard one or one for our SSID */
             ap_probes++;
@@ -849,16 +971,30 @@ static void rx_ap(const volatile unsigned char *b, unsigned len)
         !(c = ap_client(h + 10, 0)) || c->state != 2)
         return;
     c->seen = now;
-    if (!(sub & 0x40))
+    if (sub & 0x40) {
+        c->rx_null++;
+    } else {
+        c->rx_data++;
         rx_data(h + 16, h + 10, body, n);
+    }
+    ap_pm(c, fc);
 }
 
-/* An Ethernet frame from the SCM's wlan1: fromDS to an associated client or to every client. */
+/* An Ethernet frame from the SCM's wlan1: fromDS to an associated client or to every client;
+ * held while that client dozes (group frames: while any client dozes), and behind frames still
+ * held for it, so their order holds. */
 static int ap_tx_eth(const unsigned char *f, unsigned n)
 {
-    const struct client *c = 0;
-    if (!ap_ready || !same(f + 6, own, 6) || (!(f[0] & 1) && (!(c = ap_client(f, 0)) || c->state != 2)) ||
-        !ap_send(c, 0x0208, f, f + 6, c ? c->rates : ap_mrates, f[12] << 8 | f[13], f + 14, n - 14)) {
+    struct client *c = 0;
+    if (!ap_ready || !same(f + 6, own, 6) || (!(f[0] & 1) && (!(c = ap_client(f, 0)) || c->state != 2))) {
+        wifi_tx_drop++;
+        return -1;
+    }
+    if (c ? c->dozing || c->h.n : ap_gh.n || ap_anyone_dozing()) {
+        ap_hold(c ? (unsigned)(c - cl) : WIFI_AP_CLIENTS, c ? &c->h : &ap_gh, f, n);
+        return 0;
+    }
+    if (!ap_send(c, 0x0208, f, f + 6, c ? c->rates : ap_mrates, f[12] << 8 | f[13], f + 14, n - 14)) {
         wifi_tx_drop++;
         return -1;
     }
@@ -1601,15 +1737,21 @@ int wifi_ap_start(unsigned chan, unsigned bint, const unsigned char *body, unsig
     if (!chan_active(chan) || bint < 20 || bint > 1000 || len < 12 || len > sizeof ap_body ||
         state == WIFI_SCANNING)
         return -1;
-    while (o + 2 <= len && o + 2 + body[o + 1] <= len)
-        ssid |= body[o] == 0, o += 2 + body[o + 1];
+    unsigned tim = 0;
+    while (o + 2 <= len && o + 2 + body[o + 1] <= len) {
+        ssid |= body[o] == 0;
+        if (body[o] == 5 && body[o + 1] >= 4)
+            tim = o;
+        o += 2 + body[o + 1];
+    }
     if (o != len || !ssid)
         return -1;
     wifi_leave();
     for (unsigned i = 0; i < WIFI_AP_CLIENTS; i++)
         ap_drop(&cl[i]);
     copy(ap_body, body, len);
-    ap_len = len, ap_ready = 0, ap_bint = bint, ap_beacons = 0;
+    ap_len = len, ap_ready = 0, ap_bint = bint, ap_beacons = 0, ap_tim = tim;
+    ap_first = ap_hdrop = 0, ap_gh.n = 0;
     build_join_bc(bc, own, chan);
     bc[6] = bint, bc[7] = bint >> 8; /* beacon interval (a station passes its AP's, 100) */
     corebd = 0;
@@ -1625,7 +1767,7 @@ void wifi_ap_stop(void)
 {
     if (state == WIFI_AP)
         state = WIFI_IDLE;
-    ap_ready = 0;
+    ap_ready = 0, ap_gh.n = 0;
     for (unsigned i = 0; i < WIFI_AP_CLIENTS; i++)
         ap_drop(&cl[i]);
 }
@@ -1646,6 +1788,31 @@ unsigned wifi_ap_clients(unsigned char macs[][6])
     return n;
 }
 
+void wifi_ap_diag(unsigned d[WIFI_AP_DIAG])
+{
+    unsigned a = (unsigned)MB16(-8) << 2; /* HOST_FLAG2: the core's flight recorder, 0 before */
+    d[0] = ap_first;
+    for (unsigned i = 0; i < CORE_RC_N; i++)
+        d[1 + i] = a && a < 0x1fd00u ? *(const volatile unsigned *)(WSRAM + a + 4 * (CORE_RC_APIN + i)) : 0;
+    d[4] = ap_hdrop;
+}
+
+unsigned wifi_ap_client_info(struct wifi_ap_client o[WIFI_AP_CLIENTS])
+{
+    unsigned n = 0;
+    for (unsigned i = 0; state == WIFI_AP && i < WIFI_AP_CLIENTS; i++) {
+        const struct client *c = &cl[i];
+        if (c->state != 2)
+            continue;
+        copy(o[n].mac, c->mac, 6);
+        o[n].dozing = c->dozing, o[n].held = c->h.n;
+        o[n].idle_ms = now - c->seen, o[n].rx_data = c->rx_data, o[n].rx_null = c->rx_null;
+        o[n].tx_ok = c->tx_ok, o[n].tx_failed = c->tx_failed;
+        n++;
+    }
+    return n;
+}
+
 static void ap_step(void)
 {
     if (!ap_ready) {
@@ -1658,6 +1825,13 @@ static void ap_step(void)
         ap_ready = 1;
         ap_next = now;
     }
+    /* what is still held for a client that woke up, and group frames once nobody dozes, go as
+     * transmit buffers free up */
+    for (unsigned i = 0; i < WIFI_AP_CLIENTS; i++)
+        if (cl[i].state == 2 && !cl[i].dozing && cl[i].h.n)
+            ap_release(i, &cl[i].h, &cl[i], AP_HOLD);
+    if (ap_gh.n && !ap_anyone_dozing())
+        ap_release(WIFI_AP_CLIENTS, &ap_gh, 0, AP_HOLD);
     /* one beacon per interval (1 TU = 1.024 ms); a late poll sends one, not a burst */
     if (due(ap_next)) {
         ap_beacon();

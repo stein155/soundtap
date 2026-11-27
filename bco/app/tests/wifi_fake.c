@@ -81,6 +81,20 @@ void wifi_ap_counters(unsigned c[WIFI_AP_COUNTERS])
     for (unsigned i = 0; i < WIFI_AP_COUNTERS; i++)
         c[i] = 0x11 * (i + 1);
 }
+void wifi_ap_diag(unsigned d[WIFI_AP_DIAG])
+{
+    for (unsigned i = 0; i < WIFI_AP_DIAG; i++)
+        d[i] = 0x1000 + i;
+}
+unsigned wifi_ap_client_info(struct wifi_ap_client o[WIFI_AP_CLIENTS])
+{
+    if (fake_state != WIFI_AP)
+        return 0;
+    memcpy(o[0].mac, "\x02\x00\x00\x00\x00\x77", 6);
+    o[0].dozing = 1, o[0].held = 2;
+    o[0].idle_ms = 250, o[0].rx_data = 7, o[0].rx_null = 3, o[0].tx_ok = 5, o[0].tx_failed = 1;
+    return 1;
+}
 
 /* Transmit buffers and counters (flow control and LINK_STATS). */
 unsigned fake_tx_free = WIFI_TX_BUFS - 1;
