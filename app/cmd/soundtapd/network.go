@@ -135,7 +135,7 @@ func serveAll(
 	return servers, bound
 }
 
-func persistWifiProfile(path, ssid, psk string, log *slog.Logger) error {
+func persistWifiProfile(path, ssid, security, psk string, log *slog.Logger) error {
 	err := os.MkdirAll(filepath.Dir(path), wifiConfDirMode)
 	if err != nil {
 		log.Warn("wifi mkdir", "path", path, "err", err)
@@ -143,7 +143,7 @@ func persistWifiProfile(path, ssid, psk string, log *slog.Logger) error {
 		return fmt.Errorf("save the Wi-Fi network: %w", err)
 	}
 	// A 64-digit hex key goes to wpa_supplicant as the key itself, not as a passphrase.
-	err = wifi.WriteConf(path, wifi.NewRecord(ssid, psk))
+	err = wifi.WriteConf(path, wifi.NewRecord(ssid, security, psk))
 	if err != nil {
 		log.Warn("wifi save", "path", path, "err", err)
 
@@ -293,7 +293,7 @@ func savedNetwork(conf []byte) bool {
 func enterSetupMode(wifiConf string) error {
 	// Keep an empty persistent override so the Wi-Fi manager cannot fall back to
 	// credentials baked into /etc/soundtap-wifi.conf after setup mode or factory reset.
-	err := persistWifiProfile(wifiConf, "", "", slog.Default())
+	err := persistWifiProfile(wifiConf, "", "", "", slog.Default())
 	if err != nil {
 		return err
 	}

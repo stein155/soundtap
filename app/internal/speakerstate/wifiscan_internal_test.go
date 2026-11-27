@@ -34,13 +34,47 @@ func TestParseScanResults(t *testing.T) {
 	if nets[1].SSID != "OpenCafe" || nets[1].Secure {
 		t.Fatalf("OpenCafe should be open: %+v", nets[1])
 	}
+
+	// WEP (ADR 0136): Privacy without WPA; a WPA3 network is secure and not WEP
+	nets = parseScanResults("bssid / frequency / signal level / flags / ssid\n" +
+		"aa:bb:cc:dd:ee:01\t2412\t-50\t[WEP][ESS]\tOld\n" +
+		"aa:bb:cc:dd:ee:02\t2412\t-55\t[RSN-SAE-CCMP][ESS]\tNew\n")
+	if len(nets) != 2 || !nets[0].Secure || !nets[0].WEP || !nets[1].Secure || nets[1].WEP {
+		t.Fatalf("WEP and SAE parsed wrong: %+v", nets)
+	}
+}
+
+func TestCheckWifiTakesWEPKeys(t *testing.T) {
+	t.Parallel()
+
+	for _, key := range []string{"abcde", "0123456789abc", "A1B2C3D4E5", strings.Repeat("0f", 13)} {
+		err := CheckWifi("Old", "wep", key)
+		if err != nil {
+			t.Errorf("%q: %v", key, err)
+		}
+	}
+
+	spk := New()
+
+	var gotSecurity, gotKey string
+
+	spk.OnWifiProfile(func(_, security, psk string) error {
+		gotSecurity, gotKey = security, psk
+
+		return nil
+	})
+
+	err := spk.SetWifi(context.Background(), "Old", "wep", "abcde")
+	if err != nil || gotSecurity != "wep" || gotKey != "abcde" {
+		t.Fatalf("SetWifi(wep) = %v; saved %q %q", err, gotSecurity, gotKey)
+	}
 }
 
 func TestSetWifiValidatesAndPropagatesPersistenceFailure(t *testing.T) {
 	t.Parallel()
 
 	sp := New()
-	sp.OnWifiProfile(func(string, string) error { return errDiskFull })
+	sp.OnWifiProfile(func(string, string, string) error { return errDiskFull })
 
 	err := sp.SetWifi(context.Background(), "Home", "wpa_or_wpa2", "password1")
 	if err == nil {
@@ -50,7 +84,9 @@ func TestSetWifiValidatesAndPropagatesPersistenceFailure(t *testing.T) {
 	for _, test := range []struct{ ssid, security, password string }{
 		{"Home\nnetwork={}", "wpa_or_wpa2", "password1"},
 		{"Home", "wpa_or_wpa2", "short"},
-		{"Home", "wep", "password1"},
+		{"Home", "wep", "password1"},  // not a WEP key
+		{"Home", "wep", "abcd"},       // four characters
+		{"Home", "wep", "zz23456789"}, // ten characters that are not hex
 		{"Home", "none", "unexpected"},
 	} {
 		err := New().SetWifi(context.Background(), test.ssid, test.security, test.password)
@@ -94,6 +130,12 @@ BSS 77:88:99:aa:bb:cc(on wlan0)
 	if nets[1].SSID != "Cafe" || nets[1].Secure {
 		t.Fatalf("open network parsed wrong: %+v", nets[1])
 	}
+
+	nets = parseIWScan("BSS aa:bb:cc:dd:ee:ff(on wlan0)\n\tsignal: -50.00 dBm\n" +
+		"\tcapability: ESS Privacy (0x0411)\n\tSSID: Old\n")
+	if len(nets) != 1 || !nets[0].Secure || !nets[0].WEP || nets[0].Signal == "" {
+		t.Fatalf("WEP network parsed wrong: %+v", nets)
+	}
 }
 
 func TestSetWifiUsesByteLimitsAndPreservesSSIDSpaces(t *testing.T) {
@@ -103,7 +145,7 @@ func TestSetWifiUsesByteLimitsAndPreservesSSIDSpaces(t *testing.T) {
 
 	var saved string
 
-	spk.OnWifiProfile(func(ssid, _ string) error {
+	spk.OnWifiProfile(func(ssid, _, _ string) error {
 		saved = ssid
 
 		return nil

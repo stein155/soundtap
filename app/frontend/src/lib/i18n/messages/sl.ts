@@ -302,6 +302,7 @@ const sl: Messages = {
   discardChangesConfirm: 'Zavrzi',
   resetFailed: 'Ponastavitev ni uspela. Nič ni bilo izbrisano.',
   wifiPasswordLength: 'Geslo za Wi-Fi ima od 8 do 63 znakov.',
+  wifiWepKeyLength: 'Ključ WEP ima 5 ali 13 znakov ali 10 ali 26 šestnajstiških števk.',
   wifiSsidLength: 'To ime je predolgo za omrežje Wi-Fi.',
   mqttPortInvalid: 'Vnesite vrata od 1 do 65535 ali pustite prazno.',
   undo: 'Razveljavi',

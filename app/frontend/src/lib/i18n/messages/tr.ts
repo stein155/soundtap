@@ -301,6 +301,7 @@ const tr: Messages = {
   discardChangesConfirm: 'Sil',
   resetFailed: 'Sıfırlama başarısız. Hiçbir şey silinmedi.',
   wifiPasswordLength: 'Wi-Fi şifresi 8 ile 63 karakter arasında olmalıdır.',
+  wifiWepKeyLength: 'WEP anahtarı 5 veya 13 karakter ya da 10 veya 26 onaltılık basamak olmalıdır.',
   wifiSsidLength: 'Bu ad bir Wi-Fi ağı için çok uzun.',
   mqttPortInvalid: '1 ile 65535 arasında bir port girin veya boş bırakın.',
   undo: 'Geri al',

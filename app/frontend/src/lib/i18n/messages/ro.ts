@@ -306,6 +306,7 @@ const ro: Messages = {
   discardChangesConfirm: 'Renunțați',
   resetFailed: 'Resetarea a eșuat. Nu s-a șters nimic.',
   wifiPasswordLength: 'O parolă Wi-Fi are între 8 și 63 de caractere.',
+  wifiWepKeyLength: 'O cheie WEP are 5 sau 13 caractere ori 10 sau 26 de cifre hexazecimale.',
   wifiSsidLength: 'Acest nume este prea lung pentru o rețea Wi-Fi.',
   mqttPortInvalid: 'Introduceți un port de la 1 la 65535 sau lăsați câmpul gol.',
   undo: 'Anulare acțiune',

@@ -7,10 +7,21 @@
  * not header + 24 (hardware 2026-10-04: SSID+rates signature at +44 in 560 of 563 frames). Logs stay
  * counters and the owner's own profile. */
 #define RXBODY 32
+/* Cipher and AKM sets of a security IE, as bits: pairwise BSS_CCMP, BSS_TKIP; AKM BSS_PSK. */
+#define BSS_CCMP 0x1u
+#define BSS_TKIP 0x2u
+#define BSS_PSK 0x1u
+#define BSS_PSK256 0x2u /* AKM 6, PSK-SHA256 */
+#define BSS_SAE 0x4u    /* AKM 8, SAE (WPA3) */
 struct bss {
     unsigned char bssid[6], ssid[33], ssidlen, chan, rsn, wpa;
     unsigned char grp;   /* RSN group cipher suite type (00-0F-AC:2 TKIP, :4 CCMP), 0 = other */
-    unsigned char rsnok; /* the RSN IE lets this station join: pairwise CCMP, AKM PSK, no PMF required */
+    unsigned char rpair, rakm, rcaps; /* RSN pairwise and AKM sets, capabilities' low byte */
+    unsigned char wgrp, wpair, wakm;  /* the WPA IE's (00-50-F2): group type, pairwise and AKM sets */
+    unsigned char rsnok; /* the RSN IE lets this station join (rsn_parse) */
+    unsigned char wpaok; /* the WPA IE does (wpa_parse) */
+    unsigned char proto, pair; /* the network joined (wifi.c cur): WPA_PROTO_*, pairwise WPA_CIPHER_* */
+    unsigned char akm, mfp;    /* and its AKM (WPA_AKM_*) and whether management frame protection is on */
     signed char rssi; /* dBm from the RX descriptor of its last beacon, 0 = not heard yet */
     unsigned short seen;
     unsigned short gen;  /* scan generation last heard in; older than scan_gen - BSS_KEEP = aged out */
@@ -79,38 +90,86 @@ static unsigned rsn_suite(const unsigned char *p)
     return p[0] == 0x00 && p[1] == 0x0f && p[2] == 0xac ? p[3] : 0x100u;
 }
 
-/* An RSN IE's body (IEEE 802.11-2020 9.4.2.24): version 1, group suite, pairwise suites, AKM
- * suites, capabilities. An IE that ends before its AKM list takes the standard's default AKM,
- * 802.1X, so it is never one this station joins; missing capabilities are 0. Sets the group cipher
- * and returns 1 when this station can join: pairwise CCMP offered, AKM PSK offered, management
- * frame protection not required (MFPR, capabilities bit 6; bit 7 is MFPC) and a CCMP or TKIP group
- * cipher. A WPA2/WPA3 transition network (PSK and SAE, MFPC set, MFPR clear) qualifies; WPA3-only
- * or PMF-required does not. */
-static int rsn_parse(const unsigned char *p, unsigned n, unsigned char *grp)
+/* A WPA IE's suite: its type under WPA's OUI 00-50-F2, 0x100 for any other OUI. */
+static unsigned wpa_suite(const unsigned char *p)
 {
-    unsigned o = 6, cnt, i, g, pccmp = 0, psk = 0, caps = 0;
-    *grp = 0;
-    if (n < o + 2 || p[0] != 1 || p[1] != 0)
-        return 0;
-    g = rsn_suite(p + 2);
-    cnt = p[o] | p[o + 1] << 8, o += 2;
-    if (cnt > (n - o) / 4)
-        return 0;
-    for (i = 0; i < cnt; i++, o += 4)
-        pccmp |= rsn_suite(p + o) == 4;
+    return p[0] == 0x00 && p[1] == 0x50 && p[2] == 0xf2 ? p[3] : 0x100u;
+}
+
+/* The suite lists of an RSN IE (after version and group) and of a WPA IE share one layout:
+ * pairwise count and suites, AKM count and suites, then for RSN the capabilities. Fills the
+ * pairwise and AKM sets; returns the offset after the AKM list, 0 when the IE ends inside it.
+ * An IE that ends before its AKM list takes the standard's default AKM, 802.1X, which this
+ * station never joins, so it reads as no AKM. */
+static unsigned suite_lists(const unsigned char *p, unsigned n, unsigned o,
+                            unsigned (*suite)(const unsigned char *), unsigned char *pair,
+                            unsigned char *akm)
+{
+    unsigned cnt, i;
+    *pair = *akm = 0;
     if (n < o + 2)
         return 0;
     cnt = p[o] | p[o + 1] << 8, o += 2;
     if (cnt > (n - o) / 4)
         return 0;
     for (i = 0; i < cnt; i++, o += 4)
-        psk |= rsn_suite(p + o) == 2;
+        *pair |= suite(p + o) == 4 ? BSS_CCMP : suite(p + o) == 2 ? BSS_TKIP : 0;
+    if (n < o + 2)
+        return 0;
+    cnt = p[o] | p[o + 1] << 8, o += 2;
+    if (cnt > (n - o) / 4)
+        return 0;
+    for (i = 0; i < cnt; i++, o += 4)
+        *akm |= suite(p + o) == 2 ? BSS_PSK : suite(p + o) == 6 ? BSS_PSK256 : suite(p + o) == 8 ? BSS_SAE : 0;
+    return o;
+}
+
+/* A cipher combination this station joins with PSK: pairwise CCMP with a CCMP or TKIP group, or
+ * pairwise TKIP with a TKIP group (a CCMP group is stronger than TKIP pairwise allows). */
+static int ciphers_ok(unsigned group, unsigned pair)
+{
+    return (group == 4 || group == 2) && ((pair & BSS_CCMP) || ((pair & BSS_TKIP) && group == 2));
+}
+
+/* An RSN IE's body (IEEE 802.11-2020 9.4.2.24): version 1, group suite, pairwise suites, AKM
+ * suites, capabilities; missing capabilities are 0. Fills the group, the sets and the
+ * capabilities, and returns 1 when this station can join with a password over PSK: a cipher
+ * combination it joins (ciphers_ok), AKM PSK or PSK-SHA256 offered, and when management frame
+ * protection is required (MFPR, capabilities bit 6; bit 7 is MFPC) pairwise CCMP, which PMF needs
+ * (ADR 0136). A WPA2/WPA3 transition network qualifies; a WPA3-only one joins over SAE instead
+ * (wifi.c match). */
+static int rsn_parse(const unsigned char *p, unsigned n, struct bss *b)
+{
+    unsigned o, g;
+    b->grp = b->rpair = b->rakm = b->rcaps = 0;
+    if (n < 6 + 2 || p[0] != 1 || p[1] != 0)
+        return 0;
+    g = rsn_suite(p + 2);
+    if (!(o = suite_lists(p, n, 6, rsn_suite, &b->rpair, &b->rakm)))
+        return 0;
     if (n >= o + 2)
-        caps = p[o] | p[o + 1] << 8;
+        b->rcaps = p[o];
     if (g != 2 && g != 4)
         return 0;
-    *grp = (unsigned char)g;
-    return pccmp && psk && !(caps & 0x40);
+    b->grp = (unsigned char)g;
+    return ciphers_ok(g, b->rpair) && (b->rakm & (BSS_PSK | BSS_PSK256)) &&
+           (!(b->rcaps & 0x40) || (b->rpair & BSS_CCMP));
+}
+
+/* A WPA IE's body after its OUI and type (00-50-F2 1): version 1, group suite, pairwise suites,
+ * AKM suites, all under 00-50-F2. Fills the group and the sets, and returns 1 when this station
+ * can join with PSK. */
+static int wpa_parse(const unsigned char *p, unsigned n, struct bss *b)
+{
+    unsigned g;
+    b->wgrp = b->wpair = b->wakm = 0;
+    if (n < 6 + 2 || p[0] != 1 || p[1] != 0)
+        return 0;
+    g = wpa_suite(p + 2);
+    if (!suite_lists(p, n, 6, wpa_suite, &b->wpair, &b->wakm) || (g != 2 && g != 4))
+        return 0;
+    b->wgrp = (unsigned char)g;
+    return ciphers_ok(g, b->wpair) && (b->wakm & BSS_PSK);
 }
 
 /* A level to compare: a BSS without one counts as the weakest. */
@@ -142,9 +201,8 @@ static int bss_add(const unsigned char *h, unsigned len, unsigned rxchan, signed
     const unsigned char *ie = h + RXBODY + 12, *end = h + len;
     unsigned i, chan = rxchan, ssidlen = 0;
     const unsigned char *ssid = 0;
-    struct bss *b = 0;
-    int rsn = 0, wpa = 0, rsnok = 0;
-    unsigned char grp = 0;
+    struct bss *b = 0, sec = {0};
+    int rsn = 0, wpa = 0;
     if (len < RXBODY + 12 + 2) {
 #ifdef BCO_DEBUG_TRACE
         dg_bss_short++;
@@ -157,9 +215,9 @@ static int bss_add(const unsigned char *h, unsigned len, unsigned rxchan, signed
         else if (ie[0] == 3 && ie[1] == 1)
             chan = ie[2];
         else if (ie[0] == 48)
-            rsn = 1, rsnok = rsn_parse(ie + 2, ie[1], &grp);
+            rsn = 1, sec.rsnok = (unsigned char)rsn_parse(ie + 2, ie[1], &sec);
         else if (ie[0] == 221 && ie[1] >= 4 && ie[2] == 0 && ie[3] == 0x50 && ie[4] == 0xf2 && ie[5] == 1)
-            wpa = 1;
+            wpa = 1, sec.wpaok = (unsigned char)wpa_parse(ie + 6, ie[1] - 4u, &sec);
         ie += 2 + ie[1];
     }
     if (!ssid) {
@@ -197,7 +255,9 @@ static int bss_add(const unsigned char *h, unsigned len, unsigned rxchan, signed
         b->ssidlen = ssidlen;
     }
     b->chan = chan, b->rsn = rsn, b->wpa = wpa, b->seen++, b->gen = scan_gen;
-    b->grp = grp, b->rsnok = rsnok;
+    b->grp = sec.grp, b->rpair = sec.rpair, b->rakm = sec.rakm, b->rcaps = sec.rcaps;
+    b->wgrp = sec.wgrp, b->wpair = sec.wpair, b->wakm = sec.wakm;
+    b->rsnok = sec.rsnok, b->wpaok = sec.wpaok;
     if (rssi < 0)
         b->rssi = rssi;
     b->caps = h[RXBODY + 10] | h[RXBODY + 11] << 8;

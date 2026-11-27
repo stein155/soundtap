@@ -302,6 +302,7 @@ const sv: Messages = {
   discardChangesConfirm: 'Kassera',
   resetFailed: 'Återställningen misslyckades. Inget raderades.',
   wifiPasswordLength: 'Ett Wi-Fi-lösenord har 8 till 63 tecken.',
+  wifiWepKeyLength: 'En WEP-nyckel har 5 eller 13 tecken, eller 10 eller 26 hexadecimala siffror.',
   wifiSsidLength: 'Namnet är för långt för ett Wi-Fi-nätverk.',
   mqttPortInvalid: 'Ange en port från 1 till 65535, eller lämna fältet tomt.',
   undo: 'Ångra',

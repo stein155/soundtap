@@ -38,6 +38,8 @@ func newTestManager(t *testing.T, standby bool) (*Manager, string) {
 		overlayFrame:   nil,
 		transientFrame: nil,
 		transientUntil: time.Time{},
+		alertFrame:     nil,
+		alertUntil:     time.Time{},
 		shown:          nil,
 		drawnAt:        time.Time{},
 		wake:           nil,
@@ -151,6 +153,36 @@ func TestTransientOutranksAndRestoresNativeScreen(t *testing.T) {
 	got, _ = os.ReadFile(path)
 	if !bytes.Equal(got, mgr.npFrame) {
 		t.Fatal("now-playing not restored after transient")
+	}
+}
+
+// A held combination's count shows over the boot and setup screens and over a transient,
+// and they come back once it ends.
+func TestAlertOutranksTheOverlay(t *testing.T) {
+	t.Parallel()
+
+	frame := func(b byte) []byte { return bytes.Repeat([]byte{b}, oled.Width*oled.Height) }
+	mgr, path := newTestManager(t, true)
+	mgr.SetOverlay(Content{Frame: frame(5)})
+	mgr.SetTransient(Content{Frame: frame(6)}, time.Hour)
+	mgr.SetAlert(Content{Frame: frame(13)}, time.Hour)
+	mgr.step(context.Background())
+
+	if got, _ := os.ReadFile(path); !bytes.Equal(got, frame(13)) {
+		t.Fatal("the count is not drawn over the setup screen")
+	}
+
+	if mgr.tickEvery(context.Background()) != paintTick {
+		t.Fatal("a count in standby is not looked at every paint tick")
+	}
+
+	mgr.mu.Lock()
+	mgr.alertUntil = time.Now().Add(-time.Second)
+	mgr.mu.Unlock()
+	mgr.step(context.Background())
+
+	if got, _ := os.ReadFile(path); !bytes.Equal(got, frame(5)) {
+		t.Fatal("the setup screen did not come back after the count")
 	}
 }
 

@@ -29,10 +29,14 @@ once its name is published; `/etc/init.d/soundtap` starts no Wi-Fi script.
   for years and cover only part of it; the protocol is a few commands, so it is SoundTap's own small,
   tested package ([ADR 0124](0124-third-party-code.md)).
 - **No key in a file.** wpa_supplicant starts with a configuration that names only its control
-  socket. The manager adds each network with ADD_NETWORK and SET_NETWORK: the SSID in hex, the
+  socket and, since [ADR 0136](0136-every-network-stock-joined-and-wpa3.md), `pmf=1` and
+  `sae_check_mfp=1`. The manager adds each network with ADD_NETWORK and SET_NETWORK: the SSID in hex, the
   PSK as the 32-byte key that wpa_passphrase would derive (PBKDF2-SHA1), or `key_mgmt NONE`.
   wifi.conf first at priority 6, the known networks below it, every one with `scan_ssid 1`.
-  No passphrase reaches `/tmp`, the supplicant or the log.
+  No passphrase reaches `/tmp` or the log. WPA3's SAE needs the password itself, so wpa_supplicant
+  gets it as `sae_password` (in hex) over the control socket, beside the PSK
+  ([ADR 0136](0136-every-network-stock-joined-and-wpa3.md)); a network saved as a raw 64-digit
+  key has none and joins over PSK.
 - **Events.** A WRONG_KEY `CTRL-EVENT-SSID-TEMP-DISABLED` marks a wrong password beside the
   4-way-handshake state; `CTRL-EVENT-CONNECTED` to another SSID makes udhcpc release and renew
   (what `wifi-event.sh` did).

@@ -280,6 +280,7 @@ const zhHans: Messages = {
   discardChangesConfirm: '放弃',
   resetFailed: '重置失败。未清除任何内容。',
   wifiPasswordLength: 'Wi-Fi 密码为 8 到 63 个字符。',
+  wifiWepKeyLength: 'WEP 密钥为 5 或 13 个字符，或 10 或 26 位十六进制数字。',
   wifiSsidLength: '这个名称对 Wi-Fi 网络来说太长。',
   mqttPortInvalid: '请输入 1 到 65535 的端口，或留空。',
   undo: '撤销',

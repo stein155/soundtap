@@ -37,6 +37,7 @@ import (
 	"github.com/stein155/soundtap/app/internal/update"
 	"github.com/stein155/soundtap/app/internal/upnp"
 	"github.com/stein155/soundtap/app/internal/web"
+	"github.com/stein155/soundtap/app/oled/screen"
 )
 
 // recentStations opens the recently-played list and lets a wake replay its last station.
@@ -438,12 +439,7 @@ const (
 // stays as long as the chord needs holding.
 func panelFeedback(disp *display.Manager) func(text string) {
 	return func(text string) {
-		shown := panelFeedbackShown
-		if strings.HasPrefix(text, "Hold ") {
-			shown = chordHold
-		}
-
-		disp.SetTransient(display.Content{Frame: panel.Message(panel.Text(text))}, shown)
+		disp.SetTransient(display.Content{Frame: panel.Message(panel.Text(text))}, panelFeedbackShown)
 	}
 }
 
@@ -464,7 +460,14 @@ func panelChords(ctx context.Context, wiring *audioWiring, feedback func(string)
 			factoryReset(ctx, wiring.home, wifiConf, log.With("comp", "reset"), shutdown, set, presets)
 		}),
 		exclusive(new(oplock.Lock), refused, func() {
-			disp.SetTransient(display.Content{Frame: panel.Message(panel.Text("Setup"))}, panelSetupShown)
+			// Through the panel's own overlays, as the count before it: a transient set
+			// here lost to the volume overlay the chord's volume key had brought up.
+			done := "Setup mode on"
+			if setupWillClose(wifiConf) {
+				done = "Setup mode off"
+			}
+
+			frontPanel.Show(panelSetupShown, func() *screen.Frame { return panel.MessageScreen(panel.Text(done)) })
 
 			restart := func() error { return restartWifi(log) }
 			openAP := func() error { return openSetupAP(log) }
@@ -475,6 +478,15 @@ func panelChords(ctx context.Context, wiring *audioWiring, feedback func(string)
 			}
 		}),
 	)
+}
+
+// setupWillClose says the setup chord closes the setup AP rather than opening it, as
+// toggleSetupAP decides: the AP is up and there is a saved network to go back to.
+func setupWillClose(wifiConf string) bool {
+	_, up := os.Stat(setupAPUp)
+	conf, err := os.ReadFile(wifiConf)
+
+	return up == nil && err == nil && savedNetwork(conf)
 }
 
 // startPanelServices starts the media daemons, the subprocesses, AirPlay's metadata,

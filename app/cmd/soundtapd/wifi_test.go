@@ -42,7 +42,7 @@ func TestPersistWifiProfileIsInertAndAtomic(t *testing.T) {
 
 	psk := "price$5`touch /tmp/pwned`\\secret"
 
-	err = persistWifiProfile(path, ssid, psk, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	err = persistWifiProfile(path, ssid, "", psk, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +336,7 @@ func TestPersistWifiProfileKeepsARawKeyRaw(t *testing.T) {
 
 	key := strings.Repeat("ab", 32)
 
-	err := persistWifiProfile(path, "Home", key, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	err := persistWifiProfile(path, "Home", "", key, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}

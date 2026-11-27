@@ -3075,7 +3075,8 @@
                     "type": "string"
                   },
                   "security": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "none, wpa_or_wpa2 (the default when empty) or wep"
                   },
                   "password": {
                     "type": "string"
@@ -5439,6 +5440,9 @@
             ]
           },
           "secure": {
+            "type": "boolean"
+          },
+          "wep": {
             "type": "boolean"
           }
         },

@@ -6,6 +6,7 @@ package wifi
 import (
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -36,7 +37,7 @@ func countPrefix(calls []string, prefix string) int {
 func TestPassphraseBecomesTheKeyWpaPassphraseGives(t *testing.T) {
 	t.Parallel()
 
-	decoded, err := decode(NewRecord("IEEE", "password"))
+	decoded, err := decode(NewRecord("IEEE", "", "password"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,24 +48,122 @@ func TestPassphraseBecomesTheKeyWpaPassphraseGives(t *testing.T) {
 
 	raw := strings.Repeat("Ab", 32)
 
-	decoded, err = decode(NewRecord("home", raw))
+	decoded, err = decode(NewRecord("home", "", raw))
 	if err != nil || !strings.EqualFold(decoded.keyHex, raw) {
 		t.Fatalf("raw key = %q, %v", decoded.keyHex, err)
 	}
 
-	decoded, err = decode(NewRecord("cafe", ""))
+	decoded, err = decode(NewRecord("cafe", "", ""))
 	if err != nil || decoded.keyHex != "" {
 		t.Fatalf("open network = %q, %v", decoded.keyHex, err)
 	}
 
 	for name, rec := range map[string]Record{
-		"bad base64":       {SSIDB64: "!!", PSKB64: "", HexPSK: ""},
-		"short passphrase": NewRecord("home", "short"),
-		"bad hex":          {SSIDB64: b64("home"), PSKB64: "", HexPSK: strings.Repeat("z", 64)},
+		"bad base64":       {SSIDB64: "!!", PSKB64: "", HexPSK: "", Security: ""},
+		"short passphrase": NewRecord("home", "", "short"),
+		"bad hex":          {SSIDB64: b64("home"), PSKB64: "", HexPSK: strings.Repeat("z", 64), Security: ""},
 	} {
 		_, err := decode(rec)
 		if err == nil {
 			t.Errorf("%s decoded", name)
+		}
+	}
+}
+
+// A WEP network (ADR 0136) is stored with its key as typed and SECURITY=wep, the known list's
+// fourth field says wep, and wpa_supplicant gets the key in hex.
+func TestWEPRecord(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct{ key, hex string }{
+		{"abcde", "6162636465"},
+		{"0123456789abc", "30313233343536373839616263"},
+		{"A1B2C3D4E5", "a1b2c3d4e5"},
+		{strings.Repeat("Fe", 13), strings.Repeat("fe", 13)},
+	} {
+		rec := NewRecord("old net", SecurityWEP, test.key)
+		if rec.Security != SecurityWEP || rec.HexPSK != "" {
+			t.Fatalf("%q: record %+v", test.key, rec)
+		}
+
+		conf := string(ConfBytes(rec))
+		if !strings.Contains(conf, "\nSECURITY=wep\n") || ParseConf([]byte(conf)) != rec {
+			t.Errorf("%q: wifi.conf %q", test.key, conf)
+		}
+
+		if line := rec.Line(); !strings.HasSuffix(line, " wep") || ParseKnown([]byte(line + "\n"))[0] != rec {
+			t.Errorf("%q: known line %q", test.key, line)
+		}
+
+		decoded, err := decode(rec)
+		if err != nil || decoded.wepHex != test.hex || decoded.keyHex != "" {
+			t.Errorf("%q: decoded %+v, %v", test.key, decoded, err)
+		}
+	}
+
+	for _, bad := range []string{"", "abcd", "abcdef", "12345678901", "zz23456789", "abc\x01e"} {
+		if IsWEPKey(bad) {
+			t.Errorf("%q is a WEP key", bad)
+		}
+
+		_, err := decode(NewRecord("old net", SecurityWEP, bad))
+		if err == nil {
+			t.Errorf("%q decoded", bad)
+		}
+	}
+	// a WPA passphrase of five characters is no network at all, as before
+	_, err := decode(NewRecord("home", "", "abcde"))
+	if err == nil {
+		t.Error("a 5-character WPA passphrase decoded")
+	}
+}
+
+//nolint:paralleltest // its rig points wpactrl.ClientDir, a package variable, at a directory of its own
+func TestRawKeyJoinsWithoutSAE(t *testing.T) {
+	bench := newRig(t, "rhino")
+	bench.save("home", strings.Repeat("ab", 32))
+	bench.sys.where["home"] = "ok"
+	bench.start()
+	bench.eventually("network-ready", func() bool { return bench.exists("network-ready") })
+
+	cmds := bench.sys.supServer().Commands()
+	if !slices.Contains(cmds, "SET_NETWORK 0 key_mgmt WPA-PSK WPA-PSK-SHA256") {
+		t.Errorf("a raw key's network: %q", cmds)
+	}
+
+	for _, c := range cmds {
+		if strings.Contains(c, "sae_password") {
+			t.Errorf("a raw key has no SAE password: %q", c)
+		}
+	}
+}
+
+//nolint:paralleltest // its rig points wpactrl.ClientDir, a package variable, at a directory of its own
+func TestWEPNetworkJoins(t *testing.T) {
+	bench := newRig(t, "rhino")
+
+	err := WriteConf(bench.conf, NewRecord("oldnet", SecurityWEP, "abcde"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bench.sys.where["oldnet"] = "ok"
+	bench.start()
+	bench.eventually("network-ready", func() bool { return bench.exists("network-ready") })
+
+	cmds := bench.sys.supServer().Commands()
+	for _, want := range []string{
+		"SET_NETWORK 0 key_mgmt NONE", "SET_NETWORK 0 wep_key0 6162636465", "SET_NETWORK 0 wep_tx_keyidx 0",
+		"SET_NETWORK 0 auth_alg OPEN SHARED",
+	} {
+		if !slices.Contains(cmds, want) {
+			t.Errorf("wpa_supplicant never got %q: %q", want, cmds)
+		}
+	}
+
+	for _, c := range cmds {
+		if strings.HasPrefix(c, "SET_NETWORK 0 psk") {
+			t.Errorf("a WEP network got a PSK: %q", c)
 		}
 	}
 }
@@ -80,11 +179,11 @@ func TestJoinSavedNetwork(t *testing.T) {
 	bench.eventually("the join's bookkeeping", func() bool { return bench.joinCount() == 1 })
 
 	conf := bench.read(filepath.Join(bench.p.Tmp, "wpa_supplicant.conf"))
-	if conf != "ctrl_interface="+bench.p.CtrlDir+"\n" {
-		t.Fatalf("wpa_supplicant.conf = %q; want the control socket alone", conf)
+	if conf != "ctrl_interface="+bench.p.CtrlDir+"\npmf=1\nsae_check_mfp=1\n" {
+		t.Fatalf("wpa_supplicant.conf = %q; want the control socket and PMF where possible, no key", conf)
 	}
 
-	cmds := bench.sys.sup.srv.Commands()
+	cmds := bench.sys.supServer().Commands()
 	for _, want := range []string{
 		"ATTACH", "SET_NETWORK 0 ssid 686f6d65", "SET_NETWORK 0 scan_ssid 1",
 		"SET_NETWORK 0 priority 6", "ENABLE_NETWORK 0",
@@ -96,7 +195,17 @@ func TestJoinSavedNetwork(t *testing.T) {
 
 	for _, c := range cmds {
 		if strings.Contains(c, "homepass1") {
-			t.Errorf("the passphrase reached wpa_supplicant: %q", c)
+			t.Errorf("the passphrase reached wpa_supplicant in the clear: %q", c)
+		}
+	}
+	// every PSK network type (ADR 0136): WPA/WPA2, PSK-SHA256 and WPA3's SAE with its password in
+	// hex; management frame protection is the global pmf=1 above
+	for _, want := range []string{
+		"SET_NETWORK 0 key_mgmt WPA-PSK WPA-PSK-SHA256 SAE",
+		"SET_NETWORK 0 sae_password " + hex.EncodeToString([]byte("homepass1")),
+	} {
+		if !slices.Contains(cmds, want) {
+			t.Errorf("wpa_supplicant never got %q: %q", want, cmds)
 		}
 	}
 
@@ -114,7 +223,7 @@ func TestJoinSavedNetwork(t *testing.T) {
 		t.Error("wifi.conf.good is not the network that joined")
 	}
 
-	if got := bench.read(bench.conf + ".known"); got != NewRecord("home", "homepass1").Line()+"\n" {
+	if got := bench.read(bench.conf + ".known"); got != NewRecord("home", "", "homepass1").Line()+"\n" {
 		t.Errorf("known = %q", got)
 	}
 
@@ -135,7 +244,7 @@ func TestJoinSavedNetwork(t *testing.T) {
 func TestWrongPasswordFallsBackToTheLastNetworkThatWorked(t *testing.T) {
 	bench := newRig(t, "rhino")
 
-	err := WriteConf(bench.conf+".good", NewRecord("home", "homepass1"))
+	err := WriteConf(bench.conf+".good", NewRecord("home", "", "homepass1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +255,7 @@ func TestWrongPasswordFallsBackToTheLastNetworkThatWorked(t *testing.T) {
 	bench.start()
 	bench.eventually("the join after the fallback", func() bool { return bench.joinCount() == 1 })
 
-	if bench.read(bench.conf) != string(ConfBytes(NewRecord("home", "homepass1"))) {
+	if bench.read(bench.conf) != string(ConfBytes(NewRecord("home", "", "homepass1"))) {
 		t.Fatalf("wifi.conf = %q; want the last good one back", bench.read(bench.conf))
 	}
 
@@ -202,7 +311,7 @@ func TestWrongPasswordWithoutALastGoodOpensTheSetupAP(t *testing.T) {
 
 	for _, c := range []string{
 		"iw phy phy0 interface add wlan1 type __ap", "ip addr add 192.168.42.1/24 dev wlan1",
-		"lan-allow add wlan1 192.168.42.1 24", "dnsd -i 192.168.42.1", "udhcpd -f",
+		"lan-allow add wlan1 192.168.42.1 24", "dnsd -i 192.168.42.1", "udhcpd -f -v",
 	} {
 		if !bench.sys.called(c) {
 			t.Errorf("setup AP step %q missing", c)
@@ -390,7 +499,7 @@ func TestNewCredentialsJoinAndAreRemembered(t *testing.T) {
 		t.Fatalf("known = %+v", known)
 	}
 
-	cmds := bench.sys.sup.srv.Commands()
+	cmds := bench.sys.supServer().Commands()
 	if !slices.Contains(cmds, "SET_NETWORK 0 ssid "+fmt.Sprintf("%x", "office")) ||
 		!slices.Contains(cmds, "SET_NETWORK 1 ssid "+fmt.Sprintf("%x", "home")) ||
 		!slices.Contains(cmds, "SET_NETWORK 1 priority 5") {
@@ -407,7 +516,7 @@ func TestAKnownNetworkInRangeBecomesWifiConf(t *testing.T) {
 
 	var knownSb302 strings.Builder
 	for i := range 6 {
-		knownSb302.WriteString(NewRecord(fmt.Sprintf("n%d", i), "password").Line() + "\n")
+		knownSb302.WriteString(NewRecord(fmt.Sprintf("n%d", i), "", "password").Line() + "\n")
 	}
 
 	known += knownSb302.String()
@@ -438,7 +547,7 @@ func TestAKnownNetworkInRangeBecomesWifiConf(t *testing.T) {
 		t.Fatalf("known = %v; want the joined one first and five kept", names)
 	}
 	// wifi.conf and five known networks reach wpa_supplicant, the sixth does not.
-	if n := countPrefix(bench.sys.sup.srv.Commands(), "ADD_NETWORK"); n != 6 {
+	if n := countPrefix(bench.sys.supServer().Commands(), "ADD_NETWORK"); n != 6 {
 		t.Fatalf("networks offered = %d", n)
 	}
 }
@@ -469,6 +578,10 @@ func TestReleaseZeroOneZeroFilesStillJoin(t *testing.T) {
 	got := make([]string, 0, len(nets))
 	for _, n := range nets {
 		got = append(got, fmt.Sprintf("%s/%v", n.ssid, n.keyHex != ""))
+		// a file from before ADR 0136 has no SECURITY: nothing in it is WEP
+		if n.rec.Security != "" || n.wepHex != "" {
+			t.Errorf("%s reads as WEP: %+v", n.ssid, n.rec)
+		}
 	}
 
 	if strings.Join(got, " ") != "home/true work/true cafe/false" {
@@ -488,7 +601,7 @@ func TestAnotherNetworkGetsANewAddress(t *testing.T) {
 	bench := newRig(t, "rhino")
 	bench.save("home", "homepass1")
 
-	known := NewRecord("test-ap", "password").Line() + "\n"
+	known := NewRecord("test-ap", "", "password").Line() + "\n"
 
 	err := os.WriteFile(bench.conf+".known", []byte(known), 0o600)
 	if err != nil {
@@ -508,7 +621,7 @@ func TestAnotherNetworkGetsANewAddress(t *testing.T) {
 		t.Fatal("the first connection released the lease")
 	}
 	// The same network again (a router back after a power cut): renew only.
-	bench.sys.sup.srv.Event("CTRL-EVENT-CONNECTED - Connection to aa:bb:cc:dd:ee:ff completed [id=0 id_str=]")
+	bench.sys.supServer().Event("CTRL-EVENT-CONNECTED - Connection to aa:bb:cc:dd:ee:ff completed [id=0 id_str=]")
 	bench.eventually("the second renew", func() bool { return countPrefix(bench.sys.Signals(), usr1) == 2 })
 
 	if slices.Contains(bench.sys.Signals(), usr2) {
@@ -518,7 +631,7 @@ func TestAnotherNetworkGetsANewAddress(t *testing.T) {
 	bench.sys.sup.mu.Lock()
 	bench.sys.sup.current = 1
 	bench.sys.sup.mu.Unlock()
-	bench.sys.sup.srv.Event("CTRL-EVENT-CONNECTED - Connection to aa:bb:cc:dd:ee:01 completed [id=1 id_str=]")
+	bench.sys.supServer().Event("CTRL-EVENT-CONNECTED - Connection to aa:bb:cc:dd:ee:01 completed [id=1 id_str=]")
 	bench.eventually("release and renew", func() bool { return countPrefix(bench.sys.Signals(), usr1) == 3 })
 
 	sig := bench.sys.Signals()
@@ -544,7 +657,7 @@ func TestARestartedDaemonKeepsTheNetwork(t *testing.T) {
 	go func() { defer close(done); next.Run(ctx) }()
 
 	bench.eventually("the new daemon attached", func() bool {
-		return bench.sys.sup.srv.Attached() >= 1 && countPrefix(bench.sys.sup.srv.Commands(), "STATUS") > 0
+		return bench.sys.supServer().Attached() >= 1 && countPrefix(bench.sys.supServer().Commands(), "STATUS") > 0
 	})
 	time.Sleep(50 * time.Millisecond)
 	cancel()

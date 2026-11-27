@@ -81,10 +81,21 @@ void xport_irq(void);
  * schedule() are starved. Indices are shared with bco/app/src/wifi.c. */
 enum { RC_POLL, RC_PHASE, RC_SCHED, RC_WIN, RC_LIMPOS = RC_WIN + 8, RC_DMAGO, RC_DMADONE,
        RC_DMABUSY, RC_IRQIN, RC_IRQOUT, RC_IRQST, RC_ST1, RC_ST2, RC_ST2DONE, RC_ST10, RC_FIQIN,
-       RC_FIQOUT, RC_FAULTLR, RC_FAULT, RC_CMD, RC_CMDBAD, RC_EVDROP, RC_N };
+       RC_FIQOUT, RC_FAULTLR, RC_FAULT, RC_CMD, RC_CMDBAD, RC_EVDROP, RC_APIN, RC_APNOFILT,
+       RC_APKEEP, RC_APFCS, RC_APFRATE, RC_APDATA, RC_APDRATE, RC_APNOROOM,
+       RC_APACK, RC_APACKLAST, RC_N };
+_Static_assert(RC_APIN == 29 && RC_APNOFILT == 30 && RC_APKEEP == 31 && RC_APNOROOM == 36 && RC_APACKLAST == 38,
+               "bco/app/src/wifi.c (CORE_RC_APIN) reads the ap_mode counters at these indices");
 /* RC_FAULT: start.S vector number (start.S writes RC_FAULTLR/RC_FAULT by index: append only);
  * RC_CMDBAD: command records skipped as malformed (xport.c commands) or station commands
- * too short for their type (sta.c); RC_EVDROP: events dropped on a full event ring (xport.c). */
+ * too short for their type (sta.c); RC_EVDROP: events dropped on a full event ring (xport.c).
+ * In ap_mode (mac.c): RC_APIN frames to our address, RC_APNOFILT those of them the address
+ * filter did not flag, RC_APKEEP a client's data frames kept for the app; RC_APFCS frames to
+ * our address with a bad FCS and RC_APFRATE the last one's {rate index, rssi, frame control},
+ * RC_APDATA a client's data frames with a body (FCS good) and RC_APDRATE the last one's, and
+ * RC_APNOROOM those that found the receive queue full; RC_APACK the ACKs sent in ap_mode and
+ * RC_APACKLAST the last one's {rate class, received rate index, frame control acknowledged}. The app reads these
+ * three through HOST_FLAG2 for AP_STATUS (bco/app/src/wifi.c), at the offsets named there. */
 extern volatile unsigned rec[RC_N];
 void route(unsigned type, unsigned module, unsigned src, const void *payload, unsigned len);
 void sta_init(unsigned char *key_block);
@@ -106,7 +117,8 @@ int mac_ccmp_rx(const void *hdr, const void *ct, void *out, unsigned n, const un
 extern volatile unsigned tx_acked;   /* the AP ACKed a frame to us (mac.c) */
 extern volatile unsigned mgmt_tx_pending;    /* 0x10|ring when a host frame rides the mgmt queue */
 const unsigned char *sta_txkey(unsigned slot, unsigned long long *pn);
-const unsigned char *sta_rxkey(unsigned slot, int group, unsigned keyid, unsigned long long **rxpn);
+const unsigned char *sta_rxkey(unsigned slot, int group, unsigned keyid, unsigned long long **rxpn,
+                               int *soft);
 void scan_poll(void);
 extern volatile unsigned dwell_fired, dwell_state;
 extern unsigned joined;

@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -85,6 +86,9 @@ type Panel struct {
 	input   time.Time // last key press
 	holdN   int       // preset key held down, 0 for none
 	holdAt  time.Time
+	chord   string        // what a held key combination does (a key of Text), "" for none
+	chordAt time.Time     // since when it is held
+	chordOf time.Duration // how long it must be held
 	overlay func() *screen.Frame
 	until   time.Time
 	presets []speaker.Preset // as runDisplay last read them, for the preset overlay's name
@@ -105,6 +109,9 @@ func New(holdToStore time.Duration) *Panel {
 		input:       time.Time{},
 		holdN:       0,
 		holdAt:      time.Time{},
+		chord:       "",
+		chordAt:     time.Time{},
+		chordOf:     0,
 		overlay:     nil,
 		until:       time.Time{},
 		presets:     nil,
@@ -130,6 +137,31 @@ func (p *Panel) Show(d time.Duration, f func() *screen.Frame) {
 	p.overlay, p.until, p.input = f, time.Now().Add(d), time.Now()
 	p.mu.Unlock()
 	p.nudge()
+}
+
+// ChordDown starts the count of a key combination held for hold: what it does (word, a key of
+// Text) over the seconds left and a bar, above every other overlay, until ChordUp. The owner
+// let go of the setup combo at 7 and 9 s while the panel showed nothing (ST20, 2026-11-27).
+func (p *Panel) ChordDown(word string, hold time.Duration) {
+	p.mu.Lock()
+	p.chord, p.chordAt, p.chordOf, p.input = word, time.Now(), hold, time.Now()
+	p.mu.Unlock()
+	p.nudge()
+}
+
+// Counting says a held combination's count is up.
+func (p *Panel) Counting() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return p.chord != "" && p.chordOf > 0
+}
+
+// ChordUp ends the count: the combination fired or was let go.
+func (p *Panel) ChordUp() {
+	p.mu.Lock()
+	p.chord = ""
+	p.mu.Unlock()
 }
 
 // PresetDown starts the "storing" bar; PresetUp ends it, whatever came of the press.
@@ -166,6 +198,15 @@ func (p *Panel) PresetStored() {
 func (p *Panel) Current(now time.Time) (func() *screen.Frame, time.Time) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
+	if p.chord != "" && p.chordOf > 0 {
+		word, held, of := p.chord, now.Sub(p.chordAt), p.chordOf
+		left := int(math.Ceil((of - held).Seconds()))
+
+		return func() *screen.Frame {
+			return screen.Holding(Text(word), max(left, 0), float64(held)/float64(of))
+		}, p.input
+	}
 
 	if p.holdN > 0 && now.Sub(p.holdAt) >= holdShowsAfter {
 		n, progress := p.holdN, float64(now.Sub(p.holdAt)-holdShowsAfter)/float64(p.holdToStore-holdShowsAfter)
@@ -251,10 +292,16 @@ func (p *Panel) Run(
 		overlay, input := p.Current(now)
 		retick(tick, &every, panelTickFor(status.Standby && overlay == nil))
 
-		if overlay != nil {
+		switch {
+		case p.Counting():
+			// A held combination's count outranks even the boot and setup screens.
+			disp.SetAlert(display.Content{Frame: overlay().Pix(fullLevel)}, overlayHold)
+		case overlay != nil:
 			// Overlays outrank the standby clock too: a preset press wakes the speaker,
 			// and its number must show before the speaker has left standby.
 			disp.SetTransient(display.Content{Frame: overlay().Pix(fullLevel)}, overlayHold)
+		default:
+			// Nothing over the screen.
 		}
 
 		if now.Sub(read) >= time.Second {

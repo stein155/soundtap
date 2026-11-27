@@ -305,6 +305,8 @@ const hu: Messages = {
   discardChangesConfirm: 'Elvetés',
   resetFailed: 'A visszaállítás nem sikerült. Semmi sem törlődött.',
   wifiPasswordLength: 'A Wi-Fi-jelszó 8–63 karakter hosszú.',
+  wifiWepKeyLength:
+    'A WEP-kulcs 5 vagy 13 karakter, illetve 10 vagy 26 hexadecimális számjegy hosszú.',
   wifiSsidLength: 'Ez a név túl hosszú egy Wi-Fi-hálózathoz.',
   mqttPortInvalid: 'Adjon meg 1 és 65535 közötti portot, vagy hagyja üresen.',
   undo: 'Visszavonás',

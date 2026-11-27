@@ -13,11 +13,11 @@ usb)         files=src/usb.c;  defs=-DUSB_IRQ ;;
 usb-connect) files=src/usb.c;  defs="-DUSB_IRQ -DUSB_CONNECT" ;;
 mon)         files=src/mon.c ;;
 link-own)    # the network card with our own WiLD core linked in (WILD_BIN=wild.bin, bco/wild/fw)
-             files="src/netcard.c src/usblink.c src/mgmt.c src/wifi.c src/wpa.c src/wired.c src/wild_own.S"
+             files="src/netcard.c src/usblink.c src/mgmt.c src/wifi.c src/wpa.c src/wsec.c src/wired.c src/wild_own.S"
              defs="-DNETCARD_HW -fno-tree-loop-distribute-patterns -DWILD_OWN -DWILD_BIN=\"${WILD_BIN:?}\"" ;;
 link-own-trace) # link-own plus the UART diagnostics (scan, join, RX ring heartbeat). Bench only:
              # each line busy-waits on the UART while USB and the RX rings wait. Never shipped.
-             files="src/netcard.c src/usblink.c src/mgmt.c src/wifi.c src/wpa.c src/wired.c src/wild_own.S"
+             files="src/netcard.c src/usblink.c src/mgmt.c src/wifi.c src/wpa.c src/wsec.c src/wired.c src/wild_own.S"
              defs="-DNETCARD_HW -fno-tree-loop-distribute-patterns -DWILD_OWN -DBCO_DEBUG_TRACE -DWILD_BIN=\"${WILD_BIN:?}\"" ;;
 *) echo "unknown variant ${v}" >&2; exit 1 ;;
 esac

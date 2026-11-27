@@ -10,6 +10,8 @@
  * completion word and checks the control block the core hands it. */
 #include "core_sim.h"
 
+static int soft; /* sta_rxkey: the app deciphers under this key (ADR 0136) */
+
 static const unsigned char TK[16] = {0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
                                      0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f};
 static const unsigned char GTK[16] = {0xe0, 0xe1, 0xe2, 0xe3, 0xe4, 0xe5, 0xe6, 0xe7,
@@ -391,7 +393,7 @@ static void ccmp(void)
     unsigned long long *last;
     setup(1);
     joined = 1;
-    sta_rxkey(0, 0, 0, &last);
+    sta_rxkey(0, 0, 0, &last, &soft);
 
     CHECK(deliver_ccmp(&d, 0x200000, 0x0000a1b2c3d4e5f6ull & 0xffffffffffffull, 50), "deciphered");
     unsigned long long pn = 0xa1b2c3d4e5f6ull;
@@ -431,7 +433,7 @@ static void ccmp(void)
     air_rx(fbuf, len, ST_IN | ST_ADDR);
     CHECK(!delivered(&d), "no pairwise key for an unknown transmitter");
     CHECK(!deliver_ccmp(&d, 0x200000, 7, 0), "no data at all: dropped");
-    unsigned maxn = 0x6c0 - 0x94 - 24 - 8 + 16; /* n = len - 4 */
+    unsigned maxn = RXBUF - 0x94 - 24 - 8 + 16; /* n = len - 4 */
     CHECK(deliver_ccmp(&d, 0x200000, 8, maxn - 40), "largest protected frame");
     CHECK(d.end == RXBUF - 8, "fills the host buffer exactly (%#x)", d.end);
     recycle(&d);
@@ -443,7 +445,7 @@ static void ccmp(void)
     air_rx(fbuf, len, ST_IN);
     CHECK(delivered(&d) && !memcmp(&dma_b[10], GTK, 16), "group frame under group key 1");
     recycle(&d);
-    sta_rxkey(0, 1, 1, &last);
+    sta_rxkey(0, 1, 1, &last, &soft);
     CHECK(*last == 3, "group PN tracked separately");
     len = data_frame(BCAST, BSSID, 1, 2, 4, 30);
     air_rx(fbuf, len, ST_IN);
@@ -455,7 +457,7 @@ static void ccmp(void)
     for (unsigned i = 0; i < NRX; i++) {
         CHECK(deliver_ccmp(&d, 0x200000, 10 + i, 10), "fill buffer %u", i);
     }
-    sta_rxkey(0, 0, 0, &last);
+    sta_rxkey(0, 0, 0, &last, &soft);
     CHECK(!deliver_ccmp(&d, 0x200000, 20, 10), "no buffer: not delivered yet");
     CHECK(*last == 13 && rxq_in - rxq_out == 1, "still queued, PN unused");
     recycle(&d); /* one buffer back: the wait ends */
@@ -464,9 +466,164 @@ static void ccmp(void)
     CHECK(!delivered(&d), "and only once");
 }
 
+/* The setup access point (ap_mode): a client's frames carry our address as A1. A toDS frame
+ * is kept and ACKed whether or not the address filter flags it, and AP_STATUS's counters see
+ * both; null-data and PS-Poll are kept for the power-management state, QoS data goes up as
+ * plain data; group data from other networks on the channel and frames for others are not
+ * kept. A station keeps its old rule: nothing to it without the filter's flag. */
+static void ap_clients(void)
+{
+    static const unsigned char PHONE[6] = {0x02, 0x99, 0x88, 0x77, 0x66, 0x55};
+    struct rxd d;
+    unsigned n;
+    setup(0);
+    joined = ap_mode = 1;
+    n = hdr(fbuf, 0x08, 0x01, OWN, PHONE, BCAST); /* a DHCP discover: toDS, to everybody */
+    for (unsigned i = 0; i < 40; i++)
+        fbuf[n++] = i + 1;
+    air_rx(fbuf, n + 4, ST_IN);
+    CHECK(rxq_in == 1 && acked(), "ap_mode: toDS data without the filter flag kept and ACKed");
+    CHECK(rec[RC_APACK] == 1 && rec[RC_APACKLAST] == (resp_class[11] | 11u << 8 | 0x08u << 16),
+          "the ACK counted with its rate class, the received rate index and frame control");
+    CHECK(rec[RC_APIN] == 1 && rec[RC_APNOFILT] == 1 && rec[RC_APKEEP] == 1, "ap counters");
+    CHECK(rec[RC_APDATA] == 1 && rec[RC_APDRATE] == (11u | 0xc4u << 8 | 0x08u << 16) && !rec[RC_APNOROOM],
+          "a client's data frame counted with its rate index, level and frame control");
+    CHECK(delivered(&d), "delivered");
+    CHECK(!memcmp(d.buf + 0xac, fbuf, 24) && !memcmp(d.buf + 0xcc, fbuf + 24, 40), "header and body");
+    CHECK(d.end == 0x94 + 24 + 24 + 40, "end %#x", d.end);
+    recycle(&d);
+    air_rx(fbuf, n + 4, ST_IN | ST_ADDR);
+    CHECK(rxq_in == 2 && acked() && rec[RC_APIN] == 2 && rec[RC_APNOFILT] == 1, "with the flag too");
+    CHECK(delivered(&d), "delivered");
+    recycle(&d);
+
+    /* null-data with the power-management bit: kept (no body) and ACKed */
+    n = hdr(fbuf, 0x48, 0x11, OWN, PHONE, OWN);
+    air_rx(fbuf, n + 4, ST_IN);
+    CHECK(rxq_in == 3 && acked(), "null-data kept and ACKed");
+    CHECK(delivered(&d) && d.buf[0xac] == 0x48 && d.buf[0xad] == 0x11 && d.end == 0x94 + 48, "null-data record");
+    recycle(&d);
+
+    /* QoS data: up without its QoS control, as plain data */
+    n = hdr(fbuf, 0x88, 0x01, OWN, PHONE, BCAST);
+    fbuf[n++] = 0, fbuf[n++] = 0; /* QoS control: TID 0, Normal Ack */
+    for (unsigned i = 0; i < 20; i++)
+        fbuf[n++] = 0xa0 + i;
+    air_rx(fbuf, n + 4, ST_IN);
+    CHECK(rxq_in == 4 && acked(), "QoS data kept and ACKed");
+    CHECK(delivered(&d) && d.buf[0xac] == 0x08 && !memcmp(d.buf + 0xac + 1, fbuf + 1, 23), "plain data header");
+    CHECK(!memcmp(d.buf + 0xcc, fbuf + 26, 20) && d.end == 0x94 + 48 + 20, "body after the QoS control");
+    recycle(&d);
+
+    /* PS-Poll: 16 bytes (AID, BSSID, TA), kept and ACKed, padded to the header */
+    memset(fbuf, 0xee, 32);
+    fbuf[0] = 0xa4, fbuf[1] = 0x10, fbuf[2] = 1, fbuf[3] = 0xc0;
+    memcpy(fbuf + 4, OWN, 6), memcpy(fbuf + 10, PHONE, 6);
+    air_rx(fbuf, 20, ST_IN);
+    CHECK(rxq_in == 5 && acked(), "PS-Poll kept and ACKed");
+    CHECK(delivered(&d) && !memcmp(d.buf + 0xac, fbuf, 16) && d.end == 0x94 + 48, "PS-Poll record");
+    for (unsigned i = 16; i < 32; i++)
+        CHECK(d.buf + 0xac + i < d.buf + 0xcc ? d.buf[0xac + i] == 0 : 1, "padding byte %u", i);
+    recycle(&d);
+
+    /* a frame to us with a bad FCS: neither kept nor ACKed, counted with its rate and level */
+    n = hdr(fbuf, 0x08, 0x01, OWN, PHONE, BCAST);
+    air_put(fbuf, n + 20 + 4, -30, 12);
+    air_fiq(0x08, ST_IN | ST_FCS);
+    CHECK(rxq_in == 5 && !acked() && rec[RC_APFCS] == 1 && rec[RC_APFRATE] == (12u | 0xe2u << 8 | 0x08u << 16),
+          "damaged frame to us counted, not kept");
+    air_put(fbuf, n + 20 + 4, -30, 12);
+    air_fiq(0x08, ST_IN | ST_FCS);
+    CHECK(rec[RC_APFCS] == 2, "each one");
+
+    /* not ours: another network's broadcast, a frame for someone else */
+    n = hdr(fbuf, 0x08, 0x02, BCAST, OTHER, OTHER);
+    for (unsigned i = 0; i < 20; i++)
+        fbuf[n++] = i;
+    air_rx(fbuf, n + 4, ST_IN);
+    CHECK(rxq_in == 5 && !acked(), "ap_mode: other networks' group data not kept");
+    n = hdr(fbuf, 0x08, 0x01, OTHER, PHONE, BCAST);
+    air_rx(fbuf, n + 20 + 4, ST_IN);
+    CHECK(rxq_in == 5 && !acked() && rec[RC_APIN] == 5, "ap_mode: data for another BSS not kept");
+
+    /* the app stops its access point (0xb7): ap_mode and the BSS end */
+    host_cmd(0xb7, 0x12, 0x11, 0, 0);
+    pump(4);
+    CHECK(!ap_mode && !joined, "0xb7 ends ap_mode");
+    joined = 1;
+    /* a station: toDS-looking data to us without the flag stays out, as before */
+    ap_mode = 0;
+    n = hdr(fbuf, 0x08, 0x01, OWN, PHONE, BCAST);
+    air_rx(fbuf, n + 20 + 4, ST_IN);
+    CHECK(rxq_in == 5 && !acked(), "station: nothing without the filter flag");
+    ap_mode = 0, joined = 0;
+}
+
+/* Frames under the app's keys (ADR 0136) go up as they came: TKIP unicast under the soft pairwise
+ * key, TKIP group under a soft group key, WEP (no ExtIV) under a default key in the group table,
+ * cipher header and trailer kept, protected bit set, record byte 7 = RX_SOFT. A frame for a key id
+ * nobody installed is still dropped, and the largest TKIP frame is not cut. */
+static void soft_frames(void)
+{
+    struct rxd d;
+    unsigned char pr[10] = {0}, p[52] = {0};
+    setup(0);
+    joined = 1;
+    memcpy(pr, BSSID, 6);
+    host_cmd(0xb5, 0x12, 0x11, pr, sizeof pr);
+    p[8] = 2, p[19] = 16;
+    memcpy(p + 12, BSSID, 6);
+    host_cmd(13, 0x12, 1, p, 52);              /* TKIP pairwise */
+    memset(p, 0, sizeof p);
+    p[0] = 2, p[4] = 1, p[7] = 16;
+    host_cmd(11, 0x12, 1, p, 40);              /* TKIP group key 1 */
+    memset(p, 0, sizeof p);
+    p[0] = 5, p[4] = 3, p[7] = 16;
+    host_cmd(11, 0x12, 1, p, 40);              /* WEP-104 default key 3 */
+    pump(4);
+    REG(0xb18) = 0;                            /* the engine must not run */
+
+    unsigned len = data_frame(OWN, BSSID, 1, 0, 0x10203, 40);
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
+    CHECK(delivered(&d) && d.buf[0x94 + 7] == 2, "TKIP unicast up as RX_SOFT");
+    CHECK(d.buf[0xac + 1] == 0x42, "protected bit kept");
+    CHECK(!memcmp(d.buf + 0xcc, fbuf + 24, 8 + 40 + 8) && d.end == 0x94 + 24 + 24 + 8 + 40 + 8,
+          "body as on air: header, ciphertext, trailer");
+    recycle(&d);
+    len = data_frame(BCAST, BSSID, 1, 1, 5, 30);
+    air_rx(fbuf, len, ST_IN);
+    CHECK(delivered(&d) && d.buf[0x94 + 7] == 2, "TKIP group key 1 up as RX_SOFT");
+    recycle(&d);
+    len = data_frame(BCAST, BSSID, 1, 2, 6, 30);
+    air_rx(fbuf, len, ST_IN);
+    CHECK(!delivered(&d), "group key id 2: nobody's, dropped");
+    /* WEP: IV, key id 3 without ExtIV, unicast and broadcast both under default key 3 */
+    len = data_frame(OWN, BSSID, 1, 3, 7, 20);
+    fbuf[24 + 3] = 3 << 6;
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
+    CHECK(delivered(&d) && d.buf[0x94 + 7] == 2 && d.buf[0xcc + 3] == 0xc0, "WEP unicast up as RX_SOFT");
+    recycle(&d);
+    len = data_frame(BCAST, BSSID, 1, 3, 8, 20);
+    fbuf[24 + 3] = 3 << 6;
+    air_rx(fbuf, len, ST_IN);
+    CHECK(delivered(&d) && d.buf[0x94 + 7] == 2, "WEP broadcast up as RX_SOFT");
+    recycle(&d);
+    len = data_frame(OWN, BSSID, 1, 0, 9, 20);
+    fbuf[24 + 3] = 0;
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
+    CHECK(!delivered(&d), "WEP key id 0: no default key, dropped");
+    /* the largest TKIP frame: 8 + 1500 + 8 SNAP and IP, MIC 8 + ICV 4 (data_frame's trailer is 8) */
+    len = data_frame(OWN, BSSID, 1, 0, 10, 1508 + 4);
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
+    CHECK(delivered(&d) && d.end == 0x94 + 24 + 24 + 1528, "a 1528-byte TKIP body fits (%#x)", d.end);
+    recycle(&d);
+}
+
 int main(void)
 {
+    soft_frames();
     keep_filter();
+    ap_clients();
     ack_unicast_data();
     group_leave();
     read_pointer();

@@ -82,15 +82,21 @@ func apChannel(scan string) int {
 // hostapdConf is the setup AP's hostapd configuration: open, 802.11g, no WMM, and the
 // country in the beacon (802.11d) when one is known. The ST20's AP is the BCO's radio
 // (soundtap_bco, ADR 0031), proven on channel 6 without a country element, and stays so.
-func hostapdConf(iface, ssid string, channel int, country string) string {
+// rates is added as it is: st20Rates there.
+func hostapdConf(iface, ssid string, channel int, country, rates string) string {
 	conf := fmt.Sprintf("interface=%s\ndriver=nl80211\nssid=%s\nhw_mode=g\nchannel=%d\nwmm_enabled=0\n",
 		iface, ssid, channel)
 	if country != "" && country != "00" {
 		conf += fmt.Sprintf("country_code=%s\nieee80211d=1\n", country)
 	}
 
-	return conf
+	return conf + rates
 }
+
+// st20Rates caps the rates a phone may send at on the ST20's setup AP to 24 Mb/s, the 11b
+// rates basic: a phone next to the speaker got null-data through but next to none of its
+// data, which goes at the top OFDM rates (2026-11-27), and a setup page needs no more.
+const st20Rates = "supported_rates=10 20 55 110 60 90 120 180 240\nbasic_rates=10 20 55 110\n"
 
 // The setup AP's address pool: udhcpd hands out .10 to .50.
 const (
@@ -134,6 +140,8 @@ func (m *Manager) openAP(ctx context.Context, reason string) error {
 	ssid := m.setupSSID()
 	m.log.Info("starting the setup AP", "reason", reason, "iface", m.cfg.AP, "ssid", ssid, "ip", APAddress)
 
+	started := time.Now()
+
 	scan, err := m.stationForAP(ctx)
 	if err != nil {
 		return err
@@ -144,7 +152,12 @@ func (m *Manager) openAP(ctx context.Context, reason string) error {
 		return err
 	}
 
-	return m.startPortal(ctx, stopAP)
+	err = m.startPortal(ctx, stopAP)
+	if err == nil {
+		m.watchAP(ctx, started)
+	}
+
+	return err
 }
 
 // stationForAP stops the station and keeps wlan0 managed and up for the scan the setup
@@ -184,16 +197,16 @@ func (m *Manager) startHostapd(ctx context.Context, ssid, scan string) (func(), 
 
 	m.refuseRouterAdverts()
 
-	channel, country := defaultChannel, m.reg.Country
+	channel, country, rates := defaultChannel, m.reg.Country, ""
 	if m.variant == "spotty" {
-		country = ""
+		country, rates = "", st20Rates
 	} else {
 		channel = apChannel(scan)
 	}
 
 	conf := filepath.Join(m.cfg.Paths.Tmp, "hostapd.conf")
 
-	err = os.WriteFile(conf, []byte(hostapdConf(m.cfg.AP, ssid, channel, country)), privateFileMode)
+	err = os.WriteFile(conf, []byte(hostapdConf(m.cfg.AP, ssid, channel, country, rates)), privateFileMode)
 	if err != nil {
 		delAP()
 
@@ -283,7 +296,10 @@ func (m *Manager) startPortal(ctx context.Context, stopAP func()) error {
 		return fmt.Errorf("udhcpd.conf: %w", err)
 	}
 
-	err = m.startDaemon(ctx, "udhcpd", "udhcpd", "-f", dhcpConf)
+	// -v: each DISCOVER and REQUEST in the log next to the OFFER and ACK udhcpd always logs
+	// (busybox UDHCP_DEBUG, board/rootfs/busybox.fragment), so a phone without an address
+	// shows whether its request arrived.
+	err = m.startDaemon(ctx, "udhcpd", "udhcpd", "-f", "-v", dhcpConf)
 	if err != nil {
 		remove(m.state("setup-ap"), m.state("network-ready"))
 		stopAP()

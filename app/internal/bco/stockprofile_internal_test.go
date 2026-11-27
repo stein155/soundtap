@@ -17,6 +17,9 @@ const (
 	kSSID0, kSec0, kPass0 = 0x50ec, 0x50cc, 0x50bc
 	kSSID1, kSec1, kPass1 = 0x51bc, 0x519c, 0x518c
 	kCipher1              = 0x517c
+	kWEPIndex1, kWEPKey01 = 0x512c, 0x516c // Profile1's WEP/KeyIndex and WEP/Key0
+	kWEPKey21             = 0x514c         // Profile1's WEP/Key2
+	kWEPKey00             = 0x509c         // Profile0's WEP/Key0
 	kSSID2, kSec2, kPass2 = 0x528c, 0x526c, 0x525c
 	kSSID4, kSec4, kPass4 = 0x544c, 0x540c, 0x53fc
 	kActive               = 0x549c
@@ -134,7 +137,7 @@ func readFake(t *testing.T, f *stockShell) (StockProfile, error) {
 func TestStockProfileTakesTheActiveProfile(t *testing.T) {
 	t.Parallel()
 
-	home := StockProfile{SSID: "Home net", Passphrase: "correct horse"}
+	home := StockProfile{SSID: "Home net", Passphrase: "correct horse", WEP: false}
 	for name, tcase := range map[string]struct {
 		flash    map[uint32][]byte
 		want     StockProfile
@@ -193,7 +196,30 @@ func TestStockProfileTakesTheActiveProfile(t *testing.T) {
 		"WPAWPA2PSK and a raw key": {
 			flash: map[uint32][]byte{sectorA: settingsLog(0x08, kSSID0, "Home net", kSec0, "WPAWPA2PSK",
 				kPass0, strings.Repeat("Ab", 32), kActive, "0")},
-			want:     StockProfile{SSID: "Home net", Passphrase: strings.Repeat("Ab", 32)},
+			want:     StockProfile{SSID: "Home net", Passphrase: strings.Repeat("Ab", 32), WEP: false},
+			maxWords: 0,
+		},
+		"an open network, an old passphrase left in it": {
+			flash: map[uint32][]byte{sectorA: settingsLog(0x08, kSSID1, "Cafe", kSec1, "NONE",
+				kPass1, "correct horse")},
+			want:     StockProfile{SSID: "Cafe", Passphrase: "", WEP: false},
+			maxWords: 0,
+		},
+		"WEP: key 0 when no index was written (ADR 0136)": {
+			flash:    map[uint32][]byte{sectorA: settingsLog(0x08, kSSID1, "Old", kSec1, "WEP", kWEPKey01, "abcde")},
+			want:     StockProfile{SSID: "Old", Passphrase: "abcde", WEP: true},
+			maxWords: 0,
+		},
+		"WEP: the key the index names, in hex": {
+			flash: map[uint32][]byte{sectorA: settingsLog(0x08, kSSID1, "Old", kSec1, "WEP", kWEPKey01, "abcde",
+				kWEPIndex1, "2", kWEPKey21, "0123456789abcdef0123456789")},
+			want:     StockProfile{SSID: "Old", Passphrase: "0123456789abcdef0123456789", WEP: true},
+			maxWords: 0,
+		},
+		"WEP in profile 0": {
+			flash: map[uint32][]byte{sectorA: settingsLog(0x08, kSSID0, "Old", kSec0, "WEP", kWEPKey00, "1234567890",
+				kActive, "0")},
+			want:     StockProfile{SSID: "Old", Passphrase: "1234567890", WEP: true},
 			maxWords: 0,
 		},
 		"a log longer than one rd, with a short rd": {
@@ -249,10 +275,13 @@ func TestStockProfileNotImportable(t *testing.T) {
 	t.Parallel()
 
 	for name, sector := range map[string][]byte{
-		"nothing saved":         settingsLog(0x08, kDeviceName, "Keuken", kCountry, "EU"),
-		"both sectors unused":   settingsLog(0xff),
-		"open network":          settingsLog(0x08, kSSID1, "Cafe", kSec1, "NONE"),
-		"wep":                   settingsLog(0x08, kSSID1, "Home net", kSec1, "WEP", kPass1, "abcde"),
+		"nothing saved":       settingsLog(0x08, kDeviceName, "Keuken", kCountry, "EU"),
+		"both sectors unused": settingsLog(0xff),
+		"wep without a key":   settingsLog(0x08, kSSID1, "Home net", kSec1, "WEP", kPass1, "abcde"),
+		"wep key not a key":   settingsLog(0x08, kSSID1, "Old", kSec1, "WEP", kWEPKey01, "abcdef"),
+		"wep index past 3":    settingsLog(0x08, kSSID1, "Old", kSec1, "WEP", kWEPIndex1, "4", kWEPKey01, "abcde"),
+		"wep index not a number": settingsLog(0x08, kSSID1, "Old", kSec1, "WEP", kWEPIndex1, "x",
+			kWEPKey01, "abcde"),
 		"short passphrase":      settingsLog(0x08, kSSID1, "Home net", kSec1, "WPA2PSK", kPass1, "short"),
 		"no passphrase":         settingsLog(0x08, kSSID1, "Home net", kSec1, "WPA2PSK"),
 		"empty name":            settingsLog(0x08, kSSID1, "", kPass1, "correct horse"),

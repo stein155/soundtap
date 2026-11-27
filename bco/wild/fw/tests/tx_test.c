@@ -4,7 +4,7 @@
 /* The transmit path, from a host record to the MAC and back (src/xport.c): the staged packet and
  * queue descriptor, the rate class per frame type, the AP's ACK ending a unicast frame, retries
  * with the Retry bit and a growing backoff window, the last tries at the basic rate, the data-rate
- * ladder, the gap after a group frame, a lost TX-done, the record-length guard, and CCMP transmit:
+ * ladder, group data at the basic rate and the gap after it, a probe response's single retry, a lost TX-done, the record-length guard, and CCMP transmit:
  * the CCMP header and packet number, the cipher engine's control block, the same PN on a retry,
  * and a frame without a key for its peer (also one queued when the peer table is reset) or that
  * the engine cannot encipher, which never goes out. The cipher engine itself is hardware: the test sets its completion word. */
@@ -160,6 +160,7 @@ static void group_and_gap(void)
     data_hdr(h, BCAST, 0);
     CHECK(send(h, 40, 0), "broadcast sent");
     CHECK(tx_unicast == 0, "no ACK expected");
+    CHECK(tx_desc.cls == sta_mgmt_cls, "group data at the basic rate, where every client hears it");
     air_tx_done();
     pump(3);
     CHECK(host_tx_done(2, &buf, &status) && status == 0, "group frame done at its TX-done");
@@ -184,6 +185,33 @@ static void group_and_gap(void)
     REG(R_TIMER) += 3001;
     pump(3);
     CHECK(host_tx_done(2, &buf, &status) && status == 0, "ACKed frame done without TX-done");
+}
+
+/* A probe response gets one retry, not six: the phone that asked has moved on by then, and the
+ * one transmitter waits on it. An authentication response keeps them all. */
+static void probe_response_retries(void)
+{
+    static const unsigned char PHONE[6] = {0x02, 0x99, 0x88, 0x77, 0x66, 0x55};
+    unsigned char h[24];
+    unsigned buf, status;
+    for (unsigned kind = 0; kind < 2; kind++) {
+        unsigned attempts = 0;
+        setup(0);
+        hdr(h, kind ? 0xb0 : 0x50, 0, PHONE, OWN, OWN);
+        CHECK(send(h, 40, 6), "sent");
+        CHECK(tx_unicast == 1 && tx_desc.cls == sta_mgmt_cls, "unicast management at the basic rate");
+        for (unsigned round = 0; round < 10 && !host_tx_done(2, &buf, &status); round++) {
+            if (mgmt_tx_pending) {
+                attempts++;
+                air_tx_done();
+            }
+            REG(R_TIMER) += ACK_WAIT + 20 * 1024;
+            pump(1);
+        }
+        CHECK(status == 1, "failed without an ACK");
+        CHECK(attempts == (kind ? 1 + TX_RETRY : 2), "%s: %u attempts", kind ? "auth" : "probe response",
+              attempts);
+    }
 }
 
 static void record_guard(void)
@@ -280,6 +308,47 @@ static void ccmp(void)
     CHECK(send(h, sizeof tx_pkt - 0xc4 - 8, 0), "the largest protected body is sent");
 }
 
+/* A frame the app enciphered itself (TX_RAW, ADR 0136): it goes out as staged, Protected bit and
+ * all, without a key in the core and without the engine; a protected frame without the mark and
+ * without a key still never goes out. */
+static void raw(void)
+{
+    unsigned char h[24];
+    unsigned buf, status;
+    setup(0);
+    data_hdr(h, BSSID, 1);
+    REG(0xb18) = 0;                         /* the engine would fail: it must not run */
+    host_desc13 = 1;
+    CHECK(send(h, 120, 0), "an enciphered frame goes out without a key in the core");
+    host_desc13 = 0;
+    CHECK(tx_desc.p1 == tx_pkt + 0xc4 && tx_desc.l1 == 120 && tx_desc.len == 24 + 120 + 4 &&
+              !memcmp(tx_pkt + 0xc4, body, 120),
+          "body as staged: no CCMP header or MIC added");
+    CHECK(tx_pkt[0x19] & 0x40, "protected bit kept");
+    CHECK(tx_desc.cls == 12, "data at the data rate");
+    air_tx_done();
+    air_ack();
+    pump(3);
+    CHECK(host_tx_done(2, &buf, &status) && status == 0, "delivered");
+    /* a management frame enciphered by the app (a protected deauthentication): the same */
+    REG(R_TIMER) += TX_GAP;
+    hdr(h, 0xc0, 0x40, BSSID, OWN, BSSID);
+    host_desc13 = 1;
+    CHECK(send(h, 8 + 2 + 8, 6), "a protected management frame goes out");
+    host_desc13 = 0;
+    CHECK(tx_desc.l1 == 18 && tx_desc.cls == sta_mgmt_cls, "as staged, at the basic rate class");
+    air_tx_done();
+    air_ack();
+    pump(3);
+    host_tx_done(2, &buf, &status);
+    /* without the mark, Protected and no key: dropped */
+    REG(R_TIMER) += TX_GAP;
+    qstate[9] = 0;
+    data_hdr(h, BSSID, 1);
+    CHECK(!send(h, 50, 0) && qstate[9] == 0, "unmarked protected frame without a key not sent");
+    CHECK(host_tx_done(2, &buf, &status) && status == 1, "record back as failed");
+}
+
 /* A protected frame queued behind the one in flight when the peer table is reset (JOIN_DONE,
  * drop-all) or its peer deleted: the peer's key went with it, so the frame is dropped and comes
  * back failed, never sent in clear or under the old key. */
@@ -319,10 +388,12 @@ static void peer_reset(void)
 
 int main(void)
 {
+    raw();
     unicast_ok();
     retries();
     ladder_floor();
     group_and_gap();
+    probe_response_retries();
     record_guard();
     ccmp();
     peer_reset();

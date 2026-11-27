@@ -89,8 +89,14 @@ static int xfer(struct ring *h, unsigned hc, struct ring *l, unsigned lc, int to
  * be above the key's last one, and it goes up as plaintext: protected bit clear, no CCMP header
  * or MIC, record byte 7 = RX_DECIPHERED. A frame that fails any of that is dropped here. The
  * engine works on word-aligned buffers, so header and body are staged before it runs (receive-area
- * frames are not aligned). */
+ * frames are not aligned).
+ * A frame under a key the app deciphers (WEP, TKIP: sta.c's soft keys, ADR 0136) goes up as it
+ * came, cipher header and trailer included, protected bit set, record byte 7 = RX_SOFT; the app
+ * checks its replay counter, ICV and MIC. A header without the ExtIV bit is WEP's: its key id names
+ * one of the default keys, kept in the group table for unicast and group frames alike. */
 #define RX_DECIPHERED 1
+#define RX_SOFT 2
+#define RXBUF_HOST 0x6e0u   /* the host's RX buffer (wifi.c RXBUF): a TKIP frame's 20 bytes fit */
 static unsigned char rx_stage[24 + 0x6b8] __attribute__((aligned(8)));
 static unsigned *rx_slot, rx_end, rx_peer;
 
@@ -114,7 +120,8 @@ static int rx_deliver(void)
     static const unsigned char rate[16] = {0x00, 0x04, 0x0b, 0x16, 0x02, 0x04, 0x0b, 0x16,
                                            0x60, 0x30, 0x18, 0x0c, 0x6c, 0x48, 0x24, 0x12};
     const unsigned char *e = rx_peek(), *h;
-    unsigned n, slot, dec = 0;
+    unsigned n, slot, dec = 0, hl = 24;
+    int app_key = 0;
     unsigned long long pn = 0, *last = 0;
     if (!e)
         return 0;
@@ -123,11 +130,17 @@ static int rx_deliver(void)
     rx_peer = peer_slot(h + 10);        /* addr2 = the frame's transmitter */
     if ((h[0] & 0x0c) == 0x08 && (h[1] & 0x40)) {
         const unsigned char *cc = h + 24, *tk = 0;
-        if (n >= 24 + 8 + 8 + 1 && n - 16 <= 0x6c0 - 0x94 - 24 - 8 && (cc[3] & 0x20)) {
-            tk = sta_rxkey(rx_peer, h[4] & 1, cc[3] >> 6, &last);
+        if (n >= 24 + 4 + 4 + 1)
+            tk = sta_rxkey(rx_peer, (h[4] & 1) || !(cc[3] & 0x20), cc[3] >> 6, &last, &app_key);
+        if (tk && app_key) {
+            dec = RX_SOFT;      /* the app's key: up as it came */
+            goto deliver;
+        }
+        if (tk && n >= 24 + 8 + 8 + 1 && n - 16 <= RXBUF_HOST - 0x94 - 24 - 8 && (cc[3] & 0x20))
             pn = cc[0] | cc[1] << 8 |
                  (unsigned long long)(cc[4] | cc[5] << 8 | cc[6] << 16 | (unsigned)cc[7] << 24) << 16;
-        }
+        else
+            tk = 0;
         if (tk && pn > *last) {
             copy_bytes(rx_stage + 24, h, 24);
             copy_bytes(rx_stage + 56, cc + 8, n - 32);
@@ -136,14 +149,19 @@ static int rx_deliver(void)
             rx_pop();
             return 0;
         }
-        n -= 16, dec = 1;
+        n -= 16, dec = RX_DECIPHERED;
     }
+deliver:
     if (!ring_take(&l_sup, 1, 1, &slot))
         return 0;                       /* the frame stays queued and is deciphered again */
-    if (dec)
+    if (dec == RX_DECIPHERED)
         *last = pn;
-    if (n > 0x6c0 - 0x94 - 24 - 8)       /* host RX buffer (wifi.c RXBUF) */
-        n = 0x6c0 - 0x94 - 24 - 8;
+    if (n > RXBUF_HOST - 0x94 - 24 - 8)  /* host RX buffer (wifi.c RXBUF) */
+        n = RXBUF_HOST - 0x94 - 24 - 8;
+    /* In ap_mode a client's QoS data (mac.c) goes up as plain data: without its two-byte QoS
+     * control, QoS bit clear. A PS-Poll (16 bytes) goes up padded to the 24-byte header. */
+    if (!dec && ap_mode && (h[0] & 0x8c) == 0x88 && n >= 26)
+        hl = 26;
     for (unsigned i = 0; i < 24; i++)
         rx_stage[i] = 0;
     rx_stage[0] = 24;
@@ -153,14 +171,18 @@ static int rx_deliver(void)
     rx_stage[4] = e[4];
     rx_stage[5] = rx_chan;
     rx_stage[6] = rate[e[6] & 15];
-    rx_stage[7] = dec ? RX_DECIPHERED : 0;
-    copy_bytes(rx_stage + 24, h, 24);
-    if (dec)
+    rx_stage[7] = (unsigned char)dec;
+    for (unsigned i = 0; i < 24; i++)
+        rx_stage[24 + i] = i < n ? h[i] : 0;
+    if (dec == RX_DECIPHERED)
         rx_stage[24 + 1] &= ~0x40u; /* plaintext now */
+    if (hl == 26)
+        rx_stage[24] &= ~0x80u;     /* plain data now */
     for (unsigned i = 0; i < 8; i++)
         rx_stage[48 + i] = 0;       /* cipher-header room (IV); empty */
-    if (!dec)
-        copy_bytes(rx_stage + 56, h + 24, n - 24);
+    if (dec != RX_DECIPHERED && n > hl)
+        copy_bytes(rx_stage + 56, h + hl, n - hl);
+    n = n > hl ? 24 + n - hl : 24;
     rx_pop();
     rx_slot = (unsigned *)slot;
     rx_end = 0x94 + 24 + n;
@@ -183,6 +205,7 @@ static int rx_deliver(void)
  * Medium access, retries and the data rate: ADR 0031 (tx_kick, ACK_LATE, rate_cls).
  * single fragment; fragmentation, RTS/CTS and group-key TX are later milestones. */
 volatile unsigned tx_done_q;
+#define TX_RAW 1 /* descriptor byte 0x13: the app enciphered the body (ADR 0136) */
 static unsigned char tx_pkt[0xc4 + 0x600];  /* [0..0x38] descriptor, on-air header at +0x18, body at +0xc4 */
 static unsigned tx_q, tx_rec, tx_t0;
 #define TX_LOST 200000 /* R_TIMER ticks (~1 us): a frame and its retries are done well within this */
@@ -216,6 +239,7 @@ static unsigned rate_i, rate_ok, rate_bad;
 #define TX_GAP 3000
 volatile unsigned tx_acked;
 static unsigned tx_free_t, tx_unicast, tx_wait;   /* tx_unicast: attempts of the frame in flight, 0 = group */
+static unsigned tx_tries = TX_RETRY;              /* retries the frame in flight may have */
 static struct {
     unsigned z0; /* cppcheck-suppress unusedStructMember ; the MAC reads this descriptor */
     unsigned short len, z1, rate, cls; /* cppcheck-suppress unusedStructMember ; the MAC reads this descriptor */
@@ -257,11 +281,26 @@ static void tx_stage_done(void)
     *(unsigned short *)(h + 0x16) = REG(R_TIMER) << 4; /* sequence control */
     tx_desc.rate = 8;                                   /* management/EAPOL basic rate (ps0+0x24) */
     tx_desc.cls = sta_mgmt_cls;                         /* PHY rate-class: must match the (working) probe path, not 0 */
-    if ((h[0] & 0x0c) == 0x08)
-        tx_desc.cls = rate_cls[rate_i];                 /* data at the current rate, the first retries too */
+    /* Unicast data at the current rate, the first retries too. Group-addressed data (the
+     * setup AP's broadcasts: DHCP, ARP, mDNS) stays at the basic rate like management frames:
+     * nobody ACKs it, so the rate cannot follow any client, and every client must hear it. */
+    if ((h[0] & 0x0c) == 0x08 && !(h[4] & 1))
+        tx_desc.cls = rate_cls[rate_i];
+    /* A probe response is worth one retry: the phone that asked moves to the next channel
+     * within a few tens of ms, and each wasted retry holds every other frame back. */
+    tx_tries = h[0] == 0x50 ? 1 : TX_RETRY;
     tx_desc.hdrlen = 24;
     tx_desc.hdr = h;
     tx_desc.l2 = 0;
+    /* A frame the app enciphered itself (WEP, TKIP, a protected management frame; descriptor
+     * byte 0x13 = TX_RAW, ADR 0136) goes out as it is: its body already holds the cipher header,
+     * the ciphertext and the trailer. */
+    if (tx_pkt[0x13] & TX_RAW) {
+        tx_desc.l1 = body_len;
+        tx_desc.p1 = tx_pkt + 0xc4;
+        tx_desc.len = 24 + body_len + 4;
+        goto start;
+    }
     /* Protected data frame: encipher as CCMP with the pairwise key of the destination peer (the
      * record's peer slot) on the cipher engine. The 8-byte CCMP header goes just before the body,
      * the engine turns the body into ciphertext + an 8-byte MIC in place. Group/broadcast TX
@@ -611,7 +650,7 @@ void xport_poll(void)
         if (((REG(R_TIMER) - tx_t0) & 0x3ffffff) <= tx_wait &&
             ((REG(R_TIMER) - tx_done_t) & 0x3ffffff) <= (tx_desc.cls != sta_mgmt_cls ? ACK_LATE : 3000))
             ;
-        else if (tx_unicast++ > TX_RETRY)
+        else if (tx_unicast++ > tx_tries)
             tx_complete(1);
         else {
             tx_pkt[0x18 + 1] |= 0x08;                  /* Retry */

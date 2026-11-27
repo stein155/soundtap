@@ -301,6 +301,7 @@ const nb: Messages = {
   discardChangesConfirm: 'Forkast',
   resetFailed: 'Tilbakestillingen mislyktes. Ingenting ble slettet.',
   wifiPasswordLength: 'Et Wi-Fi-passord har 8 til 63 tegn.',
+  wifiWepKeyLength: 'En WEP-nøkkel har 5 eller 13 tegn, eller 10 eller 26 heksadesimale sifre.',
   wifiSsidLength: 'Navnet er for langt for et Wi-Fi-nettverk.',
   mqttPortInvalid: 'Skriv inn en port fra 1 til 65535, eller la feltet stå tomt.',
   undo: 'Angre',

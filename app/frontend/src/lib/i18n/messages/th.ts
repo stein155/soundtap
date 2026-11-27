@@ -282,6 +282,7 @@ const th: Messages = {
   discardChangesConfirm: 'ละทิ้ง',
   resetFailed: 'รีเซ็ตไม่สำเร็จ ไม่มีอะไรถูกลบ',
   wifiPasswordLength: 'รหัสผ่าน Wi-Fi ยาว 8 ถึง 63 ตัวอักษร',
+  wifiWepKeyLength: 'คีย์ WEP ยาว 5 หรือ 13 ตัวอักษร หรือเลขฐานสิบหก 10 หรือ 26 หลัก',
   wifiSsidLength: 'ชื่อนี้ยาวเกินไปสำหรับเครือข่าย Wi-Fi',
   mqttPortInvalid: 'ป้อนพอร์ตตั้งแต่ 1 ถึง 65535 หรือเว้นว่างไว้',
   undo: 'เลิกทำ',

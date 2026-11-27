@@ -29,6 +29,7 @@
 #undef memcpy
 #undef memset
 #include "../src/wpa.c"
+#include "../src/wsec.c"
 
 /* wild_own.S's core image; the test never boots it */
 const unsigned char wild_own[4], wild_own_end[1];
@@ -136,7 +137,7 @@ int main(void)
 
     /* ---- the join takes the strongest "Lab", not the most heard ---- */
     copy(cur.ssid, (const unsigned char *)"Lab", 3);
-    cur.ssidlen = 3, have_cur = 1;
+    cur.ssidlen = 3, have_cur = 1, prof_sec = WIFI_SEC_PSK;
     scan_gen = 7;
     set_bss(0, "Lab", 1, -78, 0, 0x0011);
     set_bss(1, "Lab", 2, -55, 2, 0x0411);

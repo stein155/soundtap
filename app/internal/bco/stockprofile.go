@@ -36,6 +36,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/stein155/soundtap/app/internal/wifi"
 )
 
 // stockSectors are the two sectors of the settings log, in the order they are tried. The
@@ -90,20 +92,27 @@ const stockActiveProfile9423 = 0x549
 type stockLayout struct {
 	defaultSecurity            map[int]string
 	ssid, security, passphrase [stockProfileCount]uint16
+	wepKeyIndex                [stockProfileCount]uint16
+	wepKey                     [stockProfileCount][stockWEPKeys]uint16
 	activeProfile              uint16
 	defaultActive              int
 }
+
+// stockWEPKeys is how many WEP keys a stock profile keeps (WEP/Key0..Key3).
+const stockWEPKeys = 4
 
 // stockLayout9423 names the settings soundtapd reads, by the leaf index in bits 15..4 of
 // their record header. These numbers are BCO app 9423's and nothing else's: another app
 // version may number its settings otherwise. A valid record's header is index<<4 | 0xc:
 //
-//	                     SSID    Security  Passphrase
-//	Profile0            0x50ec   0x50cc    0x50bc
-//	Profile1            0x51bc   0x519c    0x518c    (Cipher 0x517c, not read)
-//	Profile2            0x528c   0x526c    0x525c
-//	Profile3            0x535c   0x533c    0x532c
-//	Profile4            0x544c   0x540c    0x53fc    stock's own setup AP, never taken
+//	                     SSID    Security  Passphrase  WEP/KeyIndex  WEP/Key0..Key3
+//	Profile0            0x50ec   0x50cc    0x50bc      0x505c        0x509c 0x508c 0x507c 0x506c
+//	Profile1            0x51bc   0x519c    0x518c      0x512c        0x516c 0x515c 0x514c 0x513c
+//	Profile2            0x528c   0x526c    0x525c      0x51fc        0x523c 0x522c 0x521c 0x520c
+//	Profile3            0x535c   0x533c    0x532c      0x52cc        0x530c 0x52fc 0x52ec 0x52dc
+//	Profile4            0x544c   0x540c    0x53fc      stock's own setup AP, never taken
+//	(Profile1's Cipher 0x517c and every WEP/Authentication are not read: wpa_supplicant tries
+//	open system and shared key.)
 //	WlanCfg/ActiveProfile 0x549c (factory default "1"); DeviceName 0x4fbc and
 //	CountryCode 0x54ec are not read.
 //
@@ -111,9 +120,17 @@ type stockLayout struct {
 // Cipher "AES"). Another profile without a Security record is not taken.
 func stockLayout9423() stockLayout {
 	return stockLayout{
-		ssid:            [stockProfileCount]uint16{0x50e, 0x51b, 0x528, 0x535, 0x544},
-		security:        [stockProfileCount]uint16{0x50c, 0x519, 0x526, 0x533, 0x540},
-		passphrase:      [stockProfileCount]uint16{0x50b, 0x518, 0x525, 0x532, 0x53f},
+		ssid:        [stockProfileCount]uint16{0x50e, 0x51b, 0x528, 0x535, 0x544},
+		security:    [stockProfileCount]uint16{0x50c, 0x519, 0x526, 0x533, 0x540},
+		passphrase:  [stockProfileCount]uint16{0x50b, 0x518, 0x525, 0x532, 0x53f},
+		wepKeyIndex: [stockProfileCount]uint16{0x505, 0x512, 0x51f, 0x52c, 0},
+		wepKey: [stockProfileCount][stockWEPKeys]uint16{
+			{0x509, 0x508, 0x507, 0x506},
+			{0x516, 0x515, 0x514, 0x513},
+			{0x523, 0x522, 0x521, 0x520},
+			{0x530, 0x52f, 0x52e, 0x52d},
+			{},
+		},
 		activeProfile:   stockActiveProfile9423,
 		defaultActive:   1,
 		defaultSecurity: map[int]string{1: "WPAPSK"},
@@ -121,9 +138,10 @@ func stockLayout9423() stockLayout {
 }
 
 // ErrStockProfileNotImportable is a definitive answer: stock's settings were read whole and
-// hold no network SoundTap takes over (none saved, an open or WEP network, a passphrase
-// that is no WPA passphrase). Asking again gives the same answer. Every other error from
-// ReadStockProfile (no reply, a garbled dump, a cut-off log) may pass on a second try.
+// hold no network SoundTap takes over (none saved, a passphrase that is no WPA passphrase, a
+// WEP key index or key not in a form SoundTap knows). Asking again gives the same answer.
+// Every other error from ReadStockProfile (no reply, a garbled dump, a cut-off log) may pass
+// on a second try.
 var ErrStockProfileNotImportable = errors.New("BCO stock profile not importable")
 
 // The settings read's other errors, each one that may pass on a second try.
@@ -136,10 +154,12 @@ func notImportable(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrStockProfileNotImportable, fmt.Sprintf(format, args...))
 }
 
-// StockProfile is the WPA network Bose's BCO app has saved. A Passphrase of 64 hex digits
-// is a raw key (IsHexPSK).
+// StockProfile is the network Bose's BCO app has saved: a WPA network with its Passphrase,
+// an open one with none, or a WEP one (WEP set) whose Passphrase is the WEP key of the
+// profile's key index (ADR 0136). A WPA Passphrase of 64 hex digits is a raw key (IsHexPSK).
 type StockProfile struct {
 	SSID, Passphrase string
+	WEP              bool
 }
 
 // memReader returns the bytes from addr on, at least one word and at most words of them.
@@ -306,11 +326,12 @@ func walkStockLog(sector []byte) (map[uint16]string, bool, error) {
 }
 
 // stockProfileFrom takes the active profile's network out of stock's settings. It takes a
-// WPA network with a passphrase; anything else is ErrStockProfileNotImportable, never a guess.
+// WPA network with a passphrase, an open network and a WEP network with a key; anything else
+// is ErrStockProfileNotImportable, never a guess.
 func stockProfileFrom(settings map[uint16]string) (StockProfile, error) {
 	layout := stockLayout9423()
 
-	active, err := stockActiveProfile(settings, layout)
+	active, err := stockActiveProfile(settings, &layout)
 	if err != nil {
 		return StockProfile{}, err
 	}
@@ -335,7 +356,10 @@ func stockProfileFrom(settings map[uint16]string) (StockProfile, error) {
 	switch strings.ToUpper(strings.TrimSpace(security)) {
 	case "WPAPSK", "WPA2PSK", "WPAWPA2PSK":
 	case "NONE":
-		return StockProfile{}, notImportable("%q is an open network, which is not taken over", ssid)
+		// An open network: stock may keep a passphrase from before, which is not used.
+		return StockProfile{SSID: ssid, Passphrase: "", WEP: false}, nil
+	case "WEP":
+		return stockWEPProfile(settings, &layout, active, ssid)
 	default:
 		return StockProfile{}, notImportable("security %q of %q is not taken over", security, ssid)
 	}
@@ -345,12 +369,36 @@ func stockProfileFrom(settings map[uint16]string) (StockProfile, error) {
 		return StockProfile{}, notImportable("the passphrase of %q is not a WPA passphrase", ssid)
 	}
 
-	return StockProfile{SSID: ssid, Passphrase: pass}, nil
+	return StockProfile{SSID: ssid, Passphrase: pass, WEP: false}, nil
+}
+
+// stockWEPProfile takes a WEP profile's key: the one its key index names, an index that was
+// never written being key 0 (stock's factory default is empty). The values stock stores are
+// read as the key forms its own scripts take, 5 or 13 characters or 10 or 26 hex digits;
+// another index or key form is not taken.
+func stockWEPProfile(settings map[uint16]string, layout *stockLayout, active int, ssid string) (StockProfile, error) {
+	index := 0
+
+	if value := strings.TrimSpace(settings[layout.wepKeyIndex[active]]); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 0 || parsed >= stockWEPKeys {
+			return StockProfile{}, notImportable("WEP key index %q of %q is not one SoundTap knows", value, ssid)
+		}
+
+		index = parsed
+	}
+
+	key := settings[layout.wepKey[active][index]]
+	if !wifi.IsWEPKey(key) {
+		return StockProfile{}, notImportable("WEP key %d of %q is not a WEP key", index, ssid)
+	}
+
+	return StockProfile{SSID: ssid, Passphrase: key, WEP: true}, nil
 }
 
 // stockActiveProfile is the profile stock joins: its ActiveProfile setting, or the factory
 // default. Stock's own setup network and numbers it has no profile for are refused.
-func stockActiveProfile(settings map[uint16]string, layout stockLayout) (int, error) {
+func stockActiveProfile(settings map[uint16]string, layout *stockLayout) (int, error) {
 	value, ok := settings[layout.activeProfile]
 	if !ok {
 		return layout.defaultActive, nil

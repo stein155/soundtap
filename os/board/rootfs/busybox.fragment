@@ -9,6 +9,9 @@ CONFIG_FEATURE_SYSLOGD_READ_BUFFER_SIZE=1024
 CONFIG_TIMEOUT=y
 CONFIG_UBIATTACH=y
 CONFIG_UDHCPD=y
+# udhcpd -v logs each DISCOVER and REQUEST it receives (the setup AP, soundtapd's Wi-Fi
+# manager); udhcpc logs nothing more without -v, which it is not given.
+CONFIG_UDHCP_DEBUG=1
 # Nothing on the speaker serves or dials telnet or runs inetd. dnsd stays: the setup AP's
 # captive portal (soundtapd's Wi-Fi manager) needs it.
 # CONFIG_INETD is not set

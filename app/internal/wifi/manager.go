@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -94,6 +95,7 @@ type Timing struct {
 	Release    time.Duration // between a DHCP release and the renew after a network change
 	Watch      time.Duration // between looks at a joined station
 	Gone       time.Duration // for a stopped daemon to exit
+	APWatch    time.Duration // between looks at the setup AP's state for the log (0: none)
 }
 
 // The speaker's waits (DefaultTiming).
@@ -106,6 +108,7 @@ const (
 	defaultHold       = 30 * time.Minute
 	defaultWatchEvery = 5 * time.Second
 	defaultGoneWait   = 3 * time.Second
+	defaultAPWatch    = 10 * time.Second
 )
 
 // DefaultTiming is the speaker's. The join window is 90 s, not 45: the ST20's BCO join
@@ -116,7 +119,7 @@ func DefaultTiming() Timing {
 		Iface: defaultIfaceWait, Join: defaultJoinWait, Poll: time.Second, Ready: time.Minute,
 		Settle: time.Second, Scan: defaultScanWait, ScanRetry: defaultScanRetry,
 		ShortPause: time.Minute, LongPause: defaultLongPause, Hold: defaultHold,
-		Release: time.Second, Watch: defaultWatchEvery, Gone: defaultGoneWait,
+		Release: time.Second, Watch: defaultWatchEvery, Gone: defaultGoneWait, APWatch: defaultAPWatch,
 	}
 }
 
@@ -179,6 +182,7 @@ type Manager struct {
 	regDone  bool
 	variant  string
 	tries    int
+	apGen    atomic.Uint64 // one more per setup AP opened: an older AP's watch ends
 	lastSSID string
 	hasLast  bool
 }
@@ -227,6 +231,7 @@ func New(cfg Config) *Manager {
 		regDone:  false,
 		variant:  "",
 		tries:    0,
+		apGen:    atomic.Uint64{},
 		lastSSID: "",
 		hasLast:  false,
 	}

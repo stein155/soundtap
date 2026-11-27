@@ -28,7 +28,9 @@ that names its channel: 0 control, 1 Wi-Fi, 2 the wired port; data messages are 
 frames.
 
 - `wlan0` is a cfg80211 FullMAC station with the device's own Wi-Fi MAC. `wpa_supplicant` hands
-  the driver a PMK; the PSK never leaves the SCM. The BCO runs the 4-way and group handshakes,
+  the driver a PMK (no key for an open network, a WEP key for a WEP one, and for WPA3 the PMK of the
+  SAE it ran over the driver, [ADR 0136](0136-every-network-stock-joined-and-wpa3.md)); the PSK
+  never leaves the SCM. The BCO runs the 4-way and group handshakes,
   reports a lost link at once, roams within the SSID, keeps to the regulatory domain and probes
   for the scan's SSID ([ADR 0135](0135-bco-standard-firmware-features.md)).
 - `eth0` is the wired port. Neither interface is a bridge of the other, and the SCM must not
@@ -53,6 +55,20 @@ sends hostapd's beacon every beacon interval, answers probe requests from it, an
 authentication and association; the core tunes the channel and, in `ap_mode`, passes it the probe
 requests. The driver offers AP mode only when HELLO's capabilities say the app runs an access
 point.
+
+In `ap_mode` the core takes a unicast frame to the BCO's own address as passing its address
+filter, which is set up for a station, and keeps and ACKs a client's data, null-data, QoS data
+(passed up without its QoS control) and PS-Poll; it keeps no other network's group data. Group
+frames go out at the basic rate, unicast data at the data rate. Beacons go at the BSS's target
+beacon transmission times, stamped with its TSF. The app follows each client's
+power-management bit: unicast frames for a dozing client are held (four at most) and named in the
+beacon's TIM, a PS-Poll fetches one and waking fetches the rest; while any client dozes, group
+frames follow the next beacon, which is always a DTIM beacon. `AP_STATUS` carries, behind
+`BCOLINK_CAP_APDIAG`, the time to the first beacon, the core's receive counters and per-client
+counters (a client silent for 90 s is no longer listed); `AP_STOP` ends the core's `ap_mode`. The
+ST20's `hostapd.conf` offers a phone rates up to 24 Mb/s. The driver lists the clients for
+`iw dev wlan1 station dump` and shows the rest in
+`/sys/class/net/bcolink0/bco/ap`, which soundtapd logs while the setup access point runs.
 
 ### The link carries a protocol level, and a resent request is answered, not re-run
 
@@ -188,8 +204,9 @@ Alternatives that lost:
 - The release stays free of Bose bytes, and so does the BCO above BFL/BSL.
 - The BCO needs a USB vendor/product ID of its own. Development uses the pid.codes test ID
   `1209:0001`; allocating a real one is the maintainer's call.
-- Clients of the setup access point that doze may lose unicast frames (no power-save buffering),
-  and a scan while it runs returns the scan made before it.
+- The setup access point holds only four frames per dozing client, and whether the core's
+  address filter flags a client's toDS frames is unmeasured (the core no longer relies on it). A
+  scan while it runs returns the scan made before it.
 - An access point that is switched off looks like a dead radio; the doubling threshold keeps
   those cycles rare.
 - Hardware proof is per candidate, on the ST20 itself: [the measurements](../hardware/st20/bco-network-card.md#measurements-on-the-bench-st20)

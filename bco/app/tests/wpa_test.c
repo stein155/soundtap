@@ -128,8 +128,8 @@ static void replay_cases(void)
     int r;
     for (i = 0; i < 32; i++)
         pmk[i] = 0x11 + i, sn[i] = 0x22 + i, an[i] = 0x33 + i, an2[i] = 0x44 + i, forged[i] = 0x55 + i;
-    wpa_pmk_to_ptk(pmk, aa, spa, an, sn, ptk);
-    wpa_pmk_to_ptk(pmk, aa, spa, an2, sn, ptk2);
+    wpa_pmk_to_ptk(pmk, aa, spa, an, sn, ptk, 48);
+    wpa_pmk_to_ptk(pmk, aa, spa, an2, sn, ptk2, 48);
 
     /* (a) an AP that resends Message 1 with the same counter (its Message 2 got lost) */
     wpa_sm_init(&sm, pmk, aa, spa, sn);
@@ -197,9 +197,333 @@ static void replay_cases(void)
           "group msg1 while a ptk rekey waits for msg3");
 }
 
+/* An AP for the handshakes of ADR 0136 (WPA with descriptor 254, RSN with TKIP pairwise): it
+ * builds a frame of its descriptor and version, encrypts key data as that version does (RC4 keyed
+ * with the frame's IV and the KEK, the first 256 bytes dropped; or AES key wrap) and MICs it
+ * (HMAC-MD5 or HMAC-SHA1). */
+struct ap {
+    unsigned desc, ver;
+    const uint8_t *ptk;
+};
+static unsigned ap_frame(const struct ap *a, uint8_t *m, uint16_t ki, uint64_t ctr, const uint8_t *anonce,
+                         unsigned keylen, const uint8_t *kd, unsigned kdlen, int encrypt)
+{
+    unsigned total, i;
+    memset(m, 0, O_KD + kdlen + 8);
+    m[0] = 1, m[1] = 3, m[4] = (uint8_t)a->desc;
+    wbe16(m + O_KEYINFO, (uint16_t)(a->ver | ki));
+    wbe16(m + O_KEYLEN, (uint16_t)keylen);
+    for (i = 0; i < 8; i++)
+        m[O_REPLAY + i] = (uint8_t)(ctr >> (56 - 8 * i));
+    if (anonce)
+        memcpy(m + O_NONCE, anonce, 32);
+    if (kd && encrypt && a->ver == 1) {
+        uint8_t key[32];
+        for (i = 0; i < 16; i++)
+            m[O_IV + i] = (uint8_t)(0x70 + i + ctr);
+        memcpy(key, m + O_IV, 16), memcpy(key + 16, a->ptk + 16, 16);
+        memcpy(m + O_KD, kd, kdlen);
+        wpa_rc4_skip(key, 32, 256, m + O_KD, kdlen);
+    } else if (kd && encrypt) {
+        aes_wrap(a->ptk + 16, kdlen / 8, kd, m + O_KD);
+        kdlen += 8;
+    } else if (kd) {
+        memcpy(m + O_KD, kd, kdlen);
+    }
+    total = O_KD + kdlen;
+    wbe16(m + 2, (uint16_t)(total - 4));
+    wbe16(m + O_KDLEN, (uint16_t)kdlen);
+    if (ki & KI_MIC) {
+        uint8_t mic[20];
+        if (a->ver == 1)
+            wpa_hmac_md5(a->ptk, 16, m, total, mic);
+        else
+            wpa_hmac_sha1(a->ptk, 16, m, total, mic);
+        memcpy(m + O_MIC, mic, 16);
+    }
+    return total;
+}
+
+/* The supplicant's frame verifies under the AP's KCK with the version's MIC. */
+static int sta_mic_ok(const struct ap *a, const uint8_t *f, size_t n)
+{
+    uint8_t c[WPA_EAPOL_MAX], mic[20];
+    memcpy(c, f, n);
+    memset(c + O_MIC, 0, 16);
+    if (a->ver == 1)
+        wpa_hmac_md5(a->ptk, 16, c, n, mic);
+    else
+        wpa_hmac_sha1(a->ptk, 16, c, n, mic);
+    return !memcmp(mic, f + O_MIC, 16);
+}
+
+/* WPA-PSK (the WPA IE, descriptor 254) with TKIP and with CCMP, and WPA2-PSK with TKIP pairwise
+ * (RSN, version 1): Message 2 carries the association's IE under the version's MIC; WPA's
+ * Message 3 has no GTK and its Message 4 no Secure bit; the GTK comes in a group handshake, RC4
+ * keyed with the frame's IV (version 1) or AES-wrapped (version 2), its key id in the key info,
+ * and group Message 2 echoes that id; RSN with TKIP sends the GTK KDE RC4-encrypted in Message 3.
+ * The PTK is 64 bytes under TKIP. A Michael failure report carries Error and Request under the
+ * version's MIC. A frame of the other descriptor or version is refused. */
+static void tkip_and_wpa1(void)
+{
+    static const uint8_t aa[6] = {2, 0, 0, 0, 0, 0x1a}, spa[6] = {2, 0, 0, 0, 0, 0x1b};
+    static const struct { unsigned proto, pair, desc, ver; const char *name; } v[3] = {
+        {WPA_PROTO_WPA, WPA_CIPHER_TKIP, 254, 1, "wpa tkip"},
+        {WPA_PROTO_WPA, WPA_CIPHER_CCMP, 254, 2, "wpa ccmp"},
+        {WPA_PROTO_RSN, WPA_CIPHER_TKIP, 2, 1, "wpa2 tkip"},
+    };
+    for (unsigned t = 0; t < 3; t++) {
+        uint8_t pmk[32], sn[32], an[32], ptk[64], m[O_KD + 64 + 8], out[WPA_EAPOL_MAX], gtk[32], ie[WPA_IE_MAX];
+        struct wpa_sm sm;
+        struct ap a = {v[t].desc, v[t].ver, ptk};
+        unsigned plen = v[t].pair == WPA_CIPHER_TKIP ? 64 : 48, glen = v[t].pair == WPA_CIPHER_TKIP ? 32 : 16;
+        unsigned grp = v[t].pair == WPA_CIPHER_TKIP ? 2 : 4, i, n, ielen;
+        size_t ol;
+        int r;
+        char what[64];
+        for (i = 0; i < 32; i++)
+            pmk[i] = (uint8_t)(t + i), sn[i] = (uint8_t)(0x20 + i), an[i] = (uint8_t)(0x90 + i), gtk[i] = (uint8_t)(0xe0 + i);
+        wpa_pmk_to_ptk(pmk, aa, spa, an, sn, ptk, plen);
+        wpa_sm_init(&sm, pmk, aa, spa, sn);
+        wpa_sm_config(&sm, v[t].proto, v[t].pair, grp, WPA_AKM_PSK, 0);
+        ielen = wpa_own_ie(ie, v[t].proto, grp, v[t].pair, WPA_AKM_PSK, 0);
+        check(ielen == (v[t].proto == WPA_PROTO_WPA ? WPA_WPA_IE_LEN : WPA_RSN_IE_LEN) &&
+                  ie[0] == (v[t].proto == WPA_PROTO_WPA ? 0xdd : 0x30),
+              "own ie");
+        /* Message 1 -> Message 2 */
+        n = ap_frame(&a, m, KI_PAIRWISE | KI_ACK, 1, an, glen, 0, 0, 0);
+        r = wpa_sm_rx(&sm, m, n, out, &ol);
+        snprintf(what, sizeof what, "%s: msg1 -> msg2", v[t].name);
+        check(r == WPA_RX_SEND && out[4] == v[t].desc && be16(out + O_KEYINFO) == (v[t].ver | KI_PAIRWISE | KI_MIC) &&
+                  !memcmp(sm.tptk, ptk, plen) && sta_mic_ok(&a, out, ol) &&
+                  be16(out + O_KDLEN) == ielen && !memcmp(out + O_KD, ie, ielen),
+              what);
+        /* Message 3 -> Message 4 */
+        if (v[t].proto == WPA_PROTO_WPA) {
+            n = ap_frame(&a, m, KI_PAIRWISE | KI_INSTALL | KI_ACK | KI_MIC, 2, an, glen, ie, ielen, 0);
+        } else {
+            uint8_t kd[8 + 32 + 22];
+            memcpy(kd, ie, 22);
+            kd[22] = 0xdd, kd[23] = 6 + 32, kd[24] = 0, kd[25] = 0x0f, kd[26] = 0xac, kd[27] = 1;
+            kd[28] = 1, kd[29] = 0;
+            memcpy(kd + 30, gtk, 32);
+            n = ap_frame(&a, m, KI_PAIRWISE | KI_INSTALL | KI_ACK | KI_MIC | KI_SECURE | KI_ENCRYPTED, 2, an,
+                         glen, kd, 62, 1);
+        }
+        r = wpa_sm_rx(&sm, m, n, out, &ol);
+        snprintf(what, sizeof what, "%s: msg3 -> msg4", v[t].name);
+        check((r & WPA_RX_SEND) && (r & WPA_RX_INSTALL_PTK) && (r & WPA_RX_DONE) && !memcmp(sm.ptk, ptk, plen) &&
+                  sta_mic_ok(&a, out, ol) && out[4] == v[t].desc &&
+                  be16(out + O_KEYINFO) == (v[t].ver | KI_PAIRWISE | KI_MIC |
+                                            (v[t].proto == WPA_PROTO_RSN ? KI_SECURE : 0)),
+              what);
+        if (v[t].proto == WPA_PROTO_RSN) {
+            check((r & WPA_RX_INSTALL_GTK) && sm.gtk_len == 32 && !memcmp(sm.gtk, gtk, 32) && sm.gtk_idx == 1,
+                  "wpa2 tkip: gtk kde from rc4 key data");
+        } else {
+            check(!(r & WPA_RX_INSTALL_GTK), "wpa: no gtk in msg3");
+            /* group Message 1, key id 2, the GTK as key data */
+            n = ap_frame(&a, m, KI_ACK | KI_MIC | KI_SECURE | (2 << 4) | KI_INSTALL, 3, 0, glen, gtk, glen, 1);
+            r = wpa_sm_rx(&sm, m, n, out, &ol);
+            snprintf(what, sizeof what, "%s: group msg1 -> msg2", v[t].name);
+            check(r == (WPA_RX_SEND | WPA_RX_INSTALL_GTK) && sm.gtk_len == glen && !memcmp(sm.gtk, gtk, glen) &&
+                      sm.gtk_idx == 2 && sta_mic_ok(&a, out, ol) &&
+                      be16(out + O_KEYINFO) == (v[t].ver | KI_MIC | KI_SECURE | (2 << 4)),
+                  what);
+            /* a group key of a length the cipher has not: refused */
+            n = ap_frame(&a, m, KI_ACK | KI_MIC | KI_SECURE | (1 << 4), 4, 0, 5, gtk, glen, 1);
+            check(wpa_sm_rx(&sm, m, n, out, &ol) == WPA_RX_FAIL, "wpa: odd gtk length refused");
+        }
+        /* the other descriptor, the other version: refused */
+        struct ap other = {v[t].desc == 254 ? 2 : 254, v[t].ver, ptk};
+        n = ap_frame(&other, m, KI_ACK | KI_MIC | KI_SECURE, 9, 0, glen, gtk, glen, 1);
+        check(wpa_sm_rx(&sm, m, n, out, &ol) == WPA_RX_FAIL, "other descriptor refused");
+        struct ap otherv = {v[t].desc, v[t].ver == 1 ? 2 : 1, ptk};
+        n = ap_frame(&otherv, m, KI_ACK | KI_MIC | KI_SECURE, 10, 0, glen, gtk, glen, 1);
+        check(wpa_sm_rx(&sm, m, n, out, &ol) == WPA_RX_FAIL, "other version refused");
+        /* a Michael failure report */
+        n = (unsigned)wpa_mic_failure(&sm, 1, out);
+        check(n == O_KD && out[4] == v[t].desc && sta_mic_ok(&a, out, n) &&
+                  be16(out + O_KEYINFO) == (v[t].ver | KI_MIC | KI_ERROR | KI_REQUEST | KI_PAIRWISE) &&
+                  replay_of(out) > 2,
+              "mic failure report");
+        uint64_t first = replay_of(out);
+        wpa_mic_failure(&sm, 0, out);
+        check(replay_of(out) == first + 1 && !(be16(out + O_KEYINFO) & KI_PAIRWISE), "second report counts up");
+    }
+}
+
+/* WPA3 (SAE, AKM 8, key descriptor version 0) and PSK-SHA256 (AKM 6, version 3) with management
+ * frame protection (ADR 0136): the PTK from IEEE 802.11's KDF-SHA256, every MIC AES-CMAC, key
+ * data AES-wrapped; Message 2 repeats the RSN IE with MFPC; Message 3 carries the IGTK KDE beside
+ * the GTK, and a Message 3 without it fails under MFP; a group rekey brings both keys again. */
+static void sha256_akms(void)
+{
+    static const uint8_t aa[6] = {2, 0, 0, 0, 0, 0x3a}, spa[6] = {2, 0, 0, 0, 0, 0x3b};
+    static const unsigned akms[2] = {WPA_AKM_SAE, WPA_AKM_PSK_SHA256};
+    for (unsigned t = 0; t < 2; t++) {
+        uint8_t pmk[32], sn[32], an[32], ptk[48], m[O_KD + 128], out[WPA_EAPOL_MAX], ie[WPA_IE_MAX], kd[96];
+        uint8_t gtk[16], igtk[16], mic[16];
+        unsigned ver = akms[t] == WPA_AKM_SAE ? 0 : 3, i, n, ielen;
+        struct wpa_sm sm;
+        size_t ol;
+        int r;
+        for (i = 0; i < 32; i++)
+            pmk[i] = (uint8_t)(0x5a ^ i), sn[i] = (uint8_t)(0x10 + i), an[i] = (uint8_t)(0xa0 + i);
+        for (i = 0; i < 16; i++)
+            gtk[i] = (uint8_t)(0xb0 + i), igtk[i] = (uint8_t)(0xc0 + i);
+        wpa_pmk_to_ptk_sha256(pmk, aa, spa, an, sn, ptk, 48);
+        wpa_sm_init(&sm, pmk, aa, spa, sn);
+        wpa_sm_config(&sm, WPA_PROTO_RSN, WPA_CIPHER_CCMP, WPA_CIPHER_CCMP, akms[t], WPA_CAP_MFPC);
+        check(sm.ver == ver && sm.mfp, "sha256 akm: version and mfp");
+        ielen = wpa_own_ie(ie, WPA_PROTO_RSN, 4, 4, akms[t], WPA_CAP_MFPC);
+        check(ielen == 22 && ie[19] == akms[t] && ie[20] == 0x80, "rsn ie: akm and mfpc");
+        /* Message 1 */
+        memset(m, 0, O_KD);
+        m[0] = 2, m[1] = 3, m[3] = 95, m[4] = 2;
+        wbe16(m + O_KEYINFO, (uint16_t)(ver | KI_PAIRWISE | KI_ACK));
+        m[O_KEYLEN + 1] = 16, m[O_REPLAY + 7] = 1;
+        memcpy(m + O_NONCE, an, 32);
+        r = wpa_sm_rx(&sm, m, O_KD, out, &ol);
+        check(r == WPA_RX_SEND && !memcmp(sm.tptk, ptk, 48), "sha256 akm: msg1 -> msg2, kdf ptk");
+        memcpy(mic, out + O_MIC, 16);
+        memset(out + O_MIC, 0, 16);
+        {
+            uint8_t v[16];
+            wpa_cmac(ptk, out, ol, v);
+            check(!memcmp(v, mic, 16) && be16(out + O_KEYINFO) == (ver | KI_PAIRWISE | KI_MIC) &&
+                      !memcmp(out + O_KD, ie, ielen),
+                  "sha256 akm: msg2 cmac and ie");
+        }
+        /* Message 3: RSN IE, GTK KDE (id 1), IGTK KDE (id 4, IPN 7) */
+        memcpy(kd, ie, 22);
+        kd[22] = 0xdd, kd[23] = 6 + 16, kd[24] = 0, kd[25] = 0x0f, kd[26] = 0xac, kd[27] = 1, kd[28] = 1, kd[29] = 0;
+        memcpy(kd + 30, gtk, 16);
+        kd[46] = 0xdd, kd[47] = 4 + 2 + 6 + 16, kd[48] = 0, kd[49] = 0x0f, kd[50] = 0xac, kd[51] = 9;
+        kd[52] = 4, kd[53] = 0, memset(kd + 54, 0, 6), kd[54] = 7;
+        memcpy(kd + 60, igtk, 16);
+        kd[76] = 0xdd, memset(kd + 77, 0, 3); /* padding to 80 */
+        for (int with_igtk = 0; with_igtk < 2; with_igtk++) {
+            unsigned kdl = with_igtk ? 80 : 48;
+            uint8_t k2[96];
+            memcpy(k2, kd, sizeof kd);
+            if (!with_igtk)
+                k2[46] = 0xdd, memset(k2 + 47, 0, 1);
+            memset(m, 0, sizeof m);
+            m[0] = 2, m[1] = 3, m[4] = 2;
+            wbe16(m + O_KEYINFO, (uint16_t)(ver | KI_PAIRWISE | KI_INSTALL | KI_ACK | KI_MIC | KI_SECURE | KI_ENCRYPTED));
+            m[O_KEYLEN + 1] = 16, m[O_REPLAY + 7] = (uint8_t)(2 + with_igtk);
+            memcpy(m + O_NONCE, an, 32);
+            aes_wrap(ptk + 16, kdl / 8, k2, m + O_KD);
+            n = O_KD + kdl + 8;
+            wbe16(m + 2, (uint16_t)(n - 4)), wbe16(m + O_KDLEN, (uint16_t)(kdl + 8));
+            wpa_cmac(ptk, m, n, m + O_MIC);
+            r = wpa_sm_rx(&sm, m, n, out, &ol);
+            if (!with_igtk) {
+                check(r == WPA_RX_FAIL, "sha256 akm: msg3 without the igtk fails under mfp");
+                continue;
+            }
+            check((r & WPA_RX_INSTALL_PTK) && (r & WPA_RX_INSTALL_GTK) && (r & WPA_RX_INSTALL_IGTK) &&
+                      sm.igtk_idx == 4 && sm.ipn[0] == 7 && !memcmp(sm.igtk, igtk, 16) && !memcmp(sm.gtk, gtk, 16),
+                  "sha256 akm: msg3 -> gtk and igtk");
+        }
+        /* group Message 1: a new GTK (id 2) and IGTK (id 5) */
+        kd[0] = 0xdd, kd[1] = 6 + 16, kd[2] = 0, kd[3] = 0x0f, kd[4] = 0xac, kd[5] = 1, kd[6] = 2, kd[7] = 0;
+        memcpy(kd + 8, gtk, 16);
+        kd[24] = 0xdd, kd[25] = 28, kd[26] = 0, kd[27] = 0x0f, kd[28] = 0xac, kd[29] = 9, kd[30] = 5, kd[31] = 0;
+        memset(kd + 32, 0, 6), kd[32] = 9;
+        memcpy(kd + 38, igtk, 16);
+        kd[54] = 0xdd, memset(kd + 55, 0, 1);
+        memset(m, 0, sizeof m);
+        m[0] = 2, m[1] = 3, m[4] = 2;
+        wbe16(m + O_KEYINFO, (uint16_t)(ver | KI_ACK | KI_MIC | KI_SECURE | KI_ENCRYPTED));
+        m[O_REPLAY + 7] = 9;
+        aes_wrap(ptk + 16, 7, kd, m + O_KD);
+        n = O_KD + 64;
+        wbe16(m + 2, (uint16_t)(n - 4)), wbe16(m + O_KDLEN, 64);
+        wpa_cmac(ptk, m, n, m + O_MIC);
+        r = wpa_sm_rx(&sm, m, n, out, &ol);
+        check(r == (WPA_RX_SEND | WPA_RX_INSTALL_GTK | WPA_RX_INSTALL_IGTK) && sm.igtk_idx == 5 && sm.gtk_idx == 2 &&
+                  sm.ipn[0] == 9,
+              "sha256 akm: group rekey with igtk");
+    }
+}
+
 int main(void)
 {
     uint8_t out[32];
+
+    /* --- SHA-256, HMAC-SHA256 (FIPS 180-4, RFC 4231) and the 802.11 KDF (against Python's hmac) --- */
+    {
+        uint8_t d[48], key[32];
+        wpa_sha256((const uint8_t *)"abc", 3, d);
+        check(hexeq(d, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"), "sha256(abc)");
+        memset(key, 0x0b, 20);
+        wpa_hmac_sha256(key, 20, (const uint8_t *)"Hi There", 8, d);
+        check(hexeq(d, "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"), "hmac-sha256 rfc4231#1");
+        wpa_hmac_sha256((const uint8_t *)"Jefe", 4, (const uint8_t *)"what do ya want for nothing?", 28, d);
+        check(hexeq(d, "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"), "hmac-sha256 rfc4231#2");
+        uint8_t k[32], ctx[76];
+        for (int i = 0; i < 32; i++)
+            k[i] = (uint8_t)i;
+        for (int i = 0; i < 76; i++)
+            ctx[i] = (uint8_t)i;
+        wpa_kdf_sha256(k, 32, "Pairwise key expansion", ctx, 76, d, 48);
+        check(hexeq(d, "ca5d2b63205753bc5b26c31a135d1fb964f1ce5d87062246c4da6433d5422ca1"
+                       "9065f6c58c3da70e0756992606528f4d"),
+              "kdf-sha256-384");
+    }
+    /* --- AES-128 encrypt (FIPS-197 C.1) and AES-CMAC (RFC 4493 examples 1-3) --- */
+    {
+        uint8_t k[16], pt[16] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+                                 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff};
+        for (int i = 0; i < 16; i++)
+            k[i] = (uint8_t)i;
+        wpa_aes128_enc(k, pt, out);
+        check(hexeq(out, "69c4e0d86a7b0430d8cdb78070b4c55a"), "wpa_aes128_enc fips-197");
+        const uint8_t ck[16] = {0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6,
+                                0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c};
+        const uint8_t msg[40] = {0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96, 0xe9, 0x3d, 0x7e, 0x11, 0x73, 0x93,
+                                 0x17, 0x2a, 0xae, 0x2d, 0x8a, 0x57, 0x1e, 0x03, 0xac, 0x9c, 0x9e, 0xb7, 0x6f, 0xac,
+                                 0x45, 0xaf, 0x8e, 0x51, 0x30, 0xc8, 0x1c, 0x46, 0xa3, 0x5c, 0xe4, 0x11};
+        wpa_cmac(ck, msg, 0, out);
+        check(hexeq(out, "bb1d6929e95937287fa37d129b756746"), "cmac rfc4493 empty");
+        wpa_cmac(ck, msg, 16, out);
+        check(hexeq(out, "070a16b46b4d4144f79bdd9dd04a287c"), "cmac rfc4493 16");
+        wpa_cmac(ck, msg, 40, out);
+        check(hexeq(out, "dfa66747de9ae63030ca32611497c827"), "cmac rfc4493 40");
+    }
+
+    /* --- MD5 and HMAC-MD5 (RFC 1321, RFC 2104 and RFC 2202) --- */
+    wpa_md5((const uint8_t *)"", 0, out);
+    check(hexeq(out, "d41d8cd98f00b204e9800998ecf8427e"), "md5()");
+    wpa_md5((const uint8_t *)"abc", 3, out);
+    check(hexeq(out, "900150983cd24fb0d6963f7d28e17f72"), "md5(abc)");
+    {
+        uint8_t key[80];
+        memset(key, 0x0b, 16);
+        wpa_hmac_md5(key, 16, (const uint8_t *)"Hi There", 8, out);
+        check(hexeq(out, "9294727a3638bb1c13f48ef8158bfc9d"), "hmac-md5 rfc2104#1");
+        wpa_hmac_md5((const uint8_t *)"Jefe", 4, (const uint8_t *)"what do ya want for nothing?", 28, out);
+        check(hexeq(out, "750c783e6ab0b503eaa86e310a5db738"), "hmac-md5 rfc2104#2");
+        memset(key, 0xaa, 80);
+        wpa_hmac_md5(key, 80, (const uint8_t *)"Test Using Larger Than Block-Size Key - Hash Key First", 54,
+                     out);
+        check(hexeq(out, "6b1ab7fe4bd7bf8f0b62e6ce61b9d0cd"), "hmac-md5 rfc2202#6 (long key)");
+    }
+    /* --- RC4 with a dropped head (the classic vector, and its stream from byte 256 on) --- */
+    {
+        const uint8_t k[8] = {0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef};
+        uint8_t b[264], c[8];
+        memcpy(c, k, 8);
+        wpa_rc4_skip(k, 8, 0, c, 8);
+        check(hexeq(c, "75b7878099e0c596"), "rc4 classic");
+        memset(b, 0, sizeof b);
+        wpa_rc4_skip(k, 8, 0, b, sizeof b);
+        memset(c, 0, 8);
+        wpa_rc4_skip(k, 8, 256, c, 8);
+        check(!memcmp(c, b + 256, 8), "rc4 skip 256");
+    }
 
     /* --- SHA-1 (FIPS 180, "abc") --- */
     wpa_sha1((const uint8_t *)"abc", 3, out);
@@ -276,7 +600,7 @@ int main(void)
             gtk[i] = 0xc0 + i;
 
         /* AP's expected PTK (same inputs -> same derivation) */
-        wpa_pmk_to_ptk(pmk, aa, spa, anonce, snonce, ptk);
+        wpa_pmk_to_ptk(pmk, aa, spa, anonce, snonce, ptk, 48);
 
         wpa_sm_init(&sm, pmk, aa, spa, snonce);
 
@@ -498,7 +822,7 @@ int main(void)
         size_t olen;
         wpa_sm_init(&sm, pmk, aa, spa, sn);
         check(sm.group == 4, "group defaults to ccmp");
-        sm.group = 2;
+        wpa_sm_config(&sm, WPA_PROTO_RSN, WPA_CIPHER_CCMP, WPA_CIPHER_TKIP, WPA_AKM_PSK, 0);
         m1[0] = 2, m1[1] = 3, m1[3] = 95, m1[4] = 2;
         m1[O_KEYINFO + 1] = 0x8a, m1[O_KEYLEN + 1] = 16, m1[O_REPLAY + 7] = 1;
         check(wpa_sm_rx(&sm, m1, sizeof m1, m2, &olen) == WPA_RX_SEND, "tkip group msg1 -> msg2");
@@ -510,6 +834,8 @@ int main(void)
         check(ie[7] == 4, "unknown group -> ccmp");
     }
     replay_cases();
+    tkip_and_wpa1();
+    sha256_akms();
     printf(fails ? "\n%d FAILED\n" : "\nall passed\n", fails);
     return fails ? 1 : 0;
 }

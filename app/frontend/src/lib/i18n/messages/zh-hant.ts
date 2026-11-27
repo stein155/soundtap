@@ -280,6 +280,7 @@ const zhHant: Messages = {
   discardChangesConfirm: '捨棄',
   resetFailed: '重設失敗。未清除任何內容。',
   wifiPasswordLength: 'Wi-Fi 密碼為 8 到 63 個字元。',
+  wifiWepKeyLength: 'WEP 金鑰為 5 或 13 個字元，或 10 或 26 位十六進位數字。',
   wifiSsidLength: '這個名稱對 Wi-Fi 網路來說太長。',
   mqttPortInvalid: '請輸入 1 到 65535 的連接埠，或留空。',
   undo: '復原',

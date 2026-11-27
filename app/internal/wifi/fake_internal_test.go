@@ -68,8 +68,9 @@ func (f *supplicant) handle(cmd string) string {
 		f.nets[id] = &fakeNet{ssid: "", vars: map[string]string{}, enabled: false, priority: 0}
 
 		return strconv.Itoa(id) + "\n"
-	case len(words) == 4 && words[0] == "SET_NETWORK":
-		return f.setNetwork(words)
+	case len(words) >= 4 && words[0] == "SET_NETWORK":
+		// the value is the rest of the line, as wpa_supplicant reads it ("OPEN SHARED")
+		return f.setNetwork(append(words[:3:3], strings.Join(words[3:], " ")))
 	case len(words) == 2 && words[0] == "ENABLE_NETWORK":
 		id, _ := strconv.Atoi(words[1])
 		if known, ok := f.nets[id]; ok {
@@ -451,6 +452,19 @@ type rig struct {
 
 func quiet() *slog.Logger { return slog.New(slog.DiscardHandler) }
 
+// supServer is the running fake wpa_supplicant's control socket, read under the locks its
+// start writes them under: a test reads it while the manager's goroutine may start another.
+func (s *fakeSys) supServer() *wpactrltest.Server {
+	s.mu.Lock()
+	sup := s.sup
+	s.mu.Unlock()
+
+	sup.mu.Lock()
+	defer sup.mu.Unlock()
+
+	return sup.srv
+}
+
 func newRig(t *testing.T, variant string) *rig {
 	t.Helper()
 	dir := wpactrltest.ShortDir(t)
@@ -487,7 +501,7 @@ func newRig(t *testing.T, variant string) *rig {
 			Ready: 200 * time.Millisecond, Settle: 5 * time.Millisecond, Scan: time.Second,
 			ScanRetry: 5 * time.Millisecond, ShortPause: 30 * time.Millisecond, LongPause: 60 * time.Millisecond,
 			Hold: 90 * time.Millisecond, Release: 5 * time.Millisecond, Watch: 10 * time.Millisecond,
-			Gone: 10 * time.Millisecond,
+			Gone: 10 * time.Millisecond, APWatch: 10 * time.Millisecond,
 		},
 		Hostname:  func() string { return "soundtap-test" },
 		SetupSSID: func() string { return "SoundTap ST10 C3D411" },
@@ -503,7 +517,7 @@ func newRig(t *testing.T, variant string) *rig {
 func (r *rig) save(ssid, psk string) {
 	r.t.Helper()
 
-	err := WriteConf(r.conf, NewRecord(ssid, psk))
+	err := WriteConf(r.conf, NewRecord(ssid, "", psk))
 	if err != nil {
 		r.t.Fatal(err)
 	}
