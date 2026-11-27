@@ -62,7 +62,9 @@ power-management bit: unicast frames for a dozing client are held (four at most)
 beacon's TIM, a PS-Poll fetches one and waking fetches the rest; while any client dozes, group
 frames follow the next beacon, which is always a DTIM beacon. `AP_STATUS` carries, behind
 `BCOLINK_CAP_APDIAG`, the time to the first beacon, the core's receive counters and per-client
-counters; the driver lists the clients for `iw dev wlan1 station dump` and shows the rest in
+counters (a client silent for 90 s is no longer listed); `AP_STOP` ends the core's `ap_mode`. The
+ST20's `hostapd.conf` offers a phone rates up to 24 Mb/s. The driver lists the clients for
+`iw dev wlan1 station dump` and shows the rest in
 `/sys/class/net/bcolink0/bco/ap`, which soundtapd logs while the setup access point runs.
 
 ### The link carries a protocol level, and a resent request is answered, not re-run

@@ -322,13 +322,19 @@ phone). Now:
   `BCOLINK_CAP_APDIAG` then the ms from `AP_START` to the first beacon, the core's frames to our
   address, those the address filter missed, client data kept (its flight recorder, which
   `HOST_FLAG2` locates), held frames lost, and per client: dozing, frames held, ms since last
-  heard, data and null-data from it, unicast frames to it ACKed and lost. The driver lists the
+  heard, data and null-data from it, unicast frames to it ACKed and lost, and the level and rate
+  code of its last frame; after the clients the core's damaged frames to our address (bad FCS)
+  with the last one's rate index, level and frame control, a client's frames with a body with the
+  last one's, and those that found its receive queue full. A client not heard for 90 s has left
+  without a word: it is not listed and holds no group frame back. `AP_STOP` drops every peer in
+  the core (`0xb7`), which ends its `ap_mode`. The driver lists the
   clients for `iw dev wlan1 station dump` (inactive time, packets, failures), which soundtapd's
   hold reads to keep the setup network up while a phone is on it (before, the dump was always
   empty and the hold took the network for idle), and writes the whole reply to
-  `/sys/class/net/bcolink0/bco/ap` as `name value` lines. soundtapd logs it every 10 s while it
-  changes (`setup AP status`, a `setup AP client` line per client by the last three octets of its
-  address) and the first beacon once (`setup AP beaconing`, with the time since `starting the
+  `/sys/class/net/bcolink0/bco/ap` as `name value` lines. soundtapd looks at it every 10 s and logs
+  it (`setup AP status`, a `setup AP client` line per client by the last three octets of its
+  address) at once when a phone joins, leaves or sends data or a frame reaches `wlan1`, and
+  otherwise at most once a minute and the first beacon once (`setup AP beaconing`, with the time since `starting the
   setup AP`); udhcpd runs with `-v`, so each DISCOVER and REQUEST is in the log next to the OFFER
   and ACK.
 - On the SCM, `soundtap_bco` advertises AP mode, a STA + AP interface combination on one channel
@@ -340,7 +346,12 @@ phone). Now:
   from the main loop, so their spacing follows its polling: a few milliseconds of jitter, which
   clients tolerate.
 - Seen on air on alpha.6 (2026-11-27): the network appeared on a phone after a while and the
-  phone joined, but got no address. A phone getting an address, and how soon the network
+  phone joined, but got no address. With the receive rule above and power save (same day) the
+  phone's frames reached the core and passed its filter, yet over 90 s the app saw 347 null-data
+  frames and one data frame from it, and no DHCP request reached udhcpd. Null-data goes at a low
+  rate, data at the top OFDM rates, so the ST20's `hostapd.conf` now offers rates up to 24 Mb/s
+  (11b rates basic), and the damaged-frame counters and each client's last rate and level show
+  whether the radio hears the phone's data at all. A phone getting an address, and how soon the network
   appears, is the hardware checklist's setup-AP row for the ST20.
 
 ## CCMP on the core's cipher engine
