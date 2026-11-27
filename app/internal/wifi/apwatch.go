@@ -107,7 +107,7 @@ func (m *Manager) readAPState() apState {
 		case len(fields) >= nameValue && fields[0] == "client":
 			state.clients = append(state.clients, fields)
 		case len(fields) == nameValue:
-			v, err := strconv.ParseUint(fields[1], 10, 64)
+			v, err := strconv.ParseUint(fields[1], 0, 64) // the "_last" words come as hex
 			if err == nil {
 				state.add(fields[0], v)
 			}
@@ -179,7 +179,11 @@ func (s *apState) key() string {
 func (s *apState) log(info func(msg string, args ...any)) {
 	attrs := make([]any, 0, nameValue*len(s.names))
 	for _, n := range s.names {
-		attrs = append(attrs, n, s.values[n])
+		if strings.HasSuffix(n, "_last") {
+			attrs = append(attrs, n, "0x"+strconv.FormatUint(s.values[n], 16))
+		} else {
+			attrs = append(attrs, n, s.values[n])
+		}
 	}
 
 	info("setup AP status", attrs...)
