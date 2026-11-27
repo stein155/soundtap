@@ -32,6 +32,12 @@ settles on as channel masks and a TX power limit (reg_notifier); probes
 for the scan's SSID, so hidden networks answer; and lists its PersParam
 keys in the root-only bco/nv_keys for a bench check.
 
+While the setup access point runs, `iw dev wlan1 station dump` lists
+its clients with their counters (inactive time, frames in and out,
+frames lost), and bco/ap shows its state: beacons, the time to the
+first one, probe responses, the core's receive counters and each
+client.
+
 Upstream: Not applicable (SoundTap hardware support)
 Signed-off-by: Stein Milder <info@steinmilder.nl>
 ---
@@ -67,7 +73,7 @@ diff -Nru a/drivers/net/usb/Makefile b/drivers/net/usb/Makefile
 diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 --- a/drivers/net/usb/soundtap_bco.c	1970-01-01 01:00:00.000000000 +0100
 +++ b/drivers/net/usb/soundtap_bco.c	2026-10-06 18:06:43.454816079 +0200
-@@ -0,0 +1,1651 @@
+@@ -0,0 +1,1756 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * SoundTap BCO link: the SoundTouch 20's Wi-Fi and wired ports, which live on the BCO co-processor
@@ -152,6 +158,13 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +#define BCOLINK_CAP_REGDOM	0x40
 +#define BCOLINK_CAP_SCAN_SSID	0x80
 +#define BCOLINK_CAP_NVINFO	0x100
++/* AP_STATUS's tail: the setup AP's diagnostics and per-client counters (bco/app/src/mgmt.h). */
++#define BCOLINK_CAP_APDIAG	0x200
++/* AP_STATUS: status, count, the MACs, BCO_AP_COUNTERS le32; with BCOLINK_CAP_APDIAG then
++ * BCO_AP_DIAG le32 and BCO_AP_CLIENT bytes per client. */
++#define BCO_AP_COUNTERS		8
++#define BCO_AP_DIAG		5
++#define BCO_AP_CLIENT		24
 +/* An unasked EVENTS report: status, event, le16 reason, bssid, channel, rssi (bco/app/src/mgmt.h). */
 +#define BCO_EVENT_LEN		12
 +#define BCO_EV_DEAUTH		1
@@ -1020,6 +1033,52 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +	return 0;
 +}
 +
++/*
++ * Client i of the AP_STATUS reply in b->rsp: its MAC and, when the app sends per-client counters
++ * (BCOLINK_CAP_APDIAG) and sinfo is given, how long it has been silent, the frames from it (data
++ * and null-data), the unicast frames to it and how many of them were lost. -ENOENT past the last.
++ */
++static int bco_ap_client(struct bco *b, int i, u8 *mac, struct station_info *sinfo)
++{
++	unsigned int n = b->rsp_len, at;
++	const u8 *k;
++
++	if (n < 2 || i >= b->rsp[1] || 2 + 6 * (i + 1) > n)
++		return -ENOENT;
++	memcpy(mac, b->rsp + 2 + 6 * i, ETH_ALEN);
++	at = 2 + 6 * b->rsp[1] + 4 * (BCO_AP_COUNTERS + BCO_AP_DIAG) + BCO_AP_CLIENT * i;
++	if (!sinfo || !(READ_ONCE(b->caps) & BCOLINK_CAP_APDIAG) || at + BCO_AP_CLIENT > n)
++		return 0;
++	k = b->rsp + at;
++	sinfo->filled |= BIT_ULL(NL80211_STA_INFO_INACTIVE_TIME) | BIT_ULL(NL80211_STA_INFO_RX_PACKETS) |
++			 BIT_ULL(NL80211_STA_INFO_TX_PACKETS) | BIT_ULL(NL80211_STA_INFO_TX_FAILED);
++	sinfo->inactive_time = get_unaligned_le32(k + 4);
++	sinfo->rx_packets = get_unaligned_le32(k + 8) + get_unaligned_le32(k + 12);
++	sinfo->tx_packets = get_unaligned_le32(k + 16) + get_unaligned_le32(k + 20);
++	sinfo->tx_failed = get_unaligned_le32(k + 20);
++	return 0;
++}
++
++/*
++ * The setup AP's clients one by one, as the BCO lists them: `iw dev wlan1 station dump`, which
++ * soundtapd reads to tell an idle setup AP from one a phone is on. Without it the dump was empty
++ * and the setup AP went down under a phone. wlan0 lists nothing (`iw dev wlan0 link` has it).
++ */
++static int bco_dump_station(struct wiphy *wiphy, struct net_device *dev, int idx, u8 *mac,
++			    struct station_info *sinfo)
++{
++	struct bco *b = wiphy_priv(wiphy);
++	int err = -ENOENT;
++
++	if (dev != b->ap)
++		return -ENOENT;
++	mutex_lock(&b->lock);
++	if (!bco_req(b, T_AP_STATUS, NULL, 0))
++		err = bco_ap_client(b, idx, mac, sinfo);
++	mutex_unlock(&b->lock);
++	return err;
++}
++
 +static int bco_get_station(struct wiphy *wiphy, struct net_device *dev, const u8 *mac,
 +			   struct station_info *sinfo)
 +{
@@ -1028,11 +1087,12 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +
 +	mutex_lock(&b->lock);
 +	if (dev == b->ap) {
-+		/* AP_STATUS reply: status, count, client MACs */
-+		if (!bco_req(b, T_AP_STATUS, NULL, 0) && b->rsp_len >= 2)
-+			for (i = 0; i < b->rsp[1] && 2 + 6 * (i + 1) <= b->rsp_len; i++)
-+				if (ether_addr_equal(b->rsp + 2 + 6 * i, mac))
-+					err = 0;
++		u8 m[ETH_ALEN];
++
++		if (!bco_req(b, T_AP_STATUS, NULL, 0))
++			for (i = 0; err && !bco_ap_client(b, i, m, NULL); i++)
++				if (ether_addr_equal(m, mac))
++					err = bco_ap_client(b, i, m, sinfo);
 +	} else if (bco_status(b) == S_UP) {
 +		sinfo->filled |= BIT_ULL(NL80211_STA_INFO_SIGNAL);
 +		sinfo->signal = (s8)b->rsp[3 + b->rsp[2] + 7];
@@ -1185,6 +1245,7 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +	.connect = bco_connect,
 +	.disconnect = bco_disconnect,
 +	.get_station = bco_get_station,
++	.dump_station = bco_dump_station,
 +	.add_virtual_intf = bco_add_intf,
 +	.del_virtual_intf = bco_del_intf,
 +	.start_ap = bco_start_ap,
@@ -1535,6 +1596,56 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +static DEVICE_ATTR_RO(flow_resyncs);
 +
 +/*
++ * The setup AP as the BCO reports it (AP_STATUS), one "name value" per line: up (0/1), probe
++ * requests answered, frames heard, transmits ACKed, lost and dropped, frames to the SCM and beacons
++ * sent; with BCOLINK_CAP_APDIAG also the ms from AP_START to the first beacon, the core's frames to
++ * our address, those its address filter missed, client data it kept, held frames lost, and a
++ * "client" line per associated client. soundtapd logs it while the setup AP runs.
++ */
++static ssize_t ap_show(struct device *d, struct device_attribute *a, char *buf)
++{
++	static const char *const base[BCO_AP_COUNTERS] = { "up", "probes", "rx", "tx_ok", "tx_failed",
++		"tx_dropped", "to_scm", "beacons" };
++	static const char *const diag[BCO_AP_DIAG] = { "first_beacon_ms", "core_to_us",
++		"core_filter_missed", "core_client_data", "held_dropped" };
++	struct bco *b = bco_of_dev(d);
++	unsigned int n, at, i;
++	ssize_t len = 0;
++	int err;
++
++	if (!(READ_ONCE(b->caps) & BCOLINK_CAP_AP))
++		return -EOPNOTSUPP;
++	if (mutex_lock_interruptible(&b->lock))
++		return -EINTR;
++	err = bco_req(b, T_AP_STATUS, NULL, 0);
++	n = b->rsp_len;
++	at = n >= 2 ? 2 + 6 * b->rsp[1] : n + 1;
++	if (!err && at + 4 * BCO_AP_COUNTERS > n)
++		err = -EPROTO;
++	for (i = 0; !err && i < BCO_AP_COUNTERS; i++)
++		len += sysfs_emit_at(buf, len, "%s %u\n", base[i], get_unaligned_le32(b->rsp + at + 4 * i));
++	at += 4 * BCO_AP_COUNTERS;
++	if (!err && (READ_ONCE(b->caps) & BCOLINK_CAP_APDIAG) &&
++	    at + 4 * BCO_AP_DIAG + BCO_AP_CLIENT * b->rsp[1] <= n) {
++		for (i = 0; i < BCO_AP_DIAG; i++)
++			len += sysfs_emit_at(buf, len, "%s %u\n", diag[i], get_unaligned_le32(b->rsp + at + 4 * i));
++		at += 4 * BCO_AP_DIAG;
++		for (i = 0; i < b->rsp[1]; i++, at += BCO_AP_CLIENT) {
++			const u8 *k = b->rsp + at;
++
++			len += sysfs_emit_at(buf, len,
++					     "client %pM dozing %u held %u idle_ms %u rx_data %u rx_null %u tx_ok %u tx_failed %u\n",
++					     b->rsp + 2 + 6 * i, k[0] & 1, k[1], get_unaligned_le32(k + 4),
++					     get_unaligned_le32(k + 8), get_unaligned_le32(k + 12),
++					     get_unaligned_le32(k + 16), get_unaligned_le32(k + 20));
++		}
++	}
++	mutex_unlock(&b->lock);
++	return err ? err : len;
++}
++static DEVICE_ATTR_RO(ap);
++
++/*
 + * NV_INFO (BCOLINK_CAP_NVINFO): the keys of the BCO's PersParam log, each with its value length and,
 + * for a value of at most 4 bytes, the value. Read-only on the BCO, readable by root only, and asked
 + * of the BCO only when someone reads the file: the bench check for the antenna setting (ADR 0135).
@@ -1573,7 +1684,7 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +	&dev_attr_tx_ok.attr, &dev_attr_tx_failed.attr, &dev_attr_tx_dropped.attr,
 +	&dev_attr_link_dropped.attr, &dev_attr_tx_frames.attr,
 +	&dev_attr_flow.attr, &dev_attr_flow_stops.attr, &dev_attr_flow_resyncs.attr,
-+	&dev_attr_nv_keys.attr,
++	&dev_attr_nv_keys.attr, &dev_attr_ap.attr,
 +	NULL
 +};
 +

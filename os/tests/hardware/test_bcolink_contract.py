@@ -63,6 +63,23 @@ class BcoLinkContract(unittest.TestCase):
             self.assertIn(line, gate[1], line)
         self.assertIn("wiphy->interface_modes = BIT(NL80211_IFTYPE_STATION);", self.patch)
 
+    def test_ap_status_layout(self) -> None:
+        """AP_STATUS's tail has the same bit and layout on both sides, and the driver reads it only behind the bit.
+
+        The driver lists the setup AP's clients for `iw dev wlan1 station dump`, which soundtapd reads to
+        keep the AP up while a phone is on it, and shows the AP's state in bco/ap for soundtapd's log.
+        """
+        self.assertEqual(self.app["BCOLINK_CAP_APDIAG"], self.drv["BCOLINK_CAP_APDIAG"])
+        for name in ("COUNTERS", "DIAG", "CLIENT"):
+            self.assertEqual(self.app[f"MGMT_AP_{name}"], self.drv[f"BCO_AP_{name}"], name)
+        funcs = dict(re.findall(r"\n\+static [^\n]*\b(\w+)\([^)]*\)\n\+\{(.*?)\n\+\}", self.patch, re.DOTALL))
+        for name in ("bco_ap_client", "ap_show"):
+            self.assertIn("BCOLINK_CAP_APDIAG", funcs[name], name)
+        self.assertIn(".dump_station = bco_dump_station,", self.patch)
+        self.assertIn("bco_req(b, T_AP_STATUS", funcs["bco_dump_station"])
+        self.assertIn("static DEVICE_ATTR_RO(ap);", self.patch)
+        self.assertIn("&dev_attr_ap.attr", self.patch)
+
     def test_join_failure_steps(self) -> None:
         """STATUS's join failure steps are numbered the same on both sides.
 
