@@ -683,6 +683,7 @@ static void ptk_data(const uint8_t aa[6], const uint8_t spa[6], const uint8_t an
 #define O_REPLAY 9
 #define O_NONCE 17
 #define O_IV 49
+#define O_RSC 65
 #define O_MIC 81
 #define O_KDLEN 97
 #define O_KD 99
@@ -907,6 +908,50 @@ static int unwrap_gtk(struct wpa_sm *sm, const uint8_t *kek, uint16_t ki, const 
     return wpa_extract_gtk(kd, n, sm->gtk, &sm->gtk_len, &sm->gtk_idx, &sm->gtk_tx);
 }
 
+/* The group keys before a frame's key data replaced them, to tell a new GTK or IGTK from the same
+ * one sent again (group_new). */
+struct group_keys {
+    uint8_t gtk[32], igtk[16], ipn[6], gtk_set, igtk_set;
+    unsigned gtk_len;
+    int gtk_idx, igtk_idx;
+};
+
+static void group_save(const struct wpa_sm *sm, struct group_keys *o)
+{
+    cp(o->gtk, sm->gtk, 32), cp(o->igtk, sm->igtk, 16), cp(o->ipn, sm->ipn, 6);
+    o->gtk_set = sm->gtk_set, o->igtk_set = sm->igtk_set;
+    o->gtk_len = sm->gtk_len, o->gtk_idx = sm->gtk_idx, o->igtk_idx = sm->igtk_idx;
+}
+
+/* A frame that failed after its key data was read leaves the group keys as they were. */
+static void group_restore(struct wpa_sm *sm, const struct group_keys *o)
+{
+    cp(sm->gtk, o->gtk, 32), cp(sm->igtk, o->igtk, 16), cp(sm->ipn, o->ipn, 6);
+    sm->gtk_set = o->gtk_set, sm->igtk_set = o->igtk_set;
+    sm->gtk_len = o->gtk_len, sm->gtk_idx = o->gtk_idx, sm->igtk_idx = o->igtk_idx;
+}
+
+/* The install bits for the group keys a verified frame brought: only a key other than the one
+ * handed out before, as wpa_supplicant does. Installing the same key again would set its receive
+ * counter back to the frame's Key RSC or IPN, so frames already received could be replayed (the
+ * KRACK group-key class: an AP that resends group Message 1 or Message 3, or an attacker who
+ * replays one inside the window). A new GTK takes the frame's Key RSC as its last packet number. */
+static int group_new(struct wpa_sm *sm, const struct group_keys *o, const uint8_t *in)
+{
+    int r = 0;
+    if (!o->gtk_set || o->gtk_len != sm->gtk_len || o->gtk_idx != sm->gtk_idx ||
+        !eq(o->gtk, sm->gtk, sm->gtk_len)) {
+        cp(sm->gtk_rsc, in + O_RSC, 6);
+        r |= WPA_RX_INSTALL_GTK;
+    }
+    sm->gtk_set = 1;
+    if (sm->mfp && (!o->igtk_set || o->igtk_idx != sm->igtk_idx || !eq(o->igtk, sm->igtk, 16)))
+        r |= WPA_RX_INSTALL_IGTK;
+    else
+        cp(sm->ipn, o->ipn, 6); /* the same IGTK keeps the IPN it was installed with */
+    return r;
+}
+
 /* WPA (descriptor 254) group Message 1: the GTK itself as key data, encrypted (RC4 under version
  * 1, AES key wrap under 2) although the Encrypted bit is RSN's only; its length in the key length
  * field and its key id in the key info. */
@@ -942,6 +987,7 @@ size_t wpa_mic_failure(struct wpa_sm *sm, int pairwise, uint8_t *out)
 
 int wpa_sm_rx(struct wpa_sm *sm, const uint8_t *in, size_t in_len, uint8_t *out, size_t *out_len)
 {
+    struct group_keys old;
     uint16_t ki, kdlen;
     int wpa1 = sm->proto == WPA_PROTO_WPA;
     if (in_len < O_KD || in[1] != 3 || in[4] != (wpa1 ? DESC_WPA : DESC_RSN)) /* EAPOL-Key */
@@ -964,13 +1010,16 @@ int wpa_sm_rx(struct wpa_sm *sm, const uint8_t *in, size_t in_len, uint8_t *out,
         /* ---- Group Message 1 (WPA's GTK after the 4-way, or a rekey): only once keyed, answered
          * with group Message 2. It verifies under the PTK in use, also while a PTK rekey waits for
          * its Message 3. ---- */
+        group_save(sm, &old);
         if (!sm->ptk_set || !(ki & KI_MIC) || !mic_ok(sm, sm->ptk, in, in_len) ||
-            !(wpa1 ? wpa1_gtk(sm, ki, in, kdlen) : unwrap_gtk(sm, sm->ptk + 16, ki, in, kdlen)))
+            !(wpa1 ? wpa1_gtk(sm, ki, in, kdlen) : unwrap_gtk(sm, sm->ptk + 16, ki, in, kdlen))) {
+            group_restore(sm, &old);
             return WPA_RX_FAIL;
+        }
         cp(sm->replay, in + O_REPLAY, 8);
         cp(sm->rx_replay, in + O_REPLAY, 8);
         *out_len = reply(sm, in, (uint16_t)(KI_MIC | KI_SECURE | (wpa1 ? ki & KI_KEYIDX : 0)), out);
-        return WPA_RX_SEND | WPA_RX_INSTALL_GTK | (sm->mfp ? WPA_RX_INSTALL_IGTK : 0);
+        return WPA_RX_SEND | group_new(sm, &old, in);
     }
 
     if (!(ki & KI_MIC)) {
@@ -1012,15 +1061,17 @@ int wpa_sm_rx(struct wpa_sm *sm, const uint8_t *in, size_t in_len, uint8_t *out,
     /* An RSN Message 3 always carries the GTK: key data that does not decipher or holds no GTK
      * fails the frame before any key is taken. WPA's carries its IE in the clear and the GTK
      * follows in a group handshake. */
+    group_save(sm, &old);
     if (!eq(in + O_NONCE, sm->anonce, 32) || !(ki & KI_INSTALL) || !mic_ok(sm, sm->tptk, in, in_len) ||
-        (!wpa1 && !unwrap_gtk(sm, sm->tptk + 16, ki, in, kdlen)))
+        (!wpa1 && !unwrap_gtk(sm, sm->tptk + 16, ki, in, kdlen))) {
+        group_restore(sm, &old);
         return WPA_RX_FAIL;
+    }
     cp(sm->ptk, sm->tptk, sizeof sm->ptk);
     cp(sm->replay, in + O_REPLAY, 8);
     cp(sm->rx_replay, in + O_REPLAY, 8);
     sm->rx_replay_set = 1, sm->ptk_set = 1;
     *out_len = reply(sm, in, (uint16_t)(KI_PAIRWISE | KI_MIC | (ki & KI_SECURE)), out);
     sm->state = WPA_DONE;
-    return WPA_RX_SEND | WPA_RX_INSTALL_PTK | (wpa1 ? 0 : WPA_RX_INSTALL_GTK) |
-           (sm->mfp ? WPA_RX_INSTALL_IGTK : 0) | WPA_RX_DONE;
+    return WPA_RX_SEND | WPA_RX_INSTALL_PTK | (wpa1 ? 0 : group_new(sm, &old, in)) | WPA_RX_DONE;
 }

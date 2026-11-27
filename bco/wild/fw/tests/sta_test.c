@@ -21,7 +21,7 @@ static void peer_add(const unsigned char *mac, unsigned slot)
 }
 
 /* wifi.c set_key(): pairwise type 13 (52 bytes, MAC at 12, key at 20) / delete 14 (MAC at 0);
- * group type 11 (40 bytes, index at 4, key at 8) / delete 12 (index at 0). */
+ * group type 11 (40 bytes, index at 4, key at 8, Key RSC at 24) / delete 12 (index at 0). */
 static void set_key(int pairwise, unsigned idx, const unsigned char *mac, const unsigned char *key)
 {
     unsigned char p[52] = {0};
@@ -150,6 +150,21 @@ int main(void)
     CHECK(sta_rxkey(0, 1, 6, &rxpn, &soft) == k, "key id 6 is index 2");
     CHECK(!sta_rxkey(0, 1, 1, &rxpn, &soft), "no group key 1");
     CHECK(find_event(0x1b) && find_event(0x1b)->payload[0] == 0, "group install acknowledged");
+    /* the Key RSC at bytes 24-29 is the group key's last packet number: frames up to it are
+     * replays (a 24-byte install, before the RSC was sent, starts at 0 as above) */
+    {
+        unsigned char p[40] = {4, 0, 0, 0, 3, 0, 0, 16};
+        memcpy(p + 8, GTK, 16);
+        p[24] = 0x34, p[25] = 0x12, p[29] = 0x01;
+        host_cmd(11, 0x12, 1, p, sizeof p);
+        run();
+        CHECK(sta_rxkey(6, 1, 3, &rxpn, &soft) && *rxpn == 0x010000001234ull, "group key 3 from its RSC");
+        host_cmd(11, 0x12, 1, p, 24);
+        run();
+        CHECK(sta_rxkey(6, 1, 3, &rxpn, &soft) && *rxpn == 0, "an install without the RSC starts at 0");
+        set_key(0, 3, 0, 0);
+        run();
+    }
     set_key(0, 4, 0, TK);
     run();
     e = find_event(0x1b);

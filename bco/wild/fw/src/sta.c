@@ -14,7 +14,9 @@ static unsigned char *keys;
  * the per-key packet numbers are all CCMP needs: sta_txkey for a protected TX, sta_rxkey for a
  * protected RX (both on the cipher engine, ADRs 0031 and 0031). Group-key TX and the hardware
  * peer/key table (stock 0x894 via 0x29d8 / 0x522c) are not used; the engine takes the key from its
- * control block. The receive PN starts at 0 with each install (the key's RSC is not passed in). */
+ * control block. A pairwise key's receive PN starts at 0 with each install; a group key's at the
+ * Key RSC the app passes with it (bytes 24-29 of the install), so frames the access point sent
+ * before the install count as replays. */
 static struct { unsigned char tk[16], used, soft; unsigned long long pn, rxpn; } pkey[NPEER];
 static struct { unsigned char tk[16], used, soft; unsigned long long rxpn; } gkey[4];
 /* A key of another cipher than CCMP (WEP, TKIP) is the app's (ADR 0136): the install names the
@@ -131,10 +133,13 @@ unsigned sta_cmd(unsigned type, const unsigned char *payload, unsigned len, unsi
     }
     switch (type) {
     case 0x0b: /* group key install: cipher suite type payload[0], index payload[4], 16-byte key
-                * payload[8..] (stock 0x33a0) */
+                * payload[8..], the Key RSC little-endian payload[24..29] when sent (stock 0x33a0) */
         if (payload[4] < 4) {
+            unsigned long long rsc = 0;
+            for (unsigned i = 0; len >= 30 && i < 6; i++)
+                rsc |= (unsigned long long)payload[24 + i] << (8 * i);
             copy_bytes(gkey[payload[4]].tk, payload + 8, 16);
-            gkey[payload[4]].rxpn = 0;
+            gkey[payload[4]].rxpn = rsc;
             gkey[payload[4]].soft = payload[0] != CIPHER_CCMP;
             gkey[payload[4]].used = 1;
         } else {

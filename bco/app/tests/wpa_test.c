@@ -78,8 +78,9 @@ static void aes_wrap(const uint8_t kek[16], unsigned n, const uint8_t *plain, ui
 }
 
 /* An EAPOL-Key frame from the AP into m: key info, replay counter, ANonce (0: none). With a PTK
- * it carries a GTK KDE (key id 1) wrapped under its KEK and a MIC under its KCK. Returns the
- * length. */
+ * it carries a GTK KDE (key id 1) wrapped under its KEK and a MIC under its KCK; a group
+ * message's GTK differs with the counter (a rekey: the same GTK again is not installed). Returns
+ * the length. */
 static unsigned ap_key(uint8_t *m, uint16_t ki, uint64_t ctr, const uint8_t *anonce, const uint8_t *ptk)
 {
     unsigned kdlen = ptk ? 32 : 0, total = O_KD + kdlen, i;
@@ -94,7 +95,7 @@ static unsigned ap_key(uint8_t *m, uint16_t ki, uint64_t ctr, const uint8_t *ano
     if (ptk) {
         uint8_t kde[24] = {0xdd, 22, 0x00, 0x0f, 0xac, 0x01, 1}, mic[20];
         for (i = 0; i < 16; i++)
-            kde[8 + i] = 0xd0 + i;
+            kde[8 + i] = (uint8_t)(0xd0 + i + (ki & KI_PAIRWISE ? 0 : ctr));
         aes_wrap(ptk + 16, 3, kde, m + O_KD);
         wbe16(m + O_KDLEN, 32);
         wpa_hmac_sha1(ptk, 16, m, total, mic);
@@ -446,6 +447,15 @@ static void sha256_akms(void)
         check(r == (WPA_RX_SEND | WPA_RX_INSTALL_GTK | WPA_RX_INSTALL_IGTK) && sm.igtk_idx == 5 && sm.gtk_idx == 2 &&
                   sm.ipn[0] == 9,
               "sha256 akm: group rekey with igtk");
+        /* the same group Message 1 resent with an older IPN: answered, neither key installed again,
+         * the IGTK keeps the IPN it was installed with */
+        kd[32] = 3;
+        aes_wrap(ptk + 16, 7, kd, m + O_KD);
+        m[O_REPLAY + 7] = 10;
+        memset(m + O_MIC, 0, 16);
+        wpa_cmac(ptk, m, n, m + O_MIC);
+        r = wpa_sm_rx(&sm, m, n, out, &ol);
+        check(r == WPA_RX_SEND && sm.ipn[0] == 9, "sha256 akm: the same gtk and igtk again: no reinstall");
     }
 }
 
@@ -720,6 +730,7 @@ int main(void)
             wbe16(g1 + O_KEYINFO, 2 | KI_MIC | KI_ACK | KI_SECURE | KI_ENCRYPTED);
             g1[O_KEYLEN + 1] = 16;
             g1[O_REPLAY + 7] = 4;
+            g1[O_RSC] = 0x21, g1[O_RSC + 1] = 0x43, g1[O_RSC + 5] = 0x01; /* the AP's last PN */
             wbe16(g1 + O_KDLEN, 32);
             memcpy(g1 + O_KD, wrapped, 32);
             wpa_hmac_sha1(ptk, 16, g1, total, mic);
@@ -727,6 +738,8 @@ int main(void)
             r = wpa_sm_rx(&sm, g1, total, g2, &olen);
             check(r == (WPA_RX_SEND | WPA_RX_INSTALL_GTK), "group msg1 -> msg2 + gtk");
             check(sm.gtk_idx == 1 && sm.gtk[0] == 0xe0, "rekeyed gtk/idx");
+            check(sm.gtk_rsc[0] == 0x21 && sm.gtk_rsc[1] == 0x43 && sm.gtk_rsc[5] == 0x01,
+                  "gtk comes with its key rsc");
             check(be16(g2 + O_KEYINFO) == (2 | KI_MIC | KI_SECURE) && g2[O_REPLAY + 7] == 4,
                   "group msg2 key info/replay");
             {
@@ -738,10 +751,44 @@ int main(void)
             }
             r = wpa_sm_rx(&sm, g1, total, g2, &olen);
             check(r == WPA_RX_FAIL, "replayed group msg1 dropped");
+
+            /* KRACK group-key class: the AP resends group msg1 (our msg2 lost) with the same GTK,
+             * an older RSC and a new counter. It is answered, the GTK not installed again (that
+             * would set its receive PN back to the older RSC). */
+            g1[O_REPLAY + 7] = 5;
+            g1[O_RSC] = 0x01, g1[O_RSC + 1] = 0, g1[O_RSC + 5] = 0;
+            memset(g1 + O_MIC, 0, 16);
+            wpa_hmac_sha1(ptk, 16, g1, total, mic);
+            memcpy(g1 + O_MIC, mic, 16);
+            r = wpa_sm_rx(&sm, g1, total, g2, &olen);
+            check(r == WPA_RX_SEND, "same gtk again: msg2, no reinstall");
+            check(sm.gtk_rsc[0] == 0x21 && sm.gtk_rsc[5] == 0x01, "same gtk keeps its rsc");
+            check(be16(g2 + O_KEYINFO) == (2 | KI_MIC | KI_SECURE) && g2[O_REPLAY + 7] == 5,
+                  "msg2 for the resent group msg1");
+
+            /* a new GTK at the same key id is installed, with its RSC */
+            kde[8] = 0xd0;
+            aes_wrap(ptk + 16, 3, kde, wrapped);
+            memcpy(g1 + O_KD, wrapped, 32);
+            g1[O_REPLAY + 7] = 6, g1[O_RSC] = 0x07;
+            memset(g1 + O_MIC, 0, 16);
+            wpa_hmac_sha1(ptk, 16, g1, total, mic);
+            memcpy(g1 + O_MIC, mic, 16);
+            r = wpa_sm_rx(&sm, g1, total, g2, &olen);
+            check(r == (WPA_RX_SEND | WPA_RX_INSTALL_GTK) && sm.gtk[0] == 0xd0 && sm.gtk_rsc[0] == 0x07,
+                  "a new gtk is installed");
+
+            /* a frame whose MIC holds but whose key data does not unwrap leaves the gtk as it was */
+            g1[O_REPLAY + 7] = 7, g1[O_KD] ^= 1;
+            memset(g1 + O_MIC, 0, 16);
+            wpa_hmac_sha1(ptk, 16, g1, total, mic);
+            memcpy(g1 + O_MIC, mic, 16);
+            r = wpa_sm_rx(&sm, g1, total, g2, &olen);
+            check(r == WPA_RX_FAIL && sm.gtk[0] == 0xd0 && sm.gtk_set, "a bad key data keeps the gtk");
         }
 
         /* a forged msg1 (no MIC) while keyed must not change the keys in use */
-        m1[O_REPLAY + 7] = 5;
+        m1[O_REPLAY + 7] = 8;
         r = wpa_sm_rx(&sm, m1, sizeof m1, m2, &olen);
         check(r == WPA_RX_SEND && memcmp(sm.ptk, ptk, 48) == 0, "rekey msg1 keeps ptk");
         check(memcmp(sm.snonce, snonce, 32) != 0, "rekey gets a fresh snonce");

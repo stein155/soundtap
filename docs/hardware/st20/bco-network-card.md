@@ -115,7 +115,10 @@ and the BCO answers with the same `seq` and `type|0x80`, status first.
   Message 4 resent after a lost one stays readable. A rekey's Message 4 goes out under the
   pairwise key in use: the core enciphers a frame when it sends it, so the new key is handed to it
   only once Message 4's buffer is back (the access point switches keys on that Message 4). A
-  deauthentication or disassociation to every station from the joined BSS ends the link. The
+  GTK or IGTK the access point sends again (a resent group message, or a rekey's Message 3 with
+  the group key unchanged) is not installed again, as wpa_supplicant does, so its receive counter
+  never goes back; a new one starts from the frame's Key RSC or IPN, the app's TKIP group key too.
+  A deauthentication or disassociation to every station from the joined BSS ends the link. The
   setup access point keeps an associated client's slot: a seventh newcomer gets status 17, and
   only an authenticated-only client or one silent for 300 s gives its slot up.
 - `AP_START` (6: channel, beacon interval in TU, beacon body), `AP_STOP` (7) and `AP_STATUS` (8:
@@ -419,8 +422,9 @@ How the core uses it (`bco/wild/fw/src/xport.c`, `bco/wild/fw/src/sta.c`):
 2. Every protected data frame it receives is deciphered on channel B (`mac_ccmp_rx`), with the
    transmitter's pairwise key or the group key its key id names (`sta_rxkey`). Header and body are
    first copied to the word-aligned RX staging buffer.
-3. The PN must be above the key's last accepted one. A frame without a key, with an old PN or
-   with a MIC error is dropped in the core. The PN is recorded only once the frame has a host
+3. The PN must be above the key's last accepted one. A group key starts from the Key RSC the
+   access point sent with it (the app passes it in bytes 24-29 of the install), a pairwise key
+   from 0. A frame without a key, with an old PN or with a MIC error is dropped in the core. The PN is recorded only once the frame has a host
    buffer.
 4. A received frame goes up as plaintext with the protected bit clear and no CCMP header or MIC.
    Record byte 7 = 1 (`RX_DECIPHERED`) marks it. Once keyed, the app accepts only marked frames.

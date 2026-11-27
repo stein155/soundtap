@@ -106,6 +106,8 @@ struct wpa_sm {
     unsigned gtk_len;
     int gtk_idx;
     int gtk_tx;
+    uint8_t gtk_rsc[6]; /* the Key RSC that came with gtk: its last packet number, little-endian */
+    uint8_t gtk_set;    /* gtk was handed out for install (a later frame with the same GTK is not) */
     int state;
     uint8_t replay[8];    /* the replay counter of the frame answered last, echoed in the reply */
     uint8_t rx_replay[8]; /* the counter of the last frame whose MIC verified; later ones count up */
@@ -131,7 +133,9 @@ void wpa_sm_init(struct wpa_sm *sm, const uint8_t pmk[32], const uint8_t aa[6],
 void wpa_sm_config(struct wpa_sm *sm, unsigned proto, unsigned pairwise, unsigned group, unsigned akm,
                    unsigned caps);
 
-/* Result bits from wpa_sm_rx (WPA_RX_INSTALL_IGTK: igtk, igtk_idx and ipn are new). */
+/* Result bits from wpa_sm_rx (WPA_RX_INSTALL_IGTK: igtk, igtk_idx and ipn are new). A GTK or IGTK
+ * the same as the one handed out before is not installed again (the KRACK group-key class: a
+ * reinstall would set its receive counter back); a new GTK comes with its Key RSC in gtk_rsc. */
 #define WPA_RX_INSTALL_IGTK 0x20
 #define WPA_RX_SEND        0x01 /* an EAPOL-Key frame was written to out/out_len, send it to aa */
 #define WPA_RX_INSTALL_PTK 0x02 /* install ptk (TK = ptk[32..47]) as the pairwise CCMP key */

@@ -477,8 +477,11 @@ static void put32(unsigned char *p, unsigned v)
 /* Pairwise (type 13) or group (type 11) key of cipher suite type cipher; key == 0 deletes (types
  * 14 / 12). A CCMP key goes to the core's engine. Any other (WEP, TKIP) is the app's (ADR 0136):
  * the install names the cipher and carries no key bytes, so the core only knows to pass the frames
- * under it up undeciphered; the key itself stays here (sw_pair, sw_grp). */
-static int set_key(int pairwise, unsigned idx, const unsigned char *key, unsigned cipher)
+ * under it up undeciphered; the key itself stays here (sw_pair, sw_grp). A group key's rsc (6
+ * bytes, little-endian, or 0) is its last packet number, from the Key RSC, at bytes 24-29: the
+ * core accepts only frames above it. */
+static int set_key(int pairwise, unsigned idx, const unsigned char *key, unsigned cipher,
+                   const unsigned char *rsc)
 {
     union { unsigned w[13]; unsigned char b[52]; } p;
     unsigned type, len;
@@ -498,6 +501,8 @@ static int set_key(int pairwise, unsigned idx, const unsigned char *key, unsigne
             put32(p.b, cipher), p.b[4] = idx, p.b[7] = 16;
             if (cipher == WSEC_CCMP)
                 copy(p.b + 8, key, 16);
+            if (rsc)
+                copy(p.b + 24, rsc, 6);
         } else {
             p.b[0] = idx;
         }
@@ -2053,7 +2058,7 @@ static void join_step(void)
              * index are, and the link is up. A full ring tries again on the next poll. */
             if (prof_sec == WIFI_SEC_WEP) {
                 sw_grp[wep_idx].cipher = 0;
-                if (set_key(0, wep_idx, wep_key, wep_len == 5 ? WSEC_WEP40 : WSEC_WEP104)) {
+                if (set_key(0, wep_idx, wep_key, wep_len == 5 ? WSEC_WEP40 : WSEC_WEP104, 0)) {
                     jstep = J_KEYS;
                     return;
                 }
@@ -2075,7 +2080,7 @@ static void join_step(void)
         }
         return;
     case J_KEYS: /* a WEP key the full command ring did not take */
-        if (!set_key(0, wep_idx, wep_key, wep_len == 5 ? WSEC_WEP40 : WSEC_WEP104)) {
+        if (!set_key(0, wep_idx, wep_key, wep_len == 5 ? WSEC_WEP40 : WSEC_WEP104, 0)) {
             copy(sw_grp[wep_idx].key, wep_key, wep_len);
             sw_grp[wep_idx].cipher = wep_len == 5 ? WSEC_WEP40 : WSEC_WEP104;
             keyed = ap_keyed = 1;
@@ -2112,7 +2117,7 @@ static void install_keys(void)
     /* A CCMP PTK's TK goes to the engine; a TKIP one (TK and both MIC keys) stays here. Not
      * while a Message 4 under the old key is still in the core (send_eapol). */
     if ((keys_due & WPA_RX_INSTALL_PTK) && !eapol_buf &&
-        !set_key(1, 0, sm.ptk + 32, sm.pairwise == WPA_CIPHER_TKIP ? WSEC_TKIP : WSEC_CCMP)) {
+        !set_key(1, 0, sm.ptk + 32, sm.pairwise == WPA_CIPHER_TKIP ? WSEC_TKIP : WSEC_CCMP, 0)) {
         keys_due &= ~WPA_RX_INSTALL_PTK, keyed = 1;
         /* PMF: the same TK protects the robust management frames, in software */
         pmf = sm.mfp && sm.pairwise == WPA_CIPHER_CCMP;
@@ -2128,18 +2133,21 @@ static void install_keys(void)
     /* A CCMP group key goes to the engine. A TKIP one (32 bytes: a WPA/WPA2 mixed router keeps
      * TKIP for its broadcasts) stays here and the core only learns that its frames are the app's
      * (ADR 0136), so mDNS, ARP and DHCP broadcasts come through. A key of any other length is
-     * not installed. */
+     * not installed. Either starts its receive counter at the Key RSC; the supplicant asks for
+     * no install of a GTK it handed out before (wpa.h). */
     if ((keys_due & WPA_RX_INSTALL_GTK) && !(keys_due & WPA_RX_INSTALL_PTK)) {
         unsigned idx = (unsigned)sm.gtk_idx & 3;
         int ccmp = sm.group == 4 && sm.gtk_len == 16, tkip = sm.group == 2 && sm.gtk_len == 32;
         if (!ccmp && !tkip) {
             keys_due &= ~WPA_RX_INSTALL_GTK;
-        } else if (!set_key(0, idx, sm.gtk, ccmp ? WSEC_CCMP : WSEC_TKIP)) {
+        } else if (!set_key(0, idx, sm.gtk, ccmp ? WSEC_CCMP : WSEC_TKIP, sm.gtk_rsc)) {
             keys_due &= ~WPA_RX_INSTALL_GTK;
             sw_grp[idx].cipher = 0;
             if (tkip) {
                 copy(sw_grp[idx].key, sm.gtk, 32);
-                sw_grp[idx].rxtsc = 0;
+                sw_grp[idx].rxtsc = 0; /* from the Key RSC: frames up to it are replays */
+                for (unsigned i = 0; i < 6; i++)
+                    sw_grp[idx].rxtsc |= (unsigned long long)sm.gtk_rsc[i] << (8 * i);
                 sw_grp[idx].cipher = WSEC_TKIP;
             }
         }
@@ -2174,11 +2182,11 @@ static void drop_link(void)
         copy(pd, cur.bssid, 6);
         pd[6] = PEER_AP;
         if (keyed && prof_sec == WIFI_SEC_WEP) {
-            set_key(0, wep_idx, 0, 0);
+            set_key(0, wep_idx, 0, 0, 0);
         } else if (keyed) {
-            set_key(1, 0, 0, 0);
+            set_key(1, 0, 0, 0, 0);
             if (sm.gtk_idx >= 0)
-                set_key(0, (unsigned)(sm.gtk_idx & 3), 0, 0);
+                set_key(0, (unsigned)(sm.gtk_idx & 3), 0, 0, 0);
         }
         wr_cmd_checked(&tx, CMD_PEER_DEL, 0x12, 0x11, pd, sizeof pd);
         DOORBELL();

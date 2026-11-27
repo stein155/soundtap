@@ -770,21 +770,25 @@ static void tkip_frames(void)
     /* the group key from the handshake: TKIP, index 2 */
     sm.group = 2, sm.gtk_len = 32, sm.gtk_idx = 2;
     memcpy(sm.gtk, gtk, 32);
+    sm.gtk_rsc[0] = 6; /* the Key RSC: the AP's broadcasts up to TSC 6 came before the key */
     keys_due = WPA_RX_INSTALL_GTK;
     install_keys();
     assert(!keys_due && sw_grp[2].cipher == WSEC_TKIP && !memcmp(sw_grp[2].key, gtk, 32));
+    assert(sw_grp[2].rxtsc == 6);
     int seen = 0;
     for (unsigned i = 1; i + 12 < 64; i++)
         if (cmdbuf[i] == 11 && cmdbuf[i + 1] == (18u | 1u << 16)) {
             const unsigned char *pl = (const unsigned char *)(cmdbuf + i + 2);
-            assert(pl[0] == WSEC_TKIP && pl[4] == 2);
+            assert(pl[0] == WSEC_TKIP && pl[4] == 2 && pl[24] == 6); /* the RSC goes along */
             for (unsigned k = 0; k < 16; k++)
                 assert(pl[8 + k] == 0); /* the key stays in the app */
             seen = 1;
         }
     assert(seen);
-    /* a broadcast under it reaches the SCM; the same TSC again does not */
+    /* a broadcast under it reaches the SCM; the same TSC again does not, nor one up to the RSC */
     unsigned before = wifi_rx_frames;
+    rx_station(rxt, rx_tkip(ap_bcast, gtk, gtk + 16, 2, 6));
+    assert(wifi_rx_frames == before);
     rx_station(rxt, rx_tkip(ap_bcast, gtk, gtk + 16, 2, 7));
     assert(wifi_rx_frames == before + 1);
     rx_station(rxt, rx_tkip(ap_bcast, gtk, gtk + 16, 2, 7));

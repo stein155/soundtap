@@ -66,6 +66,8 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
 - **On a network that hands out no gateway**, or has no internet, the display and the Wi-Fi
   lamp now say connected instead of "Connecting" for ever.
 - **SoundTouch 20 no longer drops off Wi-Fi when the router renews its key.**
+- **SoundTouch 20: someone nearby can no longer make it accept old broadcasts from your
+  network again** when the router sends its network key a second time.
 
 ## [app-v0.1.0-alpha.6] - 2026-11-27
 
