@@ -81,10 +81,16 @@ void xport_irq(void);
  * schedule() are starved. Indices are shared with bco/app/src/wifi.c. */
 enum { RC_POLL, RC_PHASE, RC_SCHED, RC_WIN, RC_LIMPOS = RC_WIN + 8, RC_DMAGO, RC_DMADONE,
        RC_DMABUSY, RC_IRQIN, RC_IRQOUT, RC_IRQST, RC_ST1, RC_ST2, RC_ST2DONE, RC_ST10, RC_FIQIN,
-       RC_FIQOUT, RC_FAULTLR, RC_FAULT, RC_CMD, RC_CMDBAD, RC_EVDROP, RC_N };
+       RC_FIQOUT, RC_FAULTLR, RC_FAULT, RC_CMD, RC_CMDBAD, RC_EVDROP, RC_APIN, RC_APNOFILT,
+       RC_APKEEP, RC_N };
+_Static_assert(RC_APIN == 29 && RC_APNOFILT == 30 && RC_APKEEP == 31,
+               "bco/app/src/wifi.c (CORE_RC_APIN) reads the ap_mode counters at these indices");
 /* RC_FAULT: start.S vector number (start.S writes RC_FAULTLR/RC_FAULT by index: append only);
  * RC_CMDBAD: command records skipped as malformed (xport.c commands) or station commands
- * too short for their type (sta.c); RC_EVDROP: events dropped on a full event ring (xport.c). */
+ * too short for their type (sta.c); RC_EVDROP: events dropped on a full event ring (xport.c).
+ * In ap_mode (mac.c): RC_APIN frames to our address, RC_APNOFILT those of them the address
+ * filter did not flag, RC_APKEEP a client's data frames kept for the app. The app reads these
+ * three through HOST_FLAG2 for AP_STATUS (bco/app/src/wifi.c), at the offsets named there. */
 extern volatile unsigned rec[RC_N];
 void route(unsigned type, unsigned module, unsigned src, const void *payload, unsigned len);
 void sta_init(unsigned char *key_block);

@@ -464,9 +464,84 @@ static void ccmp(void)
     CHECK(!delivered(&d), "and only once");
 }
 
+/* The setup access point (ap_mode): a client's frames carry our address as A1. A toDS frame
+ * is kept and ACKed whether or not the address filter flags it, and AP_STATUS's counters see
+ * both; null-data and PS-Poll are kept for the power-management state, QoS data goes up as
+ * plain data; group data from other networks on the channel and frames for others are not
+ * kept. A station keeps its old rule: nothing to it without the filter's flag. */
+static void ap_clients(void)
+{
+    static const unsigned char PHONE[6] = {0x02, 0x99, 0x88, 0x77, 0x66, 0x55};
+    struct rxd d;
+    unsigned n;
+    setup(0);
+    joined = ap_mode = 1;
+    n = hdr(fbuf, 0x08, 0x01, OWN, PHONE, BCAST); /* a DHCP discover: toDS, to everybody */
+    for (unsigned i = 0; i < 40; i++)
+        fbuf[n++] = i + 1;
+    air_rx(fbuf, n + 4, ST_IN);
+    CHECK(rxq_in == 1 && acked(), "ap_mode: toDS data without the filter flag kept and ACKed");
+    CHECK(rec[RC_APIN] == 1 && rec[RC_APNOFILT] == 1 && rec[RC_APKEEP] == 1, "ap counters");
+    CHECK(delivered(&d), "delivered");
+    CHECK(!memcmp(d.buf + 0xac, fbuf, 24) && !memcmp(d.buf + 0xcc, fbuf + 24, 40), "header and body");
+    CHECK(d.end == 0x94 + 24 + 24 + 40, "end %#x", d.end);
+    recycle(&d);
+    air_rx(fbuf, n + 4, ST_IN | ST_ADDR);
+    CHECK(rxq_in == 2 && acked() && rec[RC_APIN] == 2 && rec[RC_APNOFILT] == 1, "with the flag too");
+    CHECK(delivered(&d), "delivered");
+    recycle(&d);
+
+    /* null-data with the power-management bit: kept (no body) and ACKed */
+    n = hdr(fbuf, 0x48, 0x11, OWN, PHONE, OWN);
+    air_rx(fbuf, n + 4, ST_IN);
+    CHECK(rxq_in == 3 && acked(), "null-data kept and ACKed");
+    CHECK(delivered(&d) && d.buf[0xac] == 0x48 && d.buf[0xad] == 0x11 && d.end == 0x94 + 48, "null-data record");
+    recycle(&d);
+
+    /* QoS data: up without its QoS control, as plain data */
+    n = hdr(fbuf, 0x88, 0x01, OWN, PHONE, BCAST);
+    fbuf[n++] = 0, fbuf[n++] = 0; /* QoS control: TID 0, Normal Ack */
+    for (unsigned i = 0; i < 20; i++)
+        fbuf[n++] = 0xa0 + i;
+    air_rx(fbuf, n + 4, ST_IN);
+    CHECK(rxq_in == 4 && acked(), "QoS data kept and ACKed");
+    CHECK(delivered(&d) && d.buf[0xac] == 0x08 && !memcmp(d.buf + 0xac + 1, fbuf + 1, 23), "plain data header");
+    CHECK(!memcmp(d.buf + 0xcc, fbuf + 26, 20) && d.end == 0x94 + 48 + 20, "body after the QoS control");
+    recycle(&d);
+
+    /* PS-Poll: 16 bytes (AID, BSSID, TA), kept and ACKed, padded to the header */
+    memset(fbuf, 0xee, 32);
+    fbuf[0] = 0xa4, fbuf[1] = 0x10, fbuf[2] = 1, fbuf[3] = 0xc0;
+    memcpy(fbuf + 4, OWN, 6), memcpy(fbuf + 10, PHONE, 6);
+    air_rx(fbuf, 20, ST_IN);
+    CHECK(rxq_in == 5 && acked(), "PS-Poll kept and ACKed");
+    CHECK(delivered(&d) && !memcmp(d.buf + 0xac, fbuf, 16) && d.end == 0x94 + 48, "PS-Poll record");
+    for (unsigned i = 16; i < 32; i++)
+        CHECK(d.buf + 0xac + i < d.buf + 0xcc ? d.buf[0xac + i] == 0 : 1, "padding byte %u", i);
+    recycle(&d);
+
+    /* not ours: another network's broadcast, a frame for someone else */
+    n = hdr(fbuf, 0x08, 0x02, BCAST, OTHER, OTHER);
+    for (unsigned i = 0; i < 20; i++)
+        fbuf[n++] = i;
+    air_rx(fbuf, n + 4, ST_IN);
+    CHECK(rxq_in == 5 && !acked(), "ap_mode: other networks' group data not kept");
+    n = hdr(fbuf, 0x08, 0x01, OTHER, PHONE, BCAST);
+    air_rx(fbuf, n + 20 + 4, ST_IN);
+    CHECK(rxq_in == 5 && !acked() && rec[RC_APIN] == 5, "ap_mode: data for another BSS not kept");
+
+    /* a station: toDS-looking data to us without the flag stays out, as before */
+    ap_mode = 0;
+    n = hdr(fbuf, 0x08, 0x01, OWN, PHONE, BCAST);
+    air_rx(fbuf, n + 20 + 4, ST_IN);
+    CHECK(rxq_in == 5 && !acked(), "station: nothing without the filter flag");
+    ap_mode = 0, joined = 0;
+}
+
 int main(void)
 {
     keep_filter();
+    ap_clients();
     ack_unicast_data();
     group_leave();
     read_pointer();

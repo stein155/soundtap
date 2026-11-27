@@ -178,10 +178,31 @@ void mac_fiq(void)
          * core (TSF/TIM) and are dropped here. */
         int mgmt = (fc & 0x0c) == 0 && (0x3e0fu >> (fc >> 4) & 1);
         int group = e[12] & 1;  /* A1 group bit: such frames are never ACKed */
+        /* In ap_mode the BSS is our own, and a client's frames to it carry our address as A1:
+         * data and null-data to the distribution system (toDS), its management frames, a
+         * PS-Poll. Whether the address filter, set up for a station, flags a toDS frame was
+         * never measured; a client whose DHCP request got neither kept nor ACKed fell back to
+         * a link-local address (ST20, 2026-11-27). So in ap_mode A1 = own counts as passing it. */
+        int to_us = ap_mode && !group && same_mac(e + 12, own_mac);
+        int hit = (st & 0x40000) || to_us;
+        if (to_us) {
+            rec[RC_APIN]++;         /* diag: AP_STATUS shows how many frames reached us... */
+            if (!(st & 0x40000))
+                rec[RC_APNOFILT]++; /* ...and how many of them the address filter missed */
+        }
         /* Non-QoS data (type 10, bit 0x80 = QoS clear) from the BSS once joined: it arrives still enciphered
          * and goes to the host like a management frame; the app deciphers it (wifi.c rx_station).
-         * QoS/HT data, A-MSDU and null-data (no body) are later work. */
-        int data = (fc & 0x8c) == 0x08 && joined && len > 28;
+         * QoS/HT data, A-MSDU and null-data (no body) are later work. Not in ap_mode: there the
+         * group data on the channel is other networks' (our clients send to our address), and
+         * keeping it filled the four-frame queue a client's frame needs room in. */
+        int data = (fc & 0x8c) == 0x08 && joined && !ap_mode && len > 28;
+        /* A client's data, null-data, QoS data and QoS-null to us (no CF subtypes): all kept,
+         * the null frames for their power-management bit (the app buffers for a dozing
+         * client), QoS data without its QoS control (xport.c rx_deliver). And its PS-Poll
+         * (16 bytes), which asks for one buffered frame. */
+        int apdata = to_us && (fc & 0x3c) == 0x08;
+        int pspoll = to_us && fc == 0xa4;
+        unsigned minlen = pspoll ? 20 : 28;
         /* Every unicast data frame to us is ACKed once joined, kept or not: data, null-data (0x48),
          * QoS data (0x88) and QoS-null (0xc8). APs probe an idle station with null-data and
          * disassociate one that does not ACK it (hostapd after ap_max_inactivity, reason 4), and
@@ -207,7 +228,7 @@ void mac_fiq(void)
          * them passively during the active dwell makes the scan robust instead of probe-dependent. */
         int keep = fc == 0x80 ? (dwell_state == 4 || dwell_state == 6)
                  : fc == 0x50 ? dwell_state == 6
-                 : (mgmt || data || probe);
+                 : (mgmt || data || probe || apdata || pspoll);
         unsigned room = rxq_in - rxq_out < RXQ;
         /* Group-addressed data (ARP, mDNS, DHCP broadcasts) never passes the address filter once
          * joined, so 0x40000 is clear; stock keeps it anyway and so do we (not ACKed, below).
@@ -217,12 +238,14 @@ void mac_fiq(void)
          * The frame must also be the one the MAC latched (0x630) with a length that fits: after
          * such an overwrite the next frame-in found stale bytes at 0x644, and their length sent
          * the pointer anywhere. */
-        if (((st & 0x40000) || ((data || probe || leave) && group)) && keep && room && len >= 28 &&
+        if ((hit || ((data || probe || leave) && group)) && keep && room && len >= minlen &&
             len <= sizeof rxarea - RX_WRAP && (e[8] & 0xfc) == fc) {
             rxq[rxq_in % RXQ] = (unsigned)e;
             rxq_len[rxq_in % RXQ] = len;
             rxq_in++;
             dg_rxkeep++;        /* diag: a received frame passed keep and went to the host ring */
+            if (apdata)
+                rec[RC_APKEEP]++;   /* diag: a client's data frame on its way to the app */
             ptr = ((((ptr + 4 + len) & ~0x30000u) + 7) & ~0x10007u);
             REG(0x644) = ptr >= RX_WRAP ? 0 : ptr;
             REG(0x604) |= 0x100;
@@ -231,7 +254,7 @@ void mac_fiq(void)
          * not buffer space) and then dropped; TCP recovers. Withholding the ACK made the AP retry,
          * back off and fall back to slower rates: 30-40 % of a download on the ST20. A group
          * frame is never ACKed, also while a scan lets everything through the address filter. */
-        if ((st & 0x40000) && !group && len >= 28 && (fc == 0x50 || (mgmt && room) || ack_data))
+        if (hit && !group && len >= minlen && (fc == 0x50 || (mgmt && room) || ack_data || pspoll))
             send_ack(e);
         if (keep && fc == 0x50 && (st & 0x40000))
             dwell_extend();

@@ -4,7 +4,7 @@
 /* The transmit path, from a host record to the MAC and back (src/xport.c): the staged packet and
  * queue descriptor, the rate class per frame type, the AP's ACK ending a unicast frame, retries
  * with the Retry bit and a growing backoff window, the last tries at the basic rate, the data-rate
- * ladder, the gap after a group frame, a lost TX-done, the record-length guard, and CCMP transmit:
+ * ladder, group data at the basic rate and the gap after it, a probe response's single retry, a lost TX-done, the record-length guard, and CCMP transmit:
  * the CCMP header and packet number, the cipher engine's control block, the same PN on a retry,
  * and a frame without a key for its peer (also one queued when the peer table is reset) or that
  * the engine cannot encipher, which never goes out. The cipher engine itself is hardware: the test sets its completion word. */
@@ -160,6 +160,7 @@ static void group_and_gap(void)
     data_hdr(h, BCAST, 0);
     CHECK(send(h, 40, 0), "broadcast sent");
     CHECK(tx_unicast == 0, "no ACK expected");
+    CHECK(tx_desc.cls == sta_mgmt_cls, "group data at the basic rate, where every client hears it");
     air_tx_done();
     pump(3);
     CHECK(host_tx_done(2, &buf, &status) && status == 0, "group frame done at its TX-done");
@@ -184,6 +185,33 @@ static void group_and_gap(void)
     REG(R_TIMER) += 3001;
     pump(3);
     CHECK(host_tx_done(2, &buf, &status) && status == 0, "ACKed frame done without TX-done");
+}
+
+/* A probe response gets one retry, not six: the phone that asked has moved on by then, and the
+ * one transmitter waits on it. An authentication response keeps them all. */
+static void probe_response_retries(void)
+{
+    static const unsigned char PHONE[6] = {0x02, 0x99, 0x88, 0x77, 0x66, 0x55};
+    unsigned char h[24];
+    unsigned buf, status;
+    for (unsigned kind = 0; kind < 2; kind++) {
+        unsigned attempts = 0;
+        setup(0);
+        hdr(h, kind ? 0xb0 : 0x50, 0, PHONE, OWN, OWN);
+        CHECK(send(h, 40, 6), "sent");
+        CHECK(tx_unicast == 1 && tx_desc.cls == sta_mgmt_cls, "unicast management at the basic rate");
+        for (unsigned round = 0; round < 10 && !host_tx_done(2, &buf, &status); round++) {
+            if (mgmt_tx_pending) {
+                attempts++;
+                air_tx_done();
+            }
+            REG(R_TIMER) += ACK_WAIT + 20 * 1024;
+            pump(1);
+        }
+        CHECK(status == 1, "failed without an ACK");
+        CHECK(attempts == (kind ? 1 + TX_RETRY : 2), "%s: %u attempts", kind ? "auth" : "probe response",
+              attempts);
+    }
 }
 
 static void record_guard(void)
@@ -323,6 +351,7 @@ int main(void)
     retries();
     ladder_floor();
     group_and_gap();
+    probe_response_retries();
     record_guard();
     ccmp();
     peer_reset();

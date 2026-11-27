@@ -114,7 +114,7 @@ static int rx_deliver(void)
     static const unsigned char rate[16] = {0x00, 0x04, 0x0b, 0x16, 0x02, 0x04, 0x0b, 0x16,
                                            0x60, 0x30, 0x18, 0x0c, 0x6c, 0x48, 0x24, 0x12};
     const unsigned char *e = rx_peek(), *h;
-    unsigned n, slot, dec = 0;
+    unsigned n, slot, dec = 0, hl = 24;
     unsigned long long pn = 0, *last = 0;
     if (!e)
         return 0;
@@ -144,6 +144,10 @@ static int rx_deliver(void)
         *last = pn;
     if (n > 0x6c0 - 0x94 - 24 - 8)       /* host RX buffer (wifi.c RXBUF) */
         n = 0x6c0 - 0x94 - 24 - 8;
+    /* In ap_mode a client's QoS data (mac.c) goes up as plain data: without its two-byte QoS
+     * control, QoS bit clear. A PS-Poll (16 bytes) goes up padded to the 24-byte header. */
+    if (!dec && ap_mode && (h[0] & 0x8c) == 0x88 && n >= 26)
+        hl = 26;
     for (unsigned i = 0; i < 24; i++)
         rx_stage[i] = 0;
     rx_stage[0] = 24;
@@ -154,13 +158,17 @@ static int rx_deliver(void)
     rx_stage[5] = rx_chan;
     rx_stage[6] = rate[e[6] & 15];
     rx_stage[7] = dec ? RX_DECIPHERED : 0;
-    copy_bytes(rx_stage + 24, h, 24);
+    for (unsigned i = 0; i < 24; i++)
+        rx_stage[24 + i] = i < n ? h[i] : 0;
     if (dec)
         rx_stage[24 + 1] &= ~0x40u; /* plaintext now */
+    if (hl == 26)
+        rx_stage[24] &= ~0x80u;     /* plain data now */
     for (unsigned i = 0; i < 8; i++)
         rx_stage[48 + i] = 0;       /* cipher-header room (IV); empty */
-    if (!dec)
-        copy_bytes(rx_stage + 56, h + 24, n - 24);
+    if (!dec && n > hl)
+        copy_bytes(rx_stage + 56, h + hl, n - hl);
+    n = n > hl ? 24 + n - hl : 24;
     rx_pop();
     rx_slot = (unsigned *)slot;
     rx_end = 0x94 + 24 + n;
@@ -216,6 +224,7 @@ static unsigned rate_i, rate_ok, rate_bad;
 #define TX_GAP 3000
 volatile unsigned tx_acked;
 static unsigned tx_free_t, tx_unicast, tx_wait;   /* tx_unicast: attempts of the frame in flight, 0 = group */
+static unsigned tx_tries = TX_RETRY;              /* retries the frame in flight may have */
 static struct {
     unsigned z0; /* cppcheck-suppress unusedStructMember ; the MAC reads this descriptor */
     unsigned short len, z1, rate, cls; /* cppcheck-suppress unusedStructMember ; the MAC reads this descriptor */
@@ -257,8 +266,14 @@ static void tx_stage_done(void)
     *(unsigned short *)(h + 0x16) = REG(R_TIMER) << 4; /* sequence control */
     tx_desc.rate = 8;                                   /* management/EAPOL basic rate (ps0+0x24) */
     tx_desc.cls = sta_mgmt_cls;                         /* PHY rate-class: must match the (working) probe path, not 0 */
-    if ((h[0] & 0x0c) == 0x08)
-        tx_desc.cls = rate_cls[rate_i];                 /* data at the current rate, the first retries too */
+    /* Unicast data at the current rate, the first retries too. Group-addressed data (the
+     * setup AP's broadcasts: DHCP, ARP, mDNS) stays at the basic rate like management frames:
+     * nobody ACKs it, so the rate cannot follow any client, and every client must hear it. */
+    if ((h[0] & 0x0c) == 0x08 && !(h[4] & 1))
+        tx_desc.cls = rate_cls[rate_i];
+    /* A probe response is worth one retry: the phone that asked moves to the next channel
+     * within a few tens of ms, and each wasted retry holds every other frame back. */
+    tx_tries = h[0] == 0x50 ? 1 : TX_RETRY;
     tx_desc.hdrlen = 24;
     tx_desc.hdr = h;
     tx_desc.l2 = 0;
@@ -611,7 +626,7 @@ void xport_poll(void)
         if (((REG(R_TIMER) - tx_t0) & 0x3ffffff) <= tx_wait &&
             ((REG(R_TIMER) - tx_done_t) & 0x3ffffff) <= (tx_desc.cls != sta_mgmt_cls ? ACK_LATE : 3000))
             ;
-        else if (tx_unicast++ > TX_RETRY)
+        else if (tx_unicast++ > tx_tries)
             tx_complete(1);
         else {
             tx_pkt[0x18 + 1] |= 0x08;                  /* Retry */

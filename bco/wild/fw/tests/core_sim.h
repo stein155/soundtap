@@ -63,7 +63,7 @@ static void sim_reset(void)
     rxq_in = rxq_out = 0, rx_chan = 0;
     dg_rxfiq = dg_rxkeep = dg_rxfcs = dg_rxdwell = 0;
     tx_done_t = mgmt_tx_pending = tx_acked = tx_done_q = 0;
-    dwell_fired = dwell_state = joined = 0, sta_mgmt_cls = 4;
+    dwell_fired = dwell_state = joined = ap_mode = 0, sta_mgmt_cls = 4;
     memset(join_bssid, 0, sizeof join_bssid);
     probe_listen = probe_extend = probe_backoff = rand_state = 0;
     for (unsigned i = 0; i < 16; i++)
@@ -74,7 +74,7 @@ static void sim_reset(void)
     memset(tx_pkt, 0, sizeof tx_pkt);
     tx_q = tx_rec = tx_t0 = 0, tx_busy = 0;
     rate_i = rate_ok = rate_bad = 0;
-    tx_free_t = tx_unicast = tx_wait = 0;
+    tx_free_t = tx_unicast = tx_wait = 0, tx_tries = TX_RETRY;
     cmd_state = cmd_kind = cmd_len = cmd_skip = 0;
     memset((void *)rec, 0, sizeof rec);
     tunes = tune_band = tune_chan = delayed = 0;
