@@ -52,6 +52,9 @@ int wifi_current(struct wifi_bss *o)
     return 1;
 }
 
+unsigned fake_fail_step, fake_fail_code;
+void wifi_fail(unsigned *step, unsigned *code) { *step = fake_fail_step, *code = fake_fail_code; }
+
 unsigned fake_ap_chan, fake_ap_bint, fake_ap_len, fake_ap_stops;
 int wifi_ap_start(unsigned chan, unsigned bint, const unsigned char *body, unsigned len)
 {

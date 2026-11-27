@@ -7,7 +7,8 @@
  * layout here was proven by the one-shot bring-up (ADR 0031, the former wild.c): boot and
  * handshake, rings, scan (0xc1/0xc2/0xe4), join (0xbc, JOIN_DONE), the auth and assoc frames,
  * PEER_ADD, the key commands and data frames both ways (DHCP over WPA2, 2026-10-06).
- * 2.4 GHz and WPA2-PSK (CCMP) only. */
+ * 2.4 GHz and WPA2-PSK only: pairwise CCMP, the AP's group cipher (CCMP, or TKIP from a mixed-mode
+ * router, whose group key the core cannot use: unicast works, its broadcasts are dropped). */
 #include "board.h"
 #include "netcard.h"
 #include "bcolink.h"
@@ -271,6 +272,9 @@ static unsigned keys_due;              /* WPA_RX_INSTALL_PTK/GTK not yet in the 
 enum { J_SCAN, J_SETUP, J_AUTH, J_ASSOC, J_4WAY };
 static unsigned jstep, jtries, deadline, join_pending, corebd, rxauthok, rxassocok, kicked;
 static unsigned kick_sub, kick_reason; /* the deauthentication (0xc0) or disassociation (0xa0) and its reason */
+/* Why the last join failed, for STATUS (wifi_fail): the step and the AP's status or reason code. */
+static unsigned fail_step, fail_code;
+#define JOIN_TRIES 5u /* auth/assoc attempts per join: a band-steering AP ignores the first few */
 static unsigned last_beacon, beacons_up;
 
 /* scan: pass 0 passive (0xc1) channels 1..13, pass 1 wildcard probe (0xc2), then 0xe4 */
@@ -479,8 +483,10 @@ static int send_assoc(void)
     int body;
     if (!a)
         return 0;
+    unsigned char ie[WPA_RSN_IE_LEN];
+    wpa_rsn_ie(ie, cur.grp);
     body = wstation_assoc((volatile uint8_t *)a, TXFBUF, own, cur.bssid, rates,
-                          (const char *)cur.ssid, cur.ssidlen, cur.caps);
+                          (const char *)cur.ssid, cur.ssidlen, cur.caps, ie);
     if (body <= 0)
         return 0;
     tx_push(a, (unsigned)body, PEER_NONE, 0xffff);
@@ -592,13 +598,20 @@ static void rx_station(const volatile unsigned char *b, unsigned len)
     if ((fc & 0x0c) == 0) { /* management, addressed to us */
         if (!same(h + 4, own, 6) || (fc & 0x0300) || len < 0xcc + 2)
             return;
-        if (sub == 0xc0 || sub == 0xa0) /* deauth / disassoc */
+        if (sub == 0xc0 || sub == 0xa0) { /* deauth / disassoc: keep the reason */
             kicked = 1, kick_sub = sub, kick_reason = le16(body);
-        else if (sub == 0xb0 && len >= 0xcc + 6 && le16(body) == 0 && le16(body + 2) == 2 &&
-                 le16(body + 4) == 0)
-            rxauthok = 1;
-        else if (sub == 0x10 && len >= 0xcc + 4 && le16(body + 2) == 0)
-            rxassocok = 1;
+            fail_step = WIFI_FAIL_KICKED, fail_code = le16(body);
+        } else if (sub == 0xb0 && len >= 0xcc + 6 && le16(body) == 0 && le16(body + 2) == 2) {
+            if (le16(body + 4) == 0)
+                rxauthok = 1;
+            else /* refused: the AP's status code says why */
+                fail_step = WIFI_FAIL_AUTH, fail_code = le16(body + 4);
+        } else if (sub == 0x10 && len >= 0xcc + 4) {
+            if (le16(body + 2) == 0)
+                rxassocok = 1;
+            else
+                fail_step = WIFI_FAIL_ASSOC, fail_code = le16(body + 2);
+        }
         return;
     }
     /* data from the AP (fromDS), to us or a group address, with a body */
@@ -622,6 +635,8 @@ static struct client {
 } cl[WIFI_AP_CLIENTS];
 static unsigned char ap_body[WIFI_AP_BODY_MAX];
 static unsigned ap_len, ap_ready, ap_deadline, ap_probes, ap_rx;
+static unsigned ap_bint, ap_next, ap_beacons; /* beacon interval (TU), next beacon due (ms), sent */
+static const unsigned char ap_bcast[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 static const unsigned char ap_mrates[8] = {2, 2, 2, 2, 2, 2, 2, 2}; /* 1 Mb/s: every client hears it */
 
 /* A client's core peer slot is its index: unicast to a client goes through its slot, as the
@@ -688,6 +703,58 @@ static struct client *ap_client(const volatile unsigned char *mac, int add)
     return old;
 }
 
+/* The timestamp field of the AP's beacons and probe responses, in microseconds since the AP came
+ * up. The core keeps no TSF for us; a client only needs it to count up. */
+static void ap_stamp(unsigned char *b)
+{
+    unsigned long long us = (unsigned long long)(now - ap_deadline + 1000u) * 1000u;
+    for (unsigned i = 0; i < 8; i++)
+        b[i] = (unsigned char)(us >> 8 * i);
+}
+
+/* One beacon: hostapd's body (with its TIM) behind a broadcast header, at 1 Mb/s so every client
+ * hears it. The core has no TBTT timer of its own (bco/wild/fw scan.c join), so ap_step sends one
+ * every beacon interval from the main loop. */
+static void ap_beacon(void)
+{
+    static unsigned char b[WIFI_AP_BODY_MAX];
+    copy(b, ap_body, ap_len);
+    ap_stamp(b);
+    if (ap_send(0, 0x80, ap_bcast, own, ap_mrates, 0, b, ap_len))
+        ap_beacons++;
+}
+
+/* The probe request's SSID IE is a wildcard (length 0) or our SSID. */
+static int ap_probe_for_us(const volatile unsigned char *ies, unsigned n)
+{
+    const unsigned char *our = ap_ie(0);
+    for (unsigned o = 0; o + 2 <= n && o + 2 + ies[o + 1] <= n; o += 2 + ies[o + 1])
+        if (ies[o] == 0)
+            return !ies[o + 1] || (our && our[1] == ies[o + 1] && same(ies + o + 2, our + 2, our[1]));
+    return 0;
+}
+
+/* A probe response to sa: the beacon body without its TIM (IEEE 802.11-2020 9.3.3.10). */
+static void ap_probe_rsp(const volatile unsigned char *sa, const volatile unsigned char *ies,
+                         unsigned n)
+{
+    static unsigned char r[WIFI_AP_BODY_MAX];
+    unsigned char to[6];
+    unsigned o = 12, k = 12;
+    if (!ap_probe_for_us(ies, n) || (sa[0] & 1))
+        return;
+    copy(to, sa, 6);
+    copy(r, ap_body, 12);
+    while (o + 2 <= ap_len && o + 2 + ap_body[o + 1] <= ap_len) {
+        unsigned l = 2 + ap_body[o + 1];
+        if (ap_body[o] != 5) /* TIM: beacons only */
+            copy(r + k, ap_body + o, l), k += l;
+        o += l;
+    }
+    ap_stamp(r);
+    ap_send(0, 0x50, to, own, ap_mrates, 0, r, k);
+}
+
 /* A non-beacon frame while the access point runs. Header at +0xac, body at +0xcc. */
 static void rx_ap(const volatile unsigned char *b, unsigned len)
 {
@@ -699,8 +766,9 @@ static void rx_ap(const volatile unsigned char *b, unsigned len)
     fc = le16(h), sub = fc & 0xfc, n = len - 0xcc;
     ap_rx++;
     if ((fc & 0x0c) == 0) {
-        if (sub == 0x40) { /* the core answers probes from the beacon template */
+        if (sub == 0x40) { /* probe request: answer a wildcard one or one for our SSID */
             ap_probes++;
+            ap_probe_rsp(h + 10, body, n);
             return;
         }
         if (!same(h + 4, own, 6) || !same(h + 16, own, 6))
@@ -1065,12 +1133,28 @@ static int stronger(const struct bss *a, const struct bss *b)
     return (unsigned short)(scan_gen - a->gen) < (unsigned short)(scan_gen - b->gen);
 }
 
-/* An RSN BSS with the profile's SSID on a channel the regulatory domain allows. A passive channel
+/* A BSS with the profile's SSID on a channel the regulatory domain allows. A passive channel
  * counts: the access point was heard there, and a station may answer the BSS it heard. */
+static int named(const struct bss *b)
+{
+    return b->ssidlen == cur.ssidlen && same(b->ssid, cur.ssid, cur.ssidlen) && chan_ok(b->chan);
+}
+
+/* A named BSS whose RSN IE this station can join (bss.rsnok: pairwise CCMP, AKM PSK, management
+ * frame protection not required, a CCMP or TKIP group cipher). */
 static int match(const struct bss *b)
 {
-    return b->ssidlen == cur.ssidlen && same(b->ssid, cur.ssid, cur.ssidlen) && b->rsn &&
-           chan_ok(b->chan);
+    return named(b) && b->rsnok;
+}
+
+/* The SSID is there, but only with security this station cannot join (WPA3 only, management
+ * frame protection required, no CCMP), so the failure says so instead of "not found". */
+static int seen_other(void)
+{
+    for (unsigned i = 0; i < nbss; i++)
+        if (named(&bsstab[i]) && !bsstab[i].rsnok)
+            return 1;
+    return 0;
 }
 
 /* The BSS to join, -1 if none: during a roam its target only, with a fixed BSSID that one only,
@@ -1143,12 +1227,15 @@ static void join_attempt(void)
     unsigned lo;
     if (i < 0 || !(lo = lowest_rate(&bsstab[i])) ||
         !wstation_rate_chain(bsstab[i].ies, bsstab[i].ielen, data_rates)) {
+        if (i < 0)
+            fail_step = seen_other() ? WIFI_FAIL_SECURITY : WIFI_FAIL_NOT_FOUND, fail_code = 0;
         fail();
         return;
     }
     copy(cur.bssid, bsstab[i].bssid, 6);
     cur.chan = bsstab[i].chan;
     cur.caps = bsstab[i].caps; /* the association request mirrors its short slot and preamble */
+    cur.grp = bsstab[i].grp;   /* and carries the RSN IE with its group cipher */
     for (unsigned r = 0; r < 8; r++)
         rates[r] = lo;
     keyed = 0, keys_due = 0, rxauthok = rxassocok = kicked = 0, eappend = 0;
@@ -1161,7 +1248,7 @@ static void join_attempt(void)
 
 static void retry(void)
 {
-    if (++jtries >= 3)
+    if (++jtries >= JOIN_TRIES)
         fail();
     else
         join_attempt();
@@ -1208,6 +1295,8 @@ static void join_step(void)
             }
             jstep = J_ASSOC, deadline = now + 1500;
         } else if (due(deadline)) {
+            if (fail_step != WIFI_FAIL_AUTH)
+                fail_step = WIFI_FAIL_AUTH_TIMEOUT, fail_code = 0;
             retry();
         }
         return;
@@ -1227,17 +1316,24 @@ static void join_step(void)
             DOORBELL();
             snonce(sn);
             wpa_sm_init(&sm, pmk, cur.bssid, own, sn);
+            sm.group = cur.grp == 2 ? 2 : 4; /* Message 2 repeats the RSN IE of the request */
             jstep = J_4WAY, deadline = now + 8000;
         } else if (due(deadline)) {
+            if (fail_step != WIFI_FAIL_ASSOC)
+                fail_step = WIFI_FAIL_ASSOC_TIMEOUT, fail_code = 0;
             retry();
         }
         return;
     case J_4WAY:
         if (sm.state == WPA_DONE && keyed && !keys_due) {
             state = WIFI_UP;
+            fail_step = fail_code = 0;
             last_beacon = now, beacons_up = 0;
             link_up();
         } else if (due(deadline)) {
+            /* no Message 1, or Message 3 never verified: almost always a wrong password */
+            if (fail_step != WIFI_FAIL_KICKED)
+                fail_step = WIFI_FAIL_HANDSHAKE, fail_code = 0;
             retry();
         }
         return;
@@ -1250,8 +1346,10 @@ static void install_keys(void)
 {
     if ((keys_due & WPA_RX_INSTALL_PTK) && !set_key(1, 0, sm.ptk + 32))
         keys_due &= ~WPA_RX_INSTALL_PTK, keyed = 1;
+    /* The core's cipher engine is CCMP only: a TKIP group key (32 bytes, a mixed-mode router) is
+     * not installed. Unicast still works; the router's TKIP broadcasts are dropped (rx_station). */
     if ((keys_due & WPA_RX_INSTALL_GTK) && !(keys_due & WPA_RX_INSTALL_PTK) &&
-        (sm.gtk_len != 16 || !set_key(0, (unsigned)sm.gtk_idx, sm.gtk)))
+        (sm.group != 4 || sm.gtk_len != 16 || !set_key(0, (unsigned)sm.gtk_idx, sm.gtk)))
         keys_due &= ~WPA_RX_INSTALL_GTK;
 }
 
@@ -1284,7 +1382,8 @@ static void drop_link(void)
         pd[6] = PEER_AP;
         if (keyed) {
             set_key(1, 0, 0);
-            set_key(0, (unsigned)(sm.gtk_idx & 3), 0);
+            if (sm.group == 4)
+                set_key(0, (unsigned)(sm.gtk_idx & 3), 0);
         }
         wr_cmd_checked(&tx, CMD_PEER_DEL, 0x12, 0x11, pd, sizeof pd);
         DOORBELL();
@@ -1427,6 +1526,7 @@ int wifi_join(const unsigned char *ssid, unsigned ssid_len, const unsigned char 
     roam_on = (prof_flags & WIFI_ROAM) && !(prof_flags & WIFI_BSSID_FIXED);
     roaming = 0, bg_phase = BG_IDLE, tx_hold = TX_OPEN, bg_scanned = 0;
     have_cur = 1, jtries = 0;
+    fail_step = fail_code = 0;
     join_pending = 1, jstep = J_SCAN;
     if (state != WIFI_SCANNING) {
         if (pick() >= 0) {
@@ -1450,43 +1550,32 @@ void wifi_leave(void)
         state = WIFI_IDLE;
 }
 
-/* Stock's AP start (0x6003bfb0 case 0x5b, 0x60073c90, 0x60073e84): the beacon head (fixed
- * fields and the IEs before TIM) as 0xe2 and the IEs after TIM as 0xe3, each {0, 0, le16 len,
- * bytes}, then 0xbc with our own MAC as BSSID, the beacon interval and the channel. The core then
- * beacons, inserting the TIM, and answers probe requests from the same template. */
-static int ap_template(unsigned type, const unsigned char *p, unsigned n)
-{
-    static unsigned char t[4 + 252];
-    if (n > sizeof t - 4)
-        return 0;
-    t[0] = t[1] = 0, t[2] = n, t[3] = n >> 8;
-    copy(t + 4, p, n);
-    return wr_cmd_checked(&tx, type, MGMT_MODULE, 0x10, t, 4 + n);
-}
-
+/* AP start: 0xbc with our own MAC as BSSID, the beacon interval and the channel tunes the core and
+ * puts it in ap_mode (bco/wild/fw scan.c), where it passes us probe requests; once it reports the
+ * BSS (0xbd, or after a second) JOIN_DONE opens its queues and ap_step starts beaconing. Stock's
+ * core beacons from a template (0xe2/0xe3) on its own TBTT timer; ours has neither, so the beacons
+ * come from here. The body must be a well-formed IE list with an SSID. */
 int wifi_ap_start(unsigned chan, unsigned bint, const unsigned char *body, unsigned len)
 {
     unsigned char bc[28];
-    unsigned h = 12, t;
+    unsigned o = 12, ssid = 0;
     if (!chan_active(chan) || bint < 20 || bint > 1000 || len < 12 || len > sizeof ap_body ||
         state == WIFI_SCANNING)
         return -1;
-    while (h + 2 <= len && h + 2 + body[h + 1] <= len && body[h] != 5)
-        h += 2 + body[h + 1];
-    t = h + 2 <= len && body[h] == 5 ? h + 2 + body[h + 1] : h; /* the tail starts after TIM */
-    if (h > 252 || t > len || len - t > 252)
+    while (o + 2 <= len && o + 2 + body[o + 1] <= len)
+        ssid |= body[o] == 0, o += 2 + body[o + 1];
+    if (o != len || !ssid)
         return -1;
     wifi_leave();
     for (unsigned i = 0; i < WIFI_AP_CLIENTS; i++)
         ap_drop(&cl[i]);
     copy(ap_body, body, len);
-    ap_len = len, ap_ready = 0;
-    if (!ap_template(0xe2, body, h) || (t < len && !ap_template(0xe3, body + t, len - t)))
-        return -1;
+    ap_len = len, ap_ready = 0, ap_bint = bint, ap_beacons = 0;
     build_join_bc(bc, own, chan);
     bc[6] = bint, bc[7] = bint >> 8; /* beacon interval (a station passes its AP's, 100) */
     corebd = 0;
-    wr_cmd_checked(&tx, 0xbc, MGMT_MODULE, 11, bc, sizeof bc);
+    if (!wr_cmd_checked(&tx, 0xbc, MGMT_MODULE, 11, bc, sizeof bc))
+        return -1;
     DOORBELL();
     ap_deadline = now + 1000;
     state = WIFI_AP;
@@ -1505,7 +1594,7 @@ void wifi_ap_stop(void)
 void wifi_ap_counters(unsigned c[WIFI_AP_COUNTERS])
 {
     unsigned v[WIFI_AP_COUNTERS] = {ap_ready, ap_probes, ap_rx, wifi_tx_ok, wifi_tx_failed,
-                                    wifi_tx_drop, wifi_rx_frames, corebd};
+                                    wifi_tx_drop, wifi_rx_frames, ap_beacons};
     copy((unsigned char *)c, (unsigned char *)v, sizeof v);
 }
 
@@ -1528,12 +1617,25 @@ static void ap_step(void)
             return; /* ring full: the next poll tries again */
         DOORBELL();
         ap_ready = 1;
+        ap_next = now;
+    }
+    /* one beacon per interval (1 TU = 1.024 ms); a late poll sends one, not a burst */
+    if (due(ap_next)) {
+        ap_beacon();
+        ap_next += ap_bint + ap_bint * 24 / 1000;
+        if (due(ap_next))
+            ap_next = now + ap_bint;
     }
 }
 
 unsigned wifi_state(void)
 {
     return state;
+}
+
+void wifi_fail(unsigned *step, unsigned *code)
+{
+    *step = fail_step, *code = fail_code;
 }
 
 int wifi_current(struct wifi_bss *o)

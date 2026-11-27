@@ -155,6 +155,7 @@ static void probe_req(const unsigned char *p)
 volatile unsigned dwell_fired;
 volatile unsigned dwell_state;
 unsigned joined;                 /* 1 after a join: keep and ACK the BSS's data frames */
+unsigned ap_mode;                /* 1 after a join on our own address: the app runs an access point */
 unsigned sta_mgmt_cls = 4;       /* PHY rate-class for host mgmt/EAPOL TX: 4 = 2.4 GHz basic, set at join */
 static unsigned probe_listen, probe_extend, probe_backoff, rand_state;
 
@@ -272,16 +273,23 @@ static void resp_classes(const unsigned char *rates)
     }
 }
 
-/* Join (stock 0x10b08 -> 0x10354). Payload: [0..5] BSSID (kept by stock for beacon tracking, not yet
- * needed here), [6..7] beacon interval (1024 ticks),
+/* Join (stock 0x10b08 -> 0x10354). Payload: [0..5] BSSID (kept by stock for beacon tracking; here
+ * only compared with our own address: a BSS of our own is the app's access point, ap_mode),
+ * [6..7] beacon interval (1024 ticks),
  * [8] channel, [9..21] {count, rates}, [26] band code. Same MAC prep and station filter as a
  * scan, the BSS's response rates, the tune, then the receiver on (0x604 bit 0 clear) when the
  * BSS beacons. A scan still running ends with 0xc3; the host then gets 0xbd (module 8).
  * stock also arms a TBTT timer (slot 0, 0x618) whose FIQ queues the host's beacon
- * template on queue 9 (AP/IBSS); a station never sets one, so it is not ported. */
+ * template on queue 9 (AP/IBSS). That is not ported: in ap_mode the app sends the beacons itself
+ * as ordinary group frames (bco/app/src/wifi.c ap_beacon), and mac.c passes it probe requests to
+ * answer. */
 static void join(const unsigned char *p)
 {
     unsigned interval = u16le(p + 6);
+    unsigned k = 0;
+    while (k < 6 && p[k] == own_mac[k])
+        k++;
+    ap_mode = k == 6;
     mac_prep();
     /* Backoff slot time - 1 (us). mac_prep leaves 0xffffffff, with which a queue-9 start with
      * backoff slots never went out (ST20): the slots never elapse. 9 us is the OFDM/ERP
@@ -307,6 +315,8 @@ static void join(const unsigned char *p)
 
 void scan_cmd(unsigned type, const unsigned char *payload, unsigned len)
 {
+    if (type == C_SCAN_CHANNEL || type == C_SCAN_PROBE)
+        ap_mode = 0;                    /* a scan or a station join ends the app's access point */
     if (type == C_SCAN_CHANNEL && len >= 5) {
         if (payload[0] == 1)            /* channel 1 = a fresh scan starts: make rx counters per-scan */
             dg_rxfiq = dg_rxkeep = dg_rxfcs = dg_rxdwell = 0;

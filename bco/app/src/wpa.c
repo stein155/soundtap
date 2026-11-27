@@ -334,10 +334,16 @@ void wpa_pmk_to_ptk(const uint8_t pmk[32], const uint8_t aa[6], const uint8_t sp
 static uint16_t be16(const uint8_t *p) { return (uint16_t)(p[0] << 8 | p[1]); }
 static void wbe16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)(v >> 8), p[1] = (uint8_t)v; }
 
-/* RSN IE we advertise (WPA2, group+pairwise CCMP, AKM PSK, no caps). */
-static const uint8_t rsn_ie[22] = {0x30, 0x14, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x04,
-                                   0x01, 0x00, 0x00, 0x0f, 0xac, 0x04, 0x01, 0x00,
-                                   0x00, 0x0f, 0xac, 0x02, 0x00, 0x00};
+/* RSN IE we advertise (WPA2, group+pairwise CCMP, AKM PSK, no caps); wpa_rsn_ie sets the group. */
+static const uint8_t rsn_ie[WPA_RSN_IE_LEN] = {0x30, 0x14, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x04,
+                                               0x01, 0x00, 0x00, 0x0f, 0xac, 0x04, 0x01, 0x00,
+                                               0x00, 0x0f, 0xac, 0x02, 0x00, 0x00};
+
+void wpa_rsn_ie(uint8_t out[WPA_RSN_IE_LEN], unsigned group)
+{
+    cp(out, rsn_ie, WPA_RSN_IE_LEN);
+    out[7] = group == 2 ? 2 : 4;
+}
 
 void wpa_sm_init(struct wpa_sm *sm, const uint8_t pmk[32], const uint8_t aa[6], const uint8_t spa[6],
                  const uint8_t snonce[32])
@@ -349,6 +355,7 @@ void wpa_sm_init(struct wpa_sm *sm, const uint8_t pmk[32], const uint8_t aa[6], 
     cp(sm->snonce, snonce, 32);
     sm->state = WPA_IDLE;
     sm->gtk_idx = -1;
+    sm->group = 4;
 }
 
 /* Walk msg3 decrypted key data: it is the RSN IE (0x30..) followed by the GTK KDE (0xdd 00 0f ac 01
@@ -456,9 +463,10 @@ int wpa_sm_rx(struct wpa_sm *sm, const uint8_t *in, size_t in_len, uint8_t *out,
          * The new PTK waits in tptk until a MICed Message 3 proves it: Message 1 carries no MIC, so
          * a forged one must not replace the keys in use. A rekey (Message 1 while DONE) gets a fresh
          * SNonce derived from the old one and the new ANonce. */
-        uint8_t *o = out;
-        unsigned total = O_KD + sizeof rsn_ie;
+        uint8_t *o = out, ie[WPA_RSN_IE_LEN];
+        unsigned total = O_KD + sizeof ie;
         uint8_t mic[20];
+        wpa_rsn_ie(ie, sm->group);
         if (sm->state == WPA_DONE)
             wpa_sha1_prf(sm->snonce, 32, "SoundTap SNonce", in + O_NONCE, 32, sm->snonce, 32);
         cp(sm->anonce, in + O_NONCE, 32);
@@ -472,8 +480,8 @@ int wpa_sm_rx(struct wpa_sm *sm, const uint8_t *in, size_t in_len, uint8_t *out,
         cp(o + O_KEYLEN, in + O_KEYLEN, 2); /* echo key length */
         cp(o + O_REPLAY, sm->replay, 8);
         cp(o + O_NONCE, sm->snonce, 32);
-        wbe16(o + O_KDLEN, sizeof rsn_ie);
-        cp(o + O_KD, rsn_ie, sizeof rsn_ie);
+        wbe16(o + O_KDLEN, sizeof ie);
+        cp(o + O_KD, ie, sizeof ie);
         wpa_hmac_sha1(sm->tptk, 16, o, total, mic);
         cp(o + O_MIC, mic, 16);
         sm->state = WPA_GOT_MSG1;

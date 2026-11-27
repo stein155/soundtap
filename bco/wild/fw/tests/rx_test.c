@@ -117,8 +117,24 @@ static void keep_filter(void)
             CHECK(d.peer == 6, "no peer slot for an unknown transmitter");
         }
     }
+    /* the app's access point (ap_mode): probe requests are kept, a wildcard one without the
+     * address filter and not ACKed; outside ap_mode they are not */
     setup(0);
-    unsigned len = mgmt_frame(0xb0, OWN, 6);
+    ap_mode = 1;
+    unsigned len = mgmt_frame(0x40, BCAST, 6);
+    air_rx(fbuf, len, ST_IN);
+    CHECK(rxq_in == 1 && !acked(), "ap_mode: wildcard probe request kept, not ACKed");
+    len = mgmt_frame(0x40, OWN, 6);
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
+    CHECK(rxq_in == 2, "ap_mode: directed probe request kept");
+    ap_mode = 0;
+    setup(0);
+    len = mgmt_frame(0x40, BCAST, 6);
+    air_rx(fbuf, len, ST_IN);
+    CHECK(rxq_in == 0, "station: probe request not kept");
+
+    setup(0);
+    len = mgmt_frame(0xb0, OWN, 6);
     air_rx(fbuf, len, ST_IN | ST_ADDR | ST_FCS);
     CHECK(rxq_in == 0 && !acked(), "FCS error: neither kept nor ACKed");
     air_rx(fbuf, len, ST_IN);

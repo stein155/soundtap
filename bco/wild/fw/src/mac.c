@@ -173,12 +173,16 @@ void mac_fiq(void)
          * and goes to the host like a management frame; the app deciphers it (wifi.c rx_station).
          * QoS/HT data, A-MSDU and null-data (no body) are later work. */
         int data = (fc & 0x8c) == 0x08 && joined && len > 28;
+        /* A probe request while the app runs its access point (ap_mode): it answers with a probe
+         * response. Wildcard ones are addressed to everybody, so like group data they need not
+         * pass the address filter. */
+        int probe = fc == 0x40 && ap_mode;
         /* Keep beacons during BOTH a passive (4) and an active (6) scan dwell: on hardware the
          * active-scan probe TX is unreliable, but APs beacon every ~100 ms regardless, so capturing
          * them passively during the active dwell makes the scan robust instead of probe-dependent. */
         int keep = fc == 0x80 ? (dwell_state == 4 || dwell_state == 6)
                  : fc == 0x50 ? dwell_state == 6
-                 : (mgmt || data);
+                 : (mgmt || data || probe);
         unsigned room = rxq_in - rxq_out < RXQ;
         /* Group-addressed data (ARP, mDNS, DHCP broadcasts) never passes the address filter once
          * joined, so 0x40000 is clear; stock keeps it anyway and so do we (not ACKed, below).
@@ -188,7 +192,7 @@ void mac_fiq(void)
          * The frame must also be the one the MAC latched (0x630) with a length that fits: after
          * such an overwrite the next frame-in found stale bytes at 0x644, and their length sent
          * the pointer anywhere. */
-        if (((st & 0x40000) || (data && (e[12] & 1))) && keep && room && len >= 28 &&
+        if (((st & 0x40000) || ((data || probe) && (e[12] & 1))) && keep && room && len >= 28 &&
             len <= sizeof rxarea - RX_WRAP && (e[8] & 0xfc) == fc) {
             rxq[rxq_in % RXQ] = (unsigned)e;
             rxq_len[rxq_in % RXQ] = len;

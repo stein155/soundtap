@@ -51,6 +51,29 @@ class BcoLinkContract(unittest.TestCase):
                          ("MGMT_FLOW_LEN", "BCO_FLOW_LEN"), ("MGMT_STATS_N", "BCO_STATS_N")):
             self.assertEqual(self.app[app], self.drv[drv], app)
 
+    def test_capabilities(self) -> None:
+        """The access point bit is the same on both sides, and the driver offers AP mode only behind it.
+
+        hostapd on an app without its own beacons would start an access point that never goes on air.
+        """
+        self.assertEqual(self.app["BCOLINK_CAP_AP"], self.drv["BCOLINK_CAP_AP"])
+        gate = re.search(r"\n\+\tif \(b->caps & BCOLINK_CAP_AP\) \{(.*?)\n\+\t\}", self.patch, re.DOTALL)
+        self.assertIsNotNone(gate)
+        for line in ("BIT(NL80211_IFTYPE_AP)", "iface_combinations", "WIPHY_FLAG_HAVE_AP_SME"):
+            self.assertIn(line, gate[1], line)
+        self.assertIn("wiphy->interface_modes = BIT(NL80211_IFTYPE_STATION);", self.patch)
+
+    def test_join_failure_steps(self) -> None:
+        """STATUS's join failure steps are numbered the same on both sides.
+
+        The driver turns the step into the status code wpa_supplicant (and so soundtapd) sees.
+        """
+        app = re.search(r"enum \{\s*(WIFI_FAIL_NONE[^}]*)\}", (APP / "wifi.h").read_text())[1]
+        app = [n.split("_", 2)[2] for n in re.findall(r"WIFI_FAIL_\w+", app)]
+        drv = re.search(r"enum \{ (F_NONE[^}]*)\}", self.patch)[1].replace("\n+", " ")
+        drv = [n.strip()[2:] for n in drv.split(",") if n.strip()]
+        self.assertEqual(app, drv)
+
     def test_standard_features(self) -> None:
         """The features of ADR 0135 have the same bits, layouts and numbers on both sides."""
         same = {f"BCOLINK_CAP_{n}": f"BCOLINK_CAP_{n}" for n in ("EVENTS", "ROAM", "REGDOM", "SCAN_SSID", "NVINFO")}

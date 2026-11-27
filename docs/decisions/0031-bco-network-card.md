@@ -48,8 +48,11 @@ The BCO can run an open access point whose BSSID is the device's MAC, on one 2.4
 up to six clients; there is no WPA2 access point. On the SCM it is standard cfg80211:
 `soundtap_bco` advertises AP mode with the authentication and association done in the device, so
 `iw … interface add wlan1 type __ap` and `hostapd` work as on the ST10, with the ST10's Wi-Fi
-script and `hostapd.conf` unchanged. The core beacons and answers probes from hostapd's beacon;
-SoundTap's app answers authentication and association.
+script and `hostapd.conf` unchanged. SoundTap's WiLD core has no beacon timer: SoundTap's app
+sends hostapd's beacon every beacon interval, answers probe requests from it, and answers
+authentication and association; the core tunes the channel and, in `ap_mode`, passes it the probe
+requests. The driver offers AP mode only when HELLO's capabilities say the app runs an access
+point.
 
 ### The link carries a protocol level, and a resent request is answered, not re-run
 
@@ -108,8 +111,10 @@ it. While it runs no SoundTap app (a flash cut off after the erase, or stock fir
 speaker has no network at all, so the install is retried without a limit, 5 minutes after a
 failure and doubling up to an hour, on this boot and later ones. A marker that says ` ok` while
 the BCO no longer runs SoundTap's app, or a deleted marker, asks for another install. The first install
-over stock BCO firmware first adopts the Wi-Fi network stock had joined, and reboots afterwards
-to start the new network path. The boot confirmation waits for this step and for `bcolink0`
+over stock BCO firmware first adopts the Wi-Fi network stock had joined, retrying a read that
+got no clear answer for up to 5 minutes before the flash
+([ADR 0129](0129-first-install-keeps-settings.md)), and reboots afterwards to start the new
+network path. The boot confirmation waits for this step and for `bcolink0`
 ([ADR 0010](0010-ab-slots-boot-confirm-rollback.md)). The image is trusted because it came with
 the signed SoundTap Core, not because it matches a stock size.
 

@@ -71,7 +71,13 @@ int main(void)
                             BCOLINK_CAP_EVENTS | BCOLINK_CAP_ROAM | BCOLINK_CAP_REGDOM |
                             BCOLINK_CAP_SCAN_SSID | BCOLINK_CAP_NVINFO)) == BCOLINK_CAPS &&
            BCOLINK_CAPS == 0x1ff);
-    n = ask(5, 0, 0, r); assert(r[6] == 0 && r[7] == WIFI_IDLE && r[8] == 0 && n == MGMT_HDR + 11);
+    n = ask(5, 0, 0, r); assert(r[6] == 0 && r[7] == WIFI_IDLE && r[8] == 0 && n == MGMT_HDR + 14 &&
+                                r[17] == WIFI_FAIL_NONE && r[18] == 0 && r[19] == 0);
+    /* a refused association: the step and the AP's status code (le16) follow the BSS */
+    extern unsigned fake_fail_step, fake_fail_code;
+    fake_fail_step = WIFI_FAIL_ASSOC, fake_fail_code = 0x0131;
+    ask(5, 0, 0, r); assert(r[17] == WIFI_FAIL_ASSOC && r[18] == 0x31 && r[19] == 0x01);
+    fake_fail_step = fake_fail_code = 0;
 
     /* scan: start -> still scanning (3), poll -> results */
     unsigned char one = 1;

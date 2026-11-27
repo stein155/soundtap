@@ -111,6 +111,23 @@ static void join_cases(void)
         free(p);
     }
 
+    /* a BSS on our own address is the app's access point; a station join or a scan ends it */
+    sim_init();
+    join_body(bc, 6, WIFI_RATES);
+    memcpy(bc, own_mac, 6);
+    scan_cmd(C_JOIN, bc, 28);
+    CHECK(ap_mode == 1 && joined == 1, "join on our own address: ap_mode");
+    bc[5] ^= 1;
+    scan_cmd(C_JOIN, bc, 28);
+    CHECK(ap_mode == 0, "join on another BSSID: station");
+    memcpy(bc, own_mac, 6);
+    scan_cmd(C_JOIN, bc, 28);
+    {
+        static const unsigned char ch[6] = {1, 0, 110, 0, 6, 0};
+        scan_cmd(C_SCAN_CHANNEL, ch, 5);
+    }
+    CHECK(ap_mode == 0, "a scan ends ap_mode");
+
     /* too short: nothing happens */
     sim_init();
     joined = 0, tunes = 0;

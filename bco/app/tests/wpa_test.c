@@ -370,6 +370,25 @@ int main(void)
         check(hexeq(ct, "69c4e0d86a7b0430d8cdb78070b4c55a"), "aes128 fips-197 kat");
     }
 
+    /* a mixed-mode router (TKIP group): Message 2 repeats the association's RSN IE, group TKIP */
+    {
+        struct wpa_sm sm;
+        uint8_t pmk[32] = {1}, aa[6] = {2, 0, 0, 0, 0, 1}, spa[6] = {2, 0, 0, 0, 0, 2}, sn[32] = {3};
+        uint8_t m1[O_KD] = {0}, m2[WPA_EAPOL_MAX], ie[WPA_RSN_IE_LEN];
+        size_t olen;
+        wpa_sm_init(&sm, pmk, aa, spa, sn);
+        check(sm.group == 4, "group defaults to ccmp");
+        sm.group = 2;
+        m1[0] = 2, m1[1] = 3, m1[3] = 95, m1[4] = 2;
+        m1[O_KEYINFO + 1] = 0x8a, m1[O_KEYLEN + 1] = 16, m1[O_REPLAY + 7] = 1;
+        check(wpa_sm_rx(&sm, m1, sizeof m1, m2, &olen) == WPA_RX_SEND, "tkip group msg1 -> msg2");
+        wpa_rsn_ie(ie, 2);
+        check(be16(m2 + O_KDLEN) == sizeof ie && memcmp(m2 + O_KD, ie, sizeof ie) == 0 &&
+                  ie[7] == 2 && ie[13] == 4 && ie[19] == 2,
+              "msg2 rsn ie: group tkip, pairwise ccmp, psk");
+        wpa_rsn_ie(ie, 9);
+        check(ie[7] == 4, "unknown group -> ccmp");
+    }
     printf(fails ? "\n%d FAILED\n" : "\nall passed\n", fails);
     return fails ? 1 : 0;
 }

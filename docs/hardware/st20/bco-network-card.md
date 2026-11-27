@@ -80,7 +80,13 @@ and the BCO answers with the same `seq` and `type|0x80`, status first.
 - `FORGET` leaves the network without sending deauthentication and drops the profile; the WiLD
   core keeps running (a core reboot recalibrates the radio in busy waits that stall USB; the app
   reboots the core only when its transmitter wedges). `STATUS` reports state, network, channel
-  and RSSI.
+  and RSSI, then why the last join failed: a step (`WIFI_FAIL_*` in `bco/app/src/wifi.h`: not
+  found, security it cannot join, authentication or association refused or unanswered, handshake
+  not completed, sent away) and the AP's IEEE status or reason code. The driver passes it to
+  wpa_supplicant as the connect result: the AP's own status for a refusal, 15 for a handshake that
+  did not complete (wpa_supplicant never sees a wrong password itself with the handshake
+  offloaded), 43 for security it cannot join, and a scan, authentication or association timeout.
+  soundtapd reads 15 as a wrong password.
 - `AP_START` (6: channel, beacon interval in TU, beacon body), `AP_STOP` (7) and `AP_STATUS` (8:
   the associated clients) drive the setup access point.
 - `FLOW` (13: `1` on, `0` off) switches the credit reports of
@@ -254,18 +260,30 @@ starts before the radio, because that replay also resets the WiLD core.
 ## The setup access point on the WiLD core
 
 Stock builds its access point in the BCO app's own C++ MLME: AP start is command type 15 to
-module 4, which hands the WiLD core a beacon template (core commands `0xe2`, the fixed fields and
-IEs before the TIM, and `0xe3`, the IEs after it) and then sets the BSS up with `0xbc`, its own MAC
-as BSSID. From then on the core beacons by itself, inserts the TIM and answers probe requests from
-the same template (read from `0x6003bfb0` case `0x5b`, `0x60073c90` and `0x60073e84`). That C++
-code is not SoundTap's and is not re-implemented; only those three core commands are reused. The core
-transmits whatever management frame the app puts on its frame ring and delivers received frames
-to the app.
+module 4, which hands stock's WiLD core a beacon template (core commands `0xe2`, the fixed fields
+and IEs before the TIM, and `0xe3`, the IEs after it) and then sets the BSS up with `0xbc`, its own
+MAC as BSSID. Stock's core then beacons on its own TBTT timer, inserts the TIM and answers probe
+requests from the template (read from `0x6003bfb0` case `0x5b`, `0x60073c90` and `0x60073e84`).
+That C++ code is not SoundTap's and is not re-implemented.
 
-- SoundTap's app (`bco/app/src/wifi.c`) gives the core hostapd's beacon as the `0xe2`/`0xe3` template,
-  then `0xbc` with the BCO's own MAC as BSSID and the beacon interval, then `0xb8` without privacy. It
-  answers open-system authentication and (re)association itself, for up to six clients (one core
-  peer slot each).
+SoundTap's WiLD core (`bco/wild/fw`) has neither the template commands nor the TBTT timer. Until
+2026-11-26 the app still sent `0xe2`/`0xe3`, which the core dropped without a word, so the AP
+reported itself up while nothing went on air (seen on two ST20s: hostapd up, no network on any
+phone). Now:
+
+- SoundTap's app (`bco/app/src/wifi.c`) sends `0xbc` with the BCO's own MAC as BSSID, the channel
+  and the beacon interval. A join on its own address puts the core in `ap_mode`: it tunes the
+  channel and passes probe requests to the app, a wildcard one without the address filter. Once
+  the core reports the BSS (`0xbd`, or after a second) the app sends `0xb8` without privacy.
+- The app sends a beacon every beacon interval from its main loop: hostapd's body (TIM included)
+  behind a broadcast header, BSSID = own MAC, at 1 Mb/s, the timestamp counting microseconds since
+  the AP came up. A late poll sends one beacon, not a burst. A wildcard probe request, or one for
+  the AP's SSID, gets a probe response with the same body minus the TIM.
+- The app answers open-system authentication and (re)association itself, for up to six clients
+  (one core peer slot each).
+- HELLO's `BCOLINK_CAP_AP` says the app runs an access point; the driver offers AP mode (and with
+  it `wlan1` to hostapd) only then, so an app without it no longer makes the speaker leave its
+  network for an AP that never goes on air.
 - Frames from associated clients (toDS) go to the SCM as Ethernet frames (DA = addr3, SA =
   addr2); frames from the SCM go out fromDS to an associated client or to every client (group
   addresses at 1 Mb/s, unicast on the client's own rate chain). While the access point runs it
@@ -277,7 +295,11 @@ to the app.
   `AP_STOP`. Beacon updates after start (`change_beacon`) are not passed on, and hostapd gets no
   new-station events; `iw dev wlan1 station get` asks the BCO.
 - Clients that doze may lose unicast frames (no TIM bits, no buffering). The radio stays on the
-  access point's channel, so a scan while it runs returns the scan made before it.
+  access point's channel, so a scan while it runs returns the scan made before it. Beacons come
+  from the main loop, so their spacing follows its polling: a few milliseconds of jitter, which
+  clients tolerate.
+- Not yet seen on air: a phone finding the network and joining it is the hardware checklist's
+  setup-AP row for the ST20.
 
 ## CCMP on the core's cipher engine
 

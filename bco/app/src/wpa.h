@@ -11,8 +11,10 @@
  * data path (feed received EAPOL in, send the produced EAPOL out, install the keys via set_key).
  *
  * Station role only. It never acts as an authenticator and never wraps key data; it only unwraps
- * the GTK the AP sends. WPA2/CCMP only (key descriptor version 2 = HMAC-SHA1 MIC + AES key wrap);
- * TKIP/WEP and descriptor version 1 (HMAC-MD5/RC4) are deliberately not implemented. */
+ * the GTK the AP sends. Pairwise CCMP only (key descriptor version 2 = HMAC-SHA1 MIC + AES key
+ * wrap); the group cipher is the AP's, CCMP or TKIP (a WPA/WPA2 mixed-mode router keeps TKIP for its
+ * broadcasts). TKIP pairwise, WEP and descriptor version 1 (HMAC-MD5/RC4) are deliberately not
+ * implemented. */
 #ifndef WPA_H
 #define WPA_H
 
@@ -35,6 +37,12 @@ int wpa_aes_unwrap(const uint8_t kek[16], unsigned n, const uint8_t *cipher, uin
  * element). Returns 1 and fills gtk/len/idx/tx, or 0 if absent. Exposed for the host self-test. */
 int wpa_extract_gtk(const uint8_t *kd, unsigned plen, uint8_t gtk[32], unsigned *gtk_len,
                     int *gtk_idx, int *gtk_tx);
+
+/* The RSN IE this station sends in its association request and in Message 2 (the AP compares
+ * the two): version 1, the given group cipher suite type (2 TKIP, 4 CCMP), pairwise CCMP, AKM PSK,
+ * capabilities 0 (no management frame protection). */
+#define WPA_RSN_IE_LEN 22
+void wpa_rsn_ie(uint8_t out[WPA_RSN_IE_LEN], unsigned group);
 
 /* WPA PMK from passphrase + SSID: PBKDF2-HMAC-SHA1(pass, ssid, 4096, 32). */
 void wpa_pbkdf2(const uint8_t *pass, size_t pass_len, const uint8_t *ssid, size_t ssid_len,
@@ -63,6 +71,7 @@ struct wpa_sm {
     int gtk_tx;
     int state;
     uint8_t replay[8]; /* last replay counter echoed back */
+    uint8_t group;     /* group cipher suite type in our RSN IE: 4 CCMP (wpa_sm_init), 2 TKIP */
 };
 
 /* Set up once per connect, after association. snonce must be 32 random bytes (caller supplies;
@@ -73,7 +82,7 @@ void wpa_sm_init(struct wpa_sm *sm, const uint8_t pmk[32], const uint8_t aa[6],
 /* Result bits from wpa_sm_rx. */
 #define WPA_RX_SEND        0x01 /* an EAPOL-Key frame was written to out/out_len, send it to aa */
 #define WPA_RX_INSTALL_PTK 0x02 /* install ptk (TK = ptk[32..47]) as the pairwise CCMP key */
-#define WPA_RX_INSTALL_GTK 0x04 /* install gtk[0..gtk_len-1] as the group CCMP key at gtk_idx */
+#define WPA_RX_INSTALL_GTK 0x04 /* install gtk[0..gtk_len-1] as the group key at gtk_idx */
 #define WPA_RX_DONE        0x08 /* handshake complete (msg4 just produced) */
 #define WPA_RX_FAIL        0x10 /* malformed / MIC mismatch; frame ignored, nothing produced */
 

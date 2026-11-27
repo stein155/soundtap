@@ -73,10 +73,27 @@ unsigned wifi_tx_free(void);
  * not joined, a frame the station cannot send). */
 void wifi_tx_counters(unsigned c[3]);
 
+/* Why the last join failed (STATUS reports it after the BSS): the step, and the AP's IEEE 802.11
+ * status code (auth, assoc) or reason code (kicked) where it sent one. 0, 0 after a join that
+ * succeeded or before any. */
+enum {
+    WIFI_FAIL_NONE,
+    WIFI_FAIL_NOT_FOUND,     /* no BSS with this SSID heard */
+    WIFI_FAIL_SECURITY,      /* only with security this station cannot join (WPA3 only, PMF required) */
+    WIFI_FAIL_AUTH,          /* authentication refused: code = status */
+    WIFI_FAIL_AUTH_TIMEOUT,  /* no authentication response */
+    WIFI_FAIL_ASSOC,         /* association refused: code = status */
+    WIFI_FAIL_ASSOC_TIMEOUT, /* no association response */
+    WIFI_FAIL_HANDSHAKE,     /* the 4-way handshake did not complete: usually a wrong password */
+    WIFI_FAIL_KICKED,        /* deauthenticated or disassociated: code = reason */
+};
+void wifi_fail(unsigned *step, unsigned *code);
+
 /* Open access point (setup AP, ADR 0031): channel 1..13, beacon interval in TU, and the beacon
  * body the SCM's hostapd built (timestamp, interval, capability, IEs including TIM). Leaves any
- * station link first. The core beacons and answers probes from it; open-system authentication
- * and (re)association are answered here. */
+ * station link first. The app sends the beacons from that body every interval, answers probe
+ * requests with it (without the TIM), and answers open-system authentication and
+ * (re)association; the core only tunes the channel and passes the frames (ADR 0031). */
 #define WIFI_AP_BODY_MAX 512u
 #define WIFI_AP_CLIENTS 6u /* one core peer slot each, 0..5 */
 int wifi_ap_start(unsigned chan, unsigned bint, const unsigned char *body, unsigned len);
@@ -84,7 +101,7 @@ void wifi_ap_stop(void);
 /* Associated clients: copies up to WIFI_AP_CLIENTS MACs, returns the count. */
 unsigned wifi_ap_clients(unsigned char macs[][6]);
 /* Counters for AP_STATUS: AP up (0/1), probe requests heard, frames received while the AP runs,
- * TX acknowledged, TX failed, TX dropped, data frames to the SCM, core BSS-ready events. */
+ * TX acknowledged, TX failed, TX dropped, data frames to the SCM, beacons sent. */
 #define WIFI_AP_COUNTERS 8u
 void wifi_ap_counters(unsigned c[WIFI_AP_COUNTERS]);
 

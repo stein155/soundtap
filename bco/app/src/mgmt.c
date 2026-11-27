@@ -196,11 +196,17 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
         wifi_leave();
         *o++ = 0;
         break;
-    case 5: { /* STATUS: status, state, ssid_len, ssid, bssid, channel, rssi */
+    case 5: { /* STATUS: status, state, ssid_len, ssid, bssid, channel, rssi, then why the last
+               * join failed: step (WIFI_FAIL_*), le16 IEEE status or reason code. The driver reads
+               * the failure only when the reply is long enough, so an older driver is unaffected. */
         struct wifi_bss b;
+        unsigned step, code;
         *o++ = 0; *o++ = wifi_state();
         wifi_current(&b);
         o = put_bss(o, &b);
+        wifi_fail(&step, &code);
+        *o++ = step;
+        *o++ = code, *o++ = code >> 8;
         break;
     }
     case 6: /* AP_START: channel, beacon interval (TU, network order), beacon body */

@@ -110,6 +110,7 @@ const unsigned char *sta_rxkey(unsigned slot, int group, unsigned keyid, unsigne
 void scan_poll(void);
 extern volatile unsigned dwell_fired, dwell_state;
 extern unsigned joined;
+extern unsigned ap_mode;
 extern unsigned sta_mgmt_cls;
 void dwell_extend(void);
 extern unsigned short resp_class[16];

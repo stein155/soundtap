@@ -97,7 +97,8 @@ static void set_bss(unsigned i, const char *ssid, unsigned last, unsigned chan, 
     memset(b, 0, sizeof *b);
     memcpy(b->bssid, "\x02\xaa\xbb\xcc\xdd\x00", 6), b->bssid[5] = (unsigned char)last;
     b->ssidlen = (unsigned char)strlen(ssid), memcpy(b->ssid, ssid, b->ssidlen);
-    b->chan = (unsigned char)chan, b->rsn = 1, b->rssi = rssi, b->gen = (unsigned short)scan_gen;
+    b->chan = (unsigned char)chan, b->rsn = 1, b->rsnok = 1, b->grp = 4; /* WPA2-PSK, CCMP */
+    b->rssi = rssi, b->gen = (unsigned short)scan_gen;
     b->caps = 0x0011, b->seen = 1;
     memcpy(b->ies, ap_rates, sizeof ap_rates), b->ielen = sizeof ap_rates;
 }

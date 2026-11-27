@@ -97,32 +97,33 @@ static int wstation_auth(volatile uint8_t *buf, size_t size, const uint8_t own[6
     return 1;
 }
 
-/* Fixed WPA2-PSK association request. Same descriptor/address/save layout as wstation_auth;
- * FC 0x00 (assoc request) and a body of capability + listen interval + SSID + a standard 11g
- * supported-rates set + a fixed RSN IE (CCMP group+pairwise, PSK AKM). The capability is ESS +
- * Privacy, plus Short Preamble (bit 5) and Short Slot Time (bit 10) where ap_caps, the capability
- * of the AP's beacon or probe response, has them: an ERP station that leaves Short Slot out makes
- * the AP drop the whole BSS to the long slot. No other caller-chosen frame fields. Returns the
- * body length (for the submit record), 0 on reject. */
+/* WPA2-PSK association request. Same descriptor/address/save layout as wstation_auth; FC 0x00
+ * (assoc request) and a body of capability + listen interval + SSID + a standard 11g supported-rates
+ * set + the RSN IE the caller built (wpa_rsn_ie: the AP's group cipher, pairwise CCMP, AKM PSK).
+ * The capability is ESS + Privacy, plus Short Preamble (bit 5) and Short Slot Time (bit 10) where
+ * ap_caps, the capability of the AP's beacon or probe response, has them: an ERP station that leaves
+ * Short Slot out makes the AP drop the whole BSS to the long slot. No HT or WMM element: the core
+ * sends and receives neither HT rates nor QoS data frames, so claiming them would make the AP use
+ * frames this station cannot decode. Returns the body length (for the submit record), 0 on
+ * reject. */
 #define WSTATION_CAP_SHORT_PREAMBLE 0x0020u
 #define WSTATION_CAP_SHORT_SLOT 0x0400u
 #define WSTATION_ASSOC_HDR 0xc4u
 /* The largest body the fixed layout can make: a 32-byte SSID. 64 rejected every SSID
  * over 20 bytes; the caller's buffer size is still checked separately. */
 #define WSTATION_ASSOC_MAXBODY (4u + (2u + 32u) + (2u + 8u) + (2u + 4u) + 22u)
+#define WSTATION_RSN_LEN 22u
 static int wstation_assoc(volatile uint8_t *buf, size_t size, const uint8_t own[6],
                           const uint8_t bssid[6], const uint8_t rates[8],
-                          const char *ssid, unsigned ssidlen, uint16_t ap_caps)
+                          const char *ssid, unsigned ssidlen, uint16_t ap_caps,
+                          const uint8_t rsn[WSTATION_RSN_LEN])
 {
     static const uint8_t srates[8] = {0x82, 0x84, 0x8b, 0x96, 0x0c, 0x12, 0x18, 0x24};
     static const uint8_t erates[4] = {0x30, 0x48, 0x60, 0x6c};
-    static const uint8_t rsn[22] = {0x30, 0x14, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x04,
-                                    0x01, 0x00, 0x00, 0x0f, 0xac, 0x04, 0x01, 0x00,
-                                    0x00, 0x0f, 0xac, 0x02, 0x00, 0x00};
-    if (!buf || !rates || !ssid || ssidlen > 32 ||
-        !wstation_unicast(own) || !wstation_unicast(bssid))
+    if (!buf || !rates || !ssid || !rsn || ssidlen > 32 || rsn[0] != 0x30 ||
+        rsn[1] != WSTATION_RSN_LEN - 2 || !wstation_unicast(own) || !wstation_unicast(bssid))
         return 0;
-    unsigned body = 4 + (2 + ssidlen) + (2 + 8) + (2 + 4) + sizeof rsn;
+    unsigned body = 4 + (2 + ssidlen) + (2 + 8) + (2 + 4) + WSTATION_RSN_LEN;
     if (body > WSTATION_ASSOC_MAXBODY || size < 8 + WSTATION_ASSOC_HDR + body)
         return 0;
     unsigned different = 0;
@@ -158,7 +159,7 @@ static int wstation_assoc(volatile uint8_t *buf, size_t size, const uint8_t own[
     p[o++] = 50, p[o++] = 4;
     for (unsigned i = 0; i < 4; i++)
         p[o++] = erates[i];
-    for (unsigned i = 0; i < sizeof rsn; i++)
+    for (unsigned i = 0; i < WSTATION_RSN_LEN; i++)
         p[o++] = rsn[i];
     for (unsigned i = 0; i < 0x38; i++)
         buf[0x94 + i] = buf[8 + i];

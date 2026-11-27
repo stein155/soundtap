@@ -86,7 +86,8 @@ static void set_bss(unsigned i, const char *ssid, unsigned last, signed char rss
     memset(b, 0, sizeof *b);
     memcpy(b->bssid, "\x02\xaa\xbb\xcc\xdd\x00", 6), b->bssid[5] = (unsigned char)last;
     b->ssidlen = (unsigned char)strlen(ssid), memcpy(b->ssid, ssid, b->ssidlen);
-    b->chan = 6, b->rsn = 1, b->rssi = rssi, b->gen = (unsigned short)(scan_gen - age);
+    b->chan = 6, b->rsn = 1, b->rsnok = 1, b->grp = 4; /* WPA2-PSK, CCMP: joinable */
+    b->rssi = rssi, b->gen = (unsigned short)(scan_gen - age);
     b->seen = (unsigned short)(100 - i), b->caps = caps; /* most beacons on the first entries */
     memcpy(b->ies, ap_rates, sizeof ap_rates), b->ielen = sizeof ap_rates;
 }
@@ -143,7 +144,7 @@ int main(void)
     set_bss(3, "Lab", 4, 0, 0, 0x0011);   /* no level yet: the weakest */
     set_bss(4, "Lab2", 5, -30, 0, 0x0011);
     set_bss(5, "Lab", 6, -20, 0, 0x0011);
-    bsstab[5].rsn = 0;                    /* open: not ours */
+    bsstab[5].rsn = bsstab[5].rsnok = 0;  /* open: not ours */
     set_bss(6, "Lab", 7, -25, 0, 0x0011);
     bsstab[6].chan = 14;                  /* off our channels */
     nbss = 7;
