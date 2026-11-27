@@ -126,7 +126,7 @@ func TestRawKeyJoinsWithoutSAE(t *testing.T) {
 	bench.start()
 	bench.eventually("network-ready", func() bool { return bench.exists("network-ready") })
 
-	cmds := bench.sys.sup.srv.Commands()
+	cmds := bench.sys.supServer().Commands()
 	if !slices.Contains(cmds, "SET_NETWORK 0 key_mgmt WPA-PSK WPA-PSK-SHA256") {
 		t.Errorf("a raw key's network: %q", cmds)
 	}
@@ -151,7 +151,7 @@ func TestWEPNetworkJoins(t *testing.T) {
 	bench.start()
 	bench.eventually("network-ready", func() bool { return bench.exists("network-ready") })
 
-	cmds := bench.sys.sup.srv.Commands()
+	cmds := bench.sys.supServer().Commands()
 	for _, want := range []string{
 		"SET_NETWORK 0 key_mgmt NONE", "SET_NETWORK 0 wep_key0 6162636465", "SET_NETWORK 0 wep_tx_keyidx 0",
 		"SET_NETWORK 0 auth_alg OPEN SHARED",
@@ -183,7 +183,7 @@ func TestJoinSavedNetwork(t *testing.T) {
 		t.Fatalf("wpa_supplicant.conf = %q; want the control socket and PMF where possible, no key", conf)
 	}
 
-	cmds := bench.sys.sup.srv.Commands()
+	cmds := bench.sys.supServer().Commands()
 	for _, want := range []string{
 		"ATTACH", "SET_NETWORK 0 ssid 686f6d65", "SET_NETWORK 0 scan_ssid 1",
 		"SET_NETWORK 0 priority 6", "ENABLE_NETWORK 0",
@@ -499,7 +499,7 @@ func TestNewCredentialsJoinAndAreRemembered(t *testing.T) {
 		t.Fatalf("known = %+v", known)
 	}
 
-	cmds := bench.sys.sup.srv.Commands()
+	cmds := bench.sys.supServer().Commands()
 	if !slices.Contains(cmds, "SET_NETWORK 0 ssid "+fmt.Sprintf("%x", "office")) ||
 		!slices.Contains(cmds, "SET_NETWORK 1 ssid "+fmt.Sprintf("%x", "home")) ||
 		!slices.Contains(cmds, "SET_NETWORK 1 priority 5") {
@@ -547,7 +547,7 @@ func TestAKnownNetworkInRangeBecomesWifiConf(t *testing.T) {
 		t.Fatalf("known = %v; want the joined one first and five kept", names)
 	}
 	// wifi.conf and five known networks reach wpa_supplicant, the sixth does not.
-	if n := countPrefix(bench.sys.sup.srv.Commands(), "ADD_NETWORK"); n != 6 {
+	if n := countPrefix(bench.sys.supServer().Commands(), "ADD_NETWORK"); n != 6 {
 		t.Fatalf("networks offered = %d", n)
 	}
 }
@@ -621,7 +621,7 @@ func TestAnotherNetworkGetsANewAddress(t *testing.T) {
 		t.Fatal("the first connection released the lease")
 	}
 	// The same network again (a router back after a power cut): renew only.
-	bench.sys.sup.srv.Event("CTRL-EVENT-CONNECTED - Connection to aa:bb:cc:dd:ee:ff completed [id=0 id_str=]")
+	bench.sys.supServer().Event("CTRL-EVENT-CONNECTED - Connection to aa:bb:cc:dd:ee:ff completed [id=0 id_str=]")
 	bench.eventually("the second renew", func() bool { return countPrefix(bench.sys.Signals(), usr1) == 2 })
 
 	if slices.Contains(bench.sys.Signals(), usr2) {
@@ -631,7 +631,7 @@ func TestAnotherNetworkGetsANewAddress(t *testing.T) {
 	bench.sys.sup.mu.Lock()
 	bench.sys.sup.current = 1
 	bench.sys.sup.mu.Unlock()
-	bench.sys.sup.srv.Event("CTRL-EVENT-CONNECTED - Connection to aa:bb:cc:dd:ee:01 completed [id=1 id_str=]")
+	bench.sys.supServer().Event("CTRL-EVENT-CONNECTED - Connection to aa:bb:cc:dd:ee:01 completed [id=1 id_str=]")
 	bench.eventually("release and renew", func() bool { return countPrefix(bench.sys.Signals(), usr1) == 3 })
 
 	sig := bench.sys.Signals()
@@ -657,7 +657,7 @@ func TestARestartedDaemonKeepsTheNetwork(t *testing.T) {
 	go func() { defer close(done); next.Run(ctx) }()
 
 	bench.eventually("the new daemon attached", func() bool {
-		return bench.sys.sup.srv.Attached() >= 1 && countPrefix(bench.sys.sup.srv.Commands(), "STATUS") > 0
+		return bench.sys.supServer().Attached() >= 1 && countPrefix(bench.sys.supServer().Commands(), "STATUS") > 0
 	})
 	time.Sleep(50 * time.Millisecond)
 	cancel()

@@ -452,6 +452,19 @@ type rig struct {
 
 func quiet() *slog.Logger { return slog.New(slog.DiscardHandler) }
 
+// supServer is the running fake wpa_supplicant's control socket, read under the locks its
+// start writes them under: a test reads it while the manager's goroutine may start another.
+func (s *fakeSys) supServer() *wpactrltest.Server {
+	s.mu.Lock()
+	sup := s.sup
+	s.mu.Unlock()
+
+	sup.mu.Lock()
+	defer sup.mu.Unlock()
+
+	return sup.srv
+}
+
 func newRig(t *testing.T, variant string) *rig {
 	t.Helper()
 	dir := wpactrltest.ShortDir(t)
