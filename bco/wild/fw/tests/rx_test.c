@@ -482,6 +482,8 @@ static void ap_clients(void)
     air_rx(fbuf, n + 4, ST_IN);
     CHECK(rxq_in == 1 && acked(), "ap_mode: toDS data without the filter flag kept and ACKed");
     CHECK(rec[RC_APIN] == 1 && rec[RC_APNOFILT] == 1 && rec[RC_APKEEP] == 1, "ap counters");
+    CHECK(rec[RC_APDATA] == 1 && rec[RC_APDRATE] == (11u | 0xc4u << 8 | 0x08u << 16) && !rec[RC_APNOROOM],
+          "a client's data frame counted with its rate index, level and frame control");
     CHECK(delivered(&d), "delivered");
     CHECK(!memcmp(d.buf + 0xac, fbuf, 24) && !memcmp(d.buf + 0xcc, fbuf + 24, 40), "header and body");
     CHECK(d.end == 0x94 + 24 + 24 + 40, "end %#x", d.end);
@@ -520,6 +522,16 @@ static void ap_clients(void)
         CHECK(d.buf + 0xac + i < d.buf + 0xcc ? d.buf[0xac + i] == 0 : 1, "padding byte %u", i);
     recycle(&d);
 
+    /* a frame to us with a bad FCS: neither kept nor ACKed, counted with its rate and level */
+    n = hdr(fbuf, 0x08, 0x01, OWN, PHONE, BCAST);
+    air_put(fbuf, n + 20 + 4, -30, 12);
+    air_fiq(0x08, ST_IN | ST_FCS);
+    CHECK(rxq_in == 5 && !acked() && rec[RC_APFCS] == 1 && rec[RC_APFRATE] == (12u | 0xe2u << 8 | 0x08u << 16),
+          "damaged frame to us counted, not kept");
+    air_put(fbuf, n + 20 + 4, -30, 12);
+    air_fiq(0x08, ST_IN | ST_FCS);
+    CHECK(rec[RC_APFCS] == 2, "each one");
+
     /* not ours: another network's broadcast, a frame for someone else */
     n = hdr(fbuf, 0x08, 0x02, BCAST, OTHER, OTHER);
     for (unsigned i = 0; i < 20; i++)
@@ -530,6 +542,11 @@ static void ap_clients(void)
     air_rx(fbuf, n + 20 + 4, ST_IN);
     CHECK(rxq_in == 5 && !acked() && rec[RC_APIN] == 5, "ap_mode: data for another BSS not kept");
 
+    /* the app stops its access point (0xb7): ap_mode and the BSS end */
+    host_cmd(0xb7, 0x12, 0x11, 0, 0);
+    pump(4);
+    CHECK(!ap_mode && !joined, "0xb7 ends ap_mode");
+    joined = 1;
     /* a station: toDS-looking data to us without the flag stays out, as before */
     ap_mode = 0;
     n = hdr(fbuf, 0x08, 0x01, OWN, PHONE, BCAST);

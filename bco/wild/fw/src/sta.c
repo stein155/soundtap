@@ -171,8 +171,11 @@ unsigned sta_cmd(unsigned type, const unsigned char *payload, unsigned len, unsi
         if (s < NPEER)
             peer_forget(s);
         return 0;
-    case 0xb7: /* drop every peer and its pairwise key (stock 0x3368) */
+    case 0xb7: /* drop every peer and its pairwise key (stock 0x3368); the app sends it when it
+                * stops its access point, which also ends ap_mode and the BSS */
         peer_clear_all();
+        if (ap_mode)
+            ap_mode = joined = 0;
         return 0;
     case 0xb8: /* JOIN_DONE: privacy payload[0], open the AC queues payload[1]; resets the peer
                 * table and the pairwise keys (stock 0x3298) */

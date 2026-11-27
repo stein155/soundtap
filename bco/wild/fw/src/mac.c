@@ -230,6 +230,12 @@ void mac_fiq(void)
                  : fc == 0x50 ? dwell_state == 6
                  : (mgmt || data || probe || apdata || pspoll);
         unsigned room = rxq_in - rxq_out < RXQ;
+        if (apdata && !(fc & 0x40)) {   /* diag: a client's frame with a body, its rate and level */
+            rec[RC_APDATA]++;
+            rec[RC_APDRATE] = e[6] | (unsigned)e[4] << 8 | fc << 16;
+            if (!room)
+                rec[RC_APNOROOM]++;
+        }
         /* Group-addressed data (ARP, mDNS, DHCP broadcasts) never passes the address filter once
          * joined, so 0x40000 is clear; stock keeps it anyway and so do we (not ACKed, below).
          * Without it nobody on the LAN could resolve this speaker. The pointer moves on
@@ -258,6 +264,14 @@ void mac_fiq(void)
             send_ack(e);
         if (keep && fc == 0x50 && (st & 0x40000))
             dwell_extend();
+    } else if ((st & 4) && ap_mode) {
+        /* diag: a frame to us that arrived damaged (bad FCS): how often, at what rate and
+         * level. A phone whose data never reaches the app shows here whether the radio heard it. */
+        const unsigned char *e = (const unsigned char *)rxarea + (REG(0x644) & 0xffff);
+        if (same_mac(e + 12, own_mac)) {
+            rec[RC_APFCS]++;
+            rec[RC_APFRATE] = e[6] | (unsigned)e[4] << 8 | (REG(0x630) & 0xfc) << 16;
+        }
     }
     if (st & 0x800) {               /* MAC timers (0x6b4); slot bit 2 = scan dwell (0x6c4) */
         if (REG(0x6b4) & 4) {
