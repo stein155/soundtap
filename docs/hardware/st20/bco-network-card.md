@@ -20,8 +20,9 @@ observation on one board, not approval of a later image: release evidence belong
 8. [The card's clock](#the-cards-clock)
 9. [The setup access point on the WiLD core](#the-setup-access-point-on-the-wild-core)
 10. [CCMP on the core's cipher engine](#ccmp-on-the-cores-cipher-engine)
-11. [Medium access and rate adaptation](#medium-access-and-rate-adaptation)
-12. [Measurements on the bench ST20](#measurements-on-the-bench-st20)
+11. [WEP and TKIP: stock's engine modes, and where SoundTap runs them](#wep-and-tkip-stocks-engine-modes-and-where-soundtap-runs-them)
+12. [Medium access and rate adaptation](#medium-access-and-rate-adaptation)
+13. [Measurements on the bench ST20](#measurements-on-the-bench-st20)
 
 ## The link
 
@@ -355,6 +356,57 @@ How the core uses it (`bco/wild/fw/src/xport.c`, `bco/wild/fw/src/sta.c`):
 
 Software AES was too slow for the link: about 10 ms per 1400-byte frame on the core, 1.35 ms per
 1.5 KB frame on the app's ARM926.
+
+## WEP and TKIP: stock's engine modes, and where SoundTap runs them
+
+Stock joins open, WEP, WPA-PSK and WPA2-PSK networks with AES or TKIP (its saved security values
+are in [the stock profile](bco-recovery.md#6-the-stock-apps-saved-network)). Whether the `0xb00`
+engine can do more than CCMP was read from stock's WiLD core, the image inside stock's BCO app
+9423 (`os/stock/PROVENANCE.md`, "ST20 cipher engine modes"). The core starts at offset
+`0x3b7db8` of the unpacked app image; its FIQ vector points at `0xa8bc`, the receive handler named
+in [the receive path](#ccmp-on-the-cores-cipher-engine). Facts only, as stock uses them:
+
+- The control block's first word is `header length << 24 | flags << 16 | key length << 8 | mode`.
+  Stock picks the mode from the key's cipher suite type, the 802.11 suite selector: 1 WEP-40,
+  2 TKIP, 4 CCMP, 5 WEP-104 (TX block builder `0x5a10`, TX start `0x5ec0`, RX `0x4634`).
+- **WEP** (types 1 and 5): mode `0x24` to encipher, `0x20` to decipher. The key length field is
+  the key length + 3, and the RC4 seed sits at block offset 40: the 3-byte IV, then the key from
+  offset 43. TX writes the IV and the key id (`id << 6`) into the 4-byte header before the body;
+  RX copies the IV from the frame and deciphers from body + 4, the data length being the body
+  less 8 (IV and ICV).
+- **TKIP** (type 2): mode `0x35` to encipher, `0x31` to decipher a frame's first or only
+  fragment, `0x30` a later fragment; `| 2` marks the last fragment, as for CCMP. The 16-byte TK
+  sits at offset 40 (key length 16), the 8-byte Michael key at offset 28, word 36 is 0, and the
+  TSC goes in the PN words 5 and 6. Stock never mixes the key in software: the engine takes the
+  TK, the TSC and the transmitter address from the header. The Michael key is bytes 24-31 of the
+  32-byte TKIP key to transmit as a station, 16-23 to receive (16-23 and 24-31 in AP role). A
+  later fragment carries the running Michael state (the previous run's words 28-36) instead of
+  the key. Stock builds the 8-byte IV itself (`0x3b0c`): TSC1, `(TSC1 | 0x20) & 0x7f`, TSC0,
+  `id << 6 | 0x20`, TSC2-TSC5. The data length is the body less 12 (IV, ICV) for a fragment
+  that is not the last, less 20 (IV, Michael MIC, ICV) for the last.
+- **Results** (`0xb18` at completion, `0x4a80`): bit 16 is an ICV failure, bit 18 a MIC failure.
+  With a TKIP mode a MIC failure goes to stock's countermeasure path (`0x511c`); with CCMP it only
+  counts. The mode the engine ran is read back from the block's first word, bits 4-6
+  (`0x20` WEP, `0x30` TKIP, `0x40` CCMP).
+- So the bits read: `0x40` AES-CCM, `0x20` RC4, `0x10` Michael on top of RC4, `0x01` Michael
+  starts from the key, `0x04` encipher, `0x02` last fragment.
+
+SoundTap has measured none of the WEP and TKIP modes on its own core (the CCMP modes were
+measured bit-exact against software, above). Running them blind would mean a network that fails
+outright if one field is off: the TKIP key half, the source of Michael's addresses and priority,
+or the fragment state. So SoundTap runs WEP and TKIP in software in the BCO app, where the keys
+already are, and keeps the engine for CCMP data ([ADR 0136](../../decisions/0136-every-network-stock-joined-and-wpa3.md)):
+
+- The app enciphers WEP and TKIP frames itself and marks them so the core
+  sends them as they are; the core passes a protected frame whose key the app installed as a
+  software key up undeciphered, and the app deciphers it, checks the TSC, the ICV and the Michael
+  MIC. The keys never leave the BCO.
+- RC4 and Michael cost far less than AES, and the app's ARM926 with software AES still moved
+  4 MB up in 7-9 s ([the measurements](#throughput-with-the-cipher-engine)); a WEP or TKIP
+  network is at most 54 Mb/s anyway.
+- Measuring the engine's modes against the software path, one mode at a time, is an open row in
+  [the hardware checklist](../hardware-test.md); with them proven the core could take WEP and
+  TKIP over as it does CCMP.
 
 ## Medium access and rate adaptation
 
