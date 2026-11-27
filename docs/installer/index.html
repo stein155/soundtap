@@ -557,7 +557,12 @@
       <h1 tabindex="-1" data-i18n="br.title">Install from this page</h1>
       <p data-i18n="br.intro">This page asks a SoundTouch that still runs Bose's software to download SoundTap from SoundTap's update feed and install it. The speaker stays on your Wi-Fi and does the work itself; it restarts as SoundTap after about four minutes.</p>
     </div>
-    <div class="note" style="margin-top:16px">
+    <div class="note warn" style="margin-top:16px" id="browserBlocked" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18h.01"/></svg>
+      <div><p id="blockedText"></p>
+        <p style="margin-top:10px"><a class="button" href="#offline" data-i18n="route.offline">Without internet</a></p></div>
+    </div>
+    <div class="note" style="margin-top:16px" id="browserNote">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/></svg>
       <p data-i18n="br.browsersNote">Chrome and Edge ask you once to let this page reach devices on your local network: allow it. Firefox and Safari cannot reach a speaker from this page; install without internet instead.</p>
     </div>
@@ -572,7 +577,7 @@
       <p class="muted" id="detail"></p>
     </div>
     <div class="actions">
-      <p class="muted" style="text-align:center;margin-bottom:6px" data-i18n="br.final">This starts the install on the speaker. Once it is sent, this page will not send it again.</p>
+      <p class="muted" style="text-align:center;margin-bottom:6px" id="browserFinal" data-i18n="br.final">This starts the install on the speaker. Once it is sent, this page will not send it again.</p>
       <button type="submit" form="form" class="primary" id="go" disabled data-i18n="br.go">Install SoundTap</button>
       <div class="links nav-only" id="browserLinks"><a class="text-link" href="#done" data-i18n="nav.whatNext">What happens next</a><a class="text-link" href="#route" data-i18n="nav.otherRoute">Nothing after ten minutes? Choose another route</a></div>
     </div>
@@ -604,8 +609,11 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
         <span class="muted" id="setupHow" data-i18n="setup.any">SoundTouch 10 or 20: hold <b>Preset 2</b> and <b>Volume −</b> together until the speaker opens its setup network. Other models: start setup mode as Bose's manual describes.</span></li>
       <li data-i18n="s4.step3">Join the speaker's Wi-Fi network, named <i>Bose …</i>, with the phone or computer that has the file.</li>
       <li><span data-i18n="s4.step4">Open the speaker's upload page in the browser:</span>
-        <div class="upload"><a class="button quiet" href="http://192.0.2.1:17008/update.html" target="_blank" rel="noopener"><code>192.0.2.1:17008/update.html</code></a></div>
-        <span class="muted" data-i18n="s4.gateway">The speaker is that network's router, normally at <code>192.0.2.1</code>; a SoundTouch 20 has used <code>192.168.1.1</code>. If the page does not open, use the router address your phone or computer shows.</span></li>
+        <div class="upload" id="uploadOthers"><span class="muted" data-i18n="s4.forOthers">SoundTouch 10, Wireless Link adapter and SoundTouch 300:</span>
+          <a class="button quiet" href="http://192.0.2.1:17008/update.html" target="_blank" rel="noopener"><code>192.0.2.1:17008/update.html</code></a></div>
+        <div class="upload" id="uploadSt20"><span class="muted" data-i18n="s4.forSt20">SoundTouch 20:</span>
+          <a class="button quiet" href="http://192.168.1.1:17008/update.html" target="_blank" rel="noopener"><code>192.168.1.1:17008/update.html</code></a></div>
+        <span class="muted" data-i18n="s4.gateway">The speaker is the router of its own network: a SoundTouch 20 at <code>192.168.1.1</code>, the other models at <code>192.0.2.1</code>. If the page does not open, use the router address your phone or computer shows.</span></li>
       <li><span data-i18n="s4.step5">Choose the <code>.stu</code> file and send it. The upload takes two to three minutes: keep the page open until it answers.</span>
         <span class="muted" data-i18n="s4.http500">A first upload has sometimes answered with an error (HTTP 500). Do not send the file again: keep the speaker powered and wait ten minutes. If it has not restarted as SoundTap by then, it is not installing, and you can send the file once more.</span></li>
     </ol>
@@ -702,6 +710,9 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
   const PREVIEW_FEED = 'https://raw.githubusercontent.com/stein155/soundtap/main/updates/soundtouch-preview';
   const body = (feed) => '<swUpdateStart indexUrl="' + feed + '"/>';
   const LOOK_FOR_MS = 10 * 60 * 1000;
+  // A SoundTouch 20 also rewrites its network chip and restarts again; one install took
+  // almost nine minutes.
+  const LOOK_FOR_ST20_MS = 20 * 60 * 1000;
 
   const $ = (id) => document.getElementById(id);
   const ip = $('ip'), agree = $('agree'), go = $('go'), model = $('model');
@@ -749,6 +760,21 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
     if (!table) return null;
     return (kind === 's' ? table.supported[i] : kind === 'p' ? table.preview[i]
       : kind === 'u' ? table.unsupported[i] : null) || null;
+  }
+  // The SoundTouch 20 (Series I or II), not its Series III preview: its network card comes
+  // back slowly, and its setup network has its own address.
+  const isSt20 = (rule = chosenRule()) => !!rule && !!rule.supported && rule.type === 'SoundTouch 20';
+  // The speaker's upload page on its own setup network: Bose's software makes a SoundTouch 20
+  // the router at 192.168.1.1 ("Bose SoundTouch Wi-Fi Network"), the other models at 192.0.2.1.
+  const uploadAddress = (rule = chosenRule()) =>
+    'http://' + (isSt20(rule) ? '192.168.1.1' : '192.0.2.1') + ':17008/update.html';
+  // Safari (every browser on an iPhone or iPad is Safari underneath) and Firefox block a
+  // secure page's requests to a speaker's http address, so this page cannot install from
+  // them: the page offers the route without internet there instead of its install form.
+  function lanBlocked(ua, touchPoints) {
+    if (/Firefox\/|FxiOS/.test(ua)) return true;
+    if (/iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && touchPoints > 1)) return true;
+    return /Version\/[\d.]+.*Safari\//.test(ua) && !/Chrome|Chromium|Edg|OPR|Android/.test(ua);
   }
 
   // Only the models SoundTap has run on, from the Bose software it has run on: anything else is refused.
@@ -798,11 +824,11 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
   }
 
   // Unlike stock's opaque replies, this must be a readable SoundTap version response.
-  async function soundtapVersion(host) {
+  async function soundtapVersion(host, ms = 4000) {
     try {
       const res = await fetch('http://' + host + '/api/version', {
         mode: 'cors', credentials: 'omit', cache: 'no-store', redirect: 'error',
-        targetAddressSpace: 'local', signal: AbortSignal.timeout(4000),
+        targetAddressSpace: 'local', signal: AbortSignal.timeout(ms),
       });
       if (!res.ok) return null;
       const v = await res.json();
@@ -812,27 +838,67 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
     } catch { return null; }
   }
 
+  // A speaker can come back at another address: a SoundTouch 20's network card asks the router
+  // for a new lease after the install. The page cannot read a speaker's id, so it looks for
+  // SoundTap speakers on the same /24 that were not there while this one was still installing:
+  // the first sweep, early in the install when this speaker still runs Bose's software, is the
+  // baseline. Later sweeps run only once the old address stopped answering altogether.
+  const SWEEP_FIRST_MS = 20 * 1000, SWEEP_FROM_MS = 2 * 60 * 1000, SWEEP_EVERY_MS = 60 * 1000;
+  async function sweep(host) {
+    const prefix = host.split('.').slice(0, 3).join('.'), todo = [], found = [];
+    for (let i = 1; i < 255; i++) if (prefix + '.' + i !== host) todo.push(prefix + '.' + i);
+    await Promise.all(Array.from({ length: 32 }, async () => {
+      while (todo.length) {
+        const h = todo.shift(), v = await soundtapVersion(h, 2500);
+        if (v) found.push({ host: h, v });
+      }
+    }));
+    return found;
+  }
+
+  function done(found, moved) {
+    say(t('st.done'), '', 'ok');
+    for (const { host, v } of found) {
+      $('detail').append((moved ? t('st.movedTo', { host }) + ' ' : '') +
+        t('st.versions', { os: v.os, app: v.app }) + ' ');
+      const link = document.createElement('a');
+      link.href = 'http://' + host + '/';
+      link.textContent = t('st.open');
+      $('detail').append(link, ' ');
+    }
+  }
+
   async function follow(host) {
-    const t0 = Date.now();
-    let stockAnswered = false;
-    while (Date.now() - t0 < LOOK_FOR_MS) {
+    const t0 = Date.now(), lookFor = isSt20() ? LOOK_FOR_ST20_MS : LOOK_FOR_MS;
+    let stockAnswered = false, baseline = null, nextSweep = SWEEP_FIRST_MS;
+    while (Date.now() - t0 < lookFor) {
       await new Promise((r) => setTimeout(r, 5000));
       const v = await soundtapVersion(host);
       if (v) {
-        say(t('st.done'), '', 'ok');
-        $('detail').textContent = t('st.versions', { os: v.os, app: v.app }) + ' ';
-        const link = document.createElement('a');
-        link.href = 'http://' + host + '/';
-        link.textContent = t('st.open');
-        $('detail').append(link);
+        done([{ host, v }], false);
         return;
       }
       stockAnswered = await answers('http://' + host + ':8090/info');
+      const elapsed = Date.now() - t0;
+      if (elapsed >= nextSweep && (!baseline || (!stockAnswered && elapsed >= SWEEP_FROM_MS))) {
+        nextSweep = elapsed + SWEEP_EVERY_MS;
+        const found = await sweep(host);
+        if (!baseline) {
+          baseline = new Set(found.map((f) => f.host));
+        } else {
+          const fresh = found.filter((f) => !baseline.has(f.host));
+          if (fresh.length) {
+            done(fresh, true);
+            return;
+          }
+        }
+      }
       const sec = Math.round((Date.now() - t0) / 1000);
-      say(t('st.waiting', { seconds: sec }), stockAnswered ? t('st.stockAnswers') : t('st.restarting'));
+      say(t('st.waiting', { seconds: sec }), stockAnswered ? t('st.stockAnswers')
+        : t('st.restarting') + (isSt20() ? ' ' + t('st.st20Moves') : ''));
     }
     if (stockAnswered) {
-      say(t('st.notStarted'), t('st.notStartedDetail', { minutes: LOOK_FOR_MS / 60000 }), 'bad');
+      say(t('st.notStarted'), t('st.notStartedDetail', { minutes: lookFor / 60000 }), 'bad');
       return;
     }
     say(t('st.unconfirmed'), t('st.unconfirmedDetail', { host }), 'bad');
@@ -891,6 +957,11 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
     const REPO = 'stein155/soundtap';
     const $ = (id) => document.getElementById(id);
     const known = (code) => LANGS.some(([c]) => c === code);
+    // Where this page cannot reach a speaker, its install form gives way to the route without
+    // internet, with the upload address of the chosen model.
+    const blocked = lanBlocked(navigator.userAgent, navigator.maxTouchPoints || 0);
+    for (const id of ['form', 'browserFinal', 'go', 'browserNote']) $(id).hidden = blocked;
+    $('browserBlocked').hidden = !blocked;
 
     // A browser language tag as SoundTap's, as the web UI reads it: Norwegian is Bokmål, plain
     // zh and the mainland read simplified.
@@ -1077,6 +1148,11 @@ certutil -hashfile SoundTap-Core-X.Y.Z.stu SHA256   # Windows</pre>
       show($('setupHow'), kind === 'st10' || kind === 'st20' ? 'setup.st1020' : kind ? 'setup.manual' : 'setup.any');
       $('nextSt20').hidden = !!kind && kind !== 'st20';
       $('nextSt10').hidden = !!kind && kind !== 'st10';
+      // Only the chosen model's upload page; both for a preview or no model.
+      const known = !!rule && !!rule.supported;
+      $('uploadSt20').hidden = known && !isSt20(rule);
+      $('uploadOthers').hidden = known && isSt20(rule);
+      if (blocked) show($('blockedText'), 'br.blocked', { address: uploadAddress(rule) });
       gate();
     }
 

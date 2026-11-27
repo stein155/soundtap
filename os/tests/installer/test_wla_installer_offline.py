@@ -154,6 +154,8 @@ class Coordinator:
             self.payload[corrupt_at] ^= 0xFF
         self.sent = 0
         self.status_states = []
+        # (state, progress, data requests answered before it) of every status received
+        self.statuses: list[tuple[int, int, int]] = []
         self.requests = []
         self.error = None
 
@@ -165,6 +167,7 @@ class Coordinator:
             self.error = f"installer did not speak first: {first!r}"
             return
         self.status_states.append(status_state(first["contents"]))
+        self.statuses.append((*status_fields(first["contents"]), 0))
         start = field_bytes(1, b"bonjour//") + field_varint(2, 0) + field_varint(3, self.declared)
         conn.sendall(envelope(1, 0, start, "SoftwareUpdateStart", sequence=1))
 
@@ -174,6 +177,7 @@ class Coordinator:
                 return
             if message["type_name"] == "SoftwareUpdateStatus":
                 self.status_states.append(status_state(message["contents"]))
+                self.statuses.append((*status_fields(message["contents"]), len(self.requests)))
                 continue
             if message["message_id"] != DATA_MESSAGE_ID:
                 # Anything else here is the installer's terminal message; record and stop.
@@ -219,6 +223,16 @@ def status_state(contents: bytes) -> int:
     """Return the state field of a SoftwareUpdateStatus message."""
     value, _ = read_varint(contents, 1)
     return value
+
+
+def status_fields(contents: bytes) -> tuple[int, int]:
+    """Return (state, progress) of a SoftwareUpdateStatus: its varint fields 1 and 2."""
+    fields, at = {}, 0
+    while at < len(contents):
+        key, at = read_varint(contents, at)
+        value, at = read_varint(contents, at)
+        fields[key >> 3] = value
+    return fields.get(1, 0), fields.get(2, 0)
 
 
 CC_IMAGE = "soundtap-cc:local"
@@ -286,14 +300,19 @@ def await_listener(process: subprocess.Popen[bytes], port: int, deadline: float 
     return None
 
 
+PREVIEW_PACKAGE = "-DSOUNDTAP_PREVIEW_PACKAGE"   # build.sh WLA_PREVIEW=1: the preview package's installer
+
+
 def build_installer(tmp: str, *, nand: bool = False, bootloaders: bool = False, port: int | None = None,
-                    preview: bool = False) -> Path:
+                    defines: tuple[str, ...] = ()) -> Path:
     """Build the real installer for this host; return the binary.
 
     The NAND build talks to the same code the board
     runs; with no /proc/mtd around it falls back to the file backend, which is what lets the
-    transaction be tested without hardware.
+    transaction be tested without hardware. ``defines`` go to the compiler as they are; with
+    PREVIEW_PACKAGE among them it is the preview package's installer.
     """
+    preview = PREVIEW_PACKAGE in defines
     binary = Path(tmp) / (("wla-installer-nand" if nand else "wla-installer") + ("-preview" if preview else ""))
     port = port or PORT
     command = ["cc", "-O2", "-Wall", "-Wextra", f"-DLISTEN_PORT={port}", "-o", str(binary),
@@ -303,8 +322,8 @@ def build_installer(tmp: str, *, nand: bool = False, bootloaders: bool = False, 
         command.append(str(SOURCE / "mtd.c"))
     if bootloaders:
         command.insert(1, "-DSOUNDTAP_INSTALL_BOOTLOADERS")
-    if preview:
-        command.insert(1, "-DSOUNDTAP_PREVIEW_PACKAGE")
+    for define in defines:
+        command.insert(1, define)
     compile_with(command, tmp)
     return binary
 
@@ -622,6 +641,66 @@ class TestInstallerOffline(unittest.TestCase):
         self.assertNotIn("module chain verified", log)
 
 
+# Wire values of SoftwareUpdateStatus.state (installer.c): the first status, stock's downloading
+# during the stream, and the last status.
+STATE_IDLE, STOCK_STATE_DOWNLOADING, STATE_COMPLETED = 0, 2, 4
+PROGRESS_LAST = 89          # the highest progress the stream reports; 90 follows the check
+PROGRESS_NEAR_END = 80      # a whole stream ends well past this
+
+
+class TestStreamProgress(TestInstallerOffline):
+    """Progress statuses while the package streams in (installer.c, SOUNDTAP_STREAM_PROGRESS).
+
+    The release build waits two seconds between them; this one sends one per rise, so a
+    host-speed stream still shows every step.
+    """
+
+    DEFINES: tuple[str, ...] = ("-DPROGRESS_SECONDS=0",)
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        """Build the installer with this class's defines and a package of many data records."""
+        cls.tmp = scratch_dir()
+        cls.port = free_port()
+        cls.binary = build_installer(cls.tmp.name, port=cls.port, defines=cls.DEFINES)
+        # Large enough for many 16 KiB data records, so there is progress to report.
+        big = dict.fromkeys(build_stu.WLA_PROBE_MODULES[1:], 64 * 1024)
+        cls.stream, cls.payloads = make_package(cls.tmp.name, sizes=big)
+
+    @staticmethod
+    def progress(coordinator: Coordinator) -> list[tuple[int, int]]:
+        """Return (progress, data requests before it) of every status sent during the stream."""
+        return [(p, after) for state, p, after in coordinator.statuses if state == STOCK_STATE_DOWNLOADING]
+
+    def test_installer_verifies_every_module(self) -> None:
+        """Stock's downloading state rises from 1 to near 89 during the stream, after the first data request."""
+        coordinator, code, log = self.drive()
+        self.assertIsNone(coordinator.error, coordinator.error)
+        self.assertEqual(code, 0, log)
+        progress = self.progress(coordinator)
+        self.assertGreater(len(progress), 1, coordinator.statuses)
+        numbers = [p for p, _ in progress]
+        self.assertEqual(numbers, sorted(set(numbers)), "progress only rises")
+        self.assertTrue(all(1 <= p <= PROGRESS_LAST for p in numbers), numbers)
+        self.assertGreaterEqual(numbers[-1], PROGRESS_NEAR_END, numbers)
+        self.assertTrue(all(after >= 1 for _, after in progress), coordinator.statuses)
+        # Stock drops the link on any status after the first that reads as idle (wire 0 or 1).
+        self.assertTrue(all(state > 1 for state, _, _ in coordinator.statuses[1:]), coordinator.statuses)
+        self.assertEqual(coordinator.statuses[0][:2], (STATE_IDLE, 0))
+        self.assertEqual(coordinator.statuses[-1][:2], (STATE_COMPLETED, 100))
+
+
+class TestStreamProgressOff(TestStreamProgress):
+    """The switch that takes it out again: only the statuses from before."""
+
+    DEFINES: tuple[str, ...] = ("-DPROGRESS_SECONDS=0", "-DSOUNDTAP_STREAM_PROGRESS=0")
+
+    def test_installer_verifies_every_module(self) -> None:
+        """With the switch off no status comes between the first and the last."""
+        coordinator, code, log = self.drive()
+        self.assertEqual(code, 0, log)
+        self.assertEqual(self.progress(coordinator), [])
+        self.assertEqual([s[:2] for s in coordinator.statuses], [(STATE_IDLE, 0), (STATE_COMPLETED, 100)])
 
 
 ENV_SIZE = 0x2000       # CONFIG_ENV_SIZE on this board, measured against its own mtd5 dump
@@ -1204,7 +1283,7 @@ class TestBootloaderPhase(unittest.TestCase):
         cls.port = free_port()
         cls.binary = build_installer(cls.tmp.name, nand=True, bootloaders=True, port=cls.port)
         cls.preview_binary = build_installer(cls.tmp.name, nand=True, bootloaders=True, port=cls.port,
-                                             preview=True)
+                                             defines=(PREVIEW_PACKAGE,))
         cls.stream, cls.payloads = make_package(cls.tmp.name, {
             "soundtap-kernel.rhino": cls.KERNEL,
             "soundtap-kernel.binky": cls.KERNEL,

@@ -13,7 +13,9 @@
  *   - the installer pulls update_size bytes in 16 KiB records, first sequence 2
  *   - update_size is the package *after* this module, so the stream starts at module 2's header
  *   - stock declares no CRC: validating the package is our job
- *   - a status event sent before the first data request makes stock drop the link
+ *   - a status event sent before the first data request makes stock drop the link; stock's
+ *     SoftwareUpdate shows why: every status after the first whose state reads as idle (0, 1
+ *     or an invalid value) resets the installer spawner, whenever it comes
  *
  * It is C, not Go, because the stock 3.14.43+ kernel does not run our Go builds; the same probe
  * in Go never reported from this slot while the C build reported in 1.3 s.
@@ -52,6 +54,24 @@ static const char *board_variant(void);
 #endif
 #define CHUNK 16384
 
+/* Progress during the stream. Without it stock gets nothing between the first status and the
+ * one after the stream, so a SoundTouch 20's display sits near 1 % for the whole 85 MiB
+ * download. Once the first data response has arrived, the puller reports stock's downloading
+ * state (STOCK_STATE_DOWNLOADING) with 1..89 from the bytes received against update_size, at
+ * most once per PROGRESS_SECONDS and only when the number rises. Stock's display moves only for
+ * downloading and installing; for downloading it shows its own ~1 % plus the rest scaled by
+ * ours. A non-idle state never makes stock drop the link, so a stock that ignored these would
+ * only leave the display where it is. Proven on a speaker when stock logs "StatusUpdated:
+ * state: downloading" with our numbers (docs/hardware/hardware-test.md, "Install from stock
+ * with progress during the download"). -DSOUNDTAP_STREAM_PROGRESS=0 (build.sh:
+ * WLA_STREAM_PROGRESS=0) sends none. */
+#ifndef SOUNDTAP_STREAM_PROGRESS
+#define SOUNDTAP_STREAM_PROGRESS 1
+#endif
+#ifndef PROGRESS_SECONDS
+#define PROGRESS_SECONDS 2
+#endif
+
 /* STU container geometry, mirroring os/installer/build-stu.py. */
 #define STU_HDR 0x138
 #define STU_OVERLAP 0x14
@@ -61,12 +81,18 @@ static const char *board_variant(void);
 #define STU_IMGCRC_OFF 0x12c
 #define STU_HDRCRC_OFF 0x134
 
-/* SoftwareUpdateStatus.state, as stock reports it back on :8090/swUpdateQuery. */
-#define STATE_IDLE 0
-#define STATE_DOWNLOADING 1
-#define STATE_AUTHENTICATING 2
-#define STATE_INSTALLING 3
-#define STATE_COMPLETED 4
+/* SoftwareUpdateStatus.state on the wire. Stock's enum (SoftwareUpdate and BoseApp 27.0.6) is
+ * idle=1, downloading=2, authenticating=3, installing=4, completed=5; any other value, 0
+ * included, reads as idle. The names below are off by one against it and are kept because
+ * the wire values the install records proved are these: the first status (0) only starts
+ * stock's update, whatever its state; 3 reads as authenticating, which stock's display
+ * ignores; 4 reads as installing, which is why "completed" leaves stock in INSTALLING. Stock
+ * drops the link (ResetInstallerSpawner) on every status after the first that reads as idle:
+ * never send 0 or 1 after it. */
+#define STATE_IDLE 0                /* stock: invalid, read as idle; first status only */
+#define STATE_INSTALLING 3          /* stock: authenticating */
+#define STATE_COMPLETED 4           /* stock: installing */
+#define STOCK_STATE_DOWNLOADING 2   /* stock: downloading, the progress during the stream */
 
 struct module_header {
     char name[STU_NAME_MAX + 1];
@@ -102,6 +128,10 @@ struct puller {
     struct swu_link *link;
     unsigned sequence;
     unsigned long long remaining;
+    unsigned long long total;       /* update_size, what the progress is measured against */
+    unsigned long long received;
+    unsigned last_progress;         /* last percentage sent; 0 before the first */
+    time_t last_progress_at;
     unsigned char buffer[CHUNK * 2];
     int have;
     int at;
@@ -114,6 +144,38 @@ static void puller_init(struct puller *p, struct swu_link *link, unsigned long l
     p->link = link;
     p->sequence = 1;
     p->remaining = size;
+    p->total = size;
+}
+
+#if SOUNDTAP_STREAM_PROGRESS
+/* stream_progress maps bytes received onto 1..89: 90 is the status sent after the stream and
+ * 100 the last one, so the number on the speaker never goes backwards. */
+static unsigned stream_progress(unsigned long long received, unsigned long long total)
+{
+    if (total == 0) return 1;
+    if (received > total) received = total;
+    return 1 + (unsigned)(received * 88 / total);
+}
+#endif
+
+/* Called only after a data response arrived, so always after the first status, and always with
+ * a non-idle state: stock drops the link on a later status that reads as idle. A failed send
+ * is logged by swu_send and left to the next data request to notice, as a broken link fails
+ * there anyway. */
+static void puller_report(struct puller *p)
+{
+#if SOUNDTAP_STREAM_PROGRESS
+    unsigned pct = stream_progress(p->received, p->total);
+    time_t now = time(NULL);
+    if (pct <= p->last_progress) return;
+    if (p->last_progress && now - p->last_progress_at < PROGRESS_SECONDS) return;
+    p->last_progress = pct;
+    p->last_progress_at = now;
+    if (swu_status(p->link, STOCK_STATE_DOWNLOADING, pct) == 0)
+        swu_log("progress %u%% at %llu of %llu bytes", pct, p->received, p->total);
+#else
+    (void)p;
+#endif
 }
 
 static int puller_fill(struct puller *p)
@@ -163,8 +225,10 @@ static int puller_fill(struct puller *p)
         p->have += data_len;
         if ((unsigned long long)data_len <= p->remaining) p->remaining -= data_len;
         else p->remaining = 0;
+        p->received += data_len;
     }
     if (eos) p->end_of_stream = 1;
+    else puller_report(p);
     return data_len;
 }
 
@@ -1665,7 +1729,9 @@ int main(int argc, char **argv)
     }
 #endif
 
-    /* No status before the first data request: stock drops the link if one arrives here. */
+    /* No status before the first data request: a second idle-reading status would make stock
+     * drop the link. The puller's progress statuses (downloading) start only after the first
+     * data response. */
     struct puller puller;
     puller_init(&puller, &link, start.update_size);
     if (consume_chain(&puller, &install, start.update_size) < 0) {

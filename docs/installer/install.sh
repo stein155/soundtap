@@ -19,6 +19,9 @@ PREVIEW_FEED='https://raw.githubusercontent.com/stein155/soundtap/main/updates/s
 # script, install.ps1 and the browser installer alike.
 SITE='https://stein155.github.io/soundtap/installer'
 WAIT_MINUTES=10
+# A SoundTouch 20 also rewrites its network chip and restarts again, and one install took
+# almost nine minutes: it gets twice as long.
+WAIT_MINUTES_ST20=20
 
 say() { printf '%s\n' "$*"; }
 # Opens a page in the default browser, where there is one; the address is printed anyway.
@@ -90,6 +93,29 @@ feed_for() {
 	fi
 }
 
+# is_soundtap <address>: the address answers with a SoundTap version.
+is_soundtap() { curl -s -m 4 "http://$1/api/version" 2>/dev/null | grep -q '"api"'; }
+
+# find_moved <deviceID> <networks>: the address of the speaker with that deviceID on any of
+# the networks, scanned as at the start. A SoundTouch 20 often comes back from the install
+# with another address. SoundTap reports stock's deviceID (the board's MAC) as deviceId on
+# /api/info. Prints nothing when it is not found.
+find_moved() {
+	_dir=$(mktemp -d) || return 0
+	for _net in $2; do
+		_i=1
+		while [ "${_i}" -le 254 ]; do
+			( curl -s -m 2 "http://${_net}.${_i}/api/info" >"${_dir}/${_net}.${_i}" 2>/dev/null || rm -f "${_dir}/${_net}.${_i}" ) &
+			_i=$((_i + 1))
+		done
+		wait
+	done
+	for _f in "${_dir}"/*; do
+		[ -s "${_f}" ] && grep -Eiq "\"deviceId\": *\"$1\"" "${_f}" && { printf '%s\n' "${_f##*/}"; break; }
+	done
+	rm -rf "${_dir}"
+}
+
 # Tests load the functions above without running the installer.
 [ -z "${SOUNDTAP_INSTALLER_FUNCTIONS:-}" ] || return 0
 
@@ -128,6 +154,8 @@ for f in "${tmp}"/*; do
 	id=$(printf '%s' "${xml}" | sed -n 's#.*<info deviceID="\([^"]*\)".*#\1#p')
 	[ -n "${id}" ] && grep -q "^${id}\$" "${tmp}/ids" 2>/dev/null && continue
 	echo "${id}" >>"${tmp}/ids"
+	# Followed by it after the install, should the speaker come back at another address.
+	printf '%s' "${id}" | tr -cd '0-9A-Za-z' >"${tmp}/id.${ip}"
 	name=$(tag name "${xml}"); type=$(tag type "${xml}")
 	classify "${table}" "${type}" "$(tag moduleType "${xml}" || true)"
 	n=$((n + 1))
@@ -195,31 +223,53 @@ for ip in ${picked}; do
 	fi
 done
 
+# Each speaker is followed by the address it had and by its deviceID, which stays the same
+# when the address does not.
+st20=''
+for ip in ${picked}; do
+	[ "$(awk -F'|' -v ip="${ip}" '$2 == ip { print $4; exit }' "${tmp}/list" || true)" != "SoundTouch 20" ] || st20=1
+done
+[ -z "${st20}" ] || WAIT_MINUTES=${WAIT_MINUTES_ST20}
+
 say ""
 say "Installing. Leave the speakers alone and keep them plugged in; this takes about five minutes."
+[ -z "${st20}" ] || say "A SoundTouch 20 takes longer, and often comes back at another address: this waits up to ${WAIT_MINUTES} minutes."
 start=$(date +%s)
 end=$((start + WAIT_MINUTES * 60))
 shown=0
+scanned=${start}
 left=${picked}
 while [ -n "${left}" ] && [ "$(date +%s || true)" -lt "${end}" ]; do
 	sleep 10
+	# Once a minute after the first two, look on the whole network for speakers that are not
+	# back at their old address.
+	now=$(date +%s)
+	rescan=''
+	[ $((now - start)) -lt 120 ] || [ $((now - scanned)) -lt 60 ] || { rescan=1; scanned=${now}; }
 	still=''
 	for ip in ${left}; do
-		v=$(curl -s -m 4 "http://${ip}/api/version" 2>/dev/null)
-		case "${v}" in
-			*'"api"'*)
-				say "${ip}: done, it runs SoundTap. Opening http://${ip}/ to set it up."
-				open_page "http://${ip}/"
-				;;
-			*) still="${still} ${ip}" ;;
-		esac
+		id=$(cat "${tmp}/id.${ip}" 2>/dev/null || true)
+		at=''
+		if is_soundtap "${ip}"; then
+			at=${ip}
+		elif [ -n "${rescan}" ] && [ -n "${id}" ]; then
+			at=$(find_moved "${id}" "${nets}")
+		fi
+		if [ -n "${at}" ]; then
+			[ "${at}" = "${ip}" ] || say "${ip}: the speaker came back at a new address, ${at}."
+			say "${at}: done, it runs SoundTap. Opening http://${at}/ to set it up."
+			open_page "http://${at}/"
+		else
+			still="${still} ${ip}"
+		fi
 	done
 	left=${still}
 	m=$((($(date +%s) - start) / 60))
 	[ -z "${left}" ] || [ "${m}" -le "${shown}" ] || { shown=${m}; say "  still installing… ${m} min"; }
 done
 for ip in ${left}; do
-	say "${ip}: SoundTap not confirmed after ${WAIT_MINUTES} minutes. Keep it powered and open http://${ip}/ later,"
-	say "    or see 'When something goes wrong' in the install guide."
+	say "${ip}: SoundTap not confirmed after ${WAIT_MINUTES} minutes. Keep it powered and look for it later:"
+	say "    at http://${ip}/, under its name in your router's list of devices (its address may have"
+	say "    changed), or at http://soundtap.local. Or see 'When something goes wrong' in the install guide."
 done
 [ -z "${left}" ]

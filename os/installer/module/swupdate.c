@@ -316,12 +316,12 @@ int swu_status(const struct swu_link *link, unsigned state, unsigned progress)
 int swu_failure(const struct swu_link *link)
 {
     unsigned char contents[8];
-    int n = swu_put_field_varint(contents, 1, 8);       /* software_failure */
+    int n = swu_put_field_varint(contents, 1, 8);       /* stock: module_failure (9 is software_failure) */
     return swu_send(link, SWU_EVENT, SWU_MSG_FAILURE, 0, 0, contents, n, "SoftwareUpdateFailure");
 }
 
-/* How the installer declares success is still unknown: status state=completed leaves stock in
- * INSTALLING. The vendor installer's string table has SoftwareUpdateSuccess and
+/* How the installer declares success is still unknown: our last status (wire 4) is stock's
+ * installing, so stock stays in INSTALLING. The vendor installer's string table has SoftwareUpdateSuccess and
  * SoftwareUpdateExit, so a trace build walks those candidates and records what stock does.
  * Release builds must not guess: they only report status and let the caller decide.
  */

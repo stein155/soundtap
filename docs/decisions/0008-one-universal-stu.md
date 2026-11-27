@@ -106,6 +106,21 @@ choice: the person updating a speaker cannot judge it, the package can).
   gate and the hardware layer of `docs/contributors/testing/install-gate.md`). Whoever installs a candidate
   by hand compares its SPL and U-Boot with the speaker first when the bootloader sources
   changed.
+- Under stock's updater, module 0 tells stock how far it is with `SoftwareUpdateStatus`.
+  Stock's state enum is idle 1, downloading 2, authenticating 3, installing 4, completed 5,
+  and any other value reads as idle. The installer sends wire state 0 with 0 % before the
+  stream (the first status only starts stock's update, whatever its state), stock's
+  downloading with 1..89 % while the package streams in (from the bytes received against the
+  size stock declared, at most every two seconds, from the first data response on), wire 3
+  (stock's authenticating) with 90 % once the stream checks out, and wire 4 (stock's
+  installing) with 100 % before the reboot. Those first and last wire values are the ones the
+  install records proved. The recorded handshake's "a status before the first data request
+  drops the link" is stock resetting on every status after the first that reads as idle, so
+  nothing after the first status is ever sent as 0 or 1. Stock's display moves only for
+  downloading and installing. That it shows the download progress is not yet seen on a
+  speaker (stock's log line `StatusUpdated: state: downloading`); one build switch
+  (`SOUNDTAP_STREAM_PROGRESS=0`, `WLA_STREAM_PROGRESS=0` in `os/installer/module/build.sh`)
+  leaves only the statuses around the stream.
 - How the installers write a slot that has a failing block is
   [ADR 0128](0128-bad-block-marking.md); what a first install carries over
   from stock is [ADR 0129](0129-first-install-keeps-settings.md).

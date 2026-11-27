@@ -31,7 +31,8 @@ async function setup(fetcher) {
   const document = {
     getElementById(id) {
       return elements[id] ||= { value: '', checked: false, textContent: '',
-        addEventListener(name, fn) { this[name] = fn; }, append() {} };
+        addEventListener(name, fn) { this[name] = fn; },
+        append(...xs) { for (const x of xs) this.textContent += typeof x === 'string' ? x : (x.textContent || ''); } };
     },
     createElement() { return {}; },
   };
@@ -48,6 +49,13 @@ async function setup(fetcher) {
   return {elements, run: code => vm.runInContext(code, ctx)};
 }
 const version = {api: 1, os: '0.1.0', app: '0.1.0', version: 'app-v0.1.0', updatable: true};
+// A page with supported model i chosen, for what it derives from the model alone.
+let h0Pages = {};
+const h0 = (i) => ({run: async (code) => {
+  h0Pages[i] ||= await setup(async () => response({}));
+  h0Pages[i].elements.model.value = 's' + i;
+  return h0Pages[i].run(code);
+}});
 const response = (body, ok = true) => ({ok, json: async () => body});
 (async () => {
   // Unsupported or unknown model, missing risk confirmation and public IP never dispatch.
@@ -90,6 +98,58 @@ const response = (body, ok = true) => ({ok, json: async () => body});
     const h = await setup(fetcher);
     await h.run("follow('192.168.1.23')");
     assert.doesNotMatch(h.elements.line.textContent, /^Done/);
+  }
+  // A SoundTouch 20 rewrites its network chip and restarts again: it gets twenty minutes, and
+  // while it restarts the owner is told it may come back at another address.
+  const st20 = table.supported.findIndex((rule) => rule.type === 'SoundTouch 20');
+  assert.ok(st20 >= 0);
+  for (const [pick, minutes] of [['s' + st20, 20], ['s0', 10]]) {
+    const h = await setup(async () => response({}));
+    h.elements.model.value = pick;
+    await h.run("follow('192.168.1.23')");
+    assert.match(h.elements.detail.textContent, new RegExp('after ' + minutes + ' minutes'));
+  }
+  const moving = await setup(async () => { throw new Error('restarting'); });
+  moving.elements.model.value = 's' + st20;
+  await moving.run("follow('192.168.1.23')");
+  assert.match(moving.elements.detail.textContent, /another address/);
+  // A speaker that comes back at another address is found by a sweep of the /24: SoundTap
+  // speakers already there during the install (.50) are the baseline, the new one (.77) is it.
+  let stockPolls = 0, asked77 = 0;
+  const moved = await setup(async (url) => {
+    if (url === 'http://192.168.1.50/api/version') return response(version);
+    if (url === 'http://192.168.1.77/api/version') {
+      if (++asked77 > 1) return response({...version, app: '9.9.9'});
+      throw new Error('nothing there yet');
+    }
+    if (url === 'http://192.168.1.23:8090/info' && ++stockPolls < 8) return response({});
+    throw new Error('nothing');
+  });
+  moved.elements.model.value = 's' + st20;
+  await moved.run("follow('192.168.1.23')");
+  assert.match(moved.elements.line.textContent, /^Done/);
+  assert.match(moved.elements.detail.textContent, /new address: 192\.168\.1\.77\. SoundTap Core 0\.1\.0 · app 9\.9\.9\./);
+  assert.doesNotMatch(moved.elements.detail.textContent, /192\.168\.1\.50/);
+  // The upload page on the setup network: 192.168.1.1 on a SoundTouch 20, 192.0.2.1 on the others.
+  assert.equal(await h0(st20).run('uploadAddress()'), 'http://192.168.1.1:17008/update.html');
+  for (const i of table.supported.keys()) {
+    if (i !== st20) assert.equal(await h0(i).run('uploadAddress()'), 'http://192.0.2.1:17008/update.html');
+  }
+  // Safari, every iPhone and iPad browser, and Firefox cannot reach the speaker from this page:
+  // the page sends them to the route without internet. Chrome and Edge can.
+  const page = await setup(async () => response({}));
+  const browsers = [
+    ['Mozilla/5.0 (iPad; CPU OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1', 5, true],
+    ['Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15', 5, true],
+    ['Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15', 0, true],
+    ['Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/131.0 Mobile/15E148 Safari/604.1', 5, true],
+    ['Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0', 0, true],
+    ['Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36', 0, false],
+    ['Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0', 0, false],
+    ['Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36', 5, false],
+  ];
+  for (const [ua, touch, blocked] of browsers) {
+    assert.equal(page.run('lanBlocked(' + JSON.stringify(ua) + ', ' + touch + ')'), blocked, ua);
   }
   // A missed stock poll followed by its return cannot establish a successful reboot.
   let polls = 0;

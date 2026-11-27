@@ -16,6 +16,9 @@ $previewFeed = 'https://raw.githubusercontent.com/stein155/soundtap/main/updates
 # script, install.sh and the browser installer alike.
 $site = 'https://stein155.github.io/soundtap/installer'
 $waitMinutes = 10
+# A SoundTouch 20 also rewrites its network chip and restarts again, and one install took
+# almost nine minutes: it gets twice as long.
+$waitMinutesSt20 = 20
 
 function Test-Private([string]$a) {
     $o = $a.Split('.') | ForEach-Object { [int]$_ }
@@ -57,6 +60,23 @@ function Get-Feed($speaker) {
     if ($speaker.Model -eq 'preview') { $previewFeed } else { $feed }
 }
 
+# Find-Moved: the address of the speaker with that deviceID on any of the /24 networks, scanned
+# as at the start, or $null. A SoundTouch 20 often comes back from the install with another
+# address. SoundTap reports stock's deviceID (the board's MAC) as deviceId on /api/info.
+function Find-Moved($http, [string]$id, $prefixes) {
+    $scan = @{}
+    foreach ($net in $prefixes) {
+        foreach ($i in 1..254) { $a = "$net.$i"; $scan[$a] = $http.GetStringAsync("http://$a/api/info") }
+    }
+    try { [System.Threading.Tasks.Task]::WaitAll([System.Threading.Tasks.Task[]]$scan.Values) } catch { }
+    foreach ($a in ($scan.Keys | Sort-Object { [version]$_ })) {
+        $t = $scan[$a]
+        if ($t.Status -ne 'RanToCompletion') { continue }
+        if ($t.Result -match ('"deviceId": *"' + [regex]::Escape($id) + '"')) { return $a }
+    }
+    $null
+}
+
 # Tests load the functions above without running the installer.
 if ($env:SOUNDTAP_INSTALLER_FUNCTIONS) { return }
 
@@ -91,7 +111,7 @@ foreach ($ip in ($tasks.Keys | Sort-Object { [version]$_ })) {
     if ($info.deviceID -and $seen[$info.deviceID]) { continue }  # one speaker, several addresses
     $seen[$info.deviceID] = $true
     $verdict = Get-Verdict $table $info.type $info.moduleType
-    $found += [pscustomobject]@{ N = $found.Count + 1; Ip = $ip; Name = $info.name; Type = $info.type; Model = $verdict.Status; Note = $verdict.Note }
+    $found += [pscustomobject]@{ N = $found.Count + 1; Ip = $ip; Id = ($info.deviceID -replace '[^0-9A-Za-z]', ''); Name = $info.name; Type = $info.type; Model = $verdict.Status; Note = $verdict.Note }
 }
 if (-not $found) {
     Write-Host "No speaker with Bose's software answered. Is it on, and on the same network as this computer?"
@@ -148,31 +168,52 @@ foreach ($ip in $picked) {
     } catch { Write-Host "${ip}: the request was not confirmed; it may still have arrived." }
 }
 
+# Each speaker is followed by the address it had and by its deviceID, which stays the same
+# when the address does not.
+$ids = @{}; $st20 = $false
+foreach ($ip in $picked) {
+    $s = $found | Where-Object { $_.Ip -eq $ip } | Select-Object -First 1
+    $ids[$ip] = $s.Id
+    if ($s.Type -ceq 'SoundTouch 20') { $st20 = $true }
+}
+if ($st20) { $waitMinutes = $waitMinutesSt20 }
+
 Write-Host ''
 Write-Host 'Installing. Leave the speakers alone and keep them plugged in; this takes about five minutes.'
+if ($st20) { Write-Host "A SoundTouch 20 takes longer, and often comes back at another address: this waits up to $waitMinutes minutes." }
 $start = Get-Date
 $end = $start.AddMinutes($waitMinutes)
 $shown = 0
+$scanned = $start
 $left = $picked
 while ($left -and (Get-Date) -lt $end) {
     Start-Sleep -Seconds 10
+    # Once a minute after the first two, look on the whole network for speakers that are not
+    # back at their old address.
+    $rescan = ((Get-Date) - $start).TotalSeconds -ge 120 -and ((Get-Date) - $scanned).TotalSeconds -ge 60
+    if ($rescan) { $scanned = Get-Date }
     $left = @($left | Where-Object {
         $ip = $_
+        $at = $null
         try {
             $v = Invoke-RestMethod -TimeoutSec 4 -Uri "http://$ip/api/version"
-            if ($null -ne $v.api) {
-                Write-Host "${ip}: done, it runs SoundTap. Opening http://$ip/ to set it up."
-                try { Start-Process "http://$ip/" } catch { }
-                return $false
-            }
+            if ($null -ne $v.api) { $at = $ip }
         } catch { }
+        if (-not $at -and $rescan -and $ids[$ip]) { $at = Find-Moved $http $ids[$ip] $prefixes }
+        if ($at) {
+            if ($at -ne $ip) { Write-Host "${ip}: the speaker came back at a new address, $at." }
+            Write-Host "${at}: done, it runs SoundTap. Opening http://$at/ to set it up."
+            try { Start-Process "http://$at/" } catch { }
+            return $false
+        }
         $true
     })
     $m = [int][math]::Floor(((Get-Date) - $start).TotalMinutes)
     if ($left -and $m -gt $shown) { $shown = $m; Write-Host "  still installing... $m min" }
 }
 foreach ($ip in $left) {
-    Write-Host "${ip}: SoundTap not confirmed after $waitMinutes minutes. Keep it powered and open http://$ip/ later,"
-    Write-Host "    or see 'When something goes wrong' in the install guide."
+    Write-Host "${ip}: SoundTap not confirmed after $waitMinutes minutes. Keep it powered and look for it later:"
+    Write-Host "    at http://$ip/, under its name in your router's list of devices (its address may have"
+    Write-Host "    changed), or at http://soundtap.local. Or see 'When something goes wrong' in the install guide."
 }
 }

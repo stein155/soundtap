@@ -7,6 +7,7 @@
 #
 #   build.sh [outdir]            release-shaped build, logs to /tmp only
 #   WLA_PREVIEW=1 build.sh       the preview package's installer: Preview boards install with it
+#   WLA_STREAM_PROGRESS=0 ...    no progress statuses while the package streams in
 #   WLA_TRACE=1 build.sh [out]   trace build: every line also goes to UDP 40099 on the USB host,
 #                                and the terminal-message candidates are walked
 set -eu
@@ -37,6 +38,11 @@ fi
 if [ "${WLA_PREVIEW:-0}" = 1 ]; then
   defines="${defines} -DSOUNDTAP_PREVIEW_PACKAGE"
   name="${name}-preview"
+fi
+# Progress statuses during the download (installer.c, SOUNDTAP_STREAM_PROGRESS): on unless
+# WLA_STREAM_PROGRESS=0, the way back if stock turns out to refuse them mid-stream.
+if [ "${WLA_STREAM_PROGRESS:-1}" = 0 ]; then
+  defines="${defines} -DSOUNDTAP_STREAM_PROGRESS=0"
 fi
 if [ "${WLA_TRACE:-0}" = 1 ]; then
   defines="${defines} -DSOUNDTAP_TRACE_UDP"
