@@ -193,13 +193,15 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
         break;
     }
     case 3: { /* SET_PROFILE: ssid_len, ssid, security, key_len, key, 32-byte seed [, flags, bssid].
-               * security WIFI_SEC_*: 0 open (no key), 1 PSK (the 32-byte PMK); any other, or a
-               * key length that does not fit it, is unsupported (status 2). */
+               * security WIFI_SEC_*: 0 open (no key), 1 PSK (the 32-byte PMK), 2 WEP (key index,
+               * authentication, then a 5- or 13-byte key: 7 or 15 bytes); any other, or a key
+               * length that does not fit it, is unsupported (status 2). */
         unsigned base = len >= 1 && len >= 1u + a[0] + 2 ? 1u + a[0] + 2 + a[1 + a[0] + 1] + 32 : 0;
         unsigned sec = base ? a[1 + a[0]] : 0, klen = base ? a[1 + a[0] + 1] : 0;
         if (len < 1 || a[0] < 1 || a[0] > 32 || !base || (len != base && len != base + MGMT_PROFILE_TAIL))
             st = 1;
-        else if (!(sec == WIFI_SEC_OPEN && klen == 0) && !(sec == WIFI_SEC_PSK && klen == 32))
+        else if (!(sec == WIFI_SEC_OPEN && klen == 0) && !(sec == WIFI_SEC_PSK && klen == 32) &&
+                 !(sec == WIFI_SEC_WEP && (klen == 7 || klen == 15)))
             st = 2;
         else { /* without the tail (an older driver): any BSSID, no roaming */
             const unsigned char *tail = len > base ? a + base : 0;

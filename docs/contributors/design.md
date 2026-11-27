@@ -526,7 +526,7 @@ flowchart LR
   end
   DRV == USB bulk, channel header ==> LINK[BCO bcolink]
   LINK -- ch 0 --> MG[mgmt.c server]
-  LINK -- ch 1 --> STA[Wi-Fi station: open or WPA2, or the open setup AP]
+  LINK -- ch 1 --> STA[Wi-Fi station: open, WEP, WPA or WPA2; or the open setup AP]
   LINK -- ch 2 --> GEM[wired port, macb]
   MG --> STA
   STA --> AIR((home Wi-Fi))

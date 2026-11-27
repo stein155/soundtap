@@ -178,7 +178,9 @@ func (m *Manager) configure(ctx context.Context, sess *session, nets []network) 
 		return fmt.Errorf("remove networks: %w", err)
 	}
 
-	for rank, saved := range nets {
+	for rank := range nets {
+		saved := &nets[rank]
+
 		netID, err := conn.AddNetwork(ctx)
 		if err != nil {
 			return fmt.Errorf("add network: %w", err)
@@ -189,9 +191,15 @@ func (m *Manager) configure(ctx context.Context, sess *session, nets []network) 
 			{"scan_ssid", "1"},
 			{"priority", strconv.Itoa(KnownMax + 1 - rank)},
 		}
-		if saved.keyHex != "" {
+		switch {
+		case saved.wepHex != "":
+			// WEP (ADR 0136): the static key 0, open system or shared key authentication,
+			// whichever the access point takes.
+			set = append(set, [2]string{"key_mgmt", "NONE"}, [2]string{"wep_key0", saved.wepHex},
+				[2]string{"wep_tx_keyidx", "0"}, [2]string{"auth_alg", "OPEN SHARED"})
+		case saved.keyHex != "":
 			set = append(set, [2]string{"psk", saved.keyHex})
-		} else {
+		default:
 			set = append(set, [2]string{"key_mgmt", "NONE"})
 		}
 

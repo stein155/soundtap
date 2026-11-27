@@ -82,7 +82,9 @@ and the BCO answers with the same `seq` and `type|0x80`, status first.
   BSSID first, 4 roam within the SSID). Without the tail the app joins any BSSID and never roams.
   Security 1 is WPA2-PSK with the 32-byte PMK as the key; with `BCOLINK_CAP_SECURITY`
   ([ADR 0136](../../decisions/0136-every-network-stock-joined-and-wpa3.md)) security 0 is an open
-  network, without a key. Anything else, or a key length that does not fit the security, is
+  network, without a key, and 2 is WEP: the key index (0-3), the authentication (0 open system, 1
+  shared key, 2 open system first and shared key when the access point refuses it with status
+  13) and the 5- or 13-byte key. Anything else, or a key length that does not fit the security, is
   answered "unsupported" (status 2). 2.4 GHz only. The key is never echoed or logged.
 - `FORGET` leaves the network without sending deauthentication and drops the profile; the WiLD
   core keeps running (a core reboot recalibrates the radio in busy waits that stall USB; the app
@@ -148,6 +150,12 @@ and the BCO answers with the same `seq` and `type|0x80`, status first.
 - An open network's association request carries no security IE and no Privacy bit, JOIN_DONE goes
   without privacy, the link is up once the access point associates, and data goes both ways in the
   clear.
+- A WEP profile joins an access point with the Privacy bit and neither an RSN nor a WPA IE. Shared
+  key authentication answers the access point's challenge in transaction 3, enciphered under the
+  profile's key (`TX_RAW`, the Protected bit set); the association carries Privacy and no IE; then
+  the key goes to the core as a mark for its index and the link is up. Frames go out under that key
+  with an IV that starts from the SCM's random seed and counts up, and come in under any of the
+  default keys the core passes up by key id (only the profile's is installed).
 - The association request's capability is ESS and Privacy (not for an open network), plus Short
   Preamble and Short Slot Time when the access point's own capability has them, as an ERP station sends: a station that
   leaves Short Slot out makes the access point move the whole BSS to the long slot.

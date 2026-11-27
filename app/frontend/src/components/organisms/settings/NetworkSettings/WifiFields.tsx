@@ -47,6 +47,7 @@ export function ManualFields({
           options={[
             { value: 'none', label: t('wifiSecurityNone') },
             { value: 'wpa_or_wpa2', label: 'WPA / WPA2' },
+            { value: 'wep', label: 'WEP' },
           ]}
           onChange={onSecurity}
         />
@@ -58,19 +59,21 @@ export function ManualFields({
 // Stockholm ticks "Show password": a Wi-Fi password is long and typed on a phone.
 // label: the field's name where the page already says what it is for (the join sheet).
 // eye: an eye inside the field shows and hides it instead, hidden to start (the first-run
-// page, as drawn).
+// page, as drawn). wep: the password is a WEP key, and the length hint says what one is.
 export function PasswordField({
   value,
   onChange,
   tooShort,
   label,
   eye = false,
+  wep = false,
 }: {
   readonly value: string;
   readonly onChange: (password: string) => void;
   readonly tooShort: boolean;
   readonly label?: string;
   readonly eye?: boolean | undefined;
+  readonly wep?: boolean | undefined;
 }): ReactElement {
   const { t } = useI18n();
   const [shown, setShown] = useState(!eye);
@@ -91,7 +94,7 @@ export function PasswordField({
       <LabeledField
         id="wifi-pw"
         label={label ?? t('wifiPassword')}
-        error={tooShort ? t('wifiPasswordLength') : null}
+        error={tooShort ? t(wep ? 'wifiWepKeyLength' : 'wifiPasswordLength') : null}
       >
         {eye ? (
           <Reveal>

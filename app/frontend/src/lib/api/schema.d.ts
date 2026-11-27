@@ -3299,6 +3299,7 @@ export interface paths {
                 content: {
                     "application/json": {
                         ssid: string;
+                        /** @description none, wpa_or_wpa2 (the default when empty) or wep */
                         security?: string;
                         password?: string;
                     };
@@ -5014,6 +5015,7 @@ export interface components {
             /** @enum {string} */
             signal?: "excellent" | "good" | "fair" | "poor";
             secure: boolean;
+            wep?: boolean;
         };
         FirmwareReport: {
             size: number;

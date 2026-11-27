@@ -630,6 +630,122 @@ static void choose_security(void)
     printf("ok: a PSK profile picks RSN over WPA and CCMP over TKIP, and says so in its IE\n");
 }
 
+/* WEP (ADR 0136): shared key authentication answers the AP's challenge enciphered under the
+ * profile's key (TX_RAW, Protected), the association carries Privacy and no IE, the key goes to
+ * the core as a mark for its index, data goes out under WEP with the IV counting up and comes in
+ * deciphered; with "auto" an AP that refuses open system (status 13) gets shared key. */
+static void wep_network(void)
+{
+    static const unsigned char wap[6] = {0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x0e};
+    static const unsigned char ies[] = {0, 3, 'O', 'l', 'd', 1, 4, 0x82, 0x84, 0x8b, 0x96, 3, 1, 1};
+    unsigned char prof[2 + 13], seed0[32] = {0x10, 0x20, 0x30};
+    for (unsigned t = 0; t < 2; t++) {
+        cmd_ring(63);
+        tx_frames();
+        nbss = 1;
+        memset(&bsstab[0], 0, sizeof bsstab[0]);
+        memcpy(bsstab[0].bssid, wap, 6), memcpy(bsstab[0].ssid, "Old", 3);
+        bsstab[0].ssidlen = 3, bsstab[0].chan = 1, bsstab[0].caps = 0x0011, bsstab[0].rssi = -60;
+        memcpy(bsstab[0].ies, ies, sizeof ies), bsstab[0].ielen = sizeof ies;
+        prof[0] = 1, prof[1] = t ? WIFI_WEP_AUTO : WIFI_WEP_SHARED;
+        for (unsigned i = 0; i < 13; i++)
+            prof[2 + i] = (unsigned char)(0x41 + i);
+        state = WIFI_IDLE, now = 60000 + 10000 * t;
+        assert(wifi_join((const unsigned char *)"Old", 3, WIFI_SEC_WEP, prof, 3, seed0, 0, 0) == -1); /* key short */
+        prof[0] = 4;
+        assert(wifi_join((const unsigned char *)"Old", 3, WIFI_SEC_WEP, prof, 15, seed0, 0, 0) == -1); /* index */
+        prof[0] = 1;
+        assert(wifi_join((const unsigned char *)"Old", 3, WIFI_SEC_WEP, prof, 15, seed0, 0, 0) == 0);
+        assert(state == WIFI_JOINING && same(cur.bssid, wap, 6) && wep_len == 13 && wep_idx == 1);
+        corebd = 1;
+        join_step();
+        const unsigned char *d = last_frame() + 8, *b = d + 0xc4;
+        if (t) { /* auto: open system first, refused with status 13 */
+            assert(d[0x18] == 0xb0 && b[0] == 0 && b[2] == 1);
+            unsigned char refuse[6] = {0, 0, 2, 0, 13, 0};
+            rx_station(rxf, rx_mgmt(0xb0, own, wap, wap, refuse, sizeof refuse));
+            tx_frames();
+            join_step();
+            d = last_frame() + 8, b = d + 0xc4;
+        }
+        assert(d[0x18] == 0xb0 && b[0] == 1 && b[1] == 0 && b[2] == 1 && b[4] == 0); /* shared key, seq 1 */
+        /* the challenge: transaction 2, IE 16 with 128 bytes */
+        unsigned char ch[6 + 2 + 128] = {1, 0, 2, 0, 0, 0, 16, 128};
+        for (unsigned i = 0; i < 128; i++)
+            ch[8 + i] = (unsigned char)(i * 3 + 7);
+        static unsigned char rxc[0xcc + sizeof ch];
+        memset(rxc, 0, sizeof rxc);
+        rxc[0x94] = 0x18, rxc[0x97] = 0xc4, rxc[0xac] = 0xb0;
+        memcpy(rxc + 0xac + 4, own, 6), memcpy(rxc + 0xac + 10, wap, 6), memcpy(rxc + 0xac + 16, wap, 6);
+        memcpy(rxc + 0xcc, ch, sizeof ch);
+        rx_station(rxc, sizeof rxc);
+        assert(challenge_due && challenge_len == 128);
+        tx_frames();
+        join_step();
+        d = last_frame() + 8, b = d + 0xc4;
+        assert(d[0x18] == 0xb0 && d[0x19] == 0x40 && d[0x13] == 1 && last_frame()[0x94 + 0x13] == 1);
+        unsigned char body3[4 + 6 + 2 + 128 + 4];
+        memcpy(body3, b, sizeof body3);
+        assert(wsec_keyid(body3) == 1 && !wsec_extiv(body3));
+        assert(wsec_wep_open(prof + 2, 13, body3, sizeof body3) == 6 + 2 + 128);
+        assert(body3[4] == 1 && body3[6] == 3 && body3[8] == 0 && body3[10] == 16 && body3[11] == 128 &&
+               !memcmp(body3 + 12, ch + 8, 128));
+        /* transaction 4: authenticated; the association carries Privacy and no IE */
+        unsigned char ok4[6] = {1, 0, 4, 0, 0, 0};
+        rx_station(rxf, rx_mgmt(0xb0, own, wap, wap, ok4, sizeof ok4));
+        assert(rxauthok);
+        tx_frames();
+        join_step();
+        d = last_frame() + 8, b = d + 0xc4;
+        assert(jstep == J_ASSOC && d[0x18] == 0x00 && (b[0] & 0x10));
+        rxassocok = 1;
+        cmd_ring(63);
+        join_step();
+        assert(state == WIFI_UP && keyed && sw_grp[1].cipher == WSEC_WEP104 && !memcmp(sw_grp[1].key, prof + 2, 13));
+        int seen = 0;
+        for (unsigned i = 1; i + 12 < 64; i++)
+            if (cmdbuf[i] == 11 && cmdbuf[i + 1] == (18u | 1u << 16)) {
+                const unsigned char *pl = (const unsigned char *)(cmdbuf + i + 2);
+                assert(pl[0] == WSEC_WEP104 && pl[4] == 1 && !pl[8]);
+                seen = 1;
+            }
+        assert(seen);
+        /* data out under WEP, the IV counting up from the seed */
+        unsigned char frame[14 + 24] = {0};
+        memcpy(frame, wap, 6), memcpy(frame + 6, own, 6), frame[12] = 0x08;
+        unsigned iv0 = wep_iv;
+        for (unsigned k = 0; k < 2; k++) {
+            tx_frames();
+            assert(radio_tx_eth(frame, sizeof frame) == 0);
+            d = last_frame() + 8;
+            unsigned char bd[4 + 8 + 24 + 4];
+            memcpy(bd, d + 0xc4, sizeof bd);
+            assert(d[0x19] == 0x41 && d[0x13] == 1);
+            assert((bd[0] | bd[1] << 8 | bd[2] << 16) == ((iv0 + k) & 0xffffff));
+            assert(wsec_wep_open(prof + 2, 13, bd, sizeof bd) == 8 + 24 && bd[4] == 0xaa && bd[10] == 0x08);
+        }
+        /* data in: WEP under key 1 from the AP reaches the SCM; under key 2 it does not */
+        static unsigned char rxw[0xcc + 4 + 8 + 20 + 4];
+        static const unsigned char llc[8] = {0xaa, 0xaa, 3, 0, 0, 0, 0x08, 0x00};
+        for (unsigned keyid = 1; keyid <= 2; keyid++) {
+            memset(rxw, 0, sizeof rxw);
+            rxw[0x94] = 0x18, rxw[0x97] = 0xc4, rxw[0x94 + 7] = RX_SOFT;
+            rxw[0xac] = 0x08, rxw[0xad] = 0x42;
+            memcpy(rxw + 0xac + 4, own, 6), memcpy(rxw + 0xac + 10, wap, 6), memcpy(rxw + 0xac + 16, wap, 6);
+            memcpy(rxw + 0xcc + 4, llc, 8);
+            rxw[0xcc + 12] = 0x45, rxw[0xcc + 15] = 20;
+            wsec_wep_protect(prof + 2, 13, keyid, 0x123456, rxw + 0xcc, 8 + 20);
+            unsigned before = wifi_rx_frames;
+            rx_station(rxw, sizeof rxw);
+            assert(wifi_rx_frames == before + (keyid == 1));
+        }
+        wifi_leave();
+        assert(!wep_len && !sw_grp[1].cipher);
+    }
+    nbss = 0;
+    printf("ok: WEP joins with shared key (also after auto's open system), data both ways\n");
+}
+
 int main(void)
 {
     /* a full ring: no PEER_ADD and no 4-way yet; the next poll still has the step */
@@ -671,5 +787,6 @@ int main(void)
     open_network();
     tkip_frames();
     choose_security();
+    wep_network();
     return 0;
 }

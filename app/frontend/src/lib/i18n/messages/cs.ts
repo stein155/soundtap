@@ -302,6 +302,7 @@ const cs: Messages = {
   discardChangesConfirm: 'Zahodit',
   resetFailed: 'Obnovení se nezdařilo. Nic nebylo smazáno.',
   wifiPasswordLength: 'Heslo Wi-Fi má 8 až 63 znaků.',
+  wifiWepKeyLength: 'Klíč WEP má 5 nebo 13 znaků, nebo 10 nebo 26 šestnáctkových číslic.',
   wifiSsidLength: 'Tento název je pro síť Wi-Fi příliš dlouhý.',
   mqttPortInvalid: 'Zadejte port od 1 do 65535, nebo pole nechte prázdné.',
   undo: 'Vrátit zpět',

@@ -606,8 +606,8 @@ func newSpeaker(opt options, identity string, log *slog.Logger) *speakerstate.Sp
 		state.NoBass()
 	}
 
-	state.OnWifiProfile(func(ssid, psk string) error {
-		err := persistWifiProfile(filepath.Join(filepath.Dir(opt.home), "wifi.conf"), ssid, psk, log)
+	state.OnWifiProfile(func(ssid, security, psk string) error {
+		err := persistWifiProfile(filepath.Join(filepath.Dir(opt.home), "wifi.conf"), ssid, security, psk, log)
 		if err != nil {
 			return err
 		}

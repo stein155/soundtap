@@ -301,6 +301,7 @@ const da: Messages = {
   discardChangesConfirm: 'Kassér',
   resetFailed: 'Nulstillingen mislykkedes. Intet blev slettet.',
   wifiPasswordLength: 'En Wi-Fi-adgangskode er på 8 til 63 tegn.',
+  wifiWepKeyLength: 'En WEP-nøgle er på 5 eller 13 tegn eller 10 eller 26 hexadecimale cifre.',
   wifiSsidLength: 'Navnet er for langt til et Wi-Fi-netværk.',
   mqttPortInvalid: 'Indtast en port fra 1 til 65535, eller lad feltet stå tomt.',
   undo: 'Fortryd',

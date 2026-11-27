@@ -18,6 +18,7 @@ import (
 	"github.com/stein155/soundtap/app/internal/bco"
 	"github.com/stein155/soundtap/app/internal/childproc"
 	"github.com/stein155/soundtap/app/internal/speaker"
+	"github.com/stein155/soundtap/app/internal/wifi"
 	"github.com/stein155/soundtap/app/internal/wpactrl"
 )
 
@@ -69,7 +70,7 @@ func (*Speaker) ScanWifi(ctx context.Context) ([]speaker.WifiNetwork, error) {
 		result := make([]speaker.WifiNetwork, 0, len(networks))
 		for _, network := range networks {
 			result = append(result, speaker.WifiNetwork{
-				SSID: network.SSID, Signal: qualityToken(network.Quality), Secure: network.Secure,
+				SSID: network.SSID, Signal: qualityToken(network.Quality), Secure: network.Secure, WEP: false,
 			})
 		}
 
@@ -188,11 +189,13 @@ func qualityToken(quality int) string {
 	}
 }
 
-// iwNetwork is one BSS in the output of iw scan.
+// iwNetwork is one BSS in the output of iw scan: secure when it has Privacy or a WPA or RSN
+// element, wpa when it has one of those elements (secure without it is WEP).
 type iwNetwork struct {
 	ssid   string
 	dbm    int
 	secure bool
+	wpa    bool
 }
 
 func parseIWScan(out string) []speaker.WifiNetwork {
@@ -224,7 +227,7 @@ func iwNetworks(out string) []iwNetwork {
 		case strings.HasPrefix(field, "BSS "):
 			flush()
 
-			current = &iwNetwork{ssid: "", dbm: 0, secure: false}
+			current = &iwNetwork{ssid: "", dbm: 0, secure: false, wpa: false}
 		case current != nil && strings.HasPrefix(field, "SSID: "):
 			current.ssid = unescapeIW(strings.TrimPrefix(field, "SSID: "))
 		case current != nil && strings.HasPrefix(field, "signal: "):
@@ -235,6 +238,7 @@ func iwNetworks(out string) []iwNetwork {
 			}
 		case current != nil && iwSecurityLine(field):
 			current.secure = true
+			current.wpa = current.wpa || strings.HasPrefix(field, "RSN:") || strings.HasPrefix(field, "WPA:")
 		default: // a line this does not read
 		}
 	}
@@ -274,7 +278,9 @@ func strongestPerSSID(found []iwNetwork) []speaker.WifiNetwork {
 	result := make([]speaker.WifiNetwork, 0, len(order))
 	for _, ssid := range order {
 		net := strongest[ssid]
-		result = append(result, speaker.WifiNetwork{SSID: net.ssid, Signal: dbmToken(net.dbm), Secure: net.secure})
+		result = append(result, speaker.WifiNetwork{
+			SSID: net.ssid, Signal: dbmToken(net.dbm), Secure: net.secure, WEP: net.secure && !net.wpa,
+		})
 	}
 
 	return result
@@ -338,7 +344,10 @@ func parseScanResults(out string) []speaker.WifiNetwork {
 		net := speaker.WifiNetwork{
 			SSID:   ssid,
 			Signal: dbmToken(dbm),
-			Secure: strings.Contains(fields[3], "WPA") || strings.Contains(fields[3], "WEP"),
+			Secure: strings.Contains(fields[3], "WPA") || strings.Contains(fields[3], "WEP") ||
+				strings.Contains(fields[3], "RSN") || strings.Contains(fields[3], "SAE"),
+			WEP: strings.Contains(fields[3], "WEP") && !strings.Contains(fields[3], "WPA") &&
+				!strings.Contains(fields[3], "RSN"),
 		}
 		if idx, ok := seen[ssid]; ok {
 			if dbm > strongest[ssid] {
@@ -390,6 +399,10 @@ func CheckWifi(ssid, security, password string) error {
 		if len(password) < 8 || len(password) > 63 || strings.IndexFunc(password, control) >= 0 {
 			return errWPAPassword
 		}
+	case wifi.SecurityWEP: // ADR 0136
+		if !wifi.IsWEPKey(password) {
+			return errWEPKey
+		}
 	default:
 		return fmt.Errorf("%w %q", errUnknownSecurity, security)
 	}
@@ -417,6 +430,11 @@ func (s *Speaker) SetWifi(ctx context.Context, ssid, security, password string) 
 	// persists it, so an error here means the speaker did not actually join — and the
 	// credentials must not be recorded as current.
 	if mode == wifiModeBCO {
+		// Bose's BCO app, still there before SoundTap's replaces it, is driven for WPA only.
+		if security == wifi.SecurityWEP {
+			return errWEPStockBCO
+		}
+
 		err := bco.Connect(ctx, os.Getenv("SOUNDTAP_BCO_TTY"), ssid, password)
 		if err != nil {
 			return err //nolint:wrapcheck // the BCO's own words for the client, which shows them as they are.
@@ -435,7 +453,7 @@ func (s *Speaker) SetWifi(ctx context.Context, ssid, security, password string) 
 	s.unlock()
 
 	if save != nil {
-		err := save(ssid, password)
+		err := save(ssid, security, password)
 		if err != nil {
 			return err
 		}

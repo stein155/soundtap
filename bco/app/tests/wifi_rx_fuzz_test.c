@@ -336,8 +336,8 @@ static void fuzz_soft(void)
             rings_fresh();
             state = WIFI_UP, keyed = 1, have_cur = 1, cm_on = 0, mic_fail_seen = 0, now += 70000;
             sm.ptk_set = 1;
-            sw_pair.cipher = WSEC_TKIP, sw_grp[1].cipher = WSEC_TKIP;
-            memcpy(sw_pair.key, key, 32), memcpy(sw_grp[1].key, key, 32);
+            sw_pair.cipher = WSEC_TKIP, sw_grp[1].cipher = WSEC_TKIP, sw_grp[2].cipher = WSEC_WEP104;
+            memcpy(sw_pair.key, key, 32), memcpy(sw_grp[1].key, key, 32), memcpy(sw_grp[2].key, key, 13);
             sw_pair.rxtsc = sw_grp[1].rxtsc = 0;
         }
         int group = rnd() % 2;
@@ -353,9 +353,15 @@ static void fuzz_soft(void)
         memcpy(f + 0xcc + 8, llc, 8);
         for (unsigned i = 8; i < n; i++)
             f[0xcc + 8 + i] = (unsigned char)rnd();
-        /* now and then under the wrong Michael key: ICV good, MIC bad */
-        unsigned len = 0xcc + wsec_tkip_protect(key, key + (rnd() % 16 ? 16 : 24), group, it + 1, BSS,
-                                                f + 0xac + 4, BSS, f + 0xcc, n);
+        /* now and then under the wrong Michael key: ICV good, MIC bad; a quarter WEP under key 2 */
+        unsigned len;
+        if (rnd() % 4 == 0) {
+            memmove(f + 0xcc + 4, f + 0xcc + 8, n);
+            len = 0xcc + wsec_wep_protect(key, 13, 2, it, f + 0xcc, n);
+        } else {
+            len = 0xcc + wsec_tkip_protect(key, key + (rnd() % 16 ? 16 : 24), group, it + 1, BSS,
+                                           f + 0xac + 4, BSS, f + 0xcc, n);
+        }
         if (rnd() % 3 == 0)
             mutate(f + 0xcc, len - 0xcc, 1 + rnd() % 3);
         if (rnd() % 8 == 0)
@@ -367,7 +373,7 @@ static void fuzz_soft(void)
         if (state != WIFI_UP)
             it |= 63; /* the countermeasures ended the link: next round */
     }
-    CHECK(to_scm - before > 1000, "TKIP frames reach the SCM (%u)", to_scm - before);
+    CHECK(to_scm - before > 1000, "TKIP and WEP frames reach the SCM (%u)", to_scm - before);
     CHECK(mics > 0, "Michael failures seen (%u)", mics);
 }
 

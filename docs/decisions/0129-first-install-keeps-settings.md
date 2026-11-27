@@ -35,16 +35,18 @@ and one of 16; any other pattern gives nothing. It leaves them in
 `/mnt/nv/soundtap/stock-wifi-key` (0600) only when SoundTap has no `wifi.conf` yet and stock saved
 a profile. On the first boot soundtapd decrypts the profile stock joined last (`lastConnected`)
 with Go's own AES, writes `wifi.conf`, deletes the key file and restarts Wi-Fi through its
-Wi-Fi manager. WPA and open networks are taken; WEP is not.
+Wi-Fi manager. WPA, WEP and open networks are taken
+([ADR 0136](0136-every-network-stock-joined-and-wpa3.md)): a WEP profile's `wepKey`, as stock's
+own scripts write it, or decrypted when the profile is encrypted.
 
 On the ST20, where Bose's software keeps the network in the BCO, soundtapd reads it from the
 BCO while Bose's BCO app is still there, before it replaces that app: afterwards it can no longer
 be read. Stock keeps its settings as an append-only log in a NOR sector
 ([the stock app's saved network](../hardware/st20/bco-recovery.md#6-the-stock-apps-saved-network)).
 soundtapd reads the active sector through the sdsShell's `rd`, takes the last valid record of
-each setting, and takes the active profile's network when it is WPA with a passphrase or open
-([ADR 0136](0136-every-network-stock-joined-and-wpa3.md)); WEP networks and stock's own setup
-profile are not taken. The record numbers are BCO app 9423's,
+each setting, and takes the active profile's network when it is WPA with a passphrase, open, or
+WEP with the key its key index names ([ADR 0136](0136-every-network-stock-joined-and-wpa3.md));
+stock's own setup profile is not taken. The record numbers are BCO app 9423's,
 in one table. A read that gets no reply or a garbled dump is tried again, up to 5 times, 30 s
 apart, within 5 minutes; a read that was whole but holds nothing to take is not. The BCO install
 waits for that answer, and goes ahead once the tries run out.
@@ -60,7 +62,8 @@ bytes in git); the owner typing the password again after the install.
 - On the ST20 the first boot from stock confirms up to 5 minutes later, while the read is tried
   again; another BCO app version with other record numbers reads as "nothing to take".
 - A NetManager with any other digit pattern, a passphrase that does not decrypt to a valid WPA
-  passphrase, or a missing file leaves the speaker on its setup network.
+  passphrase or a WEP key that is not one, or a missing file leaves the speaker on its setup
+  network.
 - An update between SoundTap versions finds `wifi.conf` and does none of this.
 - An ST20 installed from stock shows its clock, in stock's zone, without the settings first being
   opened in a browser ([ADR 0111](0111-st20-standby-clock.md)).

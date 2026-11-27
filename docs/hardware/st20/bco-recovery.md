@@ -254,9 +254,15 @@ app 9423 **[STATIC]**, except where marked as read on hardware. Numbers are that
   prints the passphrase, are not verified on hardware, so SoundTap reads the log with `rd`.
 
 SoundTap takes the active profile's network when its security is one of the three PSK values
-and its passphrase is a WPA passphrase, or when it is `NONE` (an open network; a passphrase left
-in the profile is not used). WEP networks, stock's setup profile, and a profile with no network
-are left to the setup network.
+and its passphrase is a WPA passphrase, when it is `NONE` (an open network; a passphrase left in
+the profile is not used), or when it is `WEP` and the key its `WEP/KeyIndex` names (`0`-`3`; key
+0 when the index was never written) is 5 or 13 characters or 10 or 26 hex digits. The WEP
+settings' records, from the same settings tree: `WEP/KeyIndex` `0x505c`, `0x512c`, `0x51fc`,
+`0x52cc` and `WEP/Key0` `0x509c`, `0x516c`, `0x523c`, `0x530c` for profiles 0-3 (each further key
+16 lower: Key1 `0x508c`, ...); `WEP/Authentication` (factory `shared` for profiles 0 and 1, `open`
+for 2 and 3) is not read, since wpa_supplicant tries both. Which values `KeyIndex` takes is not
+traced: a value other than `0`-`3` leaves the network to the setup network. Stock's setup profile
+and a profile with no network are left to it too.
 
 ## Evidence index (all read-only, from the extracted STU)
 

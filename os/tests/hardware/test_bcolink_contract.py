@@ -195,7 +195,16 @@ class BcoLinkContract(unittest.TestCase):
             mirror = [n.strip()[len(drv):] for n in mirror.split(",") if n.strip()]
             self.assertEqual(names, mirror, app)
         funcs = dict(re.findall(r"\n\+static [^\n]*\b(\w+)\([^)]*\)\n\+\{(.*?)\n\+\}", self.patch, re.DOTALL))
-        self.assertRegex(funcs["bco_connect"], r"open && !\(caps & BCOLINK_CAP_SECURITY\)")
+        self.assertRegex(funcs["bco_connect"], r"\(open \|\| wep\) && !\(caps & BCOLINK_CAP_SECURITY\)")
+        for app, drv in (("WIFI_WEP_", "BCO_WEP_"),):
+            names = re.search(rf"enum \{{ ({app}[^}}]*)\}}", wifi)[1]
+            names = [n.strip()[len(app):] for n in names.split(",") if n.strip()]
+            mirror = re.search(rf"enum \{{ ({drv}[^}}]*)\}}", self.patch)[1]
+            mirror = [n.strip()[len(drv):] for n in mirror.split(",") if n.strip()]
+            self.assertEqual(names, mirror, app)
+        # cfg80211 uploads a connect's WEP keys after it: add_key needs del_key and set_default_key
+        for op in ("add_key", "del_key", "set_default_key"):
+            self.assertIn(f".{op} = bco_{op},", self.patch)
         mgmt = (APP / "mgmt.c").read_text()
         status = re.search(r"case 5: \{ /\* STATUS(.*?)break;", mgmt, re.DOTALL)[1]
         self.assertRegex(status, r"\*o\+\+ = b\.grp;\s*\*o\+\+ = b\.sec;")

@@ -304,6 +304,7 @@ const fr: Messages = {
   discardChangesConfirm: 'Abandonner',
   resetFailed: 'Échec de la réinitialisation. Rien n’a été effacé.',
   wifiPasswordLength: 'Un mot de passe Wi-Fi comporte 8 à 63 caractères.',
+  wifiWepKeyLength: 'Une clé WEP comporte 5 ou 13 caractères, ou 10 ou 26 chiffres hexadécimaux.',
   wifiSsidLength: 'Ce nom est trop long pour un réseau Wi-Fi.',
   mqttPortInvalid: 'Saisissez un port de 1 à 65535, ou laissez le champ vide.',
   undo: 'Annuler',

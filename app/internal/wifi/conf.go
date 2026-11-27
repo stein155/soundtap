@@ -19,9 +19,13 @@ import (
 
 // The saved networks on /mnt/nv (docs/contributors/nv-state.md; ADR 0120 keeps these formats):
 //
-//	wifi.conf        SSID_B64=<base64>, PSK_B64=<base64> (empty: open), optional PSK_HEX=<64 hex>
+//	wifi.conf        SSID_B64=<base64>, PSK_B64=<base64> (empty: open), optional PSK_HEX=<64 hex>,
+//	                 optional SECURITY=wep (PSK_B64 then holds the WEP key as typed)
 //	wifi.conf.good   a copy of the last wifi.conf that gave the speaker an address
-//	wifi.conf.known  up to KnownMax lines, newest first: <SSID_B64> <PSK_B64|-> <PSK_HEX|->
+//	wifi.conf.known  up to KnownMax lines, newest first: <SSID_B64> <PSK_B64|-> <PSK_HEX|-> [wep]
+//
+// A file of an earlier release has no SECURITY line and no fourth field: its networks are WPA or
+// open, as they were (ADR 0120, ADR 0136).
 //
 // wifi.conf is the network tried first; the known ones follow at lower priority, so
 // wpa_supplicant joins whichever is in range.
@@ -39,22 +43,42 @@ const (
 	pskBytes         = 32
 )
 
-// Record is one saved network as stored: base64 name and passphrase, and the raw key in
-// hex when there is one. Empty fields are absent.
+// SecurityWEP marks a saved WEP network (ADR 0136): its key is 5 or 13 characters, or 10 or 26
+// hex digits.
+const SecurityWEP = "wep"
+
+// The WEP key's sizes: 40 or 104 bits, as characters or as hex digits.
+const (
+	wep40Chars  = 5
+	wep104Chars = 13
+	wep40Hex    = 10
+	wep104Hex   = 26
+)
+
+// Record is one saved network as stored: base64 name and passphrase, the raw key in hex
+// when there is one, and SecurityWEP for a WEP network. Empty fields are absent.
 type Record struct {
-	SSIDB64 string
-	PSKB64  string
-	HexPSK  string
+	SSIDB64  string
+	PSKB64   string
+	HexPSK   string
+	Security string
 }
 
-// NewRecord stores a network the way the setup page hands it over: a 64-digit hex key is
-// the key itself, anything else a passphrase.
-func NewRecord(ssid, psk string) Record {
-	rec := Record{SSIDB64: base64.StdEncoding.EncodeToString([]byte(ssid)), PSKB64: "", HexPSK: ""}
-	if IsHexPSK(psk) {
-		rec.HexPSK = psk
-	} else if psk != "" {
+// NewRecord stores a network the way the setup page hands it over: a WEP network's key as
+// typed; otherwise a 64-digit hex key is the key itself, anything else a passphrase.
+func NewRecord(ssid, security, psk string) Record {
+	rec := Record{SSIDB64: base64.StdEncoding.EncodeToString([]byte(ssid)), PSKB64: "", HexPSK: "", Security: ""}
+
+	switch {
+	case security == SecurityWEP:
+		rec.Security = SecurityWEP
 		rec.PSKB64 = base64.StdEncoding.EncodeToString([]byte(psk))
+	case IsHexPSK(psk):
+		rec.HexPSK = psk
+	case psk != "":
+		rec.PSKB64 = base64.StdEncoding.EncodeToString([]byte(psk))
+	default:
+		// An open network: no key.
 	}
 
 	return rec
@@ -70,17 +94,26 @@ func (r Record) Line() string {
 		return s
 	}
 
-	return r.SSIDB64 + " " + dash(r.PSKB64) + " " + dash(r.HexPSK)
-}
-
-// ConfBytes is r as wifi.conf.
-func ConfBytes(r Record) []byte {
-	b := "SSID_B64=" + r.SSIDB64 + "\nPSK_B64=" + r.PSKB64 + "\n"
-	if r.HexPSK != "" {
-		b += "PSK_HEX=" + r.HexPSK + "\n"
+	line := r.SSIDB64 + " " + dash(r.PSKB64) + " " + dash(r.HexPSK)
+	if r.Security == SecurityWEP {
+		line += " " + SecurityWEP
 	}
 
-	return []byte(b)
+	return line
+}
+
+// ConfBytes is rec as wifi.conf.
+func ConfBytes(rec Record) []byte {
+	conf := "SSID_B64=" + rec.SSIDB64 + "\nPSK_B64=" + rec.PSKB64 + "\n"
+	if rec.HexPSK != "" {
+		conf += "PSK_HEX=" + rec.HexPSK + "\n"
+	}
+
+	if rec.Security == SecurityWEP {
+		conf += "SECURITY=" + SecurityWEP + "\n"
+	}
+
+	return []byte(conf)
 }
 
 // WriteConf replaces path with r, atomically and readable by root only.
@@ -113,6 +146,10 @@ func ParseConf(b []byte) Record {
 			rec.PSKB64 = value
 		case "PSK_HEX":
 			rec.HexPSK = value
+		case "SECURITY":
+			if value == SecurityWEP {
+				rec.Security = SecurityWEP
+			}
 		default:
 			// Not a key of wifi.conf.
 		}
@@ -142,7 +179,13 @@ func ParseKnown(b []byte) []Record {
 
 			return s
 		}
-		out = append(out, Record{SSIDB64: fields[0], PSKB64: orNone(fields[1]), HexPSK: orNone(fields[2])})
+		rec := Record{SSIDB64: fields[0], PSKB64: orNone(fields[1]), HexPSK: orNone(fields[2]), Security: ""}
+
+		if len(fields) > 3 && fields[3] == SecurityWEP {
+			rec.Security = SecurityWEP
+		}
+
+		out = append(out, rec)
 	}
 
 	return out
@@ -207,18 +250,52 @@ func IsHexPSK(s string) bool {
 	return err == nil
 }
 
-// network is one block handed to wpa_supplicant: the name and the 32-byte key in hex, or
-// no key for an open network.
+// IsWEPKey reports a WEP key as typed: 5 or 13 printable ASCII characters, or 10 or 26 hex
+// digits.
+func IsWEPKey(s string) bool {
+	_, ok := wepKeyHex(s)
+
+	return ok
+}
+
+// wepKeyHex is a WEP key as wpa_supplicant's wep_key0 takes it unquoted: hex digits.
+func wepKeyHex(key string) (string, bool) {
+	switch len(key) {
+	case wep40Hex, wep104Hex:
+		_, err := hex.DecodeString(key)
+		if err == nil {
+			return strings.ToLower(key), true
+		}
+	case wep40Chars, wep104Chars:
+		for _, c := range []byte(key) {
+			if c < ' ' || c > '~' {
+				return "", false
+			}
+		}
+
+		return hex.EncodeToString([]byte(key)), true
+	default:
+	}
+
+	return "", false
+}
+
+// network is one block handed to wpa_supplicant: the name and the 32-byte key in hex, the
+// WEP key in hex, or no key for an open network. passphrase is kept for SAE, which needs the
+// password itself (ADR 0136), when the record has one.
 type network struct {
-	rec    Record
-	ssid   string
-	keyHex string
+	rec        Record
+	ssid       string
+	keyHex     string
+	wepHex     string
+	passphrase string
 }
 
 var (
 	errBadConf = errors.New("invalid wifi.conf")
 	errBadHex  = errors.New("invalid WPA PSK")
 	errBadPass = errors.New("invalid WPA credentials")
+	errBadWEP  = errors.New("invalid WEP key")
 )
 
 // decode turns a stored network into what wpa_supplicant gets. A passphrase becomes its
@@ -237,8 +314,15 @@ func decode(rec Record) (network, error) {
 		return none, errBadConf
 	}
 
-	decoded := network{rec: rec, ssid: string(ssid), keyHex: ""}
+	decoded := network{rec: rec, ssid: string(ssid), keyHex: "", wepHex: "", passphrase: ""}
 	switch {
+	case rec.Security == SecurityWEP:
+		key, ok := wepKeyHex(string(pass))
+		if !ok {
+			return none, errBadWEP
+		}
+
+		decoded.wepHex = key
 	case rec.HexPSK != "":
 		if !IsHexPSK(rec.HexPSK) {
 			return none, errBadHex

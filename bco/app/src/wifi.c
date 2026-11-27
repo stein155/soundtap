@@ -239,6 +239,15 @@ static unsigned char rates[8];         /* management/EAPOL rate vector: the AP's
 static unsigned char data_rates[8];    /* data frames: the AP's rates fastest first (wstation_rate_chain) */
 static unsigned char pmk[32], seed[32];
 static unsigned prof_sec; /* the profile's security, WIFI_SEC_* (SET_PROFILE) */
+/* A WEP profile (ADR 0136): the key and its index, the authentication asked for (WIFI_WEP_*), the
+ * next IV (from the SCM's random seed, then counting up per frame), and the authentication
+ * algorithm the join tries now (0 open system, 1 shared key) with the shared key's challenge. */
+static unsigned char wep_key[13], wep_len, wep_idx, wep_auth;
+static unsigned wep_iv, auth_alg, challenge_due;
+static unsigned char challenge[253];
+static unsigned challenge_len;
+#define AUTH_SHARED_KEY 1
+#define STATUS_ALG_UNSUPPORTED 13
 
 /* MIB 20:11 Rssi (S8, read-only): the core's RSSI of the BSS we are joined to, in dBm. The own
  * WiLD core never writes that MIB, so it reads 0 there; the level of the AP's last beacon
@@ -294,7 +303,7 @@ static unsigned mic_fail_t, mic_fail_seen, cm_until, cm_on;
 #define CM_HOLD_MS 60000u
 
 /* join sub-steps */
-enum { J_SCAN, J_SETUP, J_AUTH, J_ASSOC, J_4WAY };
+enum { J_SCAN, J_SETUP, J_AUTH, J_ASSOC, J_4WAY, J_KEYS };
 static unsigned jstep, jtries, deadline, join_pending, corebd, rxauthok, rxassocok, kicked;
 static unsigned kick_sub, kick_reason; /* the deauthentication (0xc0) or disassociation (0xa0) and its reason */
 /* Why the last join failed, for STATUS (wifi_fail): the step and the AP's status or reason code. */
@@ -498,12 +507,40 @@ static void tx_push(unsigned addr, unsigned body_len, unsigned peer, unsigned de
     wifi_tx_frames++;
 }
 
+/* The first authentication frame: open system (wstation_auth), or for WEP's shared key algorithm
+ * 1, transaction 1. */
 static int send_auth(void)
 {
     unsigned a = tx_buf();
-    if (!a || !wstation_auth((volatile uint8_t *)a, TXFBUF, own, cur.bssid, rates))
+    static const unsigned char shared1[6] = {AUTH_SHARED_KEY, 0, 1, 0, 0, 0};
+    if (!a)
+        return 0;
+    if (auth_alg == AUTH_SHARED_KEY ?
+            wframe((volatile uint8_t *)a, TXFBUF, 0xb0, cur.bssid, own, cur.bssid, rates, 0, shared1, 6) <= 0 :
+            !wstation_auth((volatile uint8_t *)a, TXFBUF, own, cur.bssid, rates))
         return 0;
     tx_push(a, 6, PEER_NONE, 0xffff);
+    return 1;
+}
+
+/* Shared key authentication's third frame: algorithm 1, transaction 3, status 0 and the AP's
+ * challenge text, enciphered with the WEP key (IEEE 802.11-2020 12.3.3.3): the Protected bit set,
+ * sent TX_RAW, as the app enciphered it. */
+static int send_challenge(void)
+{
+    unsigned a = tx_buf(), n = 6 + 2 + challenge_len, len;
+    unsigned char *p = secbuf + WSEC_WEP_HDR;
+    volatile unsigned char *b = (volatile unsigned char *)a;
+    if (!a)
+        return 0;
+    p[0] = AUTH_SHARED_KEY, p[1] = 0, p[2] = 3, p[3] = 0, p[4] = 0, p[5] = 0;
+    p[6] = 16, p[7] = (unsigned char)challenge_len;
+    copy(p + 8, challenge, challenge_len);
+    len = wsec_wep_protect(wep_key, wep_len, wep_idx, wep_iv++, secbuf, n);
+    if (wframe(b, TXFBUF, 0x40b0, cur.bssid, own, cur.bssid, rates, 0, secbuf, len) <= 0)
+        return 0;
+    b[8 + 0x13] = b[0x94 + 0x13] = 1; /* TX_RAW */
+    tx_push(a, len, PEER_NONE, 0xffff);
     return 1;
 }
 
@@ -533,14 +570,19 @@ static int send_assoc(void)
  * per frame; a retry is the core's, of the same frame. Returns the body length, 0 on reject. */
 static int sw_data(unsigned a, const unsigned char *da, unsigned et, const unsigned char *p, unsigned n)
 {
-    unsigned char *m = secbuf + WSEC_TKIP_HDR;
+    int wep = prof_sec == WIFI_SEC_WEP;
+    unsigned char *m = secbuf + (wep ? WSEC_WEP_HDR : WSEC_TKIP_HDR);
     unsigned len;
-    if (sw_pair.cipher != WSEC_TKIP || n > 1500)
+    if ((!wep && sw_pair.cipher != WSEC_TKIP) || n > 1500)
         return 0;
     m[0] = 0xaa, m[1] = 0xaa, m[2] = 3, m[3] = m[4] = m[5] = 0;
     m[6] = (unsigned char)(et >> 8), m[7] = (unsigned char)et;
     copy(m + 8, p, n);
-    len = wsec_tkip_protect(sw_pair.key, sw_pair.key + 24, 0, ++sw_pair.tsc, own, da, own, secbuf, 8 + n);
+    if (wep) /* WEP: the profile's key and index, the next IV */
+        len = wsec_wep_protect(wep_key, wep_len, wep_idx, wep_iv++ & 0xffffff, secbuf, 8 + n);
+    else
+        len = wsec_tkip_protect(sw_pair.key, sw_pair.key + 24, 0, ++sw_pair.tsc, own, da, own, secbuf,
+                                8 + n);
     return wstation_raw((volatile uint8_t *)a, TXFBUF, own, cur.bssid, da, data_rates,
                         et == WPA_EAPOL_ETHERTYPE, secbuf, len);
 }
@@ -557,7 +599,7 @@ static int send_eapol(const unsigned char *f, unsigned n)
     if (!a)
         return 0;
     /* under the app's own pairwise key (TKIP) the app enciphers it, once the AP uses the key */
-    if (keyed && ap_keyed && sw_pair.cipher)
+    if (keyed && ap_keyed && sw_pair.cipher && prof_sec != WIFI_SEC_WEP)
         body = sw_data(a, cur.bssid, WPA_EAPOL_ETHERTYPE, f, n);
     else
         body = wstation_eapol((volatile uint8_t *)a, TXFBUF, own, cur.bssid, rates, f, n);
@@ -585,7 +627,7 @@ int radio_tx_eth(const unsigned char *f, unsigned n)
         wifi_tx_drop++;
         return -1;
     }
-    body = sw_pair.cipher ? sw_data(a, f, et, f + 14, n - 14) :
+    body = sw_pair.cipher || prof_sec == WIFI_SEC_WEP ? sw_data(a, f, et, f + 14, n - 14) :
            wstation_data((volatile uint8_t *)a, TXFBUF, own, cur.bssid, f, data_rates, et, f + 14,
                          n - 14, prof_sec != WIFI_SEC_OPEN);
     if (body <= 0) {
@@ -701,8 +743,16 @@ static int sw_open(const volatile unsigned char *h, const volatile unsigned char
         return -1;
     copy(hh, h, 24);
     copy(secbuf, body, n);
-    if (!wsec_extiv(secbuf))
-        return -1; /* WEP: no keys yet (ADR 0136, later in this branch) */
+    if (!wsec_extiv(secbuf)) { /* WEP: a default key, unicast and group alike */
+        k = &sw_grp[wsec_keyid(secbuf)];
+        if (k->cipher != WSEC_WEP40 && k->cipher != WSEC_WEP104)
+            return -1;
+        r = wsec_wep_open(k->key, k->cipher == WSEC_WEP40 ? 5 : 13, secbuf, n);
+        if (r < 0)
+            return -1;
+        *off = WSEC_WEP_HDR;
+        return r;
+    }
     k = (hh[4] & 1) ? &sw_grp[wsec_keyid(secbuf)] : &sw_pair;
     if (k->cipher != WSEC_TKIP || n < WSEC_TKIP_OVERHEAD)
         return -1;
@@ -738,11 +788,22 @@ static void rx_station(const volatile unsigned char *b, unsigned len)
         if (sub == 0xc0 || sub == 0xa0) { /* deauth / disassoc: keep the reason */
             kicked = 1, kick_sub = sub, kick_reason = le16(body);
             fail_step = WIFI_FAIL_KICKED, fail_code = le16(body);
-        } else if (sub == 0xb0 && len >= 0xcc + 6 && le16(body) == 0 && le16(body + 2) == 2) {
-            if (le16(body + 4) == 0)
+        } else if (sub == 0xb0 && len >= 0xcc + 6 && le16(body) == auth_alg && !(fc & 0x4000)) {
+            /* Open system answers transaction 2; shared key's 2 carries the challenge text and
+             * its 4 the result (IEEE 802.11-2020 12.3.3) */
+            unsigned seq = le16(body + 2), st = le16(body + 4);
+            if (st) { /* refused: the AP's status code says why */
+                fail_step = WIFI_FAIL_AUTH, fail_code = st;
+            } else if (seq == 2 && auth_alg != AUTH_SHARED_KEY) {
                 rxauthok = 1;
-            else /* refused: the AP's status code says why */
-                fail_step = WIFI_FAIL_AUTH, fail_code = le16(body + 4);
+            } else if (seq == 2 && len >= 0xcc + 8 && body[6] == 16 && body[7] &&
+                       len >= 0xcc + 8 + body[7]) {
+                challenge_len = body[7];
+                copy(challenge, body + 8, challenge_len);
+                challenge_due = 1;
+            } else if (seq == 4 && auth_alg == AUTH_SHARED_KEY) {
+                rxauthok = 1;
+            }
         } else if (sub == 0x10 && len >= 0xcc + 4) {
             if (le16(body + 2) == 0)
                 rxassocok = 1;
@@ -1351,6 +1412,8 @@ static int match(const struct bss *b)
         return 0;
     if (prof_sec == WIFI_SEC_OPEN)
         return !(b->caps & 0x10) && !b->rsn && !b->wpa;
+    if (prof_sec == WIFI_SEC_WEP) /* the Privacy bit without an RSN or WPA IE */
+        return (b->caps & 0x10) && !b->rsn && !b->wpa;
     if (!choose(b, &proto, &pair, &grp))
         return 0;
     return !(cm_on && !due(cm_until) && (pair == WPA_CIPHER_TKIP || grp == WPA_CIPHER_TKIP));
@@ -1456,6 +1519,9 @@ static void join_attempt(void)
     for (unsigned r = 0; r < 8; r++)
         rates[r] = lo;
     keyed = ap_keyed = 0, keys_due = 0, rxauthok = rxassocok = kicked = 0, eappend = 0;
+    /* WEP shared key asks with algorithm 1 at once; "auto" starts with open system */
+    auth_alg = prof_sec == WIFI_SEC_WEP && wep_auth == WIFI_WEP_SHARED ? AUTH_SHARED_KEY : 0;
+    challenge_due = 0;
     build_join_bc(bc, cur.bssid, cur.chan);
     corebd = 0;
     wr_cmd_checked(&tx, 0xbc, MGMT_MODULE, 11, bc, sizeof bc);
@@ -1514,6 +1580,22 @@ static void join_step(void)
         return;
     }
     case J_AUTH:
+        /* WEP shared key: answer the challenge, then wait for transaction 4. With "auto" an AP
+         * that refuses open system for its algorithm gets shared key, in the same attempt. */
+        if (challenge_due) {
+            challenge_due = 0;
+            if (!send_challenge())
+                retry();
+            return;
+        }
+        if (!rxauthok && fail_step == WIFI_FAIL_AUTH && fail_code == STATUS_ALG_UNSUPPORTED &&
+            prof_sec == WIFI_SEC_WEP && wep_auth == WIFI_WEP_AUTO && auth_alg != AUTH_SHARED_KEY) {
+            auth_alg = AUTH_SHARED_KEY, fail_step = fail_code = 0;
+            if (!send_auth())
+                retry();
+            deadline = now + 2000;
+            return;
+        }
         if (rxauthok) { /* associate at once: the AP ages the auth state out within ~1 s */
             if (!send_assoc()) {
                 retry();
@@ -1544,6 +1626,20 @@ static void join_step(void)
                 join_done();
                 return;
             }
+            /* WEP: the key is the app's (ADR 0136); the core only learns that frames under its
+             * index are, and the link is up. A full ring tries again on the next poll. */
+            if (prof_sec == WIFI_SEC_WEP) {
+                sw_grp[wep_idx].cipher = 0;
+                if (set_key(0, wep_idx, wep_key, wep_len == 5 ? WSEC_WEP40 : WSEC_WEP104)) {
+                    jstep = J_KEYS;
+                    return;
+                }
+                copy(sw_grp[wep_idx].key, wep_key, wep_len);
+                sw_grp[wep_idx].cipher = wep_len == 5 ? WSEC_WEP40 : WSEC_WEP104;
+                keyed = ap_keyed = 1;
+                join_done();
+                return;
+            }
             snonce(sn);
             wpa_sm_init(&sm, pmk, cur.bssid, own, sn);
             /* Message 2 repeats the IE of the request */
@@ -1552,6 +1648,16 @@ static void join_step(void)
         } else if (due(deadline)) {
             if (fail_step != WIFI_FAIL_ASSOC)
                 fail_step = WIFI_FAIL_ASSOC_TIMEOUT, fail_code = 0;
+            retry();
+        }
+        return;
+    case J_KEYS: /* a WEP key the full command ring did not take */
+        if (!set_key(0, wep_idx, wep_key, wep_len == 5 ? WSEC_WEP40 : WSEC_WEP104)) {
+            copy(sw_grp[wep_idx].key, wep_key, wep_len);
+            sw_grp[wep_idx].cipher = wep_len == 5 ? WSEC_WEP40 : WSEC_WEP104;
+            keyed = ap_keyed = 1;
+            join_done();
+        } else if (due(deadline)) {
             retry();
         }
         return;
@@ -1631,7 +1737,9 @@ static void drop_link(void)
         unsigned char pd[8] = {0};
         copy(pd, cur.bssid, 6);
         pd[6] = PEER_AP;
-        if (keyed) {
+        if (keyed && prof_sec == WIFI_SEC_WEP) {
+            set_key(0, wep_idx, 0, 0);
+        } else if (keyed) {
             set_key(1, 0, 0, 0);
             if (sm.gtk_idx >= 0)
                 set_key(0, (unsigned)(sm.gtk_idx & 3), 0, 0);
@@ -1769,7 +1877,8 @@ int wifi_join(const unsigned char *ssid, unsigned ssid_len, unsigned sec, const 
               unsigned key_len, const unsigned char s[32], unsigned flags, const unsigned char bssid[6])
 {
     if (ssid_len < 1 || ssid_len > 32 || state == WIFI_AP ||
-        !((sec == WIFI_SEC_OPEN && !key_len) || (sec == WIFI_SEC_PSK && key_len == 32)))
+        !((sec == WIFI_SEC_OPEN && !key_len) || (sec == WIFI_SEC_PSK && key_len == 32) ||
+          (sec == WIFI_SEC_WEP && (key_len == 7 || key_len == 15) && key[0] < 4 && key[1] <= WIFI_WEP_AUTO)))
         return -1;
     drop_link();
     copy(cur.ssid, ssid, ssid_len);
@@ -1779,9 +1888,14 @@ int wifi_join(const unsigned char *ssid, unsigned ssid_len, unsigned sec, const 
     cur.caps = 0;
     bss_want(0, ssid, ssid_len);
     for (unsigned i = 0; i < 32; i++)
-        pmk[i] = i < key_len ? key[i] : 0;
+        pmk[i] = sec == WIFI_SEC_PSK ? key[i] : 0;
+    for (unsigned i = 0; i < sizeof wep_key; i++)
+        wep_key[i] = sec == WIFI_SEC_WEP && i < key_len - 2 ? key[2 + i] : 0;
+    wep_len = sec == WIFI_SEC_WEP ? (unsigned char)(key_len - 2) : 0;
+    wep_idx = sec == WIFI_SEC_WEP ? key[0] : 0, wep_auth = sec == WIFI_SEC_WEP ? key[1] : 0;
     prof_sec = sec;
     copy(seed, s, 32);
+    wep_iv = seed[0] | seed[1] << 8 | (unsigned)seed[2] << 16;
     prof_flags = bssid ? flags & (WIFI_BSSID_FIXED | WIFI_BSSID_HINT | WIFI_ROAM) : 0;
     if (bssid)
         copy(prof_bssid, bssid, 6);
@@ -1806,6 +1920,9 @@ void wifi_leave(void)
     drop_link();
     for (unsigned i = 0; i < 32; i++)
         pmk[i] = seed[i] = 0;
+    for (unsigned i = 0; i < sizeof wep_key; i++)
+        wep_key[i] = 0;
+    wep_len = 0;
     bss_want(0, 0, 0);
     have_cur = 0, join_pending = 0;
     prof_flags = roam_on = roaming = 0, bg_phase = BG_IDLE, tx_hold = TX_OPEN;

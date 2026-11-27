@@ -300,6 +300,7 @@ const en = {
   discardChangesConfirm: 'Discard',
   resetFailed: 'Reset failed. Nothing was erased.',
   wifiPasswordLength: 'A Wi-Fi password is 8 to 63 characters.',
+  wifiWepKeyLength: 'A WEP key is 5 or 13 characters, or 10 or 26 hexadecimal digits.',
   wifiSsidLength: 'This name is too long for a Wi-Fi network.',
   mqttPortInvalid: 'Enter a port from 1 to 65535, or leave it empty.',
   undo: 'Undo',

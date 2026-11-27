@@ -42,6 +42,22 @@ follows what was negotiated: EAPOL-Key descriptor 2 for RSN, 254 for WPA; key de
 the first 256 bytes of the stream dropped) under TKIP, with a 64-byte PTK. WPA's Message 3 has no
 GTK; it comes in a group handshake, its key id in the key info.
 
+### WEP joins as stock joined it, on every model
+
+A WEP profile carries one static key (40 or 104 bits) and its index. The ST20's BCO joins an
+access point with the Privacy bit and no RSN or WPA IE, with open system or shared key
+authentication as the profile says, or open system first and shared key when the access point
+refuses it (status 13); the driver passes cfg80211's connect key, its index and its
+authentication type down, and keeps the static keys wpa_supplicant sets (`add_key`,
+`set_default_key`), which cfg80211 requires once a connect carries keys. soundtapd takes a
+`wep` security with a 5- or 13-character or 10- or 26-hex-digit key, stores it with
+`SECURITY=wep` in `wifi.conf` (an older file has no such line and reads as before, ADR 0120) and
+hands wpa_supplicant `key_mgmt=NONE`, `wep_key0`, `wep_tx_keyidx=0` and `auth_alg=OPEN SHARED`;
+wpa_supplicant is built with WEP for that on every model. The setup page offers WEP beside open
+and WPA, and a surveyed network without a WPA or RSN IE asks for a WEP key. The first install
+takes a WEP network stock saved, on the ST20 from its BCO's settings, elsewhere from stock's
+network profiles.
+
 ### WEP and TKIP run in software in the BCO app
 
 The BCO app enciphers and deciphers WEP and TKIP frames itself: RC4, the CRC-32 ICV, TKIP's key
@@ -75,6 +91,11 @@ Alternatives that lost:
 - `os/board/rootfs/linux-patches/0007-net-usb-add-soundtap-bco-link-driver.patch`: `bco_connect`
   and `bco_status_sec` in the driver.
 - `app/internal/bco/stockprofile.go`: `stockProfileFrom` takes stock's open profile.
+- `bco/app/src/wifi.c` (`send_challenge`, the `J_KEYS` step), `app/internal/wifi/conf.go`
+  (`SecurityWEP`, `IsWEPKey`), `app/internal/wifi/station.go` (`configure`),
+  `app/internal/speakerstate/backend_wifi.go` (`CheckWifi`), `app/cmd/soundtapd/stock_wifi.go`,
+  `app/frontend/src/components/organisms/settings/NetworkSettings/useWifiJoin.ts` and
+  `os/external.mk` (wpa_supplicant's `CONFIG_WEP`): WEP.
 - `bco/app/src/wscan.h` (`rsn_parse`, `wpa_parse`), `bco/app/src/wifi.c` (`choose`, `match`) and
   `bco/app/src/wpa.c` (`wpa_sm_config`, `wpa_own_ie`, descriptor 254 and version 1): which security a
   PSK profile joins, and its handshake.

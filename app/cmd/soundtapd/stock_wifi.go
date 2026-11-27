@@ -59,15 +59,17 @@ const (
 
 // Why stock's network is not taken over.
 var (
-	errStockNoNetwork    = errors.New("no WPA or open network saved")
+	errStockNoNetwork    = errors.New("no network saved")
+	errStockNotWEP       = errors.New("WEP key is not a WEP key")
 	errStockNotWPA       = errors.New("passphrase is not a WPA passphrase")
 	errStockNotAESBlocks = errors.New("encrypted passphrase is not whole AES blocks")
 	errStockWrongKey     = errors.New("passphrase does not decrypt with stock's key")
 )
 
-// stockNetwork is one network to join: an empty PSK and hexPSK mean an open network.
+// stockNetwork is one network to join: an empty PSK and hexPSK mean an open network; a WEP
+// network has its key in wep (ADR 0136).
 type stockNetwork struct {
-	ssid, psk, hexPSK string
+	ssid, psk, hexPSK, wep string
 }
 
 // adoptStockWifi turns the network stock was on into wifi.conf on the first boot after an
@@ -129,11 +131,17 @@ func adoptStockWifi(home, wifiConf string, log *slog.Logger) bool {
 
 // saveStockNetwork writes network as wifi.conf, the form the Wi-Fi manager reads.
 func saveStockNetwork(wifiConf string, network stockNetwork) error {
-	err := wifi.WriteConf(wifiConf, wifi.Record{
-		SSIDB64: base64.StdEncoding.EncodeToString([]byte(network.ssid)),
-		PSKB64:  base64.StdEncoding.EncodeToString([]byte(network.psk)),
-		HexPSK:  network.hexPSK,
-	})
+	rec := wifi.Record{
+		SSIDB64:  base64.StdEncoding.EncodeToString([]byte(network.ssid)),
+		PSKB64:   base64.StdEncoding.EncodeToString([]byte(network.psk)),
+		HexPSK:   network.hexPSK,
+		Security: "",
+	}
+	if network.wep != "" {
+		rec = wifi.NewRecord(network.ssid, wifi.SecurityWEP, network.wep)
+	}
+
+	err := wifi.WriteConf(wifiConf, rec)
 	if err != nil {
 		return fmt.Errorf("write wifi.conf: %w", err)
 	}
@@ -199,9 +207,15 @@ func adoptStockBCOWifi(
 
 // saveStockBCOProfile writes the network read from stock's BCO as wifi.conf.
 func saveStockBCOProfile(wifiConf string, profile bco.StockProfile, try int, log *slog.Logger) {
-	network := stockNetwork{ssid: profile.SSID, psk: profile.Passphrase, hexPSK: ""}
-	if bco.IsHexPSK(profile.Passphrase) {
-		network = stockNetwork{ssid: profile.SSID, psk: "", hexPSK: strings.ToLower(profile.Passphrase)}
+	network := stockNetwork{ssid: profile.SSID, psk: profile.Passphrase, hexPSK: "", wep: ""}
+
+	switch {
+	case profile.WEP:
+		network = stockNetwork{ssid: profile.SSID, psk: "", hexPSK: "", wep: profile.Passphrase}
+	case bco.IsHexPSK(profile.Passphrase):
+		network = stockNetwork{ssid: profile.SSID, psk: "", hexPSK: strings.ToLower(profile.Passphrase), wep: ""}
+	default:
+		// A WPA passphrase, or an open network: as read.
 	}
 
 	err := saveStockNetwork(wifiConf, network)
@@ -219,9 +233,11 @@ func saveStockBCOProfile(wifiConf string, profile bco.StockProfile, try int, log
 //	<WiFiProfiles><profile SSID="…" security="wpa_or_wpa2" passphrase="…" encrypted="true"
 //	  lastConnected="…" priority="…" /></WiFiProfiles>
 //
-// An encrypted passphrase is base64 of AES-256-CBC with PKCS#7 padding. WEP networks are
-// skipped: SoundTap joins WPA and open networks only. A 64-digit hex passphrase is a raw PSK,
-// as wpa_supplicant reads it.
+// An encrypted passphrase is base64 of AES-256-CBC with PKCS#7 padding. A 64-digit hex
+// passphrase is a raw PSK, as wpa_supplicant reads it. A WEP network keeps its key in wepKey,
+// as hex digits stock's own scripts write (set-wifi.sh, override-wifi-profile): taken as it
+// is when it is a WEP key, else decrypted like a passphrase when the profile is encrypted
+// (ADR 0136).
 func readStockNetwork(src io.Reader, key, initVector []byte) (stockNetwork, error) {
 	var doc stockWifiProfiles
 
@@ -236,7 +252,11 @@ func readStockNetwork(src io.Reader, key, initVector []byte) (stockNetwork, erro
 	}
 
 	if strings.EqualFold(profile.Security, "open") {
-		return stockNetwork{ssid: profile.SSID, psk: "", hexPSK: ""}, nil
+		return stockNetwork{ssid: profile.SSID, psk: "", hexPSK: "", wep: ""}, nil
+	}
+
+	if strings.EqualFold(profile.Security, "wep") {
+		return stockWEPNetwork(&profile, key, initVector)
 	}
 
 	pass := profile.Passphrase
@@ -249,12 +269,32 @@ func readStockNetwork(src io.Reader, key, initVector []byte) (stockNetwork, erro
 
 	switch {
 	case len(pass) == wpaHexPSKLen && isHex(pass):
-		return stockNetwork{ssid: profile.SSID, psk: "", hexPSK: strings.ToLower(pass)}, nil
+		return stockNetwork{ssid: profile.SSID, psk: "", hexPSK: strings.ToLower(pass), wep: ""}, nil
 	case len(pass) >= wpaPassphraseMin && len(pass) <= wpaPassphraseMax:
-		return stockNetwork{ssid: profile.SSID, psk: pass, hexPSK: ""}, nil
+		return stockNetwork{ssid: profile.SSID, psk: pass, hexPSK: "", wep: ""}, nil
 	default:
 		return stockNetwork{}, errStockNotWPA
 	}
+}
+
+// stockWEPNetwork is a WEP profile's network: its wepKey as it stands when that is a WEP key,
+// else decrypted with stock's key when the profile says it is encrypted.
+func stockWEPNetwork(profile *stockWifiProfile, key, initVector []byte) (stockNetwork, error) {
+	wep := profile.WEPKey
+	if !wifi.IsWEPKey(wep) && (profile.Encrypted == "true" || profile.Encrypted == "1") {
+		plain, err := decryptStockPassphrase(wep, key, initVector)
+		if err != nil {
+			return stockNetwork{}, err
+		}
+
+		wep = plain
+	}
+
+	if !wifi.IsWEPKey(wep) {
+		return stockNetwork{}, errStockNotWEP
+	}
+
+	return stockNetwork{ssid: profile.SSID, psk: "", hexPSK: "", wep: wep}, nil
 }
 
 // stockWifiProfiles is stock's NetworkProfiles.xml.
@@ -267,16 +307,17 @@ type stockWifiProfile struct {
 	SSID          string `xml:"SSID,attr"`
 	Security      string `xml:"security,attr"`
 	Passphrase    string `xml:"passphrase,attr"`
+	WEPKey        string `xml:"wepKey,attr"`
 	Encrypted     string `xml:"encrypted,attr"`
 	LastConnected string `xml:"lastConnected,attr"`
 }
 
-// lastJoinedProfile is the WPA or open network stock joined last; false without one.
+// lastJoinedProfile is the network stock joined last; false without one.
 func lastJoinedProfile(profiles []stockWifiProfile) (stockWifiProfile, bool) {
 	best, bestAt := -1, uint64(0)
 
 	for index, profile := range profiles {
-		if profile.SSID == "" || strings.EqualFold(profile.Security, "wep") {
+		if profile.SSID == "" {
 			continue
 		}
 

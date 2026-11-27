@@ -4,6 +4,12 @@
 include $(sort $(wildcard $(BR2_EXTERNAL_SOUNDTAP_PATH)/package/*/*.mk))
 include $(BR2_EXTERNAL_SOUNDTAP_PATH)/ignore-cves.mk
 
+# wpa_supplicant 2.12 builds without WEP unless asked. SoundTap joins the WEP networks stock
+# joined, on every model (ADR 0136): its configure step uncomments every CONFIG_ENABLE entry.
+ifeq ($(BR2_PACKAGE_SOUNDTAP_RUNTIME),y)
+WPA_SUPPLICANT_CONFIG_ENABLE += CONFIG_WEP
+endif
+
 ifeq ($(BR2_PACKAGE_SOUNDTAP_RUNTIME),y)
 define SOUNDTAP_RUNTIME_REMOVE_UNUSED_ALSA_UTILS
 	rm -f $(TARGET_DIR)/usr/bin/alsamixer

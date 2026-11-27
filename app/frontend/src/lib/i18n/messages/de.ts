@@ -309,6 +309,7 @@ const de: Messages = {
   discardChangesConfirm: 'Verwerfen',
   resetFailed: 'Zurücksetzen fehlgeschlagen. Es wurde nichts gelöscht.',
   wifiPasswordLength: 'Ein WLAN-Passwort hat 8 bis 63 Zeichen.',
+  wifiWepKeyLength: 'Ein WEP-Schlüssel hat 5 oder 13 Zeichen oder 10 oder 26 Hexadezimalziffern.',
   wifiSsidLength: 'Dieser Name ist für ein WLAN zu lang.',
   mqttPortInvalid: 'Geben Sie einen Port von 1 bis 65535 ein oder lassen Sie das Feld leer.',
   undo: 'Rückgängig',

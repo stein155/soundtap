@@ -56,7 +56,7 @@ func profiles(entries ...string) string {
 
 // network is a stockNetwork; an empty psk and hexPSK are an open one.
 func network(ssid, psk, hexPSK string) stockNetwork {
-	return stockNetwork{ssid: ssid, psk: psk, hexPSK: hexPSK}
+	return stockNetwork{ssid: ssid, psk: psk, hexPSK: hexPSK, wep: ""}
 }
 
 func TestReadStockNetwork(t *testing.T) {
@@ -118,17 +118,22 @@ func TestReadStockNetwork(t *testing.T) {
 			want: network("Nieuw", "nieuwnieuw", ""), bad: false,
 		},
 		{
-			name: "wep is passed over",
+			name: "wep joined last: its encrypted key (ADR 0136)",
 			xml: profiles(
 				`<profile SSID="Oud" security="wep" wepKey="`+enc("1234567890")+
 					`" encrypted="true" lastConnected="300" />`,
 				`<profile SSID="Thuis" `+wpa+` passphrase="`+enc("geheim123")+
 					`" encrypted="true" lastConnected="1" />`),
-			want: network("Thuis", "geheim123", ""), bad: false,
+			want: stockNetwork{ssid: "Oud", psk: "", hexPSK: "", wep: "1234567890"}, bad: false,
 		},
 		{
-			name: "only wep", bad: true, want: none,
-			xml: profiles(`<profile SSID="Oud" security="wep" wepKey="abcde" />`),
+			name: "wep with a plain key, as stock's scripts write it",
+			xml:  profiles(`<profile SSID="Oud" security="wep" wepKey="0123456789abcdef0123456789" />`),
+			want: stockNetwork{ssid: "Oud", psk: "", hexPSK: "", wep: "0123456789abcdef0123456789"}, bad: false,
+		},
+		{
+			name: "wep with a key that is none", bad: true, want: none,
+			xml: profiles(`<profile SSID="Oud" security="wep" wepKey="abcdef" />`),
 		},
 		{
 			name: "wrong key", bad: true, want: none,
@@ -245,7 +250,7 @@ func TestAdoptStockBCOWifi(t *testing.T) {
 		return func(context.Context) (bco.StockProfile, error) { return profile, err }
 	}
 	profile := func(ssid, passphrase string) bco.StockProfile {
-		return bco.StockProfile{SSID: ssid, Passphrase: passphrase}
+		return bco.StockProfile{SSID: ssid, Passphrase: passphrase, WEP: false}
 	}
 	ctx := context.Background()
 	conf := filepath.Join(t.TempDir(), "wifi.conf")
@@ -285,6 +290,15 @@ func TestAdoptStockBCOWifi(t *testing.T) {
 		t.Fatalf("wifi.conf = %q, want a PSK_HEX line", got)
 	}
 
+	// A WEP network goes in with its key and SECURITY=wep (ADR 0136).
+	conf = filepath.Join(t.TempDir(), "wifi.conf")
+	adoptStockBCOWifi(ctx, conf, read(bco.StockProfile{SSID: "Oud", Passphrase: "abcde", WEP: true}, nil), noWait, log)
+
+	if got, _ := os.ReadFile(conf); !strings.Contains(string(got), "SECURITY=wep\n") ||
+		!strings.Contains(string(got), "PSK_B64="+base64.StdEncoding.EncodeToString([]byte("abcde"))+"\n") {
+		t.Fatalf("wifi.conf = %q, want the WEP key and SECURITY=wep", got)
+	}
+
 	// An open network goes in without a passphrase, as the Wi-Fi manager reads an open one.
 	conf = filepath.Join(t.TempDir(), "wifi.conf")
 	adoptStockBCOWifi(ctx, conf, read(profile("Cafe", ""), nil), noWait, log)
@@ -311,7 +325,7 @@ func TestAdoptStockBCOWifiRetries(t *testing.T) {
 	t.Parallel()
 
 	notImportable := fmt.Errorf("%w: WEP network", bco.ErrStockProfileNotImportable)
-	good := bco.StockProfile{SSID: "Home net", Passphrase: "correct horse"}
+	good := bco.StockProfile{SSID: "Home net", Passphrase: "correct horse", WEP: false}
 
 	for name, tcase := range map[string]struct {
 		errs      []error // one per read; past the end, the read succeeds

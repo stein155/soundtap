@@ -38,11 +38,13 @@ int wifi_scan(int start);
 void wifi_scan_ssid(const unsigned char *ssid, unsigned n);
 int wifi_bss(unsigned i, struct wifi_bss *o);
 /* Join a network with the profile's security (WIFI_SEC_*, SET_PROFILE's security byte): open
- * (no key), PSK (key = the 32-byte PMK), and 32 random bytes from the SCM for the SNonce.
+ * (no key), PSK (key = the 32-byte PMK), WEP (key = key index 0..3, authentication WIFI_WEP_*, then
+ * the 5- or 13-byte WEP key), and 32 random bytes from the SCM for the SNonce (and WEP's first IV).
  * flags (WIFI_BSSID_*, WIFI_ROAM) and bssid come from SET_PROFILE's tail (ADR 0135); flags 0
  * joins the strongest access point of the SSID and never roams.
  * Returns 0 when the join started (state goes JOINING, then UP or FAILED), -1 when refused. */
-enum { WIFI_SEC_OPEN, WIFI_SEC_PSK };
+enum { WIFI_SEC_OPEN, WIFI_SEC_PSK, WIFI_SEC_WEP };
+enum { WIFI_WEP_OPEN, WIFI_WEP_SHARED, WIFI_WEP_AUTO }; /* WEP authentication: open system first */
 #define WIFI_BSSID_FIXED 0x1u /* only this BSSID */
 #define WIFI_BSSID_HINT 0x2u  /* this BSSID first, when it is heard */
 #define WIFI_ROAM 0x4u        /* roam to a clearly stronger access point of the SSID */

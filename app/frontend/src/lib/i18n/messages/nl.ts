@@ -307,6 +307,7 @@ const nl: Messages = {
   discardChangesConfirm: 'Weggooien',
   resetFailed: 'Terugzetten mislukt. Er is niets gewist.',
   wifiPasswordLength: 'Een wifi-wachtwoord is 8 tot 63 tekens.',
+  wifiWepKeyLength: 'Een WEP-sleutel is 5 of 13 tekens, of 10 of 26 hexadecimale tekens.',
   wifiSsidLength: 'Deze naam is te lang voor een wifi-netwerk.',
   mqttPortInvalid: 'Vul een poort van 1 tot 65535 in, of laat het leeg.',
   undo: 'Ongedaan maken',

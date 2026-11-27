@@ -302,6 +302,7 @@ const af: Messages = {
   discardChangesConfirm: 'Gooi weg',
   resetFailed: 'Terugstel het misluk. Niks is uitgevee nie.',
   wifiPasswordLength: '’n Wi-Fi-wagwoord is 8 tot 63 karakters.',
+  wifiWepKeyLength: '’n WEP-sleutel is 5 of 13 karakters, of 10 of 26 heksadesimale syfers.',
   wifiSsidLength: 'Hierdie naam is te lank vir ’n Wi-Fi-netwerk.',
   mqttPortInvalid: 'Voer ’n poort van 1 tot 65535 in, of laat dit leeg.',
   undo: 'Ontdoen',

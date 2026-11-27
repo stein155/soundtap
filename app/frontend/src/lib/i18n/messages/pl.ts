@@ -304,6 +304,7 @@ const pl: Messages = {
   discardChangesConfirm: 'Odrzuć',
   resetFailed: 'Nie udało się przywrócić ustawień fabrycznych. Nic nie usunięto.',
   wifiPasswordLength: 'Hasło Wi-Fi musi mieć od 8 do 63 znaków.',
+  wifiWepKeyLength: 'Klucz WEP musi mieć 5 lub 13 znaków albo 10 lub 26 cyfr szesnastkowych.',
   wifiSsidLength: 'Ta nazwa jest za długa dla sieci Wi-Fi.',
   mqttPortInvalid: 'Wpisz port od 1 do 65535 albo zostaw pole puste.',
   undo: 'Cofnij',

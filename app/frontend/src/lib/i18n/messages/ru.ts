@@ -301,6 +301,8 @@ const ru: Messages = {
   discardChangesConfirm: 'Не сохранять',
   resetFailed: 'Не удалось выполнить сброс. Ничего не удалено.',
   wifiPasswordLength: 'Пароль Wi-Fi должен содержать от 8 до 63 символов.',
+  wifiWepKeyLength:
+    'Ключ WEP должен содержать 5 или 13 символов либо 10 или 26 шестнадцатеричных цифр.',
   wifiSsidLength: 'Это название слишком длинное для сети Wi-Fi.',
   mqttPortInvalid: 'Введите порт от 1 до 65535 или оставьте поле пустым.',
   undo: 'Отменить',
