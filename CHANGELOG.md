@@ -45,6 +45,8 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
 - **SoundTouch 20: on networks that mix WPA and WPA2, apps find the speaker again.** The
   speaker now also receives such a network's broadcasts, which the AirPlay, Spotify and
   SoundTap apps use to find it.
+- **On a network that hands out no gateway**, or has no internet, the display and the Wi-Fi
+  lamp now say connected instead of "Connecting" for ever.
 
 ## [app-v0.1.0-alpha.6] - 2026-11-27
 

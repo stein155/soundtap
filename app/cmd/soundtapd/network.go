@@ -243,9 +243,20 @@ func startMDNS(
 }
 
 // outboundIP returns the primary non-loopback IPv4 by inspecting the route to a public
-// address (no packet is sent). Empty when offline. IPv4 stays the speaker's one address
-// for the API, the A record and multiroom; its IPv6 addresses come on top (ADR 0134).
+// address (no packet is sent), or, on a network without a default route (a router that
+// hands out no gateway, a LAN without internet), the IPv4 its interface holds. Empty when
+// offline. IPv4 stays the speaker's one address for the API, the A record and multiroom;
+// its IPv6 addresses come on top (ADR 0134).
 func outboundIP() string {
+	if ip := routedIPv4(); ip != "" {
+		return ip
+	}
+
+	return lanIPv4(interfaceIPs())
+}
+
+// routedIPv4 is the source address of the route to a public address, empty without one.
+func routedIPv4() string {
 	conn, err := (&net.Dialer{}).DialContext(context.Background(), "udp4", "8.8.8.8:80")
 	if err != nil {
 		return ""
@@ -254,6 +265,66 @@ func outboundIP() string {
 
 	if local, ok := conn.LocalAddr().(*net.UDPAddr); ok {
 		return local.IP.String()
+	}
+
+	return ""
+}
+
+// ifaceIPs is one interface's flags and addresses, as lanIPv4 reads them.
+type ifaceIPs struct {
+	name  string
+	flags net.Flags
+	ips   []net.IP
+}
+
+func interfaceIPs() []ifaceIPs {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+
+	out := make([]ifaceIPs, 0, len(ifaces))
+
+	for _, iface := range ifaces {
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+
+		entry := ifaceIPs{name: iface.Name, flags: iface.Flags}
+
+		for _, addr := range addrs {
+			if ipNet, ok := addr.(*net.IPNet); ok {
+				entry.ips = append(entry.ips, ipNet.IP)
+			}
+		}
+
+		out = append(out, entry)
+	}
+
+	return out
+}
+
+// lanIPv4 is the first IPv4 of the station or wired interface (wlan0, eth0) that is up with
+// a carrier (a joined network, a plugged cable), not link-local. Other interfaces never
+// count: the setup AP's wlan1 (the speaker is the router there) and an alpha image's USB
+// gadget (usb0, 192.168.7.2 with a bench host on the cable) say nothing about the LAN.
+func lanIPv4(ifaces []ifaceIPs) string {
+	const live = net.FlagUp | net.FlagRunning
+
+	for _, iface := range ifaces {
+		if (iface.name != "wlan0" && iface.name != "eth0") || iface.flags&live != live {
+			continue
+		}
+
+		for _, ip := range iface.ips {
+			v4 := ip.To4()
+			if v4 == nil || v4.IsLinkLocalUnicast() {
+				continue
+			}
+
+			return v4.String()
+		}
 	}
 
 	return ""
