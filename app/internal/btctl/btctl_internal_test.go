@@ -5,8 +5,10 @@ package btctl
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -175,13 +177,27 @@ func TestConnectedStateCannotBeFakedByADeviceName(t *testing.T) {
 	}
 }
 
-// An adapter with nothing paired keeps the adapter and lists no devices.
+// An adapter with nothing paired keeps the adapter and lists no devices. The list is
+// "devices": [], never null: the settings page reads its length and failed on null.
 func TestReadWithNoPairingsKeepsTheAdapter(t *testing.T) {
 	t.Parallel()
 
 	bus, _ := serve(t, objects{adapterPath: adapter()})
-	if st := Read(context.Background(), bus); !st.Adapter || len(st.Devices) != 0 {
+
+	st := Read(context.Background(), bus)
+	if !st.Adapter || len(st.Devices) != 0 {
 		t.Fatalf("status = %#v", st)
+	}
+
+	for _, s := range []Status{st, Read(context.Background(), down)} {
+		encoded, err := json.Marshal(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if !strings.Contains(string(encoded), `"devices":[]`) {
+			t.Errorf("encoded %s, want \"devices\":[]", encoded)
+		}
 	}
 }
 

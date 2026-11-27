@@ -92,6 +92,12 @@ export async function setVolume(
   return send('/api/volume', 'POST', group ? { volume: value, group } : { volume: value }, speaker);
 }
 
+// Mutes or unmutes the speaker as its remote's mute key does: the level stays, and
+// getMutedLevel reads it back while muted, also after a reload.
+export async function setMuted(muted: boolean, speaker?: string): Promise<unknown> {
+  return send('/api/mute', 'POST', { muted }, speaker);
+}
+
 // Select (play) a TuneIn station by id.
 export async function selectStation(
   tuneInId: string,

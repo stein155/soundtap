@@ -32,6 +32,22 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
 
 ### Fixed
 
+- **The Settings page no longer fails to open** on a speaker that has no Bluetooth device
+  paired.
+- **The first install takes over every Wi-Fi network** the original software had saved, not
+  only one. Before, it could pick a network that was no longer there, because the original
+  software dated a network it joined at start-up in 2015; the speaker then never got online
+  until you set the network again.
+- **Mute in the app keeps your volume**: it mutes the speaker as the remote's mute key does,
+  and unmuting brings back the volume you had, also after reloading the page or from another
+  phone. Before, unmuting after a reload went to 25.
+- **Music apps that control the speaker over UPnP/DLNA** see the real volume while it is
+  muted, not 0.
+- **A song title with an odd character from a Bluetooth phone** no longer stops the title
+  from showing.
+- **Leftover pieces of a save interrupted by a power cut are cleaned up** at start, so they
+  cannot slowly fill the speaker's storage.
+- **TuneIn browsing passes addresses on exactly as asked.**
 - **SoundTouch 20: the setup network handles phones better.** The speaker's network chip now
   accepts what a phone sends it, keeps messages for a phone that has gone to sleep until it
   wakes, and sends messages for every phone at the slowest speed, so phones further away hear

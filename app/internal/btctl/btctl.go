@@ -101,6 +101,8 @@ func flag(props map[string]dbus.Variant, key string) bool {
 func Read(ctx context.Context, bus Bus) Status {
 	var status Status
 
+	status.Devices = []Device{} // "devices": [] without an adapter too; the page reads its length
+
 	objs, err := managed(ctx, bus)
 	if err != nil {
 		return status
@@ -132,8 +134,9 @@ func Paired(ctx context.Context, bus Bus) []Device {
 	return pairedOf(objs)
 }
 
+// pairedOf is never nil: nothing paired encodes as "devices": [], not null.
 func pairedOf(objs objects) []Device {
-	var devs []Device
+	devs := []Device{}
 
 	each(objs, deviceIface, func(objectPath dbus.ObjectPath, props map[string]dbus.Variant) {
 		if !flag(props, "Paired") {

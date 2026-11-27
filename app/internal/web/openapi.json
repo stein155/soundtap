@@ -208,6 +208,53 @@
         ]
       }
     },
+    "/api/mute": {
+      "post": {
+        "tags": [
+          "Playback"
+        ],
+        "summary": "Mute or unmute",
+        "description": "The remote's mute: the level stays, GET /api/volume reports it with muted true, and an unmute returns to it.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "muted": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "muted"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Volume"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Request"
+          }
+        ]
+      }
+    },
     "/api/power": {
       "post": {
         "tags": [

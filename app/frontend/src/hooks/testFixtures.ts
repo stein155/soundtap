@@ -167,6 +167,7 @@ export const live = (over: Partial<Live> = {}): Live => ({
   unreachable: false,
   refreshNowPlaying: vi.fn(),
   changeVolume: vi.fn(),
+  showVolume: vi.fn(),
   playOptimistic: vi.fn(),
   stopOptimistic: vi.fn(),
   releaseStopHold: vi.fn(),

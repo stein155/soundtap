@@ -26,6 +26,7 @@ type fakeBackend struct {
 	state      string
 	stopErr    error
 	volume     int
+	muted      bool
 	at         time.Duration
 }
 
@@ -41,7 +42,7 @@ func newFakeBackend(state string, volume int) *fakeBackend {
 	var none Meta
 
 	return &fakeBackend{
-		uri: "", title: "", meta: none, stopped: false, state: state, stopErr: nil, volume: volume, at: 0,
+		uri: "", title: "", meta: none, stopped: false, state: state, stopErr: nil, volume: volume, muted: false, at: 0,
 	}
 }
 
@@ -94,18 +95,16 @@ func (f *fakeBackend) Pause(context.Context) error {
 func (f *fakeBackend) TransportState(context.Context) string { return f.state }
 func (f *fakeBackend) Volume(context.Context) (int, error)   { return f.volume, nil }
 func (f *fakeBackend) SetVolume(_ context.Context, v int) error {
-	f.volume = v
+	f.volume, f.muted = v, false // setting a level is asking to hear it, as the speaker does
 
 	return nil
 }
 
-//nolint:revive // flag-parameter: it implements Backend.SetMute, whose argument is the mute state
+func (f *fakeBackend) Muted() bool { return f.muted }
+
+// SetMute keeps the level, as the speaker's mute key does.
 func (f *fakeBackend) SetMute(_ context.Context, on bool) error {
-	if on {
-		f.volume = 0
-	} else if f.volume == 0 {
-		f.volume = 20
-	}
+	f.muted = on
 
 	return nil
 }
@@ -157,8 +156,15 @@ func TestRenderingControlVolumeAndMute(t *testing.T) {
 	}
 
 	rec = send("SetMute", "<Channel>Master</Channel><DesiredMute>1</DesiredMute>")
-	if rec.Code != 200 || backend.volume != 0 {
-		t.Fatalf("SetMute 1 = %d, volume %d", rec.Code, backend.volume)
+	if rec.Code != 200 || !backend.muted {
+		t.Fatalf("SetMute 1 = %d, muted %v", rec.Code, backend.muted)
+	}
+
+	// Muted, the volume is still the level an unmute returns to: a controller's slider
+	// must not drop to 0, and GetMute says the mute on its own.
+	rec = send("GetVolume", "<Channel>Master</Channel>")
+	if !strings.Contains(rec.Body.String(), "<CurrentVolume>55</CurrentVolume>") {
+		t.Fatalf("muted GetVolume = %s, want 55", rec.Body)
 	}
 
 	rec = send("GetMute", "<Channel>Master</Channel>")
@@ -167,8 +173,13 @@ func TestRenderingControlVolumeAndMute(t *testing.T) {
 	}
 
 	rec = send("SetMute", "<Channel>Master</Channel><DesiredMute>false</DesiredMute>")
-	if rec.Code != 200 || backend.volume == 0 {
-		t.Fatalf("SetMute false = %d, volume %d", rec.Code, backend.volume)
+	if rec.Code != 200 || backend.muted {
+		t.Fatalf("SetMute false = %d, muted %v", rec.Code, backend.muted)
+	}
+
+	rec = send("GetMute", "<Channel>Master</Channel>")
+	if !strings.Contains(rec.Body.String(), "<CurrentMute>0</CurrentMute>") {
+		t.Fatalf("unmuted GetMute = %s", rec.Body)
 	}
 }
 

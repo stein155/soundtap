@@ -230,7 +230,8 @@ type Server struct {
 	standbyWatched atomic.Bool
 	// group is this speaker's place in a multiroom group: whom it follows (multiroom_follow.go).
 	group multiroom.Group
-	// volumeMu makes the read-old-level/set-new-level pair in setVolume one step.
+	// volumeMu makes the read-old-level/set-new-level pair in setVolume, and the
+	// read-state/press-key pair in setMute, one step.
 	volumeMu sync.Mutex
 	// opts is what New was given and attached the groups handed over since, for a test
 	// that changes them (export_test.go).

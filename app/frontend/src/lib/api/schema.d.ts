@@ -201,6 +201,55 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/mute": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mute or unmute
+         * @description The remote's mute: the level stays, GET /api/volume reports it with muted true, and an unmute returns to it.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    /** @description Optional id naming one user action. A repeated write with the same id within a minute gets the first answer back instead of acting twice. */
+                    "X-SoundTap-Request"?: components["parameters"]["Request"];
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        muted: boolean;
+                    };
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Volume"];
+                    };
+                };
+                default: components["responses"]["Error"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/power": {
         parameters: {
             query?: never;

@@ -19,6 +19,7 @@ export interface SpeakerVolume {
   volume: number;
   volumeFailures: number;
   changeVolume: (level: number, options?: { group?: boolean }) => void;
+  showVolume: (level: number) => void;
   applyVolume: (vol: number) => void;
   releaseHold: () => void;
   resetVolume: () => void;
@@ -65,6 +66,12 @@ export function useSpeakerVolume(speaker: string): SpeakerVolume {
     },
     [sendVolume]
   );
+  // Shows a level the speaker reaches by other means than a volume write (a mute), held
+  // like a local change so a stale reading cannot undo it, but never sent.
+  const showVolume = useCallback((level: number) => {
+    volumeHoldRef.current = holdVolume(level);
+    setVolumeState(level);
+  }, []);
   // Fold in a volume reading. While a local change is held, only accept the speaker's value
   // once it has caught up to what we set (or the hold expires) — otherwise a stale read
   // would make the slider jump back.
@@ -81,5 +88,13 @@ export function useSpeakerVolume(speaker: string): SpeakerVolume {
     setVolumeState(20);
     setFailed({ speaker, count: 0 });
   }, [speaker]);
-  return { volume, volumeFailures, changeVolume, applyVolume, releaseHold, resetVolume };
+  return {
+    volume,
+    volumeFailures,
+    changeVolume,
+    showVolume,
+    applyVolume,
+    releaseHold,
+    resetVolume,
+  };
 }

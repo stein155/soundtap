@@ -203,19 +203,19 @@ func (b upnpBackend) TransportState(ctx context.Context) string {
 	}
 }
 
-// Volume is what is heard, so a controller sees a mute as volume 0 and GetMute follows.
+// Volume is the level the speaker keeps, also while muted: a controller reads the mute
+// from Muted, and its slider stays where an unmute returns to.
 func (b upnpBackend) Volume(ctx context.Context) (int, error) {
 	volume, err := b.sp.Volume(ctx)
-	if b.sp.Muted() {
-		volume = 0
-	}
-
 	if err != nil {
 		return volume, fmt.Errorf("UPnP volume: %w", err)
 	}
 
 	return volume, nil
 }
+
+// Muted reports the speaker's mute, which the MUTE key and SetMute toggle.
+func (b upnpBackend) Muted() bool { return b.sp.Muted() }
 
 // SetVolume sets the speaker's volume.
 func (b upnpBackend) SetVolume(ctx context.Context, level int) error {

@@ -15,6 +15,7 @@ const DRAG_MS = 1500;
 
 export interface RoomVolume {
   setRoomVolume: (room: Room, volume: number) => void;
+  showRoomVolume: (room: Room, volume: number) => void;
   setGroupVolume: (volume: number) => void;
   volumeStamp: (id: string) => number;
 }
@@ -78,6 +79,16 @@ export function useRoomVolume(
     senderFor(speakerArg(room), room.name)(volume);
   };
 
+  // Shows a room at a level it reached without a volume write (a mute), sending nothing.
+  const showRoomVolume = (room: Room, volume: number) => {
+    touch(room.id);
+    if (room.id === lead?.id) {
+      live.showVolume(volume);
+      return;
+    }
+    roomsState.patch(room.id, { volume });
+  };
+
   // Moves every speaker of the group by the same step, so their balance stays. The step
   // is measured from the levels at the start of the drag, so a member clamped at an end
   // of the slider comes back to its own level on the way back.
@@ -108,5 +119,5 @@ export function useRoomVolume(
     for (const room of group) setRoomVolume(room, clampVolume(from(room) + step));
   };
 
-  return { setRoomVolume, setGroupVolume, volumeStamp };
+  return { setRoomVolume, showRoomVolume, setGroupVolume, volumeStamp };
 }

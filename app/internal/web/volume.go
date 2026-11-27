@@ -169,3 +169,56 @@ func (s *Server) setVolume(w http.ResponseWriter, r *http.Request) {
 	s.hub.nudge() // push the new volume to other browsers at once
 	writeJSON(w, http.StatusOK, map[string]int{"volume": volume})
 }
+
+// muteMaxBody bounds a POST /api/mute body: {"muted":true}.
+const muteMaxBody = 1 << 8
+
+// setMute mutes or unmutes this speaker the way the remote's mute key does: the level
+// stays and GET /api/volume reports it with "muted": true, so an unmute, from here or the
+// remote, comes back to it. The key is a toggle, so it is only pressed when the state
+// differs. POST /api/mute {"muted":true}.
+func (s *Server) setMute(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Muted *bool `json:"muted"`
+	}
+
+	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, muteMaxBody)).Decode(&body)
+	if err != nil || body.Muted == nil {
+		s.badRequest(w, "muted required", err)
+
+		return
+	}
+
+	if _, ok := s.backend.(MuteReporter); !ok {
+		apiError(w, http.StatusNotImplemented, "mute unavailable")
+
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), backendCallTimeout)
+	defer cancel()
+
+	// The read of the state and the press are one step: two requests between them would
+	// both press the toggle and cancel each other out.
+	s.volumeMu.Lock()
+	if muted(s.backend) != *body.Muted {
+		err = s.backend.Key(ctx, "MUTE")
+	}
+	s.volumeMu.Unlock()
+
+	if err != nil {
+		s.fail(w, "mute failed", err)
+
+		return
+	}
+
+	volume, err := s.backend.Volume(ctx)
+	if err != nil {
+		s.fail(w, "volume failed", err)
+
+		return
+	}
+
+	s.hub.nudge() // push the mute to other browsers at once
+	writeJSON(w, http.StatusOK, map[string]any{"volume": volume, "muted": muted(s.backend)})
+}

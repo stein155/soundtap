@@ -3,7 +3,7 @@
 
 import { beforeAll, describe, expect, it } from 'vitest';
 import { loadLanguage, makeT, type TranslateFn } from './i18n';
-import { alarmSummary } from './summaries';
+import { alarmSummary, bluetoothSummary } from './summaries';
 import type { Preset } from './types';
 
 let t: TranslateFn;
@@ -29,5 +29,20 @@ describe('alarmSummary', () => {
 
   it('is off when disabled', () => {
     expect(alarmSummary({ enabled: false, time: '07:00', slot: 2 }, [null, preset], t)).toBe('Uit');
+  });
+});
+
+describe('bluetoothSummary', () => {
+  const status = { adapter: true, alias: 'Keuken', powered: true, discoverable: false };
+
+  it('names the paired devices', () => {
+    const devices = [{ address: '02:00:00:00:00:01', name: 'Telefoon', connected: false }];
+    expect(bluetoothSummary({ ...status, devices }, t)).toBe('Telefoon');
+  });
+
+  // A speaker with nothing paired sent "devices": null, and the settings page failed on it.
+  it('says nothing is paired when the list is null or empty', () => {
+    expect(bluetoothSummary({ ...status, devices: null }, t)).toBe(t('btNone'));
+    expect(bluetoothSummary({ ...status, devices: [] }, t)).toBe(t('btNone'));
   });
 });

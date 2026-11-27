@@ -270,6 +270,60 @@ func TestVolume(t *testing.T) {
 	}
 }
 
+// A speaker without Bluetooth lists its paired devices as [], not null: the settings
+// page reads the list's length.
+func TestBluetoothWithoutARadioListsNoDevices(t *testing.T) {
+	t.Parallel()
+
+	handler, _ := newServer(t)
+
+	rec := do(t, handler, "GET", "/api/bluetooth", "")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"devices":[]`) {
+		t.Fatalf("GET bluetooth: %d %s, want \"devices\":[]", rec.Code, rec.Body)
+	}
+}
+
+// POST /api/mute is the remote's mute: the level stays, GET /api/volume reports it with
+// "muted": true, and an unmute comes back to it, also after the page was reloaded.
+func TestMuteKeepsTheLevel(t *testing.T) {
+	t.Parallel()
+
+	handler, _ := newServer(t)
+	do(t, handler, "POST", "/api/volume", `{"volume":42}`)
+
+	type volumeState struct {
+		Volume int  `json:"volume"`
+		Muted  bool `json:"muted"`
+	}
+
+	for _, step := range []struct {
+		body string
+		want volumeState
+	}{
+		{`{"muted":true}`, volumeState{Volume: 42, Muted: true}},
+		{`{"muted":true}`, volumeState{Volume: 42, Muted: true}}, // a second mute is no toggle
+		{`{"muted":false}`, volumeState{Volume: 42, Muted: false}},
+		{`{"muted":false}`, volumeState{Volume: 42, Muted: false}},
+	} {
+		rec := do(t, handler, "POST", "/api/mute", step.body)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("POST mute %s: %d (%s)", step.body, rec.Code, rec.Body)
+		}
+
+		var echoed, read volumeState
+		decodeBody(t, rec, &echoed)
+		decodeBody(t, do(t, handler, "GET", "/api/volume", ""), &read)
+
+		if echoed != step.want || read != step.want {
+			t.Errorf("after %s: echoed %+v, read %+v, want %+v", step.body, echoed, read, step.want)
+		}
+	}
+
+	if rec := do(t, handler, "POST", "/api/mute", `{}`); rec.Code != http.StatusBadRequest {
+		t.Errorf("POST {} mute: %d, want 400", rec.Code)
+	}
+}
+
 func TestPresetsLifecycle(t *testing.T) {
 	t.Parallel()
 

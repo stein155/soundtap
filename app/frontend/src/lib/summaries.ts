@@ -20,9 +20,8 @@ export function alarmSummary(
 
 // The paired devices by name, or "No devices paired".
 export function bluetoothSummary(status: BluetoothStatus, t: TranslateFn): string {
-  return status.devices !== undefined && status.devices.length > 0
-    ? status.devices.map((d) => d.name || d.address).join(', ')
-    : t('btNone');
+  const devices = status.devices ?? [];
+  return devices.length > 0 ? devices.map((d) => d.name || d.address).join(', ') : t('btNone');
 }
 
 // "Ethernet", the Wi-Fi network's name, or a dash.

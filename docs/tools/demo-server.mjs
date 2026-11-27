@@ -256,12 +256,14 @@ const SURVEY = [
 // What the page changes; /api/demo/reset puts it back.
 let devices;
 let volumes;
+let muted; // speaker id -> true while muted; its volume stays the level it returns to
 let joined;
 let away;
 let leaders; // follower id -> the id of the speaker it plays along with
 function reset() {
   devices = DEVICES.map((d) => ({ ...d }));
   volumes = { ...VOLUMES };
+  muted = {};
   joined = null;
   away = false;
   leaders = {};
@@ -377,7 +379,8 @@ const followers = (dev) =>
 function api(path, dev, url) {
   if (path === "/api/devices") return { devices };
   if (path === "/api/now") return now[dev] ?? { source: "STANDBY" };
-  if (path === "/api/volume") return { volume: volumes[dev] ?? 0 };
+  if (path === "/api/volume")
+    return { volume: volumes[dev] ?? 0, muted: muted[dev] === true };
   if (path === "/api/presets") return presets;
   if (path === "/api/sleep") return { minutes: 0, endsAt: "" };
   if (path === "/api/user-sources" || path === "/api/favorites") return [];
@@ -443,6 +446,7 @@ const streams = new Set();
 const stateOf = (dev) => ({
   now: now[dev] ?? { source: "STANDBY" },
   volume: volumes[dev] ?? 0,
+  muted: muted[dev] === true,
   presets: "demo",
 });
 const event = (name, data) =>
@@ -502,7 +506,13 @@ function post(path, dev, sent) {
   if (path === "/api/multiroom/follow" && !sent.host) delete leaders[dev];
   if (path === "/api/volume" && typeof sent.volume === "number") {
     volumes[dev] = Math.max(0, Math.min(100, Math.round(sent.volume)));
+    delete muted[dev]; // setting a level is asking to hear it
     push(dev);
+  }
+  if (path === "/api/mute" && typeof sent.muted === "boolean") {
+    muted[dev] = sent.muted;
+    push(dev);
+    return { volume: volumes[dev] ?? 0, muted: sent.muted };
   }
   if (path === "/api/settings" && typeof sent.name === "string") {
     const d = devices.find((x) => x.id === dev);

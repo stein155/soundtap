@@ -384,11 +384,7 @@ func (r *Renderer) properties(ctx context.Context) map[string]string {
 
 	volume, err := r.Backend.Volume(ctx)
 	if err == nil {
-		mute := "0"
-		if volume == 0 {
-			mute = "1"
-		}
-
+		mute := muteValue(r.Backend)
 		state[renderURN] = lastChange(`<Event xmlns="urn:schemas-upnp-org:metadata-1-0/RCS/"><InstanceID val="0">` +
 			`<Volume channel="Master" val="` + strconv.Itoa(volume) + `"/>` +
 			`<Mute channel="Master" val="` + mute + `"/></InstanceID></Event>`)

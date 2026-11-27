@@ -74,7 +74,7 @@ function useVolumeAndMute(
   failed: ReportFailure
 ): { volume: RoomVolume; onMute: (room: Room) => void } {
   const volume = useRoomVolume(selected, syncVolume, failed);
-  const toggleMute = useMute(volume.setRoomVolume, volume.volumeStamp);
+  const toggleMute = useMute(volume, failed);
   return {
     volume,
     onMute: (room) => {

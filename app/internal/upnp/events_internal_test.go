@@ -5,6 +5,7 @@ package upnp
 
 import (
 	"context"
+	"html"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -301,5 +302,22 @@ func TestSubscriptionsOutliveARestart(t *testing.T) {
 
 	if n := <-got; n.seq != "1" || !strings.Contains(n.body, "STOPPED") {
 		t.Fatalf("first event after restart = %+v", n)
+	}
+}
+
+// RenderingControl's LastChange carries the level and the mute apart, as GetVolume and
+// GetMute do: a muted speaker still reports the level an unmute returns to.
+func TestRenderingControlEventKeepsTheLevelWhileMuted(t *testing.T) {
+	t.Parallel()
+
+	backend := newFakeBackend("STOPPED", 35)
+	backend.muted = true
+	r := newTestRenderer(backend)
+
+	event := html.UnescapeString(r.properties(context.Background())[renderURN])
+	for _, want := range []string{`<Volume channel="Master" val="35"/>`, `<Mute channel="Master" val="1"/>`} {
+		if !strings.Contains(event, want) {
+			t.Errorf("LastChange %s lacks %s", event, want)
+		}
 	}
 }

@@ -60,4 +60,24 @@ describe('useRoomVolume', () => {
       expect(patch).toHaveBeenCalledWith('b2', { volume: 71 });
     });
   }
+
+  // A mute shows the room silent without a volume write: the speaker keeps its level.
+  it('shows a level without sending it', async () => {
+    const api = await import('../lib/api');
+    vi.mocked(api.setVolume).mockClear();
+    const changeVolume = vi.fn();
+    const showVolume = vi.fn();
+    const patch = vi.fn();
+    const s = group(['a', 'b'], 30, changeVolume, patch);
+    s.live.showVolume = showVolume;
+    const { result } = renderHook(() => useRoomVolume(s, false));
+    const stamp = result.current.volumeStamp('a');
+    result.current.showRoomVolume(must(s.lead, 'the lead'), 0);
+    result.current.showRoomVolume(must(s.members[0], 'the follower'), 0);
+    expect(showVolume).toHaveBeenCalledWith(0);
+    expect(patch).toHaveBeenCalledWith('b', { volume: 0 });
+    expect(changeVolume).not.toHaveBeenCalled();
+    expect(api.setVolume).not.toHaveBeenCalled();
+    expect(result.current.volumeStamp('a')).not.toBe(stamp);
+  });
 });

@@ -40,6 +40,7 @@ func (s *Server) getBluetooth(w http.ResponseWriter, r *http.Request) {
 	if s.btBus == nil {
 		var none btctl.Status
 
+		none.Devices = []btctl.Device{} // as btctl.Read: a list, never null
 		writeJSON(w, http.StatusOK, none)
 
 		return

@@ -1,35 +1,43 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useState } from 'react';
-import { getMutedLevel } from '../lib/api/playback';
+import { getMutedLevel, setMuted } from '../lib/api/playback';
+import type { ReportFailure } from './useErrorReporter';
+import type { RoomVolume } from './useRoomVolume';
 import { speakerArg, type Room } from './useRooms';
 
-// Unmuting with nothing to return to (the page opened on a room at volume 0) lands here.
-const UNMUTE_FALLBACK = 25;
-
 // The speaker icon of a volume slider: mutes a room, and the next tap puts it back where
-// it was. The level to return to is kept per room: another room's level must not leak
-// into this one after a room switch. A room muted elsewhere, by a soundbar's remote,
-// knows its own level, and that one goes first: this page's may be older. `volumeStamp`
-// changes with every volume change of a room: a slider moved while that level was being
-// read wins, and the late level is dropped.
+// it was. It is the speaker's own mute, the one its remote's mute key toggles: the speaker
+// keeps the level, so an unmute returns to it after a reload, from another phone and for a
+// room muted by its remote. A muted room shows 0; a room at 0 that is not muted has
+// nothing to return to, and the tap leaves it as it is. `volumeStamp` changes with every
+// volume change of a room: a slider moved while the kept level was being read wins, and
+// the late level is dropped.
 export function useMute(
-  setVolume: (room: Room, volume: number) => void,
-  volumeStamp: (id: string) => number = () => 0
+  { showRoomVolume, volumeStamp }: Pick<RoomVolume, 'showRoomVolume' | 'volumeStamp'>,
+  failed?: ReportFailure
 ): (room: Room) => Promise<void> {
-  const [lastAudible, setLastAudible] = useState<Record<string, number>>({});
   return async (room: Room) => {
+    const speaker = speakerArg(room);
     if (room.volume === 0) {
       const stamp = volumeStamp(room.id);
-      const level = await getMutedLevel(speakerArg(room));
-      if (volumeStamp(room.id) !== stamp) return;
-      // No level kept (or a kept 0): the last level heard here, else a quiet default.
-      const back = level !== null && level !== 0 ? level : undefined;
-      setVolume(room, back ?? lastAudible[room.id] ?? UNMUTE_FALLBACK);
+      const level = await getMutedLevel(speaker);
+      if (level === null || volumeStamp(room.id) !== stamp) return;
+      showRoomVolume(room, level);
+      try {
+        await setMuted(false, speaker);
+      } catch (err) {
+        showRoomVolume(room, 0);
+        failed?.(room.name)(err);
+      }
       return;
     }
-    setLastAudible((levels) => ({ ...levels, [room.id]: room.volume }));
-    setVolume(room, 0);
+    showRoomVolume(room, 0);
+    try {
+      await setMuted(true, speaker);
+    } catch (err) {
+      showRoomVolume(room, room.volume);
+      failed?.(room.name)(err);
+    }
   };
 }

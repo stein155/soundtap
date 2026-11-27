@@ -35,6 +35,8 @@ export interface SpeakerLive {
   unreachable: boolean;
   refreshNowPlaying: () => Promise<boolean>;
   changeVolume: (level: number, options?: { group?: boolean }) => void;
+  // The slider shows level without sending it: the mute sets the speaker's state itself.
+  showVolume: (level: number) => void;
   playOptimistic: (station: PlayTarget | null) => Pending | null;
   stopOptimistic: () => void;
   releaseStopHold: () => void;
@@ -131,6 +133,7 @@ export function useSpeaker(speaker = ''): SpeakerLive {
     unreachable: feed.unreachable,
     refreshNowPlaying: refresh,
     changeVolume: vol.changeVolume,
+    showVolume: vol.showVolume,
     playOptimistic: play.playOptimistic,
     stopOptimistic: play.stopOptimistic,
     releaseStopHold,

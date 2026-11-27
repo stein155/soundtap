@@ -153,7 +153,8 @@ export interface BluetoothStatus {
   alias: string;
   powered: boolean;
   discoverable: boolean;
-  devices?: BluetoothDevice[];
+  // null from a speaker on an older release with nothing paired.
+  devices?: BluetoothDevice[] | null;
 }
 
 export async function getBluetooth(speaker?: string): Promise<BluetoothStatus | null> {

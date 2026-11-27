@@ -62,7 +62,7 @@ func routeAccess() map[string]string {
 		"POST /api/favorites": open, "DELETE /api/favorites": open,
 		"POST /api/play/{slot}": open, "POST /api/play": open, "POST /api/key": open,
 		"POST /api/stop": open, "POST /api/power": open, "POST /api/sleep": open,
-		"POST /api/user-source": open, "POST /api/volume": open,
+		"POST /api/user-source": open, "POST /api/volume": open, "POST /api/mute": open,
 		"PUT /api/soundbar/tone": open, "PUT /api/soundbar/audio-mode": open, "PUT /api/soundbar/cec-mode": open,
 		"PUT /api/soundbar/hdmi-input": open, "PUT /api/soundbar/lip-sync": open, "POST /api/soundbar/adaptiq": open,
 		"PUT /api/channel": open, "PUT /api/settings": open,

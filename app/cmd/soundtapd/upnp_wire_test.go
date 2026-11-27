@@ -123,8 +123,8 @@ func TestUPnPPlayShowsArtistAndCover(t *testing.T) {
 	}
 }
 
-// A controller sees a mute as volume 0 and sets it through SetMute; the speaker keeps the
-// level to come back to.
+// A controller sets a mute through SetMute and reads it from Muted; Volume stays the level
+// the speaker comes back to.
 //
 //nolint:paralleltest // changes package-wide state other tests read: chordCounting, confirmPending, confirmer and more
 func TestUPnPMuteKeepsTheLevel(t *testing.T) {
@@ -143,8 +143,8 @@ func TestUPnPMuteKeepsTheLevel(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if v, _ := backend.Volume(ctx); v != 0 {
-		t.Fatalf("muted Volume = %d, want 0", v)
+	if v, _ := backend.Volume(ctx); v != 40 || !backend.Muted() {
+		t.Fatalf("muted: Volume = %d, Muted %v, want 40 and true", v, backend.Muted())
 	}
 
 	err = backend.SetMute(ctx, true)
@@ -157,8 +157,8 @@ func TestUPnPMuteKeepsTheLevel(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if v, _ := backend.Volume(ctx); v != 40 {
-		t.Fatalf("unmuted Volume = %d, want 40", v)
+	if v, _ := backend.Volume(ctx); v != 40 || backend.Muted() {
+		t.Fatalf("unmuted: Volume = %d, Muted %v, want 40 and false", v, backend.Muted())
 	}
 }
 

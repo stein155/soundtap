@@ -37,9 +37,12 @@ type Backend interface {
 	// TransportState reports "PLAYING", "STOPPED", etc. for GetTransportInfo.
 	TransportState(ctx context.Context) string
 	// Volume and SetVolume are the speaker's own 0..100 volume, for RenderingControl.
+	// Volume is the level the speaker keeps, also while it is muted.
 	Volume(ctx context.Context) (int, error)
 	SetVolume(ctx context.Context, level int) error
-	// SetMute mutes (volume 0, the level kept to come back to) or unmutes.
+	// Muted and SetMute are the mute beside it: the volume stays the level an unmute
+	// comes back to.
+	Muted() bool
 	SetMute(ctx context.Context, on bool) error
 }
 

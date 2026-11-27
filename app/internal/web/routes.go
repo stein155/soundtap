@@ -64,6 +64,7 @@ func (s *Server) Handler() http.Handler { //nolint:funlen // route table, moved 
 	mux.HandleFunc("GET /api/household/events", s.householdEvents)
 	mux.HandleFunc("GET /api/volume", s.getVolume)
 	mux.HandleFunc("POST /api/volume", s.setVolume)
+	mux.HandleFunc("POST /api/mute", s.setMute)
 	mux.HandleFunc("GET /api/multiroom", s.getMultiroom)
 	mux.HandleFunc("GET /api/soundbar/tone", s.getTone)
 	mux.HandleFunc("PUT /api/soundbar/tone", s.putTone)

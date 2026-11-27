@@ -38,7 +38,8 @@ const (
 )
 
 // rcControl is RenderingControl on the Master channel: the speaker's own volume and
-// mute. Volume is 0..100 like the speaker's; mute is volume 0.
+// mute. Volume is 0..100 like the speaker's; mute is a flag beside it, so GetVolume
+// reports the level an unmute returns to, as a controller's slider expects.
 func (r *Renderer) rcControl(w http.ResponseWriter, req *http.Request) { //nolint:cyclop // moved unchanged
 	action := soapAction(req.Header.Get("SoapAction"))
 
@@ -70,12 +71,7 @@ func (r *Renderer) rcControl(w http.ResponseWriter, req *http.Request) { //nolin
 			return
 		}
 
-		muted := "0"
-		if volume == 0 {
-			muted = "1"
-		}
-
-		soapOK(w, actGetMute, renderURN, "<CurrentMute>"+muted+"</CurrentMute>")
+		soapOK(w, actGetMute, renderURN, "<CurrentMute>"+muteValue(r.Backend)+"</CurrentMute>")
 	case actSetVolume:
 		volume, err := strconv.Atoi(firstGroup(reVolume, body))
 		if err != nil || volume < 0 || volume > maxVolume {
@@ -116,4 +112,13 @@ func (r *Renderer) rcControl(w http.ResponseWriter, req *http.Request) { //nolin
 	default:
 		soapFail(w, faultInvalidAction)
 	}
+}
+
+// muteValue is the backend's mute as RenderingControl's boolean Mute variable.
+func muteValue(b Backend) string {
+	if b.Muted() {
+		return "1"
+	}
+
+	return "0"
 }
