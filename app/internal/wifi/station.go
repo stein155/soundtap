@@ -274,7 +274,8 @@ func (m *Manager) offers(saved *network, mgmt string) bool {
 // false, without an error, for a network this build cannot join at all (WEP without
 // CONFIG_WEP); a refused optional setting only narrows what the network offers.
 //
-//   - WEP: the static key 0, open system or shared key authentication, whichever the access
+//   - WEP: the static key at the index it was saved with (0 unless stock's BCO had another),
+//     sent at that index, open system or shared key authentication, whichever the access
 //     point takes.
 //   - A password or a raw key: the PSK, then the most capable suites (offers) that
 //     wpa_supplicant takes; management frame protection comes from supplicantConf's pmf=1, so
@@ -288,11 +289,12 @@ func (m *Manager) setSecurity(ctx context.Context, conn *wpactrl.Conn, netID int
 			return false, nil
 		}
 
+		index := strconv.Itoa(saved.wepIndex)
 		for _, setting := range [][2]string{
-			{keyMgmt, "NONE"}, {"wep_key0", saved.wepHex}, {"wep_tx_keyidx", "0"}, {"auth_alg", "OPEN SHARED"},
+			{keyMgmt, "NONE"}, {"wep_key" + index, saved.wepHex}, {"wep_tx_keyidx", index}, {"auth_alg", "OPEN SHARED"},
 		} {
 			err := conn.SetNetwork(ctx, netID, setting[0], setting[1])
-			if wpactrl.Refused(err) && setting[0] == "wep_key0" {
+			if wpactrl.Refused(err) && setting[0] == "wep_key"+index {
 				m.refuse(refusedWEP, "this build cannot join WEP networks")
 
 				return false, nil

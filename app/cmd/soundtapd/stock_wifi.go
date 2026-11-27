@@ -67,9 +67,10 @@ var (
 )
 
 // stockNetwork is one network to join: an empty PSK and hexPSK mean an open network; a WEP
-// network has its key in wep (ADR 0136).
+// network has its key in wep, and in wepIndex the index stock transmits it at (ADR 0136).
 type stockNetwork struct {
 	ssid, psk, hexPSK, wep string
+	wepIndex               int
 }
 
 // adoptStockWifi turns the network stock was on into wifi.conf on the first boot after an
@@ -132,13 +133,15 @@ func adoptStockWifi(home, wifiConf string, log *slog.Logger) bool {
 // saveStockNetwork writes network as wifi.conf, the form the Wi-Fi manager reads.
 func saveStockNetwork(wifiConf string, network stockNetwork) error {
 	rec := wifi.Record{
-		SSIDB64:  base64.StdEncoding.EncodeToString([]byte(network.ssid)),
-		PSKB64:   base64.StdEncoding.EncodeToString([]byte(network.psk)),
-		HexPSK:   network.hexPSK,
-		Security: "",
+		SSIDB64:     base64.StdEncoding.EncodeToString([]byte(network.ssid)),
+		PSKB64:      base64.StdEncoding.EncodeToString([]byte(network.psk)),
+		HexPSK:      network.hexPSK,
+		Security:    "",
+		WEPKeyIndex: 0,
 	}
 	if network.wep != "" {
 		rec = wifi.NewRecord(network.ssid, wifi.SecurityWEP, network.wep)
+		rec.WEPKeyIndex = network.wepIndex
 	}
 
 	err := wifi.WriteConf(wifiConf, rec)
@@ -207,13 +210,17 @@ func adoptStockBCOWifi(
 
 // saveStockBCOProfile writes the network read from stock's BCO as wifi.conf.
 func saveStockBCOProfile(wifiConf string, profile bco.StockProfile, try int, log *slog.Logger) {
-	network := stockNetwork{ssid: profile.SSID, psk: profile.Passphrase, hexPSK: "", wep: ""}
+	network := stockNetwork{ssid: profile.SSID, psk: profile.Passphrase, hexPSK: "", wep: "", wepIndex: 0}
 
 	switch {
 	case profile.WEP:
-		network = stockNetwork{ssid: profile.SSID, psk: "", hexPSK: "", wep: profile.Passphrase}
+		network = stockNetwork{
+			ssid: profile.SSID, psk: "", hexPSK: "", wep: profile.Passphrase, wepIndex: profile.WEPKeyIndex,
+		}
 	case bco.IsHexPSK(profile.Passphrase):
-		network = stockNetwork{ssid: profile.SSID, psk: "", hexPSK: strings.ToLower(profile.Passphrase), wep: ""}
+		network = stockNetwork{
+			ssid: profile.SSID, psk: "", hexPSK: strings.ToLower(profile.Passphrase), wep: "", wepIndex: 0,
+		}
 	default:
 		// A WPA passphrase, or an open network: as read.
 	}
@@ -252,7 +259,7 @@ func readStockNetwork(src io.Reader, key, initVector []byte) (stockNetwork, erro
 	}
 
 	if strings.EqualFold(profile.Security, "open") {
-		return stockNetwork{ssid: profile.SSID, psk: "", hexPSK: "", wep: ""}, nil
+		return stockNetwork{ssid: profile.SSID, psk: "", hexPSK: "", wep: "", wepIndex: 0}, nil
 	}
 
 	if strings.EqualFold(profile.Security, "wep") {
@@ -269,9 +276,9 @@ func readStockNetwork(src io.Reader, key, initVector []byte) (stockNetwork, erro
 
 	switch {
 	case len(pass) == wpaHexPSKLen && isHex(pass):
-		return stockNetwork{ssid: profile.SSID, psk: "", hexPSK: strings.ToLower(pass), wep: ""}, nil
+		return stockNetwork{ssid: profile.SSID, psk: "", hexPSK: strings.ToLower(pass), wep: "", wepIndex: 0}, nil
 	case len(pass) >= wpaPassphraseMin && len(pass) <= wpaPassphraseMax:
-		return stockNetwork{ssid: profile.SSID, psk: pass, hexPSK: "", wep: ""}, nil
+		return stockNetwork{ssid: profile.SSID, psk: pass, hexPSK: "", wep: "", wepIndex: 0}, nil
 	default:
 		return stockNetwork{}, errStockNotWPA
 	}
@@ -294,7 +301,7 @@ func stockWEPNetwork(profile *stockWifiProfile, key, initVector []byte) (stockNe
 		return stockNetwork{}, errStockNotWEP
 	}
 
-	return stockNetwork{ssid: profile.SSID, psk: "", hexPSK: "", wep: wep}, nil
+	return stockNetwork{ssid: profile.SSID, psk: "", hexPSK: "", wep: wep, wepIndex: 0}, nil
 }
 
 // stockWifiProfiles is stock's NetworkProfiles.xml.

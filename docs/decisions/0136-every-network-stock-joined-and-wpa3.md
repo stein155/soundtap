@@ -56,8 +56,12 @@ authentication type down, and keeps the static keys wpa_supplicant sets (`add_ke
 `set_default_key`), which cfg80211 requires once a connect carries keys. soundtapd takes a
 `wep` security with a 5- or 13-character or 10- or 26-hex-digit key, stores it with
 `SECURITY=wep` in `wifi.conf` (an older file has no such line and reads as before, ADR 0120) and
-hands wpa_supplicant `key_mgmt=NONE`, `wep_key0`, `wep_tx_keyidx=0` and `auth_alg=OPEN SHARED`;
-wpa_supplicant is built with WEP for that on every model. The setup page offers WEP beside open
+hands wpa_supplicant `key_mgmt=NONE`, `wep_keyN`, `wep_tx_keyidx=N` and `auth_alg=OPEN SHARED`;
+wpa_supplicant is built with WEP for that on every model. N is 0, except for a key taken over
+from an ST20's BCO at another index: the access point holds the key at the same index and picks
+it by the index each frame carries, so the index is kept, as `WEP_KEYIDX=N` in `wifi.conf` and a
+fifth field in `wifi.conf.known`, both written only for an index other than 0 and skipped by an
+older reader. The setup page offers WEP beside open
 and WPA, and a surveyed network without a WPA or RSN IE asks for a WEP key. The first install
 takes a WEP network stock saved, on the ST20 from its BCO's settings, elsewhere from stock's
 network profiles.

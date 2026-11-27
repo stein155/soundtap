@@ -160,6 +160,9 @@ func notImportable(format string, args ...any) error {
 type StockProfile struct {
 	SSID, Passphrase string
 	WEP              bool
+	// WEPKeyIndex is the WEP key stock transmits with, 0 to 3: the access point holds the
+	// same key at the same index.
+	WEPKeyIndex int
 }
 
 // memReader returns the bytes from addr on, at least one word and at most words of them.
@@ -357,7 +360,7 @@ func stockProfileFrom(settings map[uint16]string) (StockProfile, error) {
 	case "WPAPSK", "WPA2PSK", "WPAWPA2PSK":
 	case "NONE":
 		// An open network: stock may keep a passphrase from before, which is not used.
-		return StockProfile{SSID: ssid, Passphrase: "", WEP: false}, nil
+		return StockProfile{SSID: ssid, Passphrase: "", WEP: false, WEPKeyIndex: 0}, nil
 	case "WEP":
 		return stockWEPProfile(settings, &layout, active, ssid)
 	default:
@@ -369,7 +372,7 @@ func stockProfileFrom(settings map[uint16]string) (StockProfile, error) {
 		return StockProfile{}, notImportable("the passphrase of %q is not a WPA passphrase", ssid)
 	}
 
-	return StockProfile{SSID: ssid, Passphrase: pass, WEP: false}, nil
+	return StockProfile{SSID: ssid, Passphrase: pass, WEP: false, WEPKeyIndex: 0}, nil
 }
 
 // stockWEPProfile takes a WEP profile's key: the one its key index names, an index that was
@@ -393,7 +396,7 @@ func stockWEPProfile(settings map[uint16]string, layout *stockLayout, active int
 		return StockProfile{}, notImportable("WEP key %d of %q is not a WEP key", index, ssid)
 	}
 
-	return StockProfile{SSID: ssid, Passphrase: key, WEP: true}, nil
+	return StockProfile{SSID: ssid, Passphrase: key, WEP: true, WEPKeyIndex: index}, nil
 }
 
 // stockActiveProfile is the profile stock joins: its ActiveProfile setting, or the factory

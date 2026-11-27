@@ -62,9 +62,11 @@ func TestPassphraseBecomesTheKeyWpaPassphraseGives(t *testing.T) {
 	}
 
 	for name, rec := range map[string]Record{
-		"bad base64":       {SSIDB64: "!!", PSKB64: "", HexPSK: "", Security: ""},
+		"bad base64":       {SSIDB64: "!!", PSKB64: "", HexPSK: "", Security: "", WEPKeyIndex: 0},
 		"short passphrase": NewRecord("home", "", "short"),
-		"bad hex":          {SSIDB64: b64("home"), PSKB64: "", HexPSK: strings.Repeat("z", 64), Security: ""},
+		"bad hex": {
+			SSIDB64: b64("home"), PSKB64: "", HexPSK: strings.Repeat("z", 64), Security: "", WEPKeyIndex: 0,
+		},
 	} {
 		_, err := decode(rec)
 		if err == nil {
@@ -168,6 +170,57 @@ func TestWEPNetworkJoins(t *testing.T) {
 		if strings.HasPrefix(c, "SET_NETWORK 0 psk") {
 			t.Errorf("a WEP network got a PSK: %q", c)
 		}
+	}
+}
+
+// A WEP key saved at another index (stock's BCO had key 2) is stored with it, in wifi.conf
+// and in the known list, and wpa_supplicant gets the key at that index and sends with it.
+//
+//nolint:paralleltest // its rig points wpactrl.ClientDir, a package variable, at a directory of its own
+func TestWEPKeyIndexJoins(t *testing.T) {
+	rec := NewRecord("oldnet", SecurityWEP, "abcde")
+	rec.WEPKeyIndex = 2
+
+	conf := string(ConfBytes(rec))
+	if !strings.HasSuffix(conf, "SECURITY=wep\nWEP_KEYIDX=2\n") || ParseConf([]byte(conf)) != rec {
+		t.Fatalf("wifi.conf %q reads as %+v", conf, ParseConf([]byte(conf)))
+	}
+
+	if line := rec.Line(); !strings.HasSuffix(line, " wep 2") || ParseKnown([]byte(line + "\n"))[0] != rec {
+		t.Fatalf("known line %q", line)
+	}
+
+	// an index out of range, or on a network that is not WEP, reads as key 0
+	for _, bad := range []string{"SECURITY=wep\nWEP_KEYIDX=4\n", "SECURITY=wep\nWEP_KEYIDX=x\n", "WEP_KEYIDX=-1\n"} {
+		if got := ParseConf([]byte(bad)); got.WEPKeyIndex != 0 {
+			t.Errorf("%q: index %d", bad, got.WEPKeyIndex)
+		}
+	}
+
+	if got := ParseKnown([]byte("b2xk - - - 2\n")); got[0].WEPKeyIndex != 0 {
+		t.Errorf("a network that is not WEP has a WEP key index: %+v", got[0])
+	}
+
+	bench := newRig(t, "rhino")
+
+	err := WriteConf(bench.conf, rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bench.sys.where["oldnet"] = "ok"
+	bench.start()
+	bench.eventually("network-ready", func() bool { return bench.exists("network-ready") })
+
+	cmds := bench.sys.supServer().Commands()
+	for _, want := range []string{"SET_NETWORK 0 wep_key2 6162636465", "SET_NETWORK 0 wep_tx_keyidx 2"} {
+		if !slices.Contains(cmds, want) {
+			t.Errorf("wpa_supplicant never got %q: %q", want, cmds)
+		}
+	}
+
+	if slices.Contains(cmds, "SET_NETWORK 0 wep_key0 6162636465") {
+		t.Errorf("the key went in at index 0: %q", cmds)
 	}
 }
 
@@ -838,7 +891,7 @@ func TestReleaseZeroOneZeroFilesStillJoin(t *testing.T) {
 	for _, n := range nets {
 		got = append(got, fmt.Sprintf("%s/%v", n.ssid, n.keyHex != ""))
 		// a file from before ADR 0136 has no SECURITY: nothing in it is WEP
-		if n.rec.Security != "" || n.wepHex != "" {
+		if n.rec.Security != "" || n.wepHex != "" || n.wepIndex != 0 {
 			t.Errorf("%s reads as WEP: %+v", n.ssid, n.rec)
 		}
 	}

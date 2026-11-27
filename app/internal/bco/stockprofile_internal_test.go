@@ -137,7 +137,7 @@ func readFake(t *testing.T, f *stockShell) (StockProfile, error) {
 func TestStockProfileTakesTheActiveProfile(t *testing.T) {
 	t.Parallel()
 
-	home := StockProfile{SSID: "Home net", Passphrase: "correct horse", WEP: false}
+	home := StockProfile{SSID: "Home net", Passphrase: "correct horse", WEP: false, WEPKeyIndex: 0}
 	for name, tcase := range map[string]struct {
 		flash    map[uint32][]byte
 		want     StockProfile
@@ -196,30 +196,30 @@ func TestStockProfileTakesTheActiveProfile(t *testing.T) {
 		"WPAWPA2PSK and a raw key": {
 			flash: map[uint32][]byte{sectorA: settingsLog(0x08, kSSID0, "Home net", kSec0, "WPAWPA2PSK",
 				kPass0, strings.Repeat("Ab", 32), kActive, "0")},
-			want:     StockProfile{SSID: "Home net", Passphrase: strings.Repeat("Ab", 32), WEP: false},
+			want:     StockProfile{SSID: "Home net", Passphrase: strings.Repeat("Ab", 32), WEP: false, WEPKeyIndex: 0},
 			maxWords: 0,
 		},
 		"an open network, an old passphrase left in it": {
 			flash: map[uint32][]byte{sectorA: settingsLog(0x08, kSSID1, "Cafe", kSec1, "NONE",
 				kPass1, "correct horse")},
-			want:     StockProfile{SSID: "Cafe", Passphrase: "", WEP: false},
+			want:     StockProfile{SSID: "Cafe", Passphrase: "", WEP: false, WEPKeyIndex: 0},
 			maxWords: 0,
 		},
 		"WEP: key 0 when no index was written (ADR 0136)": {
 			flash:    map[uint32][]byte{sectorA: settingsLog(0x08, kSSID1, "Old", kSec1, "WEP", kWEPKey01, "abcde")},
-			want:     StockProfile{SSID: "Old", Passphrase: "abcde", WEP: true},
+			want:     StockProfile{SSID: "Old", Passphrase: "abcde", WEP: true, WEPKeyIndex: 0},
 			maxWords: 0,
 		},
 		"WEP: the key the index names, in hex": {
 			flash: map[uint32][]byte{sectorA: settingsLog(0x08, kSSID1, "Old", kSec1, "WEP", kWEPKey01, "abcde",
 				kWEPIndex1, "2", kWEPKey21, "0123456789abcdef0123456789")},
-			want:     StockProfile{SSID: "Old", Passphrase: "0123456789abcdef0123456789", WEP: true},
+			want:     StockProfile{SSID: "Old", Passphrase: "0123456789abcdef0123456789", WEP: true, WEPKeyIndex: 2},
 			maxWords: 0,
 		},
 		"WEP in profile 0": {
 			flash: map[uint32][]byte{sectorA: settingsLog(0x08, kSSID0, "Old", kSec0, "WEP", kWEPKey00, "1234567890",
 				kActive, "0")},
-			want:     StockProfile{SSID: "Old", Passphrase: "1234567890", WEP: true},
+			want:     StockProfile{SSID: "Old", Passphrase: "1234567890", WEP: true, WEPKeyIndex: 0},
 			maxWords: 0,
 		},
 		"a log longer than one rd, with a short rd": {

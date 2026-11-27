@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/stein155/soundtap/app/internal/atomicjson"
@@ -20,12 +21,14 @@ import (
 // The saved networks on /mnt/nv (docs/contributors/nv-state.md; ADR 0120 keeps these formats):
 //
 //	wifi.conf        SSID_B64=<base64>, PSK_B64=<base64> (empty: open), optional PSK_HEX=<64 hex>,
-//	                 optional SECURITY=wep (PSK_B64 then holds the WEP key as typed)
+//	                 optional SECURITY=wep (PSK_B64 then holds the WEP key as typed), and for a
+//	                 WEP key at another index than 0 WEP_KEYIDX=<1-3>
 //	wifi.conf.good   a copy of the last wifi.conf that gave the speaker an address
-//	wifi.conf.known  up to KnownMax lines, newest first: <SSID_B64> <PSK_B64|-> <PSK_HEX|-> [wep]
+//	wifi.conf.known  up to KnownMax lines, newest first: <SSID_B64> <PSK_B64|-> <PSK_HEX|-> [wep [<1-3>]]
 //
 // A file of an earlier release has no SECURITY line and no fourth field: its networks are WPA or
-// open, as they were (ADR 0120, ADR 0136).
+// open, as they were; one without WEP_KEYIDX or a fifth field has its WEP key at index 0, as
+// before (ADR 0120, ADR 0136). A reader that does not know WEP_KEYIDX or the fifth field skips it.
 //
 // wifi.conf is the network tried first; the known ones follow at lower priority, so
 // wpa_supplicant joins whichever is in range.
@@ -47,6 +50,9 @@ const (
 // hex digits.
 const SecurityWEP = "wep"
 
+// wepKeys is how many keys a WEP network has: indexes 0 to 3.
+const wepKeys = 4
+
 // The WEP key's sizes: 40 or 104 bits, as characters or as hex digits.
 const (
 	wep40Chars  = 5
@@ -56,18 +62,22 @@ const (
 )
 
 // Record is one saved network as stored: base64 name and passphrase, the raw key in hex
-// when there is one, and SecurityWEP for a WEP network. Empty fields are absent.
+// when there is one, and SecurityWEP for a WEP network with the index of its key (0 to 3; the
+// access point holds the key at the same index). Empty fields are absent.
 type Record struct {
-	SSIDB64  string
-	PSKB64   string
-	HexPSK   string
-	Security string
+	SSIDB64     string
+	PSKB64      string
+	HexPSK      string
+	Security    string
+	WEPKeyIndex int
 }
 
 // NewRecord stores a network the way the setup page hands it over: a WEP network's key as
 // typed; otherwise a 64-digit hex key is the key itself, anything else a passphrase.
 func NewRecord(ssid, security, psk string) Record {
-	rec := Record{SSIDB64: base64.StdEncoding.EncodeToString([]byte(ssid)), PSKB64: "", HexPSK: "", Security: ""}
+	rec := Record{
+		SSIDB64: base64.StdEncoding.EncodeToString([]byte(ssid)), PSKB64: "", HexPSK: "", Security: "", WEPKeyIndex: 0,
+	}
 
 	switch {
 	case security == SecurityWEP:
@@ -97,6 +107,9 @@ func (r Record) Line() string {
 	line := r.SSIDB64 + " " + dash(r.PSKB64) + " " + dash(r.HexPSK)
 	if r.Security == SecurityWEP {
 		line += " " + SecurityWEP
+		if r.WEPKeyIndex != 0 {
+			line += " " + strconv.Itoa(r.WEPKeyIndex)
+		}
 	}
 
 	return line
@@ -111,6 +124,9 @@ func ConfBytes(rec Record) []byte {
 
 	if rec.Security == SecurityWEP {
 		conf += "SECURITY=" + SecurityWEP + "\n"
+		if rec.WEPKeyIndex != 0 {
+			conf += "WEP_KEYIDX=" + strconv.Itoa(rec.WEPKeyIndex) + "\n"
+		}
 	}
 
 	return []byte(conf)
@@ -150,6 +166,8 @@ func ParseConf(b []byte) Record {
 			if value == SecurityWEP {
 				rec.Security = SecurityWEP
 			}
+		case "WEP_KEYIDX":
+			rec.WEPKeyIndex = parseWEPKeyIndex(value)
 		default:
 			// Not a key of wifi.conf.
 		}
@@ -179,16 +197,33 @@ func ParseKnown(b []byte) []Record {
 
 			return s
 		}
-		rec := Record{SSIDB64: fields[0], PSKB64: orNone(fields[1]), HexPSK: orNone(fields[2]), Security: ""}
+		rec := Record{
+			SSIDB64: fields[0], PSKB64: orNone(fields[1]), HexPSK: orNone(fields[2]), Security: "", WEPKeyIndex: 0,
+		}
 
 		if len(fields) > 3 && fields[3] == SecurityWEP {
 			rec.Security = SecurityWEP
+		}
+
+		if len(fields) > 4 && rec.Security == SecurityWEP {
+			rec.WEPKeyIndex = parseWEPKeyIndex(fields[4])
 		}
 
 		out = append(out, rec)
 	}
 
 	return out
+}
+
+// parseWEPKeyIndex reads a stored WEP key index; anything but 1 to 3 reads as 0, the key
+// every earlier file meant.
+func parseWEPKeyIndex(value string) int {
+	index, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || index < 0 || index >= wepKeys {
+		return 0
+	}
+
+	return index
 }
 
 // remember puts r in front of the known list in path, drops an older line for the same
@@ -258,7 +293,7 @@ func IsWEPKey(s string) bool {
 	return ok
 }
 
-// wepKeyHex is a WEP key as wpa_supplicant's wep_key0 takes it unquoted: hex digits.
+// wepKeyHex is a WEP key as wpa_supplicant's wep_key0 to wep_key3 take it unquoted: hex digits.
 func wepKeyHex(key string) (string, bool) {
 	switch len(key) {
 	case wep40Hex, wep104Hex:
@@ -281,13 +316,14 @@ func wepKeyHex(key string) (string, bool) {
 }
 
 // network is one block handed to wpa_supplicant: the name and the 32-byte key in hex, the
-// WEP key in hex, or no key for an open network. passphrase is kept for SAE, which needs the
-// password itself (ADR 0136), when the record has one.
+// WEP key in hex with its index, or no key for an open network. passphrase is kept for SAE,
+// which needs the password itself (ADR 0136), when the record has one.
 type network struct {
 	rec        Record
 	ssid       string
 	keyHex     string
 	wepHex     string
+	wepIndex   int
 	passphrase string
 }
 
@@ -315,7 +351,7 @@ func decode(rec Record) (network, error) {
 		return none, errBadConf
 	}
 
-	decoded := network{rec: rec, ssid: string(ssid), keyHex: "", wepHex: "", passphrase: ""}
+	decoded := network{rec: rec, ssid: string(ssid), keyHex: "", wepHex: "", wepIndex: 0, passphrase: ""}
 	switch {
 	case rec.Security == SecurityWEP:
 		key, ok := wepKeyHex(string(pass))
@@ -323,7 +359,7 @@ func decode(rec Record) (network, error) {
 			return none, errBadWEP
 		}
 
-		decoded.wepHex = key
+		decoded.wepHex, decoded.wepIndex = key, rec.WEPKeyIndex
 	case rec.HexPSK != "":
 		if !IsHexPSK(rec.HexPSK) {
 			return none, errBadHex
