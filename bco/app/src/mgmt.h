@@ -110,6 +110,12 @@ void mgmt_sae_lost(void);
 #define MGMT_AP_EXTRA2 16
 #define MGMT_AP_CLIENT3 16
 
+/* AP_BEACON (21, BCOLINK_CAP_APBEACON): the beacon body as AP_START carries it, without channel and
+ * interval: hostapd's updated beacon (ERP protection, a changed IE). It replaces the one the access
+ * point sends from its next beacon and probe response on. Reply: status (1 = no access point
+ * runs, or the body is not well formed: the old one stays). */
+#define MGMT_AP_BEACON 21
+
 /* NV_INFO (17, BCOLINK_CAP_NVINFO): read-only. Reply: status (1 = no PersParam sector), count, then
  * count entries of key (FourCC as stored, le32), le16 value length, and the value's first 4 bytes
  * when the value is at most 4 bytes long (else zeros): no longer value, and so no passphrase or

@@ -75,6 +75,15 @@ int wifi_ap_start(unsigned chan, unsigned bint, const unsigned char *body, unsig
     return 0;
 }
 void wifi_ap_stop(void) { fake_ap_stops++, fake_state = WIFI_IDLE; }
+unsigned fake_ap_beacons;
+int wifi_ap_beacon(const unsigned char *body, unsigned len)
+{
+    (void)body;
+    if (fake_state != WIFI_AP || len < 12 || len > WIFI_AP_BODY_MAX)
+        return -1;
+    fake_ap_beacons++, fake_ap_len = len;
+    return 0;
+}
 unsigned wifi_ap_clients(unsigned char macs[][6])
 {
     if (fake_state != WIFI_AP)

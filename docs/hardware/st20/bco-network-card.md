@@ -380,7 +380,9 @@ phone). Now:
 - On the SCM, `soundtap_bco` advertises AP mode, a STA + AP interface combination on one channel
   and `WIPHY_FLAG_HAVE_AP_SME` (the device does authentication and association, as `brcmfmac`).
   `start_ap` sends hostapd's beacon (head + a TIM + tail) down as `AP_START`; `stop_ap` sends
-  `AP_STOP`. Beacon updates after start (`change_beacon`) are not passed on, and hostapd gets no
+  `AP_STOP`. Beacon updates after start (`change_beacon`: ERP protection, a changed IE) go down
+  as `AP_BEACON` to an app that announces `BCOLINK_CAP_APBEACON`; the app sends the new body from
+  its next beacon and probe response on (an older app keeps the first beacon). hostapd gets no
   new-station events; `iw dev wlan1 station get` asks the BCO.
 - The radio stays on the access point's channel, so a scan while it runs returns the scan made before it. Beacons come
   from the main loop, so their spacing follows its polling: a few milliseconds of jitter, which

@@ -2488,21 +2488,29 @@ void wifi_leave(void)
  * BSS (0xbd, or after a second) JOIN_DONE opens its queues and ap_step starts beaconing. Stock's
  * core beacons from a template (0xe2/0xe3) on its own TBTT timer; ours has neither, so the beacons
  * come from here. The body must be a well-formed IE list with an SSID. */
-int wifi_ap_start(unsigned chan, unsigned bint, const unsigned char *body, unsigned len)
+/* A beacon body the access point can send: fixed fields, then a well-formed IE list with an SSID.
+ * Its TIM's offset (0 if it has none) in *tim; 0 if the body will do, -1 if not. */
+static int ap_body_check(const unsigned char *body, unsigned len, unsigned *tim)
 {
-    unsigned char bc[28];
     unsigned o = 12, ssid = 0;
-    if (!chan_active(chan) || bint < 20 || bint > 1000 || len < 12 || len > sizeof ap_body ||
-        state == WIFI_SCANNING)
+    if (len < 12 || len > sizeof ap_body)
         return -1;
-    unsigned tim = 0;
+    *tim = 0;
     while (o + 2 <= len && o + 2 + body[o + 1] <= len) {
         ssid |= body[o] == 0;
         if (body[o] == 5 && body[o + 1] >= 4)
-            tim = o;
+            *tim = o;
         o += 2 + body[o + 1];
     }
-    if (o != len || !ssid)
+    return o == len && ssid ? 0 : -1;
+}
+
+int wifi_ap_start(unsigned chan, unsigned bint, const unsigned char *body, unsigned len)
+{
+    unsigned char bc[28];
+    unsigned tim;
+    if (!chan_active(chan) || bint < 20 || bint > 1000 || state == WIFI_SCANNING ||
+        ap_body_check(body, len, &tim))
         return -1;
     wifi_leave();
     for (unsigned i = 0; i < WIFI_AP_CLIENTS; i++)
@@ -2518,6 +2526,19 @@ int wifi_ap_start(unsigned chan, unsigned bint, const unsigned char *body, unsig
     DOORBELL();
     ap_deadline = now + 1000;
     state = WIFI_AP;
+    return 0;
+}
+
+/* hostapd's beacon update (ERP protection and the like). The main loop runs this between two
+ * passes, as it runs ap_step: a beacon or probe response is built whole from one body or the
+ * other, and one already queued is a copy. The interval and TSF stay. */
+int wifi_ap_beacon(const unsigned char *body, unsigned len)
+{
+    unsigned tim;
+    if (state != WIFI_AP || ap_body_check(body, len, &tim))
+        return -1;
+    copy(ap_body, body, len);
+    ap_len = len, ap_tim = tim;
     return 0;
 }
 

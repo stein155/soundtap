@@ -70,8 +70,8 @@ int main(void)
            (BCOLINK_CAPS & (BCOLINK_CAP_AP | BCOLINK_CAP_REPLAY | BCOLINK_CAP_FLOW | BCOLINK_CAP_STATS |
                             BCOLINK_CAP_EVENTS | BCOLINK_CAP_ROAM | BCOLINK_CAP_REGDOM |
                             BCOLINK_CAP_SCAN_SSID | BCOLINK_CAP_NVINFO | BCOLINK_CAP_APDIAG |
-                            BCOLINK_CAP_SECURITY | BCOLINK_CAP_WPA3)) == BCOLINK_CAPS &&
-           BCOLINK_CAPS == 0xfff);
+                            BCOLINK_CAP_SECURITY | BCOLINK_CAP_WPA3 | BCOLINK_CAP_APBEACON)) == BCOLINK_CAPS &&
+           BCOLINK_CAPS == 0x1fff);
     n = ask(5, 0, 0, r); assert(r[6] == 0 && r[7] == WIFI_IDLE && r[8] == 0 && n == MGMT_HDR + 16 + MGMT_SCAN_DETAIL_LEN &&
                                 r[17] == WIFI_FAIL_NONE && r[18] == 0 && r[19] == 0 && r[20] == 0);
     /* a refused association: the step and the AP's status code (le16) follow the BSS */
@@ -239,7 +239,13 @@ int main(void)
     const unsigned char *x2 = k2 + MGMT_AP_CLIENT2, *k3 = x2 + 4 * MGMT_AP_EXTRA2;
     assert(le32(x2) == 0x3000 && le32(x2 + 4 * (MGMT_AP_EXTRA2 - 1)) == 0x3000 + MGMT_AP_EXTRA2 - 1);
     assert(le32(k3) == 711 && le32(k3 + 4) == 40 && le32(k3 + 8) == 2 && le32(k3 + 12) == 35);
+    /* AP_BEACON: hostapd's update replaces the body while the AP runs */
+    extern unsigned fake_ap_beacons;
+    n = ask(MGMT_AP_BEACON, ap + 3, 30, r);
+    assert(n == MGMT_HDR + 1 && r[1] == (MGMT_AP_BEACON | 0x80) && r[6] == 0 && fake_ap_beacons == 1 &&
+           fake_ap_len == 30);
     ask(7, 0, 0, r); assert(r[6] == 0 && fake_ap_stops == 1);
+    ask(MGMT_AP_BEACON, ap + 3, 30, r); assert(r[6] == 1 && fake_ap_beacons == 1); /* no AP: refused */
     ask(8, 0, 0, r); assert(r[7] == 0);
     ap[0] = 14; ask(6, ap, sizeof ap, r); assert(r[6] == 1);       /* no channel 14 */
     ask(6, ap, 2, r); assert(r[6] == 1);                           /* short */

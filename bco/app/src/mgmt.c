@@ -356,6 +356,9 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
     case 19: /* AUTH_FRAME: wpa_supplicant's SAE frame body to send */
         *o++ = !len || len > MGMT_SAE_MAX || wifi_sae_tx(a, len) ? 1 : 0;
         break;
+    case 21: /* AP_BEACON: the new beacon body (mgmt.h MGMT_AP_BEACON) */
+        *o++ = wifi_ap_beacon(a, len) ? 1 : 0;
+        break;
     case 20: /* SET_PMK: bssid, the PMK SAE derived. Never echoed, never kept for a resend. */
         *o++ = len != 6 + 32 || wifi_set_pmk(a, a + 6) ? 1 : 0;
         break;

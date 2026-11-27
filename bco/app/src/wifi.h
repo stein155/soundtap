@@ -128,6 +128,10 @@ void wifi_fail(unsigned *step, unsigned *code);
 #define WIFI_AP_BODY_MAX 512u
 #define WIFI_AP_CLIENTS 6u /* one core peer slot each, 0..5 */
 int wifi_ap_start(unsigned chan, unsigned bint, const unsigned char *body, unsigned len);
+/* A new beacon body for the access point that runs (hostapd's beacon update): the next beacon and
+ * probe response carry it. -1, and the old body stays, without an access point or for a body
+ * wifi_ap_start would refuse. */
+int wifi_ap_beacon(const unsigned char *body, unsigned len);
 void wifi_ap_stop(void);
 /* Associated clients: copies up to WIFI_AP_CLIENTS MACs, returns the count. */
 unsigned wifi_ap_clients(unsigned char macs[][6]);

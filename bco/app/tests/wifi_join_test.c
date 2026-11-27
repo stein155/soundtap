@@ -237,8 +237,34 @@ static void access_point(void)
     unsigned char ours[] = {0, 8, 'S', 'o', 'u', 'n', 'd', 'T', 'a', 'p'};
     rx_ap(rxf, rx_mgmt(0x40, own, phone, own, ours, sizeof ours));
     assert(wifi_tx_frames == before + 2);
+
+    /* hostapd's beacon update: an ERP element with Use_Protection set. The next beacon and probe
+     * response carry it; the interval and the target times stay. A malformed body is refused and
+     * the old one stays, and without the access point nothing is replaced. */
+    static const unsigned char upd[] = {0, 0, 0, 0, 0, 0, 0, 0, 100, 0, 0x01, 0x00,
+                                        0, 8, 'S', 'o', 'u', 'n', 'd', 'T', 'a', 'p',
+                                        1, 4, 0x82, 0x84, 0x8b, 0x96,
+                                        3, 1, 6,
+                                        5, 4, 0, 1, 0, 0,
+                                        42, 1, 0x02};
+    unsigned char broken[sizeof upd];
+    memcpy(broken, upd, sizeof upd);
+    broken[sizeof upd - 2] = 9; /* the ERP element runs past the end */
+    assert(wifi_ap_beacon(broken, sizeof broken) == -1 && ap_len == sizeof body);
+    assert(wifi_ap_beacon(upd, sizeof upd) == 0 && ap_len == sizeof upd && ap_tim == sizeof body - 6);
+    unsigned long long next = ap_tbtt;
+    now = ap_ms(ap_tbtt);
+    tx_frames();
+    ap_step();
+    assert(ap_beacons == 13 && ap_tbtt == next + 102400);
+    f = last_frame(), d = f + 8, b = d + 0xc4;
+    assert(d[0x18] == 0x80 && !memcmp(b + 8, upd + 8, sizeof upd - 8)); /* the new body, ERP included */
+    rx_ap(rxf, rx_mgmt(0x40, own, phone, own, ours, sizeof ours));
+    f = last_frame(), d = f + 8, b = d + 0xc4;
+    assert(d[0x18] == 0x50 && b[sizeof upd - 6 - 3] == 42 && b[sizeof upd - 6 - 1] == 0x02); /* no TIM, ERP */
     wifi_ap_stop();
     assert(state == WIFI_IDLE);
+    assert(wifi_ap_beacon(upd, sizeof upd) == -1);
     printf("ok: the access point beacons every interval and answers probe requests\n");
 }
 

@@ -80,6 +80,21 @@ class BcoLinkContract(unittest.TestCase):
         self.assertIn("static DEVICE_ATTR_RO(ap);", self.patch)
         self.assertIn("&dev_attr_ap.attr", self.patch)
 
+    def test_ap_beacon_update(self) -> None:
+        """Beacon updates from hostapd reach the BCO as AP_BEACON, only for an app that announces them.
+
+        Before, change_beacon did nothing and an ERP protection change never went on air.
+        """
+        self.assertEqual(self.app["BCOLINK_CAP_APBEACON"], self.drv["BCOLINK_CAP_APBEACON"])
+        self.assertEqual(defines((APP / "wifi.h").read_text())["WIFI_AP_BODY_MAX"], self.drv["BCO_AP_BODY_MAX"])
+        # its number: test_message_types holds T_AP_BEACON to mgmt.c's case 21, and mgmt.h names it
+        self.assertEqual(self.app["MGMT_AP_BEACON"], 21)
+        funcs = dict(re.findall(r"\n\+static [^\n]*\b(\w+)\([^)]*\)\n\+\{(.*?)\n\+\}", self.patch, re.DOTALL))
+        body = funcs["bco_change_beacon"]
+        self.assertIn("BCOLINK_CAP_APBEACON", body)
+        self.assertIn("bco_req(b, T_AP_BEACON", body)
+        self.assertEqual([n for n, b in funcs.items() if "T_AP_BEACON" in b], ["bco_change_beacon"])
+
     def test_join_failure_steps(self) -> None:
         """STATUS's join failure steps are numbered the same on both sides.
 
@@ -258,7 +273,7 @@ class BcoLinkContract(unittest.TestCase):
         mgmt = (APP / "mgmt.c").read_text()
         for num, name in ((18, "EXT_AUTH"), (19, "AUTH_FRAME"), (20, "SET_PMK")):
             self.assertRegex(mgmt, rf"case {num}: /\* {name}")
-        self.assertIn("T_NV_INFO, T_EXT_AUTH,\n+\tT_AUTH_FRAME, T_SET_PMK };", self.patch)
+        self.assertIn("T_NV_INFO, T_EXT_AUTH,\n+\tT_AUTH_FRAME, T_SET_PMK, T_AP_BEACON };", self.patch)
         funcs = dict(re.findall(r"\n\+static [^\n]*\b(\w+)\([^)]*\)\n\+\{(.*?)\n\+\}", self.patch, re.DOTALL))
         for name in ("bco_mgmt_tx", "bco_external_auth", "bco_set_pmksa"):
             self.assertIn("BCOLINK_CAP_WPA3", funcs[name], name)
