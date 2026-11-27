@@ -317,9 +317,12 @@ phone). Now:
   and the beacon interval. A join on its own address puts the core in `ap_mode`: it tunes the
   channel and passes probe requests to the app, a wildcard one without the address filter. Once
   the core reports the BSS (`0xbd`, or after a second) the app sends `0xb8` without privacy.
-- The app sends a beacon every beacon interval from its main loop: hostapd's body (TIM included)
-  behind a broadcast header, BSSID = own MAC, at 1 Mb/s, the timestamp counting microseconds since
-  the AP came up. A late poll sends one beacon, not a burst. A wildcard probe request, or one for
+- The app sends a beacon at each target beacon transmission time from its main loop: hostapd's
+  body (TIM included) behind a broadcast header, BSSID = own MAC, at 1 Mb/s, at every TSF that is
+  a multiple of the beacon interval (TSF = microseconds since the BSS came up) and stamped with
+  that TSF. A dozing phone wakes at those times. Until 2026-11-27 beacons went every 102 ms instead
+  of 102.4 ms (100 TU) stamped with the millisecond clock, so they drifted 0.4 ms a beacon against
+  the times a phone wakes at. A late poll sends one beacon, not a burst. A wildcard probe request, or one for
   the AP's SSID, gets a probe response with the same body minus the TIM.
 - The app answers open-system authentication and (re)association itself, for up to six clients
   (one core peer slot each).
@@ -378,7 +381,15 @@ phone). Now:
   frames and one data frame from it, and no DHCP request reached udhcpd. Null-data goes at a low
   rate, data at the top OFDM rates, so the ST20's `hostapd.conf` now offers rates up to 24 Mb/s
   (11b rates basic), and the damaged-frame counters and each client's last rate and level show
-  whether the radio hears the phone's data at all. A phone getting an address, and how soon the network
+  whether the radio hears the phone's data at all. The third test (same day, a few metres): the
+  radio heard the phone well (−57 to −60 dBm, 15 damaged frames) but the phone sent no frame with
+  a body at all, only null-data, about six a second, dozing within seconds: the phone itself never
+  started DHCP. That is what a phone does when it misses its beacons (the drift above) or does not
+  hear its frames acknowledged, so the beacons now keep their target times, and `AP_STATUS` counts
+  the core's ACKs (with the last one's rate class, the rate it answered and the frame it
+  acknowledged) and per client the frames with the Retry bit, those repeating a sequence number
+  and the last sequence control (`retries`, `repeats`, `seq` on its line in
+  `/sys/class/net/bcolink0/bco/ap`). A phone getting an address, and how soon the network
   appears, is the hardware checklist's setup-AP row for the ST20.
 
 ## CCMP on the core's cipher engine

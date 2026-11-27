@@ -31,6 +31,8 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
   then waited without an address. The speaker's network chip now accepts what a phone sends
   it, keeps messages for a phone that has gone to sleep until it wakes, and sends messages for
   every phone at the slowest speed, so phones further away hear them too.
+- **SoundTouch 20: phones that save battery stay connected to the setup network**: its
+  broadcasts now come exactly on time, when a sleeping phone wakes to listen for them.
 - **SoundTouch 20: the setup network stays up while a phone is on it**, instead of closing
   after a few minutes to try your home network again, and closes again once the phone has left.
 - **SoundTouch 20: the display counts down while you hold Preset 2 and Volume Down** (or

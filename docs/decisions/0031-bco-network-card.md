@@ -59,7 +59,8 @@ point.
 In `ap_mode` the core takes a unicast frame to the BCO's own address as passing its address
 filter, which is set up for a station, and keeps and ACKs a client's data, null-data, QoS data
 (passed up without its QoS control) and PS-Poll; it keeps no other network's group data. Group
-frames go out at the basic rate, unicast data at the data rate. The app follows each client's
+frames go out at the basic rate, unicast data at the data rate. Beacons go at the BSS's target
+beacon transmission times, stamped with its TSF. The app follows each client's
 power-management bit: unicast frames for a dozing client are held (four at most) and named in the
 beacon's TIM, a PS-Poll fetches one and waking fetches the rest; while any client dozes, group
 frames follow the next beacon, which is always a DTIM beacon. `AP_STATUS` carries, behind
