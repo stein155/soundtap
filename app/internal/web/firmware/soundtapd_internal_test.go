@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"debug/buildinfo"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -14,7 +15,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/stein155/soundtap/app/internal/oplock"
@@ -53,10 +56,12 @@ func soundtapdServer(t *testing.T) appFixture {
 		t.Fatal(err)
 	}
 
+	// run in a directory of its own, as on the speaker: the running copy is on tmpfs, the
+	// override on /mnt/nv. A test that breaks the store must not break the upload too.
 	dir := t.TempDir()
 	base := filepath.Join(dir, "base")
 
-	run := filepath.Join(dir, "run")
+	run := filepath.Join(t.TempDir(), "run")
 	for _, path := range []string{base, run} {
 		err := os.WriteFile(path, bin, 0o755)
 		if err != nil {
@@ -334,6 +339,54 @@ func TestSoundTapdFailedStoreKeepsTheStoredApp(t *testing.T) {
 	_, err = os.Stat(update.override + ".base")
 	if err != nil {
 		t.Error("the stored app no longer counts: .base is gone")
+	}
+}
+
+// An upload the speaker cannot write is its own failure: a 500 that does not name the
+// staging path, not a 400 that blames the client.
+//
+//nolint:paralleltest // it changes the mode of the run directory under the handler
+func TestSoundTapdUploadThatCannotBeWrittenIsAServerError(t *testing.T) {
+	app := soundtapdServer(t)
+	if os.Geteuid() == 0 {
+		t.Skip("root writes into a read-only directory")
+	}
+
+	dir := filepath.Dir(app.update.run)
+
+	err := os.Chmod(dir, 0o555)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer func() { _ = os.Chmod(dir, 0o755) }()
+
+	rec := postSoundTapd(t, app.handler, append(append([]byte{}, app.bin...), 0), confirmSoundTapd)
+	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), dir) {
+		t.Fatalf("status %d: %s; want 500 without the path", rec.Code, rec.Body)
+	}
+}
+
+// receiveSoundTapd tells a write on the speaker (installError) from the client's body
+// failing or being too large.
+func TestReceiveSoundTapdTellsWhoFailed(t *testing.T) {
+	t.Parallel()
+
+	var failed installError
+
+	_, err := receiveSoundTapd(strings.NewReader("x"), filepath.Join(t.TempDir(), "missing", "run.new"))
+	if !errors.As(err, &failed) || strings.Contains(failed.msg, "missing") {
+		t.Errorf("unwritable path: %v, want an installError without the path in its message", err)
+	}
+
+	_, err = receiveSoundTapd(iotest.ErrReader(io.ErrUnexpectedEOF), filepath.Join(t.TempDir(), "run.new"))
+	if err == nil || errors.As(err, &failed) {
+		t.Errorf("failing body: %v, want a client error", err)
+	}
+
+	sum, err := receiveSoundTapd(strings.NewReader("x"), filepath.Join(t.TempDir(), "run.new"))
+	if err != nil || sum != "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881" {
+		t.Errorf("good body: %q, %v", sum, err)
 	}
 }
 

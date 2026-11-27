@@ -185,7 +185,7 @@ func (s *Handler) postSoundTapd(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		_ = os.Remove(tmp)
 
-		apiError(w, http.StatusBadRequest, err.Error())
+		s.receiveFailed(w, err)
 
 		return
 	}
@@ -225,6 +225,18 @@ func (s *Handler) postSoundTapd(w http.ResponseWriter, r *http.Request) {
 	unlock = false
 
 	update.restartSoon()
+}
+
+// receiveFailed answers an upload receiveSoundTapd could not take: the speaker's own
+// failure with a 500 (the path stays in the log), the client's with a 400.
+func (s *Handler) receiveFailed(w http.ResponseWriter, err error) {
+	if failed, ok := errors.AsType[installError](err); ok {
+		s.fail(w, failed.msg, failed.err)
+
+		return
+	}
+
+	apiError(w, http.StatusBadRequest, err.Error())
 }
 
 // refusedError is an upload that is not a soundtapd for this speaker.
@@ -341,19 +353,29 @@ func (s *Handler) deleteSoundTapd(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// receiveSoundTapd writes the request body to path and returns its SHA-256. A failure on
+// the speaker's side is an installError, answered with a 500 that keeps the path in the
+// log; anything else is the client's and gets a 400.
 func receiveSoundTapd(body io.Reader, path string) (string, error) {
 	// Executable: it is probed with -os-api and then runs as the new app.
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, executableMode)
 	if err != nil {
-		// The 400's text as it has always been worded: the path and what the system said.
-		return "", err //nolint:wrapcheck // the text is the API's answer, unchanged
+		return "", installError{"receiving the upload failed", err}
 	}
 
 	hasher := sha256.New()
+	// A failed write is the speaker's (a full tmpfs, say), a failed read the client's.
+	dst := &writeRecorder{w: io.MultiWriter(file, hasher), err: nil}
 
-	written, err := io.Copy(io.MultiWriter(file, hasher), io.LimitReader(body, soundtapdMaxSize+1))
-	if cerr := file.Close(); err == nil {
-		err = cerr
+	written, err := io.Copy(dst, io.LimitReader(body, soundtapdMaxSize+1))
+
+	cerr := file.Close()
+	if dst.err == nil && err == nil && cerr != nil {
+		dst.err = cerr
+	}
+
+	if dst.err != nil {
+		return "", installError{"receiving the upload failed", dst.err}
 	}
 
 	if err != nil {
@@ -365,6 +387,22 @@ func receiveSoundTapd(body io.Reader, path string) (string, error) {
 	}
 
 	return hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+// writeRecorder remembers the first error its writer returned, so a failed copy can tell
+// a write on the speaker from a read of the request body.
+type writeRecorder struct {
+	w   io.Writer
+	err error
+}
+
+func (r *writeRecorder) Write(p []byte) (int, error) {
+	n, err := r.w.Write(p)
+	if err != nil && r.err == nil {
+		r.err = err
+	}
+
+	return n, err //nolint:wrapcheck // io.Copy hands it back unchanged; r.err keeps it for the caller
 }
 
 // check refuses anything but a soundtapd for this speaker's CPU: an executable that

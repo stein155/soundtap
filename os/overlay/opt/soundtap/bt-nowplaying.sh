@@ -23,11 +23,12 @@ field() {
 	printf '%s\n' "$1" | sed -n "s/^[[:space:]]*$2: \(.*\)$/\1/p" | head -n1 | tr -d '\r' | tr '\t' ' '
 }
 
-# JSON string escaping for the two characters that can actually appear in a track name
-# and break a hand-built body. Track names with quotes are common enough (12") that
-# posting them raw would silently drop metadata with a 400.
+# JSON string escaping for a hand-built body. Track names with quotes are common enough
+# (12") that posting them raw would silently drop metadata with a 400. Control characters
+# (0x00-0x1F) are dropped first, as esc() in spotify-source.sh does: a raw one in an AVRCP
+# title is invalid JSON, and the same refused body would be posted again on every change.
 json() {
-	printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+	printf '%s' "$1" | tr -d '\000-\037' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
 }
 
 read_player() {

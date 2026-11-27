@@ -33,21 +33,37 @@ func TestClockOffClearsStandbyFrame(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ctx := t.Context()
-
-	disp := display.New(ctx, fbPath, func(context.Context) bool { return true }, slog.New(slog.DiscardHandler))
 	// Like stock, no clock before the first NTP sync of the boot.
 	synced := filepath.Join(t.TempDir(), "clock-synced")
 	old := clocksync.Path
-
 	clocksync.Path = synced
-	defer func() { clocksync.Path = old }()
+
+	// Not t.Context(): that ends only after the test, while the temp dirs are already
+	// being removed. Cleanups run last-registered first, so this one, registered after
+	// both TempDir calls, stops the clock loop and the display's paint loop (which writes
+	// the framebuffer back as it stops) before the files go, and before clocksync.Path,
+	// which the clock loop reads, is put back.
+	ctx, cancel := context.WithCancel(context.Background())
+	disp := display.New(ctx, fbPath, func(context.Context) bool { return true }, slog.New(slog.DiscardHandler))
+	clockDone := make(chan struct{})
+
+	t.Cleanup(func() {
+		cancel()
+		<-clockDone
+		<-disp.Done()
+
+		clocksync.Path = old
+	})
 
 	var off atomic.Bool
 
-	go clockScreenEvery(ctx, disp, func() settings.Display {
-		return settings.Display{Timezone: "UTC", ClockOff: off.Load(), Hour12: false}
-	}, slog.New(slog.DiscardHandler), time.Millisecond)
+	go func() {
+		defer close(clockDone)
+
+		clockScreenEvery(ctx, disp, func() settings.Display {
+			return settings.Display{Timezone: "UTC", ClockOff: off.Load(), Hour12: false}
+		}, slog.New(slog.DiscardHandler), time.Millisecond)
+	}()
 
 	wait := func(what string, cond func() bool) {
 		t.Helper()

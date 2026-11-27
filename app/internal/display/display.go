@@ -40,6 +40,8 @@ type Manager struct {
 
 	// wake ends the slow standby tick at once when something new is set.
 	wake chan struct{}
+	// done is closed when the paint loop has stopped; see Done.
+	done chan struct{}
 }
 
 func New(ctx context.Context, fbPath string, standby func(context.Context) bool, log *slog.Logger) *Manager {
@@ -61,17 +63,28 @@ func New(ctx context.Context, fbPath string, standby func(context.Context) bool,
 		drawnAt:        time.Time{},
 
 		wake: make(chan struct{}, 1),
+		done: make(chan struct{}),
 	}
 	if !mgr.avail {
 		log.Info("no ST20 OLED framebuffer; display disabled", "path", fbPath)
+		close(mgr.done)
 
 		return mgr
 	}
 
-	safego.Go("display.loop", func() { mgr.loop(ctx) })
+	safego.Go("display.loop", func() {
+		defer close(mgr.done)
+
+		mgr.loop(ctx)
+	})
 
 	return mgr
 }
+
+// Done is closed once the paint loop has stopped after New's context ended, with the
+// framebuffer restored: nothing writes to it after that. Without a panel there is no
+// loop and it is closed from the start.
+func (m *Manager) Done() <-chan struct{} { return m.done }
 
 func (m *Manager) Available() bool { return m != nil && m.avail }
 

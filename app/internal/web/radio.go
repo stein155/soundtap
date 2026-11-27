@@ -53,12 +53,24 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 // tuneinProxy mirrors a request to https://opml.radiotime.com so the browser can
 // hit TuneIn's OPML API same-origin (TuneIn sends no CORS headers). Only the
 // path under /api/tunein/ and the query string are forwarded; the host is fixed.
+// The path is forwarded as the browser escaped it: decoding it first would turn an
+// encoded "?" or "#" into a real query or fragment. A ".." segment, plain or encoded,
+// is refused rather than left for TuneIn to resolve.
 func (s *Server) tuneinProxy(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/api/tunein")
-	if path == "" || path == "/" {
+	path, ok := strings.CutPrefix(r.URL.EscapedPath(), "/api/tunein")
+	if !ok || path == "" || path == "/" {
 		apiError(w, http.StatusBadRequest, "missing path")
 
 		return
+	}
+
+	for segment := range strings.SplitSeq(path, "/") {
+		decoded, err := url.PathUnescape(segment)
+		if err != nil || decoded == ".." {
+			apiError(w, http.StatusBadRequest, "bad path")
+
+			return
+		}
 	}
 
 	target := tuneInBase + path

@@ -43,6 +43,7 @@ func newTestManager(t *testing.T, standby bool) (*Manager, string) {
 		shown:          nil,
 		drawnAt:        time.Time{},
 		wake:           nil,
+		done:           nil,
 	}
 
 	return mgr, path
