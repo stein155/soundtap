@@ -73,7 +73,7 @@ diff -Nru a/drivers/net/usb/Makefile b/drivers/net/usb/Makefile
 diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 --- a/drivers/net/usb/soundtap_bco.c	1970-01-01 01:00:00.000000000 +0100
 +++ b/drivers/net/usb/soundtap_bco.c	2026-10-06 18:06:43.454816079 +0200
-@@ -0,0 +1,1756 @@
+@@ -0,0 +1,1766 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * SoundTap BCO link: the SoundTouch 20's Wi-Fi and wired ports, which live on the BCO co-processor
@@ -165,6 +165,9 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +#define BCO_AP_COUNTERS		8
 +#define BCO_AP_DIAG		5
 +#define BCO_AP_CLIENT		24
++/* and after the clients, from an app that sends them: the core's damaged frames to us and the
++ * last one's rate, a client's frames with a body and the last one's, frames without queue room */
++#define BCO_AP_EXTRA		5
 +/* An unasked EVENTS report: status, event, le16 reason, bssid, channel, rssi (bco/app/src/mgmt.h). */
 +#define BCO_EVENT_LEN		12
 +#define BCO_EV_DEAUTH		1
@@ -1608,6 +1611,8 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +		"tx_dropped", "to_scm", "beacons" };
 +	static const char *const diag[BCO_AP_DIAG] = { "first_beacon_ms", "core_to_us",
 +		"core_filter_missed", "core_client_data", "held_dropped" };
++	static const char *const extra[BCO_AP_EXTRA] = { "core_fcs_bad", "core_fcs_bad_last",
++		"core_data", "core_data_last", "core_no_room" };
 +	struct bco *b = bco_of_dev(d);
 +	unsigned int n, at, i;
 +	ssize_t len = 0;
@@ -1634,11 +1639,16 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +			const u8 *k = b->rsp + at;
 +
 +			len += sysfs_emit_at(buf, len,
-+					     "client %pM dozing %u held %u idle_ms %u rx_data %u rx_null %u tx_ok %u tx_failed %u\n",
-+					     b->rsp + 2 + 6 * i, k[0] & 1, k[1], get_unaligned_le32(k + 4),
-+					     get_unaligned_le32(k + 8), get_unaligned_le32(k + 12),
-+					     get_unaligned_le32(k + 16), get_unaligned_le32(k + 20));
++					     "client %pM dozing %u held %u rssi %d rate %u idle_ms %u rx_data %u rx_null %u tx_ok %u tx_failed %u\n",
++					     b->rsp + 2 + 6 * i, k[0] & 1, k[1], (s8)k[2], k[3],
++					     get_unaligned_le32(k + 4), get_unaligned_le32(k + 8),
++					     get_unaligned_le32(k + 12), get_unaligned_le32(k + 16),
++					     get_unaligned_le32(k + 20));
 +		}
++		/* the last-frame words as hex: rate index, level and frame control, a byte each */
++		for (i = 0; at + 4 * BCO_AP_EXTRA <= n && i < BCO_AP_EXTRA; i++)
++			len += sysfs_emit_at(buf, len, i & 1 ? "%s 0x%x\n" : "%s %u\n", extra[i],
++					     get_unaligned_le32(b->rsp + at + 4 * i));
 +	}
 +	mutex_unlock(&b->lock);
 +	return err ? err : len;

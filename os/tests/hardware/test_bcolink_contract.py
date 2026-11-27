@@ -70,7 +70,7 @@ class BcoLinkContract(unittest.TestCase):
         keep the AP up while a phone is on it, and shows the AP's state in bco/ap for soundtapd's log.
         """
         self.assertEqual(self.app["BCOLINK_CAP_APDIAG"], self.drv["BCOLINK_CAP_APDIAG"])
-        for name in ("COUNTERS", "DIAG", "CLIENT"):
+        for name in ("COUNTERS", "DIAG", "CLIENT", "EXTRA"):
             self.assertEqual(self.app[f"MGMT_AP_{name}"], self.drv[f"BCO_AP_{name}"], name)
         funcs = dict(re.findall(r"\n\+static [^\n]*\b(\w+)\([^)]*\)\n\+\{(.*?)\n\+\}", self.patch, re.DOTALL))
         for name in ("bco_ap_client", "ap_show"):
