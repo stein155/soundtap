@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -200,6 +201,9 @@ func lookupsFor(path string, state *speakerstate.Speaker,
 		synced:     func() bool { return true },
 		buildEpoch: time.Time{},
 		log:        log,
+		mu:         sync.Mutex{},
+		closed:     false,
+		cancel:     nil,
 	}
 }
 
@@ -422,6 +426,61 @@ func TestStockLookupsRedateAPresetDatedByTheBuildClock(t *testing.T) {
 	file, _ := readPendingStockPresets(path)
 	if !file.Presets[0].FirstSeen.Equal(testNow) {
 		t.Fatalf("first seen %v, want %v", file.Presets[0].FirstSeen, testNow)
+	}
+}
+
+// A factory reset closes the lookups before it removes the pending file: a round still
+// waiting for Radio Browser then never writes the file back, so stock's presets do not come
+// back at the next start.
+func TestStockLookupsClosedByAResetWriteNothing(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), stockPendingName)
+	// the first is dropped, so the round has the second to write back
+	writePending(t, path,
+		pending(1, "not-a-uuid", "Gone", time.Time{}), pending(2, uuidNPO2, "NPO Radio 2", time.Time{}))
+
+	asked, answer := make(chan struct{}), make(chan struct{})
+	slow := func(context.Context, string) (radiobrowser.Station, error) {
+		close(asked)
+		<-answer
+
+		return radiobrowser.Station{}, radiobrowser.ErrNoServer
+	}
+	now := testNow
+	lookups := lookupsFor(path, speakerstate.New(), slow, &now, slog.New(slog.DiscardHandler))
+
+	done := make(chan bool)
+
+	go func() { done <- lookups.round(context.Background()) }()
+
+	<-asked // the round is in flight, with a shorter file to write back
+
+	err := lookups.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_ = os.Remove(path) // the reset
+
+	close(answer)
+	<-done
+
+	_, err = os.Stat(path)
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the round wrote the pending file back after the reset: %v", err)
+	}
+}
+
+// Lookups that never started, because nothing waited, close too.
+func TestStockLookupsCloseWhenNothingWaits(t *testing.T) {
+	t.Parallel()
+
+	closer := startStockPresetLookups(t.Context(), t.TempDir(), speakerstate.New(), slog.New(slog.DiscardHandler))
+
+	err := closer.Close()
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

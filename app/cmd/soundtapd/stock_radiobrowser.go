@@ -8,11 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/stein155/soundtap/app/internal/atomicjson"
@@ -160,6 +162,8 @@ func readPendingStockPresets(path string) (pendingStockFile, error) {
 }
 
 // stockLookups stores stock's Radio Browser presets once their stream address is known.
+// Close ends them for a factory reset: a round still in flight then never writes the pending
+// file back after the reset removed it.
 type stockLookups struct {
 	path string
 	// resolve looks a station up (radiobrowser.Client.Station).
@@ -177,17 +181,45 @@ type stockLookups struct {
 	// this check did) and is dated again; at worst its week starts again after an update.
 	buildEpoch time.Time
 	log        *slog.Logger
+
+	mu     sync.Mutex // held over a write of the pending file and over Close
+	closed bool
+	cancel context.CancelFunc // ends run's context; nil when nothing runs
 }
 
+// Close ends the lookups: no write of the pending file comes after it, and a round in flight
+// stops at its next preset.
+func (l *stockLookups) Close() error {
+	l.mu.Lock()
+	l.closed = true
+	l.mu.Unlock()
+
+	if l.cancel != nil {
+		l.cancel()
+	}
+
+	return nil
+}
+
+// noLookups is the Closer of lookups that never started: nothing waited.
+type noLookups struct{}
+
+func (noLookups) Close() error { return nil }
+
 // startStockPresetLookups looks stock's Radio Browser presets up in the background while
-// any wait, at every start and then with a growing pause, up to every ten minutes.
-func startStockPresetLookups(ctx context.Context, home string, state *speakerstate.Speaker, log *slog.Logger) {
+// any wait, at every start and then with a growing pause, up to every ten minutes. A
+// factory reset closes what it returns before it removes the pending file.
+func startStockPresetLookups(
+	ctx context.Context, home string, state *speakerstate.Speaker, log *slog.Logger,
+) io.Closer {
 	path := filepath.Join(home, stockPendingName)
 
 	_, err := os.Stat(path)
 	if err != nil {
-		return // nothing waits: the usual case
+		return noLookups{} // nothing waits: the usual case
 	}
+
+	ctx, cancel := context.WithCancel(ctx)
 
 	client := radiobrowser.New("SoundTap/" + strings.TrimPrefix(version, "app-v"))
 	lookups := &stockLookups{
@@ -214,9 +246,14 @@ func startStockPresetLookups(ctx context.Context, home string, state *speakersta
 		synced:     clocksync.Synced,
 		buildEpoch: readBuildEpoch(buildEpochPath),
 		log:        log.With("comp", "stock-presets"),
+		mu:         sync.Mutex{},
+		closed:     false,
+		cancel:     cancel,
 	}
 
 	goSafe("stockPresetLookups", func() { lookups.run(ctx, sleepCtx) })
+
+	return lookups
 }
 
 // run looks up until nothing waits, waiting between rounds with wait.
@@ -397,8 +434,16 @@ func pendingProblem(preset *pendingStockPreset) string {
 	return ""
 }
 
-// save writes what still waits back, and removes the file once nothing does.
+// save writes what still waits back, and removes the file once nothing does; after Close it
+// writes nothing.
 func (l *stockLookups) save(waiting []pendingStockPreset) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if l.closed {
+		return
+	}
+
 	if len(waiting) == 0 {
 		err := os.Remove(l.path)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {

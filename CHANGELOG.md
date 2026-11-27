@@ -56,6 +56,8 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
 - **Radio Browser presets from the original software are no longer given up at once** on a
   speaker that cannot reach Radio Browser right after the first install: the week SoundTap
   keeps trying now starts once the speaker knows the time.
+- **A factory reset no longer brings back the original software's Radio Browser presets**
+  when it came while SoundTap was still looking them up.
 - **On a network that hands out no gateway**, or has no internet, the display and the Wi-Fi
   lamp now say connected instead of "Connecting" for ever.
 

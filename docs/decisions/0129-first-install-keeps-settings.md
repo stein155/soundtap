@@ -60,7 +60,8 @@ set the clock this boot (`/run/soundtap/clock-synced`): on the first boot after 
 stock init sets the clock to the build's time, and a preset dated by it would be given up at the
 first failed lookup once NTP moved the clock on by more than a week. A time no later than an
 hour after the running build's time is taken for such a date and taken again. The file goes with its last entry, and
-with a factory reset. `.stock-imported` still records only that the takeover ran: the lookups
+with a factory reset, which ends the lookups first so a round still in flight cannot write it
+back. `.stock-imported` still records only that the takeover ran: the lookups
 carry on after it.
 
 For the Wi-Fi, the installer runs under stock, so it reads the key and IV from the NetManager

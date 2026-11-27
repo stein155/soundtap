@@ -202,9 +202,9 @@ func startAudioSide(ctx context.Context, opt options, wiring *audioWiring) audio
 }
 
 // setupOptions are Wi-Fi setup, saved networks and the factory reset.
-func setupOptions(
-	life *lifecycle, set *settings.Store, presets *store.Store, home, wifiConf string, log *slog.Logger,
-) web.SetupOptions {
+//
+// stores are what the reset closes before it removes their files (factoryReset).
+func setupOptions(life *lifecycle, home, wifiConf string, log *slog.Logger, stores ...io.Closer) web.SetupOptions {
 	return web.SetupOptions{
 		SetupMode:    func() error { return openSetupAP(log) },
 		WifiProfiles: func() ([]web.WifiProfile, error) { return savedWifiProfiles(wifiConf) },
@@ -220,7 +220,7 @@ func setupOptions(
 					time.Sleep(resetResponseGrace)
 					life.shutdown()
 				}()
-			}, set, presets)
+			}, stores...)
 
 			return nil
 		},
@@ -293,6 +293,7 @@ type audioWiring struct {
 	spot        *spotify.Client
 	set         *settings.Store
 	st          *store.Store
+	lookups     io.Closer // stock's Radio Browser preset lookups, closed by a factory reset
 	tc          *tunein.Client
 	disp        *display.Manager
 	mux         *http.ServeMux
@@ -446,7 +447,8 @@ func panelFeedback(disp *display.Manager) func(text string) {
 // panelChords are the front panel's recovery chords: the factory reset and the setup AP.
 // Front-panel escape hatches remain usable when the network is unreachable.
 func panelChords(ctx context.Context, wiring *audioWiring, feedback func(string)) []chord {
-	disp, set, presets, shutdown, log := wiring.disp, wiring.set, wiring.st, wiring.shutdown, wiring.log
+	disp, shutdown, log := wiring.disp, wiring.shutdown, wiring.log
+	stores := []io.Closer{wiring.lookups, wiring.set, wiring.st} // the lookups first: they write presets
 	wifiConf := filepath.Join(filepath.Dir(wiring.home), "wifi.conf")
 	// Both chords change the network, so an install or BCO flash refuses them as it does a key.
 	refused := func() {
@@ -457,7 +459,7 @@ func panelChords(ctx context.Context, wiring *audioWiring, feedback func(string)
 	return recoveryChords(
 		exclusiveKept(&resetLock, refused, func() {
 			disp.SetTransient(display.Content{Frame: panel.Message(panel.Text("Resetting"))}, panelResettingShown)
-			factoryReset(ctx, wiring.home, wifiConf, log.With("comp", "reset"), shutdown, set, presets)
+			factoryReset(ctx, wiring.home, wifiConf, log.With("comp", "reset"), shutdown, stores...)
 		}),
 		exclusive(new(oplock.Lock), refused, func() {
 			// Through the panel's own overlays, as the count before it: a transient set

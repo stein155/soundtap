@@ -24,6 +24,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -237,7 +238,7 @@ func runDaemon(opt options, serial string, log *slog.Logger) {
 
 	speakerState := newSpeaker(opt, identity, log)
 	tuneinClient := tunein.New()
-	presets := openPresets(ctx, speakerState, presetsPath, leftovers.presets, log)
+	presets, stockLookups := openPresets(ctx, speakerState, presetsPath, leftovers.presets, log)
 	upd := update.New(version, log.With("comp", "update"))
 
 	port, advertisedPort := advertisedPorts(opt)
@@ -263,7 +264,7 @@ func runDaemon(opt options, serial string, log *slog.Logger) {
 		},
 		Multiroom: multiroomOptions(),
 		Firmware:  firmwareOptions(life, disp, opt.home, func() { quietForInstall(speakerState) }),
-		Setup:     setupOptions(life, set, presets, opt.home, wifiConf, log),
+		Setup:     setupOptions(life, opt.home, wifiConf, log, stockLookups, set, presets),
 		Bluetooth: bluetoothOptions(ctx, log),
 		Panel:     panelOptions(disp, log),
 		Changed:   changes,
@@ -292,8 +293,8 @@ func runDaemon(opt options, serial string, log *slog.Logger) {
 	startPprof(ctx, log)
 
 	pump := startAudioSide(ctx, opt, &audioWiring{
-		sp: speakerState, web: webSrv, spot: spot, set: set, st: presets, tc: tuneinClient, disp: disp, mux: mux,
-		home: opt.home, port: port, identity: identity, nameUpdates: nameUpdates,
+		sp: speakerState, web: webSrv, spot: spot, set: set, st: presets, lookups: stockLookups, tc: tuneinClient,
+		disp: disp, mux: mux, home: opt.home, port: port, identity: identity, nameUpdates: nameUpdates,
 		receiverUpdates: receiverUpdates,
 		shutdown:        life.shutdown, fadeOut: &life.fadeOut, savePrefs: &life.savePrefs, log: log,
 		chime: nil, eventChime: nil, // wireChimes sets them
@@ -622,15 +623,15 @@ func newSpeaker(opt options, identity string, log *slog.Logger) *speakerstate.Sp
 }
 
 // openPresets is loadPresets, then the lookups of stock's Radio Browser presets beside the
-// presets file, once those are on the speaker.
+// presets file, once those are on the speaker. A factory reset closes the lookups.
 func openPresets(
 	ctx context.Context, state *speakerstate.Speaker, path string, stockPresets func() stockPresetSet,
 	log *slog.Logger,
-) *store.Store {
+) (*store.Store, io.Closer) {
 	presets := loadPresets(ctx, state, path, stockPresets, log)
-	startStockPresetLookups(ctx, filepath.Dir(path), state, log)
+	lookups := startStockPresetLookups(ctx, filepath.Dir(path), state, log)
 
-	return presets
+	return presets, lookups
 }
 
 // loadPresets opens the preset store and puts its presets on the speaker.
