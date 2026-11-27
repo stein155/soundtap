@@ -8,15 +8,18 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/stein155/soundtap/app/internal/wpactrl"
+	"github.com/stein155/soundtap/app/internal/wpactrl/wpactrltest"
 )
 
 func b64(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
@@ -165,6 +168,165 @@ func TestWEPNetworkJoins(t *testing.T) {
 		if strings.HasPrefix(c, "SET_NETWORK 0 psk") {
 			t.Errorf("a WEP network got a PSK: %q", c)
 		}
+	}
+}
+
+// lockedWriter is a log sink the manager's goroutine and the test share.
+type lockedWriter struct {
+	w  *strings.Builder
+	mu sync.Mutex
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return l.w.Write(p) //nolint:wrapcheck // strings.Builder never fails
+}
+
+func (l *lockedWriter) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return l.w.String()
+}
+
+// noSAE is a wpa_supplicant built without CONFIG_SAE: it refuses SAE in key_mgmt and its
+// password, as the one in a stale incremental build did on an ST20.
+func noSAE(variable, value string) bool {
+	return variable == "sae_password" || variable == keyMgmt && slices.Contains(strings.Fields(value), "SAE")
+}
+
+// A wpa_supplicant without SAE still joins a WPA2 network over PSK, says once what it
+// refused, and the next join no longer offers it.
+//
+//nolint:paralleltest // its rig points wpactrl.ClientDir, a package variable, at a directory of its own
+func TestJoinWithoutSAEFallsBackToPSK(t *testing.T) {
+	bench := newRig(t, "spotty")
+
+	logs := &lockedWriter{w: &strings.Builder{}, mu: sync.Mutex{}}
+	bench.m.log = slog.New(slog.NewTextHandler(logs, nil))
+	bench.save("home", "homepass1")
+	bench.sys.where["home"] = "ok"
+	bench.sys.keys["home"] = "homepass1"
+	bench.sys.refuse = noSAE
+	bench.start()
+	bench.eventually("network-ready", func() bool { return bench.exists("network-ready") })
+
+	cmds := bench.sys.supServer().Commands()
+	if !slices.Contains(cmds, "SET_NETWORK 0 key_mgmt WPA-PSK WPA-PSK-SHA256") ||
+		!slices.Contains(cmds, "ENABLE_NETWORK 0") {
+		t.Fatalf("the network did not fall back to WPA-PSK: %q", cmds)
+	}
+
+	bench.stop()
+
+	if !bench.m.refused[refusedSAE] || bench.m.refused[refusedSHA256] {
+		t.Errorf("refused = %v; want SAE alone", bench.m.refused)
+	}
+
+	if n := strings.Count(logs.String(), "refused an optional setting"); n != 1 {
+		t.Errorf("logged the refusal %d times:\n%s", n, logs.String())
+	}
+
+	// the next join does not try SAE again
+	ctx := context.Background()
+	srv := wpactrltest.Listen(t, wpactrltest.ShortDir(t), "wlan9", func(cmd string) string {
+		if cmd == "ADD_NETWORK" {
+			return "0\n"
+		}
+
+		if strings.Contains(cmd, "SAE") || strings.Contains(cmd, "sae_password") {
+			t.Errorf("SAE tried again: %q", cmd)
+		}
+
+		return "OK\n"
+	})
+
+	conn, err := wpactrl.Dial(srv.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer conn.Close()
+
+	nets, err := networks(bench.conf, NewRecord("home", "", "homepass1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sess := &session{conn: conn, records: map[int]Record{}, wrongKey: false, security: false, lost: false}
+
+	err = bench.m.configure(ctx, sess, nets)
+	if err != nil || len(sess.records) != 1 {
+		t.Fatalf("configure = %v, records %v", err, sess.records)
+	}
+}
+
+// A wpa_supplicant that knows neither SAE nor PSK-SHA256 joins over plain WPA-PSK.
+//
+//nolint:paralleltest // its rig points wpactrl.ClientDir, a package variable, at a directory of its own
+func TestJoinWithoutPSKSHA256FallsBackToWPAPSK(t *testing.T) {
+	bench := newRig(t, "rhino")
+	bench.save("home", "homepass1")
+	bench.sys.where["home"] = "ok"
+	bench.sys.keys["home"] = "homepass1"
+	bench.sys.refuse = func(variable, value string) bool {
+		return noSAE(variable, value) || variable == keyMgmt && strings.Contains(value, "SHA256")
+	}
+	bench.start()
+	bench.eventually("network-ready", func() bool { return bench.exists("network-ready") })
+
+	if cmds := bench.sys.supServer().Commands(); !slices.Contains(cmds, "SET_NETWORK 0 key_mgmt WPA-PSK") {
+		t.Fatalf("the network did not fall back to WPA-PSK: %q", cmds)
+	}
+}
+
+// A wpa_supplicant that does not start with pmf=1 and sae_check_mfp=1 starts without them.
+//
+//nolint:paralleltest // its rig points wpactrl.ClientDir, a package variable, at a directory of its own
+func TestSupplicantStartsWithoutPMF(t *testing.T) {
+	bench := newRig(t, "rhino")
+	bench.save("home", "homepass1")
+	bench.sys.where["home"] = "ok"
+	bench.sys.keys["home"] = "homepass1"
+	bench.sys.badConf = "sae_check_mfp=1"
+	bench.start()
+	bench.eventually("network-ready", func() bool { return bench.exists("network-ready") })
+
+	conf := bench.read(filepath.Join(bench.p.Tmp, "wpa_supplicant.conf"))
+	if conf != "ctrl_interface="+bench.p.CtrlDir+"\n" {
+		t.Fatalf("wpa_supplicant.conf = %q; want the control socket alone", conf)
+	}
+}
+
+// A WEP network on a build without CONFIG_WEP is skipped and the next saved network joins.
+//
+//nolint:paralleltest // its rig points wpactrl.ClientDir, a package variable, at a directory of its own
+func TestWEPWithoutSupportJoinsTheNextNetwork(t *testing.T) {
+	bench := newRig(t, "rhino")
+
+	err := WriteConf(bench.conf, NewRecord("oldnet", SecurityWEP, "abcde"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = os.WriteFile(bench.conf+".known", []byte(NewRecord("home", "", "homepass1").Line()+"\n"), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bench.sys.where["oldnet"] = "ok"
+	bench.sys.where["home"] = "ok"
+	bench.sys.keys["home"] = "homepass1"
+	bench.sys.refuse = func(variable, _ string) bool { return variable == "wep_key0" }
+	bench.start()
+	bench.eventually("network-ready", func() bool { return bench.exists("network-ready") })
+
+	cmds := bench.sys.supServer().Commands()
+	if !slices.Contains(cmds, "REMOVE_NETWORK 0") || slices.Contains(cmds, "ENABLE_NETWORK 0") ||
+		!slices.Contains(cmds, "ENABLE_NETWORK 1") {
+		t.Fatalf("the WEP network was not skipped for the next one: %q", cmds)
 	}
 }
 

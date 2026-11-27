@@ -62,6 +62,15 @@ func (f *supplicant) handle(cmd string) string {
 		f.nets = map[int]*fakeNet{}
 
 		return "OK\n"
+	case len(words) == 2 && words[0] == "REMOVE_NETWORK":
+		id, _ := strconv.Atoi(words[1])
+		if _, ok := f.nets[id]; ok {
+			delete(f.nets, id)
+
+			return "OK\n"
+		}
+
+		return "FAIL\n"
 	case cmd == "ADD_NETWORK":
 		id := f.nextID
 		f.nextID++
@@ -110,7 +119,7 @@ func (f *supplicant) setNetwork(words []string) string {
 	id, _ := strconv.Atoi(words[1])
 
 	known, ok := f.nets[id]
-	if !ok {
+	if !ok || f.sys.refuses(words[2], words[3]) {
 		return "FAIL\n"
 	}
 
@@ -219,6 +228,11 @@ type fakeSys struct {
 	env     string            // what fw_printenv prints; "" fails
 	servers map[int]*wpactrltest.Server
 	exits   map[int]chan struct{} // closed to end a daemon Start started
+	// refuse says which SET_NETWORK variable and value this wpa_supplicant build turns down
+	// (nil: none), as one built without CONFIG_SAE or CONFIG_WEP does
+	refuse func(variable, value string) bool
+	// badConf is a line wpa_supplicant does not start with ("": it takes every line)
+	badConf string
 }
 
 func newFakeSys(t *testing.T, paths *Paths) *fakeSys {
@@ -228,7 +242,7 @@ func newFakeSys(t *testing.T, paths *Paths) *fakeSys {
 		t: t, p: *paths, mu: sync.Mutex{}, calls: nil, signals: nil, alive: map[int]bool{}, nextPid: 1000,
 		sup: nil, where: map[string]string{}, scan: nil, dhcp: false, noIP: false, apMode: true,
 		fail: map[string]bool{}, iwScan: "", station: "", keys: map[string]string{}, env: "",
-		servers: map[int]*wpactrltest.Server{}, exits: map[int]chan struct{}{},
+		servers: map[int]*wpactrltest.Server{}, exits: map[int]chan struct{}{}, refuse: nil, badConf: "",
 	}
 }
 
@@ -249,6 +263,8 @@ func (s *fakeSys) Run(_ context.Context, name string, args ...string) ([]byte, e
 	}
 
 	switch {
+	case name == "wpa_supplicant" && s.rejectsConf(arg(args, "-c")):
+		return []byte("unknown global field"), errExitStatus
 	case name == "wpa_supplicant":
 		s.mu.Lock()
 		sup := &supplicant{
@@ -399,6 +415,30 @@ func (s *fakeSys) failing(line string) bool {
 	}
 
 	return false
+}
+
+// refuses reports whether this wpa_supplicant build turns down variable set to value.
+func (s *fakeSys) refuses(variable, value string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.refuse != nil && s.refuse(variable, value)
+}
+
+// rejectsConf reports whether the configuration file at path has the line wpa_supplicant
+// does not start with.
+func (s *fakeSys) rejectsConf(path string) bool {
+	s.mu.Lock()
+	bad := s.badConf
+	s.mu.Unlock()
+
+	if bad == "" {
+		return false
+	}
+
+	b, _ := os.ReadFile(path)
+
+	return slices.Contains(strings.Split(string(b), "\n"), bad)
 }
 
 func (s *fakeSys) spawn(pidfile string) int {

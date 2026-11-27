@@ -43,7 +43,7 @@ func TestRequestsGetTheirReplies(t *testing.T) {
 
 			return string(rune('0'+ids-1)) + "\n"
 		case strings.HasPrefix(cmd, "SET_NETWORK 0 ssid "), cmd == "ENABLE_NETWORK 0", cmd == "SELECT_NETWORK 0",
-			cmd == "REMOVE_NETWORK all", cmd == "RECONFIGURE":
+			cmd == "REMOVE_NETWORK all", cmd == "REMOVE_NETWORK 0", cmd == "RECONFIGURE":
 			return "OK\n"
 		case strings.HasPrefix(cmd, "SET_NETWORK"):
 			return "FAIL\n"
@@ -81,12 +81,17 @@ func TestRequestsGetTheirReplies(t *testing.T) {
 		t.Fatalf("a refused SET_NETWORK = %v; want an error without the value", err)
 	}
 
-	for _, f := range []func(context.Context) error{
+	if !wpactrl.Refused(err) {
+		t.Fatalf("FAIL is not read as a refusal: %v", err)
+	}
+
+	for _, call := range []func(context.Context) error{
 		func(ctx context.Context) error { return conn.EnableNetwork(ctx, 0) },
 		func(ctx context.Context) error { return conn.SelectNetwork(ctx, 0) },
+		func(ctx context.Context) error { return conn.RemoveNetwork(ctx, 0) },
 		conn.RemoveAllNetworks, conn.Reconfigure, conn.Scan,
 	} {
-		err = f(ctx)
+		err = call(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -183,6 +188,10 @@ func TestAGoneSupplicantTimesOutAndCloseCleansUp(t *testing.T) {
 	_, err := conn.Request(context.Background(), "PING")
 	if !errors.Is(err, wpactrl.ErrClosed) {
 		t.Fatalf("request after close = %v", err)
+	}
+
+	if wpactrl.Refused(err) || wpactrl.Refused(nil) {
+		t.Fatal("a closed connection or no error read as a refusal")
 	}
 
 	left, _ := filepath.Glob(filepath.Join(dir, "wpa_ctrl_*"))

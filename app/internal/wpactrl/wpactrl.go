@@ -73,6 +73,15 @@ type replyError struct {
 
 func (e *replyError) Error() string { return "wpactrl " + e.verb + ": " + e.reply }
 
+// Refused reports whether err is wpa_supplicant answering FAIL: it heard the command and
+// turned it down, as a SET_NETWORK with a value its build does not know (SAE without
+// CONFIG_SAE, a WEP key without CONFIG_WEP). A socket error or a timeout is not a refusal.
+func Refused(err error) bool {
+	var re *replyError
+
+	return errors.As(err, &re) && strings.HasPrefix(re.reply, "FAIL")
+}
+
 // Event is one unsolicited message after ATTACH.
 type Event struct {
 	Level int    // the priority in <N>, MSG_INFO = 3
@@ -326,6 +335,11 @@ func (c *Conn) EnableNetwork(ctx context.Context, id int) error {
 // SelectNetwork enables network id alone and disables every other one.
 func (c *Conn) SelectNetwork(ctx context.Context, id int) error {
 	return c.OK(ctx, fmt.Sprintf("SELECT_NETWORK %d", id))
+}
+
+// RemoveNetwork forgets network id.
+func (c *Conn) RemoveNetwork(ctx context.Context, id int) error {
+	return c.OK(ctx, fmt.Sprintf("REMOVE_NETWORK %d", id))
 }
 
 // RemoveAllNetworks forgets every network block.
