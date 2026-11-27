@@ -75,6 +75,7 @@ static void sim_reset(void)
     tx_q = tx_rec = tx_t0 = 0, tx_busy = 0;
     rate_i = rate_ok = rate_bad = 0;
     tx_free_t = tx_unicast = tx_wait = 0, tx_tries = TX_RETRY;
+    tx_gap = tx_slots = 0;
     cmd_state = cmd_kind = cmd_len = cmd_skip = 0;
     memset((void *)rec, 0, sizeof rec);
     tunes = tune_band = tune_chan = delayed = 0;
@@ -279,6 +280,7 @@ static const unsigned char BCAST[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 /* Record {buf, -, 1 | (body + 0xc4) << 16, -, peer | dest << 16, -}; the buffer holds the
  * descriptor copy at +0x94 with the on-air header at +0xac and the body at +0xcc (wstation.h). */
 static unsigned char host_desc13; /* descriptor byte 0x13 of the next host_tx (1: TX_RAW) */
+static unsigned char host_rate0;  /* descriptor byte 4: the fastest rate of its chain, 0 = none */
 static void host_tx(unsigned q, unsigned b, const unsigned char *h24, const void *body,
                     unsigned body_len, unsigned peer, unsigned dest)
 {
@@ -287,6 +289,7 @@ static void host_tx(unsigned q, unsigned b, const unsigned char *h24, const void
     memset(buf, 0, TXFBUF);
     memcpy(buf + 0xac, h24, 24);
     buf[0x94 + 0x13] = host_desc13;
+    buf[0x94 + 4] = host_rate0;
     if (body_len <= TXFBUF - 0xcc)
         memcpy(buf + 0xcc, body, body_len);
     if (!ring_take(&H_frm[q], 0, 1, &slot)) {

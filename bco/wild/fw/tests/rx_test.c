@@ -556,6 +556,31 @@ static void ap_clients(void)
     n = hdr(fbuf, 0x08, 0x01, OWN, PHONE, BCAST);
     air_rx(fbuf, n + 20 + 4, ST_IN);
     CHECK(rxq_in == 5 && !acked(), "station: nothing without the filter flag");
+    joined = ap_mode = 1;
+    /* the frames to us by kind, and those the address filter missed: the data frames (two
+     * DHCP, one QoS), the null-data, the PS-Poll (other); the damaged ones are not counted */
+    CHECK(rec[RC_APTYPE + AP_DATA] == 3 && rec[RC_APTYPE + AP_NULL] == 1 && rec[RC_APTYPE + AP_OTHER] == 1 &&
+              !rec[RC_APTYPE + AP_RTS] && !rec[RC_APTYPE + AP_ACK] && !rec[RC_APTYPE + AP_PROBE],
+          "frames to us by kind");
+    CHECK(rec[RC_APNFTYPE + AP_DATA] == 2 && rec[RC_APNFTYPE + AP_NULL] == 1 && rec[RC_APNFTYPE + AP_OTHER] == 1,
+          "the filter's misses by kind");
+    /* an RTS and an ACK to us, a QoS-null, a directed probe request; the RTS passes the filter */
+    memset(fbuf, 0, 32);
+    fbuf[0] = 0xb4, memcpy(fbuf + 4, OWN, 6), memcpy(fbuf + 10, PHONE, 6);
+    air_rx(fbuf, 20, ST_IN | ST_ADDR);
+    fbuf[0] = 0xd4;
+    air_rx(fbuf, 14, ST_IN);
+    n = hdr(fbuf, 0xc8, 0x11, OWN, PHONE, OWN);
+    fbuf[n++] = 0, fbuf[n++] = 0;
+    air_rx(fbuf, n + 4, ST_IN);
+    n = hdr(fbuf, 0x40, 0, OWN, PHONE, OWN);
+    air_rx(fbuf, n + 4, ST_IN);
+    CHECK(rec[RC_APTYPE + AP_RTS] == 1 && rec[RC_APTYPE + AP_ACK] == 1 && rec[RC_APTYPE + AP_NULL] == 2 &&
+              rec[RC_APTYPE + AP_PROBE] == 1 && rec[RC_APIN] == 9,
+          "RTS, ACK, QoS-null and probe request counted by kind");
+    CHECK(!rec[RC_APNFTYPE + AP_RTS] && rec[RC_APNFTYPE + AP_ACK] == 1 && rec[RC_APNFTYPE + AP_NULL] == 2 &&
+              rec[RC_APNFTYPE + AP_PROBE] == 1 && rec[RC_APNOFILT] == 7,
+          "and the filter's misses");
     ap_mode = 0, joined = 0;
 }
 

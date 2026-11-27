@@ -4,7 +4,9 @@
 /* The transmit path, from a host record to the MAC and back (src/xport.c): the staged packet and
  * queue descriptor, the rate class per frame type, the AP's ACK ending a unicast frame, retries
  * with the Retry bit and a growing backoff window, the last tries at the basic rate, the data-rate
- * ladder, group data at the basic rate and the gap after it, a probe response's single retry, a lost TX-done, the record-length guard, and CCMP transmit:
+ * ladder and the receiver's fastest rate capping it, group data at the basic rate and the gap after
+ * it (the frame's airtime, DIFS and backoff on top of the margin), the airtime itself, a probe
+ * response's single retry, a lost TX-done (a beacon's counted), the record-length guard, and CCMP transmit:
  * the CCMP header and packet number, the cipher engine's control block, the same PN on a retry,
  * and a frame without a key for its peer (also one queued when the peer table is reset) or that
  * the engine cannot encipher, which never goes out. The cipher engine itself is hardware: the test sets its completion word. */
@@ -17,6 +19,7 @@ static unsigned char body[0x700];
 static void setup(int key)
 {
     sim_init();
+    host_rate0 = 0;
     REG(R_TIMER) = 100000;
     for (unsigned i = 0; i < sizeof body; i++)
         body[i] = i * 5 + 1;
@@ -152,22 +155,35 @@ static void ladder_floor(void)
     CHECK(rate_i == sizeof rate_cls - 1, "floor at 24 Mb/s");
 }
 
+/* The gap after a group frame of len bytes (FCS included) at 1 Mb/s that started after slots
+ * backoff slots: the margin, DIFS, the slots (20 us each) and its airtime (192 us preamble, then
+ * 8 us a byte). */
+static unsigned expect_gap(unsigned len, unsigned slots)
+{
+    return TX_GAP + 50 + 20 * slots + 192 + 8 * len;
+}
+
 static void group_and_gap(void)
 {
     unsigned char h[24];
-    unsigned buf, status;
+    unsigned buf, status, gap;
     setup(0);
     data_hdr(h, BCAST, 0);
     CHECK(send(h, 40, 0), "broadcast sent");
     CHECK(tx_unicast == 0, "no ACK expected");
     CHECK(tx_desc.cls == sta_mgmt_cls, "group data at the basic rate, where every client hears it");
+    gap = expect_gap(24 + 40 + 4, slots_of_start());
+    CHECK(tx_gap == gap, "gap %u, want %u", tx_gap, gap);
     air_tx_done();
     pump(3);
     CHECK(host_tx_done(2, &buf, &status) && status == 0, "group frame done at its TX-done");
     CHECK(!send(h, 40, 0), "next frame waits for the gap");
-    REG(R_TIMER) += TX_GAP;
+    REG(R_TIMER) += gap - 1;
     pump(3);
-    CHECK(mgmt_tx_pending, "sent after %u ticks", (unsigned)TX_GAP);
+    CHECK(!mgmt_tx_pending, "not before the gap");
+    REG(R_TIMER) += 1;
+    pump(3);
+    CHECK(mgmt_tx_pending, "sent after %u ticks", gap);
 
     /* a lost TX-done: a group frame comes back failed after TX_LOST */
     REG(R_TIMER) += TX_LOST - 1;
@@ -176,15 +192,125 @@ static void group_and_gap(void)
     REG(R_TIMER) += 2;
     pump(3);
     CHECK(host_tx_done(2, &buf, &status) && status == 1, "given back as failed");
+    CHECK(rec[RC_APBLOST] == 0, "group data is no beacon");
 
     /* a lost TX-done on a unicast frame that was ACKed: done 3000 ticks after the start */
-    REG(R_TIMER) += TX_GAP;
+    REG(R_TIMER) += tx_gap;
     data_hdr(h, BSSID, 0);
     CHECK(send(h, 40, 0), "unicast sent");
+    CHECK(tx_gap == 0, "a unicast frame holds nothing back: its ACK ended it");
     air_ack();
     REG(R_TIMER) += 3001;
     pump(3);
     CHECK(host_tx_done(2, &buf, &status) && status == 0, "ACKed frame done without TX-done");
+}
+
+/* A beacon of the setup AP (ap_mode): 1 Mb/s, ~1.6 ms on air for a 200-byte body. The next frame
+ * waits until it can have left the air, also behind the longest first backoff; the 3 ms that was
+ * the whole gap let the next frame overwrite it. A beacon whose TX-done never came is counted. */
+static void beacon_gap(void)
+{
+    unsigned char h[24];
+    unsigned buf, status, gap;
+    setup(0);
+    ap_mode = 1;
+    hdr(h, 0x80, 0, BCAST, OWN, OWN);
+    CHECK(send(h, 200, 6), "beacon sent");
+    CHECK(tx_unicast == 0 && tx_desc.cls == sta_mgmt_cls, "a group frame at the basic rate");
+    gap = expect_gap(24 + 200 + 4, slots_of_start());
+    CHECK(tx_gap == gap && gap > TX_GAP + 192 + 8 * 228, "gap %u covers its airtime", tx_gap);
+    air_tx_done();
+    pump(3);
+    CHECK(host_tx_done(2, &buf, &status) && status == 0, "done at its TX-done");
+    hdr(h, 0x08, 0x02, BCAST, OWN, OWN);
+    REG(R_TIMER) += TX_GAP + 1;
+    CHECK(!send(h, 40, 6), "the next frame does not stage over the beacon after 3 ms");
+    REG(R_TIMER) += gap - TX_GAP - 1;
+    pump(3);
+    CHECK(mgmt_tx_pending, "but once the beacon can have left the air");
+    air_tx_done();
+    pump(3);
+    host_tx_done(2, &buf, &status);
+
+    /* a beacon without a TX-done */
+    REG(R_TIMER) += tx_gap;
+    hdr(h, 0x80, 0, BCAST, OWN, OWN);
+    CHECK(send(h, 200, 6), "second beacon sent");
+    REG(R_TIMER) += TX_LOST + 1;
+    pump(3);
+    CHECK(host_tx_done(2, &buf, &status) && status == 1 && rec[RC_APBLOST] == 1,
+          "a beacon given back after TX_LOST is counted");
+    ap_mode = 0;
+}
+
+/* The airtime the gap uses never comes out shorter than the exact one, nor much longer. */
+static void airtime_bounds(void)
+{
+    static const unsigned mbps10[16] = {10, 20, 55, 110, 10, 20, 55, 110, 480, 240, 120, 60, 540, 360, 180, 90};
+    for (unsigned cls = 0; cls < 16; cls++)
+        for (unsigned len = 14; len <= 1600; len += 7) {
+            unsigned exact, got = airtime(cls, len);
+            if (cls >= 8) {
+                unsigned bps = mbps10[cls] * 4 / 10; /* data bits per 4 us symbol */
+                exact = 20 + 4 * ((16 + 8 * len + 6 + bps - 1) / bps) + 6;
+            } else {
+                exact = (cls == 0 || cls == 4 || cls < 4 ? 192 : 96) + (80 * len + mbps10[cls] - 1) / mbps10[cls];
+            }
+            CHECK(got >= exact && got <= exact + exact / 12 + 8, "class %u, %u bytes: %u us, exact %u",
+                  cls, len, got, exact);
+        }
+    CHECK(airtime(4, 100) == 992, "100 bytes at 1 Mb/s: 992 us");
+    CHECK(airtime(11, 100) == 166, "100 bytes at 6 Mb/s: 35 symbols, 166 us");
+}
+
+/* In ap_mode unicast data starts at the ladder's rate, or the next one down its receiver supports
+ * (the fastest rate of the frame's chain): a setup AP client that hostapd offers 24 Mb/s gets 24,
+ * one slower than the ladder the basic rate. */
+static void rate_cap(void)
+{
+    static const struct { unsigned char max, cls; const char *what; } c[] = {
+        {0, 12, "no chain: 54 Mb/s"},
+        {108, 12, "54 Mb/s receiver: 54"},
+        {96, 13, "48 Mb/s receiver: 36"},
+        {72, 13, "36 Mb/s receiver: 36"},
+        {48, 9, "24 Mb/s receiver (the setup AP's cap): 24"},
+        {36, 4, "18 Mb/s receiver: the basic rate"},
+        {22, 4, "11b receiver: the basic rate"},
+    };
+    unsigned char h[24];
+    unsigned buf, status;
+    for (unsigned i = 0; i < sizeof c / sizeof c[0]; i++) {
+        setup(0);
+        ap_mode = 1;
+        host_rate0 = c[i].max | 0x80; /* the basic bit is ignored */
+        data_hdr(h, BSSID, 0);
+        CHECK(send(h, 64, 0) && tx_desc.cls == c[i].cls, "%s (class %u)", c[i].what, tx_desc.cls);
+    }
+    /* the station keeps the ladder: its EAPOL frames carry the AP's lowest rate in byte 4 */
+    setup(0);
+    host_rate0 = 2;
+    data_hdr(h, BSSID, 0);
+    CHECK(send(h, 64, 0) && tx_desc.cls == 12, "station: 54 Mb/s whatever byte 4 says");
+    /* after a step down the cap still holds, and the last tries are at the basic rate */
+    setup(0);
+    ap_mode = 1;
+    host_rate0 = 48;
+    rate_i = 1;
+    data_hdr(h, BSSID, 0);
+    CHECK(send(h, 64, 0) && tx_desc.cls == 9, "36 Mb/s step, 24 Mb/s receiver: 24");
+    rate_i = 0;
+    unsigned attempts = 0, basic = 0;
+    for (unsigned round = 0; round < 10 && !host_tx_done(2, &buf, &status); round++) {
+        if (mgmt_tx_pending) {
+            attempts++;
+            basic += tx_desc.cls == sta_mgmt_cls;
+            air_tx_done();
+        }
+        REG(R_TIMER) += ACK_WAIT + 20 * 1024;
+        pump(1);
+    }
+    CHECK(attempts == 1 + TX_RETRY && basic == 2, "%u attempts, the last %u at the basic rate", attempts, basic);
+    ap_mode = 0;
 }
 
 /* A probe response gets one retry, not six: the phone that asked has moved on by then, and the
@@ -225,11 +351,10 @@ static void record_guard(void)
     pump(3);
     CHECK(!mgmt_tx_pending && host_tx_done(2, &buf, &status) && status == 1,
           "negative length refused");
-    REG(R_TIMER) += TX_GAP; /* a refused record is followed by the group-frame gap */
+    /* a refused record never reached the MAC: no gap behind it */
     host_tx(2, 0, h, body, sizeof tx_pkt - 0xc4 + 1, 0, 0x11);
     pump(3);
     CHECK(!mgmt_tx_pending && host_tx_done(2, &buf, &status) && status == 1, "oversize refused");
-    REG(R_TIMER) += TX_GAP;
     CHECK(send(h, sizeof tx_pkt - 0xc4, 0), "the largest body is sent");
     CHECK(tx_desc.l1 == sizeof tx_pkt - 0xc4, "whole body");
 }
@@ -393,6 +518,9 @@ int main(void)
     retries();
     ladder_floor();
     group_and_gap();
+    beacon_gap();
+    airtime_bounds();
+    rate_cap();
     probe_response_retries();
     record_guard();
     ccmp();

@@ -147,6 +147,14 @@ void wifi_ap_diag(unsigned d[WIFI_AP_DIAG]);
  * the last one's {rate class, received rate index, frame control}. */
 #define WIFI_AP_EXTRA 7u
 void wifi_ap_extra(unsigned d[WIFI_AP_EXTRA]);
+/* And the last of them, after the second block per client: transmits that failed by kind
+ * (beacons, probe responses, the rest: together TX failed), the beacons the core gave back as
+ * failed because the MAC raised no TX-done for them, then the core's frames to our address by
+ * kind and those of them its address filter missed, each as WIFI_AP_KINDS words: RTS, ACK, probe
+ * request, null-data, other data, anything else. */
+#define WIFI_AP_KINDS 6u
+#define WIFI_AP_EXTRA2 (4u + 2u * WIFI_AP_KINDS)
+void wifi_ap_extra2(unsigned d[WIFI_AP_EXTRA2]);
 /* One associated client heard within WIFI_AP_GONE_MS: dozing (power-management bit set), frames
  * held for it, the level (dBm) and rate code (500 kb/s units) of its last frame, ms since it was
  * last heard, data and null-data frames from it, unicast frames to it ACKed and lost. A client
@@ -160,6 +168,10 @@ struct wifi_ap_client {
     /* its frames with the Retry bit (it missed our ACK to the first try), those that repeat the
      * sequence number of the frame before (the same frame again), and its last sequence control */
     unsigned retries, repeats, seq;
+    /* its null-data: the ms between the last two (a retransmission not counted as a new one),
+     * how many said it dozes (power-management bit set) and how many that it is awake, and how
+     * many gaps were 700-730 ms (7 beacon intervals: a phone waiting for beacons it misses) */
+    unsigned null_gap_ms, null_pm1, null_pm0, null_gaps_700_730;
 };
 unsigned wifi_ap_client_info(struct wifi_ap_client o[WIFI_AP_CLIENTS]);
 

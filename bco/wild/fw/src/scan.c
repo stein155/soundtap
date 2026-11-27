@@ -241,14 +241,18 @@ unsigned rate_code(unsigned r, int long_pre)
 
 /* Stock 0xe494: the ACK rate for each received rate code = the highest basic rate of the same
  * modulation at or below it; rates = {count, rate...}, basic rates have bit 7. The join's rate
- * block is 13 bytes, so the count is clamped to 12 (a count up to 255 read past the payload). */
+ * block is 13 bytes, so the count is clamped to 12 (a count up to 255 read past the payload).
+ * With no basic OFDM rate at or below it (the setup AP's basic rates are the 11b ones), an OFDM
+ * frame is answered at the highest mandatory OFDM rate, 6, 12 or 24 Mb/s, at or below its own
+ * (IEEE 802.11-2020 10.6.6.5.2): ofdm_def, in the order of ofdm. A 9 Mb/s frame so gets its ACK at
+ * 6 Mb/s; it was answered at 9, which is not mandatory. */
 #define JOIN_RATES 12u
 unsigned short resp_class[16] = {5, 5, 5, 5, 5, 5, 5, 5, 11, 11, 11, 11, 11, 11, 11, 11};
 
 static void resp_classes(const unsigned char *rates)
 {
     static const unsigned char dsss[4] = {2, 4, 11, 22}, ofdm[8] = {96, 48, 24, 12, 108, 72, 36, 18};
-    static const unsigned char ofdm_def[8] = {9, 9, 10, 11, 9, 9, 10, 15};
+    static const unsigned char ofdm_def[8] = {9, 9, 10, 11, 9, 9, 10, 11};
     unsigned i, k, r, n = rates[0] > JOIN_RATES ? JOIN_RATES : rates[0];
 
     for (i = 1; i < 8; i++)

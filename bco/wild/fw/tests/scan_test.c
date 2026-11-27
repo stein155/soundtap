@@ -56,8 +56,9 @@ static void resp_class_is(const unsigned short *want, const char *what)
 static void join_cases(void)
 {
     unsigned char bc[28];
-    /* wifi.c's set: basic 1, 2, 5.5, 11 Mb/s, no basic OFDM rate: OFDM ACKs at the defaults */
-    static const unsigned short want_wifi[16] = {4, 1, 2, 3, 4, 5, 6, 7, 9, 9, 10, 11, 9, 9, 10, 15};
+    /* wifi.c's set: basic 1, 2, 5.5, 11 Mb/s, no basic OFDM rate: OFDM ACKs at the highest
+     * mandatory rate (6, 12, 24 Mb/s) at or below the frame's, 9 Mb/s at 6 (class 11), not 9 */
+    static const unsigned short want_wifi[16] = {4, 1, 2, 3, 4, 5, 6, 7, 9, 9, 10, 11, 9, 9, 10, 11};
     /* basic 1, 6, 12, 24 Mb/s: each OFDM rate answers at the highest basic one at or below it */
     static const unsigned char ofdm_basic[13] = {4, 0x82, 0x8c, 0x98, 0xb0};
     static const unsigned short want_ofdm[16] = {4, 4, 4, 4, 4, 4, 4, 4, 9, 9, 10, 11, 9, 9, 10, 11};
@@ -71,6 +72,8 @@ static void join_cases(void)
     CHECK(REG(0x6b0) == 8, "slot time 9 us");
     CHECK(!(REG(0x604) & 1), "receiver on for a beaconing BSS");
     resp_class_is(want_wifi, "wifi.c rate set");
+    CHECK(resp_class[15] == rate_code(12, 1) && resp_class[13] == rate_code(48, 1),
+          "a 9 Mb/s frame (rate index 15) is ACKed at 6 Mb/s, a 36 Mb/s one at 24");
     pump(4);
     host_events();
     CHECK(nev == 1 && ev[0].type == 0xbd && ev[0].module == 8 && ev[0].src == 0x13,

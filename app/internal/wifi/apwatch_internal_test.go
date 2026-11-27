@@ -98,8 +98,10 @@ func TestSetupAPStateIsLoggedWhenItChanges(t *testing.T) {
 	}
 
 	client := "client 02:99:88:77:66:55 dozing 1 held 2 idle_ms %s rx_data 3 rx_null 4 tx_ok 5 tx_failed 0\n"
+	groups := "tx_failed_beacon/probe_resp/other 3/1/0\ncore_to_us_rts/ack/probe/null/data/other 0/12/3/40/2/0\n" +
+		"core_odd 1/x\n"
 	writeFile(t, apFile, "up 1\nbeacons 7\nfirst_beacon_ms 4\nprobes 2\ncore_filter_missed 9\n"+
-		"core_ack_last 0x8090b\n"+strings.Replace(client, "%s", "100", 1))
+		"core_ack_last 0x8090b\n"+groups+strings.Replace(client, "%s", "100", 1))
 	waitFor(t, "the client", func() bool { return strings.Contains(out.String(), "setup AP client") })
 
 	logged := out.String()
@@ -113,11 +115,18 @@ func TestSetupAPStateIsLoggedWhenItChanges(t *testing.T) {
 		t.Fatalf("client line:\n%s", logged)
 	}
 
+	// a group stays one field, as it reads; a value that is no group is no counter
+	if !strings.Contains(logged, "tx_failed_beacon/probe_resp/other=3/1/0") ||
+		!strings.Contains(logged, "core_to_us_rts/ack/probe/null/data/other=0/12/3/40/2/0") ||
+		strings.Contains(logged, "core_odd") {
+		t.Fatalf("groups:\n%s", logged)
+	}
+
 	// only the client's silence grows: no new lines
 	statuses := strings.Count(logged, "setup AP status")
 
 	writeFile(t, apFile, "up 1\nbeacons 7\nfirst_beacon_ms 4\nprobes 2\ncore_filter_missed 9\n"+
-		"core_ack_last 0x8090b\n"+strings.Replace(client, "%s", "9000", 1))
+		"core_ack_last 0x8090b\n"+groups+strings.Replace(client, "%s", "9000", 1))
 	time.Sleep(30 * time.Millisecond)
 
 	if got := strings.Count(out.String(), "setup AP status"); got != statuses {
@@ -164,6 +173,7 @@ func TestSetupAPCountersAloneLogOnceAMinute(t *testing.T) {
 	look := apState{
 		names:   []string{"beacons", "wlan1_rx_packets"},
 		values:  map[string]uint64{"beacons": 7, "wlan1_rx_packets": 1},
+		groups:  map[string]string{},
 		clients: [][]string{{"client", "02:99:88:77:66:55", "dozing", "1", "rx_data", "3", "rx_null", "9"}},
 	}
 	before := look.eventKey()

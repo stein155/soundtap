@@ -127,6 +127,8 @@ static unsigned txfbuf[NTXFBUF], txnfree, txfbase, txbusy[NTXFBUF], txready;
  * Message 4), until the core hands it back: the new PTK waits for it (install_keys). */
 static unsigned eapol_buf;
 unsigned wifi_rx_frames, wifi_tx_frames, wifi_tx_drop, wifi_rx_drop, wifi_tx_ok, wifi_tx_failed;
+/* wifi_tx_failed by what failed: beacons, probe responses, anything else (AP_STATUS) */
+static unsigned tx_fail_beacon, tx_fail_presp, tx_fail_other;
 #ifdef BCO_DEBUG_TRACE
 /* RX diagnostics (the trace build only, build-app.sh link-own-trace: every line goes out on the UART,
  * which busy-waits per character and starves USB and the RX rings meanwhile), for when the hardware finds fewer networks than the emulator: these count,
@@ -201,12 +203,23 @@ static void tx_reclaim(void)
     for (unsigned c = 0; c < 4; c++) {
         while (wr_avail(&frm[c], 3)) {
             const volatile unsigned *e = wr_reserve(&frm[c], 3, 1);
-            unsigned buf = e[1], off = buf - txfbase;
+            unsigned buf = e[1], off = buf - txfbase, bad = (e[3] & 0xffff) != 0;
+            int ours = off < NTXFBUF * TXFBUF && off % TXFBUF == 0 && txbusy[off / TXFBUF];
             wr_commit(&frm[c], 3, 1);
             if (buf == eapol_buf)
                 eapol_buf = 0;
-            if (off < NTXFBUF * TXFBUF && off % TXFBUF == 0 && txbusy[off / TXFBUF] &&
-                txnfree < NTXFBUF) {
+            /* a failed frame by its kind, read while the buffer is still ours: the descriptor's
+             * frame control (wframe d[0x18]); its report, counted in wifi_tx_failed, follows */
+            if (bad) {
+                unsigned fc = ours ? ((const volatile unsigned char *)buf)[8 + 0x18] : 0;
+                if (fc == 0x80)
+                    tx_fail_beacon++;
+                else if (fc == 0x50)
+                    tx_fail_presp++;
+                else
+                    tx_fail_other++;
+            }
+            if (ours && txnfree < NTXFBUF) {
                 txbusy[off / TXFBUF] = 0;
                 txfbuf[txnfree++] = buf;
             }
@@ -1132,6 +1145,10 @@ static struct client {
     struct hold h;
     unsigned seen, rx_data, rx_null, tx_ok, tx_failed;
     unsigned retries, repeats, seq; /* frames with Retry, repeated sequence numbers, the last one */
+    /* its null-data: when the last came, the ms between the last two, how many had the
+     * power-management bit set and clear, and the gaps of 700-730 ms (wifi.h) */
+    unsigned null_t, null_gap, null_pm1, null_pm0, null_g7;
+    unsigned char null_seen;
 } cl[WIFI_AP_CLIENTS];
 static struct hold ap_gh;              /* group frames held */
 static unsigned char ap_body[WIFI_AP_BODY_MAX];
@@ -1147,6 +1164,8 @@ static const unsigned char ap_mrates[8] = {2, 2, 2, 2, 2, 2, 2, 2}; /* 1 Mb/s: e
  * bco/wild/fw/src/hw.h RC_APIN, RC_APNOFILT, RC_APKEEP (the core asserts these indices). */
 #define CORE_RC_APIN 29u
 #define CORE_RC_N 8u
+/* RC_APTYPE: WIFI_AP_KINDS frames to us by kind, as many missed by the filter, RC_APBLOST */
+#define CORE_RC_APTYPE 39u
 
 /* An associated client heard within WIFI_AP_GONE_MS. One silent longer left without a word: it
  * is not listed (soundtapd's hold then sees the setup AP idle) and holds no group frame back. */
@@ -1185,6 +1204,8 @@ static void ap_drop(struct client *c)
     c->h.n = 0;
     c->rx_data = c->rx_null = c->tx_ok = c->tx_failed = 0;
     c->retries = c->repeats = c->seq = 0;
+    c->null_t = c->null_gap = c->null_pm1 = c->null_pm0 = c->null_g7 = 0;
+    c->null_seen = 0;
 }
 
 /* to a client (its peer slot) or, with c = 0, to every client */
@@ -1319,6 +1340,28 @@ static void ap_pm(struct client *c, unsigned fc)
         ap_release((unsigned)(c - cl), &c->h, c, AP_HOLD);
 }
 
+/* diag: a client's null-data frame (fc its frame control). A phone that associates but sends only
+ * null-data, every 7 beacon intervals (~717 ms), is listening for beacons it does not hear: the
+ * gap between its nulls, and whether they say it dozes, show that. A retransmission (Retry bit)
+ * is the same null again and starts no new gap. */
+#define AP_NULL_GAP_LO 700u
+#define AP_NULL_GAP_HI 730u
+static void ap_null(struct client *c, unsigned fc)
+{
+    if (fc & 0x1000)
+        c->null_pm1++;
+    else
+        c->null_pm0++;
+    if (fc & 0x0800)
+        return;
+    if (c->null_seen) {
+        c->null_gap = now - c->null_t;
+        if (c->null_gap >= AP_NULL_GAP_LO && c->null_gap <= AP_NULL_GAP_HI)
+            c->null_g7++;
+    }
+    c->null_t = now, c->null_seen = 1;
+}
+
 /* One beacon: hostapd's body behind a broadcast header, at 1 Mb/s so every client hears it. The
  * core has no TBTT timer of its own (bco/wild/fw scan.c join), so ap_step sends one every beacon
  * interval from the main loop. Every beacon is a DTIM beacon (count 0, period 1): its TIM has the
@@ -1342,6 +1385,44 @@ static void ap_beacon(void)
             ap_first = now - (ap_deadline - 1000);
         ap_release(WIFI_AP_CLIENTS, &ap_gh, 0, AP_HOLD);
     }
+}
+
+/* Rate v (500 kb/s units) in the supported-rate IEs (1, 50) of an IE list. */
+static int ap_has_rate(const unsigned char *ies, unsigned len, unsigned v)
+{
+    for (unsigned o = 0; o + 2 <= len && o + 2 + ies[o + 1] <= len; o += 2 + ies[o + 1])
+        if (ies[o] == 1 || ies[o] == 50)
+            for (unsigned k = 0; k < ies[o + 1]; k++)
+                if ((ies[o + 2 + k] & 0x7f) == v)
+                    return 1;
+    return 0;
+}
+
+/* An associating client's data rates, as wstation_rate_chain lists them (fastest first, up to
+ * eight, the last repeated), but only those the AP offers too (IEs 1 and 50 of hostapd's body).
+ * The core sends unicast data at the chain's first rate at most (xport.c data_cls): with the
+ * client's own chain a phone got 54 Mb/s data from an AP that offers it 24 Mb/s at most
+ * (app/internal/wifi/ap.go st20Rates). A client that shares no rate with the AP gets the AP's
+ * chain; 0 when the request lists no rate at all. */
+static int ap_client_rates(const unsigned char *ies, unsigned il, unsigned char out[8])
+{
+    unsigned n = 0, prev = 0x80;
+    if (!wstation_rate_chain(ies, il, out))
+        return 0;
+    while (n < 8) { /* next rate below prev that both have */
+        unsigned best = 0;
+        for (unsigned v = prev - 1; v && !best; v--)
+            if (ap_has_rate(ies, il, v) && ap_has_rate(ap_body + 12, ap_len - 12, v))
+                best = v;
+        if (!best)
+            break;
+        out[n++] = (unsigned char)(prev = best);
+    }
+    if (!n)
+        return wstation_rate_chain(ap_body + 12, ap_len - 12, out);
+    for (unsigned i = n; i < 8; i++)
+        out[i] = out[n - 1];
+    return 1;
 }
 
 /* The probe request's SSID IE is a wildcard (length 0) or our SSID. */
@@ -1430,7 +1511,7 @@ static void rx_ap(const volatile unsigned char *b, unsigned len)
             if (il > sizeof ies)
                 il = sizeof ies;
             copy(ies, body + skip, il);
-            if (!wstation_rate_chain(ies, il, c->rates))
+            if (!ap_client_rates(ies, il, c->rates))
                 return;
             ap_restart(c);
             c->state = 2;
@@ -1459,6 +1540,7 @@ static void rx_ap(const volatile unsigned char *b, unsigned len)
         c->repeats++;
     c->seq = seq;
     if (sub & 0x40) {
+        ap_null(c, fc);
         c->rx_null++;
     } else {
         c->rx_data++;
@@ -2484,6 +2566,17 @@ void wifi_ap_extra(unsigned d[WIFI_AP_EXTRA])
         d[i] = a && a < 0x1fd00u ? *(const volatile unsigned *)(WSRAM + a + 4 * (CORE_RC_APIN + 3 + i)) : 0;
 }
 
+void wifi_ap_extra2(unsigned d[WIFI_AP_EXTRA2])
+{
+    unsigned a = (unsigned)MB16(-8) << 2;
+    d[0] = tx_fail_beacon, d[1] = tx_fail_presp, d[2] = tx_fail_other;
+    /* the core's RC_APBLOST follows its two blocks of kinds; the kinds follow in d */
+    for (unsigned i = 0; i <= 2 * WIFI_AP_KINDS; i++) {
+        unsigned v = a && a < 0x1fd00u ? *(const volatile unsigned *)(WSRAM + a + 4 * (CORE_RC_APTYPE + i)) : 0;
+        d[i < 2 * WIFI_AP_KINDS ? 4 + i : 3] = v;
+    }
+}
+
 unsigned wifi_ap_client_info(struct wifi_ap_client o[WIFI_AP_CLIENTS])
 {
     unsigned n = 0;
@@ -2496,6 +2589,8 @@ unsigned wifi_ap_client_info(struct wifi_ap_client o[WIFI_AP_CLIENTS])
         o[n].idle_ms = now - c->seen, o[n].rx_data = c->rx_data, o[n].rx_null = c->rx_null;
         o[n].tx_ok = c->tx_ok, o[n].tx_failed = c->tx_failed;
         o[n].retries = c->retries, o[n].repeats = c->repeats, o[n].seq = c->seq;
+        o[n].null_gap_ms = c->null_gap, o[n].null_pm1 = c->null_pm1, o[n].null_pm0 = c->null_pm0;
+        o[n].null_gaps_700_730 = c->null_g7;
         n++;
     }
     return n;

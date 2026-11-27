@@ -340,7 +340,8 @@ phone). Now:
 - Frames from associated clients (toDS) go to the SCM as Ethernet frames (DA = addr3, SA =
   addr2); frames from the SCM go out fromDS to an associated client or to every client. The core
   sends group-addressed data at the basic rate (1 Mb/s, as management frames) and unicast data at
-  its data rate; a probe response gets one retry, as the phone that asked has moved on to the next
+  its data rate, no faster than the fastest rate the client shares with the access point (the
+  app's chain for the client, descriptor byte 4; 24 Mb/s on the ST20's setup network); a probe response gets one retry, as the phone that asked has moved on to the next
   channel by then. While the access point runs it owns link channel 1; the station is left first.
   There is no intra-BSS relay.
 - In `ap_mode` the core counts a unicast frame whose A1 is the BCO's own address as passing the
@@ -400,6 +401,22 @@ phone). Now:
   and the last sequence control (`retries`, `repeats`, `seq` on its line in
   `/sys/class/net/bcolink0/bco/ap`). A phone getting an address, and how soon the network
   appears, is the hardware checklist's setup-AP row for the ST20.
+- The fourth look (same day): an iPhone associated but sent only null-data, about every 0.71 s
+  (seven beacon intervals), and found the network about three minutes after it began beaconing:
+  most likely it did not hear our beacons. A group frame (a beacon, group data) gets no ACK, and
+  the TX-done marks only the MAC taking the frame, so the next frame was staged after a fixed
+  3 ms and could overwrite a beacon still waiting behind its backoff or a busy medium (1 Mb/s:
+  ~1.1 ms on air). The core now waits after a group frame for its airtime at its rate, DIFS and
+  the backoff slots it started with, plus the 3 ms. Unicast data to a client started at 54 Mb/s
+  although hostapd offers 24 at most; it now starts at the fastest rate both have, and a 9 Mb/s
+  frame is ACKed at 6 Mb/s instead of 9. `AP_STATUS` adds, after the second client block, the
+  failed transmits by kind (`tx_failed_beacon/probe_resp/other`), the beacons the core gave back
+  without a TX-done (`core_beacon_lost`), the core's frames to our address by kind and those of
+  them its address filter missed (`core_to_us_rts/ack/probe/null/data/other`,
+  `core_missed_rts/ack/probe/null/data/other`), each group one line in
+  `/sys/class/net/bcolink0/bco/ap` and one field in soundtapd's log, and per client the ms
+  between its last two null-data frames, those with the power-management bit set and clear, and
+  the gaps of 700-730 ms (`null_gap_ms`, `null_pm1`, `null_pm0`, `null_gaps_700_730`).
 
 ## CCMP on the core's cipher engine
 
@@ -574,7 +591,15 @@ itself (`tx_kick`, `ACK_LATE`, `rate_cls` in `bco/wild/fw/src/xport.c`):
    is 3 ms.
 4. Data starts at 54 Mb/s. Two frames in a row that needed a retry step the rate down (54 -> 36 ->
    24 Mb/s), and ten frames that went through at once step it up again. The last tries of a frame
-   stay at the basic rate.
+   stay at the basic rate. A frame never goes faster than the first rate of its rate chain
+   (descriptor byte 4: the peer's fastest rate), taking the next step down that fits; a peer slower
+   than 24 Mb/s gets the basic rate.
+5. A group frame gets no ACK, and whether its TX-done marks the MAC taking it or the frame going on
+   air was never measured. The next frame waits for its airtime at its rate (rounded up), DIFS and
+   its backoff slots (both with the 20 us long slot), plus 3 ms (`group_gap`).
+6. The core ACKs an OFDM frame at the highest basic rate at or below its own, or else at the
+   highest mandatory rate (6, 12 or 24 Mb/s) at or below it (IEEE 802.11-2020 10.6.6.5.2;
+   `resp_classes` in `scan.c`).
 
 Limits: 24 Mb/s is the floor of the adaptation, because below it a frame outlasts `ACK_LATE`; a
 weaker link falls back to the basic rate on the last tries. 9 us assumes a BSS with short slots

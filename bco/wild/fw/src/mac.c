@@ -155,6 +155,21 @@ static int same_mac(const unsigned char *a, const unsigned char *b)
     return !d;
 }
 
+/* diag: the kind of a frame to us in ap_mode (hw.h AP_*), by its frame control: what a client
+ * that associates but never gets an address still sends, and what the address filter misses. */
+static unsigned ap_kind(unsigned fc)
+{
+    if (fc == 0xb4)
+        return AP_RTS;
+    if (fc == 0xd4)
+        return AP_ACK;
+    if (fc == 0x40)
+        return AP_PROBE;
+    if (fc == 0x48 || fc == 0xc8)
+        return AP_NULL;
+    return (fc & 0x0c) == 0x08 ? AP_DATA : AP_OTHER;
+}
+
 void mac_fiq(void)
 {
     unsigned st = REG(0x620);
@@ -190,9 +205,13 @@ void mac_fiq(void)
         int to_us = ap_mode && !group && same_mac(e + 12, own_mac);
         int hit = (st & 0x40000) || to_us;
         if (to_us) {
+            unsigned kind = ap_kind(fc);
             rec[RC_APIN]++;         /* diag: AP_STATUS shows how many frames reached us... */
-            if (!(st & 0x40000))
+            rec[RC_APTYPE + kind]++;
+            if (!(st & 0x40000)) {
                 rec[RC_APNOFILT]++; /* ...and how many of them the address filter missed */
+                rec[RC_APNFTYPE + kind]++;
+            }
         }
         /* Non-QoS data (type 10, bit 0x80 = QoS clear) from the BSS once joined: it arrives still enciphered
          * and goes to the host like a management frame; the app deciphers it (wifi.c rx_station).

@@ -670,6 +670,107 @@ static void ap_data(void)
     printf("ok: the setup AP carries a phone's DHCP both ways and holds frames while it dozes\n");
 }
 
+/* The core hands every queued frame back with this status (0 delivered, 1 failed). */
+static void core_returns_status(unsigned status)
+{
+    while (wr_avail(&frm[2], 1)) {
+        volatile unsigned *e = wr_reserve(&frm[2], 1, 1);
+        e[1] = e[0], e[3] = status;
+        wr_commit(&frm[2], 1, 1);
+        wr_reserve(&frm[2], 2, 1);
+        wr_commit(&frm[2], 2, 1);
+    }
+}
+
+/* The setup AP as the ST20 runs it (hostapd's st20Rates: 1-11 Mb/s basic, OFDM up to 24 Mb/s): a
+ * phone's data rates are those it shares with the AP, so its unicast data goes at 24 Mb/s at most;
+ * its null-data are timed and counted by power-management bit; failed transmits count by kind; the
+ * core's frames by kind and lost beacons reach AP_STATUS. */
+static void ap_rates_and_diag(void)
+{
+    static const unsigned char body[] = {0, 0, 0, 0, 0, 0, 0, 0, 100, 0, 0x01, 0x00,
+                                         0, 8, 'S', 'o', 'u', 'n', 'd', 'T', 'a', 'p',
+                                         1, 8, 0x82, 0x84, 0x8b, 0x96, 0x0c, 0x12, 0x18, 0x24,
+                                         3, 1, 6,
+                                         50, 1, 0x30,
+                                         5, 4, 0, 1, 0, 0};
+    static const unsigned char au[6] = {0, 0, 1, 0, 0, 0};
+    /* an iPhone's: 1-11 Mb/s and 6-24 Mb/s in IE 1, 36-54 Mb/s in IE 50 */
+    static const unsigned char as[] = {0x01, 0x00, 0x0a, 0x00, 1, 8, 0x82, 0x84, 0x8b, 0x96, 0x0c, 0x12, 0x18, 0x24,
+                                       50, 4, 0x30, 0x48, 0x60, 0x6c};
+    static const unsigned char as54[] = {0x01, 0x00, 0x0a, 0x00, 1, 1, 0x6c};
+    static const unsigned char phone[6] = {0x02, 0x99, 0x88, 0x77, 0x66, 0x55};
+    static const unsigned char shared[8] = {48, 36, 24, 22, 18, 12, 11, 4};
+    static unsigned char pkt[14 + 100];
+    cmd_ring(63);
+    tx_frames();
+    state = WIFI_IDLE, now = 60000;
+    assert(wifi_ap_start(6, 100, body, sizeof body) == 0);
+    corebd = 1, now += 3;
+    ap_step();
+    assert(ap_ready && ap_beacons == 1);
+    rx_ap(rxf, rx_mgmt(0xb0, own, phone, own, au, sizeof au));
+    rx_ap(rxf, rx_mgmt(0x00, own, phone, own, as, sizeof as));
+    struct client *c = ap_client(phone, 0);
+    assert(c && c->state == 2 && !memcmp(c->rates, shared, 8)); /* 24 Mb/s first, not 54 */
+    memset(pkt, 0x5a, sizeof pkt);
+    memcpy(pkt, phone, 6), memcpy(pkt + 6, own, 6), pkt[12] = 0x08, pkt[13] = 0;
+    assert(radio_tx_eth(pkt, sizeof pkt) == 0);
+    assert(last_frame()[8 + 4] == 48 && !memcmp(last_frame() + 8 + 4, shared, 8)); /* the core's cap */
+    /* a client that shares no rate with the AP gets the AP's own chain */
+    rx_ap(rxf, rx_mgmt(0x00, own, phone, own, as54, sizeof as54));
+    assert(c->state == 2 && !memcmp(c->rates, shared, 8));
+    rx_ap(rxf, rx_mgmt(0x00, own, phone, own, as, sizeof as));
+
+    /* null-data: every ~711 ms with the PM bit, a retransmission of one, then one awake */
+    struct wifi_ap_client info[WIFI_AP_CLIENTS];
+    now = 70000;
+    rx_ap(rxf, rx_mgmt(0x48 | 0x1100, own, phone, own, au, 0));
+    assert(wifi_ap_client_info(info) == 1 && info[0].null_gap_ms == 0 && info[0].null_pm1 == 1);
+    now += 711;
+    rx_ap(rxf, rx_mgmt(0x48 | 0x1100, own, phone, own, au, 0));
+    now += 2;
+    rx_ap(rxf, rx_mgmt(0x48 | 0x1900, own, phone, own, au, 0)); /* Retry: the same null again */
+    assert(wifi_ap_client_info(info) == 1 && info[0].null_gap_ms == 711 && info[0].null_gaps_700_730 == 1);
+    now += 729;
+    rx_ap(rxf, rx_mgmt(0xc8 | 0x1100, own, phone, own, au, 0)); /* a QoS-null 731 ms on: outside */
+    assert(wifi_ap_client_info(info) == 1 && info[0].null_gap_ms == 731 && info[0].null_gaps_700_730 == 1);
+    now += 300;
+    rx_ap(rxf, rx_mgmt(0x48 | 0x0100, own, phone, own, au, 0));
+    assert(wifi_ap_client_info(info) == 1 && info[0].null_gap_ms == 300 && info[0].null_pm1 == 4 &&
+           info[0].null_pm0 == 1 && info[0].null_gaps_700_730 == 1 && info[0].rx_null == 5);
+
+    /* failed transmits by kind: a beacon, a probe response, a data frame */
+    tx_frames();
+    unsigned failed = wifi_tx_failed, b0 = tx_fail_beacon, p0 = tx_fail_presp, o0 = tx_fail_other;
+    now = ap_ms(ap_tbtt);
+    ap_step();
+    unsigned char pq[] = {0, 0};
+    rx_ap(rxf, rx_mgmt(0x40, ap_bcast, phone, ap_bcast, pq, sizeof pq));
+    assert(radio_tx_eth(pkt, sizeof pkt) == 0);
+    core_returns_status(1);
+    tx_reclaim();
+    assert(wifi_tx_failed == failed + 3 && tx_fail_beacon == b0 + 1 && tx_fail_presp == p0 + 1 &&
+           tx_fail_other == o0 + 1);
+    assert(txnfree == NTXFBUF); /* every buffer back */
+
+    /* AP_STATUS's last block: those three, then the core's lost beacons and its kinds */
+    unsigned x[WIFI_AP_EXTRA2];
+    volatile unsigned *corerec = (volatile unsigned *)(uintptr_t)(0x30000000u + 0x100);
+    for (unsigned i = 0; i <= 2 * WIFI_AP_KINDS; i++)
+        corerec[CORE_RC_APTYPE + i] = 300 + i;
+    MB16(-8) = 0x100 >> 2;
+    wifi_ap_extra2(x);
+    assert(x[0] == tx_fail_beacon && x[1] == tx_fail_presp && x[2] == tx_fail_other);
+    assert(x[3] == 300 + 2 * WIFI_AP_KINDS);              /* RC_APBLOST */
+    assert(x[4] == 300 && x[4 + WIFI_AP_KINDS] == 300 + WIFI_AP_KINDS && x[WIFI_AP_EXTRA2 - 1] == 300 + 2 * WIFI_AP_KINDS - 1);
+    MB16(-8) = 0;
+    wifi_ap_extra2(x);
+    assert(x[3] == 0 && x[4] == 0 && x[0] == tx_fail_beacon);
+    wifi_ap_stop();
+    printf("ok: the setup AP sends a phone data at the rates both have, and reports its nulls and failures\n");
+}
+
 /* An open network: the association request has no security IE and no Privacy bit, JOIN_DONE
  * says no privacy, the link is up once the AP associated (no handshake), data goes out without the
  * Protected bit and frames in the clear come in. A PSK profile does not join it. */
@@ -1273,6 +1374,7 @@ int main(void)
     access_point();
     ap_full();
     ap_data();
+    ap_rates_and_diag();
     link_frames();
     rekey_msg4_old_key();
     open_network();

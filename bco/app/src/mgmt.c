@@ -21,7 +21,8 @@ unsigned char mgmt_wifi_mac[6];
 volatile unsigned mgmt_uptime;
 
 _Static_assert(MGMT_AP_COUNTERS == WIFI_AP_COUNTERS && MGMT_AP_DIAG == WIFI_AP_DIAG &&
-               MGMT_AP_CLIENT == 4 + 5 * 4 && MGMT_AP_EXTRA == WIFI_AP_EXTRA && MGMT_AP_CLIENT2 == 4 + 2 + 2,
+               MGMT_AP_CLIENT == 4 + 5 * 4 && MGMT_AP_EXTRA == WIFI_AP_EXTRA && MGMT_AP_CLIENT2 == 4 + 2 + 2 &&
+               MGMT_AP_EXTRA2 == WIFI_AP_EXTRA2 && MGMT_AP_CLIENT3 == 4 * 4,
                "AP_STATUS's layout (mgmt.h) is what case 8 writes");
 
 static unsigned char *put32(unsigned char *o, unsigned v)
@@ -305,6 +306,15 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
             o = put32(o, cl[i].retries);
             *o++ = cl[i].repeats, *o++ = cl[i].repeats >> 8;
             *o++ = cl[i].seq, *o++ = cl[i].seq >> 8;
+        }
+        unsigned x2[WIFI_AP_EXTRA2];
+        wifi_ap_extra2(x2);
+        for (unsigned i = 0; i < WIFI_AP_EXTRA2; i++) o = put32(o, x2[i]);
+        for (unsigned i = 0; i < c; i++) {
+            o = put32(o, cl[i].null_gap_ms);
+            o = put32(o, cl[i].null_pm1);
+            o = put32(o, cl[i].null_pm0);
+            o = put32(o, cl[i].null_gaps_700_730);
         }
         break;
     }

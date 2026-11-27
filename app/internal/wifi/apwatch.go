@@ -70,10 +70,13 @@ func worthLogging(event, changed bool, since, quiet time.Duration) bool {
 }
 
 // apState is one look at the setup AP: name/value counters in the order read, and a line per
-// client as soundtap_bco writes it.
+// client as soundtap_bco writes it. A group of counters is one line too, "name a/b/c" with the
+// members named in the name ("core_to_us_rts/ack/probe/null/data/other 0/12/3/40/2/0"): kept as
+// it reads, so the status line stays short enough to read.
 type apState struct {
 	names   []string
 	values  map[string]uint64
+	groups  map[string]string
 	clients [][]string // "client" <mac> then name value pairs
 }
 
@@ -82,7 +85,7 @@ const nameValue = 2
 
 // readAPState reads wlan1's statistics and, where there is one, the BCO's bco/ap.
 func (m *Manager) readAPState() apState {
-	state := apState{names: nil, values: map[string]uint64{}, clients: nil}
+	state := apState{names: nil, values: map[string]uint64{}, groups: map[string]string{}, clients: nil}
 	stats := filepath.Join(m.cfg.Paths.SysNet, m.cfg.AP, "statistics")
 
 	for _, name := range []string{"rx_packets", "tx_packets", "rx_dropped", "tx_dropped"} {
@@ -110,6 +113,9 @@ func (m *Manager) readAPState() apState {
 			v, err := strconv.ParseUint(fields[1], 0, 64) // the "_last" words come as hex
 			if err == nil {
 				state.add(fields[0], v)
+			} else if isGroup(fields[1]) {
+				state.names = append(state.names, fields[0])
+				state.groups[fields[0]] = fields[1]
 			}
 		default:
 			// Not a line soundtap_bco writes.
@@ -117,6 +123,18 @@ func (m *Manager) readAPState() apState {
 	}
 
 	return state
+}
+
+// isGroup says whether a value is a group of counters: decimal numbers joined by "/".
+func isGroup(value string) bool {
+	for part := range strings.SplitSeq(value, "/") {
+		_, err := strconv.ParseUint(part, 10, 64)
+		if err != nil {
+			return false
+		}
+	}
+
+	return strings.Contains(value, "/")
 }
 
 func (s *apState) add(name string, v uint64) {
@@ -156,7 +174,7 @@ func (s *apState) key() string {
 	var key strings.Builder
 
 	for _, n := range s.names {
-		key.WriteString(n + "=" + strconv.FormatUint(s.values[n], 10) + " ")
+		key.WriteString(n + "=" + s.value(n) + " ")
 	}
 
 	for _, client := range s.clients {
@@ -178,11 +196,14 @@ func (s *apState) key() string {
 // octets of its address: enough to tell phones apart, not to name one.
 func (s *apState) log(info func(msg string, args ...any)) {
 	attrs := make([]any, 0, nameValue*len(s.names))
-	for _, n := range s.names {
-		if strings.HasSuffix(n, "_last") {
-			attrs = append(attrs, n, "0x"+strconv.FormatUint(s.values[n], 16))
-		} else {
-			attrs = append(attrs, n, s.values[n])
+	for _, name := range s.names {
+		switch group, ok := s.groups[name]; {
+		case ok:
+			attrs = append(attrs, name, group)
+		case strings.HasSuffix(name, "_last"):
+			attrs = append(attrs, name, "0x"+strconv.FormatUint(s.values[name], 16))
+		default:
+			attrs = append(attrs, name, s.values[name])
 		}
 	}
 
@@ -196,6 +217,15 @@ func (s *apState) log(info func(msg string, args ...any)) {
 
 		info("setup AP client", attrs...)
 	}
+}
+
+// value is a counter's value, or a group's as read.
+func (s *apState) value(name string) string {
+	if group, ok := s.groups[name]; ok {
+		return group
+	}
+
+	return strconv.FormatUint(s.values[name], 10)
 }
 
 // shortMAC is a MAC's last three octets.

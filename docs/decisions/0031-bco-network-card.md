@@ -59,7 +59,9 @@ point.
 In `ap_mode` the core takes a unicast frame to the BCO's own address as passing its address
 filter, which is set up for a station, and keeps and ACKs a client's data, null-data, QoS data
 (passed up without its QoS control) and PS-Poll; it keeps no other network's group data. Group
-frames go out at the basic rate, unicast data at the data rate. Beacons go at the BSS's target
+frames go out at the basic rate, unicast data at the data rate, but no faster than the fastest
+rate the client shares with the access point. The core waits after a group frame until it can
+have left the air (its airtime, DIFS and backoff, plus a margin), since no ACK ends it. Beacons go at the BSS's target
 beacon transmission times, stamped with its TSF. The app follows each client's
 power-management bit: unicast frames for a dozing client are held (four at most) and named in the
 beacon's TIM, a PS-Poll fetches one and waking fetches the rest; while any client dozes, group
@@ -109,7 +111,8 @@ cipher engine, as stock does it: the core enciphers every protected frame it sen
 every protected frame it receives, drops a frame it cannot encipher rather than sending it in
 clear, and checks the PN. The temporal keys never leave the BCO; the SCM driver never sees a key.
 The core contends for the medium with an 802.11 DCF backoff on the queue it transmits on and
-adapts the data rate between 54 and 24 Mb/s. Stock's transmit code stays unread. It ACKs every
+adapts the data rate between 54 and 24 Mb/s. An OFDM frame is ACKed at the highest basic
+rate at or below its own, or else the highest mandatory one (6, 12, 24 Mb/s). Stock's transmit code stays unread. It ACKs every
 unicast data frame to the station once joined, null-data and QoS frames included (QoS only with the
 Normal Ack policy), also those it does not keep: an access point disassociates a station that does
 not answer its idle check. It never ACKs a frame addressed to a group, and it passes a

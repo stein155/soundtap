@@ -103,6 +103,12 @@ void mgmt_sae_lost(void);
 /* and, per client in the same order, MGMT_AP_CLIENT2 bytes: le32 frames with the Retry bit, le16
  * frames repeating the sequence number before, le16 the last sequence control */
 #define MGMT_AP_CLIENT2 8
+/* then MGMT_AP_EXTRA2 le32 (wifi_ap_extra2) and, per client in the same order, MGMT_AP_CLIENT3
+ * bytes: le32 ms between its last two null-data frames, null-data with the power-management bit
+ * set, with it clear, and gaps of 700-730 ms between them. A driver that knows only what comes
+ * before ignores it; one that knows it finds it by the reply's length. */
+#define MGMT_AP_EXTRA2 16
+#define MGMT_AP_CLIENT3 16
 
 /* NV_INFO (17, BCOLINK_CAP_NVINFO): read-only. Reply: status (1 = no PersParam sector), count, then
  * count entries of key (FourCC as stored, le32), le16 value length, and the value's first 4 bytes

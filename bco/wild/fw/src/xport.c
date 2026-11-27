@@ -219,7 +219,9 @@ static volatile int tx_busy;
  * the ST20 needed 242 retries and lost no frame (2026-10-20). Measured under load: 98 % of
  * ACKs arrive within 0.5 ms of the TX-done and every TX-done within 5 ms of the start; retrying
  * sooner after the TX-done than ACK_WAIT from the start tripled the retries.
- * A group frame gets no ACK: the next one waits TX_GAP (3 ms measured best). */
+ * A group frame (a beacon, group data) gets no ACK, so nothing says when it has left the air: the
+ * next frame waits tx_gap after its TX-done (group_gap). Staged sooner, it overwrites tx_pkt and
+ * tx_desc and restarts queue 9 under a frame the MAC may still be deferring or sending. */
 #define ACK_WAIT 5000 /* R_TIMER ticks from the start of an attempt; an ACK takes ~0.3 ms, 30 ms
                        * here cut a download on the ST20 to a third */
 #define TX_RETRY 6     /* retries after the first attempt: 7 attempts, 802.11's dot11ShortRetryLimit
@@ -236,9 +238,58 @@ static volatile int tx_busy;
  * 24 Mb/s is the floor: below it the frame outlasts ACK_LATE; then the basic rate takes over. */
 static const unsigned char rate_cls[] = {12, 13, 9};
 static unsigned rate_i, rate_ok, rate_bad;
-#define TX_GAP 3000
+/* Each PHY rate code's rate in 500 kb/s units (scan.c rate_code; 5-7 are 2, 5.5 and 11 Mb/s with
+ * the short preamble). Code 0 is no rate; counted as 1 Mb/s, the slowest. */
+static const unsigned char cls_rate[16] = {2, 4, 11, 22, 2, 4, 11, 22, 96, 48, 24, 12, 108, 72, 36, 18};
+
+/* The data rate class of a unicast data frame: rate_cls[rate_i], or the next one down the ladder
+ * that the receiver supports. max is the fastest rate of the frame's rate chain (500 kb/s units),
+ * 0 = no limit. In ap_mode that is descriptor byte 4, the first of the rates a client shares with
+ * the access point (wifi.c ap_client_rates); the station passes 0 and keeps the ladder as it was
+ * (its EAPOL frames carry the AP's lowest rate there). A receiver slower than the whole ladder
+ * (24 Mb/s, its floor) gets the basic rate: a frame below 24 Mb/s outlasts ACK_LATE. Without
+ * this a setup AP client was sent 54 Mb/s data while hostapd offers it 24 Mb/s at most. */
+static unsigned data_cls(unsigned max)
+{
+    for (unsigned i = rate_i; i < sizeof rate_cls; i++)
+        if (!max || cls_rate[rate_cls[i]] <= max)
+            return rate_cls[i];
+    return sta_mgmt_cls;
+}
+
+/* Airtime in us (R_TIMER ticks) of len bytes, FCS included, at PHY rate code cls, rounded up so
+ * it never comes out short: DSSS/CCK 192 us long (96 us short) preamble and header, then the bits
+ * at the rate; OFDM 20 us preamble and SIGNAL, 4 us symbols of 16 service + 8 len + 6 tail bits,
+ * and the 6 us signal extension of 2.4 GHz. 1024 / rate in Mb/s, rounded up, saves a division. */
+static unsigned airtime(unsigned cls, unsigned len)
+{
+    static const unsigned short us1024[16] = {0, 512, 187, 94, 0, 512, 187, 94, 22, 43, 86, 171, 19, 29, 57, 114};
+    cls &= 15;
+    if (cls == 4 || !cls)   /* 1 Mb/s (and the unknown code 0): long preamble, 1 us a bit */
+        return 192 + 8 * len;
+    if (cls < 8)
+        return (cls < 4 ? 192 : 96) + ((8 * len * us1024[cls] + 1023) >> 10);
+    return 20 + 4 * ((((16 + 8 * len + 6) * us1024[cls] + 1023) >> 10) / 4 + 1) + 6;
+}
+
+#define TX_GAP 3000   /* margin after a group frame (3 ms measured best when that was the whole gap) */
+#define TX_DIFS 50    /* DIFS with the 20 us long slot (SIFS + 2 slots), the longer of the two */
+#define TX_SLOT 20    /* backoff slot, long: join sets 9 us (scan.c), 20 for an 11b BSS */
+
+/* How long the transmitter stays shut after a group frame's TX-done: everything the frame may
+ * still need before it has left the air. Whether the TX-done marks the MAC taking the descriptor
+ * (~2 us after the start, measured on a unicast frame without backoff) or the frame going on air
+ * was never measured, so the gap covers the first: DIFS, the backoff slots the start asked for
+ * and the airtime at its rate, plus TX_GAP for a busy medium. A beacon at 1 Mb/s is ~1.1 ms on
+ * air; behind backoff and other stations' frames it outlasted the fixed 3 ms that was the whole
+ * gap before, and the next frame staged over it (a phone found the setup AP minutes late). */
+static unsigned group_gap(unsigned cls, unsigned len, unsigned slots)
+{
+    return TX_GAP + TX_DIFS + TX_SLOT * slots + airtime(cls, len);
+}
 volatile unsigned tx_acked;
 static unsigned tx_free_t, tx_unicast, tx_wait;   /* tx_unicast: attempts of the frame in flight, 0 = group */
+static unsigned tx_gap, tx_slots;                 /* the gap after the frame in flight (0: none), its backoff */
 static unsigned tx_tries = TX_RETRY;              /* retries the frame in flight may have */
 static struct {
     unsigned z0; /* cppcheck-suppress unusedStructMember ; the MAC reads this descriptor */
@@ -262,6 +313,7 @@ static void tx_kick(void)
     unsigned cw = n > 5 ? 1023 : ((OP_CWMIN + 1u) << n) - 1;
     unsigned slots = lcg() >> 16 & (cw > 1023 ? 1023 : cw);
     tx_wait = ACK_WAIT + 20 * slots;
+    tx_slots = slots;
     tx_t0 = REG(R_TIMER);
     mgmt_tx_pending = 0x10 | tx_q;
     mac_send_mgmt(&tx_desc.len, 0x20000 | slots);
@@ -285,7 +337,7 @@ static void tx_stage_done(void)
      * setup AP's broadcasts: DHCP, ARP, mDNS) stays at the basic rate like management frames:
      * nobody ACKs it, so the rate cannot follow any client, and every client must hear it. */
     if ((h[0] & 0x0c) == 0x08 && !(h[4] & 1))
-        tx_desc.cls = rate_cls[rate_i];
+        tx_desc.cls = data_cls(ap_mode ? tx_pkt[4] & 0x7f : 0u);
     /* A probe response is worth one retry: the phone that asked moves to the next channel
      * within a few tens of ms, and each wasted retry holds every other frame back. */
     tx_tries = h[0] == 0x50 ? 1 : TX_RETRY;
@@ -342,13 +394,14 @@ start:
     tx_unicast = !(h[4] & 1);
     tx_acked = 0;
     tx_kick();
+    tx_gap = tx_unicast ? 0 : group_gap(tx_desc.cls, tx_desc.len, tx_slots);
 }
 
 /* Stage one queued host frame into tx_pkt (host buf+0x94 -> tx_pkt+0x8c), then tx_stage_done. */
 static int frm_in_data(void)
 {
     unsigned q;
-    if (tx_busy || ((REG(R_TIMER) - tx_free_t) & 0x3ffffff) < TX_GAP)
+    if (tx_busy || ((REG(R_TIMER) - tx_free_t) & 0x3ffffff) < tx_gap)
         return 0;
     for (q = 0; q < 4; q++)
         if (ring_avail(&l_frm[q], 1)) {
@@ -357,6 +410,7 @@ static int frm_in_data(void)
             e = (unsigned *)tx_rec;
             tx_q = q;
             tx_busy = 1;
+            tx_gap = 0;     /* a frame that never reaches the MAC holds nothing back */
             /* A record whose length does not fit tx_pkt is refused, never staged: a negative
              * (e[2] >> 16) - 0x8c is a DMA of ~4 GB over the whole core. It goes back as failed. */
             if ((e[2] >> 16) < 0xc4 || (e[2] >> 16) > sizeof tx_pkt) {
@@ -394,7 +448,7 @@ static void tx_complete(unsigned status)
             rate_i++, rate_bad = 0;
     }
     ring_commit(&l_frm[q], 3, 1);                      /* record: channel 3 -> 4, picked up by schedule */
-    tx_free_t = REG(R_TIMER) - (tx_unicast ? TX_GAP : 0);
+    tx_free_t = REG(R_TIMER);                          /* frm_in_data waits tx_gap from here */
     tx_unicast = 0;
     tx_busy = 0;
 }
@@ -678,6 +732,8 @@ void xport_poll(void)
             /* A unicast frame needs no TX-done: the AP's ACK delivered it, and without an ACK it
              * takes the retry path above on the next poll. ~7 % of frames under load raised no
              * TX-done and each waited TX_LOST, 200 ms with the one TX slot held. */
+            if (ap_mode && !tx_unicast && tx_pkt[0x18] == 0x80)
+                rec[RC_APBLOST]++;  /* diag: a beacon that never raised its TX-done */
             if (!tx_unicast || tx_acked)
                 tx_complete(!tx_acked);
         }
