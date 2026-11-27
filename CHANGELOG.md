@@ -10,6 +10,35 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
 
 ## [Unreleased]
 
+## [app-v0.1.0-alpha.6] - 2026-11-27
+
+- The SoundTap app that SoundTap Core 0.1.0-alpha.6 carries; what it changes is listed under
+  that release.
+
+## [os-v0.1.0-alpha.6] - 2026-11-27
+
+The sixth alpha of SoundTap Core 0.1.0.
+
+### Fixed
+
+- **SoundTouch 20: the setup network appears** when you hold Preset 2 and Volume Down. Its
+  network chip now sends the setup network's beacons itself.
+- **SoundTouch 20: joins more routers**, among them networks that still offer older WPA
+  next to WPA2 and networks that mix WPA2 and WPA3. When a join fails, the settings say
+  whether the password was wrong or the network's security is not supported, instead of
+  staying on "Connecting".
+- **SoundTouch 20: the first install takes over your Wi-Fi** from the original software, also
+  when the network chip needs a moment to answer.
+- **SoundTouch 20: the display counts up while SoundTap installs** from the original software,
+  instead of staying at 1%.
+- **SoundTouch 20: a two-second press confirms**, as on the other speakers, instead of four
+  seconds.
+- **With a network cable in, the settings show the wired connection**, not the setup network.
+- **The install page finds your speaker**: it names each model's own setup address (the
+  SoundTouch 20's included), waits long enough for the SoundTouch 20, and finds a speaker that
+  moved to another address. In Safari and Firefox, which do not let a web page reach the
+  speaker, it sends you straight to the download route.
+
 ## [app-v0.1.0-alpha.5] - 2026-11-26
 
 - The SoundTap app that SoundTap Core 0.1.0-alpha.5 carries; what it changes is listed under
