@@ -307,8 +307,10 @@ void mac_fiq(void)
          * SIFS and the CTS itself (IEEE 802.11-2020 9.3.1.3; 0 if that leaves nothing). Without
          * it a client that protects its frames with RTS never sends them. The NAV is not kept, so
          * the CTS goes whatever the medium was reserved for. rec[RC_APTYPE + AP_RTS] shows
-         * whether RTS frames reach the FIQ at all. */
-        if (fc == 0xb4 && (ap_mode || joined) && !group && len >= 20 && same_mac(e + 12, own_mac)) {
+         * whether RTS frames reach the FIQ at all. Only when the receive area holds this RTS (its
+         * frame control is the latched one): stale bytes there would send a CTS nobody asked for. */
+        if (fc == 0xb4 && (ap_mode || joined) && !group && len >= 20 && (e[8] & 0xfc) == fc &&
+            same_mac(e + 12, own_mac)) {
             unsigned dur = e[10] | (unsigned)e[11] << 8, cost = 10 + airtime(resp_class[e[6] & 15], 14);
             send_resp(e, 0xc4, dur & 0x8000 || dur <= cost ? 0 : dur - cost);
             rec[RC_CTS]++;

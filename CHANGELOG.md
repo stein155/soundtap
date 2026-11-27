@@ -53,7 +53,9 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
 - **SoundTouch 20: the setup network handles phones better.** The speaker's network chip now
   accepts what a phone sends it, keeps messages for a phone that has gone to sleep until it
   wakes, and sends messages for every phone at the slowest speed, so phones further away hear
-  them too. A phone on it still gets no address on our test speaker; that is not solved yet.
+  them too. Its announcements are no longer cut off by the next message, it answers phones that
+  ask before they send, and it talks to each phone at a speed that phone accepts. A phone on it
+  still gets no address on our test speaker; that is not solved yet.
 - **SoundTouch 20: phones that save battery stay connected to the setup network**: its
   broadcasts now come exactly on time, when a sleeping phone wakes to listen for them.
 - **SoundTouch 20: the setup network stays up while a phone is on it**, instead of closing
