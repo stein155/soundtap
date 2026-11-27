@@ -53,7 +53,7 @@ type Speaker struct {
 
 	wifiSSID string
 	wifiPSK  string
-	wifiSave func(ssid, psk string) error
+	wifiSave func(ssid, security, psk string) error
 
 	// Live association read from wpa_supplicant, cached for wifiLinkTTL — see wifilink.go.
 	wifiLinkCache wifiLink
@@ -315,8 +315,9 @@ func (s *Speaker) OnTransport(fn func(action string) error) {
 	s.unlock()
 }
 
-// OnWifiProfile registers a callback for newly submitted Wi-Fi credentials.
-func (s *Speaker) OnWifiProfile(fn func(ssid, psk string) error) {
+// OnWifiProfile registers a callback for newly submitted Wi-Fi credentials: the network, its
+// security as CheckWifi takes it ("wep" for a WEP network) and its password.
+func (s *Speaker) OnWifiProfile(fn func(ssid, security, psk string) error) {
 	s.lock()
 	s.wifiSave = fn
 	s.unlock()

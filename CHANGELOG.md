@@ -10,6 +10,21 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
 
 ## [Unreleased]
 
+### Added
+
+- **SoundTouch 20: joins open networks** (without a password), and an open network the
+  original software had saved is taken over on the first install.
+- **SoundTouch 20: joins older routers with WPA (TKIP)**, and WPA2 routers set to TKIP, as the
+  original software did.
+- **SoundTouch 20: joins WPA3 networks**, and networks that mix WPA2 and WPA3, with the same
+  password as always. Where your router offers it, it also uses protected management frames, so
+  nobody nearby can knock it off your Wi-Fi. The other speakers join networks that mix WPA2 and
+  WPA3 as before, over WPA2; a WPA3-only network needs support their Wi-Fi chip's driver does not
+  have yet.
+- **Joins WEP networks**, on every speaker, as the original software did: pick *WEP* as the
+  security type, or pick the network from the list and type its WEP key. A WEP network the
+  original software had saved is taken over on the first install.
+
 ### Fixed
 
 - **SoundTouch 20: phones get an address on the setup network.** A phone could join it but
@@ -25,6 +40,9 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
   are on it, and each address request a phone makes, without a line every few seconds.
 - **SoundTouch 20: the countdown also shows while the display shows the start-up or setup
   screen.**
+- **SoundTouch 20: on networks that mix WPA and WPA2, apps find the speaker again.** The
+  speaker now also receives such a network's broadcasts, which the AirPlay, Spotify and
+  SoundTap apps use to find it.
 
 ## [app-v0.1.0-alpha.6] - 2026-11-27
 

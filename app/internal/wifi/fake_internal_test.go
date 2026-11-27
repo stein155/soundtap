@@ -68,8 +68,9 @@ func (f *supplicant) handle(cmd string) string {
 		f.nets[id] = &fakeNet{ssid: "", vars: map[string]string{}, enabled: false, priority: 0}
 
 		return strconv.Itoa(id) + "\n"
-	case len(words) == 4 && words[0] == "SET_NETWORK":
-		return f.setNetwork(words)
+	case len(words) >= 4 && words[0] == "SET_NETWORK":
+		// the value is the rest of the line, as wpa_supplicant reads it ("OPEN SHARED")
+		return f.setNetwork(append(words[:3:3], strings.Join(words[3:], " ")))
 	case len(words) == 2 && words[0] == "ENABLE_NETWORK":
 		id, _ := strconv.Atoi(words[1])
 		if known, ok := f.nets[id]; ok {
@@ -503,7 +504,7 @@ func newRig(t *testing.T, variant string) *rig {
 func (r *rig) save(ssid, psk string) {
 	r.t.Helper()
 
-	err := WriteConf(r.conf, NewRecord(ssid, psk))
+	err := WriteConf(r.conf, NewRecord(ssid, "", psk))
 	if err != nil {
 		r.t.Fatal(err)
 	}

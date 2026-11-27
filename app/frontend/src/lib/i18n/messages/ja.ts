@@ -306,6 +306,7 @@ const ja: Messages = {
   discardChangesConfirm: '破棄',
   resetFailed: 'リセットに失敗しました。何も消去されていません。',
   wifiPasswordLength: 'Wi-Fiのパスワードは8～63文字です。',
+  wifiWepKeyLength: 'WEPキーは5文字か13文字、または16進数で10桁か26桁です。',
   wifiSsidLength: 'この名前はWi-Fiネットワークには長すぎます。',
   mqttPortInvalid: '1～65535のポートを入力するか、空欄のままにしてください。',
   undo: '元に戻す',

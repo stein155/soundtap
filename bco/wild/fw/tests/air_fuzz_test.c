@@ -14,6 +14,8 @@
  * packet number ever moves backwards. */
 #include "core_sim.h"
 
+static int soft; /* sta_rxkey: the app deciphers under this key (ADR 0136) */
+
 static const unsigned char TK[16] = {0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
                                      0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f};
 #define ITER 40000u
@@ -21,7 +23,7 @@ static const unsigned char TK[16] = {0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0
 static unsigned char fbuf[0x4000]; /* at least the receive area: air_put copies what fits there */
 static unsigned held[NRX], nheld; /* buffers the host keeps for a while */
 static unsigned long long last_pn[5];
-static unsigned delivered, deciphered, kept_max;
+static unsigned delivered, deciphered, soft_up, kept_max;
 
 static void install_keys(void)
 {
@@ -31,9 +33,11 @@ static void install_keys(void)
     p[8] = 4, p[19] = 16;
     memcpy(p + 12, BSSID, 6), memcpy(p + 20, TK, 16);
     host_cmd(13, 0x12, 1, p, 52);
-    for (unsigned k = 0; k < 4; k += 2) {
+    /* CCMP group keys 0 and 2 on the engine; 1 (TKIP) and 3 (WEP-104) the app's (ADR 0136), so
+     * frames under them go up undeciphered, cipher trailer and all */
+    for (unsigned k = 0; k < 4; k++) {
         memset(p, 0, sizeof p);
-        p[0] = 4, p[4] = k, p[7] = 16;
+        p[0] = k == 1 ? 2 : k == 3 ? 5 : 4, p[4] = k, p[7] = 16;
         memcpy(p + 8, TK, 16);
         host_cmd(11, 0x12, 1, p, 40);
     }
@@ -89,11 +93,14 @@ static void check_record(const struct rxd *d)
 {
     const unsigned char *r = d->buf + 0x94;
     CHECK(d->end + 8 <= RXBUF && d->end >= 0x94 + 24 + 24, "record end %#x", d->end);
-    CHECK(r[0] == 24 && r[1] == 24 && r[2] == 48 && r[3] == 0xc4 && r[7] <= 1, "record header");
-    if (r[7]) {
+    CHECK(r[0] == 24 && r[1] == 24 && r[2] == 48 && r[3] == 0xc4 && r[7] <= 2, "record header");
+    if (r[7] == 1) {
         deciphered++;
         CHECK((d->buf[0xac] & 0x0c) == 0x08 && !(d->buf[0xad] & 0x40),
               "deciphered data comes up in clear");
+    } else if (r[7] == 2) {
+        soft_up++;    /* the app's key: up as it came, still protected (ADR 0136) */
+        CHECK((d->buf[0xac] & 0x0c) == 0x08 && (d->buf[0xad] & 0x40), "an app-key frame stays protected");
     }
     CHECK(d->peer <= 6, "peer slot %u", d->peer);
     delivered++;
@@ -117,12 +124,12 @@ static void host_side(void)
 static void check_pn(void)
 {
     unsigned long long *p;
-    if (sta_rxkey(0, 0, 0, &p)) {
+    if (sta_rxkey(0, 0, 0, &p, &soft)) {
         CHECK(*p >= last_pn[0], "pairwise PN went back %llx -> %llx", last_pn[0], *p);
         last_pn[0] = *p;
     }
     for (unsigned k = 0; k < 4; k++)
-        if (sta_rxkey(0, 1, k, &p)) {
+        if (sta_rxkey(0, 1, k, &p, &soft)) {
             CHECK(*p >= last_pn[1 + k], "group %u PN went back", k);
             last_pn[1 + k] = *p;
         }
@@ -182,9 +189,10 @@ int main(void)
     }
     pump(8);
     host_side();
-    printf("air fuzz: %u frames, %u delivered, %u deciphered, queue peak %u\n", ITER, delivered,
-           deciphered, kept_max);
-    CHECK(delivered > ITER / 20 && deciphered > 100, "the fuzz reaches delivery and decipher");
+    printf("air fuzz: %u frames, %u delivered, %u deciphered, %u for the app, queue peak %u\n", ITER,
+           delivered, deciphered, soft_up, kept_max);
+    CHECK(delivered > ITER / 20 && deciphered > 100 && soft_up > 100,
+          "the fuzz reaches delivery, decipher and the app's keys");
     CHECK(irq_depth == 0, "critical sections balanced");
     return done("air_fuzz");
 }

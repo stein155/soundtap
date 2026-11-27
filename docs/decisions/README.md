@@ -109,3 +109,4 @@ Keep it short. Add a Mermaid diagram when a picture says it faster.
 | [0133](0133-more-soundtouch-models-from-stock.md) | More SoundTouch models, worked out from the stock packages alone | accepted |
 | [0134](0134-ipv6-on-the-speaker.md) | The speaker runs IPv6 next to IPv4, behind the same filter | accepted |
 | [0135](0135-bco-standard-firmware-features.md) | BCO network card: standard firmware features | accepted |
+| [0136](0136-every-network-stock-joined-and-wpa3.md) | Every network security stock joined, and WPA3, on every model | proposed |

@@ -3,8 +3,8 @@
 
 /* CPU mode stacks live in SDRAM (>= 16 MB, hw-map), far above the image. The 64 KB internal
  * SRAM is left to the WiLD rings and buffers, which the core must reach through UMR0
- * (0x500000 = 0x400000): vectors/trampolines 0x400000-0x401000, RX buffers 0x401000-0x403f40,
- * TX buffers 0x504100-0x507040 (7 x 0x6c0, wifi.c), command rings 0x507220-0x5095a0, frame +
+ * (0x500000 = 0x400000): vectors/trampolines 0x400000-0x401000, RX buffers 0x401000-0x404020
+ * (7 x 0x6e0), TX buffers 0x504100-0x5070b0 (7 x 0x6d0, wifi.c), command rings 0x507220-0x5095a0, frame +
  * supply rings 0x509600-0x50a140; the wired port's MACB rings and buffers 0x50a200-0x50d020
  * (wired.c). The budget: docs/hardware/st20/bco-network-card.md, "The SRAM budget".
  * Used by src/app.S. */

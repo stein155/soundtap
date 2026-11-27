@@ -20,8 +20,10 @@ observation on one board, not approval of a later image: release evidence belong
 8. [The card's clock](#the-cards-clock)
 9. [The setup access point on the WiLD core](#the-setup-access-point-on-the-wild-core)
 10. [CCMP on the core's cipher engine](#ccmp-on-the-cores-cipher-engine)
-11. [Medium access and rate adaptation](#medium-access-and-rate-adaptation)
-12. [Measurements on the bench ST20](#measurements-on-the-bench-st20)
+11. [WEP and TKIP: stock's engine modes, and where SoundTap runs them](#wep-and-tkip-stocks-engine-modes-and-where-soundtap-runs-them)
+12. [WPA3 and PMF](#wpa3-and-pmf)
+13. [Medium access and rate adaptation](#medium-access-and-rate-adaptation)
+14. [Measurements on the bench ST20](#measurements-on-the-bench-st20)
 
 ## The link
 
@@ -68,15 +70,24 @@ and the BCO answers with the same `seq` and `type|0x80`, status first.
 - `SCAN`: payload `{1}` starts a scan, `{1, ssid_len, ssid}` starts one whose directed pass probes
   for that SSID (`BCOLINK_CAP_SCAN_SSID`), an empty payload polls; status 3 means still scanning,
   status 0 carries the results (`ssid_len, ssid, bssid[6], channel, rssi i8, security`: 0 open,
-  1 RSN, 2 WPA1 only). A scan is two passes over the channels the regulatory domain allows (1-13
+  1 RSN, 2 WPA1 only, 3 WEP: the Privacy bit without either IE). With `BCOLINK_CAP_SECURITY` the
+  first byte is a set of flags, 1 start and 2 detail, and a poll `{2}` asks for the detail too: six
+  bytes after each entry's security byte, the RSN group cipher suite type, the RSN pairwise set (1
+  CCMP, 2 TKIP), the RSN AKM set (1 PSK), the RSN capabilities' low byte, the WPA IE's group and its
+  pairwise set. The driver builds each network's RSN and WPA IE from them for its scan cache. A scan is two passes over the channels the regulatory domain allows (1-13
   until one is set), 200 ms per channel, probing on each but a passive one, where it only listens;
   while connected the cached list is returned. The second pass probes for the SCAN's SSID, else the
   profile's ([choosing the network](#choosing-the-network)).
-- `SET_PROFILE`: `ssid_len, ssid, security = 1, pmk_len = 32, PMK, 32 random bytes` from the SCM
-  kernel for the SNonce, and with `BCOLINK_CAP_ROAM` a tail of `flags, bssid[6]` (1 this BSSID
-  only, 2 this BSSID first, 4 roam within the SSID). Without the tail the app joins any BSSID and
-  never roams. Only WPA2-PSK on 2.4 GHz; anything else is answered "unsupported" (status 2). The
-  PMK is never echoed or logged.
+- `SET_PROFILE`: `ssid_len, ssid, security, key_len, key, 32 random bytes` from the SCM kernel for
+  the SNonce, and with `BCOLINK_CAP_ROAM` a tail of `flags, bssid[6]` (1 this BSSID only, 2 this
+  BSSID first, 4 roam within the SSID). Without the tail the app joins any BSSID and never roams.
+  Security 1 is WPA2-PSK with the 32-byte PMK as the key; with `BCOLINK_CAP_SECURITY`
+  ([ADR 0136](../../decisions/0136-every-network-stock-joined-and-wpa3.md)) security 0 is an open
+  network, without a key, and 2 is WEP: the key index (0-3), the authentication (0 open system, 1
+  shared key, 2 open system first and shared key when the access point refuses it with status
+  13) and the 5- or 13-byte key. With `BCOLINK_CAP_WPA3` security 3 is WPA3-SAE, without a key
+  ([WPA3 and PMF](#wpa3-and-pmf)). Anything else, or a key length that does not fit the security, is
+  answered "unsupported" (status 2). 2.4 GHz only. The key is never echoed or logged.
 - `FORGET` leaves the network without sending deauthentication and drops the profile; the WiLD
   core keeps running (a core reboot recalibrates the radio in busy waits that stall USB; the app
   reboots the core only when its transmitter wedges). `STATUS` reports state, network, channel
@@ -88,8 +99,11 @@ and the BCO answers with the same `seq` and `type|0x80`, status first.
   offloaded), 43 for security it cannot join, and a scan, authentication or association timeout.
   soundtapd reads 15 as a wrong password. Last comes the network's RSN group cipher (2 TKIP, 4
   CCMP, 0 unknown), which the driver reads only when present and logs with the join result
-  (`BCO joined …, group cipher …` or `BCO join failed: step …, code …, group cipher …`): with a
-  TKIP group the core drops the router's broadcasts. `SCAN` lists what fits in one reply (1536
+  (`BCO joined …, group cipher …` or `BCO join failed: step …, code …, group cipher …`); a TKIP
+  group's broadcasts the app deciphers itself (an app before `BCOLINK_CAP_SECURITY` dropped them).
+  After it comes what the network offers, as in
+  SCAN (0 open, 1 RSN, 2 WPA1, 3 WEP) and its six bytes of detail, which the driver puts in its
+  scan cache for a roam or a join it reports. `SCAN` lists what fits in one reply (1536
   bytes: 36 networks when every SSID is 32 bytes long), its count matching. A join that runs past
   90 s, above the app's worst case of about 68 s (scan, then five tries of authentication,
   association and handshake), makes the driver send `FORGET` and report a timeout, so the BCO
@@ -117,8 +131,10 @@ and the BCO answers with the same `seq` and `type|0x80`, status first.
 
 ## Choosing the network
 
-- SET_PROFILE joins the strongest RSN access point on channels 1-13 with the profile's SSID: the
-  highest level of its last beacon or probe response, and on a tie the one heard in the later
+- SET_PROFILE joins the strongest access point on channels 1-13 with the profile's SSID and a
+  security it matches (an open profile only an access point without the Privacy bit; a PSK
+  profile one whose RSN or WPA IE offers PSK with pairwise CCMP, or pairwise TKIP with a TKIP group,
+  joined over RSN before WPA and with CCMP before TKIP, ADR 0136): the highest level of its last beacon or probe response, and on a tie the one heard in the later
   scan. An access point heard without a level counts as the weakest. The scan table keeps a BSS
   heard in any of the last five scans.
 - A hidden network leaves its SSID out of the beacon. The scan's second pass sends a probe request
@@ -133,8 +149,17 @@ and the BCO answers with the same `seq` and `type|0x80`, status first.
   first when it was heard, else the strongest. `wpa_supplicant` sends a hint, not a fixed BSSID, to
   a driver that roams by itself (`WIPHY_FLAG_SUPPORTS_FW_ROAM`), unless the network names a
   `bssid`.
-- The association request's capability is ESS and Privacy, plus Short Preamble and Short Slot
-  Time when the access point's own capability has them, as an ERP station sends: a station that
+- An open network's association request carries no security IE and no Privacy bit, JOIN_DONE goes
+  without privacy, the link is up once the access point associates, and data goes both ways in the
+  clear.
+- A WEP profile joins an access point with the Privacy bit and neither an RSN nor a WPA IE. Shared
+  key authentication answers the access point's challenge in transaction 3, enciphered under the
+  profile's key (`TX_RAW`, the Protected bit set); the association carries Privacy and no IE; then
+  the key goes to the core as a mark for its index and the link is up. Frames go out under that key
+  with an IV that starts from the SCM's random seed and counts up, and come in under any of the
+  default keys the core passes up by key id (only the profile's is installed).
+- The association request's capability is ESS and Privacy (not for an open network), plus Short
+  Preamble and Short Slot Time when the access point's own capability has them, as an ERP station sends: a station that
   leaves Short Slot out makes the access point move the whole BSS to the long slot.
 
 ## Protocol level and resent requests
@@ -197,15 +222,17 @@ app's start, so they wrap and start over after a BCO power cycle. `/api/health` 
 ### The SRAM budget
 
 The WiLD core reaches the app's buffers only through UMR0, the 64 KB internal SRAM
-(`bco/app/src/stacks.h`); the 16 MB SDRAM is out of its reach. A transmit buffer is `0x6c0` bytes:
+(`bco/app/src/stacks.h`); the 16 MB SDRAM is out of its reach. A transmit buffer is `0x6d0` bytes:
 the 8-byte record, the `0xc4` descriptor, LLC/SNAP, 1500 bytes and the CCMP header and MIC the core
-adds in place.
+adds in place, or the IV, Michael MIC and ICV of a TKIP frame the app enciphered (20 bytes). A
+receive buffer is `0x6e0` bytes, so a TKIP frame comes up whole for the app to decipher
+([ADR 0136](../../decisions/0136-every-network-stock-joined-and-wpa3.md)).
 
 | SRAM | Use |
 |---|---|
 | `0x0000-0x0fff` | vectors and trampolines |
-| `0x1000-0x3f3f` | 7 receive buffers |
-| `0x4100-0x703f` | 7 transmit buffers (6 until flow control) |
+| `0x1000-0x401f` | 7 receive buffers |
+| `0x4100-0x70af` | 7 transmit buffers (6 until flow control) |
 | `0x7220-0x959f` | the core's command rings |
 | `0x9600-0xa13f` | frame and supply rings |
 | `0xa200-0xd01f` | the wired port's MACB rings and buffers (`wired.c`) |
@@ -214,8 +241,8 @@ adds in place.
 
 An eighth transmit buffer would have to go into the `0xd020` gap or above the first stage, apart
 from the other seven, and neither area is proven free of BFL's use on hardware; the gaps at
-`0x3f40` and `0x7040` are too small. `wifi.c` asserts at build time that the seven end below the
-command rings.
+`0x4020` and `0x70b0` are too small. `wifi.c` asserts at build time that the receive buffers end
+below the transmit buffers and the seven transmit buffers below the command rings.
 
 ## Link events, roaming and the regulatory domain
 
@@ -393,6 +420,119 @@ How the core uses it (`bco/wild/fw/src/xport.c`, `bco/wild/fw/src/sta.c`):
 
 Software AES was too slow for the link: about 10 ms per 1400-byte frame on the core, 1.35 ms per
 1.5 KB frame on the app's ARM926.
+
+## WEP and TKIP: stock's engine modes, and where SoundTap runs them
+
+Stock joins open, WEP, WPA-PSK and WPA2-PSK networks with AES or TKIP (its saved security values
+are in [the stock profile](bco-recovery.md#6-the-stock-apps-saved-network)). Whether the `0xb00`
+engine can do more than CCMP was read from stock's WiLD core, the image inside stock's BCO app
+9423 (`os/stock/PROVENANCE.md`, "ST20 cipher engine modes"). The core starts at offset
+`0x3b7db8` of the unpacked app image; its FIQ vector points at `0xa8bc`, the receive handler named
+in [the receive path](#ccmp-on-the-cores-cipher-engine). Facts only, as stock uses them:
+
+- The control block's first word is `header length << 24 | flags << 16 | key length << 8 | mode`.
+  Stock picks the mode from the key's cipher suite type, the 802.11 suite selector: 1 WEP-40,
+  2 TKIP, 4 CCMP, 5 WEP-104 (TX block builder `0x5a10`, TX start `0x5ec0`, RX `0x4634`).
+- **WEP** (types 1 and 5): mode `0x24` to encipher, `0x20` to decipher. The key length field is
+  the key length + 3, and the RC4 seed sits at block offset 40: the 3-byte IV, then the key from
+  offset 43. TX writes the IV and the key id (`id << 6`) into the 4-byte header before the body;
+  RX copies the IV from the frame and deciphers from body + 4, the data length being the body
+  less 8 (IV and ICV).
+- **TKIP** (type 2): mode `0x35` to encipher, `0x31` to decipher a frame's first or only
+  fragment, `0x30` a later fragment; `| 2` marks the last fragment, as for CCMP. The 16-byte TK
+  sits at offset 40 (key length 16), the 8-byte Michael key at offset 28, word 36 is 0, and the
+  TSC goes in the PN words 5 and 6. Stock never mixes the key in software: the engine takes the
+  TK, the TSC and the transmitter address from the header. The Michael key is bytes 24-31 of the
+  32-byte TKIP key to transmit as a station, 16-23 to receive (16-23 and 24-31 in AP role). A
+  later fragment carries the running Michael state (the previous run's words 28-36) instead of
+  the key. Stock builds the 8-byte IV itself (`0x3b0c`): TSC1, `(TSC1 | 0x20) & 0x7f`, TSC0,
+  `id << 6 | 0x20`, TSC2-TSC5. The data length is the body less 12 (IV, ICV) for a fragment
+  that is not the last, less 20 (IV, Michael MIC, ICV) for the last.
+- **Results** (`0xb18` at completion, `0x4a80`): bit 16 is an ICV failure, bit 18 a MIC failure.
+  With a TKIP mode a MIC failure goes to stock's countermeasure path (`0x511c`); with CCMP it only
+  counts. The mode the engine ran is read back from the block's first word, bits 4-6
+  (`0x20` WEP, `0x30` TKIP, `0x40` CCMP).
+- So the bits read: `0x40` AES-CCM, `0x20` RC4, `0x10` Michael on top of RC4, `0x01` Michael
+  starts from the key, `0x04` encipher, `0x02` last fragment.
+
+SoundTap has measured none of the WEP and TKIP modes on its own core (the CCMP modes were
+measured bit-exact against software, above). Running them blind would mean a network that fails
+outright if one field is off: the TKIP key half, the source of Michael's addresses and priority,
+or the fragment state. So SoundTap runs WEP and TKIP in software in the BCO app, where the keys
+already are, and keeps the engine for CCMP data ([ADR 0136](../../decisions/0136-every-network-stock-joined-and-wpa3.md)):
+
+- The app enciphers WEP and TKIP frames itself and marks them so the core
+  sends them as they are; the core passes a protected frame whose key the app installed as a
+  software key up undeciphered, and the app deciphers it, checks the TSC, the ICV and the Michael
+  MIC. The keys never leave the BCO.
+- RC4 and Michael cost far less than AES, and the app's ARM926 with software AES still moved
+  4 MB up in 7-9 s ([the measurements](#throughput-with-the-cipher-engine)); a WEP or TKIP
+  network is at most 54 Mb/s anyway.
+- Measuring the engine's modes against the software path, one mode at a time, is an open row in
+  [the hardware checklist](../hardware-test.md); with them proven the core could take WEP and
+  TKIP over as it does CCMP.
+
+How it runs (`bco/app/src/wsec.c`, `bco/app/src/wifi.c`, the core's `sta.c` and `xport.c`):
+
+1. A key install names the cipher suite type (`set_key`): CCMP goes to the engine with its key;
+   WEP or TKIP goes with the type and no key bytes, and the core marks that key slot as the app's.
+   The app keeps the key, and for TKIP the TSC it last sent and the one it last accepted. A
+   32-byte TKIP key is the TK, the MIC key the AP sends with (bytes 16-23, which the station
+   receives with) and the one it receives with (24-31).
+2. Receive: a protected data frame under a slot of the app's comes up as it came, cipher header
+   and trailer included, protected bit set, record byte 7 = 2 (`RX_SOFT`). A header without the
+   ExtIV bit is WEP's, whose key id names a default key in the core's group table, for unicast and
+   group frames alike. The app copies the body out, refuses a TSC that is not above the key's last
+   one, deciphers, checks the ICV and then Michael (DA addr1, SA addr3, TA addr2, priority 0), and
+   takes the TSC only then.
+3. Transmit: under a TKIP pairwise key the app builds the MSDU, adds Michael (the station's MIC
+   key) and the ICV, enciphers with the next TSC and sends the frame with descriptor byte `0x13` =
+   1 (`TX_RAW`): the core sends that body as it is, without the engine and without a key of its
+   own. A protected frame without the mark and without a CCMP key is still never sent.
+4. A Michael failure (the ICV held, the MIC did not) is reported to the access point in an
+   EAPOL-Key frame with Error and Request. A second within 60 s starts the countermeasures of IEEE
+   802.11: a deauthentication with reason 14, the link dropped (a link event with reason 14), and no
+   network with a TKIP group or pairwise cipher joined for 60 s.
+5. The receive and transmit buffers grew by the 20 bytes of a TKIP frame
+   ([the SRAM budget](#the-sram-budget)).
+
+## WPA3 and PMF
+
+[ADR 0136](../../decisions/0136-every-network-stock-joined-and-wpa3.md) records the decision; the
+messages and steps (`BCOLINK_CAP_WPA3`):
+
+1. SET_PROFILE security 3 (SAE). The BCO picks an access point whose RSN IE offers AKM 8 with
+   pairwise and group CCMP and MFPC, sets the BSS up and sends JOIN_DONE, then asks unasked
+   `EXT_AUTH` (18 | 0x80, seq 0): `status 0, action 1, bssid[6], ssid_len, ssid`. The driver calls
+   `cfg80211_external_auth_request`, and wpa_supplicant starts SAE.
+2. wpa_supplicant's SAE frames come to the driver's `mgmt_tx` and go down as `AUTH_FRAME` (19:
+   the authentication body, algorithm 3); the BCO sends each to the access point. The access
+   point's authentication frames of algorithm 3 go up unasked as `AUTH_FRAME` (19 | 0x80, seq 0:
+   `status 0`, the 24-byte header and the body) and to wpa_supplicant through
+   `cfg80211_rx_mgmt`. The driver reports each sent frame's status once its request was answered.
+3. wpa_supplicant puts the PMK in its PMKSA cache; the driver's `set_pmksa` sends it as `SET_PMK`
+   (20: `bssid[6]`, the 32-byte PMK). Then `external_auth` sends SAE's result as `EXT_AUTH` (18:
+   `le16 status, bssid[6]`). With status 0 and the PMK the BCO associates with AKM 8 and MFPC
+   (MFPR where the access point requires it) and runs the 4-way with that PMK: the 802.11
+   KDF-SHA256 PTK, AES-CMAC MICs, key descriptor version 0. A refusal fails the attempt with
+   wpa_supplicant's status; 15 s without a result is an authentication timeout; either sends
+   `EXT_AUTH` with action 2 and tries again.
+4. A PSK profile takes PSK-SHA256 (AKM 6, key descriptor version 3) where the access point offers
+   it, and PMF wherever the access point offers it with pairwise CCMP; a network that requires
+   PMF needs pairwise CCMP.
+5. Under PMF the BCO keeps the IGTK from Message 3 and each group rekey. A robust management frame
+   from the access point (deauthentication, disassociation, action) counts only protected:
+   unicast under software CCMP with the PTK's TK, the nonce's Management flag set and a packet
+   number above the last one; group-addressed with an MMIE that checks out under BIP-CMAC-128 with
+   a newer IPN. An unprotected deauthentication or disassociation sends a protected SA Query
+   (action category 8) and ends the link with its reason only when no protected answer with the
+   same transaction id comes within 1 s. The access point's SA Query gets a protected answer. The
+   BCO's own protected management frames count their packet numbers from 2^40, so they never meet
+   the core's data packet numbers under the same key; receivers keep separate replay counters for
+   management frames.
+6. The driver offers SAE (`NL80211_FEATURE_SAE`), authentication frames on the station, BIP and
+   optional PMF only with the capability; the access point's interface keeps no management frame
+   types, as before.
 
 ## Medium access and rate adaptation
 

@@ -299,6 +299,7 @@ const ko: Messages = {
   discardChangesConfirm: '버리기',
   resetFailed: '초기화하지 못했습니다. 삭제된 것은 없습니다.',
   wifiPasswordLength: 'Wi-Fi 암호는 8~63자입니다.',
+  wifiWepKeyLength: 'WEP 키는 5자 또는 13자, 또는 16진수 10자리 또는 26자리입니다.',
   wifiSsidLength: '이 이름은 Wi-Fi 네트워크에 너무 깁니다.',
   mqttPortInvalid: '1~65535 사이의 포트를 입력하거나 비워 두십시오.',
   undo: '실행 취소',

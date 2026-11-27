@@ -23,7 +23,7 @@ type session struct {
 	conn     *wpactrl.Conn
 	records  map[int]Record
 	wrongKey bool // wpa_supplicant said a key was wrong (CTRL-EVENT-SSID-TEMP-DISABLED reason=WRONG_KEY)
-	security bool // the router refused our security (status 31, 43, 45 or 72): WPA3 only, PMF required
+	security bool // the router refused our security (status 31, 43, 45 or 72): none this station can use
 	lost     bool // the event stream ended: wpa_supplicant went away
 }
 
@@ -79,9 +79,14 @@ type joinResult struct {
 	reason string // why it failed: no_address, wrong_password, refused, timeout, not_found
 }
 
-// supplicantConf is the configuration wpa_supplicant starts with: only its control socket.
-// The networks come over that socket, so no key is ever written to a file.
-func supplicantConf(ctrlDir string) string { return "ctrl_interface=" + ctrlDir + "\n" }
+// supplicantConf is the configuration wpa_supplicant starts with: its control socket, and
+// management frame protection where the radio's driver can do it (pmf=1 is turned off for a
+// driver without BIP, which the WL1835's is), with SAE only where PMF can then be used
+// (sae_check_mfp: a WPA2/WPA3 router joins over PSK instead), ADR 0136. The networks come over
+// the socket, so no key is ever written to a file.
+func supplicantConf(ctrlDir string) string {
+	return "ctrl_interface=" + ctrlDir + "\npmf=1\nsae_check_mfp=1\n"
+}
 
 // join starts wpa_supplicant with nets and udhcpc on wlan0 and waits for an address.
 // An error means wpa_supplicant could not be run or configured at all.
@@ -166,10 +171,43 @@ func (m *Manager) attach(ctx context.Context) (*session, error) {
 	}
 }
 
+// keyMgmt is wpa_supplicant's network variable for the authentication suites.
+const keyMgmt = "key_mgmt"
+
+// securitySettings are a network's security variables for wpa_supplicant (ADR 0136).
+//
+//   - WEP: the static key 0, open system or shared key authentication, whichever the access
+//     point takes.
+//   - A password or a raw key: every PSK network, WPA and WPA2, PSK-SHA256, WPA3's SAE and the
+//     WPA2/WPA3 transition; management frame protection comes from supplicantConf's pmf=1, so
+//     wpa_supplicant leaves it off for a driver that cannot do it. SAE needs the password itself,
+//     which a raw 64-digit key does not give: such a network joins over PSK only. The password
+//     goes as hex, so no quoting can go wrong.
+//   - Neither: an open network.
+func securitySettings(saved *network) [][2]string {
+	switch {
+	case saved.wepHex != "":
+		return [][2]string{
+			{keyMgmt, "NONE"}, {"wep_key0", saved.wepHex}, {"wep_tx_keyidx", "0"}, {"auth_alg", "OPEN SHARED"},
+		}
+	case saved.keyHex == "":
+		return [][2]string{{keyMgmt, "NONE"}}
+	case saved.passphrase == "":
+		return [][2]string{{keyMgmt, "WPA-PSK WPA-PSK-SHA256"}, {"psk", saved.keyHex}}
+	default:
+		return [][2]string{
+			{keyMgmt, "WPA-PSK WPA-PSK-SHA256 SAE"},
+			{"psk", saved.keyHex},
+			{"sae_password", hex.EncodeToString([]byte(saved.passphrase))},
+		}
+	}
+}
+
 // configure hands wpa_supplicant the networks: wifi.conf at the highest priority, the
 // known ones below in order. The name goes as hex and the key as the 32-byte PSK in hex, so
-// no quoting can go wrong and no passphrase reaches the supplicant. A hidden network answers
-// only a probe that names it, and a typed SSID may be hidden: every network is probed for.
+// no quoting can go wrong; the passphrase goes only as SAE's password, in hex too, over the
+// control socket (ADR 0136). A hidden network answers only a probe that names it, and a typed
+// SSID may be hidden: every network is probed for.
 func (m *Manager) configure(ctx context.Context, sess *session, nets []network) error {
 	conn := sess.conn
 
@@ -178,22 +216,23 @@ func (m *Manager) configure(ctx context.Context, sess *session, nets []network) 
 		return fmt.Errorf("remove networks: %w", err)
 	}
 
-	for rank, saved := range nets {
+	for rank := range nets {
+		saved := &nets[rank]
+
 		netID, err := conn.AddNetwork(ctx)
 		if err != nil {
 			return fmt.Errorf("add network: %w", err)
 		}
 
-		set := [][2]string{
+		base := [][2]string{
 			{"ssid", hex.EncodeToString([]byte(saved.ssid))},
 			{"scan_ssid", "1"},
 			{"priority", strconv.Itoa(KnownMax + 1 - rank)},
 		}
-		if saved.keyHex != "" {
-			set = append(set, [2]string{"psk", saved.keyHex})
-		} else {
-			set = append(set, [2]string{"key_mgmt", "NONE"})
-		}
+		security := securitySettings(saved)
+		set := make([][2]string, 0, len(base)+len(security))
+		set = append(set, base...)
+		set = append(set, security...)
 
 		for _, kv := range set {
 			setErr := conn.SetNetwork(ctx, netID, kv[0], kv[1])
@@ -379,7 +418,7 @@ func (m *Manager) event(ctx context.Context, sess *session, event wpactrl.Event)
 		// The router's IEEE 802.11 status code. On the ST20 the BCO reports its own join
 		// failures this way too: 15 when the 4-way handshake did not complete (with handshake
 		// offload wpa_supplicant never sees WRONG_KEY), 43 when the network offers only security
-		// it cannot join (WPA3 only, management frame protection required).
+		// it cannot join (an enterprise network, or one whose security its profile does not have).
 		code, _ := event.Field("status_code")
 		m.log.Info("association refused", "status_code", code)
 

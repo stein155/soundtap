@@ -11,6 +11,8 @@ _Static_assert(MGMT_EV_DEAUTH == WIFI_EV_DEAUTH && MGMT_EV_DISASSOC == WIFI_EV_D
                MGMT_EV_BEACON_LOSS == WIFI_EV_BEACON_LOSS && MGMT_EV_TX_WEDGE == WIFI_EV_TX_WEDGE &&
                MGMT_EV_ROAMED == WIFI_EV_ROAMED && MGMT_EV_ROAM_FAILED == WIFI_EV_ROAM_FAILED,
                "the link's event numbers are the station's");
+_Static_assert(MGMT_EXT_AUTH_START == WIFI_SAE_START && MGMT_EXT_AUTH_ABORT == WIFI_SAE_ABORT &&
+               MGMT_SAE_MAX == WIFI_SAE_MAX, "the link's SAE messages are the station's");
 _Static_assert(MGMT_PROFILE_BSSID_FIXED == WIFI_BSSID_FIXED && MGMT_PROFILE_BSSID_HINT == WIFI_BSSID_HINT &&
                MGMT_PROFILE_ROAM == WIFI_ROAM, "SET_PROFILE's flags are the station's");
 
@@ -89,11 +91,49 @@ void mgmt_event_lost(void)
     ev_held = 1;
 }
 
+/* ---- WPA3-SAE messages for the driver (mgmt.h) ---- */
+static unsigned char sae_msg[1 + 24 + MGMT_SAE_MAX];
+static unsigned sae_len, sae_sent; /* due now; the last one built, due again when the link lost it */
+
+unsigned mgmt_sae_due(unsigned char *r)
+{
+    if (!sae_len) {
+        int n = wifi_sae_next(sae_msg, sizeof sae_msg);
+        if (n <= 0)
+            return 0;
+        sae_len = (unsigned)n;
+    }
+    /* kind START/ABORT -> EXT_AUTH {0, action, ...}; FRAME -> AUTH_FRAME {0, frame} */
+    unsigned frame = sae_msg[0] == WIFI_SAE_FRAME, plen = frame ? sae_len : sae_len + 1;
+    unsigned char *o = r + MGMT_HDR;
+    *o++ = 0;
+    if (!frame)
+        *o++ = sae_msg[0];
+    for (unsigned i = 1; i < sae_len; i++)
+        *o++ = sae_msg[i];
+    r[0] = 1, r[1] = (frame ? 19 : 18) | 0x80, r[2] = 0, r[3] = 0;
+    r[4] = (unsigned char)(plen >> 8), r[5] = (unsigned char)plen;
+    sae_sent = sae_len, sae_len = 0;
+    return MGMT_HDR + plen;
+}
+
+void mgmt_sae_lost(void)
+{
+    sae_len = sae_sent; /* still in sae_msg: built again on the next call */
+}
+
 /* The PersParam sector NV_INFO reads (netcard.c maps the NOR on hardware); the weak default has
  * none. */
 __attribute__((weak)) const volatile unsigned char *mgmt_nv(void)
 {
     return 0;
+}
+
+/* SCAN's and STATUS's security detail (MGMT_SCAN_DETAIL_LEN bytes). */
+static unsigned char *put_detail(unsigned char *o, const struct wifi_bss *b)
+{
+    *o++ = b->grp, *o++ = b->rpair, *o++ = b->rakm, *o++ = b->rcaps, *o++ = b->wgrp, *o++ = b->wpair;
+    return o;
 }
 
 static unsigned char *put_bss(unsigned char *o, const struct wifi_bss *b)
@@ -122,7 +162,8 @@ static unsigned last_len, last_key; /* type << 16 | seq; 0 = nothing kept */
 
 static int changes_state(unsigned type)
 {
-    return type == 3 || type == 4 || type == 6 || type == 7 || type == 15;
+    return type == 3 || type == 4 || type == 6 || type == 7 || type == 15 || type == 18 || type == 19 ||
+           type == 20;
 }
 
 unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
@@ -164,8 +205,9 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
         *o++ = BCOLINK_PROTO;
         o = put32(o, BCOLINK_CAPS); /* capabilities, le32 */
         break;
-    case 2: { /* SCAN [start [ssid_len ssid]]: status (3 = still scanning), count, entries */
-        int start = len >= 1 && a[0] == 1, found;
+    case 2: { /* SCAN [flags [ssid_len ssid]]: status (3 = still scanning), count, entries; flags
+               * MGMT_SCAN_START and MGMT_SCAN_DETAIL (mgmt.h) */
+        int start = len >= 1 && (a[0] & MGMT_SCAN_START), detail = len >= 1 && (a[0] & MGMT_SCAN_DETAIL), found;
         if (start) /* the directed probe's SSID (BCOLINK_CAP_SCAN_SSID); none leaves the profile's */
             wifi_scan_ssid(a + 2, len >= 2 && a[1] <= 32 && len >= 2u + a[1] ? a[1] : 0);
         found = wifi_scan(start);
@@ -177,24 +219,33 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
          * buffer (MGMT_MAX) takes: a beacon flood from anyone in range fills the table. The list
          * stops before the first entry that no longer fits; the count says how many went in. */
         for (int i = 0; i < found && *cnt < 255 && wifi_bss(i, &b) == 0; i++) {
-            if ((unsigned)(o - r) + 1u + b.ssid_len + 6 + 1 + 1 + 1 > MGMT_MAX)
+            if ((unsigned)(o - r) + 1u + b.ssid_len + 6 + 1 + 1 + 1 + (detail ? MGMT_SCAN_DETAIL_LEN : 0) >
+                MGMT_MAX)
                 break;
             o = put_bss(o, &b);
             *o++ = b.sec;
+            if (detail)
+                o = put_detail(o, &b);
             ++*cnt;
         }
         break;
     }
-    case 3: { /* SET_PROFILE: ssid_len, ssid, security, pmk_len, pmk, 32-byte seed [, flags, bssid] */
+    case 3: { /* SET_PROFILE: ssid_len, ssid, security, key_len, key, 32-byte seed [, flags, bssid].
+               * security WIFI_SEC_*: 0 open (no key), 1 PSK (the 32-byte PMK), 2 WEP (key index,
+               * authentication, then a 5- or 13-byte key: 7 or 15 bytes), 3 SAE (no key: the SCM
+               * runs SAE, mgmt.h); any other, or a key length that does not fit it, is unsupported
+               * (status 2). */
         unsigned base = len >= 1 && len >= 1u + a[0] + 2 ? 1u + a[0] + 2 + a[1 + a[0] + 1] + 32 : 0;
+        unsigned sec = base ? a[1 + a[0]] : 0, klen = base ? a[1 + a[0] + 1] : 0;
         if (len < 1 || a[0] < 1 || a[0] > 32 || !base || (len != base && len != base + MGMT_PROFILE_TAIL))
             st = 1;
-        else if (a[1 + a[0]] != 1 || a[1 + a[0] + 1] != 32)
-            st = 2; /* WPA2-PSK with a PMK only */
+        else if (!(sec == WIFI_SEC_OPEN && klen == 0) && !(sec == WIFI_SEC_PSK && klen == 32) &&
+                 !(sec == WIFI_SEC_WEP && (klen == 7 || klen == 15)) && !(sec == WIFI_SEC_SAE && klen == 0))
+            st = 2;
         else { /* without the tail (an older driver): any BSSID, no roaming */
-            const unsigned char *tail = len > base ? a + base : 0; /* cppcheck-suppress knownConditionTrueFalse ; len is base without the tail */
-            st = wifi_join(a + 1, a[0], a + 1 + a[0] + 2, a + 1 + a[0] + 2 + 32, tail ? tail[0] : 0,
-                           tail ? tail + 1 : 0) ? 1 : 0;
+            const unsigned char *tail = len > base ? a + base : 0;
+            st = wifi_join(a + 1, a[0], sec, a + 1 + a[0] + 2, klen, a + 1 + a[0] + 2 + klen,
+                           tail ? tail[0] : 0, tail ? tail + 1 : 0) ? 1 : 0;
         }
         *o++ = st;
         break;
@@ -208,9 +259,11 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
     case 5: { /* STATUS: status, state, ssid_len, ssid, bssid, channel, rssi, then why the last
                * join failed: step (WIFI_FAIL_*), le16 IEEE status or reason code. The driver reads
                * the failure only when the reply is long enough, so an older driver is unaffected.
-               * Last, the BSS's RSN group cipher suite type (2 TKIP, 4 CCMP, 0 unknown): with TKIP
-               * the core drops the router's broadcasts (wifi.c install_keys), which the SCM logs.
-               * Again read only when present. */
+               * Last, the BSS's RSN group cipher suite type (2 TKIP, 4 CCMP, 0 unknown), which the
+               * SCM logs: a TKIP group's broadcasts the app deciphers itself (wifi.c install_keys,
+               * ADR 0136). Again read only when present. Then what the network offers (WIFI_BSS_*,
+               * BCOLINK_CAP_SECURITY) and its security detail (MGMT_SCAN_DETAIL_LEN bytes), for the
+               * driver's scan cache. */
         struct wifi_bss b;
         unsigned step, code;
         *o++ = 0; *o++ = wifi_state();
@@ -220,6 +273,8 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
         *o++ = step;
         *o++ = code, *o++ = code >> 8;
         *o++ = b.grp;
+        *o++ = b.sec;
+        o = put_detail(o, &b);
         break;
     }
     case 6: /* AP_START: channel, beacon interval (TU, network order), beacon body */
@@ -280,6 +335,15 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
         *o++ = res < 0, *o++ = res > 0;
         break;
     }
+    case 18: /* EXT_AUTH: le16 status, bssid: SAE's result from the SCM (mgmt.h) */
+        *o++ = len != 8 || wifi_sae_done((unsigned)(a[0] | a[1] << 8), a + 2) ? 1 : 0;
+        break;
+    case 19: /* AUTH_FRAME: wpa_supplicant's SAE frame body to send */
+        *o++ = !len || len > MGMT_SAE_MAX || wifi_sae_tx(a, len) ? 1 : 0;
+        break;
+    case 20: /* SET_PMK: bssid, the PMK SAE derived. Never echoed, never kept for a resend. */
+        *o++ = len != 6 + 32 || wifi_set_pmk(a, a + 6) ? 1 : 0;
+        break;
     case 17: { /* NV_INFO: status, count, entries (mgmt.h); read-only */
         static uint32_t keys[MGMT_NV_MAX];
         static unsigned lens[MGMT_NV_MAX];

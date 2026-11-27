@@ -301,6 +301,7 @@ const es: Messages = {
   discardChangesConfirm: 'Descartar',
   resetFailed: 'No se pudo restablecer. No se ha borrado nada.',
   wifiPasswordLength: 'Una contraseña de Wi-Fi tiene de 8 a 63 caracteres.',
+  wifiWepKeyLength: 'Una clave WEP tiene 5 o 13 caracteres, o 10 o 26 dígitos hexadecimales.',
   wifiSsidLength: 'Este nombre es demasiado largo para una red Wi-Fi.',
   mqttPortInvalid: 'Escribe un puerto de 1 a 65535 o déjalo vacío.',
   undo: 'Deshacer',

@@ -308,6 +308,47 @@ static void ccmp(void)
     CHECK(send(h, sizeof tx_pkt - 0xc4 - 8, 0), "the largest protected body is sent");
 }
 
+/* A frame the app enciphered itself (TX_RAW, ADR 0136): it goes out as staged, Protected bit and
+ * all, without a key in the core and without the engine; a protected frame without the mark and
+ * without a key still never goes out. */
+static void raw(void)
+{
+    unsigned char h[24];
+    unsigned buf, status;
+    setup(0);
+    data_hdr(h, BSSID, 1);
+    REG(0xb18) = 0;                         /* the engine would fail: it must not run */
+    host_desc13 = 1;
+    CHECK(send(h, 120, 0), "an enciphered frame goes out without a key in the core");
+    host_desc13 = 0;
+    CHECK(tx_desc.p1 == tx_pkt + 0xc4 && tx_desc.l1 == 120 && tx_desc.len == 24 + 120 + 4 &&
+              !memcmp(tx_pkt + 0xc4, body, 120),
+          "body as staged: no CCMP header or MIC added");
+    CHECK(tx_pkt[0x19] & 0x40, "protected bit kept");
+    CHECK(tx_desc.cls == 12, "data at the data rate");
+    air_tx_done();
+    air_ack();
+    pump(3);
+    CHECK(host_tx_done(2, &buf, &status) && status == 0, "delivered");
+    /* a management frame enciphered by the app (a protected deauthentication): the same */
+    REG(R_TIMER) += TX_GAP;
+    hdr(h, 0xc0, 0x40, BSSID, OWN, BSSID);
+    host_desc13 = 1;
+    CHECK(send(h, 8 + 2 + 8, 6), "a protected management frame goes out");
+    host_desc13 = 0;
+    CHECK(tx_desc.l1 == 18 && tx_desc.cls == sta_mgmt_cls, "as staged, at the basic rate class");
+    air_tx_done();
+    air_ack();
+    pump(3);
+    host_tx_done(2, &buf, &status);
+    /* without the mark, Protected and no key: dropped */
+    REG(R_TIMER) += TX_GAP;
+    qstate[9] = 0;
+    data_hdr(h, BSSID, 1);
+    CHECK(!send(h, 50, 0) && qstate[9] == 0, "unmarked protected frame without a key not sent");
+    CHECK(host_tx_done(2, &buf, &status) && status == 1, "record back as failed");
+}
+
 /* A protected frame queued behind the one in flight when the peer table is reset (JOIN_DONE,
  * drop-all) or its peer deleted: the peer's key went with it, so the frame is dropped and comes
  * back failed, never sent in clear or under the old key. */
@@ -347,6 +388,7 @@ static void peer_reset(void)
 
 int main(void)
 {
+    raw();
     unicast_ok();
     retries();
     ladder_floor();

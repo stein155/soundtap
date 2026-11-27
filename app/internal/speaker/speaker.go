@@ -179,6 +179,7 @@ type WifiNetwork struct {
 	SSID   string `json:"ssid"`
 	Signal string `json:"signal,omitempty"` // "excellent" | "good" | "fair" | "poor"
 	Secure bool   `json:"secure"`           // needs a password to join
+	WEP    bool   `json:"wep,omitempty"`    // its password is a WEP key: Privacy without WPA (ADR 0136)
 }
 
 // The methods below let the legacy XML client satisfy web.Backend alongside the in-process

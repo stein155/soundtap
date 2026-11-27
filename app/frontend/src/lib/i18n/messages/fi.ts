@@ -304,6 +304,7 @@ const fi: Messages = {
   discardChangesConfirm: 'Hylkää',
   resetFailed: 'Nollaus epäonnistui. Mitään ei tyhjennetty.',
   wifiPasswordLength: 'Wi-Fi-salasanassa on 8–63 merkkiä.',
+  wifiWepKeyLength: 'WEP-avaimessa on 5 tai 13 merkkiä tai 10 tai 26 heksadesimaalinumeroa.',
   wifiSsidLength: 'Nimi on liian pitkä Wi-Fi-verkolle.',
   mqttPortInvalid: 'Syötä portti väliltä 1–65535 tai jätä kenttä tyhjäksi.',
   undo: 'Kumoa',

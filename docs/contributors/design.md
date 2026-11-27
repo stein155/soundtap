@@ -71,7 +71,8 @@ volume keys in a group; volume steps without a glide; start in standby after a p
 reset clears user settings and credentials and keeps the speaker's codec calibration and
 manufacturing data ([ADR 0012](../decisions/0012-single-dac-writer.md)). Different from stock on
 purpose: Snapcast multiroom instead of Bose zones, the ST20 standby clock,
-every extra (alarm, sleep timer, notifications, MQTT), updates started only by hand, no low-power
+every extra (alarm, sleep timer, notifications, MQTT), WPA3 and protected management frames
+([ADR 0136](../decisions/0136-every-network-stock-joined-and-wpa3.md)), updates started only by hand, no low-power
 standby on a long POWER hold, the Volume down + preset chords only for presets 1 and 2, and no
 stock `:8090` API.
 
@@ -526,14 +527,17 @@ flowchart LR
   end
   DRV == USB bulk, channel header ==> LINK[BCO bcolink]
   LINK -- ch 0 --> MG[mgmt.c server]
-  LINK -- ch 1 --> STA[Wi-Fi station, WPA2/CCMP, or open setup AP]
+  LINK -- ch 1 --> STA[Wi-Fi station: open, WEP, WPA, WPA2 or WPA3; or the open setup AP]
   LINK -- ch 2 --> GEM[wired port, macb]
   MG --> STA
   STA --> AIR((home Wi-Fi))
   GEM --> LAN((wired LAN))
 ```
 
-`wlan0` is a FullMAC station: `wpa_supplicant` hands the driver a PMK, the BCO runs the 4-way handshake and
+`wlan0` is a FullMAC station: `wpa_supplicant` hands the driver a PMK, no key for an open network or a
+WEP key; for WPA3 it runs SAE over the driver (cfg80211 external authentication) and hands the PMK it
+derived ([ADR 0136](../decisions/0136-every-network-stock-joined-and-wpa3.md)); the BCO runs the 4-way
+handshake, management frame protection and
 keeps time from the USB frame number ([detail](../hardware/st20/bco-network-card.md#the-cards-clock)). Proven on the ST20 on 2026-10-06: DHCP on
 `wlan0` and the SoundTap UI on :80 from the LAN ([measurement](../hardware/st20/bco-network-card.md#lan-and-api-response), [ADR 0001](../decisions/0001-soundtapd-one-go-daemon.md)).
 

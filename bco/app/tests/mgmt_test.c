@@ -69,9 +69,10 @@ int main(void)
            r[24] == 1 && r[25] == BCOLINK_PROTO && le32(r + 26) == BCOLINK_CAPS &&
            (BCOLINK_CAPS & (BCOLINK_CAP_AP | BCOLINK_CAP_REPLAY | BCOLINK_CAP_FLOW | BCOLINK_CAP_STATS |
                             BCOLINK_CAP_EVENTS | BCOLINK_CAP_ROAM | BCOLINK_CAP_REGDOM |
-                            BCOLINK_CAP_SCAN_SSID | BCOLINK_CAP_NVINFO | BCOLINK_CAP_APDIAG)) == BCOLINK_CAPS &&
-           BCOLINK_CAPS == 0x3ff);
-    n = ask(5, 0, 0, r); assert(r[6] == 0 && r[7] == WIFI_IDLE && r[8] == 0 && n == MGMT_HDR + 15 &&
+                            BCOLINK_CAP_SCAN_SSID | BCOLINK_CAP_NVINFO | BCOLINK_CAP_APDIAG |
+                            BCOLINK_CAP_SECURITY | BCOLINK_CAP_WPA3)) == BCOLINK_CAPS &&
+           BCOLINK_CAPS == 0xfff);
+    n = ask(5, 0, 0, r); assert(r[6] == 0 && r[7] == WIFI_IDLE && r[8] == 0 && n == MGMT_HDR + 16 + MGMT_SCAN_DETAIL_LEN &&
                                 r[17] == WIFI_FAIL_NONE && r[18] == 0 && r[19] == 0 && r[20] == 0);
     /* a refused association: the step and the AP's status code (le16) follow the BSS */
     extern unsigned fake_fail_step, fake_fail_code;
@@ -106,7 +107,20 @@ int main(void)
                n <= MGMT_MAX && (big.r[4] << 8 | big.r[5]) == n - MGMT_HDR);
         for (unsigned i = 0; i < sizeof big.guard; i++)
             assert(big.guard[i] == 0x5c);
+        /* with the security detail (MGMT_SCAN_DETAIL, a poll {2}): 6 bytes more per entry, fewer fit */
+        const unsigned char det = MGMT_SCAN_DETAIL;
+        n = ask(2, &det, 1, big.r);
+        at = MGMT_HDR + 2, k = 0;
+        while (at < n)
+            at += 1 + big.r[at] + 6 + 1 + 1 + 1 + MGMT_SCAN_DETAIL_LEN, k++;
+        assert(big.r[6] == 0 && big.r[7] == k && at == n && k == (MGMT_MAX - MGMT_HDR - 2) / 48 &&
+               n <= MGMT_MAX && !fake_scanning);
+        for (unsigned i = 0; i < sizeof big.guard; i++)
+            assert(big.guard[i] == 0x5c);
         fake_ssid_max = 0;
+        fake_nbss = 1;
+        n = ask(2, &det, 1, r);
+        assert(n == MGMT_HDR + 2 + 13 + MGMT_SCAN_DETAIL_LEN && r[21] == 0 && r[22] == 0); /* the fake's detail: zeros */
     }
     /* SCAN naming an SSID (BCOLINK_CAP_SCAN_SSID): the directed probe looks for it */
     extern unsigned char fake_scan_ssid[32];
@@ -138,7 +152,8 @@ int main(void)
     fake_grp = 2;
     n = ask(5, 0, 0, r);
     assert(r[7] == WIFI_JOINING && r[8] == 4 && !memcmp(r + 9, "test", 4) && r[19] == 6 &&
-           (signed char)r[20] == -50 && n == MGMT_HDR + 15 + 4 && r[24] == 2);
+           (signed char)r[20] == -50 && n == MGMT_HDR + 15 + 5 + MGMT_SCAN_DETAIL_LEN && r[24] == 2 && r[25] == WIFI_BSS_RSN &&
+           r[26] == 2 && r[27] == WIFI_SET_CCMP && r[28] == WIFI_SET_PSK);
     fake_grp = 0;
     for (unsigned i = 0; i + 4 <= n; i++) assert(memcmp(r + i, "\xab\xab\xab\xab", 4)); /* PMK never echoed */
     ask(3, sp, sizeof sp - 1, r); assert(r[6] == 1);              /* no seed */
@@ -151,10 +166,54 @@ int main(void)
     assert(r[6] == 0 && fake_joins == 2 && fake_join_flags == (MGMT_PROFILE_BSSID_HINT | MGMT_PROFILE_ROAM) &&
            fake_join_bssid[5] == 0x42);
     ask(3, spt, sizeof spt - 1, r); assert(r[6] == 1 && fake_joins == 2); /* a short tail */
-    sp[5] = 0; ask(3, sp, sizeof sp, r); assert(r[6] == 2);       /* open: unsupported */
+    sp[5] = 0; ask(3, sp, sizeof sp, r); assert(r[6] == 2);       /* open with a key: unsupported */
+    sp[5] = 7; ask(3, sp, sizeof sp, r); assert(r[6] == 2);       /* an unknown security */
     sp[5] = 1, sp[0] = 0; ask(3, sp, sizeof sp, r); assert(r[6] == 1); /* empty ssid */
     ask(3, sp, 0, r); assert(r[6] == 1);                           /* no payload at all */
     assert(fake_joins == 2);
+    /* an open network (security 0): no key, the seed */
+    extern unsigned fake_sec, fake_key_len;
+    unsigned char so[1 + 4 + 2 + 32] = {4, 'o', 'p', 'e', 'n', 0, 0};
+    memset(so + 7, 0xcd, 32);
+    ask(3, so, sizeof so, r);
+    assert(r[6] == 0 && fake_joins == 3 && fake_sec == 0 && fake_key_len == 0 && fake_seed[0] == 0xcd);
+    so[6] = 1; ask(3, so, sizeof so, r); assert(r[6] == 1);       /* a key length past the end */
+    sp[0] = 4;
+    unsigned char sk[sizeof sp - 16];                              /* PSK with a 16-byte key */
+    memcpy(sk, sp, 7), sk[6] = 16, memset(sk + 7, 0xab, 16), memset(sk + 23, 0xcd, 32);
+    ask(3, sk, sizeof sk, r); assert(r[6] == 2 && fake_joins == 3);
+    /* SAE (security 3, no key) and the SCM's side of it (BCOLINK_CAP_WPA3) */
+    unsigned char ss[1 + 3 + 2 + 32] = {3, 'w', 'p', '3', 3, 0};
+    memset(ss + 6, 0xcd, 32);
+    ask(3, ss, sizeof ss, r); assert(r[6] == 0 && fake_sec == 3 && fake_key_len == 0);
+    ss[5] = 32; ask(3, ss, sizeof ss, r); assert(r[6] == 1); /* a key length past the end */
+    extern unsigned char fake_sae_out[600], fake_sae_tx[600], fake_sae_pmk[32], fake_sae_bssid[6];
+    extern unsigned fake_sae_out_len, fake_sae_tx_len, fake_sae_status, fake_sae_pmks;
+    const unsigned char ea[8] = {0, 0, 2, 0, 0, 0, 0, 0x42};
+    ask(18, ea, sizeof ea, r); assert(r[6] == 0 && fake_sae_status == 0 && fake_sae_bssid[5] == 0x42);
+    ask(18, ea, 7, r); assert(r[6] == 1);
+    const unsigned char commit[8] = {3, 0, 1, 0, 0, 0, 19, 0};
+    ask(19, commit, sizeof commit, r); assert(r[6] == 0 && fake_sae_tx_len == 8 && !memcmp(fake_sae_tx, commit, 8));
+    ask(19, commit, 0, r); assert(r[6] == 1);
+    unsigned char sp20[6 + 32];
+    memset(sp20, 0x77, sizeof sp20);
+    n = ask(20, sp20, sizeof sp20, r);
+    assert(r[6] == 0 && fake_sae_pmks == 1 && fake_sae_pmk[31] == 0x77 && n == MGMT_HDR + 1); /* never echoed */
+    ask(20, sp20, 37, r); assert(r[6] == 1 && fake_sae_pmks == 1);
+    /* the station's messages go up unasked: EXT_AUTH (start, bssid, ssid) and AUTH_FRAME */
+    static unsigned char up[MGMT_HDR + 1 + 24 + MGMT_SAE_MAX];
+    fake_sae_out[0] = WIFI_SAE_START, memcpy(fake_sae_out + 1, "\x02\x00\x00\x00\x00\x42", 6);
+    fake_sae_out[7] = 3, memcpy(fake_sae_out + 8, "wp3", 3), fake_sae_out_len = 11;
+    n = mgmt_sae_due(up);
+    assert(n == MGMT_HDR + 12 && up[1] == (18 | 0x80) && up[2] == 0 && up[3] == 0 && up[6] == 0 &&
+           up[7] == MGMT_EXT_AUTH_START && up[13] == 0x42 && up[14] == 3 && !memcmp(up + 15, "wp3", 3));
+    assert(!mgmt_sae_due(up));
+    mgmt_sae_lost(); /* the link refused it: the same message again */
+    assert(mgmt_sae_due(up) == n && up[7] == MGMT_EXT_AUTH_START);
+    fake_sae_out[0] = WIFI_SAE_FRAME;
+    memset(fake_sae_out + 1, 0xb0, 24 + 8), fake_sae_out_len = 1 + 24 + 8;
+    n = mgmt_sae_due(up);
+    assert(n == MGMT_HDR + 1 + 24 + 8 && up[1] == (19 | 0x80) && up[6] == 0 && up[7] == 0xb0);
     ask(4, 0, 0, r); assert(r[6] == 0 && fake_leaves == 1);
     assert(fake_resets == 0); /* FORGET leaves the network; the core keeps running */
     ask(5, 0, 0, r); assert(r[7] == WIFI_IDLE && r[8] == 0);

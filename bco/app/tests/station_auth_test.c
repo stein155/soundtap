@@ -32,14 +32,14 @@ int main(void)
     assert(!wstation_has_1mbps(0, 1));
 
     /* association request */
-    uint8_t ab[8 + 0xc4 + 76];
+    uint8_t ab[8 + 0xc4 + 80];
     const char *ss = "HomeNet";
     unsigned sl = 7;
     memset(ab, 0xa5, sizeof ab);
     /* the RSN IE as wpa_rsn_ie builds it for a TKIP-group (mixed-mode) router */
     const uint8_t rsn[22] = {0x30, 0x14, 1, 0, 0x00, 0x0f, 0xac, 2, 1, 0, 0x00, 0x0f, 0xac, 4,
                              1, 0, 0x00, 0x0f, 0xac, 2, 0, 0};
-    int blen = wstation_assoc(ab, sizeof ab, own, ap, rates, ss, sl, 0, rsn);
+    int blen = wstation_assoc(ab, sizeof ab, own, ap, rates, ss, sl, 0, rsn, 22, 1);
     assert(blen == (int)(4 + (2 + sl) + 10 + 6 + 22));
     const uint8_t *d = ab + 8, *p = d + 0xc4;
     assert(d[0x18] == 0x00);                        /* FC: assoc request */
@@ -52,29 +52,42 @@ int main(void)
     assert(!memcmp(ab + 0x94, ab + 8, 0x38));                    /* header save */
     /* capability: the AP's Short Preamble (bit 5) and Short Slot Time (bit 10) are mirrored, its
      * other bits (IBSS, CF, spectrum management, ...) never */
-    assert(wstation_assoc(ab, sizeof ab, own, ap, rates, ss, sl, 0x0431, rsn) == blen);
+    assert(wstation_assoc(ab, sizeof ab, own, ap, rates, ss, sl, 0x0431, rsn, 22, 1) == blen);
     assert(p[0] == 0x31 && p[1] == 0x04);
-    assert(wstation_assoc(ab, sizeof ab, own, ap, rates, ss, sl, 0x0401, rsn) == blen);
+    assert(wstation_assoc(ab, sizeof ab, own, ap, rates, ss, sl, 0x0401, rsn, 22, 1) == blen);
     assert(p[0] == 0x11 && p[1] == 0x04);
-    assert(wstation_assoc(ab, sizeof ab, own, ap, rates, ss, sl, 0xfbdf, rsn) == blen);
+    assert(wstation_assoc(ab, sizeof ab, own, ap, rates, ss, sl, 0xfbdf, rsn, 22, 1) == blen);
     assert(p[0] == 0x11 && p[1] == 0x00);
-    const uint8_t bad[22] = {0xdd, 0x14};
-    assert(!wstation_assoc(ab, sizeof ab, own, ap, rates, ss, sl, 0, bad)); /* not an RSN IE */
-    assert(!wstation_assoc(ab, sizeof ab, own, ap, rates, ss, sl, 0, 0));
+    const uint8_t bad[22] = {0x30, 0x13};
+    assert(!wstation_assoc(ab, sizeof ab, own, ap, rates, ss, sl, 0, bad, 22, 1)); /* bad IE length */
+    assert(!wstation_assoc(ab, sizeof ab, own, ap, rates, ss, sl, 0, 0, 22, 1)); /* no IE bytes */
+    const uint8_t notie[22] = {0x31, 0x14};
+    assert(!wstation_assoc(ab, sizeof ab, own, ap, rates, ss, sl, 0, notie, 22, 1)); /* not RSN/WPA */
+    /* an open network: no security IE, no Privacy bit */
+    assert(wstation_assoc(ab, sizeof ab, own, ap, rates, ss, sl, 0, 0, 0, 0) == (int)(4 + (2 + sl) + 10 + 6));
+    assert(p[0] == 0x01 && p[1] == 0);
+    /* a WEP network: no IE, Privacy */
+    assert(wstation_assoc(ab, sizeof ab, own, ap, rates, ss, sl, 0, 0, 0, 1) == (int)(4 + (2 + sl) + 10 + 6));
+    assert(p[0] == 0x11);
+    /* a WPA IE (24 bytes) fits with a 32-byte SSID */
+    const uint8_t wpa[24] = {0xdd, 0x16, 0x00, 0x50, 0xf2, 1, 1, 0, 0x00, 0x50, 0xf2, 2, 1, 0,
+                             0x00, 0x50, 0xf2, 2, 1, 0, 0x00, 0x50, 0xf2, 2};
+    assert(wstation_assoc(ab, sizeof ab, own, ap, rates, "0123456789abcdefghijklmnopqrstuv", 32, 0,
+                          wpa, 24, 1) == 4 + 34 + 10 + 6 + 24);
     /* every legal SSID length fits, 21..32 bytes included */
     const char *ss32 = "0123456789abcdefghijklmnopqrstuv";
-    assert(wstation_assoc(ab, sizeof ab, own, ap, rates, ss32, 20, 0, rsn) == 4 + 22 + 10 + 6 + 22);
-    assert(wstation_assoc(ab, sizeof ab, own, ap, rates, ss32, 21, 0, rsn) == 4 + 23 + 10 + 6 + 22);
-    assert(wstation_assoc(ab, sizeof ab, own, ap, rates, ss32, 32, 0, rsn) == 76);
-    assert(!wstation_assoc(ab, sizeof ab, own, ap, rates, ss, 33, 0, rsn));   /* ssid too long */
-    assert(!wstation_assoc(ab, 8 + 0xc4 + 10, own, ap, rates, ss, sl, 0, rsn)); /* buffer too small */
-    assert(!wstation_assoc(ab, sizeof ab, own, own, rates, ss, sl, 0, rsn));  /* own == bssid */
+    assert(wstation_assoc(ab, sizeof ab, own, ap, rates, ss32, 20, 0, rsn, 22, 1) == 4 + 22 + 10 + 6 + 22);
+    assert(wstation_assoc(ab, sizeof ab, own, ap, rates, ss32, 21, 0, rsn, 22, 1) == 4 + 23 + 10 + 6 + 22);
+    assert(wstation_assoc(ab, sizeof ab, own, ap, rates, ss32, 32, 0, rsn, 22, 1) == 76);
+    assert(!wstation_assoc(ab, sizeof ab, own, ap, rates, ss, 33, 0, rsn, 22, 1));   /* ssid too long */
+    assert(!wstation_assoc(ab, 8 + 0xc4 + 10, own, ap, rates, ss, sl, 0, rsn, 22, 1)); /* buffer too small */
+    assert(!wstation_assoc(ab, sizeof ab, own, own, rates, ss, sl, 0, rsn, 22, 1));  /* own == bssid */
 
     /* data frames: stock encapsulation layout */
     uint8_t db[8 + 0xc4 + 64];
     const uint8_t bc[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff}, ip[4] = {0x45, 0, 0, 20};
     memset(db, 0xa5, sizeof db);
-    assert(wstation_data(db, sizeof db, own, ap, bc, rates, 0x0800, ip, 4) == 12);
+    assert(wstation_data(db, sizeof db, own, ap, bc, rates, 0x0800, ip, 4, 1) == 12);
     d = db + 8, p = d + 0xc4;
     assert(d[0] == 0x18 && d[1] == 0x18 && d[2] == 0x32 && d[3] == 0xc4);
     assert(d[0x18] == 0x08 && d[0x19] == 0x41);                  /* data, toDS | Protected */
@@ -84,6 +97,9 @@ int main(void)
     assert(!memcmp(db + 0x94, db + 8, 0x38));
     assert(wstation_eapol(db, sizeof db, own, ap, rates, ip, 4) == 12);
     assert(d[0x19] == 0x01 && d[0x12] == 1 && !memcmp(d + 0x28, ap, 6)); /* EAPOL: clear */
-    assert(!wstation_data(db, sizeof db, own, ap, bc, rates, 0x0800, ip, 64)); /* too small */
+    assert(!wstation_data(db, sizeof db, own, ap, bc, rates, 0x0800, ip, 64, 1)); /* too small */
+    /* an open network's data frame goes without the Protected bit */
+    assert(wstation_data(db, sizeof db, own, ap, bc, rates, 0x0800, ip, 4, 0) == 12);
+    assert(d[0x19] == 0x01);
     return 0;
 }

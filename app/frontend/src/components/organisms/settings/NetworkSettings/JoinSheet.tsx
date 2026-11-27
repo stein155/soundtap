@@ -56,13 +56,17 @@ function NetworkForm({
   const { t } = useI18n();
   const [password, setPassword] = useState('');
   return (
-    <JoinForm join={join} target={{ ssid: network.ssid, secure: network.secure, password }}>
+    <JoinForm
+      join={join}
+      target={{ ssid: network.ssid, secure: network.secure, password, wep: network.wep }}
+    >
       {network.secure && (
         <PasswordField
           label={t('wifiPasswordShort')}
           value={password}
           onChange={setPassword}
-          tooShort={badPassword(password)}
+          tooShort={badPassword(password, network.wep)}
+          wep={network.wep}
         />
       )}
     </JoinForm>
@@ -76,15 +80,17 @@ function OtherForm({ join }: { readonly join: WifiJoin }) {
   const [security, setSecurity] = useState<Security>('wpa_or_wpa2');
   const [password, setPassword] = useState('');
   const secure = security !== 'none';
+  const wep = security === 'wep';
   return (
-    <JoinForm join={join} target={{ ssid, secure, password }}>
+    <JoinForm join={join} target={{ ssid, secure, password, wep }}>
       <ManualFields ssid={ssid} onSsid={setSsid} security={security} onSecurity={setSecurity} />
       {secure && (
         <PasswordField
           label={t('wifiPasswordShort')}
           value={password}
           onChange={setPassword}
-          tooShort={badPassword(password)}
+          tooShort={badPassword(password, wep)}
+          wep={wep}
         />
       )}
     </JoinForm>

@@ -255,7 +255,7 @@ func writeNV(t *testing.T, nvDir string) {
 		t.Fatalf("bco.AutoInstall = %v, %v", flashed, err)
 	}
 
-	must(t, persistWifiProfile(filepath.Join(nvDir, "wifi.conf"), "home", "homepass1", quietLog()))
+	must(t, persistWifiProfile(filepath.Join(nvDir, "wifi.conf"), "home", "", "homepass1", quietLog()))
 	pointLPMAt(t, home)
 	must(t, soundbar.SaveSource(nvBarSource))
 

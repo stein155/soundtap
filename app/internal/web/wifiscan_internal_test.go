@@ -26,7 +26,7 @@ func (b *slowScan) ScanWifi(context.Context) ([]speaker.WifiNetwork, error) {
 	b.n.Add(1)
 	time.Sleep(50 * time.Millisecond)
 
-	return []speaker.WifiNetwork{{SSID: "home", Signal: "", Secure: false}}, nil
+	return []speaker.WifiNetwork{{SSID: "home", Signal: "", Secure: false, WEP: false}}, nil
 }
 
 // A survey takes the speaker's radio, so a scan is a POST behind the origin guard and runs once

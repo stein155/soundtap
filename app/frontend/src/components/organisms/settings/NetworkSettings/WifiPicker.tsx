@@ -146,7 +146,7 @@ function SurveyForm({
   return (
     <JoinForm
       join={join}
-      target={{ ssid: chosen.ssid, secure: chosen.secure, password }}
+      target={{ ssid: chosen.ssid, secure: chosen.secure, password, wep: chosen.wep }}
       docked={docked}
       status={status}
     >
@@ -168,8 +168,9 @@ function SurveyForm({
           label={t('setupPasswordOf', { name: chosen.ssid })}
           value={password}
           onChange={(value) => setTyped({ ssid: chosen.ssid, password: value })}
-          tooShort={badPassword(password)}
+          tooShort={badPassword(password, chosen.wep)}
           eye={docked}
+          wep={chosen.wep}
         />
       )}
       {notice}
@@ -184,10 +185,11 @@ function ManualForm({ join, onSwitch, docked, status }: FormProps) {
   const [security, setSecurity] = useState<Security>('wpa_or_wpa2');
   const [password, setPassword] = useState('');
   const secure = security !== 'none';
+  const wep = security === 'wep';
   return (
     <JoinForm
       join={join}
-      target={{ ssid, secure, password }}
+      target={{ ssid, secure, password, wep }}
       docked={docked}
       status={status}
       after={
@@ -201,8 +203,9 @@ function ManualForm({ join, onSwitch, docked, status }: FormProps) {
         <PasswordField
           value={password}
           onChange={setPassword}
-          tooShort={badPassword(password)}
+          tooShort={badPassword(password, wep)}
           eye={docked}
+          wep={wep}
         />
       )}
     </JoinForm>

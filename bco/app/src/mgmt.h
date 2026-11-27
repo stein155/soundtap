@@ -53,6 +53,29 @@ extern unsigned mgmt_events; /* events are on */
 unsigned mgmt_event_due(unsigned char *r);
 void mgmt_event_lost(void);
 
+/* SCAN's flags (payload byte 0): 1 starts a scan; 2 (BCOLINK_CAP_SECURITY) asks for entries with
+ * their security detail, MGMT_SCAN_DETAIL_LEN bytes after the security byte: RSN group cipher
+ * suite type, RSN pairwise set, RSN AKM set, RSN capabilities' low byte, WPA IE group, WPA IE
+ * pairwise set (wifi.h WIFI_SET_*). STATUS carries the same bytes after its security byte. */
+#define MGMT_SCAN_START 0x1u
+#define MGMT_SCAN_DETAIL 0x2u
+#define MGMT_SCAN_DETAIL_LEN 6
+
+/* WPA3-SAE through the SCM (BCOLINK_CAP_WPA3, ADR 0136). SET_PROFILE security 3 (SAE, no key)
+ * makes the station ask the driver to run SAE, unasked, as EXT_AUTH (18 | 0x80, seq 0):
+ *     status 0, action (1 start, 2 abort), bssid[6], ssid_len, ssid
+ * and pass up each authentication frame of the access point as AUTH_FRAME (19 | 0x80, seq 0):
+ *     status 0, the frame (24-byte header, body)
+ * The driver asks: AUTH_FRAME (19) with wpa_supplicant's frame body (algorithm 3) to send;
+ * SET_PMK (20) bssid[6], the 32-byte PMK SAE derived; EXT_AUTH (18) le16 IEEE status, bssid[6]:
+ * SAE's result, after which the station associates and runs the 4-way with that PMK. Each
+ * reply is a status byte. */
+#define MGMT_EXT_AUTH_START 1u
+#define MGMT_EXT_AUTH_ABORT 2u
+#define MGMT_SAE_MAX 512u /* the longest SAE body the driver sends, and frame (header and body) it gets */
+unsigned mgmt_sae_due(unsigned char *r); /* the message due now, whole, in r (MGMT_HDR + 1 + 24 + MGMT_SAE_MAX) */
+void mgmt_sae_lost(void);
+
 /* SET_PROFILE's tail (BCOLINK_CAP_ROAM): after the 32-byte seed, flags and bssid[6]. Without the
  * tail the app joins any BSSID of the SSID and never roams, as an app before ADR 0135 did. */
 #define MGMT_PROFILE_TAIL 7

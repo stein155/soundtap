@@ -15,8 +15,14 @@ static unsigned char *keys;
  * protected RX (both on the cipher engine, ADRs 0031 and 0031). Group-key TX and the hardware
  * peer/key table (stock 0x894 via 0x29d8 / 0x522c) are not used; the engine takes the key from its
  * control block. The receive PN starts at 0 with each install (the key's RSC is not passed in). */
-static struct { unsigned char tk[16], used; unsigned long long pn, rxpn; } pkey[NPEER];
-static struct { unsigned char tk[16], used; unsigned long long rxpn; } gkey[4];
+static struct { unsigned char tk[16], used, soft; unsigned long long pn, rxpn; } pkey[NPEER];
+static struct { unsigned char tk[16], used, soft; unsigned long long rxpn; } gkey[4];
+/* A key of another cipher than CCMP (WEP, TKIP) is the app's (ADR 0136): the install names the
+ * cipher suite type and carries no key bytes we use. Such a slot only tells rx_deliver to pass a
+ * frame for it up undeciphered (sta_rxkey's *soft); the app deciphers and checks it. It never
+ * enciphers here: sta_txkey has nothing for it, so a frame marked Protected but not enciphered by
+ * the app is dropped, never sent in clear. */
+#define CIPHER_CCMP 4
 
 /* Peer table: slot -> MAC of the far end (stock keeps this behind 0x894 for the MAC's crypto and
  * addressing; here it is the software map that resolves a received frame's transmitter to its
@@ -36,25 +42,29 @@ void sta_init(unsigned char *key_block)
  * CCMP header. */
 const unsigned char *sta_txkey(unsigned slot, unsigned long long *pn)
 {
-    if (slot >= NPEER || !pkey[slot].used)
+    if (slot >= NPEER || !pkey[slot].used || pkey[slot].soft)
         return 0;
     *pn = ++pkey[slot].pn;
     return pkey[slot].tk;
 }
 
 /* Receive key for a protected frame: the group key with this key id when group, else the
- * pairwise key of the transmitter's peer slot; *rxpn is its last accepted PN. 0 if none. */
-const unsigned char *sta_rxkey(unsigned slot, int group, unsigned keyid, unsigned long long **rxpn)
+ * pairwise key of the transmitter's peer slot; *rxpn is its last accepted PN, *soft set when the app
+ * deciphers frames under it. 0 if none. */
+const unsigned char *sta_rxkey(unsigned slot, int group, unsigned keyid, unsigned long long **rxpn,
+                               int *soft)
 {
     if (group) {
         if (!gkey[keyid & 3].used)
             return 0;
         *rxpn = &gkey[keyid & 3].rxpn;
+        *soft = gkey[keyid & 3].soft;
         return gkey[keyid & 3].tk;
     }
     if (slot >= NPEER || !pkey[slot].used)
         return 0;
     *rxpn = &pkey[slot].rxpn;
+    *soft = pkey[slot].soft;
     return pkey[slot].tk;
 }
 
@@ -120,10 +130,12 @@ unsigned sta_cmd(unsigned type, const unsigned char *payload, unsigned len, unsi
         return 1;
     }
     switch (type) {
-    case 0x0b: /* group key install: index payload[4], 16-byte key payload[8..] (stock 0x33a0) */
+    case 0x0b: /* group key install: cipher suite type payload[0], index payload[4], 16-byte key
+                * payload[8..] (stock 0x33a0) */
         if (payload[4] < 4) {
             copy_bytes(gkey[payload[4]].tk, payload + 8, 16);
             gkey[payload[4]].rxpn = 0;
+            gkey[payload[4]].soft = payload[0] != CIPHER_CCMP;
             gkey[payload[4]].used = 1;
         } else {
             status = 1;                     /* nothing installed: the reply says so */
@@ -135,12 +147,13 @@ unsigned sta_cmd(unsigned type, const unsigned char *payload, unsigned len, unsi
             gkey[payload[0]].used = 0;
         route(0x1c, src, MOD_STA, 0, 0);
         return 0;
-    case 0x0d: /* pairwise key install: peer MAC payload[0xc..0x11], 16-byte key payload[0x14..]
-                * (stock 0x345c) */
+    case 0x0d: /* pairwise key install: cipher suite type payload[8], peer MAC payload[0xc..0x11],
+                * 16-byte key payload[0x14..] (stock 0x345c) */
         s = peer_slot(payload + 0xc);
         if (s < NPEER) {
             copy_bytes(pkey[s].tk, payload + 0x14, 16);
             pkey[s].pn = pkey[s].rxpn = 0;   /* first protected frame carries PN 1 */
+            pkey[s].soft = payload[8] != CIPHER_CCMP;
             pkey[s].used = 1;
         } else {
             status = 1;   /* no peer with this MAC: nothing installed, never an install "ok" */

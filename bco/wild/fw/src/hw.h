@@ -115,7 +115,8 @@ int mac_ccmp_rx(const void *hdr, const void *ct, void *out, unsigned n, const un
 extern volatile unsigned tx_acked;   /* the AP ACKed a frame to us (mac.c) */
 extern volatile unsigned mgmt_tx_pending;    /* 0x10|ring when a host frame rides the mgmt queue */
 const unsigned char *sta_txkey(unsigned slot, unsigned long long *pn);
-const unsigned char *sta_rxkey(unsigned slot, int group, unsigned keyid, unsigned long long **rxpn);
+const unsigned char *sta_rxkey(unsigned slot, int group, unsigned keyid, unsigned long long **rxpn,
+                               int *soft);
 void scan_poll(void);
 extern volatile unsigned dwell_fired, dwell_state;
 extern unsigned joined;

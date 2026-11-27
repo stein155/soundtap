@@ -449,7 +449,7 @@ func TestWifiProfileCallback(t *testing.T) {
 
 	var gotSSID, gotPSK string
 
-	spk.OnWifiProfile(func(ssid, psk string) error {
+	spk.OnWifiProfile(func(ssid, _, psk string) error {
 		gotSSID, gotPSK = ssid, psk
 
 		return nil

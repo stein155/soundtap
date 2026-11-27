@@ -197,6 +197,78 @@ class BcoLinkContract(unittest.TestCase):
         self.assertIn("if (b->rsp_len < at + 1)\n+\t\treturn NULL;", body)
         self.assertIn("bco_group_cipher(b)", funcs["bco_join_result"])
 
+    def test_security(self) -> None:
+        """ADR 0136's profile and scan security values are numbered the same on both sides.
+
+        The driver sends an open network only to an app that announces BCOLINK_CAP_SECURITY, and
+        reads STATUS's security byte right after the group cipher, only when present.
+        """
+        self.assertEqual(self.app["BCOLINK_CAP_SECURITY"], self.drv["BCOLINK_CAP_SECURITY"])
+        wifi = (APP / "wifi.h").read_text()
+        for app, drv in (("WIFI_SEC_", "BCO_SEC_"), ("WIFI_BSS_", "BCO_BSS_")):
+            names = re.search(rf"enum \{{ ({app}[^}}]*)\}}", wifi)[1]
+            names = [n.strip()[len(app):] for n in names.split(",") if n.strip()]
+            mirror = re.search(rf"enum \{{ ({drv}[^}}]*)\}}", self.patch)[1].replace("\n+", " ")
+            mirror = [n.strip()[len(drv):] for n in mirror.split(",") if n.strip()]
+            self.assertEqual(names, mirror, app)
+        funcs = dict(re.findall(r"\n\+static [^\n]*\b(\w+)\([^)]*\)\n\+\{(.*?)\n\+\}", self.patch, re.DOTALL))
+        self.assertRegex(funcs["bco_connect"], r"\(open \|\| wep\) && !\(caps & BCOLINK_CAP_SECURITY\)")
+        for app, drv in (("WIFI_WEP_", "BCO_WEP_"),):
+            names = re.search(rf"enum \{{ ({app}[^}}]*)\}}", wifi)[1]
+            names = [n.strip()[len(app):] for n in names.split(",") if n.strip()]
+            mirror = re.search(rf"enum \{{ ({drv}[^}}]*)\}}", self.patch)[1]
+            mirror = [n.strip()[len(drv):] for n in mirror.split(",") if n.strip()]
+            self.assertEqual(names, mirror, app)
+        # cfg80211 uploads a connect's WEP keys after it: add_key needs del_key and set_default_key
+        for op in ("add_key", "del_key", "set_default_key"):
+            self.assertIn(f".{op} = bco_{op},", self.patch)
+        mgmt = (APP / "mgmt.c").read_text()
+        status = re.search(r"case 5: \{ /\* STATUS(.*?)break;", mgmt, re.DOTALL)[1]
+        self.assertRegex(status, r"\*o\+\+ = b\.grp;\s*\*o\+\+ = b\.sec;")
+        self.assertIn("at = 3 + r[2] + 8 + 3 + 1;", funcs["bco_status_sec"])
+        self.assertIn("b->rsp_len >= at + 1", funcs["bco_status_sec"])
+        # SCAN's security detail: the same flags, sets and length, asked for only behind the bit,
+        # and STATUS's copy right after its security byte
+        for app, drv in (("MGMT_SCAN_START", "BCO_SCAN_START"), ("MGMT_SCAN_DETAIL", "BCO_SCAN_DETAIL"),
+                         ("MGMT_SCAN_DETAIL_LEN", "BCO_SCAN_DETAIL_LEN")):
+            self.assertEqual(self.app[app], self.drv[drv], app)
+        wifi_sets = defines(wifi)
+        for name in ("CCMP", "TKIP", "PSK"):
+            self.assertEqual(wifi_sets[f"WIFI_SET_{name}"], self.drv[f"BCO_SET_{name}"], name)
+        self.assertIn("READ_ONCE(b->caps) & BCOLINK_CAP_SECURITY", funcs["bco_scan_work"])
+        self.assertRegex(status, r"\*o\+\+ = b\.sec;\s*o = put_detail\(o, &b\);")
+        self.assertIn("at = 3 + r[2] + 8 + 3 + 1 + 1;", funcs["bco_status_detail"])
+
+    def test_wpa3(self) -> None:
+        """ADR 0136's WPA3 messages have the same numbers on both sides, and stay behind their bit.
+
+        SAE runs in wpa_supplicant over cfg80211's external authentication: the driver offers it
+        (NL80211_FEATURE_SAE, the station's authentication frames, BIP, optional MFP) only to an app
+        that announces BCOLINK_CAP_WPA3, and every operation that sends one of the messages checks
+        the bit.
+        """
+        self.assertEqual(self.app["BCOLINK_CAP_WPA3"], self.drv["BCOLINK_CAP_WPA3"])
+        for app, drv in (("MGMT_EXT_AUTH_START", "BCO_EXT_AUTH_START"), ("MGMT_EXT_AUTH_ABORT", "BCO_EXT_AUTH_ABORT"),
+                         ("MGMT_SAE_MAX", "BCO_SAE_MAX")):
+            self.assertEqual(self.app[app], self.drv[drv], app)
+        wifi = defines((APP / "wifi.h").read_text())
+        for name in ("PSK256", "SAE"):
+            self.assertEqual(wifi[f"WIFI_SET_{name}"], self.drv[f"BCO_SET_{name}"], name)
+        # the request types: 18 EXT_AUTH, 19 AUTH_FRAME, 20 SET_PMK on both sides
+        mgmt = (APP / "mgmt.c").read_text()
+        for num, name in ((18, "EXT_AUTH"), (19, "AUTH_FRAME"), (20, "SET_PMK")):
+            self.assertRegex(mgmt, rf"case {num}: /\* {name}")
+        self.assertIn("T_NV_INFO, T_EXT_AUTH,\n+\tT_AUTH_FRAME, T_SET_PMK };", self.patch)
+        funcs = dict(re.findall(r"\n\+static [^\n]*\b(\w+)\([^)]*\)\n\+\{(.*?)\n\+\}", self.patch, re.DOTALL))
+        for name in ("bco_mgmt_tx", "bco_external_auth", "bco_set_pmksa"):
+            self.assertIn("BCOLINK_CAP_WPA3", funcs[name], name)
+        self.assertRegex(funcs["bco_connect"], r"sae && !\(caps & BCOLINK_CAP_WPA3\)")
+        gate = re.search(r"if \(b->caps & BCOLINK_CAP_WPA3\) \{(.*?)\} else if", self.patch, re.DOTALL)[1]
+        for line in ("NL80211_FEATURE_SAE", "bco_mgmt_stypes", "NL80211_EXT_FEATURE_MFP_OPTIONAL", "bco_ciphers_wpa3"):
+            self.assertIn(line, gate, line)
+        # the PMK never stays in the driver's request buffer
+        self.assertIn("memzero_explicit(pl, sizeof(pl));", funcs["bco_set_pmksa"])
+
     def test_hunk_count(self) -> None:
         """The driver patch's hunk header counts the lines the new file has."""
         lines = self.patch.split("\n")

@@ -308,6 +308,7 @@ const el: Messages = {
   discardChangesConfirm: 'Απόρριψη',
   resetFailed: 'Η επαναφορά απέτυχε. Δεν διαγράφηκε τίποτα.',
   wifiPasswordLength: 'Ο κωδικός πρόσβασης Wi-Fi έχει 8 έως 63 χαρακτήρες.',
+  wifiWepKeyLength: 'Το κλειδί WEP έχει 5 ή 13 χαρακτήρες ή 10 ή 26 δεκαεξαδικά ψηφία.',
   wifiSsidLength: 'Αυτό το όνομα είναι πολύ μεγάλο για δίκτυο Wi-Fi.',
   mqttPortInvalid: 'Εισαγάγετε θύρα από 1 έως 65535 ή αφήστε το πεδίο κενό.',
   undo: 'Αναίρεση',

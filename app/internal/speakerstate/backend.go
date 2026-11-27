@@ -435,6 +435,8 @@ var (
 	errOpenPassword    = errors.New("open network must not have a password")
 	errWPAPassword     = errors.New("WPA password must be 8..63 bytes without control characters")
 	errUnknownSecurity = errors.New("unknown security")
+	errWEPKey          = errors.New("WEP key must be 5 or 13 characters, or 10 or 26 hex digits")
+	errWEPStockBCO     = errors.New("WEP is joined once SoundTap's network card app runs")
 	errWifiDisabled    = errors.New("wifi setup is disabled on this speaker")
 )
 

@@ -211,6 +211,53 @@ describe('WifiPicker', () => {
     expect(getByRole('button', { name: 'Connect' })).toBeEnabled();
   });
 
+  it('joins a WEP network from the list with its key (ADR 0136)', async () => {
+    vi.mocked(scanWifi).mockResolvedValue([
+      { ssid: 'Old', secure: true, wep: true, signal: 'good' },
+    ]);
+    vi.mocked(setWifi).mockReset();
+    vi.mocked(setWifi).mockResolvedValue(undefined);
+    const { findByLabelText, getByText, getByRole } = renderWithI18n(
+      <WifiPicker network={null} speaker="Kitchen" />
+    );
+    const pw = await findByLabelText('Password for Old');
+    fireEvent.change(pw, { target: { value: 'abcdef' } });
+    expect(
+      getByText('A WEP key is 5 or 13 characters, or 10 or 26 hexadecimal digits.')
+    ).toBeTruthy();
+    expect(getByRole('button', { name: 'Connect' })).toBeDisabled();
+    fireEvent.change(pw, { target: { value: 'abcde' } });
+    fireEvent.click(getByRole('button', { name: 'Connect' }));
+    await waitFor(() =>
+      expect(setWifi).toHaveBeenCalledWith(
+        { ssid: 'Old', security: 'wep', password: 'abcde' },
+        'Kitchen'
+      )
+    );
+  });
+
+  it('joins a typed WEP network with a hex key', async () => {
+    vi.mocked(scanWifi).mockResolvedValue([]);
+    vi.mocked(setWifi).mockReset();
+    vi.mocked(setWifi).mockResolvedValue(undefined);
+    const { findByRole, getByLabelText, getByRole } = renderWithI18n(
+      <WifiPicker network={null} speaker="Kitchen" />
+    );
+    fireEvent.click(await findByRole('button', { name: 'Manual Setup' }));
+    fireEvent.change(getByLabelText('Wireless Network'), { target: { value: 'Old' } });
+    fireEvent.change(getByLabelText('Security Type'), { target: { value: 'wep' } });
+    fireEvent.change(getByLabelText('Enter Password'), {
+      target: { value: '0123456789ABCDEF0123456789' },
+    });
+    fireEvent.click(getByRole('button', { name: 'Connect' }));
+    await waitFor(() =>
+      expect(setWifi).toHaveBeenCalledWith(
+        { ssid: 'Old', security: 'wep', password: '0123456789ABCDEF0123456789' },
+        'Kitchen'
+      )
+    );
+  });
+
   // No second network can be sent while the first is still being joined.
   it('locks the network list while a connection is being made', async () => {
     vi.mocked(scanWifi).mockResolvedValue([
