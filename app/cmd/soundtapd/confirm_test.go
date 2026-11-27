@@ -199,6 +199,185 @@ func TestShortPressDoesNotConfirm(t *testing.T) {
 	})
 }
 
+// A release shorter than confirmGrace during the hold is the panel's contact chattering,
+// not letting go: the hold confirms confirmHold after the key first went down, not after
+// the last bounce, and does not ask again on the way.
+//
+//nolint:paralleltest // swaps package variables other tests read: confirmTokenPath, confirmer
+func TestConfirmHoldRidesOutAShortRelease(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		conf := testConfirmer(t)
+		useConfirmer(t, conf)
+
+		var shows panelShows
+
+		conf.show = shows.show
+		handler, actor := panelHandler()
+		done := wait(conf, "POST /api/reboot")
+
+		handler.Handle(1, true, "PRESET_1")
+		time.Sleep(time.Second)
+		handler.Handle(1, false, "PRESET_1")
+		time.Sleep(confirmGrace - 10*time.Millisecond)
+		handler.Handle(1, true, "PRESET_1")
+		time.Sleep(confirmHold - time.Second - confirmGrace + 10*time.Millisecond - time.Millisecond)
+		synctest.Wait()
+
+		if ok, _ := answered(done); ok {
+			t.Fatal("confirmed before the hold was long enough")
+		}
+
+		time.Sleep(time.Millisecond)
+		synctest.Wait()
+
+		ok, err := answered(done)
+		if !ok || err != nil {
+			t.Fatalf("confirmHold after the first press: answered=%v err=%v, want confirmed", ok, err)
+		}
+
+		handler.Handle(1, false, "PRESET_1")
+
+		if got := shows.all(); len(got) != 2 || got[1] == got[0] {
+			t.Fatalf("panel = %q, want the prompt once and then the confirmation", got)
+		}
+
+		if keys, stored := actor.snapshot(); len(keys) != 0 || len(stored) != 0 {
+			t.Fatalf("keys=%v stored=%v, want nothing from the confirming key", keys, stored)
+		}
+	})
+}
+
+// A hold whose time runs out while its key is briefly up confirms only once the key is
+// down again, and not before: the hold confirms while the key is held.
+//
+//nolint:paralleltest // swaps package variables other tests read: confirmTokenPath, confirmer
+func TestConfirmHoldDueDuringAShortReleaseConfirmsOnThePress(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		conf := testConfirmer(t)
+		useConfirmer(t, conf)
+
+		handler, _ := panelHandler()
+		done := wait(conf, "POST /api/reboot")
+
+		handler.Handle(1, true, "PRESET_1")
+		time.Sleep(confirmHold - 100*time.Millisecond)
+		handler.Handle(1, false, "PRESET_1")
+		time.Sleep(150 * time.Millisecond)
+		synctest.Wait()
+
+		if ok, _ := answered(done); ok {
+			t.Fatal("confirmed while the key was up")
+		}
+
+		handler.Handle(1, true, "PRESET_1")
+		synctest.Wait()
+
+		ok, err := answered(done)
+		if !ok || err != nil {
+			t.Fatalf("after the press within the grace: answered=%v err=%v, want confirmed", ok, err)
+		}
+
+		handler.Handle(1, false, "PRESET_1")
+	})
+}
+
+// Letting go just before confirmHold is letting go, though the grace reaches past it:
+// nothing is confirmed, the panel asks again, and the key's next press is a new hold.
+//
+//nolint:paralleltest // swaps package variables other tests read: confirmTokenPath, confirmer
+func TestConfirmHoldLetGoJustBeforeItIsDueConfirmsNothing(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		conf := testConfirmer(t)
+		useConfirmer(t, conf)
+
+		var shows panelShows
+
+		conf.show = shows.show
+		handler, actor := panelHandler()
+		done := wait(conf, "POST /api/reboot")
+
+		handler.Handle(1, true, "PRESET_1")
+		time.Sleep(confirmHold - 100*time.Millisecond)
+		handler.Handle(1, false, "PRESET_1")
+		time.Sleep(confirmGrace)
+		synctest.Wait()
+
+		if ok, _ := answered(done); ok {
+			t.Fatal("a released key confirmed the request")
+		}
+
+		if got := shows.all(); len(got) != 2 || got[1] != got[0] {
+			t.Fatalf("panel = %q, want the prompt and then the prompt again", got)
+		}
+		// A press after the grace starts over: a tap of it confirms nothing.
+		handler.Handle(1, true, "PRESET_1")
+		time.Sleep(confirmHold / 2)
+		handler.Handle(1, false, "PRESET_1")
+		time.Sleep(confirmHold)
+		synctest.Wait()
+
+		if ok, _ := answered(done); ok {
+			t.Fatal("a new short press finished the old hold")
+		}
+
+		if keys, stored := actor.snapshot(); len(keys) != 0 || len(stored) != 0 {
+			t.Fatalf("keys=%v stored=%v, want nothing while a request waits", keys, stored)
+		}
+
+		err := <-done
+		if !errors.Is(err, web.ErrNotConfirmed) {
+			t.Fatalf("confirm = %v, want ErrNotConfirmed", err)
+		}
+	})
+}
+
+// A bounce of the confirming key keeps the hold to the request that waited when it
+// began: a request that replaced it during the bounce needs a hold of its own.
+//
+//nolint:paralleltest // swaps package variables other tests read: confirmTokenPath, confirmer
+func TestConfirmHoldAcrossABounceKeepsItsRequest(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		conf := testConfirmer(t)
+		useConfirmer(t, conf)
+
+		handler, _ := panelHandler()
+		first := wait(conf, "POST /api/reboot")
+
+		handler.Handle(1, true, "PRESET_1")
+		time.Sleep(confirmHold / 2)
+		handler.Handle(1, false, "PRESET_1")
+
+		second := wait(conf, "POST /api/factory-reset")
+
+		time.Sleep(confirmGrace / 2)
+		handler.Handle(1, true, "PRESET_1")
+		time.Sleep(confirmHold)
+		synctest.Wait()
+
+		err := <-first
+		if !errors.Is(err, web.ErrConfirmSuperseded) {
+			t.Fatalf("first = %v, want ErrConfirmSuperseded", err)
+		}
+
+		if ok, _ := answered(second); ok {
+			t.Fatal("a hold begun under the first request confirmed the second")
+		}
+
+		handler.Handle(1, false, "PRESET_1")
+		time.Sleep(confirmGrace)
+		handler.Handle(1, true, "PRESET_1")
+		time.Sleep(confirmHold)
+		synctest.Wait()
+
+		ok, err := answered(second)
+		if !ok || err != nil {
+			t.Fatalf("second after its own hold: answered=%v err=%v", ok, err)
+		}
+
+		handler.Handle(1, false, "PRESET_1")
+	})
+}
+
 // Volume keys never confirm, however long they are held, and keep working while a
 // request waits.
 //

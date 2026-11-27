@@ -31,9 +31,18 @@ and one of 16; any other pattern gives nothing. It leaves them in
 `/mnt/nv/soundtap/stock-wifi-key` (0600) only when SoundTap has no `wifi.conf` yet and stock saved
 a profile. On the first boot soundtapd decrypts the profile stock joined last (`lastConnected`)
 with Go's own AES, writes `wifi.conf`, deletes the key file and restarts Wi-Fi through its
-Wi-Fi manager. WPA and open networks are taken; WEP is not. On the ST20, where Bose's software keeps the network in the BCO,
-soundtapd reads the profile from the BCO while Bose's BCO app is still there, just before it
-replaces that app.
+Wi-Fi manager. WPA and open networks are taken; WEP is not.
+
+On the ST20, where Bose's software keeps the network in the BCO, soundtapd reads it from the
+BCO while Bose's BCO app is still there, before it replaces that app: afterwards it can no longer
+be read. Stock keeps its settings as an append-only log in a NOR sector
+([the stock app's saved network](../hardware/st20/bco-recovery.md#6-the-stock-apps-saved-network)).
+soundtapd reads the active sector through the sdsShell's `rd`, takes the last valid record of
+each setting, and takes the active profile's network when it is WPA with a passphrase; open and
+WEP networks and stock's own setup profile are not taken. The record numbers are BCO app 9423's,
+in one table. A read that gets no reply or a garbled dump is tried again, up to 5 times, 30 s
+apart, within 5 minutes; a read that was whole but holds nothing to take is not. The BCO install
+waits for that answer, and goes ahead once the tries run out.
 
 Alternatives that lost: shipping the key and IV in SoundTap's source (simpler, but it puts Bose-derived
 bytes in git); the owner typing the password again after the install.
@@ -42,6 +51,8 @@ bytes in git); the owner typing the password again after the install.
 
 - No Bose byte enters the repository or the image, and no Bose code runs under SoundTap: the
   installer only reads stock's binary as a file, once, while stock is still the running system.
+- On the ST20 the first boot from stock confirms up to 5 minutes later, while the read is tried
+  again; another BCO app version with other record numbers reads as "nothing to take".
 - A NetManager with any other digit pattern, a passphrase that does not decrypt to a valid WPA
   passphrase, or a missing file leaves the speaker on its setup network.
 - An update between SoundTap versions finds `wifi.conf` and does none of this.
@@ -54,6 +65,8 @@ bytes in git); the owner typing the password again after the install.
 
 - `os/installer/module/installer.c`: `stock_wifi_key` and the `--stock-wifi-key` self-test.
 - `app/cmd/soundtapd/stock_wifi.go`: `adoptStockWifi`, `readStockNetwork`,
-  `decryptStockPassphrase`, and `adoptStockBCOWifi` for the ST20 (`bco.ReadStockProfile`).
+  `decryptStockPassphrase`, and `adoptStockBCOWifi` for the ST20 with its retry bounds.
+- `app/internal/bco/stockprofile.go`: `ReadStockProfile`, the settings log walk and
+  `stockLayout9423`; `ErrStockProfileNotImportable` marks the definitive answer.
 - `app/cmd/soundtapd/identity.go`: `stockDeviceName`, `stockPresets`, `stockClock`,
   `takeStockClock` and `takeStockOnce`.

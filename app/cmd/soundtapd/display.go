@@ -7,7 +7,6 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/stein155/soundtap/app/internal/bco"
 	"github.com/stein155/soundtap/app/internal/display"
 	"github.com/stein155/soundtap/app/internal/hw"
 	"github.com/stein155/soundtap/app/internal/panel"
@@ -36,7 +35,7 @@ func startBootScreen(ctx context.Context, disp *display.Manager, set *settings.S
 			Up:      daemonUp.Load,
 			Link:    func() hw.Link { return hw.ReadLink(func() bool { return outboundIP() != "" }) },
 			Update:  updatePercent,
-			NetCard: bco.Flashing,
+			NetCard: bcoUpdating,
 			Faulted: func() bool { return ampFaulted() },
 			Clock:   panel.Clock(set),
 		}, log.With("comp", "oled-boot"))

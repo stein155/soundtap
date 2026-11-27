@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -140,10 +141,31 @@ type buttonHandler struct {
 	// speaker's own panel, and the SoundTouch 300's processor keys (newLPMKeys). The IR
 	// remote of the other models leaves it false: a remote works from the next room, and a
 	// confirmation is proof that someone stands at the speaker.
-	confirms     bool
-	confirmKey   string      // the key being held to confirm, "" when none
-	confirmTimer *time.Timer // fires confirmHold after confirmKey went down
-	confirmLog   []any       // attributes of the current key for the confirm log lines
+	confirms   bool
+	confirmMu  sync.Mutex   // guards confirm: the hold and grace timers change it too
+	confirm    *confirmHeld // the hold that may confirm a waiting request, nil when none
+	confirmLog []any        // attributes of the current key for the confirm log lines
+}
+
+// confirmGrace is how long a release of the confirming key may last and still count as
+// part of the hold. The ST20's panel is a polled matrix with a 60 ms debounce, and a
+// thumb that rolls on the key during a two-second hold opens the contact for a sweep or
+// two: the hold started over, and the owner held for four seconds instead of two. A
+// release this long is letting go.
+const confirmGrace = 250 * time.Millisecond
+
+// confirmHeld is one hold of a key to confirm the request that waited when it went down.
+// Its timers check that it is still the handler's current hold before they act, so a
+// timer that fires as the hold ends or restarts does nothing.
+type confirmHeld struct {
+	key      string
+	gen      uint64      // the request this hold confirms
+	attrs    []any       // the key's log attributes
+	timer    *time.Timer // confirmHold after the key went down
+	grace    *time.Timer // running while the key is up, until it counts as let go
+	released bool        // the key is up, within confirmGrace
+	due      bool        // confirmHold passed while the key was up: confirm on the next press
+	fired    bool        // the hold ran its full time while held
 }
 
 // What the panel says while a chord is held.
@@ -171,26 +193,26 @@ type chord struct {
 
 func newButtonHandler(sp keyActor, log *slog.Logger, chords ...chord) *buttonHandler {
 	return &buttonHandler{
-		sp:           sp,
-		log:          log,
-		feedback:     nil,
-		chime:        nil,
-		auxHoldBT:    false,
-		btPair:       nil,
-		holds:        map[int]*time.Timer{},
-		repeats:      map[int]chan struct{}{},
-		chords:       chords,
-		down:         map[string]bool{},
-		downIndex:    map[string]int{},
-		chordTimer:   nil,
-		chordStop:    nil,
-		chordArmed:   "",
-		chordSince:   time.Time{},
-		swallow:      map[string]bool{},
-		confirms:     false,
-		confirmKey:   "",
-		confirmTimer: nil,
-		confirmLog:   nil,
+		sp:         sp,
+		log:        log,
+		feedback:   nil,
+		chime:      nil,
+		auxHoldBT:  false,
+		btPair:     nil,
+		holds:      map[int]*time.Timer{},
+		repeats:    map[int]chan struct{}{},
+		chords:     chords,
+		down:       map[string]bool{},
+		downIndex:  map[string]int{},
+		chordTimer: nil,
+		chordStop:  nil,
+		chordArmed: "",
+		chordSince: time.Time{},
+		swallow:    map[string]bool{},
+		confirms:   false,
+		confirmMu:  sync.Mutex{},
+		confirm:    nil,
+		confirmLog: nil,
 	}
 }
 
@@ -321,18 +343,28 @@ func (h *buttonHandler) dispatchPress(index int, action string) {
 }
 
 // confirmReleased takes the release of the key held to confirm a waiting request, and
-// reports whether it took it (confirmPressed).
+// reports whether it took it (confirmPressed). A release shorter than confirmGrace is
+// contact chatter, not letting go: the grace timer decides, and a press of the same key
+// within it carries on the hold.
 func (h *buttonHandler) confirmReleased(action string) bool {
-	if h.confirmKey == "" || action != h.confirmKey {
+	h.confirmMu.Lock()
+	defer h.confirmMu.Unlock()
+
+	held := h.confirm
+	if held == nil || action != held.key {
 		return false
 	}
 
-	if h.confirmTimer.Stop() {
-		h.log.Info("button released before it confirmed", "key", action, "hold", confirmHold)
-		confirmer.remind()
+	if held.fired {
+		h.confirm = nil
+
+		return true
 	}
 
-	h.confirmKey, h.confirmTimer = "", nil
+	if !held.released {
+		held.released = true
+		held.grace = time.AfterFunc(confirmGrace, func() { h.confirmLetGo(held) })
+	}
 
 	return true
 }
@@ -343,7 +375,28 @@ func (h *buttonHandler) confirmReleased(action string) bool {
 // key went down, and a shorter press confirms nothing. Neither plays, stores or switches
 // anything, and the release is swallowed. Volume keys keep working, so someone can still
 // turn the speaker down while it waits.
+//
+// A press of the confirming key within confirmGrace of its release carries on the hold
+// from when it began. The hold confirms only while the key is down, so a hold whose time
+// ran out during such a gap confirms on the press that ends the gap.
 func (h *buttonHandler) confirmPressed(action string) bool {
+	h.confirmMu.Lock()
+	defer h.confirmMu.Unlock()
+
+	held := h.confirm
+	if held != nil && action == held.key && held.released {
+		// Pressed again within the grace: the same hold.
+		held.grace.Stop()
+		held.released, held.grace = false, nil
+
+		if held.due {
+			held.due = false
+			h.confirmFire(held)
+		}
+
+		return true
+	}
+
 	if !h.confirms || isVolumeKey(action) {
 		return false
 	}
@@ -353,7 +406,7 @@ func (h *buttonHandler) confirmPressed(action string) bool {
 		return false
 	}
 
-	if h.confirmKey != "" {
+	if held != nil {
 		// One key confirms; a second one pressed meanwhile does nothing, release included.
 		h.swallow[action] = true
 
@@ -362,14 +415,74 @@ func (h *buttonHandler) confirmPressed(action string) bool {
 
 	attrs := append([]any{"key", action}, h.confirmLog...)
 	h.log.Info("button held for a waiting request", attrs...)
-	h.confirmKey = action
-	h.confirmTimer = time.AfterFunc(confirmHold, func() {
-		if confirmer.held(gen) {
-			h.log.Info("button confirmed a request", attrs...)
+
+	held = &confirmHeld{
+		key: action, gen: gen, attrs: attrs, timer: nil, grace: nil, released: false, due: false, fired: false,
+	}
+	h.confirm = held
+	held.timer = time.AfterFunc(confirmHold, func() {
+		h.confirmMu.Lock()
+		defer h.confirmMu.Unlock()
+
+		if h.confirm != held {
+			return
 		}
+
+		if held.released {
+			held.due = true
+
+			return
+		}
+
+		h.confirmFire(held)
 	})
 
 	return true
+}
+
+// confirmFire confirms the request hold held began under, with the key down. Called with
+// confirmMu held.
+func (h *buttonHandler) confirmFire(held *confirmHeld) {
+	held.fired = true
+	if confirmer.held(held.gen) {
+		h.log.Info("button confirmed a request", held.attrs...)
+	}
+}
+
+// confirmLetGo ends hold held once its key stayed up for confirmGrace: letting go before
+// confirmHold confirms nothing and asks again.
+func (h *buttonHandler) confirmLetGo(held *confirmHeld) {
+	h.confirmMu.Lock()
+	defer h.confirmMu.Unlock()
+
+	if h.confirm != held || !held.released {
+		return
+	}
+
+	held.timer.Stop()
+
+	h.confirm = nil
+
+	if !held.fired {
+		h.log.Info("button released before it confirmed", "key", held.key, "hold", confirmHold)
+		confirmer.remind()
+	}
+}
+
+// confirmCancel drops the current hold without confirming or asking again.
+func (h *buttonHandler) confirmCancel() {
+	h.confirmMu.Lock()
+	defer h.confirmMu.Unlock()
+
+	if held := h.confirm; held != nil {
+		held.timer.Stop()
+
+		if held.grace != nil {
+			held.grace.Stop()
+		}
+	}
+
+	h.confirm = nil
 }
 
 func (h *buttonHandler) show(text string) {

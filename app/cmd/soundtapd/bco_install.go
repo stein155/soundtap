@@ -81,10 +81,11 @@ func wireBCOFlash(ctx context.Context, tty, wifiConf string, gate *bootGate, log
 		if first {
 			first, wasOwn = false, ownBCOApp()
 			if !wasOwn {
-				// Bose's app is about to go, and the network it joined with it.
+				// Bose's app is about to go, and the network it joined with it: the install
+				// waits until the read gave an answer or ran out of tries (stockBCOImportLimit).
 				adoptStockBCOWifi(ctx, wifiConf, func(ctx context.Context) (bco.StockProfile, error) {
 					return bco.ReadStockProfile(ctx, tty)
-				}, log)
+				}, sleepCtx, log)
 			}
 		}
 
@@ -95,6 +96,8 @@ func wireBCOFlash(ctx context.Context, tty, wifiConf string, gate *bootGate, log
 		if !sleepCtx(ctx, bcoInstallDelay) {
 			return
 		}
+
+		defer bcoUpdateNotice(!ownBCOApp())()
 
 		flashed := keepBCOInstalled(ctx, lock, attempt, ownBCOApp, sleepCtx, log)
 

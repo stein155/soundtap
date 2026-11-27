@@ -53,11 +53,8 @@ func (h *buttonHandler) Reset() {
 	h.cancelGestures()
 	h.disarmChord()
 	// A hold whose release will never come is not a hold anyone can vouch for.
-	if h.confirmTimer != nil {
-		h.confirmTimer.Stop()
-	}
+	h.confirmCancel()
 
-	h.confirmKey, h.confirmTimer = "", nil
 	for action := range h.down {
 		delete(h.down, action)
 		delete(h.downIndex, action)

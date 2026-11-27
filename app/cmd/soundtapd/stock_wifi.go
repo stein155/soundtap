@@ -39,8 +39,16 @@ const (
 // stockProfilesLimit bounds how much of stock's NetworkProfiles.xml is read.
 const stockProfilesLimit = 256 << 10
 
-// stockBCOWifiLimit bounds reading the network from Bose's BCO app.
-const stockBCOWifiLimit = time.Minute
+// Bounds of the ST20's take-over from stock's BCO. Stock's BCO app may still be starting,
+// or busy on its console, when the first look comes: a read that gets no reply or a garbled
+// dump is tried again. The whole take-over is capped, so the BCO install never waits on it
+// for longer than stockBCOImportLimit.
+const (
+	stockBCOReadTries   = 5
+	stockBCORetryDelay  = 30 * time.Second
+	stockBCOReadLimit   = 90 * time.Second
+	stockBCOImportLimit = 5 * time.Minute
+)
 
 // The WPA passphrase lengths, and the length of a raw PSK in hex (as wpa_supplicant reads it).
 const (
@@ -134,40 +142,76 @@ func saveStockNetwork(wifiConf string, network stockNetwork) error {
 }
 
 // adoptStockBCOWifi is adoptStockWifi for the ST20, where Bose's software keeps the network
-// in the BCO and not on this processor. It runs while Bose's BCO app is still there, just
-// before AutoInstall replaces it: afterwards the speaker reboots onto its own Wi-Fi path
-// and needs wifi.conf to join anything. read is bco.ReadStockProfile on the BCO's UART.
+// in the BCO and not on this processor. It runs while Bose's BCO app is still there, before
+// AutoInstall replaces it: afterwards the speaker reboots onto its own Wi-Fi path, needs
+// wifi.conf to join anything, and stock's settings can no longer be read. read is
+// bco.ReadStockProfile on the BCO's UART, wait sleepCtx.
+//
+// It returns once the read gave an answer: a network written to wifi.conf, or
+// bco.ErrStockProfileNotImportable (nothing stock saved can be taken). Any other error is
+// tried again, stockBCOReadTries times in all and within stockBCOImportLimit, and then given
+// up so the install goes ahead; the owner then sets the network up on the setup network.
 func adoptStockBCOWifi(
-	ctx context.Context, wifiConf string, read func(context.Context) (bco.StockProfile, error), log *slog.Logger,
+	ctx context.Context, wifiConf string, read func(context.Context) (bco.StockProfile, error),
+	wait func(context.Context, time.Duration) bool, log *slog.Logger,
 ) {
 	_, err := os.Stat(wifiConf)
 	if err == nil {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, stockBCOWifiLimit)
+	ctx, cancel := context.WithTimeout(ctx, stockBCOImportLimit)
 	defer cancel()
 
-	profile, err := read(ctx)
-	if err != nil {
-		log.Warn("stock wifi not taken over from the BCO", "err", err)
+	for try := 1; ; try++ {
+		readCtx, readCancel := context.WithTimeout(ctx, stockBCOReadLimit)
+		profile, err := read(readCtx)
 
-		return
+		readCancel()
+
+		switch {
+		case err == nil:
+			saveStockBCOProfile(wifiConf, profile, try, log)
+
+			return
+		case errors.Is(err, bco.ErrStockProfileNotImportable):
+			log.Warn("stock wifi not taken over from the BCO; the speaker opens its setup network", "err", err)
+
+			return
+		case try >= stockBCOReadTries || ctx.Err() != nil:
+			log.Warn("stock wifi not taken over from the BCO, giving up; the speaker opens its setup network",
+				"err", err, "tries", try)
+
+			return
+		}
+
+		log.Warn("stock wifi read from the BCO failed, trying again before stock's BCO app is replaced",
+			"err", err, "try", try, "in", stockBCORetryDelay)
+
+		if !wait(ctx, stockBCORetryDelay) {
+			log.Warn("stock wifi not taken over from the BCO, giving up; the speaker opens its setup network",
+				"err", "out of time", "tries", try)
+
+			return
+		}
 	}
+}
 
+// saveStockBCOProfile writes the network read from stock's BCO as wifi.conf.
+func saveStockBCOProfile(wifiConf string, profile bco.StockProfile, try int, log *slog.Logger) {
 	network := stockNetwork{ssid: profile.SSID, psk: profile.Passphrase, hexPSK: ""}
 	if bco.IsHexPSK(profile.Passphrase) {
 		network = stockNetwork{ssid: profile.SSID, psk: "", hexPSK: strings.ToLower(profile.Passphrase)}
 	}
 
-	err = saveStockNetwork(wifiConf, network)
+	err := saveStockNetwork(wifiConf, network)
 	if err != nil {
 		log.Warn("stock wifi save", "err", err)
 
 		return
 	}
 
-	log.Info("wifi taken over from stock's BCO", "ssid", profile.SSID)
+	log.Info("wifi taken over from stock's BCO", "ssid", profile.SSID, "try", try)
 }
 
 // readStockNetwork picks the network stock joined last from its NetworkProfiles.xml:

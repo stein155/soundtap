@@ -10,12 +10,14 @@ import (
 	"crypto/cipher"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stein155/soundtap/app/internal/bco"
 )
@@ -249,14 +251,14 @@ func TestAdoptStockBCOWifi(t *testing.T) {
 	conf := filepath.Join(t.TempDir(), "wifi.conf")
 
 	// A failed read leaves no file: the speaker opens its setup network instead.
-	adoptStockBCOWifi(ctx, conf, read(profile("", ""), errNoReplyInTest), log)
+	adoptStockBCOWifi(ctx, conf, read(profile("", ""), errNoReplyInTest), noWait, log)
 
 	_, err := os.Stat(conf)
 	if err == nil {
 		t.Fatal("wifi.conf written after a failed read")
 	}
 
-	adoptStockBCOWifi(ctx, conf, read(profile("Home net", "correct horse"), nil), log)
+	adoptStockBCOWifi(ctx, conf, read(profile("Home net", "correct horse"), nil), noWait, log)
 
 	want := "SSID_B64=" + base64.StdEncoding.EncodeToString([]byte("Home net")) + "\nPSK_B64=" +
 		base64.StdEncoding.EncodeToString([]byte("correct horse")) + "\n"
@@ -269,7 +271,7 @@ func TestAdoptStockBCOWifi(t *testing.T) {
 	}
 
 	// A network the owner already chose is never replaced.
-	adoptStockBCOWifi(ctx, conf, read(profile("Other", "another one"), nil), log)
+	adoptStockBCOWifi(ctx, conf, read(profile("Other", "another one"), nil), noWait, log)
 
 	if got, _ := os.ReadFile(conf); string(got) != want {
 		t.Fatalf("wifi.conf was replaced: %q", got)
@@ -277,9 +279,92 @@ func TestAdoptStockBCOWifi(t *testing.T) {
 
 	// A raw 64-digit key goes in as PSK_HEX, as wpa_supplicant reads it.
 	conf = filepath.Join(t.TempDir(), "wifi.conf")
-	adoptStockBCOWifi(ctx, conf, read(profile("Home net", strings.Repeat("AB", 32)), nil), log)
+	adoptStockBCOWifi(ctx, conf, read(profile("Home net", strings.Repeat("AB", 32)), nil), noWait, log)
 
 	if got, _ := os.ReadFile(conf); !strings.Contains(string(got), "PSK_HEX="+strings.Repeat("ab", 32)+"\n") {
 		t.Fatalf("wifi.conf = %q, want a PSK_HEX line", got)
+	}
+}
+
+// noWait stands in for sleepCtx: no time passes in a test.
+func noWait(ctx context.Context, _ time.Duration) bool { return ctx.Err() == nil }
+
+// Reads that fail in a test, each for a reason that may pass.
+var (
+	errDumpInTest  = errors.New("BCO memory dump: bad word")
+	errOtherInTest = errors.New("still no reply")
+)
+
+// TestAdoptStockBCOWifiRetries holds the ST20's one chance to read stock's network: a read
+// that fails for a reason that may pass is tried again before the BCO app is replaced, a
+// definitive answer is not, and the tries are bounded.
+func TestAdoptStockBCOWifiRetries(t *testing.T) {
+	t.Parallel()
+
+	notImportable := fmt.Errorf("%w: open network", bco.ErrStockProfileNotImportable)
+	good := bco.StockProfile{SSID: "Home net", Passphrase: "correct horse"}
+
+	for name, tcase := range map[string]struct {
+		errs      []error // one per read; past the end, the read succeeds
+		wantReads int
+		wantConf  bool
+	}{
+		"first read works":           {nil, 1, true},
+		"BCO app still starting":     {[]error{errNoReplyInTest, errNoReplyInTest}, 3, true},
+		"noisy dump, then good":      {[]error{errDumpInTest}, 2, true},
+		"not importable: asked once": {[]error{notImportable}, 1, false},
+		"transient, then definitive": {[]error{errNoReplyInTest, notImportable}, 2, false},
+		"never answers: bounded": {
+			[]error{errNoReplyInTest, errOtherInTest, errDumpInTest, errNoReplyInTest, errOtherInTest, errDumpInTest},
+			5, false,
+		},
+	} {
+		conf := filepath.Join(t.TempDir(), "wifi.conf")
+		reads, waits := 0, 0
+		read := func(ctx context.Context) (bco.StockProfile, error) {
+			_, ok := ctx.Deadline()
+			if !ok {
+				t.Errorf("%s: read without a deadline", name)
+			}
+
+			reads++
+			if reads <= len(tcase.errs) && tcase.errs[reads-1] != nil {
+				return bco.StockProfile{}, tcase.errs[reads-1]
+			}
+
+			return good, nil
+		}
+		wait := func(ctx context.Context, d time.Duration) bool {
+			waits++
+
+			if d != stockBCORetryDelay {
+				t.Errorf("%s: waited %v", name, d)
+			}
+
+			return ctx.Err() == nil
+		}
+
+		adoptStockBCOWifi(t.Context(), conf, read, wait, quietLog())
+
+		_, err := os.Stat(conf)
+		if reads != tcase.wantReads || (err == nil) != tcase.wantConf || waits != reads-1 {
+			t.Errorf("%s: %d reads, %d waits, wifi.conf written %v; want %d reads, written %v",
+				name, reads, waits, err == nil, tcase.wantReads, tcase.wantConf)
+		}
+	}
+
+	// A wait cut short (shutdown, or the take-over's own time limit) ends the take-over.
+	reads := 0
+
+	adoptStockBCOWifi(t.Context(), filepath.Join(t.TempDir(), "wifi.conf"),
+		func(context.Context) (bco.StockProfile, error) {
+			reads++
+
+			return bco.StockProfile{}, errNoReplyInTest
+		},
+		func(context.Context, time.Duration) bool { return false }, quietLog())
+
+	if reads != 1 {
+		t.Fatalf("%d reads after the wait was cut short", reads)
 	}
 }

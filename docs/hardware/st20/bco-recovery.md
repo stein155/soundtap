@@ -211,6 +211,52 @@ Stock sdsShell on USB port 8000 was not reachable in the recorded provisioned an
 factory-reset observations. `/dev/TelnetShell` was found as a device-node name; it does
 not establish a remotely reachable recovery shell.
 
+## 6. The stock app's saved network
+
+Bose's BCO app keeps the Wi-Fi network it joins in the BCO's own NOR flash; the SCM holds no
+copy. SoundTap reads it once, on the first boot after an install from stock, before it
+replaces that app ([ADR 0129](../../decisions/0129-first-install-keeps-settings.md);
+`app/internal/bco/stockprofile.go`). The facts below come from offline analysis of stock BCO
+app 9423 **[STATIC]**, except where marked as read on hardware. Numbers are that app version's.
+
+- **The store.** Stock's "CnE User" settings store is an append-only log in a NOR sector. Two
+  sectors take turns: one active, one free. When the active one is full, stock copies the
+  valid records into the other. Candidate addresses are `0x40030000` (read on hardware
+  2026-11-11; the owner's dump began with the u16 `0x0008`) and `0x407e0000` (unproven).
+- **Sector header.** The low nibble of the sector's first u16 is its state: `0xf` not used,
+  `0xe` free, `0xc` being written, `0x8` active, `0x0` being removed.
+- **Records** start at sector offset 2: a little-endian u16 header, the value as a
+  NUL-terminated string, and one pad byte (written as 0) when the next record would start at
+  an odd address. The header's low nibble is the record's state: `0xc` valid, `0xe` being
+  written, `0x8` superseded, `0xf` erased (the end of the log). Bits 15..4 name the setting.
+- **Which value holds.** The last valid record of a setting wins. The order on flash is the
+  order of writing, so a profile's records need not sit next to each other. A setting never
+  written keeps its factory default.
+- **Settings** (valid-record headers, state `0xc`):
+
+  | Setting | SSID | Security | Passphrase |
+  | --- | --- | --- | --- |
+  | Profile0 | `0x50ec` | `0x50cc` | `0x50bc` |
+  | Profile1 | `0x51bc` | `0x519c` | `0x518c` |
+  | Profile2 | `0x528c` | `0x526c` | `0x525c` |
+  | Profile3 | `0x535c` | `0x533c` | `0x532c` |
+  | Profile4 (stock's own setup AP) | `0x544c` | `0x540c` | `0x53fc` |
+
+  Profile1's Cipher is `0x517c`. `cne/Networking/DrvCfg/WlanCfg/ActiveProfile` is `0x549c`
+  (factory default `1`), DeviceName `0x4fbc`, CountryCode `0x54ec`. Profile1's factory
+  defaults are Security `WPAPSK` and Cipher `AES`; other profiles' defaults were not traced.
+- **Values.** Security is one of `NONE`, `WEP`, `WPAPSK`, `WPA2PSK`, `WPAWPA2PSK`. The
+  passphrase is stored in plain text: 8 to 63 characters, or 64 hex digits.
+- **Shell access.** The sdsShell's `rd <address> <words>` prints four little-endian words to a
+  line (read on hardware). It also has `get [-e|-s|-b] <attr>` (for example
+  `get -s cne/Networking/DrvCfg/WlanCfg/Profile1/SSID`) and `ls [-r -e -v -s] <dir>` (for
+  example `ls -s -r cne/Networking/DrvCfg/WlanCfg`); their output format, and whether `get`
+  prints the passphrase, are not verified on hardware, so SoundTap reads the log with `rd`.
+
+SoundTap takes the active profile's network when its security is one of the three PSK values
+and its passphrase is a WPA passphrase. Open and WEP networks, stock's setup profile, and a
+profile with no network are left to the setup network.
+
 ## Evidence index (all read-only, from the extracted STU)
 
 - `rootfs/opt/Bose/SMSC_App_Update`, `SMSC_BSL_Update`, `SMSCControlApp`,
