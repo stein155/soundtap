@@ -608,6 +608,16 @@ itself (`tx_kick`, `ACK_LATE`, `rate_cls` in `bco/wild/fw/src/xport.c`):
    on hardware is not measured yet: `core_to_us_rts/...` in the setup AP's log shows it, and
    `rec[RC_CTS]` counts the CTS frames sent.
 
+The station receives 802.11b/g only, as far as the repository shows: the receive record's rate
+index has 16 values, all DSSS/CCK and OFDM rates (`rx_deliver` in `xport.c`), and nothing names an
+MCS. So the association request announces no HT and no WMM (`wstation.h`), and an A-MSDU (which
+needs HT) is not kept. QoS data from the joined BSS that comes in the clear is kept and goes up as
+plain data without its QoS control, as a setup AP client's does (`qdata` in `mac.c`); an AP should
+send none to a station without WMM, but one that does is not lost. Protected QoS data is ACKed and
+dropped: CCMP takes the TID into its nonce and AAD, and whether the cipher engine does that with a
+26-byte header was never measured. WMM stays off until the transmit side sends QoS data (per-TID
+sequence numbers, EDCA) and the engine's QoS CCMP is measured.
+
 Limits: 24 Mb/s is the floor of the adaptation, because below it a frame outlasts `ACK_LATE`; a
 weaker link falls back to the basic rate on the last tries. 9 us assumes a BSS with short slots
 (every OFDM/ERP network); the association request asks for them when the access point offers

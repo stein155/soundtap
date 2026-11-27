@@ -224,10 +224,18 @@ void mac_fiq(void)
         }
         /* Non-QoS data (type 10, bit 0x80 = QoS clear) from the BSS once joined: it arrives still enciphered
          * and goes to the host like a management frame; the app deciphers it (wifi.c rx_station).
-         * QoS/HT data, A-MSDU and null-data (no body) are later work. Not in ap_mode: there the
+         * HT data, A-MSDU and null-data (no body) are later work. Not in ap_mode: there the
          * group data on the channel is other networks' (our clients send to our address), and
          * keeping it filled the four-frame queue a client's frame needs room in. */
         int data = (fc & 0x8c) == 0x08 && joined && !ap_mode && len > 28;
+        /* QoS data from the BSS (fromDS) in the clear: kept too and passed up as plain data,
+         * without its QoS control (xport.c rx_deliver), as a setup AP client's. We announce no
+         * WMM, so an AP should send us none, but one that does is not lost. Not protected QoS data:
+         * its CCMP nonce and AAD take the QoS control's TID, and whether the cipher engine does
+         * that with a 26-byte header was never measured (it is ACKed and dropped, as before);
+         * not an A-MSDU (QoS control bit 7), which needs HT, which this radio is not shown to do. */
+        int qdata = (fc & 0xfc) == 0x88 && joined && !ap_mode && (e[9] & 0x43) == 0x02 &&
+                    len > 24 + 2 + 4 && !(e[8 + 24] & 0x80);
         /* A client's data, null-data, QoS data and QoS-null to us (no CF subtypes): all kept,
          * the null frames for their power-management bit (the app buffers for a dozing
          * client), QoS data without its QoS control (xport.c rx_deliver). And its PS-Poll
@@ -238,8 +246,8 @@ void mac_fiq(void)
         /* Every unicast data frame to us is ACKed once joined, kept or not: data, null-data (0x48),
          * QoS data (0x88) and QoS-null (0xc8). APs probe an idle station with null-data and
          * disassociate one that does not ACK it (hostapd after ap_max_inactivity, reason 4), and
-         * QoS data that is not ACKed is retried until the AP gives up. QoS data is still dropped
-         * here (not kept); its ACK only stops the retries. A QoS frame whose ack policy (QoS
+         * QoS data that is not ACKed is retried until the AP gives up. Protected QoS data is still
+         * dropped here (not kept, qdata above); its ACK only stops the retries. A QoS frame whose ack policy (QoS
          * control bits 5-6, after a 3- or 4-address header) is not Normal Ack is not ACKed:
          * No Ack forbids it, and we hold no block-ack agreement. CF-Ack/CF-Poll subtypes are
          * not answered. */
@@ -260,7 +268,7 @@ void mac_fiq(void)
          * them passively during the active dwell makes the scan robust instead of probe-dependent. */
         int keep = fc == 0x80 ? (dwell_state == 4 || dwell_state == 6)
                  : fc == 0x50 ? dwell_state == 6
-                 : (mgmt || data || probe || apdata || pspoll);
+                 : (mgmt || data || qdata || probe || apdata || pspoll);
         unsigned room = rxq_in - rxq_out < RXQ;
         if (apdata && !(fc & 0x40)) {   /* diag: a client's frame with a body, its rate and level */
             rec[RC_APDATA]++;
@@ -276,7 +284,7 @@ void mac_fiq(void)
          * The frame must also be the one the MAC latched (0x630) with a length that fits: after
          * such an overwrite the next frame-in found stale bytes at 0x644, and their length sent
          * the pointer anywhere. */
-        if ((hit || ((data || probe || leave) && group)) && keep && room && len >= minlen &&
+        if ((hit || ((data || qdata || probe || leave) && group)) && keep && room && len >= minlen &&
             len <= sizeof rxarea - RX_WRAP && (e[8] & 0xfc) == fc) {
             rxq[rxq_in % RXQ] = (unsigned)e;
             rxq_len[rxq_in % RXQ] = len;

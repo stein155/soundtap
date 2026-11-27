@@ -118,7 +118,9 @@ rate at or below its own, or else the highest mandatory one (6, 12, 24 Mb/s), an
 its own address with a CTS on the ACK's queue (the setup AP, or the station once joined). Stock's transmit code stays unread. It ACKs every
 unicast data frame to the station once joined, null-data and QoS frames included (QoS only with the
 Normal Ack policy), also those it does not keep: an access point disassociates a station that does
-not answer its idle check. It never ACKs a frame addressed to a group, and it passes a
+not answer its idle check. QoS data from the joined BSS that comes in the clear goes up as plain
+data, without its QoS control; protected QoS data and A-MSDUs are not kept, and the station
+announces neither WMM nor HT. It never ACKs a frame addressed to a group, and it passes a
 deauthentication or disassociation to every station from the joined BSS to the app.
 
 ### The image ships with SoundTap Core, and soundtapd installs it

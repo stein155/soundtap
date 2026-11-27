@@ -165,7 +165,7 @@ static void keep_filter(void)
     CHECK(tx_acked == 0, "ACK to someone else ignored");
 
     /* data: only once joined; unicast kept and ACKed, group kept without the address filter and
-     * never ACKed; QoS and null data not kept */
+     * never ACKed; null data not kept, QoS data in the clear kept (station_qos) */
     setup(0);
     len = data_frame(OWN, BSSID, 0, 0, 0, 20);
     air_rx(fbuf, len, ST_IN | ST_ADDR);
@@ -183,7 +183,7 @@ static void keep_filter(void)
     len = data_frame(OWN, BSSID, 0, 0, 0, 20);
     fbuf[0] = 0x88;
     air_rx(fbuf, len, ST_IN | ST_ADDR);
-    CHECK(rxq_in == 2, "QoS data not kept");
+    CHECK(rxq_in == 3, "QoS data in the clear kept");
 
     /* a full queue: unicast data is still ACKed, management is not */
     fbuf[0] = 0x08;
@@ -225,10 +225,10 @@ static void ack_unicast_data(void)
     air_rx(fbuf, len, ST_IN | ST_ADDR);
     CHECK(acked() && rxq_in == 0, "unicast QoS-null ACKed, not kept");
     len = data_frame(OWN, BSSID, 0, 0, 0, 40);
-    fbuf[0] = 0x88;
+    fbuf[0] = 0x88, fbuf[1] |= 0x40; /* protected: not kept (station_qos keeps it in the clear) */
     fbuf[24] = 5, fbuf[25] = 0;
     air_rx(fbuf, len, ST_IN | ST_ADDR);
-    CHECK(acked() && rxq_in == 0, "unicast QoS data ACKed, not kept");
+    CHECK(acked() && rxq_in == 0, "unicast protected QoS data ACKed, not kept");
     fbuf[24] = 0x25; /* ack policy No Ack */
     air_rx(fbuf, len, ST_IN | ST_ADDR);
     CHECK(!acked() && rxq_in == 0, "QoS No Ack policy: not ACKed");
@@ -244,14 +244,16 @@ static void ack_unicast_data(void)
     air_rx(fbuf, len, ST_IN | ST_ADDR);
     CHECK(!acked() && rxq_in == 0, "CF subtype not ACKed");
 
-    /* group-addressed: no ACK, and the null kinds are not kept */
+    /* group-addressed: no ACK, and the null kinds are not kept (group QoS data in the clear is) */
     for (unsigned k = 0; k < 3; k++) {
         static const unsigned char fcs[3] = {0x48, 0xc8, 0x88};
         len = data_frame(BCAST, BSSID, 0, 0, 0, fcs[k] == 0x48 ? 0 : 20);
         fbuf[0] = fcs[k];
         air_rx(fbuf, len, ST_IN | ST_ADDR);
-        CHECK(!acked() && rxq_in == 0, "group fc %#x: neither ACKed nor kept", fcs[k]);
+        CHECK(!acked() && rxq_in == (k == 2), "group fc %#x: not ACKed, kept only as QoS data", fcs[k]);
     }
+    CHECK(delivered(&d) && d.buf[0xac] == 0x08, "the group QoS data up as plain data");
+    recycle(&d);
 
     /* before the join none of them is ACKed */
     joined = 0;
@@ -584,6 +586,37 @@ static void ap_clients(void)
     ap_mode = 0, joined = 0;
 }
 
+/* The station keeps QoS data from its BSS that comes in the clear and passes it up as plain data
+ * without its QoS control, as the setup AP does a client's; protected QoS data (the engine's QoS
+ * nonce is unmeasured), an A-MSDU, one that is not fromDS and one before the join stay out. */
+static void station_qos(void)
+{
+    struct rxd d;
+    unsigned len;
+    setup(0);
+    joined = 1;
+    len = data_frame(OWN, BSSID, 0, 0, 0, 2 + 30);
+    fbuf[0] = 0x88, fbuf[24] = 5, fbuf[25] = 0; /* TID 5, Normal Ack */
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
+    CHECK(acked() && rxq_in == 1, "QoS data in the clear ACKed and kept");
+    CHECK(delivered(&d) && d.buf[0xac] == 0x08 && !memcmp(d.buf + 0xac + 1, fbuf + 1, 23), "up as plain data");
+    CHECK(!memcmp(d.buf + 0xcc, fbuf + 26, 30) && d.end == 0x94 + 48 + 30, "body after the QoS control");
+    recycle(&d);
+    fbuf[24] = 0x85; /* A-MSDU present */
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
+    CHECK(acked() && rxq_in == 1, "an A-MSDU ACKed, not kept");
+    fbuf[24] = 5, fbuf[1] = 0x01; /* toDS: not from our AP */
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
+    CHECK(rxq_in == 1, "not fromDS: not kept");
+    fbuf[1] = 0x42;
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
+    CHECK(acked() && rxq_in == 1, "protected QoS data ACKed, not kept");
+    fbuf[1] = 0x02;
+    joined = 0;
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
+    CHECK(!acked() && rxq_in == 1, "before the join: nothing");
+}
+
 /* An RTS to us gets a CTS a SIFS later: the ACK's queue, frame control 0xc4, RA = the RTS's TA,
  * the RTS's duration less the SIFS and the CTS (at 6 Mb/s for an RTS at 6 Mb/s: 50 us), at the
  * control-response rate; as the setup AP and as a joined station. Not for anybody else, not to a
@@ -698,6 +731,7 @@ int main(void)
 {
     soft_frames();
     rts_cts();
+    station_qos();
     keep_filter();
     ap_clients();
     ack_unicast_data();

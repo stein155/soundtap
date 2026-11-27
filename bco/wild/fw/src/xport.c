@@ -158,9 +158,10 @@ deliver:
         *last = pn;
     if (n > RXBUF_HOST - 0x94 - 24 - 8)  /* host RX buffer (wifi.c RXBUF) */
         n = RXBUF_HOST - 0x94 - 24 - 8;
-    /* In ap_mode a client's QoS data (mac.c) goes up as plain data: without its two-byte QoS
-     * control, QoS bit clear. A PS-Poll (16 bytes) goes up padded to the 24-byte header. */
-    if (!dec && ap_mode && (h[0] & 0x8c) == 0x88 && n >= 26)
+    /* QoS data (a setup AP client's, or the station's BSS's in the clear; mac.c) goes up as plain
+     * data: without its two-byte QoS control, QoS bit clear. A PS-Poll (16 bytes) goes up padded
+     * to the 24-byte header. */
+    if (!dec && (ap_mode || joined) && (h[0] & 0x8c) == 0x88 && n >= 26)
         hl = 26;
     for (unsigned i = 0; i < 24; i++)
         rx_stage[i] = 0;
