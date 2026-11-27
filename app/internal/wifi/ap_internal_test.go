@@ -23,6 +23,22 @@ func TestUdhcpdConfNamesItsLeaseFileAndFitsThePool(t *testing.T) {
 	}
 }
 
+// The ST20's setup AP caps a phone's rates at 24 Mb/s, with the 11b rates basic; the others
+// offer every 802.11g rate, as before.
+func TestHostapdConfCapsTheST20sRates(t *testing.T) {
+	t.Parallel()
+
+	base := "interface=wlan1\ndriver=nl80211\nssid=S\nhw_mode=g\nchannel=6\nwmm_enabled=0\n"
+	if got := hostapdConf("wlan1", "S", 6, "", ""); got != base {
+		t.Fatalf("hostapd.conf = %q", got)
+	}
+
+	want := base + "supported_rates=10 20 55 110 60 90 120 180 240\nbasic_rates=10 20 55 110\n"
+	if got := hostapdConf("wlan1", "S", 6, "", st20Rates); got != want {
+		t.Fatalf("ST20 hostapd.conf = %q\nwant %q", got, want)
+	}
+}
+
 //nolint:paralleltest // its rig points wpactrl.ClientDir, a package variable, at a directory of its own
 func TestSetupAPGivesUdhcpdAnExistingLeaseFile(t *testing.T) {
 	bench := newRig(t, "rhino")

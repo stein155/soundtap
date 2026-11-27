@@ -138,6 +138,46 @@ func TestSetupAPStateIsLoggedWhenItChanges(t *testing.T) {
 	}
 }
 
+// Beacons, probes and the core's counters move on every look: alone they log once a minute,
+// while a phone joining, leaving or sending data logs at once.
+func TestSetupAPCountersAloneLogOnceAMinute(t *testing.T) {
+	t.Parallel()
+
+	for _, tcase := range []struct {
+		event, changed bool
+		since          time.Duration
+		want           bool
+	}{
+		{false, false, time.Hour, false},
+		{false, true, 30 * time.Second, false},
+		{false, true, time.Minute, true},
+		{true, false, 0, true},
+		{true, true, time.Second, true},
+	} {
+		if got := worthLogging(tcase.event, tcase.changed, tcase.since, time.Minute); got != tcase.want {
+			t.Errorf("event %v, changed %v, %s since: %v, want %v",
+				tcase.event, tcase.changed, tcase.since, got, tcase.want)
+		}
+	}
+
+	look := apState{
+		names:   []string{"beacons", "wlan1_rx_packets"},
+		values:  map[string]uint64{"beacons": 7, "wlan1_rx_packets": 1},
+		clients: [][]string{{"client", "02:99:88:77:66:55", "dozing", "1", "rx_data", "3", "rx_null", "9"}},
+	}
+	before := look.eventKey()
+
+	look.values["beacons"], look.clients[0][3], look.clients[0][7] = 8, "0", "12"
+	if look.eventKey() != before {
+		t.Error("beacons, dozing and null-data count as a phone's doing")
+	}
+
+	look.clients[0][5] = "4"
+	if look.eventKey() == before {
+		t.Error("a data frame from the phone does not count")
+	}
+}
+
 func TestShortMACKeepsTheLastThreeOctets(t *testing.T) {
 	t.Parallel()
 
