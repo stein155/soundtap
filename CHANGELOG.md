@@ -10,6 +10,10 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
 
 ## [Unreleased]
 
+### Fixed
+
+- On a network that hands out no gateway, or has no internet, the display and the Wi-Fi lamp now say connected instead of "Connecting" for ever.
+
 ## [app-v0.1.0-alpha.6] - 2026-11-27
 
 - The SoundTap app that SoundTap Core 0.1.0-alpha.6 carries; what it changes is listed under
