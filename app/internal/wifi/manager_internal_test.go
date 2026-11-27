@@ -300,6 +300,103 @@ func TestSupplicantStartsWithoutPMF(t *testing.T) {
 	}
 }
 
+// A wpa_supplicant start that fails for a reason of the moment (the interface not up yet)
+// joins without pmf and sae_check_mfp that once, but the next start offers them again: only
+// a refusal that names them is kept.
+//
+//nolint:paralleltest // its rig points wpactrl.ClientDir, a package variable, at a directory of its own
+func TestSupplicantKeepsPMFAfterAPassingFailure(t *testing.T) {
+	bench := newRig(t, "rhino")
+	bench.save("home", "homepass1")
+	bench.sys.where["home"] = "ok"
+	bench.sys.keys["home"] = "homepass1"
+	bench.sys.busy = 1
+	bench.start()
+	bench.eventually("network-ready", func() bool { return bench.exists("network-ready") })
+	bench.stop()
+
+	if bench.m.refused[refusedGlobal] {
+		t.Fatalf("a busy interface was taken for a refused pmf=1: refused = %v", bench.m.refused)
+	}
+
+	err := bench.m.startSupplicant(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	conf := bench.read(filepath.Join(bench.p.Tmp, "wpa_supplicant.conf"))
+	if conf != supplicantConf(bench.p.CtrlDir) {
+		t.Fatalf("wpa_supplicant.conf = %q; want pmf=1 and sae_check_mfp=1 again", conf)
+	}
+}
+
+// A wpa_supplicant that knows SAE but not PSK-SHA256 still offers WPA3: the refused combined
+// suite is not blamed on SAE, and the network joins over WPA-PSK with SAE.
+//
+//nolint:paralleltest // its rig points wpactrl.ClientDir, a package variable, at a directory of its own
+func TestJoinWithoutPSKSHA256KeepsSAE(t *testing.T) {
+	bench := newRig(t, "rhino")
+	bench.save("home", "homepass1")
+	bench.sys.where["home"] = "ok"
+	bench.sys.keys["home"] = "homepass1"
+	bench.sys.refuse = func(variable, value string) bool {
+		return variable == keyMgmt && strings.Contains(value, "SHA256")
+	}
+	bench.start()
+	bench.eventually("network-ready", func() bool { return bench.exists("network-ready") })
+
+	if cmds := bench.sys.supServer().Commands(); !slices.Contains(cmds, "SET_NETWORK 0 key_mgmt WPA-PSK SAE") {
+		t.Fatalf("the network did not keep SAE: %q", cmds)
+	}
+
+	bench.stop()
+
+	if !bench.m.refused[refusedSHA256] || bench.m.refused[refusedSAE] {
+		t.Errorf("refused = %v; want PSK-SHA256 alone", bench.m.refused)
+	}
+}
+
+// A combined suite refused for want of SAE, with the SAE password taken, is put down to SAE
+// once PSK-SHA256 is taken.
+//
+//nolint:paralleltest // its rig points wpactrl.ClientDir, a package variable, at a directory of its own
+func TestSetPSKBlamesSAEWhenPSKSHA256IsTaken(t *testing.T) {
+	bench := newRig(t, "rhino")
+	ctx := context.Background()
+	srv := wpactrltest.Listen(t, wpactrltest.ShortDir(t), "wlan9", func(cmd string) string {
+		if strings.HasPrefix(cmd, "SET_NETWORK 0 key_mgmt") && strings.Contains(cmd, "SAE") {
+			return "FAIL\n"
+		}
+
+		return "OK\n"
+	})
+
+	conn, err := wpactrl.Dial(srv.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer conn.Close()
+
+	nets, err := networks(bench.conf, NewRecord("home", "", "homepass1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ok, err := bench.m.setPSK(ctx, conn, 0, &nets[0])
+	if !ok || err != nil {
+		t.Fatalf("setPSK = %v, %v", ok, err)
+	}
+
+	if !bench.m.refused[refusedSAE] || bench.m.refused[refusedSHA256] {
+		t.Errorf("refused = %v; want SAE alone", bench.m.refused)
+	}
+
+	if cmds := srv.Commands(); !slices.Contains(cmds, "SET_NETWORK 0 key_mgmt WPA-PSK WPA-PSK-SHA256") {
+		t.Errorf("never fell back to PSK-SHA256: %q", cmds)
+	}
+}
+
 // A WEP network on a build without CONFIG_WEP is skipped and the next saved network joins.
 //
 //nolint:paralleltest // its rig points wpactrl.ClientDir, a package variable, at a directory of its own

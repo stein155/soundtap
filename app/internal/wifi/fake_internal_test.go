@@ -233,6 +233,9 @@ type fakeSys struct {
 	refuse func(variable, value string) bool
 	// badConf is a line wpa_supplicant does not start with ("": it takes every line)
 	badConf string
+	// busy is how many wpa_supplicant starts still fail for a reason of the moment (the
+	// interface not up yet), whatever the configuration
+	busy int
 }
 
 func newFakeSys(t *testing.T, paths *Paths) *fakeSys {
@@ -242,7 +245,7 @@ func newFakeSys(t *testing.T, paths *Paths) *fakeSys {
 		t: t, p: *paths, mu: sync.Mutex{}, calls: nil, signals: nil, alive: map[int]bool{}, nextPid: 1000,
 		sup: nil, where: map[string]string{}, scan: nil, dhcp: false, noIP: false, apMode: true,
 		fail: map[string]bool{}, iwScan: "", station: "", keys: map[string]string{}, env: "",
-		servers: map[int]*wpactrltest.Server{}, exits: map[int]chan struct{}{}, refuse: nil, badConf: "",
+		servers: map[int]*wpactrltest.Server{}, exits: map[int]chan struct{}{}, refuse: nil, badConf: "", busy: 0,
 	}
 }
 
@@ -263,8 +266,12 @@ func (s *fakeSys) Run(_ context.Context, name string, args ...string) ([]byte, e
 	}
 
 	switch {
+	case name == "wpa_supplicant" && s.busyNow():
+		return []byte("nl80211: Could not set interface 'wlan0' UP\nwlan0: Failed to initialize driver interface"),
+			errExitStatus
 	case name == "wpa_supplicant" && s.rejectsConf(arg(args, "-c")):
-		return []byte("unknown global field"), errExitStatus
+		return []byte(fmt.Sprintf("Line 3: unknown global field '%s'.\nLine 3: Invalid configuration line '%s'.\n"+
+			"Failed to read or parse configuration '%s'.", s.badConf, s.badConf, arg(args, "-c"))), errExitStatus
 	case name == "wpa_supplicant":
 		s.mu.Lock()
 		sup := &supplicant{
@@ -423,6 +430,21 @@ func (s *fakeSys) refuses(variable, value string) bool {
 	defer s.mu.Unlock()
 
 	return s.refuse != nil && s.refuse(variable, value)
+}
+
+// busyNow reports whether this wpa_supplicant start fails for a reason of the moment, and
+// counts it.
+func (s *fakeSys) busyNow() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.busy == 0 {
+		return false
+	}
+
+	s.busy--
+
+	return true
 }
 
 // rejectsConf reports whether the configuration file at path has the line wpa_supplicant

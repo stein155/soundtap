@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -108,42 +109,59 @@ func (m *Manager) refuse(setting, means string) {
 }
 
 // startSupplicant starts wpa_supplicant on the station with supplicantConf. pmf and
-// sae_check_mfp are optional: when wpa_supplicant does not start with them and does start
-// with the control socket alone, it runs without them from then on, so a build that does not
-// know them still joins a WPA2 network.
+// sae_check_mfp are optional: when wpa_supplicant does not start with them, it is started
+// with the control socket alone. Only a refusal whose output names one of them (wpa_supplicant
+// prints "Line 2: unknown global field 'pmf=1'." for a build that does not know it) is taken
+// as this build's answer and kept for the run; any other failure (the interface busy, the
+// ST20's network card not ready yet) leaves the next start to try the full configuration
+// again, so a WPA3 network is never given up for a passing error.
 func (m *Manager) startSupplicant(ctx context.Context) error {
 	conf := filepath.Join(m.cfg.Paths.Tmp, "wpa_supplicant.conf")
 	bare := "ctrl_interface=" + m.cfg.Paths.CtrlDir + "\n"
 
-	run := func(body string) error {
+	run := func(body string) ([]byte, error) {
 		err := os.WriteFile(conf, []byte(body), privateFileMode)
 		if err != nil {
-			return fmt.Errorf("write %s: %w", conf, err)
+			return nil, fmt.Errorf("write %s: %w", conf, err)
 		}
 
-		_, err = m.runCmd(ctx, "wpa_supplicant", "-B", "-P", m.pid("wpa"), "-i", m.cfg.STA, "-D", "nl80211", "-c", conf)
+		return m.runCmd(ctx, "wpa_supplicant", "-B", "-P", m.pid("wpa"), "-i", m.cfg.STA, "-D", "nl80211", "-c", conf)
+	}
+
+	if m.refused[refusedGlobal] {
+		_, err := run(bare)
 
 		return err
 	}
 
-	if m.refused[refusedGlobal] {
-		return run(bare)
-	}
-
-	err := run(supplicantConf(m.cfg.Paths.CtrlDir))
+	out, err := run(supplicantConf(m.cfg.Paths.CtrlDir))
 	if err == nil {
 		return nil
 	}
 
-	bareErr := run(bare)
+	_, bareErr := run(bare)
 	if bareErr != nil {
 		return err
+	}
+
+	if !refusesGlobal(out) {
+		m.log.Warn("wpa_supplicant started only without pmf=1 and sae_check_mfp=1 this time", "err", err)
+
+		return nil
 	}
 
 	m.log.Warn("wpa_supplicant did not start with pmf=1 and sae_check_mfp=1", "err", err)
 	m.refuse(refusedGlobal, "no management frame protection: WPA2 networks join without it")
 
 	return nil
+}
+
+// refusesGlobal reports whether wpa_supplicant's output names one of the optional global
+// settings supplicantConf adds, as its configuration parser does for a line it turns down.
+func refusesGlobal(out []byte) bool {
+	text := string(out)
+
+	return strings.Contains(text, "pmf") || strings.Contains(text, "sae_check_mfp")
 }
 
 // join starts wpa_supplicant with nets and udhcpc on wlan0 and waits for an address.
@@ -226,31 +244,30 @@ func (m *Manager) attach(ctx context.Context) (*session, error) {
 const keyMgmt = "key_mgmt"
 
 // The authentication suites a password network offers, most capable first (ADR 0136):
-// WPA/WPA2 with PSK-SHA256 and WPA3's SAE, then without SAE, then plain WPA-PSK. A
-// wpa_supplicant built without SAE (or without PSK-SHA256) refuses the first; the network
-// then joins over the next one.
+// WPA/WPA2 with PSK-SHA256 and WPA3's SAE, then without SAE, then with SAE but without
+// PSK-SHA256, then plain WPA-PSK. A wpa_supplicant built without SAE (or without PSK-SHA256)
+// refuses the first; the network then joins over the next one it takes.
 const (
 	mgmtPSKSAE    = "WPA-PSK WPA-PSK-SHA256 SAE"
 	mgmtPSKSHA256 = "WPA-PSK WPA-PSK-SHA256"
+	mgmtPSKOnly   = "WPA-PSK SAE"
 	mgmtPSK       = "WPA-PSK"
 )
 
-// mgmtCount is how many suites keyMgmts can give.
-const mgmtCount = 3
-
-// keyMgmts are the suites to try for saved, without those this wpa_supplicant refused
-// before. SAE needs the password itself, which a raw 64-digit key does not give.
-func (m *Manager) keyMgmts(saved *network) []string {
-	out := make([]string, 0, mgmtCount)
-	if saved.passphrase != "" && !m.refused[refusedSAE] && !m.refused[refusedSHA256] {
-		out = append(out, mgmtPSKSAE)
+// offers reports whether a password network still tries mgmt, given what this
+// wpa_supplicant refused so far. SAE needs the password itself, which a raw 64-digit key does
+// not give; WPA-PSK with SAE alone is only worth a try once PSK-SHA256 is known to be missing.
+func (m *Manager) offers(saved *network, mgmt string) bool {
+	switch mgmt {
+	case mgmtPSKSAE:
+		return saved.passphrase != "" && !m.refused[refusedSAE] && !m.refused[refusedSHA256]
+	case mgmtPSKSHA256:
+		return !m.refused[refusedSHA256]
+	case mgmtPSKOnly:
+		return saved.passphrase != "" && !m.refused[refusedSAE] && m.refused[refusedSHA256]
+	default:
+		return true
 	}
-
-	if !m.refused[refusedSHA256] {
-		out = append(out, mgmtPSKSHA256)
-	}
-
-	return append(out, mgmtPSK)
 }
 
 // setSecurity sets a network's security variables in wpa_supplicant (ADR 0136). It reports
@@ -259,7 +276,7 @@ func (m *Manager) keyMgmts(saved *network) []string {
 //
 //   - WEP: the static key 0, open system or shared key authentication, whichever the access
 //     point takes.
-//   - A password or a raw key: the PSK, then the most capable suites keyMgmts gives that
+//   - A password or a raw key: the PSK, then the most capable suites (offers) that
 //     wpa_supplicant takes; management frame protection comes from supplicantConf's pmf=1, so
 //     wpa_supplicant leaves it off for a driver that cannot do it. SAE's password goes as hex,
 //     so no quoting can go wrong.
@@ -299,48 +316,93 @@ func (m *Manager) setSecurity(ctx context.Context, conn *wpactrl.Conn, netID int
 	}
 }
 
-// setPSK sets a password network: its PSK, and the first suites of keyMgmts wpa_supplicant
-// takes. A refused SAE password or suite is logged once and the next suite is tried.
+// setPSK sets a password network: its PSK, and the first suites wpa_supplicant takes, most
+// capable first. A refused SAE password or suite is logged once and the next suite is tried.
+// A refusal of the first, combined suite says only that SAE or PSK-SHA256 is missing: which
+// one is learnt from the next suites, so a build with SAE but without PSK-SHA256 still offers
+// WPA3.
 func (m *Manager) setPSK(ctx context.Context, conn *wpactrl.Conn, netID int, saved *network) (bool, error) {
 	err := conn.SetNetwork(ctx, netID, "psk", saved.keyHex)
 	if err != nil {
 		return false, fmt.Errorf("psk: %w", err)
 	}
 
-	for _, mgmt := range m.keyMgmts(saved) {
-		if mgmt == mgmtPSKSAE {
-			err = conn.SetNetwork(ctx, netID, "sae_password", hex.EncodeToString([]byte(saved.passphrase)))
-			if wpactrl.Refused(err) {
-				m.refuse(refusedSAE, "no WPA3: WPA2 networks join without it")
+	try := pskTry{saePassword: false, combinedRefused: false}
 
-				continue
-			}
-
-			if err != nil {
-				return false, fmt.Errorf("sae_password: %w", err)
-			}
+	for _, mgmt := range []string{mgmtPSKSAE, mgmtPSKSHA256, mgmtPSKOnly, mgmtPSK} {
+		if !m.offers(saved, mgmt) {
+			continue
 		}
 
-		err = conn.SetNetwork(ctx, netID, keyMgmt, mgmt)
-		if err == nil {
-			return true, nil
-		}
+		var done bool
 
-		if !wpactrl.Refused(err) {
-			return false, fmt.Errorf("%s: %w", keyMgmt, err)
-		}
-
-		switch mgmt {
-		case mgmtPSKSAE:
-			m.refuse(refusedSAE, "no WPA3: WPA2 networks join without it")
-		case mgmtPSKSHA256:
-			m.refuse(refusedSHA256, "no PSK-SHA256: WPA2 networks join without it")
-		default:
-			// plain WPA-PSK refused: nothing left to try
+		done, err = m.trySuite(ctx, conn, netID, saved, mgmt, &try)
+		if done || err != nil && !wpactrl.Refused(err) {
+			return done, err
 		}
 	}
 
+	return false, err // plain WPA-PSK refused: nothing left to try
+}
+
+// pskTry is what setPSK learnt so far: whether SAE's password is set, and whether the
+// combined suite was refused without saying for want of what.
+type pskTry struct {
+	saePassword     bool
+	combinedRefused bool
+}
+
+// trySuite offers one suite, with SAE's password first where it has SAE. It reports true once
+// wpa_supplicant takes the suite; a refusal comes back as wpactrl.Refused, after it is noted.
+func (m *Manager) trySuite(
+	ctx context.Context, conn *wpactrl.Conn, netID int, saved *network, mgmt string, try *pskTry,
+) (bool, error) {
+	if strings.HasSuffix(mgmt, " SAE") && !try.saePassword {
+		err := conn.SetNetwork(ctx, netID, "sae_password", hex.EncodeToString([]byte(saved.passphrase)))
+		if err != nil {
+			if wpactrl.Refused(err) {
+				m.refuse(refusedSAE, "no WPA3: WPA2 networks join without it")
+			}
+
+			return false, fmt.Errorf("sae_password: %w", err)
+		}
+
+		try.saePassword = true
+	}
+
+	err := conn.SetNetwork(ctx, netID, keyMgmt, mgmt)
+	if err == nil {
+		// PSK-SHA256 taken after the combined suite was refused: SAE was what it lacked
+		if mgmt == mgmtPSKSHA256 && try.combinedRefused {
+			m.refuse(refusedSAE, "no WPA3: WPA2 networks join without it")
+		}
+
+		return true, nil
+	}
+
+	if wpactrl.Refused(err) && m.refusedMgmt(mgmt) {
+		try.combinedRefused = true
+	}
+
 	return false, fmt.Errorf("%s: %w", keyMgmt, err)
+}
+
+// refusedMgmt notes what a refused suite says this wpa_supplicant lacks. It reports true for
+// the combined suite, whose refusal says only that SAE or PSK-SHA256 is missing: the next
+// suites tell which.
+func (m *Manager) refusedMgmt(mgmt string) bool {
+	switch mgmt {
+	case mgmtPSKSAE:
+		return true
+	case mgmtPSKSHA256:
+		m.refuse(refusedSHA256, "no PSK-SHA256: WPA2 networks join without it")
+	case mgmtPSKOnly:
+		m.refuse(refusedSAE, "no WPA3: WPA2 networks join without it")
+	default:
+		// plain WPA-PSK refused: nothing left to try
+	}
+
+	return false
 }
 
 // configure hands wpa_supplicant the networks: wifi.conf at the highest priority, the

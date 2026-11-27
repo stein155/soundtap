@@ -98,10 +98,15 @@ WPA3 option; hostapd is not, since the setup network stays open
 These features are optional to the join. A wpa_supplicant that does not take one (a build
 without `CONFIG_SAE` answers FAIL to `SAE` in `key_mgmt` and to `sae_password`, one without
 `CONFIG_WEP` to `wep_key0`) costs only that feature: soundtapd logs once which setting was
-refused and offers the network the next suites, `WPA-PSK WPA-PSK-SHA256` then `WPA-PSK`; a
-network the build cannot join at all, such as WEP without `CONFIG_WEP`, is left out and the other
-saved networks still join. When wpa_supplicant does not start with `pmf=1` and `sae_check_mfp=1`,
-it starts without them. Only a control socket that stops answering fails the join. On an ST20 a
+refused and offers the network the next suites, `WPA-PSK WPA-PSK-SHA256`, then `WPA-PSK SAE`
+(tried only once PSK-SHA256 is known to be missing, so a build with SAE but without PSK-SHA256
+still offers WPA3), then `WPA-PSK`. A refused combined suite is not put down to SAE or PSK-SHA256
+until the next suites show which one it was. A network the build cannot join at all, such as WEP
+without `CONFIG_WEP`, is left out and the other saved networks still join. When wpa_supplicant
+does not start with `pmf=1` and `sae_check_mfp=1`, it starts without them; only a refusal whose
+output names one of them (its configuration parser prints the line it turned down) is kept for the
+run. Any other failure, such as an interface not up yet, costs PMF for that start alone, and the
+next start offers both again. Only a control socket that stops answering fails the join. On an ST20 a
 stale wpa_supplicant without SAE had refused every join this way and left the speaker on its
 setup network.
 
