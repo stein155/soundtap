@@ -97,6 +97,9 @@ func TestPanelStates(t *testing.T) {
 		{"mute", screen.Mute(Text("Muted")).Pix(fullLevel)},
 		{"preset", screen.Preset(Text("PRESET"), 2, "NPO Radio 2").Pix(fullLevel)},
 		{"holding", screen.Holding(Text("Save as preset"), 2, 0.3).Pix(fullLevel)},
+		{"chord-setup", screen.Holding(Text("Setup mode"), 7, 0.3).Pix(fullLevel)},
+		{"chord-reset", screen.Holding(Text("Factory reset"), 10, 0).Pix(fullLevel)},
+		{"setup-on", Message(Text("Setup mode on"))},
 		{"saved", screen.Saved(Text("Saved as preset")).Pix(fullLevel)},
 		{"pairing", playing(pairing)},
 		{"standby", standby},
@@ -153,8 +156,14 @@ func TestST20WordsFit(t *testing.T) {
 			}
 		}
 
-		if len(table.words) != 50 {
-			t.Errorf("%s has %d words, want all 50", lang, len(table.words))
+		if len(table.words) != 52 {
+			t.Errorf("%s has %d words, want all 52", lang, len(table.words))
+		}
+		// A held combination's count says what it does in the Holding screen's title type.
+		for _, en := range []string{"Setup mode", "Factory reset", "Save as preset"} {
+			if w := screen.Width("j700-9", table.words[en]); w > oled.Width {
+				t.Errorf("%s %q is %.0f px wide, more than the panel", lang, table.words[en], w)
+			}
 		}
 		// The notice sublines run along one line; the messages wrap to three.
 		for _, en := range []string{"Do not unplug", "Network card", "No sound", "Join Wi-Fi", "Then open"} {
@@ -165,7 +174,8 @@ func TestST20WordsFit(t *testing.T) {
 
 		for _, english := range []string{
 			"Updating", "Update failed", "Pairing list cleared", "Can't connect", "Switching to Ethernet",
-			"Switching to Wi-Fi", "Amp fault", "Setup", "Hold to reset", "Hold for setup", "Preset store failed",
+			"Switching to Wi-Fi", "Amp fault", "Setup", "Preset store failed",
+			"Setup mode on", "Setup mode off",
 			"Nothing to store", "Preset empty", "Playback error", "Hold a button", "Hold a button to reset",
 			"Hold a button to restore", "Hold a button to restart", "Hold a button for Wi-Fi",
 			"Hold a button for setup", "Hold a button to unpair", "Hold a button to install", "Hold a button for logs",

@@ -297,7 +297,8 @@ func testChordHandler(fired *firedChords) (*buttonHandler, *fakeActor) {
 	return newButtonHandler(actor, slog.New(slog.DiscardHandler), chords...), actor
 }
 
-// The panel counts the seconds down while a chord is held, and the lamps stop when it ends.
+// The panel counts the seconds down while a chord is held, and the count and the lamps stop
+// when it fires, or when it is let go.
 //
 //nolint:paralleltest // changes package-wide state other tests read: chordCounting, confirmPending, confirmer and more
 func TestChordCountsDownOnThePanel(t *testing.T) {
@@ -306,33 +307,24 @@ func TestChordCountsDownOnThePanel(t *testing.T) {
 
 		handler, _ := testChordHandler(&fired)
 		handler.chords[0].hold = 3 * time.Second
-
-		var shown []string
-
-		handler.feedback = func(s string) { shown = append(shown, s) }
+		show := newFakeChordPanel()
+		handler.chordShow = show
 		handler.Handle(6, true, "PRESET_1")
 		handler.Handle(4, true, "VOLUME_DOWN")
 
-		if !chordCounting.Load() {
-			t.Fatal("the lamps do not show a held chord")
+		if !chordCounting.Load() || show.word != "Factory reset" || show.hold != 3*time.Second {
+			t.Fatalf("held chord: lamps %v, panel %q for %s", chordCounting.Load(), show.word, show.hold)
 		}
 
 		time.Sleep(4 * time.Second)
 		synctest.Wait()
 
-		if chordCounting.Load() {
-			t.Fatal("the lamps still count after the chord fired")
-		}
-
-		if want := []string{"Hold to reset", "Hold to reset 2", "Hold to reset 1"}; !slices.Equal(shown, want) {
-			t.Fatalf("shown = %q, want %q", shown, want)
+		if downs, ups := show.counts(); chordCounting.Load() || downs != 1 || ups != 1 {
+			t.Fatalf("after firing: lamps %v, count started %d, ended %d", chordCounting.Load(), downs, ups)
 		}
 
 		handler.Handle(4, false, "VOLUME_DOWN")
 		handler.Handle(6, false, "PRESET_1")
-
-		shown = nil
-
 		handler.Handle(6, true, "PRESET_1")
 		handler.Handle(4, true, "VOLUME_DOWN")
 		handler.Handle(4, false, "VOLUME_DOWN")
@@ -340,8 +332,8 @@ func TestChordCountsDownOnThePanel(t *testing.T) {
 		time.Sleep(4 * time.Second)
 		synctest.Wait()
 
-		if slices.Contains(shown, "Hold to reset 2") || chordCounting.Load() {
-			t.Fatalf("a released chord kept counting: %q", shown)
+		if downs, ups := show.counts(); chordCounting.Load() || downs != 2 || ups != 2 {
+			t.Fatalf("a released chord kept counting: lamps %v, started %d, ended %d", chordCounting.Load(), downs, ups)
 		}
 	})
 }
@@ -700,28 +692,96 @@ func TestKeyDeviceReaderStopsOnCancel(t *testing.T) {
 	}
 }
 
-// Each recovery combo names itself while it counts down: the pairing combo said
-// "Hold for setup" on the ST20, and the owner let go before it opened.
+// fakeChordPanel records what the panel was told about a chord.
+type fakeChordPanel struct {
+	mu    sync.Mutex
+	word  string
+	hold  time.Duration
+	downs int
+	ups   int
+}
+
+func (f *fakeChordPanel) ChordDown(word string, hold time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.word, f.hold = word, hold
+	f.downs++
+}
+
+func (f *fakeChordPanel) ChordUp() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.ups++
+}
+
+func newFakeChordPanel() *fakeChordPanel {
+	return &fakeChordPanel{mu: sync.Mutex{}, word: "", hold: 0, downs: 0, ups: 0}
+}
+
+// counts are the times the count started and ended.
+func (f *fakeChordPanel) counts() (int, int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.downs, f.ups
+}
+
+// Each recovery combo names itself on the panel, with its hold to count down: the setup
+// combo showed nothing on the ST20 (2026-11-27), and the owner let go at 7 and 9 s.
 //
 //nolint:paralleltest // changes package-wide state other tests read: chordCounting, confirmPending, confirmer and more
-func TestChordFeedbackNamesTheCombo(t *testing.T) {
+func TestChordCountNamesTheCombo(t *testing.T) {
 	for _, testCase := range []struct{ preset, want string }{
-		{"PRESET_1", "Hold to reset"}, {"PRESET_2", "Hold for setup"},
+		{"PRESET_1", "Factory reset"}, {"PRESET_2", "Setup mode"},
 	} {
 		nop := func() {}
 		handler := newButtonHandler(newFakeActor(false), slog.New(slog.DiscardHandler), recoveryChords(nop, nop)...)
-
-		var feedback string
-
-		handler.feedback = func(s string) { feedback = s }
+		show := newFakeChordPanel()
+		handler.chordShow = show
 		handler.Handle(1, true, "VOLUME_DOWN")
 		handler.Handle(2, true, testCase.preset)
-		handler.disarmChord()
 
-		if feedback != testCase.want {
-			t.Errorf("%s + VOLUME_DOWN: feedback = %q, want %q", testCase.preset, feedback, testCase.want)
+		if show.word != testCase.want || show.hold != chordHold || show.downs != 1 {
+			t.Errorf("%s + VOLUME_DOWN: panel = %q for %s (%d), want %q for %s",
+				testCase.preset, show.word, show.hold, show.downs, testCase.want, chordHold)
+		}
+
+		handler.Handle(2, false, testCase.preset) // let go early: the count goes
+
+		if _, ups := show.counts(); ups != 1 {
+			t.Errorf("%s released early: %d ends of the count, want 1", testCase.preset, ups)
 		}
 	}
+}
+
+// A chord held its whole time ends the count before its action runs (which shows its own
+// result), so nothing stays on the panel.
+//
+//nolint:paralleltest // changes package-wide state other tests read: chordCounting, confirmPending, confirmer and more
+func TestChordCountEndsWhenItFires(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		show := newFakeChordPanel()
+
+		var ups atomic.Int64
+
+		ups.Store(-1)
+
+		handler := newButtonHandler(newFakeActor(false), slog.New(slog.DiscardHandler),
+			chord{name: "setup-mode", keys: []string{"PRESET_2", keyVolumeDown}, hold: chordHold, action: func() {
+				_, n := show.counts()
+				ups.Store(int64(n))
+			}})
+		handler.chordShow = show
+		handler.Handle(1, true, "VOLUME_DOWN")
+		handler.Handle(2, true, "PRESET_2")
+		time.Sleep(chordHold + time.Second)
+
+		if downs, _ := show.counts(); downs != 1 || ups.Load() != 1 {
+			t.Fatalf("count started %d times, ended %d times before the action; want 1, 1", downs, ups.Load())
+		}
+	})
 }
 
 // A combo held for seconds and let go early was meant: the key still held must not

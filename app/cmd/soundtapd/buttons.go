@@ -14,7 +14,6 @@ import (
 
 	"github.com/stein155/soundtap/app/internal/hw"
 	"github.com/stein155/soundtap/app/internal/oplock"
-	"github.com/stein155/soundtap/app/internal/panel"
 )
 
 // keySourceToggle is the source key: AUX and Bluetooth on a tap, Bluetooth on a hold.
@@ -132,7 +131,7 @@ type buttonHandler struct {
 	down       map[string]bool // actions currently held, by action name
 	downIndex  map[string]int  // device index for each held action
 	chordTimer *time.Timer
-	chordStop  chan struct{} // ends the panel's count on release
+	chordShow  chordPanel // the ST20 panel's count while a chord is held
 	chordArmed string
 	chordSince time.Time
 	swallow    map[string]bool // keys of an abandoned combo whose release does nothing
@@ -168,11 +167,17 @@ type confirmHeld struct {
 	fired    bool        // the hold ran its full time while held
 }
 
-// What the panel says while a chord is held.
+// What the panel says a held chord does, over the seconds left and a bar (panel.Panel.ChordDown).
 const (
-	holdForSetup = "Hold for setup"
-	holdToReset  = "Hold to reset"
+	chordSetupMode    = "Setup mode"
+	chordFactoryReset = "Factory reset"
 )
+
+// chordPanel is the panel's side of a chord: frontPanel on the speaker, a fake in tests.
+type chordPanel interface {
+	ChordDown(word string, hold time.Duration)
+	ChordUp()
+}
 
 // chordCounting is set while a chord is held and has not fired, so the lamps show it is
 // working: stock has its own lamp state for this, and the holds run for many seconds.
@@ -205,7 +210,7 @@ func newButtonHandler(sp keyActor, log *slog.Logger, chords ...chord) *buttonHan
 		down:       map[string]bool{},
 		downIndex:  map[string]int{},
 		chordTimer: nil,
-		chordStop:  nil,
+		chordShow:  frontPanel,
 		chordArmed: "",
 		chordSince: time.Time{},
 		swallow:    map[string]bool{},
@@ -508,19 +513,19 @@ func (h *buttonHandler) armChord() bool {
 		h.chordArmed, h.chordSince = name, time.Now()
 		h.log.Info("chord held, counting down", "chord", name, "hold", chordDef.hold)
 
-		text := holdForSetup
+		text := chordSetupMode
 		if name == "factory-reset" {
-			text = holdToReset
+			text = chordFactoryReset
 		}
-
-		h.show(text)
+		// The panel counts the seconds down with a bar, above the volume overlay the
+		// chord's volume key brings up, and stays until the chord fires or is let go.
+		show := h.chordShow
+		show.ChordDown(text, chordDef.hold)
 		chordCounting.Store(true)
-
-		h.chordStop = make(chan struct{})
-		go h.countDown(text, int(chordDef.hold/time.Second)-1, h.chordStop)
 
 		h.chordTimer = time.AfterFunc(chordDef.hold, func() {
 			chordCounting.Store(false)
+			show.ChordUp()
 			h.log.Warn("chord fired", "chord", name)
 			action()
 		})
@@ -531,30 +536,12 @@ func (h *buttonHandler) armChord() bool {
 	return false
 }
 
-// countDown shows the seconds left on the panel while a chord is held, as stock does. A panel
-// message lasts about two seconds, so without it the panel went quiet long before the chord
-// fired. Ends by itself when the time is up, or when stop closes on release.
-func (h *buttonHandler) countDown(text string, left int, stop <-chan struct{}) {
-	for ; left > 0; left-- {
-		select {
-		case <-time.After(time.Second):
-			h.show(panel.Text(text) + " " + strconv.Itoa(left))
-		case <-stop:
-			return
-		}
-	}
-}
-
 func (h *buttonHandler) disarmChord() bool {
-	if h.chordStop != nil {
-		close(h.chordStop)
-		h.chordStop = nil
-	}
-
 	chordCounting.Store(false)
 
 	canceled := h.chordTimer != nil && h.chordTimer.Stop()
 	if canceled {
+		h.chordShow.ChordUp() // a chord that fired has ended its count itself
 		h.log.Info("chord released early", "chord", h.chordArmed)
 	}
 
