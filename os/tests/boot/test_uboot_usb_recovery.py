@@ -1843,10 +1843,8 @@ def stu_file(modules: list[tuple[str, bytes]], magic: bytes = b"BOSE", tag: str 
         else:
             h[4:8] = magic
         h[0x18:0x18 + len(name)] = name.encode()
-        if versions is not None:
-            version = versions.get(name, "").encode()
-        else:
-            version = b"27.0.6.46330.5043500" + (tag.encode() if name == "ubi.img" else b"")
+        default = b"27.0.6.46330.5043500" + (tag.encode() if name == "ubi.img" else b"")
+        version = versions.get(name, "").encode() if versions is not None else default
         h[0xa8:0xa8 + len(version)] = version
         h[0x98:0x9c] = len(payload).to_bytes(4, "big")
         h[0x12c:0x130] = zlib.crc32(payload).to_bytes(4, "big")
