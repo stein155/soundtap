@@ -36,10 +36,33 @@ type Client struct {
 	// Diagnostics. A client that dropped out stays in the list as connected:false
 	// rather than disappearing: a speaker that silently vanishes from the group looks
 	// like a bug in the app, while "offline, last seen 2 minutes ago" is a fact the
-	// user can act on. lastSeenAgo is seconds and only meaningful when offline.
+	// user can act on. lastSeenAgo is seconds and only meaningful when offline. After
+	// forgetAfter offline the row goes (dropForgotten).
 	Connected   bool `json:"connected"`
 	Latency     int  `json:"latency"`
 	LastSeenAgo int  `json:"lastSeenAgo,omitempty"`
+	// Leader and LeaderDeviceID are set on this speaker's own row (current) while it
+	// follows another speaker: the address it follows and that speaker's device id. The
+	// list is this speaker's own snapserver, the group it leads; a follower's group is
+	// the list its leader answers. A follower that showed its leader's rows would read, to
+	// every controller that takes a speaker's connected rows as its followers, as the
+	// leader of its own leader.
+	Leader         string `json:"leader,omitempty"`
+	LeaderDeviceID string `json:"leaderDeviceId,omitempty"`
+}
+
+// MarkLeader sets Leader and LeaderDeviceID on the current row of rows; an empty host
+// leaves rows as they are.
+func MarkLeader(rows []Client, host, deviceID string) {
+	if host == "" {
+		return
+	}
+
+	for i := range rows {
+		if rows[i].Current {
+			rows[i].Leader, rows[i].LeaderDeviceID = host, deviceID
+		}
+	}
 }
 
 // Clients lists every client of status, with this speaker (localID) first when snapserver
@@ -78,6 +101,7 @@ func Clients(
 			ID: localID, DeviceID: DeviceIDFor(localID),
 			Name: name, Host: "", IP: "", Percent: localVolume, Muted: false,
 			GroupID: localGroup, Current: true, Member: true, Connected: true, Latency: 0, LastSeenAgo: 0,
+			Leader: "", LeaderDeviceID: "",
 		}}, rows...)
 	}
 
@@ -125,6 +149,7 @@ func clientRow(
 		GroupID: groupID, Current: client.ID == localID,
 		Member:    localGroup != "" && groupID == localGroup,
 		Connected: connected, Latency: client.Config.Latency, LastSeenAgo: ago,
+		Leader: "", LeaderDeviceID: "",
 	}
 }
 
@@ -164,11 +189,16 @@ func dropGhosts(rows []Client) []Client {
 }
 
 // forgetAfter is how long a speaker may stay offline before its row is dropped as gone.
-const forgetAfter = 7 * 24 * time.Hour
+// An hour keeps a speaker that is being power-cycled or moved in the list, offline with its
+// last-seen time; one gone for days (the bench on 2026-11-28 showed rows last seen 29 h and
+// 3.8 days ago as members) has left the group, or follows another speaker by now.
+const forgetAfter = time.Hour
 
 // dropForgotten removes offline clients that are gone for good: ones offline longer than
 // forgetAfter. snapserver keeps every client it ever saw in server.json, so without this
-// the list grows with each replaced speaker.
+// the list grows with each replaced speaker. Only the row goes: snapserver keeps the
+// client's record, so a follower that comes back after a group standby returns with the
+// membership, mute and latency it had.
 func dropForgotten(rows []Client) []Client {
 	kept := rows[:0]
 	for i := range rows {

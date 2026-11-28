@@ -1242,7 +1242,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Group state */
+        /**
+         * Group state
+         * @description The clients of this speaker's own snapserver: the group it leads. A speaker that follows another names it in leader on its own row; ask that speaker for the group it plays in.
+         */
         get: {
             parameters: {
                 query?: never;
@@ -5021,8 +5024,12 @@ export interface components {
             connected: boolean;
             /** @description Playback offset in ms. */
             latency: number;
-            /** @description Seconds since an offline client was last seen. */
+            /** @description Seconds since an offline client was last seen. A client offline for more than an hour is left out of the list. */
             lastSeenAgo?: number;
+            /** @description On this speaker's own row (current) while it follows another speaker: the address it follows. The list is this speaker's own group; a follower's group is the list its leader answers. */
+            leader?: string;
+            /** @description The device id of the speaker named in leader, when known. */
+            leaderDeviceId?: string;
         };
         Device: {
             capabilities: string[];

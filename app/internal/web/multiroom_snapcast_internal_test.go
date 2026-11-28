@@ -257,6 +257,51 @@ func TestMultiroomReportsLatencyAndLastSeen(t *testing.T) {
 	}
 }
 
+// A follower's list is its own snapserver's; its own row names the leader whose list is
+// the group it plays in, and no other row does (the Pi bench, 2026-11-28).
+func TestMultiroomFollowerNamesItsLeader(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	err := multiroom.WriteFollow(filepath.Join(dir, "multiroom-server"), "192.0.2.10", "SERIAL0000000000A")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv := new(Server)
+	srv.log = slog.New(slog.DiscardHandler)
+	srv.ReconfigureForTest(func(o *Options) {
+		o.Multiroom.Backend, o.Multiroom.LocalID = &fakeMultiroom{
+			statuses: []snapcast.Status{multiroomStatus()},
+			volumeID: "",
+			volume:   snapcast.Volume{Percent: 0, Muted: false},
+			groupID:  "",
+			clients:  nil,
+			latency:  nil,
+		}, "local"
+	})
+	srv.homeDir = dir
+
+	var rows []multiroom.Client
+
+	err = json.Unmarshal(multiroomRequest(t, srv.Handler(), http.MethodGet, "/api/multiroom", "").Body.Bytes(), &rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, row := range rows {
+		want, wantID := "", ""
+		if row.Current {
+			want, wantID = "192.0.2.10", "SERIAL0000000000A"
+		}
+
+		if row.Leader != want || row.LeaderDeviceID != wantID {
+			t.Errorf("row %s: leader %q / %q, want %q / %q", row.ID, row.Leader, row.LeaderDeviceID, want, wantID)
+		}
+	}
+}
+
 // Following another speaker is one setting and one restart. The wrapper the boot script
 // supervises reads that setting, so what this endpoint has to get right is the file, the
 // kick, and refusing anything that would not survive being pasted onto a command line.

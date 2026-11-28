@@ -43,7 +43,13 @@ func (s *Server) getMultiroom(w http.ResponseWriter, r *http.Request) {
 		name, volume = current.Name, current.Audio.Volume
 	}
 
-	writeJSON(w, http.StatusOK, multiroom.Clients(status, s.snapclientID, names, name, volume))
+	rows := multiroom.Clients(status, s.snapclientID, names, name, volume)
+	// The list is this speaker's own group; a follower names the leader whose list is
+	// the group it plays in.
+	leader, leaderID := s.Follow()
+	multiroom.MarkLeader(rows, leader, leaderID)
+
+	writeJSON(w, http.StatusOK, rows)
 }
 
 func (s *Server) putMultiroomVolume(w http.ResponseWriter, r *http.Request) {

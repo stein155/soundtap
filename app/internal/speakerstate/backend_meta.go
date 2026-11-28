@@ -203,11 +203,14 @@ func (s *Speaker) applySourceLocked(source, location, name, art string) {
 	s.startAt = 0
 
 	prev := s.source
-	if prev == sourceStandby {
+	next := orDefault(source, sourceTuneIn)
+	// Joining a group is not a user wake: a follower keeps its own volume (ADR 0013),
+	// where the wake floor raised a follower left at 3 to 10 on every follow.
+	if prev == sourceStandby && next != sourceMultiroom {
 		s.boundWakeVolumeLocked()
 	}
 
-	s.source = orDefault(source, sourceTuneIn)
+	s.source = next
 	if fn := s.onBluetoothSelect; fn != nil && s.source == sourceBT && prev != sourceBT {
 		safego.Go("speakerstate.bluetoothSelect", func() { fn() })
 	}

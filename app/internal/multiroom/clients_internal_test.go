@@ -12,6 +12,7 @@ func row(id, deviceID, host string, connected bool, lastSeenAgo int) Client {
 	return Client{
 		ID: id, Name: "", Host: host, IP: "", Percent: 0, Muted: false, GroupID: "",
 		DeviceID: deviceID, Current: false, Member: false, Connected: connected, Latency: 0, LastSeenAgo: lastSeenAgo,
+		Leader: "", LeaderDeviceID: "",
 	}
 }
 
@@ -91,14 +92,15 @@ func TestGhostWithSameHostIsDropped(t *testing.T) {
 	}
 }
 
-// snapserver never forgets a client. Speakers gone for over a week must not stay in
-// /api/multiroom; a speaker that is merely offline for a while must.
+// snapserver never forgets a client. Speakers gone for longer than an hour must not stay in
+// /api/multiroom (the bench on 2026-11-28 showed members last seen 29 h ago); a speaker
+// that is merely offline for a few minutes must.
 func TestForgottenClientsAreDropped(t *testing.T) {
 	t.Parallel()
 
 	rows := []Client{
-		row("soundtap-SN2", "SN2", "", false, 8*24*3600),
-		row("soundtap-SN3", "SN3", "", false, 3600),
+		row("soundtap-SN2", "SN2", "", false, 29*3600),
+		row("soundtap-SN3", "SN3", "", false, 10*60),
 		row("soundtap-SN4", "SN4", "", true, 0),
 		row("soundtap-SN5", "SN5", "", false, 0),
 		row("soundtap-SN6", "SN6", "", true, 0),
@@ -107,5 +109,46 @@ func TestForgottenClientsAreDropped(t *testing.T) {
 	got := dropForgotten(rows)
 	if len(got) != 4 || got[0].ID != "soundtap-SN3" || got[3].ID != "soundtap-SN6" {
 		t.Fatalf("kept %+v, want SN3, SN4, SN5, SN6", got)
+	}
+}
+
+// A row offline just past forgetAfter goes; one just inside it stays.
+func TestForgetAfterIsTheBound(t *testing.T) {
+	t.Parallel()
+
+	limit := int(forgetAfter.Seconds())
+	rows := []Client{
+		row("soundtap-SN2", "SN2", "", false, limit+1),
+		row("soundtap-SN3", "SN3", "", false, limit),
+	}
+
+	got := dropForgotten(rows)
+	if len(got) != 1 || got[0].ID != "soundtap-SN3" {
+		t.Fatalf("kept %+v, want only SN3", got)
+	}
+}
+
+// A follower's own row names the leader it follows; no other row does, and a speaker that
+// follows nobody names none.
+func TestMarkLeaderSetsTheCurrentRow(t *testing.T) {
+	t.Parallel()
+
+	rows := []Client{row("soundtap-SN1", "SN1", "", true, 0), row("soundtap-SN2", "SN2", "", false, 60)}
+	rows[0].Current = true
+
+	MarkLeader(rows, "", "")
+
+	if rows[0].Leader != "" || rows[0].LeaderDeviceID != "" {
+		t.Fatalf("not following, yet leader set: %+v", rows[0])
+	}
+
+	MarkLeader(rows, "192.0.2.10", "SN9")
+
+	if rows[0].Leader != "192.0.2.10" || rows[0].LeaderDeviceID != "SN9" {
+		t.Fatalf("current row = %+v, want leader 192.0.2.10 / SN9", rows[0])
+	}
+
+	if rows[1].Leader != "" || rows[1].LeaderDeviceID != "" {
+		t.Fatalf("another row got the leader: %+v", rows[1])
 	}
 }

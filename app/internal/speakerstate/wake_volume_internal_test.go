@@ -159,3 +159,52 @@ func TestControllerRestartKeepsTheVolume(t *testing.T) {
 		t.Fatalf("a later wake left the volume at %d, want 10", got)
 	}
 }
+
+// Following a leader out of standby is not a user wake: the follower keeps its own volume,
+// below the floor or above the ceiling (ADR 0013). The owner's wake later is still bounded.
+func TestFollowFromStandbyKeepsTheVolume(t *testing.T) {
+	t.Parallel()
+
+	for _, before := range []int{3, 90} {
+		spk := New()
+		spk.SetWakeVolumeMin(10)
+		spk.SetWakeVolumeMax(70)
+		selectX(t, spk)
+
+		err := spk.SetVolume(bg(), before)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// The first follow, then the group's standby and the leader playing again.
+		for range 2 {
+			setSource(t, spk, "STANDBY")
+			setSource(t, spk, "MULTIROOM")
+
+			if np := now(t, spk); np.Source != "MULTIROOM" {
+				t.Fatalf("source = %q, want MULTIROOM", np.Source)
+			}
+
+			if got, _ := spk.Volume(bg()); got != before {
+				t.Errorf("follow from standby moved volume %d to %d", before, got)
+			}
+		}
+
+		spk.ApplyKey("POWER")
+		spk.ApplyKey("POWER")
+
+		want := min(max(before, 10), 70)
+		if got, _ := spk.Volume(bg()); got != want {
+			t.Errorf("POWER wake left volume %d at %d, want %d", before, got, want)
+		}
+	}
+}
+
+func setSource(t *testing.T, spk *Speaker, source string) {
+	t.Helper()
+
+	err := spk.SetSource(bg(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
