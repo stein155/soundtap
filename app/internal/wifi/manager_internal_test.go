@@ -530,6 +530,21 @@ func TestJoinSavedNetwork(t *testing.T) {
 	if !bench.sys.called("iw dev wlan0 set power_save off") || !bench.sys.called("iw reg set 00") {
 		t.Errorf("station setup missing: %q", bench.sys.Calls())
 	}
+	// power save goes off again, and is read back, once the station has associated: not only
+	// before wpa_supplicant starts (a WiLink in power save answers mDNS only at its DTIM wake)
+	calls := bench.sys.Calls()
+	started := slices.IndexFunc(calls, func(c string) bool { return strings.HasPrefix(c, "wpa_supplicant ") })
+	after := 0
+
+	for _, c := range calls[started+1:] {
+		if c == "iw dev wlan0 set power_save off" {
+			after++
+		}
+	}
+
+	if started < 0 || after == 0 || !bench.sys.called("iw dev wlan0 get power_save") {
+		t.Errorf("power save not set off and read back after the association: %q", calls)
+	}
 
 	if bench.read(bench.conf+".good") != bench.read(bench.conf) {
 		t.Error("wifi.conf.good is not the network that joined")

@@ -5123,6 +5123,7 @@ export interface components {
             ip?: string;
             /** @description RSSI. */
             dbm?: number;
+            /** @description Wi-Fi transmit rate in Mb/s. Optional: absent on Ethernet and wherever the radio reports no rate, which is always the case on the ST20, whose BCO network card reports signal and channel but no rate. */
             linkMbps?: number;
             /** @description Channel frequency. */
             mhz?: number;

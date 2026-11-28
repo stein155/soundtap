@@ -268,6 +268,8 @@ type fakeSys struct {
 	// busy is how many wpa_supplicant starts still fail for a reason of the moment (the
 	// interface not up yet), whatever the configuration
 	busy int
+	// powerSave is what `iw dev wlan0 get power_save` prints ("": off, as a set to off leaves it)
+	powerSave string
 }
 
 func newFakeSys(t *testing.T, paths *Paths) *fakeSys {
@@ -278,6 +280,7 @@ func newFakeSys(t *testing.T, paths *Paths) *fakeSys {
 		sup: nil, where: map[string]string{}, sec: map[string]string{}, scan: nil, dhcp: false, noIP: false,
 		apMode: true, fail: map[string]bool{}, iwScan: "", station: "", keys: map[string]string{}, env: "",
 		servers: map[int]*wpactrltest.Server{}, exits: map[int]chan struct{}{}, refuse: nil, badConf: "", busy: 0,
+		powerSave: "",
 	}
 }
 
@@ -340,6 +343,15 @@ func (s *fakeSys) Run(_ context.Context, name string, args ...string) ([]byte, e
 		}
 
 		return []byte("Wiphy phy0\n\tSupported interface modes:\n\t\t * managed\n"), nil
+	case strings.HasSuffix(line, "get power_save"):
+		s.mu.Lock()
+		defer s.mu.Unlock()
+
+		if s.powerSave == "" {
+			return []byte("Power save: off\n"), nil
+		}
+
+		return []byte(s.powerSave), nil
 	case strings.HasSuffix(line, " scan"):
 		return []byte(s.iwScan), nil
 	case strings.HasSuffix(line, "station dump"):

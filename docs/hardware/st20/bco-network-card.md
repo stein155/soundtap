@@ -23,7 +23,8 @@ observation on one board, not approval of a later image: release evidence belong
 11. [WEP and TKIP: stock's engine modes, and where SoundTap runs them](#wep-and-tkip-stocks-engine-modes-and-where-soundtap-runs-them)
 12. [WPA3 and PMF](#wpa3-and-pmf)
 13. [Medium access and rate adaptation](#medium-access-and-rate-adaptation)
-14. [Measurements on the bench ST20](#measurements-on-the-bench-st20)
+14. [Throughput](#throughput)
+15. [Measurements on the bench ST20](#measurements-on-the-bench-st20)
 
 ## The link
 
@@ -49,9 +50,11 @@ index), `mwifiex` (BSS index), `rndis_wlan` (usbnet minidriver with a cfg80211 `
   Wi-Fi MAC (PersParam `MAC0`, reported in `HELLO`), so the access point sees one station. `scan`
   maps to SCAN, `connect` to SET_PROFILE with the handshake offloaded
   (`NL80211_EXT_FEATURE_4WAY_HANDSHAKE_STA_PSK`), `disconnect` to FORGET and station info to
-  STATUS; STATUS is polled while connected and a drop reports a disconnect, at once when the app
-  sends a [link event](#link-events-roaming-and-the-regulatory-domain). `eth0` is the wired
-  port on channel 2. The usbnet device itself is the transport (`bcolink0`, no addresses); the
+  STATUS (the signal only: STATUS carries no transmit rate, so `GET /api/settings` has no
+  `network.linkMbps` on an ST20, which the API documents as optional); STATUS is polled while
+  connected and a drop reports a disconnect, at once when the app sends a
+  [link event](#link-events-roaming-and-the-regulatory-domain). `eth0` is the wired port on
+  channel 2. The usbnet device itself is the transport (`bcolink0`, no addresses); the
   driver brings it up with its children.
 - On the BCO, channel 1 goes to the Wi-Fi station (Ethernet ↔ 802.11 data with the device MAC),
   channel 2 to the GEM (`bco/app/src/wired.c`), channel 0 to the management server
@@ -658,6 +661,65 @@ again from the core's main loop, up to four times (`DMA_TRIES`). Then a staged f
 failed and a host buffer goes back empty (length 0, which the app frees unread). Before, the failed
 copy was dropped with what it carried: a staged frame held the one transmit slot until the app
 rebooted the core for a wedged transmitter, and each lost host buffer left one fewer for receiving.
+
+## Throughput
+
+What the speaker sends over Wi-Fi (a web UI download, a Snapcast leader's stream, an upload) is
+capped by the BCO's radio transmit path, not by the SCM, the USB link or flow control. Received
+traffic shares the same core and air.
+
+| Measured | Wi-Fi up from the speaker |
+|---|---|
+| stock firmware, bench ST20 (2026-10-22) | 4 MB in 4-5 s, 0.8-1.0 MB/s |
+| SoundTap with the core's cipher engine and the DCF backoff, bench ST20 | 4 MB in 5-6 s, 0.7-0.8 MB/s |
+| 0.1.0-alpha.8, Pi bench run (2026-11-28), 2.4 GHz at -66 dBm | web UI at about 0.8 MB/s; ST10, WLA and ST300 2-4 MB/s on the same bench |
+
+The ST20 sends at about stock's rate. Why it stays there, from the code:
+
+1. **One frame on the air at a time, stop-and-wait.** The core stages one host frame into its
+   single transmit packet (`tx_pkt`, `tx_busy` in `bco/wild/fw/src/xport.c`), waits for the access
+   point's ACK, and only then takes the next record from the ring. There is no second frame staged
+   behind the one in flight, no burst within a TXOP and no block acknowledgement.
+2. **802.11g rates only.** The station announces no HT and no WMM
+   ([medium access](#medium-access-and-rate-adaptation)): no MCS rates, no A-MPDU or A-MSDU.
+   Data goes at 54, 36 or 24 Mb/s on the core's ladder (`rate_cls`), and two frames in a row
+   that needed a retry step it down. The WL1835 on the other models sends 802.11n with
+   aggregation.
+3. **Overhead per frame.** At 0.8 MB/s a 1500-byte frame leaves about every 1.8 ms. Its airtime at
+   54 Mb/s with the DIFS, an average backoff at CWmin, the SIFS and the ACK is about 0.4 ms
+   (computed, not measured); the rest is the host DMA from the app's SRAM into `tx_pkt`, the CCMP
+   pass on the cipher engine, the ACK picked up by `mac.c` and handled in the core's main loop,
+   the ring handoff to the app, and retries (about 13 % of first attempts, each at least
+   `ACK_LATE` plus a backoff; [retries](#retries-and-the-dcf-backoff)). The split between these
+   was not measured.
+4. **Seven transmit buffers.** The app has `WIFI_TX_BUFS` 7 in the 64 KB SRAM the core reaches
+   ([the SRAM budget](#the-sram-budget)); one is kept for its own management frames.
+
+What `/api/health`'s `bco.flowStops` means here: a count of the times the driver stopped `wlan0`'s
+queue because the BCO had no free transmit buffer ([flow control](#flow-control-and-the-counters)).
+A rising count under a download is the SCM being faster than the radio and the frames waiting in
+`wlan0`'s qdisc instead of being dropped on the BCO; it is flow control working, not a fault. The
+Pi run's 269 is a count since the BCO app started, not per test. The 8-client load roughly
+doubled the JS asset's median time (311 ms against about 150 ms), which is what one shared
+0.8 MB/s link gives eight clients.
+
+Changes on the SCM side that do not raise the cap, and why:
+
+- A longer queue or more frames in flight in `soundtap_bco`: the radio, not the driver, is the
+  queue. The BCO holds at most its free buffers; more frames sent would be dropped there, as before
+  flow control.
+- Batching frames into one USB transfer: the link carries one message per transfer, a change on
+  both sides for a link that is not the bottleneck (USB 2.0 high speed against under 1 MB/s).
+- Fewer copies per frame on the SCM: `skb_cow_head` and one URB per frame cost the SCM little at
+  about 550 frames a second.
+- TCP Small Queues: a frame counts against its socket until its USB transfer completes, so TSQ sees
+  the BCO's buffers as sent and holds each flow's backlog in `wlan0`'s qdisc, where the credit lets
+  it go. It does not throttle below the radio's rate.
+
+What would raise it, all on the BCO and each needing its own measurement on hardware before it
+ships: staging the next frame while the current one waits for its ACK (a second `tx_pkt` in the
+core), HT rates and WMM (QoS data with per-TID sequence numbers and the engine's QoS CCMP measured
+first), and A-MPDU with block acknowledgement. None is a cheap or safe change; none is made here.
 
 ## Measurements on the bench ST20
 

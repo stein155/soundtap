@@ -78,6 +78,44 @@ func TestSchemaCheckCatchesRename(t *testing.T) {
 	}
 }
 
+// An ST20 on Wi-Fi has a signal and a channel but no transmit rate (its BCO reports none), so
+// its network has no linkMbps; an Ethernet speaker has none of the three. Both are valid
+// NetworkInfo: only type is required, and linkMbps, when present, is an integer.
+func TestNetworkInfoWithoutLinkRateMatchesTheSchema(t *testing.T) {
+	t.Parallel()
+
+	spec := loadSpec(t)
+	ref := map[string]any{"$ref": "#/components/schemas/NetworkInfo"}
+
+	for _, body := range []string{
+		`{"type":"wifi","ssid":"Keuken","signal":"good","ip":"192.0.2.20","dbm":-66,"mhz":2437}`,
+		`{"type":"ethernet","ip":"192.0.2.20"}`,
+		`{"type":"wifi","ssid":"Keuken","signal":"good","dbm":-55,"linkMbps":72,"mhz":2437}`,
+	} {
+		var doc any
+
+		err := json.Unmarshal([]byte(body), &doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if got := checkSchema(spec, ref, doc, "NetworkInfo"); len(got) != 0 {
+			t.Errorf("%s: %q", body, got)
+		}
+	}
+
+	var doc any
+
+	err := json.Unmarshal([]byte(`{"type":"wifi","linkMbps":"54"}`), &doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := checkSchema(spec, ref, doc, "NetworkInfo"); len(got) == 0 {
+		t.Error("a linkMbps that is not an integer passed")
+	}
+}
+
 func loadSpec(t *testing.T) map[string]any {
 	t.Helper()
 

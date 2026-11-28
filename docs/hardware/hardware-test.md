@@ -336,7 +336,11 @@ power cycle is the last resort when the HTTP server itself is gone.
   is up, keeps the network: wpa_supplicant (or hostapd) keeps its pid and the next soundtapd logs
   `wifi already joined; keeping it` (or `setup AP already up; keeping it`). After a join the log
   says `clock synchronized after the Wi-Fi join`. On the WiLink models `dmesg` shows the board
-  configuration of this speaker's region loaded, without `falling back to default config`.
+  configuration of this speaker's region loaded, without `falling back to default config`;
+  after a join, after a roam and after a kept network `iw dev wlan0 get power_save` says `off`,
+  the log has no `Wi-Fi power save stays on`, and a direct mDNS query for the speaker's A and
+  AAAA records (sent from a LAN host to 224.0.0.251) is answered within about 20 ms, as on the
+  ST10 and ST20.
 - **Reboot persistence** — presets, settings, Wi-Fi and source recovery survive a reboot.
 - **Security** — port 22 is closed; blank-password root login is impossible from LAN and setup AP.
   Production: the web UI and AirPlay answer from the speaker's own subnet and on the setup AP,

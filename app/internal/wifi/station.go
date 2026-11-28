@@ -181,13 +181,8 @@ func (m *Manager) join(ctx context.Context, nets []network) (*session, joinResul
 	if err != nil {
 		m.log.Warn("could not bring the station up", "iface", sta, "err", err)
 	}
-	// Stock keeps the radio awake. With power save on, the wl18xx answers only at its DTIM
-	// wake: sparse pings averaged 68 ms (up to 246 ms) against 15 ms with it off. mac80211
-	// keeps the setting across reassociations. The ST20's BCO has no such knob.
-	_, err = m.runCmd(ctx, "iw", "dev", sta, "set", "power_save", "off")
-	if err != nil {
-		m.log.Debug("power save left as it was", "iface", sta, "err", err)
-	}
+
+	m.keepAwake(ctx, "join")
 
 	err = m.startSupplicant(ctx)
 	if err != nil {
@@ -651,6 +646,7 @@ func (m *Manager) events(ctx context.Context, sess *session, d time.Duration) bo
 func (m *Manager) event(ctx context.Context, sess *session, event wpactrl.Event) {
 	switch event.Name {
 	case "CTRL-EVENT-CONNECTED":
+		m.keepAwake(ctx, "associated")
 		m.renewLease(ctx, sess)
 	case "CTRL-EVENT-SSID-TEMP-DISABLED":
 		if reason, _ := event.Field("reason"); reason == "WRONG_KEY" {
@@ -751,6 +747,72 @@ func (m *Manager) joined(ctx context.Context, sess *session, confPath string, co
 
 	if m.cfg.Joined != nil {
 		m.cfg.Joined()
+	}
+}
+
+// powerSaveState is what `iw dev <sta> get power_save` says.
+type powerSaveState int
+
+const (
+	powerSaveUnknown powerSaveState = iota // no answer: the driver has no power save (the ST20's BCO)
+	powerSaveOff
+	powerSaveOn
+)
+
+// parsePowerSave reads `iw dev <sta> get power_save`: "Power save: on" or "Power save: off".
+func parsePowerSave(out []byte) powerSaveState {
+	for line := range strings.SplitSeq(string(out), "\n") {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), ":")
+		if !ok || !strings.EqualFold(strings.TrimSpace(key), "power save") {
+			continue
+		}
+
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "off":
+			return powerSaveOff
+		case "on":
+			return powerSaveOn
+		default:
+			return powerSaveUnknown
+		}
+	}
+
+	return powerSaveUnknown
+}
+
+// keepAwakeTries is how often keepAwake sets power save off before it warns that it stays on.
+const keepAwakeTries = 2
+
+// keepAwake turns the station's power save off and reads it back: before the join and again on
+// every association (when says which). With power save on, the wl18xx wakes only for its DTIM
+// beacon, so a sparse frame to the speaker waits for it: pings averaged 68 ms (up to 246 ms)
+// against 15 ms with it off, and an mDNS query waits the same way although avahi answers the
+// speaker's unique A and AAAA records at once. Set once before wpa_supplicant started, never read
+// back and with a failure only a debug line, a station that came out of an association in power
+// save stayed there unseen. An "on" gets a second try; one that stays on is a warning. The ST20's
+// BCO has no power save and refuses both requests: that stays a debug line.
+func (m *Manager) keepAwake(ctx context.Context, when string) {
+	sta := m.cfg.STA
+
+	for try := 1; ; try++ {
+		_, setErr := m.runCmd(ctx, "iw", "dev", sta, "set", "power_save", "off")
+		out, getErr := m.runCmd(ctx, "iw", "dev", sta, "get", "power_save")
+
+		switch state := parsePowerSave(out); {
+		case state == powerSaveOff:
+			return
+		case state == powerSaveOn && try < keepAwakeTries:
+			continue
+		case state == powerSaveOn:
+			m.log.Warn("Wi-Fi power save stays on: frames to the speaker wait for its DTIM wake",
+				"iface", sta, "when", when, "err", setErr)
+
+			return
+		default:
+			m.log.Debug("power save left as it was", "iface", sta, "when", when, "set_err", setErr, "get_err", getErr)
+
+			return
+		}
 	}
 }
 

@@ -168,7 +168,8 @@ type Network struct {
 	SSID   string `json:"ssid,omitempty"`   // Wi-Fi network name
 	Signal string `json:"signal,omitempty"` // "excellent" | "good" | "fair" | "poor"
 	IP     string `json:"ip,omitempty"`     // current LAN address
-	// The Wi-Fi link in detail, as stock's network page showed it; absent when unknown.
+	// The Wi-Fi link in detail, as stock's network page showed it; absent when unknown. The
+	// ST20's BCO reports no transmit rate, so it never has LinkMbps (optional in the API).
 	Dbm      int `json:"dbm,omitempty"`      // RSSI
 	LinkMbps int `json:"linkMbps,omitempty"` // link speed
 	MHz      int `json:"mhz,omitempty"`      // channel frequency: 2.4, 5 or 6 GHz band

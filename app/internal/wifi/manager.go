@@ -386,6 +386,7 @@ func (m *Manager) adoptStation(ctx context.Context) (adoption, bool) {
 	}
 
 	m.log.Info("wifi already joined; keeping it", "ssid", status["ssid"])
+	m.keepAwake(ctx, "adopted")
 	m.lastSSID, m.hasLast = status["ssid"], true
 	m.ensureRegulatory(ctx)
 	m.problem("")

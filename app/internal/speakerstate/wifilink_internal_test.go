@@ -5,9 +5,11 @@ package speakerstate
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stein155/soundtap/app/internal/wpactrl/wpactrltest"
@@ -48,6 +50,45 @@ func TestNetworkInfoReadsTheLiveLink(t *testing.T) {
 	if network.SSID != "Home Net" || network.Dbm != -55 || network.LinkMbps != 72 || network.MHz != 2437 ||
 		network.Signal == "" {
 		t.Fatalf("network = %+v", network)
+	}
+}
+
+// The ST20's wlan0 is the soundtap_bco driver's: its station info carries the signal and
+// wpa_supplicant knows the channel, but the BCO reports no transmit rate, so SIGNAL_POLL has no
+// LINKSPEED. The rate is then unknown and left out of the JSON (linkMbps is optional in the API,
+// ADR 0108), while the signal and channel stay.
+func TestNetworkInfoWithoutLinkRateLeavesItOut(t *testing.T) {
+	t.Setenv("SOUNDTAP_WIFI_MODE", "scm")
+	fakeSupplicant(t, func(cmd string) string {
+		switch cmd {
+		case "STATUS":
+			return "bssid=aa:bb:cc:dd:ee:ff\nssid=Keuken\nid=0\nmode=station\nwpa_state=COMPLETED\n"
+		case "SIGNAL_POLL":
+			return "RSSI=-66\nNOISE=9999\nFREQUENCY=2437\n"
+		}
+
+		return ""
+	})
+
+	sp := New()
+	sp.IP = "192.168.1.42"
+
+	network, err := sp.NetworkInfo(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if network.Dbm != -66 || network.MHz != 2437 || network.LinkMbps != 0 || network.Signal == "" {
+		t.Fatalf("network = %+v", network)
+	}
+
+	body, err := json.Marshal(network)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(string(body), "linkMbps") || !strings.Contains(string(body), `"dbm":-66`) {
+		t.Fatalf("JSON = %s; want dbm and no linkMbps", body)
 	}
 }
 
