@@ -44,12 +44,32 @@ export const Meta = styled.p`
   color: var(--ink-3);
 `;
 
-export const Notes = styled.p`
+export const Notes = styled.div`
   margin: 10px 0 0;
   font-size: 13px;
   line-height: 1.5;
   color: var(--ink-2);
-  white-space: pre-wrap;
+
+  p {
+    margin: 6px 0 0;
+  }
+`;
+
+// A heading inside the notes ("Changes", "Fixes").
+export const NotesHeading = styled.h4`
+  margin: 12px 0 2px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+`;
+
+export const NotesList = styled.ul`
+  margin: 2px 0 0;
+  padding-left: 18px;
+
+  li + li {
+    margin-top: 2px;
+  }
 `;
 
 // The card's buttons and what they report, full width under the rest.

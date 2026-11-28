@@ -4,7 +4,8 @@
 import { useId, useState, type ReactNode, type ReactElement } from 'react';
 import { TextButton } from '../../../atoms/TextButton';
 import { useI18n } from '../../../../lib/i18n';
-import { Actions, Card, Kicker, Meta, Notes, Title } from './styled';
+import { ReleaseNotes } from './ReleaseNotes';
+import { Actions, Card, Kicker, Meta, Title } from './styled';
 
 // Whether a slot holds something to draw: what is not there, false or an empty line is not.
 const shows = (node: ReactNode): boolean =>
@@ -45,7 +46,7 @@ export function VersionCard({
           {t('whatsNew')}
         </TextButton>
       )}
-      {notes && showNotes && <Notes id={notesId}>{notes}</Notes>}
+      {notes && showNotes && <ReleaseNotes id={notesId} md={notes} />}
       {shows(children) && <Actions>{children}</Actions>}
     </Card>
   );
