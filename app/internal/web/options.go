@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/stein155/soundtap/app/internal/btctl"
@@ -127,7 +126,7 @@ func New(opts Options) *Server { //nolint:gocritic // hugeParam: cmd/soundtapd p
 	srv.np, srv.log, srv.version, srv.homeDir = opts.NowPlaying, opts.Log, opts.Update.Version(), opts.Home
 	srv.favoritesStore = favorites.Open(filepath.Join(opts.Home, "favorites.json"))
 	srv.startedAt = time.Now()
-	srv.ui = &gzipAssets{fs: sub, next: http.FileServer(http.FS(sub)), mu: sync.Mutex{}, cache: nil}
+	srv.ui = newGzipAssets(sub, http.FileServer(http.FS(sub)))
 	srv.proxy = &http.Client{Timeout: publicProxyTimeout, Transport: publicOnlyTransport()}
 	srv.fw = firmware.New(opts.Log, opts.Home)
 	srv.hub = newHub(srv.pollState, opts.Log.With("comp", "events"))

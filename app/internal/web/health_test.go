@@ -276,7 +276,9 @@ func TestSupportBundleTailsAllRetainedBootLogs(t *testing.T) {
 func TestHealthReportsBCOLink(t *testing.T) { //nolint:paralleltest // it points the package-level system root elsewhere
 	root := t.TempDir()
 	t.Cleanup(web.SetSystemRootForTest(root))
-	handler, _ := newServer(t)
+	srv, _, _ := newServerSrv(t)
+	srv.UncachedHealthForTest()
+	handler := srv.Handler()
 
 	var none map[string]any
 	decodeBody(t, do(t, handler, "GET", "/api/health", ""), &none)

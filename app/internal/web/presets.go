@@ -5,7 +5,6 @@ package web
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"slices"
@@ -82,7 +81,7 @@ func (s *Server) setPreset(w http.ResponseWriter, r *http.Request) {
 
 	var preset store.Preset
 
-	err := json.NewDecoder(r.Body).Decode(&preset)
+	err := decodeJSON(w, r, maxRequestBody, &preset)
 	if err != nil {
 		s.badRequest(w, "valid stationId required", err)
 

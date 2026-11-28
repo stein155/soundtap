@@ -5,8 +5,6 @@ package web
 
 import (
 	"context"
-	"encoding/json"
-	"io"
 	"net/http"
 	"time"
 )
@@ -33,7 +31,7 @@ func (s *Server) setPosition(w http.ResponseWriter, r *http.Request) {
 		DurationMs int    `json:"durationMs"`
 	}{DurationMs: -1, Source: "", PositionMs: 0}
 
-	err := json.NewDecoder(io.LimitReader(r.Body, tinyBody)).Decode(&body)
+	err := decodeJSON(w, r, tinyBody, &body)
 	if err != nil {
 		s.badRequest(w, "bad body", err)
 
@@ -85,7 +83,7 @@ func (s *Server) seek(w http.ResponseWriter, r *http.Request) {
 		PositionMs int `json:"positionMs"`
 	}
 
-	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, smallBody)).Decode(&body)
+	err := decodeJSON(w, r, smallBody, &body)
 	if err != nil || body.PositionMs < 0 {
 		s.badRequest(w, "bad body", err)
 

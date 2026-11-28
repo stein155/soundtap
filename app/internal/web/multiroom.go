@@ -5,7 +5,6 @@ package web
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"path/filepath"
@@ -65,7 +64,7 @@ func (s *Server) putMultiroomVolume(w http.ResponseWriter, r *http.Request) {
 		Muted   *bool `json:"muted"`
 	}
 
-	err := json.NewDecoder(r.Body).Decode(&body)
+	err := decodeJSON(w, r, maxRequestBody, &body)
 	if err != nil || body.Percent == nil || body.Muted == nil {
 		s.badRequest(w, "percent and muted required", err)
 
@@ -106,7 +105,7 @@ func (s *Server) putMultiroomMembership(w http.ResponseWriter, r *http.Request) 
 		Member *bool `json:"member"`
 	}
 
-	err := json.NewDecoder(r.Body).Decode(&body)
+	err := decodeJSON(w, r, maxRequestBody, &body)
 	if err != nil || body.Member == nil {
 		s.badRequest(w, "member required", err)
 

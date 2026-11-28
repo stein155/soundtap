@@ -7,7 +7,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -122,10 +121,7 @@ func (s *Server) postCrashReport(w http.ResponseWriter, r *http.Request) {
 		Outcome string `json:"outcome"`
 	}
 
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, tinyBody))
-	dec.DisallowUnknownFields()
-
-	err := dec.Decode(&body)
+	err := decodeJSONStrict(w, r, tinyBody, &body)
 	if err != nil {
 		s.badRequest(w, "bad body", err)
 

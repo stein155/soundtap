@@ -111,9 +111,9 @@ func (s *Server) postMultiroomInvite(w http.ResponseWriter, r *http.Request) {
 		IP string `json:"ip"`
 	}
 
-	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, smallBody)).Decode(&body)
+	err := decodeJSON(w, r, smallBody, &body)
 	if err != nil {
-		apiError(w, http.StatusBadRequest, "invalid JSON body")
+		refuseBody(w, "invalid JSON body", err)
 
 		return
 	}

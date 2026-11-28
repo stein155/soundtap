@@ -5,14 +5,15 @@ package web
 
 import (
 	"context"
-	"encoding/json"
-	"io"
+	"fmt"
 	"net/http"
 
 	"github.com/stein155/soundtap/app/internal/speaker"
 )
 
-// The range a volume request is read in before it is clamped to the scale.
+// The range a group volume request may ask for: the UI's group slider sends the leader's
+// level plus the group's step, which lies in -100..200. A request for one speaker takes
+// 0..100. Anything else is refused with 400, not clamped (openapi.json).
 const (
 	minVolumeAsked = -100
 	maxVolumeAsked = 200
@@ -35,7 +36,7 @@ func (s *Server) setNowPlaying(w http.ResponseWriter, r *http.Request) {
 		URI    string `json:"uri"`
 	}
 
-	err := json.NewDecoder(io.LimitReader(r.Body, mediumBody)).Decode(&body)
+	err := decodeJSON(w, r, mediumBody, &body)
 	if err != nil {
 		s.badRequest(w, "bad body", err)
 
@@ -120,14 +121,20 @@ func (s *Server) setVolume(w http.ResponseWriter, r *http.Request) {
 		Group  bool   `json:"group"`  // move the followers too; see volumeSyncWanted
 	}
 	// A body without "volume" used to decode as 0 and mute the speaker.
-	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, volumeMaxBody)).Decode(&body)
+	err := decodeJSON(w, r, volumeMaxBody, &body)
 	if err != nil || body.Volume == nil {
 		s.badRequest(w, "volume required", err)
 
 		return
 	}
 
-	asked := min(max(*body.Volume, minVolumeAsked), maxVolumeAsked)
+	asked := *body.Volume
+	if lowest, highest := volumeRange(body.Group); asked < lowest || asked > highest {
+		s.badRequest(w, fmt.Sprintf("volume must be %d..%d", lowest, highest), nil)
+
+		return
+	}
+
 	volume := min(max(asked, 0), maxVolume)
 
 	ctx, cancel := context.WithTimeout(r.Context(), backendCallTimeout)
@@ -170,6 +177,18 @@ func (s *Server) setVolume(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]int{"volume": volume})
 }
 
+// volumeRange is the lowest and highest level a POST /api/volume may ask for: 0..100, or
+// with "group": true minVolumeAsked..maxVolumeAsked.
+//
+//nolint:revive // flag-parameter: group is the request's own field and decides the range
+func volumeRange(group bool) (int, int) {
+	if group {
+		return minVolumeAsked, maxVolumeAsked
+	}
+
+	return 0, maxVolume
+}
+
 // muteMaxBody bounds a POST /api/mute body: {"muted":true}.
 const muteMaxBody = 1 << 8
 
@@ -182,7 +201,7 @@ func (s *Server) setMute(w http.ResponseWriter, r *http.Request) {
 		Muted *bool `json:"muted"`
 	}
 
-	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, muteMaxBody)).Decode(&body)
+	err := decodeJSON(w, r, muteMaxBody, &body)
 	if err != nil || body.Muted == nil {
 		s.badRequest(w, "muted required", err)
 

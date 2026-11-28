@@ -85,12 +85,35 @@ func (s *Server) fail(w http.ResponseWriter, msg string, err error) {
 
 // badRequest reports a client error (malformed body, missing field) as a 400,
 // so callers can tell their own mistakes apart from speaker/upstream failures.
+// A body over the route's limit is a 413, not a 400 (refuseBody).
 func (s *Server) badRequest(w http.ResponseWriter, msg string, err error) {
 	if err != nil {
 		s.log.Warn(msg, "err", err.Error())
 	}
 
-	apiError(w, http.StatusBadRequest, msg)
+	refuseBody(w, msg, err)
+}
+
+// refuseBody answers a body the handler will not take: 413 when it ran past its limit,
+// otherwise 400 with msg. err may be nil.
+func refuseBody(w http.ResponseWriter, msg string, err error) { apierror.RefuseBody(w, msg, err) }
+
+// decodeJSON reads r's JSON body into v, at most limit bytes of it. A longer body fails
+// with an *http.MaxBytesError, which badRequest and refuseBody answer with 413. Every
+// handler that takes a JSON body reads it here, so none turns "too large" into a 400.
+func decodeJSON(w http.ResponseWriter, r *http.Request, limit int64, v any) error {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
+
+	return dec.Decode(v) //nolint:wrapcheck // callers test it with errors.As
+}
+
+// decodeJSONStrict is decodeJSON that refuses a field v does not have: a mistyped key is an
+// error, not a silent no-op.
+func decodeJSONStrict(w http.ResponseWriter, r *http.Request, limit int64, v any) error {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
+	dec.DisallowUnknownFields()
+
+	return dec.Decode(v) //nolint:wrapcheck // callers test it with errors.As
 }
 
 // routePath is the route a request is for: its own path, or for /api/devices/{id}/<rest>

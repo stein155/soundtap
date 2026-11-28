@@ -175,6 +175,8 @@ func TestAmpFaultHealthWarning(t *testing.T) {
 	t.Parallel()
 
 	srv, spk, _ := newServerSrv(t)
+	srv.UncachedHealthForTest()
+
 	fault := false
 
 	srv.AttachForTest(func(h *web.Attached) { h.Audio.AmpFault = func() bool { return fault } })

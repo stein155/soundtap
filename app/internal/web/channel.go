@@ -4,7 +4,6 @@
 package web
 
 import (
-	"encoding/json"
 	"net/http"
 	"slices"
 )
@@ -28,9 +27,9 @@ func (s *Server) putChannel(w http.ResponseWriter, r *http.Request) {
 		Channel string `json:"channel"`
 	}
 
-	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, tinyBody)).Decode(&body)
+	err := decodeJSON(w, r, tinyBody, &body)
 	if err != nil || !slices.Contains(channels(), body.Channel) {
-		apiError(w, http.StatusBadRequest, "channel must be stereo, left, right or mono")
+		refuseBody(w, "channel must be stereo, left, right or mono", err)
 
 		return
 	}

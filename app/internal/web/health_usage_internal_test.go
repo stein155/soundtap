@@ -4,14 +4,63 @@
 package web
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 )
+
+// /api/health samples once per healthFor however many ask, side by side or one after
+// another, and samples afresh after it.
+func TestHealthCacheSamplesOncePerSecond(t *testing.T) {
+	t.Parallel()
+
+	var (
+		cache   healthCache
+		samples atomic.Int32
+		wg      sync.WaitGroup
+	)
+
+	collect := func(context.Context) health {
+		samples.Add(1)
+		time.Sleep(10 * time.Millisecond) // a slow sampling: the others wait for this one
+
+		var reading health
+
+		reading.Processes = int(samples.Load())
+
+		return reading
+	}
+
+	for range 20 {
+		wg.Go(func() {
+			if got := cache.get(t.Context(), collect); got.Processes != 1 {
+				t.Errorf("got reading %d, want the first", got.Processes)
+			}
+		})
+	}
+
+	wg.Wait()
+
+	if n := samples.Load(); n != 1 {
+		t.Fatalf("%d samplings for 20 requests at once, want 1", n)
+	}
+
+	cache.mu.Lock()
+	cache.at = cache.at.Add(-healthFor)
+	cache.mu.Unlock()
+
+	if got := cache.get(t.Context(), collect); got.Processes != 2 || samples.Load() != 2 {
+		t.Fatalf("a stale reading was served: %d after %d samplings", got.Processes, samples.Load())
+	}
+}
 
 func TestLargestEntriesSumsDirectories(t *testing.T) {
 	t.Parallel()

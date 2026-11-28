@@ -5,7 +5,6 @@ package web
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -216,7 +215,7 @@ func (s *Server) playStation(w http.ResponseWriter, r *http.Request) {
 		Name      string `json:"name"`
 	}
 
-	err := json.NewDecoder(r.Body).Decode(&body)
+	err := decodeJSON(w, r, maxRequestBody, &body)
 	if err != nil || !validStation(r.Context(), body.StationID) {
 		s.badRequest(w, "valid stationId required", err)
 

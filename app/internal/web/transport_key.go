@@ -60,9 +60,9 @@ func (s *Server) postKey(w http.ResponseWriter, r *http.Request) {
 		Key string `json:"key"`
 	}
 
-	err := json.NewDecoder(r.Body).Decode(&body)
+	err := decodeJSON(w, r, maxRequestBody, &body)
 	if err != nil || !s.keyAllowed(body.Key) {
-		apiError(w, http.StatusBadRequest, "transport key required (power and presets only in a stereo pair)")
+		refuseBody(w, "transport key required (power and presets only in a stereo pair)", err)
 
 		return
 	}

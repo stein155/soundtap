@@ -9,6 +9,7 @@ package apierror
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 )
 
@@ -149,4 +150,25 @@ func Write(w http.ResponseWriter, status int, code Code, msg string) {
 
 	body := Body{Error: msg, Code: code}
 	_ = json.NewEncoder(w).Encode(body) //nolint:errchkjson // the client may be gone; nothing left to tell it
+}
+
+// RefuseBody answers a request whose body the speaker will not take: 413 with TooLarge
+// when it ran past the route's limit (http.MaxBytesReader's *http.MaxBytesError, from the
+// handler's own limit or the guard's), 400 with InvalidRequest and msg otherwise. err may
+// be nil.
+func RefuseBody(w http.ResponseWriter, msg string, err error) {
+	if TooLong(err) {
+		Write(w, http.StatusRequestEntityTooLarge, TooLarge, "request body too large")
+
+		return
+	}
+
+	Write(w, http.StatusBadRequest, InvalidRequest, msg)
+}
+
+// TooLong reports whether err says a request body ran past its limit.
+func TooLong(err error) bool {
+	_, ok := errors.AsType[*http.MaxBytesError](err)
+
+	return ok
 }

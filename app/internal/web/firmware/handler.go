@@ -231,8 +231,8 @@ func (s *Handler) badRequest(w http.ResponseWriter, msg string, err error) {
 	if err != nil {
 		s.logger().Warn(msg, "err", err.Error())
 	}
-
-	apiError(w, http.StatusBadRequest, msg)
+	// A body over the route's limit is a 413, not a 400.
+	apierror.RefuseBody(w, msg, err)
 }
 
 // logger tolerates the zero Handler the tests build.

@@ -172,10 +172,11 @@ export interface paths {
             requestBody: {
                 content: {
                     "application/json": {
+                        /** @description 0 to 100. Only with group true may it lie from -100 to 200: this speaker stops at 0 or 100 and its followers move by the whole step. Any other value is refused with 400 invalid_request. */
                         volume: number;
                         /** @description Source reporting its own slider, e.g. SPOTIFY. */
                         source?: string;
-                        /** @description Move the followers of a group too. */
+                        /** @description Move the followers of a group too, and allow a volume from -100 to 200. */
                         group?: boolean;
                     };
                 };
@@ -4842,7 +4843,7 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** @description The one error shape. Status says whose fault: 4xx the caller's, 5xx the speaker's. code says what went wrong: invalid_request (400), not_found (404), method_not_allowed (405), forbidden (403), signature_invalid (403, an upload's signature is missing or does not verify), confirm_required (428, or 400 for an app upload, the X-SoundTap-Confirm it needs), not_confirmed (403, nobody held a button on the speaker in time), confirm_superseded (409, a newer request took this one's place in the wait for the button), busy (409 or 503, another operation is running), conflict (409, the speaker's state does not allow it), timeout (408, 504), too_large (413), package_rejected (400, 415), precondition_failed (412), unsupported (501), unavailable (503), clock_not_set (503, the update check waits until NTP has set the clock since boot), upstream_failed (502), storage_full (507), internal (500). */
+        /** @description The one error shape. Status says whose fault: 4xx the caller's, 5xx the speaker's. code says what went wrong: invalid_request (400), not_found (404), method_not_allowed (405), forbidden (403), signature_invalid (403, an upload's signature is missing or does not verify), confirm_required (428, or 400 for an app upload, the X-SoundTap-Confirm it needs), not_confirmed (403, nobody held a button on the speaker in time), confirm_superseded (409, a newer request took this one's place in the wait for the button), busy (409 or 503, another operation is running), conflict (409, the speaker's state does not allow it), timeout (408, 504), too_large (413, a request body past the route's limit), package_rejected (400, 415), precondition_failed (412), unsupported (501), unavailable (503), clock_not_set (503, the update check waits until NTP has set the clock since boot), upstream_failed (502), storage_full (507), internal (500). */
         Error: {
             /** @description What went wrong, in English, for a person. Its wording may change in any release. */
             error: string;

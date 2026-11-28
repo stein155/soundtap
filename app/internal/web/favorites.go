@@ -5,7 +5,6 @@ package web
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -54,7 +53,7 @@ func (s *Server) getFavorites(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) addFavorite(w http.ResponseWriter, r *http.Request) {
 	var entry favorites.Entry
 
-	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, favoriteMaxBytes)).Decode(&entry)
+	err := decodeJSON(w, r, favoriteMaxBytes, &entry)
 	if err != nil {
 		s.badRequest(w, "valid favorite required", err)
 
@@ -94,7 +93,7 @@ func (s *Server) delFavorite(w http.ResponseWriter, r *http.Request) {
 		Location string `json:"location"`
 	}
 
-	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, smallBody)).Decode(&body)
+	err := decodeJSON(w, r, smallBody, &body)
 	if err != nil || body.Source == "" {
 		s.badRequest(w, "source required", err)
 

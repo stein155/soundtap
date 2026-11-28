@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/stein155/soundtap/app/internal/bco"
@@ -325,7 +326,33 @@ func (s *Server) collectHealth(ctx context.Context) health {
 }
 
 func (s *Server) healthInfo(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.collectHealth(r.Context()))
+	writeJSON(w, http.StatusOK, s.health.get(r.Context(), s.collectHealth))
+}
+
+// healthFor is how long one /api/health reading answers. A monitor or bench script polling
+// in parallel then costs one sampling a second, not one per request; the debug bundle and
+// the support archive sample afresh.
+const healthFor = time.Second
+
+// healthCache keeps the last reading. Requests that come while one is being taken wait for
+// it rather than each taking their own.
+type healthCache struct {
+	mu     sync.Mutex
+	at     time.Time
+	report health
+	ok     bool
+	off    bool // every request samples: tests that change what is sampled and read again
+}
+
+func (c *healthCache) get(ctx context.Context, collect func(context.Context) health) health {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.off || !c.ok || time.Since(c.at) >= healthFor {
+		c.report, c.at, c.ok = collect(ctx), time.Now(), true
+	}
+
+	return c.report
 }
 
 // readMeminfo parses MemTotal/MemAvailable (kB) out of /proc/meminfo. A kernel too

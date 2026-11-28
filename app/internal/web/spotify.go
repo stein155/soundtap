@@ -6,7 +6,6 @@ package web
 import (
 	"container/list"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -259,7 +258,7 @@ func (s *Server) spotifyPlay(w http.ResponseWriter, r *http.Request) {
 		Item    *spotifyPlayItem `json:"item"`
 	}
 
-	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, smallBody)).Decode(&body)
+	err := decodeJSON(w, r, smallBody, &body)
 	if err != nil {
 		s.badRequest(w, "spotify_invalid_request", err)
 
@@ -357,7 +356,7 @@ func (s *Server) spotifySeek(w http.ResponseWriter, r *http.Request) {
 		PositionMs int `json:"positionMs"`
 	}
 
-	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, smallBody)).Decode(&body)
+	err := decodeJSON(w, r, smallBody, &body)
 	if err != nil {
 		s.badRequest(w, "spotify_invalid_request", err)
 
@@ -414,7 +413,7 @@ func (s *Server) spotifySetLiked(w http.ResponseWriter, r *http.Request) {
 		On bool `json:"on"`
 	}
 
-	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, smallBody)).Decode(&body)
+	err := decodeJSON(w, r, smallBody, &body)
 	if err != nil {
 		s.badRequest(w, "spotify_invalid_request", err)
 
@@ -450,7 +449,7 @@ func (s *Server) spotifyShuffle(w http.ResponseWriter, r *http.Request) {
 		On bool `json:"on"`
 	}
 
-	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, smallBody)).Decode(&body)
+	err := decodeJSON(w, r, smallBody, &body)
 	if err != nil {
 		s.badRequest(w, "spotify_invalid_request", err)
 
@@ -479,7 +478,7 @@ func (s *Server) spotifyRepeat(w http.ResponseWriter, r *http.Request) {
 		Mode string `json:"mode"`
 	}
 
-	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, smallBody)).Decode(&body)
+	err := decodeJSON(w, r, smallBody, &body)
 	if err != nil {
 		s.badRequest(w, "spotify_invalid_request", err)
 

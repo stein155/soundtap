@@ -4,7 +4,6 @@
 package web
 
 import (
-	"encoding/json"
 	"net/http"
 )
 
@@ -42,10 +41,10 @@ func (s *Server) putTone(w http.ResponseWriter, r *http.Request) {
 		Rear   *int `json:"rear"`
 	}
 
-	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, tinyBody)).Decode(&body)
+	err := decodeJSON(w, r, tinyBody, &body)
 	if err != nil ||
 		body.Bass == nil || body.Treble == nil || body.Centre == nil || body.Rear == nil {
-		apiError(w, http.StatusBadRequest, "bass, treble, centre and rear are required")
+		refuseBody(w, "bass, treble, centre and rear are required", err)
 
 		return
 	}
@@ -73,9 +72,9 @@ func (s *Server) startADAPTiQ(w http.ResponseWriter, r *http.Request) {
 		Confirm bool `json:"confirm"`
 	}
 
-	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, tinyBody)).Decode(&body)
+	err := decodeJSON(w, r, tinyBody, &body)
 	if err != nil || !body.Confirm {
-		apiError(w, http.StatusBadRequest, "confirm must be true")
+		refuseBody(w, "confirm must be true", err)
 
 		return
 	}
@@ -135,9 +134,9 @@ func (s *Server) putChoice(name string) http.HandlerFunc {
 			Mode string `json:"mode"`
 		}
 
-		err := json.NewDecoder(http.MaxBytesReader(w, r.Body, tinyBody)).Decode(&body)
+		err := decodeJSON(w, r, tinyBody, &body)
 		if err != nil || body.Mode == "" {
-			apiError(w, http.StatusBadRequest, "mode is required")
+			refuseBody(w, "mode is required", err)
 
 			return
 		}
@@ -180,9 +179,9 @@ func (s *Server) putLipSync(w http.ResponseWriter, r *http.Request) {
 		MS *int `json:"ms"`
 	}
 
-	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, tinyBody)).Decode(&body)
+	err := decodeJSON(w, r, tinyBody, &body)
 	if err != nil || body.MS == nil {
-		apiError(w, http.StatusBadRequest, "ms is required")
+		refuseBody(w, "ms is required", err)
 
 		return
 	}

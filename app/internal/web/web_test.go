@@ -248,25 +248,44 @@ func TestVolume(t *testing.T) {
 		t.Errorf("readback volume = %d, want 42", got.Volume)
 	}
 
-	// Sim clamps to 0..100.
-	do(t, handler, "POST", "/api/volume", `{"volume":250}`)
+	// The ends of the scale are taken as they are.
+	for _, level := range []int{100, 0, 42} {
+		rec = do(t, handler, "POST", "/api/volume", fmt.Sprintf(`{"volume":%d}`, level))
+		decodeBody(t, rec, &got)
+
+		if rec.Code != 200 || got.Volume != level {
+			t.Errorf("POST volume %d: %d, echoed %d", level, rec.Code, got.Volume)
+		}
+	}
+
+	// A body without "volume" must not mute the speaker, and a level off the 0..100 scale
+	// is refused, not clamped: only a group's level may lie past it (openapi.json).
+	refused := []string{
+		`{}`, `{"volume":101}`, `{"volume":-1}`, `{"volume":250}`,
+		`{"volume":201,"group":true}`, `{"volume":-101,"group":true}`,
+	}
+	for _, body := range refused {
+		rec = do(t, handler, "POST", "/api/volume", body)
+		if rec.Code != 400 || !strings.Contains(rec.Body.String(), `"code":"invalid_request"`) {
+			t.Errorf("POST %s: %d %s, want 400 invalid_request", body, rec.Code, rec.Body)
+		}
+	}
+
 	rec = do(t, handler, "GET", "/api/volume", "")
 	decodeBody(t, rec, &got)
 
-	if got.Volume != 100 {
-		t.Errorf("clamp high volume = %d, want 100", got.Volume)
+	if got.Volume != 42 {
+		t.Errorf("volume after refused requests = %d, want 42", got.Volume)
 	}
 
-	// A body without "volume" must not mute the speaker.
-	if rec = do(t, handler, "POST", "/api/volume", `{}`); rec.Code != 400 {
-		t.Errorf("POST {} volume: %d, want 400", rec.Code)
-	}
+	// A group level past the scale is taken; this speaker stops at the bound.
+	for body, want := range map[string]int{`{"volume":150,"group":true}`: 100, `{"volume":-50,"group":true}`: 0} {
+		rec = do(t, handler, "POST", "/api/volume", body)
+		decodeBody(t, rec, &got)
 
-	rec = do(t, handler, "GET", "/api/volume", "")
-	decodeBody(t, rec, &got)
-
-	if got.Volume != 100 {
-		t.Errorf("volume after {} = %d, want 100", got.Volume)
+		if rec.Code != 200 || got.Volume != want {
+			t.Errorf("POST %s: %d, echoed %d, want %d", body, rec.Code, got.Volume, want)
+		}
 	}
 }
 
@@ -972,6 +991,7 @@ func TestHealthReportsTheBoot(t *testing.T) {
 	t.Cleanup(web.SetSystemRootForTest(root))
 
 	srv, _, home := newServerSrv(t)
+	srv.UncachedHealthForTest()
 
 	err := os.MkdirAll(filepath.Join(home, web.LastBootDir), 0o700)
 	if err != nil {
@@ -1430,5 +1450,34 @@ func TestSourceFlushWaitReportsFailure(t *testing.T) {
 	rec := doLoopbackCT(t, handler, "POST", "/api/source", "application/json", flushWait)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("flush failure acknowledged: %d", rec.Code)
+	}
+}
+
+// A body past a route's limit is 413 too_large, not 400: the handler's own limit and the
+// guard's alike (decodeJSON, apierror.RefuseBody).
+func TestOversizeBodyIs413(t *testing.T) {
+	t.Parallel()
+
+	handler, _ := newServer(t)
+	huge := `{"x":"` + strings.Repeat("a", 2<<20) + `"}`
+
+	for _, route := range []string{
+		"POST /api/volume", "POST /api/mute", "PUT /api/settings", "POST /api/sleep",
+		"PUT /api/channel", "POST /api/favorites", "DELETE /api/favorites", "POST /api/play",
+		"PUT /api/presets/1", "DELETE /api/recent",
+	} {
+		method, target, _ := strings.Cut(route, " ")
+
+		rec := do(t, handler, method, target, huge)
+		if rec.Code != http.StatusRequestEntityTooLarge || !strings.Contains(rec.Body.String(), `"code":"too_large"`) {
+			t.Errorf("%s with a 2 MiB body: %d %s, want 413 too_large", route, rec.Code, rec.Body)
+		}
+	}
+	// The loopback hooks read through the same helper.
+	for _, target := range []string{"/api/nowplaying", "/api/position", "/api/source"} {
+		rec := doLoopbackCT(t, handler, "POST", target, "application/json", huge)
+		if rec.Code != http.StatusRequestEntityTooLarge {
+			t.Errorf("POST %s with a 2 MiB body: %d %s, want 413", target, rec.Code, rec.Body)
+		}
 	}
 }

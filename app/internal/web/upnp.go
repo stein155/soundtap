@@ -5,9 +5,7 @@ package web
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 
 	"github.com/stein155/soundtap/app/internal/upnp"
@@ -64,7 +62,7 @@ func (s *Server) upnpPlay(w http.ResponseWriter, r *http.Request) {
 		Folder string `json:"folder"`
 	}
 
-	err := json.NewDecoder(io.LimitReader(r.Body, smallBody)).Decode(&body)
+	err := decodeJSON(w, r, smallBody, &body)
 	if err != nil {
 		s.badRequest(w, "bad body", err)
 
@@ -209,7 +207,7 @@ func (s *Server) upnpSetModes(w http.ResponseWriter, r *http.Request) {
 		Repeat  *string `json:"repeat"`
 	}
 
-	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, smallBody)).Decode(&body)
+	err := decodeJSON(w, r, smallBody, &body)
 	if err != nil {
 		s.badRequest(w, "invalid request", err)
 

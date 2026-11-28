@@ -5,7 +5,6 @@ package web
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -108,10 +107,7 @@ func (s *Server) forgetBluetooth(w http.ResponseWriter, r *http.Request) {
 		Address string `json:"address"`
 	}
 
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, tinyBody))
-	dec.DisallowUnknownFields()
-
-	err := dec.Decode(&body)
+	err := decodeJSONStrict(w, r, tinyBody, &body)
 	if err != nil {
 		s.badRequest(w, "bad body", err)
 
@@ -271,7 +267,7 @@ func (s *Server) setWifi(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 
-	err := json.NewDecoder(r.Body).Decode(&body)
+	err := decodeJSON(w, r, maxRequestBody, &body)
 	if err != nil {
 		s.badRequest(w, "bad body", err)
 
@@ -375,7 +371,7 @@ func (s *Server) forgetSavedWifi(w http.ResponseWriter, r *http.Request) {
 		ID string `json:"id"`
 	}
 
-	err := json.NewDecoder(r.Body).Decode(&body)
+	err := decodeJSON(w, r, maxRequestBody, &body)
 	if err != nil || body.ID == "" {
 		s.badRequest(w, "id required", err)
 
@@ -413,7 +409,7 @@ func (s *Server) enterSetup(w http.ResponseWriter, r *http.Request) {
 		Confirm bool `json:"confirm"`
 	}
 
-	err := json.NewDecoder(r.Body).Decode(&body)
+	err := decodeJSON(w, r, maxRequestBody, &body)
 	if err != nil {
 		s.badRequest(w, "bad body", err)
 

@@ -6,7 +6,6 @@ package web
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"path"
@@ -145,7 +144,7 @@ func (s *Server) delRecent(w http.ResponseWriter, r *http.Request) {
 		Location string `json:"location"`
 	}
 
-	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, smallBody)).Decode(&body)
+	err := decodeJSON(w, r, smallBody, &body)
 	if err != nil || body.Source == "" {
 		s.badRequest(w, "source required", err)
 

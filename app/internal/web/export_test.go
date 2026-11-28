@@ -6,10 +6,26 @@ package web
 import (
 	"context"
 	"fmt"
+	"io/fs"
+	"net/http"
 	"net/http/httptest"
 
 	"github.com/stein155/soundtap/app/internal/multiroom"
 )
+
+// UncachedHealthForTest makes every GET /api/health sample afresh, for a test that changes
+// what it reports and reads it again at once.
+func (s *Server) UncachedHealthForTest() {
+	s.health.mu.Lock()
+	s.health.off = true
+	s.health.mu.Unlock()
+}
+
+// SetUIForTest serves fsys as the UI bundle in place of the embedded one, which a test
+// build holds empty. Nothing is compressed ahead: the first requests take that cost.
+func (s *Server) SetUIForTest(fsys fs.FS) {
+	s.ui = newGzipAssets(fsys, http.FileServer(http.FS(fsys)))
+}
 
 // Test hook. The support bundle tails absolute paths under /tmp, so the redaction test
 // has to redirect them: pointing it at the real /tmp/soundtap.log made it skip whenever

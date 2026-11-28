@@ -5,13 +5,50 @@ package apierror_test
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stein155/soundtap/app/internal/web/apierror"
 )
+
+// A body that ran past http.MaxBytesReader's limit is 413 too_large, wrapped or not;
+// anything else, nil included, is 400 invalid_request with the caller's message.
+func TestRefuseBody(t *testing.T) {
+	t.Parallel()
+
+	rec := httptest.NewRecorder()
+	_, tooLong := io.ReadAll(http.MaxBytesReader(rec, io.NopCloser(strings.NewReader("12345")), 2))
+
+	for _, testCase := range []struct {
+		err    error
+		status int
+		code   apierror.Code
+	}{
+		{tooLong, http.StatusRequestEntityTooLarge, apierror.TooLarge},
+		{fmt.Errorf("decode: %w", tooLong), http.StatusRequestEntityTooLarge, apierror.TooLarge},
+		{io.ErrUnexpectedEOF, http.StatusBadRequest, apierror.InvalidRequest},
+		{nil, http.StatusBadRequest, apierror.InvalidRequest},
+	} {
+		rec := httptest.NewRecorder()
+		apierror.RefuseBody(rec, "volume required", testCase.err)
+
+		var got apierror.Body
+
+		err := json.Unmarshal(rec.Body.Bytes(), &got)
+		if err != nil || rec.Code != testCase.status || got.Code != testCase.code {
+			t.Errorf("%v: %d %s, want %d %s", testCase.err, rec.Code, rec.Body, testCase.status, testCase.code)
+		}
+
+		if testCase.status == http.StatusBadRequest && got.Error != "volume required" {
+			t.Errorf("%v: message %q", testCase.err, got.Error)
+		}
+	}
+}
 
 func TestWriteSendsMessageAndCode(t *testing.T) {
 	t.Parallel()

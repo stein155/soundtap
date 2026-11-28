@@ -19,13 +19,28 @@ import (
 // gzipAssets serves the bundle's text assets gzipped to clients that accept it. The ST20's
 // own Wi-Fi moves a few tens of KB/s, so the 500 KB script took the UI tens of seconds to
 // load; gzipped it is about a third. The embedded files never change, so each is compressed
-// once, on first request, and kept.
+// once and kept: all of them in the background when the server starts (warm), or on the
+// first request that comes sooner. One file's compression holds only the requests for that
+// file: under one lock for the lot, a cached script waited behind a second or more of
+// compressing another file on the speaker's single core.
 type gzipAssets struct {
 	fs   fs.FS
 	next http.Handler
 
-	mu    sync.Mutex
-	cache map[string][]byte
+	mu    sync.Mutex // guards cache, not the compression
+	cache map[string]*gzipped
+}
+
+// gzipped is one asset's compressed body, made once.
+type gzipped struct {
+	once sync.Once
+	body []byte
+	ok   bool
+}
+
+// newGzipAssets serves fsys's assets, gzipped where they can be, and next for the rest.
+func newGzipAssets(fsys fs.FS, next http.Handler) *gzipAssets {
+	return &gzipAssets{fs: fsys, next: next, mu: sync.Mutex{}, cache: map[string]*gzipped{}}
 }
 
 // gzipTypes are the asset extensions served gzipped.
@@ -69,15 +84,52 @@ func (g *gzipAssets) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(body)
 }
 
+// warm compresses every asset ahead of the first request for it.
+func (g *gzipAssets) warm() {
+	_ = fs.WalkDir(g.fs, "assets", func(name string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && slices.Contains(gzipTypes(), path.Ext(name)) {
+			g.compressed(name)
+		}
+
+		return nil
+	})
+}
+
+// compressed is name gzipped, compressed on its first call; false for a file that is not
+// there or did not compress.
 func (g *gzipAssets) compressed(name string) ([]byte, bool) {
 	g.mu.Lock()
-	defer g.mu.Unlock()
+	entry, known := g.cache[name]
+	g.mu.Unlock()
 
-	if b, ok := g.cache[name]; ok {
-		return b, true
+	if !known {
+		// Only a file that exists gets an entry: a request for any name must not grow the map.
+		fi, err := fs.Stat(g.fs, name)
+		if err != nil || fi.IsDir() {
+			return nil, false
+		}
+
+		g.mu.Lock()
+		if g.cache == nil {
+			g.cache = map[string]*gzipped{}
+		}
+
+		entry, known = g.cache[name]
+		if !known {
+			entry = &gzipped{once: sync.Once{}, body: nil, ok: false}
+			g.cache[name] = entry
+		}
+		g.mu.Unlock()
 	}
 
-	raw, err := fs.ReadFile(g.fs, name)
+	entry.once.Do(func() { entry.body, entry.ok = gzipFile(g.fs, name) })
+
+	return entry.body, entry.ok
+}
+
+// gzipFile is name read from fsys and gzipped at the best compression.
+func gzipFile(fsys fs.FS, name string) ([]byte, bool) {
+	raw, err := fs.ReadFile(fsys, name)
 	if err != nil {
 		return nil, false
 	}
@@ -90,12 +142,6 @@ func (g *gzipAssets) compressed(name string) ([]byte, bool) {
 	if err != nil || zw.Close() != nil {
 		return nil, false
 	}
-
-	if g.cache == nil {
-		g.cache = map[string][]byte{}
-	}
-
-	g.cache[name] = buf.Bytes()
 
 	return buf.Bytes(), true
 }

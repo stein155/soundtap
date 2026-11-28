@@ -9,7 +9,6 @@ package web
 import (
 	"context"
 	"embed"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -86,6 +85,7 @@ type Server struct {
 	version      string
 	homeDir      string
 	startedAt    time.Time
+	health       healthCache                   // the last /api/health reading (health.go)
 	ui           http.Handler                  // serves the embedded dist bundle
 	proxy        *http.Client                  // for the same-origin TuneIn / logo proxies
 	hub          *hub                          // pushes live state to browsers over SSE (/api/events)
@@ -242,7 +242,12 @@ type Server struct {
 
 // Run drives the background services the Server owns — the SSE hub's
 // speaker poll loop and the alarm clock — until ctx is cancelled. Call once in a goroutine.
+// It also compresses the UI's assets once, so no page load waits for that.
 func (s *Server) Run(ctx context.Context) {
+	if assets, ok := s.ui.(*gzipAssets); ok {
+		safego.Go("web.gzip", assets.warm)
+	}
+
 	safego.Go("web.alarm", func() { s.runAlarm(ctx, alarmEvery) })
 	safego.Go("web.household", func() { s.household.Run(ctx) })
 	s.hub.run(ctx)
@@ -420,7 +425,7 @@ func (s *Server) updateApp(w http.ResponseWriter, r *http.Request) {
 		Confirm bool   `json:"confirm"`
 	}
 
-	err := json.NewDecoder(r.Body).Decode(&body)
+	err := decodeJSON(w, r, maxRequestBody, &body)
 	if err != nil {
 		s.badRequest(w, "bad body", err)
 
@@ -496,7 +501,7 @@ func (s *Server) updateCore(w http.ResponseWriter, r *http.Request) {
 		Confirm bool `json:"confirm"`
 	}
 
-	err := json.NewDecoder(r.Body).Decode(&body)
+	err := decodeJSON(w, r, maxRequestBody, &body)
 	if err != nil {
 		s.badRequest(w, "bad body", err)
 

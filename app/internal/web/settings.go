@@ -5,7 +5,6 @@ package web
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -182,10 +181,7 @@ type integrationsPatch struct {
 func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	var patch settingsPatch
 
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, settingsMaxBody))
-	dec.DisallowUnknownFields() // a typo is an error, not a silent no-op
-
-	err := dec.Decode(&patch)
+	err := decodeJSONStrict(w, r, settingsMaxBody, &patch) // a typo is an error, not a silent no-op
 	if err != nil {
 		s.badRequest(w, "bad body", err)
 

@@ -5,7 +5,6 @@ package web
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -41,7 +40,7 @@ func (s *Server) postSleep(w http.ResponseWriter, r *http.Request) {
 		Minutes *int `json:"minutes"`
 	}
 
-	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, sleepMaxBody)).Decode(&body)
+	err := decodeJSON(w, r, sleepMaxBody, &body)
 	if err != nil || body.Minutes == nil {
 		s.badRequest(w, "minutes required", err)
 
@@ -203,7 +202,7 @@ func (s *Server) power(w http.ResponseWriter, r *http.Request) {
 		On *bool `json:"on"`
 	}
 
-	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, sleepMaxBody)).Decode(&body)
+	err := decodeJSON(w, r, sleepMaxBody, &body)
 	if err != nil || body.On == nil {
 		s.badRequest(w, "on required", err)
 

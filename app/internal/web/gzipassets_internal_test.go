@@ -6,10 +6,10 @@ package web
 import (
 	"bytes"
 	"compress/gzip"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"sync"
 	"testing"
 	"testing/fstest"
 )
@@ -23,7 +23,7 @@ func TestGzipAssets(t *testing.T) {
 		"assets/logo.png": {Data: []byte("png")},
 		"index.html":      {Data: []byte("<html>")},
 	}
-	assets := &gzipAssets{fs: files, next: http.FileServer(http.FS(files)), mu: sync.Mutex{}, cache: nil}
+	assets := newGzipAssets(files, http.FileServer(http.FS(files)))
 	get := func(p, enc string) *httptest.ResponseRecorder {
 		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, p, http.NoBody)
 		if enc != "" {
@@ -63,5 +63,41 @@ func TestGzipAssets(t *testing.T) {
 		if w := get(testCase[0], testCase[1]); w.Header().Get("Content-Encoding") != "" || w.Code != http.StatusOK {
 			t.Fatalf("%v: encoding %q code %d", testCase, w.Header().Get("Content-Encoding"), w.Code)
 		}
+	}
+}
+
+// warm compresses every text asset ahead, and a name that is not there leaves no entry
+// behind: requests for made-up names must not grow the cache.
+func TestGzipAssetsWarmAndUnknownNames(t *testing.T) {
+	t.Parallel()
+
+	files := fstest.MapFS{
+		"assets/app.js":    {Data: bytes.Repeat([]byte("let a = 1;\n"), 100)},
+		"assets/app.css":   {Data: []byte("body{}")},
+		"assets/logo.png":  {Data: []byte("png")},
+		"assets/sub/x.svg": {Data: []byte("<svg/>")},
+	}
+	assets := newGzipAssets(files, http.FileServer(http.FS(files)))
+	assets.warm()
+
+	for _, name := range []string{"assets/app.js", "assets/app.css", "assets/sub/x.svg"} {
+		entry, ok := assets.cache[name]
+		if !ok || !entry.ok || len(entry.body) == 0 {
+			t.Errorf("%s not compressed ahead", name)
+		}
+	}
+
+	if _, ok := assets.cache["assets/logo.png"]; ok {
+		t.Error("an image was compressed")
+	}
+
+	for i := range 50 {
+		if _, ok := assets.compressed(fmt.Sprintf("assets/missing-%d.js", i)); ok {
+			t.Fatal("a missing file compressed")
+		}
+	}
+
+	if len(assets.cache) != 3 {
+		t.Errorf("cache holds %d entries, want 3", len(assets.cache))
 	}
 }

@@ -5,7 +5,6 @@ package web
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -137,12 +136,9 @@ func (s *Server) postMultiroomFollow(w http.ResponseWriter, r *http.Request) {
 		ID string `json:"id"`
 	}
 	// A mistyped key would read as an empty host, which means leave the group.
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, smallBody))
-	dec.DisallowUnknownFields()
-
-	err := dec.Decode(&body)
+	err := decodeJSONStrict(w, r, smallBody, &body)
 	if err != nil {
-		apiError(w, http.StatusBadRequest, "invalid JSON body")
+		refuseBody(w, "invalid JSON body", err)
 
 		return
 	}

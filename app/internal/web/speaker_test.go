@@ -249,9 +249,9 @@ func TestSpeakerNotifyJSONBodyLimited(t *testing.T) {
 	// Build a body just over notifyJSONMax (4 KiB) with a very long URL field.
 	big := `{"url":"http://example.com/` + strings.Repeat("a", 5000) + `"}`
 	rec := doLoopbackCT(t, handler, "POST", "/api/speaker/notify", "application/json", big)
-	// The decoder hits the limit mid-read and returns a bad-body 400.
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("oversized JSON body = %d, want 400", rec.Code)
+	// The decoder hits the limit mid-read: 413, the body is too large.
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized JSON body = %d, want 413", rec.Code)
 	}
 }
 

@@ -8,7 +8,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -96,7 +95,7 @@ const notifyJSONMax = 4 << 10
 func (s *Server) speakerNotifyURL(w http.ResponseWriter, r *http.Request) {
 	var body speakerNotifyBody
 
-	err := json.NewDecoder(io.LimitReader(r.Body, notifyJSONMax)).Decode(&body)
+	err := decodeJSON(w, r, notifyJSONMax, &body)
 	if err != nil {
 		s.badRequest(w, "bad body", err)
 

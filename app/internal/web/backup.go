@@ -180,9 +180,7 @@ func (s *Server) importBackup(w http.ResponseWriter, r *http.Request) {
 
 	var parsed backup
 
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, backupMaxBytes))
-
-	err := dec.Decode(&parsed)
+	err := decodeJSON(w, r, backupMaxBytes, &parsed)
 	if err != nil {
 		s.badRequest(w, "not readable as a backup file", err)
 
@@ -409,7 +407,7 @@ func (s *Server) factoryReset(w http.ResponseWriter, r *http.Request) {
 		Confirm bool `json:"confirm"`
 	}
 
-	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, smallBody)).Decode(&body)
+	err := decodeJSON(w, r, smallBody, &body)
 	if err != nil {
 		s.badRequest(w, "bad body", err)
 
@@ -494,7 +492,7 @@ func (s *Server) movePreset(w http.ResponseWriter, r *http.Request) {
 		To   int `json:"to"`
 	}
 
-	err := json.NewDecoder(r.Body).Decode(&body)
+	err := decodeJSON(w, r, maxRequestBody, &body)
 	if err != nil {
 		s.badRequest(w, "bad body", err)
 

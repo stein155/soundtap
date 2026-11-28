@@ -5,8 +5,6 @@ package web
 
 import (
 	"context"
-	"encoding/json"
-	"io"
 	"net/http"
 	"slices"
 )
@@ -55,7 +53,7 @@ func (s *Server) setUserSource(w http.ResponseWriter, r *http.Request) {
 		Source string `json:"source"`
 	}
 
-	err := json.NewDecoder(io.LimitReader(r.Body, tinyBody)).Decode(&body)
+	err := decodeJSON(w, r, tinyBody, &body)
 	if err != nil {
 		s.badRequest(w, "bad body", err)
 
@@ -137,9 +135,9 @@ func (s *Server) setSource(w http.ResponseWriter, r *http.Request) {
 		Event string `json:"event"`
 	}
 
-	err := json.NewDecoder(r.Body).Decode(&body)
+	err := decodeJSON(w, r, maxRequestBody, &body)
 	if err != nil || body.Source == "" {
-		apiError(w, http.StatusBadRequest, "source required")
+		refuseBody(w, "source required", err)
 
 		return
 	}

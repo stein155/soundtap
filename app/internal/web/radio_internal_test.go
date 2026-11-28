@@ -1664,13 +1664,13 @@ func TestConcurrentSettingsPutsDoNotLoseFields(t *testing.T) {
 	}
 
 	big := `{"language":"` + strings.Repeat("x", settingsMaxBody) + `"}`
-	if rec := radioDo(t, handler, http.MethodPut, "/api/settings", big); rec.Code != http.StatusBadRequest {
-		t.Fatalf("oversized PUT = %d, want 400", rec.Code)
+	if rec := radioDo(t, handler, http.MethodPut, "/api/settings", big); rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized PUT = %d, want 413", rec.Code)
 	}
 
 	big = `{"volume":40,"source":"` + strings.Repeat("x", volumeMaxBody) + `"}`
-	if rec := radioDo(t, handler, http.MethodPost, "/api/volume", big); rec.Code != http.StatusBadRequest {
-		t.Fatalf("oversized volume POST = %d, want 400", rec.Code)
+	if rec := radioDo(t, handler, http.MethodPost, "/api/volume", big); rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized volume POST = %d, want 413", rec.Code)
 	}
 }
 
