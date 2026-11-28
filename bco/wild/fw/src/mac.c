@@ -288,6 +288,7 @@ void mac_fiq(void)
             len <= sizeof rxarea - RX_WRAP && (e[8] & 0xfc) == fc) {
             rxq[rxq_in % RXQ] = (unsigned)e;
             rxq_len[rxq_in % RXQ] = len;
+            __asm__ volatile("" ::: "memory");  /* the entry is stored before rxq_in shows it */
             rxq_in++;
             dg_rxkeep++;        /* diag: a received frame passed keep and went to the host ring */
             if (apdata)
@@ -382,6 +383,9 @@ void tx_mac_start(unsigned q, void *desc)
 const unsigned char *rx_peek(void)
 {
     while (rxq_in != rxq_out) {
+        /* rxq[] and the frame are plain memory: read them only after rxq_in said they are
+         * there, and again on every pass, not from before the FIQ queued them. */
+        __asm__ volatile("" ::: "memory");
         const unsigned char *e = (const unsigned char *)rxq[rxq_out % RXQ];
         if (*(const unsigned short *)e == rxq_len[rxq_out % RXQ])
             return e;
