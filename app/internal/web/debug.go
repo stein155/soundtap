@@ -201,6 +201,11 @@ func (s *Server) writeDebugResources(out *strings.Builder, r *http.Request) {
 }
 
 func (s *Server) writeDebugBoot(out *strings.Builder) {
+	cmdline, _ := os.ReadFile("/proc/cmdline")
+
+	out.WriteString("\n== usb stick at power-on ==\n")
+	fmt.Fprintf(out, "this boot  : %s\n", stickResult(string(cmdline)))
+
 	// The last crash, written by soundtapd's goSafe before the restart (ADR 0052).
 	raw, err := os.ReadFile(filepath.Join(s.homeDir, PanicLogName))
 	if err == nil {
@@ -490,4 +495,32 @@ func fifoStatus(path string) string {
 	default:
 		return "exists but not a fifo"
 	}
+}
+
+// stickResult reads U-Boot's soundtap.recovery=<rc> from the kernel command line (ADR 0130):
+// whether the USB-stick gesture was seen at power-on, and what came of it. On a speaker
+// without SSH, the ST300's above all, this is the one place an owner can read it.
+func stickResult(cmdline string) string {
+	for f := range strings.FieldsSeq(cmdline) {
+		code, ok := strings.CutPrefix(f, "soundtap.recovery=")
+		if !ok {
+			continue
+		}
+
+		meaning := map[string]string{
+			"0":   "installed from the stick",
+			"-19": "gesture seen, no USB stick found",
+			"-2":  "gesture seen, no Update.stu on the stick",
+			"-8":  "gesture seen, the file was refused (not a .stu or not for this speaker)",
+			"-74": "gesture seen, a CRC or read-back check failed",
+			"-5":  "gesture seen, a read or NAND error",
+		}[code]
+		if meaning == "" {
+			meaning = "gesture seen, error " + code
+		}
+
+		return code + " (" + meaning + ")"
+	}
+
+	return "no gesture seen"
 }
