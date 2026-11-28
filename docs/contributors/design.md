@@ -134,7 +134,7 @@ flowchart TB
   (the media daemons' supervisor), `counters` (the counts `/api/health` reports,
   [ADR 0127](../decisions/0127-health-counters-and-alpha-pprof.md)), `lanfilter` (keeps the production filter's IPv6 own-prefix set `lan_nets6`, [ADR 0134](../decisions/0134-ipv6-on-the-speaker.md)) and `wifi` (the Wi-Fi manager: the
   station join over wpa_supplicant's control socket through `wpactrl`, the fallback to the last
-  network that worked and the hostapd setup AP, [ADR 0063](../decisions/0063-wifi-lease-and-setup-ap.md)). `app/cmd/soundtapd` keeps what wires them together per model:
+  network that worked or another saved network in range, and the hostapd setup AP, [ADR 0063](../decisions/0063-wifi-lease-and-setup-ap.md)). `app/cmd/soundtapd` keeps what wires them together per model:
   the button handler, the arbiter's wiring and the source ownership, the media daemons' table,
   identity, network and setup, and the web server's options (`web.New(web.Options)`,
   [ADR 0091](../decisions/0091-web-api-split-into-lanes.md)). Go modules are vendored in `app/vendor/` and build offline in Buildroot

@@ -58,3 +58,50 @@ func TestRememberSeveral(t *testing.T) {
 		t.Fatalf("mode: %v", err)
 	}
 }
+
+// A save replaces the network's whole earlier profile: its line in the known list becomes the
+// new one, in its place, so an open or WEP entry of the SSID never outlives a move to WEP or
+// WPA2. The other networks stay as they were.
+func TestSaveReplacesTheKnownProfileOfItsSSID(t *testing.T) {
+	t.Parallel()
+
+	conf := filepath.Join(t.TempDir(), "wifi.conf")
+	cafe := NewRecord("cafe", "", "cafepass1")
+
+	err := os.WriteFile(conf+".known", []byte(NewRecord("lab", "", "").Line()+"\n"+cafe.Line()+"\n"), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	known := func() []Record {
+		b, _ := os.ReadFile(conf + ".known")
+
+		return ParseKnown(b)
+	}
+
+	for _, rec := range []Record{NewRecord("lab", SecurityWEP, "abcde"), NewRecord("lab", "", "labpass12")} {
+		err = Save(conf, rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		b, _ := os.ReadFile(conf)
+		if ParseConf(b) != rec {
+			t.Fatalf("wifi.conf = %q", b)
+		}
+
+		if got, want := known(), []Record{rec, cafe}; !slices.Equal(got, want) {
+			t.Fatalf("known = %+v, want %+v", got, want)
+		}
+	}
+
+	// the empty profile setup mode saves leaves the list alone
+	err = Save(conf, NewRecord("", "", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := known(), []Record{NewRecord("lab", "", "labpass12"), cafe}; !slices.Equal(got, want) {
+		t.Fatalf("known after setup mode = %+v, want %+v", got, want)
+	}
+}

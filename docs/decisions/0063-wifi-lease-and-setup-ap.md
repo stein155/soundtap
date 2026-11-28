@@ -95,6 +95,20 @@ When the network was not found or gave no address, the first ten retries come ev
 a router coming back from a power cut then costs about a minute, not up to five. A wrong password
 keeps the 5 minutes, since it needs the AP and trying sooner does not help.
 
+Before the setup AP opens after a failed join, the manager tries what else is saved:
+
+- **The last network that worked** (`wifi.conf.good`) takes wifi.conf's place when it is
+  another network, or the same SSID with the same security whose router refused the password (a
+  typo). A save replaces the network's whole profile: an older profile of the same SSID with
+  other security (open where WEP was saved, WEP where WPA2 now is) never stands in for it, nor an
+  older password when the network was simply not there (a router restarting with new settings).
+  A save also puts the new profile in place of the SSID's line in `wifi.conf.known`.
+- **Another saved network in range.** A network that is there but refuses the speaker (a bad key
+  management) holds wpa_supplicant on it for the whole join, so the networks below it never get a
+  turn (ST20 bench, 2026-11-28). One pass then joins the other saved networks that the last scan
+  shows with the security they were saved with, wifi.conf's left out; once per failure, so two
+  failing networks never cycle without the AP. One that joins becomes wifi.conf.
+
 ### Consequences
 
 - A speaker recovers by itself from a router that came up late. Each attempt leaves at most

@@ -481,6 +481,29 @@ func (m *Manager) setNetwork(
 	return m.setSecurity(ctx, conn, netID, saved)
 }
 
+// bssMatches reports whether a scanned BSS is saved's network: its SSID, with the security it
+// was saved with, as wpa_supplicant's flags show it. An open BSS never matches a WEP or WPA
+// network, nor a protected one an open network; a WPA network matches over PSK, or over SAE when
+// it has the password WPA3 needs.
+func bssMatches(b wpactrl.BSS, saved *network) bool {
+	has := func(words ...string) bool {
+		return slices.ContainsFunc(words, func(w string) bool { return strings.Contains(b.Flags, w) })
+	}
+
+	if b.SSID != saved.ssid {
+		return false
+	}
+
+	switch saved.rec.security() {
+	case SecurityWEP:
+		return has("WEP") && !has("WPA", "RSN", "SAE")
+	case secPSK:
+		return has("PSK") || saved.passphrase != "" && has("SAE")
+	default:
+		return !has("WEP", "WPA", "RSN", "SAE")
+	}
+}
+
 // startDHCP starts udhcpc on wlan0 in the background. No -q: udhcpc stays and renews the
 // lease; with -q it exited once bound, and when the lease ran out the router could hand the
 // address to another host (ADR 0063). -A 3: discovery often starts before the join
@@ -698,7 +721,7 @@ func (m *Manager) joined(ctx context.Context, sess *session, confPath string, co
 	}
 
 	remove(m.state("wifi-join-failed"))
-	m.tries = 0
+	m.tries, m.triedOthers = 0, false
 	m.problem("")
 	m.log.Info("dhcp ok", "iface", m.cfg.STA, "after_s", res.took)
 	m.rememberJoined(ctx, sess, confPath, conf)

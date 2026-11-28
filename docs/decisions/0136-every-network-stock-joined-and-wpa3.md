@@ -51,7 +51,10 @@ GTK; it comes in a group handshake, its key id in the key info.
 A WEP profile carries one static key (40 or 104 bits) and its index. The ST20's BCO joins an
 access point with the Privacy bit and no RSN or WPA IE, with open system or shared key
 authentication as the profile says, or open system first and shared key when the access point
-refuses it (status 13); the driver passes cfg80211's connect key, its index and its
+refuses it (status 13). WEP has no handshake that proves the access point holds the key, so an
+association answer without the Privacy bit (an access point that dropped WEP since the BCO last
+heard it) fails the join on security and is left with a deauthentication: an open network never
+takes a WEP profile. The driver passes cfg80211's connect key, its index and its
 authentication type down, and keeps the static keys wpa_supplicant sets (`add_key`,
 `set_default_key`), which cfg80211 requires once a connect carries keys. soundtapd takes a
 `wep` security with a 5- or 13-character or 10- or 26-hex-digit key, stores it with

@@ -142,8 +142,9 @@ func persistWifiProfile(path, ssid, security, psk string, log *slog.Logger) erro
 
 		return fmt.Errorf("save the Wi-Fi network: %w", err)
 	}
-	// A 64-digit hex key goes to wpa_supplicant as the key itself, not as a passphrase.
-	err = wifi.WriteConf(path, wifi.NewRecord(ssid, security, psk))
+	// A 64-digit hex key goes to wpa_supplicant as the key itself, not as a passphrase. The save
+	// replaces the network's earlier profile in the known list too.
+	err = wifi.Save(path, wifi.NewRecord(ssid, security, psk))
 	if err != nil {
 		log.Warn("wifi save", "path", path, "err", err)
 

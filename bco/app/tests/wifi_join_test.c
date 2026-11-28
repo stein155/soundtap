@@ -1196,7 +1196,9 @@ static void wep_network(void)
         join_step();
         d = last_frame() + 8, b = d + 0xc4;
         assert(jstep == J_ASSOC && d[0x18] == 0x00 && (b[0] & 0x10));
-        rxassocok = 1;
+        unsigned char assoc_ok[6] = {0x11, 0x00, 0, 0, 1, 0xc0}; /* ESS + Privacy, status 0, AID 1 */
+        rx_station(rxf, rx_mgmt(0x10, own, wap, wap, assoc_ok, sizeof assoc_ok));
+        assert(rxassocok);
         cmd_ring(63);
         join_step();
         assert(state == WIFI_UP && keyed && sw_grp[1].cipher == WSEC_WEP104 && !memcmp(sw_grp[1].key, prof + 2, 13));
@@ -1242,6 +1244,63 @@ static void wep_network(void)
     }
     nbss = 0;
     printf("ok: WEP joins with shared key (also after auto's open system), data both ways\n");
+}
+
+/* A WEP profile never joins an open network. An access point the table still holds as WEP (its
+ * last beacon here had the Privacy bit) that accepts the association without that bit has dropped
+ * WEP, and WEP has no handshake that would fail: the join fails on security, the AP is left with
+ * a deauthentication, no key reaches the core, and the entry learns the change, so neither a WEP
+ * nor a PSK profile tries it again. */
+static void wep_never_open(void)
+{
+    static const unsigned char wap[6] = {0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x0f};
+    static const unsigned char ies[] = {0, 3, 'L', 'a', 'b', 1, 4, 0x82, 0x84, 0x8b, 0x96, 3, 1, 1};
+    static const unsigned char prof[2 + 5] = {0, WIFI_WEP_OPEN, 'a', 'b', 'c', 'd', 'e'}, seed0[32] = {0},
+                               k[32] = {1};
+    cmd_ring(63);
+    tx_frames();
+    nbss = 1;
+    memset(&bsstab[0], 0, sizeof bsstab[0]);
+    memcpy(bsstab[0].bssid, wap, 6), memcpy(bsstab[0].ssid, "Lab", 3);
+    bsstab[0].ssidlen = 3, bsstab[0].chan = 1, bsstab[0].caps = 0x0011, bsstab[0].rssi = -60;
+    memcpy(bsstab[0].ies, ies, sizeof ies), bsstab[0].ielen = sizeof ies;
+    state = WIFI_IDLE, now = 80000;
+    assert(wifi_join((const unsigned char *)"Lab", 3, WIFI_SEC_WEP, prof, sizeof prof, seed0, 0, 0) == 0);
+    assert(state == WIFI_JOINING && same(cur.bssid, wap, 6));
+    corebd = 1;
+    join_step(); /* JOIN_DONE, then open system authentication */
+    unsigned char auth_ok[6] = {0, 0, 2, 0, 0, 0};
+    rx_station(rxf, rx_mgmt(0xb0, own, wap, wap, auth_ok, sizeof auth_ok));
+    assert(rxauthok);
+    join_step();
+    assert(jstep == J_ASSOC);
+    unsigned char assoc_open[6] = {0x01, 0x04, 0, 0, 1, 0xc0}; /* ESS + short slot, no Privacy; status 0 */
+    rx_station(rxf, rx_mgmt(0x10, own, wap, wap, assoc_open, sizeof assoc_open));
+    tx_frames();
+    cmd_ring(63);
+    join_step();
+    assert(state == WIFI_FAILED && fail_step == WIFI_FAIL_SECURITY && !keyed && !sw_grp[0].cipher);
+    const unsigned char *d = last_frame() + 8, *b = d + 0xc4;
+    assert(d[0x18] == 0xc0 && b[0] == 3 && b[1] == 0); /* deauthentication, leaving */
+    for (unsigned i = 1; i + 1 < 64; i++)               /* no key went to the core */
+        assert(!(cmdbuf[i] == 11 && cmdbuf[i + 1] == (18u | 1u << 16)));
+    assert(!(bsstab[0].caps & 0x10));
+    /* the next attempts: nothing to join with either profile, and the failure says security */
+    state = WIFI_IDLE;
+    assert(wifi_join((const unsigned char *)"Lab", 3, WIFI_SEC_WEP, prof, sizeof prof, seed0, 0, 0) == 0);
+    assert(state == WIFI_SCANNING);
+    state = WIFI_JOINING;
+    join_attempt();
+    assert(state == WIFI_FAILED && fail_step == WIFI_FAIL_SECURITY);
+    state = WIFI_IDLE;
+    assert(wifi_join((const unsigned char *)"Lab", 3, WIFI_SEC_PSK, k, 32, seed0, 0, 0) == 0);
+    assert(state == WIFI_SCANNING);
+    state = WIFI_JOINING;
+    join_attempt();
+    assert(state == WIFI_FAILED && fail_step == WIFI_FAIL_SECURITY);
+    wifi_leave();
+    nbss = 0, state = WIFI_IDLE;
+    printf("ok: a WEP profile never joins an open network, even one the table still held as WEP\n");
 }
 
 /* A management frame from the AP to dst (us or everybody), as the core passes it up. */
@@ -1468,6 +1527,7 @@ int main(void)
     choose_security();
     wep_network();
     long_challenge();
+    wep_never_open();
     wpa3_and_pmf();
     return 0;
 }

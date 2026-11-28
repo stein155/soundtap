@@ -1165,3 +1165,154 @@ func TestAnEndedDaemonTakesItsPidFileAlong(t *testing.T) {
 	bench.sys.end(pid)
 	bench.eventually("the pid file gone", func() bool { return !exists(dnsd) })
 }
+
+func (r *rig) write(path string, recs ...Record) {
+	r.t.Helper()
+
+	var err error
+	if strings.HasSuffix(path, ".known") {
+		err = Remember(path, recs...)
+	} else {
+		err = WriteConf(path, recs[0])
+	}
+
+	if err != nil {
+		r.t.Fatal(err)
+	}
+}
+
+// A saved network that is there but refuses the speaker (a bad key management, say) holds
+// wpa_supplicant on it for the whole join. Another saved network in range is joined before the
+// setup AP opens, also when wifi.conf.good is the refusing network itself (it was saved again).
+//
+//nolint:paralleltest // its rig points wpactrl.ClientDir, a package variable, at a directory of its own
+func TestARefusingNetworkGivesWayToAnotherSavedOneInRange(t *testing.T) {
+	bench := newRig(t, "spotty")
+	home, cafe := NewRecord("home", "", "homepass1"), NewRecord("cafe", "", "cafepass1")
+	bench.write(bench.conf, home)
+	bench.write(bench.conf+".good", home)
+	bench.write(bench.conf+".known", home, cafe)
+	bench.sys.where["home"] = "refused"
+	bench.sys.where["cafe"] = "ok"
+	bench.sys.keys["cafe"] = "cafepass1"
+	bench.sys.scan = []string{"home", "cafe"}
+	bench.start()
+	bench.eventually("the join of the other network", func() bool { return bench.joinCount() == 1 })
+
+	if bench.sys.called("hostapd") {
+		t.Error("the setup AP opened although another saved network was in range")
+	}
+
+	if got := bench.read(bench.conf); got != string(ConfBytes(cafe)) {
+		t.Errorf("wifi.conf = %q; want the network that joined", got)
+	}
+
+	if got := bench.read(filepath.Join(bench.p.State, "wifi-join-failed")); got != "" {
+		t.Errorf("join failed = %q after the join", got)
+	}
+}
+
+// A saved WEP or WPA2 network never falls back to an older open profile of the same SSID: the
+// open access point of that name is not joined, wifi.conf keeps what was saved, and the setup AP
+// opens. Another saved network shown with other security than it was saved with is not tried
+// either.
+//
+//nolint:paralleltest // its rigs point wpactrl.ClientDir, a package variable, at a directory of their own
+func TestASavedProfileNeverFallsBackToAnOpenOneOfItsSSID(t *testing.T) {
+	for _, saved := range []Record{NewRecord("lab", SecurityWEP, "abcde"), NewRecord("lab", "", "labpass12")} {
+		t.Run(saved.security(), func(t *testing.T) {
+			bench := newRig(t, "spotty")
+			bench.write(bench.conf, saved)
+			bench.write(bench.conf+".good", NewRecord("lab", "", ""))
+			bench.write(bench.conf+".known", NewRecord("lab", "", ""), NewRecord("cafe", "", ""))
+			bench.sys.setAir("lab", "ok", "open", "")
+			bench.sys.setAir("cafe", "ok", "psk", "")
+			bench.sys.scan = []string{"lab", "cafe"}
+			bench.start()
+			bench.eventually("the setup AP twice", func() bool {
+				return countPrefix(bench.sys.Calls(), "hostapd ") >= 2
+			})
+			bench.stop()
+
+			if bench.joinCount() != 0 {
+				t.Error("joined an open network for a protected profile")
+			}
+
+			if got := bench.read(bench.conf); got != string(ConfBytes(saved)) {
+				t.Errorf("wifi.conf = %q; want the saved profile", got)
+			}
+		})
+	}
+}
+
+// Saving the network again as WPA2 after it was WEP replaces the profile: when the router, still
+// restarting with its new settings, is not there for the first join, the old WEP profile in
+// wifi.conf.good does not take the new one's place, and the WPA2 network joins once it is back.
+//
+//nolint:paralleltest // its rig points wpactrl.ClientDir, a package variable, at a directory of its own
+func TestAResaveAsWPA2IsWhatJoins(t *testing.T) {
+	bench := newRig(t, "spotty")
+	wep, wpa2 := NewRecord("lab", SecurityWEP, "abcde"), NewRecord("lab", "", "labpass12")
+	bench.write(bench.conf+".good", wep)
+	bench.write(bench.conf+".known", wep)
+
+	err := Save(bench.conf, wpa2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bench.sys.scan = []string{"lab"}
+	bench.start()
+	bench.eventually("the setup AP", func() bool { return bench.exists("setup-ap") })
+	bench.sys.setAir("lab", "ok", "psk", "labpass12")
+	bench.eventually("the WPA2 join", func() bool { return bench.joinCount() == 1 })
+
+	if got := bench.read(bench.conf); got != string(ConfBytes(wpa2)) {
+		t.Errorf("wifi.conf = %q; want the WPA2 profile", got)
+	}
+
+	if got := bench.read(bench.conf + ".known"); got != wpa2.Line()+"\n" {
+		t.Errorf("known = %q; want the WPA2 profile alone", got)
+	}
+
+	for _, c := range bench.sys.supServer().Commands() {
+		if strings.Contains(c, "wep_key") {
+			t.Errorf("the WPA2 join set a WEP key: %q", c)
+		}
+	}
+}
+
+// bssMatches takes a scanned BSS for a saved network only with the security it was saved with.
+func TestBSSMatchesTheSavedSecurity(t *testing.T) {
+	t.Parallel()
+
+	flags := map[string]string{
+		"open": "[ESS]", "wep": "[WEP][ESS]", "wpa2": "[WPA2-PSK-CCMP][ESS]", "wpa3": "[WPA2-SAE-CCMP][ESS]",
+	}
+
+	for _, test := range []struct {
+		rec  Record
+		want string // the flags it matches, by name
+	}{
+		{NewRecord("n", "", ""), "open"},
+		{NewRecord("n", SecurityWEP, "abcde"), "wep"},
+		{NewRecord("n", "", "password1"), "wpa2 wpa3"},
+		{NewRecord("n", "", strings.Repeat("ab", 32)), "wpa2"},
+	} {
+		saved, err := decode(test.rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for name, f := range flags {
+			got := bssMatches(wpactrl.BSS{BSSID: "", Freq: 2437, Signal: -50, Flags: f, SSID: "n"}, &saved)
+			if want := slices.Contains(strings.Fields(test.want), name); got != want {
+				t.Errorf("%+v on %s: %v, want %v", test.rec, name, got, want)
+			}
+		}
+
+		if bssMatches(wpactrl.BSS{BSSID: "", Freq: 2437, Signal: -50, Flags: flags["wpa2"], SSID: "m"}, &saved) {
+			t.Errorf("%+v matched another SSID", test.rec)
+		}
+	}
+}

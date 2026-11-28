@@ -37,8 +37,12 @@ type fakeNet struct {
 }
 
 // supplicant is a fake wpa_supplicant behind the control socket. Where says, per SSID,
-// what the air does: "ok" joins, "wrong_key" fails the handshake, anything else (or
-// nothing) is not in range. A join takes one STATUS to scan, then the result.
+// what the air does: "ok" joins, "wrong_key" fails the handshake, "refused" associates and is
+// sent away (status 43) again and again, holding wpa_supplicant on it as the ST20's bench showed
+// (no lower-priority network is tried meanwhile), anything else (or nothing) is not in range. A
+// network whose security is not the one the air has for its SSID (fakeSys.sec) is not in range
+// for it either, as wpa_supplicant skips a BSS whose security does not match. A join takes one
+// STATUS to scan, then the result.
 type supplicant struct {
 	mu        sync.Mutex
 	sys       *fakeSys
@@ -102,8 +106,11 @@ func (f *supplicant) handle(cmd string) string {
 		reply := "bssid / frequency / signal level / flags / ssid\n"
 
 		var rows strings.Builder
+
 		for i, ssid := range f.scan {
-			fmt.Fprintf(&rows, "aa:bb:cc:dd:ee:%02x\t2437\t-50\t[WPA2-PSK-CCMP][ESS]\t%s\n", i, ssid)
+			flags := map[string]string{"open": "[ESS]", "wep": "[WEP][ESS]"}[f.sys.security(ssid)]
+			flags = cmp.Or(flags, "[WPA2-PSK-CCMP][ESS]")
+			fmt.Fprintf(&rows, "aa:bb:cc:dd:ee:%02x\t2437\t-50\t%s\t%s\n", i, flags, ssid)
 		}
 
 		reply += rows.String()
@@ -163,13 +170,20 @@ func (f *supplicant) step() {
 	slices.SortFunc(ids, func(a, b int) int { return cmp.Compare(f.nets[b].priority, f.nets[a].priority) })
 
 	for _, id := range ids {
-		n := f.nets[id]
-		if f.result(n) == "ok" {
+		switch f.result(f.nets[id]) {
+		case "ok":
 			f.state, f.current, f.connected = "COMPLETED", id, true
 			go f.srv.Event(fmt.Sprintf(
 				"CTRL-EVENT-CONNECTED - Connection to aa:bb:cc:dd:ee:ff completed [id=%d id_str=]", id))
 
 			return
+		case "refused":
+			f.state = "ASSOCIATING"
+			go f.srv.Event("CTRL-EVENT-ASSOC-REJECT bssid=aa:bb:cc:dd:ee:ff status_code=43")
+
+			return
+		default:
+			// Not this one: the next network down.
 		}
 	}
 
@@ -191,18 +205,35 @@ func (f *supplicant) step() {
 	f.state = "SCANNING"
 }
 
-// result is what joining n does: a network in range with another key than n's refuses
-// the handshake.
-func (f *supplicant) result(n *fakeNet) string {
-	verdict, pass, ok := f.sys.air(n.ssid)
+// result is what joining saved does: a network in range with another key than saved's
+// refuses the handshake; one with other security is not there for it.
+func (f *supplicant) result(saved *fakeNet) string {
+	if sec := f.sys.security(saved.ssid); sec != "" && sec != saved.security() {
+		return ""
+	}
+
+	verdict, pass, ok := f.sys.air(saved.ssid)
 	if ok && verdict == "ok" {
-		key, _ := pbkdf2.Key(sha1.New, pass, []byte(n.ssid), 4096, 32)
-		if n.vars["psk"] != hex.EncodeToString(key) {
+		key, _ := pbkdf2.Key(sha1.New, pass, []byte(saved.ssid), 4096, 32)
+		if saved.vars["psk"] != hex.EncodeToString(key) {
 			return "wrong_key"
 		}
 	}
 
 	return verdict
+}
+
+// security is how wpa_supplicant was told to join n: "wep" with a WEP key, "open" with
+// key_mgmt NONE alone, "psk" otherwise.
+func (n *fakeNet) security() string {
+	switch {
+	case n.vars[keyMgmt] != "NONE":
+		return "psk"
+	case n.vars["wep_key0"] != "" || n.vars["wep_key1"] != "" || n.vars["wep_key2"] != "" || n.vars["wep_key3"] != "":
+		return "wep"
+	default:
+		return "open"
+	}
 }
 
 // fakeSys records every command and plays the box: the radio's interfaces, the daemons'
@@ -217,6 +248,7 @@ type fakeSys struct {
 	nextPid int
 	sup     *supplicant
 	where   map[string]string
+	sec     map[string]string // SSID -> the air's security: "open", "wep" or "psk"; absent: any, WPA2 in a scan
 	scan    []string
 	dhcp    bool // udhcpc runs
 	noIP    bool // DHCP never answers
@@ -243,8 +275,8 @@ func newFakeSys(t *testing.T, paths *Paths) *fakeSys {
 
 	return &fakeSys{
 		t: t, p: *paths, mu: sync.Mutex{}, calls: nil, signals: nil, alive: map[int]bool{}, nextPid: 1000,
-		sup: nil, where: map[string]string{}, scan: nil, dhcp: false, noIP: false, apMode: true,
-		fail: map[string]bool{}, iwScan: "", station: "", keys: map[string]string{}, env: "",
+		sup: nil, where: map[string]string{}, sec: map[string]string{}, scan: nil, dhcp: false, noIP: false,
+		apMode: true, fail: map[string]bool{}, iwScan: "", station: "", keys: map[string]string{}, env: "",
 		servers: map[int]*wpactrltest.Server{}, exits: map[int]chan struct{}{}, refuse: nil, badConf: "", busy: 0,
 	}
 }
@@ -485,6 +517,26 @@ func (s *fakeSys) air(ssid string) (string, string, bool) {
 	pass, hasKey := s.keys[ssid]
 
 	return s.where[ssid], pass, hasKey
+}
+
+// security is the air's security for ssid, "" when the test set none.
+func (s *fakeSys) security(ssid string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.sec[ssid]
+}
+
+// setAir changes what the air does for ssid while the manager runs: in range or not, its
+// security, and the passphrase it takes ("": any).
+func (s *fakeSys) setAir(ssid, verdict, security, pass string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.where[ssid], s.sec[ssid] = verdict, security
+	if pass != "" {
+		s.keys[ssid] = pass
+	}
 }
 
 func (s *fakeSys) called(prefix string) bool {

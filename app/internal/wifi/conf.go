@@ -115,6 +115,24 @@ func (r Record) Line() string {
 	return line
 }
 
+// secPSK is security's word for a password or raw-key network (WPA, WPA2, WPA3).
+const secPSK = "psk"
+
+// security is how r joins: SecurityWEP, secPSK for a password or a raw key, "" for an open
+// network. Two records of one SSID with another security are two different networks to the
+// speaker: one never stands in for the other, so an open access point never takes a WEP or WPA
+// profile.
+func (r Record) security() string {
+	switch {
+	case r.Security == SecurityWEP:
+		return SecurityWEP
+	case r.HexPSK != "" || r.PSKB64 != "":
+		return secPSK
+	default:
+		return ""
+	}
+}
+
 // ConfBytes is rec as wifi.conf.
 func ConfBytes(rec Record) []byte {
 	conf := "SSID_B64=" + rec.SSIDB64 + "\nPSK_B64=" + rec.PSKB64 + "\n"
@@ -137,6 +155,45 @@ func WriteConf(path string, r Record) error {
 	err := atomicjson.WriteFile(path, ConfBytes(r), privateFileMode)
 	if err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
+	}
+
+	return nil
+}
+
+// Save makes rec the network wifi.conf at path joins, and puts it in place of the known list's
+// entry for its SSID: a save replaces the whole earlier profile of that network, its security
+// included, so an older entry (open, or WEP before a move to WPA2) is never joined in its stead.
+// The known list keeps its order; the network moves to the front once it joins.
+func Save(path string, rec Record) error {
+	err := WriteConf(path, rec)
+	if err != nil {
+		return err
+	}
+
+	known := path + ".known"
+
+	old, err := os.ReadFile(known)
+	if err != nil || rec.SSIDB64 == "" {
+		return nil //nolint:nilerr // no known list yet, or no network saved: nothing to replace
+	}
+
+	lines := strings.Split(strings.TrimRight(string(old), "\n"), "\n")
+	changed := false
+
+	for i, line := range lines {
+		ssid, _, _ := strings.Cut(strings.TrimSpace(line), " ")
+		if ssid == rec.SSIDB64 && line != rec.Line() {
+			lines[i], changed = rec.Line(), true
+		}
+	}
+
+	if !changed {
+		return nil
+	}
+
+	err = atomicjson.WriteFile(known, []byte(strings.Join(lines, "\n")+"\n"), privateFileMode)
+	if err != nil {
+		return fmt.Errorf("known networks: %w", err)
 	}
 
 	return nil

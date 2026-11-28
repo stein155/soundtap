@@ -359,6 +359,7 @@ static unsigned saeq_in, saeq_out, sae_pmk, sae_result; /* sae_result: 0 waiting
 enum { J_SCAN, J_SETUP, J_AUTH, J_ASSOC, J_4WAY, J_KEYS, J_SAE };
 static unsigned jstep, jtries, deadline, join_pending, corebd, rxauthok, rxassocok, kicked;
 static unsigned kick_sub, kick_reason; /* the deauthentication (0xc0) or disassociation (0xa0) and its reason */
+static unsigned assoc_caps; /* the capability field of the AP's accepting association response */
 /* Why the last join failed, for STATUS (wifi_fail): the step and the AP's status or reason code. */
 static unsigned fail_step, fail_code;
 #define JOIN_TRIES 5u /* auth/assoc attempts per join: a band-steering AP ignores the first few */
@@ -1090,7 +1091,7 @@ static void rx_station(const volatile unsigned char *b, unsigned len)
             }
         } else if (sub == 0x10 && len >= 0xcc + 4) {
             if (le16(body + 2) == 0)
-                rxassocok = 1;
+                rxassocok = 1, assoc_caps = le16(body);
             else
                 fail_step = WIFI_FAIL_ASSOC, fail_code = le16(body + 2);
         }
@@ -2048,7 +2049,7 @@ static void join_attempt(void)
     cur.wgrp = bsstab[i].wgrp, cur.wpair = bsstab[i].wpair;
     for (unsigned r = 0; r < 8; r++)
         rates[r] = lo;
-    keyed = ap_keyed = 0, keys_due = 0, rxauthok = rxassocok = kicked = 0, eappend = 0;
+    keyed = ap_keyed = 0, keys_due = 0, rxauthok = rxassocok = kicked = 0, eappend = 0, assoc_caps = 0;
     eapol_buf = 0;
     /* WEP shared key asks with algorithm 1 at once; "auto" starts with open system */
     auth_alg = prof_sec == WIFI_SEC_WEP && wep_auth == WIFI_WEP_SHARED ? AUTH_SHARED_KEY :
@@ -2157,6 +2158,19 @@ static void join_step(void)
         }
         return;
     case J_ASSOC:
+        /* WEP has no handshake that proves the access point holds the key, so its answer must ask
+         * for privacy: one without the Privacy bit is an open network (the BSS dropped WEP since
+         * its last beacon here) and never takes a WEP profile. Leave it and fail on security; its
+         * entry learns the change, so the next attempt fails at once. */
+        if (rxassocok && prof_sec == WIFI_SEC_WEP && !(assoc_caps & 0x10)) {
+            send_deauth(3); /* leaving */
+            for (unsigned i = 0; i < nbss; i++)
+                if (same(bsstab[i].bssid, cur.bssid, 6))
+                    bsstab[i].caps = (unsigned short)assoc_caps;
+            fail_step = WIFI_FAIL_SECURITY, fail_code = 0;
+            fail();
+            return;
+        }
         if (rxassocok) {
             unsigned char pr[10] = {0};
             unsigned char sn[32];

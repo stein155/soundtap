@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,6 +26,7 @@ import (
 	"time"
 
 	"github.com/stein155/soundtap/app/internal/safego"
+	"github.com/stein155/soundtap/app/internal/wpactrl"
 )
 
 // Sys is what the manager does to the box. A test records it.
@@ -186,6 +188,10 @@ type Manager struct {
 	lastSSID string
 	hasLast  bool
 	refused  map[string]bool // optional wpa_supplicant settings this build turned down
+	// others are the saved networks in range the next pass joins instead of wifi.conf's, which
+	// failed; triedOthers says that pass ran since the last join or setup AP, so it runs once.
+	others      []network
+	triedOthers bool
 }
 
 // New returns a Manager; Run starts it.
@@ -236,6 +242,9 @@ func New(cfg Config) *Manager {
 		apGen:    atomic.Uint64{},
 		lastSSID: "",
 		hasLast:  false,
+		others:   nil,
+
+		triedOthers: false,
 	}
 }
 
@@ -317,6 +326,8 @@ func (m *Manager) take() (kind, bool) {
 }
 
 func (m *Manager) transition(ctx context.Context, want kind) {
+	m.others, m.triedOthers = nil, false
+
 	if want == kindBoot {
 		adopted := m.adopt(ctx)
 		if adopted == adoptKept {
@@ -502,8 +513,9 @@ func (m *Manager) bringUp(ctx context.Context, pass kind) (bool, error) {
 	}
 
 	conf, _ := os.ReadFile(confPath)
+	confRec := ParseConf(conf)
 
-	nets, err := networks(confPath, ParseConf(conf))
+	nets, err := m.passNetworks(confPath, confRec)
 	if err != nil {
 		return false, m.apOnly(ctx, err.Error())
 	}
@@ -523,7 +535,7 @@ func (m *Manager) bringUp(ctx context.Context, pass kind) (bool, error) {
 
 	switch {
 	case res.joined:
-		m.joined(ctx, sess, confPath, nets[0].rec, &res)
+		m.joined(ctx, sess, confPath, confRec, &res)
 
 		return m.watch(ctx, sess, nil), nil
 	case ctx.Err() != nil:
@@ -555,11 +567,20 @@ func (m *Manager) joinFailed(ctx context.Context, sess *session, confPath string
 				joined: false, assoc: -1, took: -1, seen: nil, reason: "",
 			})
 		}), nil
-	case exists(good) && !sameFile(confPath, good) && copyFile(good, confPath) == nil:
+	case exists(good) && !sameFile(confPath, good) && goodStandsIn(confPath, good, res.reason) &&
+		copyFile(good, confPath) == nil:
 		// New settings that do not join, a mistyped password above all: a speaker that was
 		// on the network must not need the setup AP to get back.
 		m.log.Info("wifi join failed; back to the last network that worked")
 		_ = os.WriteFile(m.state("wifi-fallback-reason"), []byte(res.reason+"\n"), publicFileMode)
+
+		return true, nil
+	case !m.triedOthers && m.othersInRange(ctx, sess, confPath):
+		// wifi.conf's network is there but refuses the speaker (a bad key management, say):
+		// wpa_supplicant keeps at it for the whole join and never reaches a saved network
+		// below it. Another one in range is joined before the setup AP opens.
+		m.log.Info("wifi join failed; trying the other saved networks in range", "networks", len(m.others))
+		m.triedOthers = true
 
 		return true, nil
 	default:
@@ -573,10 +594,63 @@ func (m *Manager) joinFailed(ctx context.Context, sess *session, confPath string
 	return m.apUntilRetry(ctx, "wifi join failed", pause), nil
 }
 
+// goodStandsIn reports whether wifi.conf.good may replace wifi.conf after its join failed:
+// another network, or the same one with the same security that refused the password, a typo.
+// A save replaces the network's whole profile, so an older profile of the same SSID with other
+// security (open where WEP was saved, WEP where WPA2 was) never takes its place, and neither does
+// an older password when the network was simply not there (a router restarting after its
+// settings changed).
+func goodStandsIn(confPath, good, reason string) bool {
+	conf, _ := os.ReadFile(confPath)
+	last, _ := os.ReadFile(good)
+	saved, worked := ParseConf(conf), ParseConf(last)
+
+	if saved.SSIDB64 != worked.SSIDB64 {
+		return true
+	}
+
+	return reason == "wrong_password" && saved.security() == worked.security()
+}
+
+// othersInRange keeps for the next pass the saved networks other than wifi.conf's that the
+// last scan shows with the security they were saved with (bssMatches), and reports whether there
+// are any: wifi.conf.good first, then the known ones in their order.
+func (m *Manager) othersInRange(ctx context.Context, sess *session, confPath string) bool {
+	bss, err := sess.scanResults(ctx)
+	if err != nil {
+		return false
+	}
+
+	conf, _ := os.ReadFile(confPath)
+	skip := map[string]bool{ParseConf(conf).SSIDB64: true}
+	good, _ := os.ReadFile(confPath + ".good")
+	known, _ := os.ReadFile(confPath + ".known")
+	m.others = nil
+
+	for _, rec := range append([]Record{ParseConf(good)}, ParseKnown(known)...) {
+		if rec.SSIDB64 == "" || skip[rec.SSIDB64] || len(m.others) > KnownMax {
+			continue
+		}
+
+		saved, err := decode(rec)
+		if err != nil || !slices.ContainsFunc(bss, func(b wpactrl.BSS) bool { return bssMatches(b, &saved) }) {
+			continue
+		}
+
+		skip[rec.SSIDB64] = true
+
+		m.others = append(m.others, saved)
+	}
+
+	return len(m.others) > 0
+}
+
 // apUntilRetry opens the setup AP until the saved network's next try. An AP that does not
 // open is a problem, not the end: the saved network is tried again after the pause, so a
 // speaker never stays without both its network and its setup AP.
 func (m *Manager) apUntilRetry(ctx context.Context, reason string, pause time.Duration) bool {
+	m.triedOthers = false // the next try may find another saved network in range again
+
 	err := m.openAP(ctx, reason)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -620,6 +694,19 @@ func (m *Manager) apOnly(ctx context.Context, reason string) error {
 			return fmt.Errorf("setup AP: %w", ctx.Err())
 		}
 	}
+}
+
+// passNetworks is what a pass joins: networks, or after wifi.conf's network failed the other
+// saved networks in range alone (othersInRange).
+func (m *Manager) passNetworks(confPath string, conf Record) ([]network, error) {
+	nets, err := networks(confPath, conf)
+	if err != nil || len(m.others) == 0 {
+		return nets, err
+	}
+
+	nets, m.others = m.others, nil
+
+	return nets, nil
 }
 
 // networks is wifi.conf first, then every known network not already there, at falling
