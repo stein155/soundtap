@@ -10,8 +10,32 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
 
 ## [Unreleased]
 
+## [app-v0.1.0-alpha.9] - 2026-11-28
+
+- The SoundTap app that SoundTap Core 0.1.0-alpha.9 carries; what it changes is listed under
+  that release.
+
+## [os-v0.1.0-alpha.9] - 2026-11-28
+
+The ninth alpha of SoundTap Core 0.1.0, the candidate for 1.0.
+
+### Changed
+
+- **You can leave the update screen** while a speaker updates and go on using the app and your
+  other speakers. A notice above the player shows how far the update is; tap it to see the
+  update screen again.
+- **SoundTouch 20: the display shows something about a second sooner** after you plug it in.
+- **SoundTouch 20: the display's animations are smooth**, at about 20 frames a second instead of
+  about 5.
+
 ### Fixed
 
+- **Speakers in a group play closer together**: a speaker following another no longer plays a
+  few hundredths of a second ahead of it.
+- **On an iPhone, the app on your home screen reaches the bottom of the screen**: the speaker
+  bar no longer stops short above it, and it no longer jumps when you open what is playing.
+- **The USB stick takes a SoundTouch 10 back to Bose's software with Bose's own file** for that
+  speaker, and a SoundTouch 300 with Bose's older 27.0.1 file.
 - **SoundTouch 20: no more "Connecting…" flash after power-on.** While the speaker joins its
   Wi-Fi for the first time after power-on, which can take up to a minute on the SoundTouch 20,
   the display and the Wi-Fi lamp no longer say it is connecting. If it has not joined after a
