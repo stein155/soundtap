@@ -16,7 +16,15 @@
 #include "host.h"
 
 #include "../src/ring.c"
+/* A test may watch src/sta.c's copies (an interrupt in the middle of a key install): it defines
+ * SIM_STA_COPY as the name of its own copy function, declared before this header. */
+#ifdef SIM_STA_COPY
+#define copy_bytes SIM_STA_COPY
+#endif
 #include "../src/sta.c"
+#ifdef SIM_STA_COPY
+#undef copy_bytes
+#endif
 #include "../src/mac.c"
 #include "../src/scan.c"
 #include "../src/xport.c"
@@ -54,6 +62,9 @@ static void host_ring(struct ring *r, void *buf, unsigned size, unsigned esize, 
     r->core_base = r->base; /* the core's DMA addresses are our pointers */
 }
 
+/* The host DMA engine fails the next dma_fail_n jobs on the local address dma_fail_local (sim_dma). */
+static unsigned dma_jobs, dma_fail_local, dma_fail_n;
+
 /* Power-on state of every module (the core's .bss is zeroed at reset). */
 static void sim_reset(void)
 {
@@ -69,7 +80,7 @@ static void sim_reset(void)
     for (unsigned i = 0; i < 16; i++)
         resp_class[i] = i < 8 ? 5 : 11;
     memset(&job, 0, sizeof job);
-    dma_busy = 0;
+    dma_busy = 0, dma_redo = 0, dma_fail_n = 0;
     memset(rx_stage, 0, sizeof rx_stage), rx_slot = 0, rx_end = rx_peer = 0;
     memset(tx_pkt, 0, sizeof tx_pkt);
     tx_q = tx_rec = tx_t0 = 0, tx_busy = 0;
@@ -99,23 +110,25 @@ static void sim_init(void)
     xport_init(&hb);
 }
 
-/* The host DMA engine: one job, then its completion interrupt. */
-static unsigned dma_jobs;
+/* The host DMA engine: one job, then its completion interrupt. The next dma_fail_n jobs on the
+ * local address dma_fail_local copy nothing and end with the error status instead. */
 static void sim_dma(void)
 {
     while (dma_busy) {
         void *local = (void *)(uintptr_t)REG(R_DMA_LOCAL), *host = (void *)(uintptr_t)REG(R_DMA_HOST);
-        unsigned len = REG(R_DMA_LEN);
+        unsigned len = REG(R_DMA_LEN), fail = dma_fail_n && REG(R_DMA_LOCAL) == dma_fail_local;
         if (!(REG(R_DMA_CTL) & 2)) {
             CHECK(0, "DMA job without a start");
             return;
         }
-        if (REG(R_DMA_CTL) & 1)
+        if (fail)
+            dma_fail_n--;
+        else if (REG(R_DMA_CTL) & 1)
             memcpy(host, local, len);
         else
             memcpy(local, host, len);
         REG(R_DMA_CTL) &= ~2u;
-        REG(R_DMA_STATUS) = 0;
+        REG(R_DMA_STATUS) = fail ? 2 : 0;
         REG(R_IRQ_STATUS) = 2;
         xport_irq();
         REG(R_IRQ_STATUS) = 0;

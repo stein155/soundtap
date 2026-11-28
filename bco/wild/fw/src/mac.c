@@ -211,7 +211,8 @@ void mac_fiq(void)
          * PS-Poll. Whether the address filter, set up for a station, flags a toDS frame was
          * never measured; a client whose DHCP request got neither kept nor ACKed fell back to
          * a link-local address (ST20, 2026-11-27). So in ap_mode A1 = own counts as passing it. */
-        int to_us = ap_mode && !group && same_mac(e + 12, own_mac);
+        int ra_us = same_mac(e + 12, own_mac);   /* A1 is our address (so not a group) */
+        int to_us = ap_mode && ra_us;
         int hit = (st & 0x40000) || to_us;
         if (to_us) {
             unsigned kind = ap_kind(fc);
@@ -300,8 +301,11 @@ void mac_fiq(void)
         /* Unicast data is ACKed even when the queue is full (802.11: the ACK answers a good FCS,
          * not buffer space) and then dropped; TCP recovers. Withholding the ACK made the AP retry,
          * back off and fall back to slower rates: 30-40 % of a download on the ST20. A group
-         * frame is never ACKed, also while a scan lets everything through the address filter. */
-        if (hit && !group && len >= minlen && (fc == 0x50 || (mgmt && room) || ack_data || pspoll))
+         * frame is never ACKed, also while a scan lets everything through the address filter.
+         * Nor is a frame to another station (A1 not our address) that the open filter of a scan
+         * passed: a background scan while joined ACKed other networks' unicast data, and an
+         * active scan other stations' probe responses, on top of their own receivers' ACKs. */
+        if (hit && ra_us && len >= minlen && (fc == 0x50 || (mgmt && room) || ack_data || pspoll))
             send_ack(e);
         /* An RTS to us (RA = own address; the setup AP, or the station once joined) gets a CTS a
          * SIFS later, to its TA, at the control-response rate, with the RTS's duration less the
@@ -310,8 +314,7 @@ void mac_fiq(void)
          * the CTS goes whatever the medium was reserved for. rec[RC_APTYPE + AP_RTS] shows
          * whether RTS frames reach the FIQ at all. Only when the receive area holds this RTS (its
          * frame control is the latched one): stale bytes there would send a CTS nobody asked for. */
-        if (fc == 0xb4 && (ap_mode || joined) && !group && len >= 20 && (e[8] & 0xfc) == fc &&
-            same_mac(e + 12, own_mac)) {
+        if (fc == 0xb4 && (ap_mode || joined) && ra_us && len >= 20 && (e[8] & 0xfc) == fc) {
             unsigned dur = e[10] | (unsigned)e[11] << 8, cost = 10 + airtime(resp_class[e[6] & 15], 14);
             send_resp(e, 0xc4, dur & 0x8000 || dur <= cost ? 0 : dur - cost);
             rec[RC_CTS]++;

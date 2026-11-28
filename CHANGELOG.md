@@ -23,6 +23,9 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
   could refuse to join that network again for weeks.
 - **SoundTouch 20: keeps moving to a stronger access point of your network after weeks of
   running**, instead of staying on a weak one.
+- **SoundTouch 20: keeps sending on Wi-Fi when your network renews its encryption key** in the
+  middle of a transfer, and a failed copy inside its network chip no longer stops it sending
+  until a restart.
 - **SoundTouch 20: a forged Wi-Fi frame nearby can no longer corrupt its network chip's memory**
   while it joins a WEP network.
 - **Spotify no longer writes the recently played list at every song change and resume.**

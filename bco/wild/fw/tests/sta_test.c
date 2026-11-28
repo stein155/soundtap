@@ -4,7 +4,25 @@
 /* Station module (src/sta.c) through the command ring as bco/app/src/wifi.c drives it: the peer
  * table, CCMP key install and delete with their replies, the transmit packet number and the
  * receive-key lookup. Command layouts are wifi.c's set_key() and the PEER_ADD/JOIN_DONE bodies. */
+#define SIM_STA_COPY sta_copy
+void sta_copy(void *dst, const void *src, unsigned n);
 #include "core_sim.h"
+
+/* src/sta.c's copies: after each one, where interrupts are on, the IRQ comes and enciphers a frame
+ * for slot 0 as tx_stage_done does (sta_txkey), the key it gets and its PN noted. */
+static int irq_watch, irq_seen;
+static unsigned char irq_tk[16];
+static unsigned long long irq_pn;
+void sta_copy(void *dst, const void *src, unsigned n)
+{
+    copy_bytes(dst, src, n);
+    if (irq_watch && !irq_depth) {
+        const unsigned char *k = sta_txkey(0, &irq_pn);
+        irq_seen = k != 0;
+        if (k)
+            memcpy(irq_tk, k, 16);
+    }
+}
 
 static int soft; /* sta_rxkey: the app deciphers under this key (ADR 0136) */
 
@@ -77,8 +95,36 @@ static void soft_keys(void)
     CHECK(sta_rxkey(0, 0, 0, &rxpn, &soft) && !soft && sta_txkey(0, &pn), "CCMP over it: hardware");
 }
 
+/* A rekey seen from the IRQ: the old key with its PN, or the new key from PN 1, never the new key
+ * with the old key's PN (after which the access point drops every frame numbered from 1 again as a
+ * replay). */
+static void rekey_irq(void)
+{
+    static const unsigned char TK2[16] = {0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+                                          0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f};
+    unsigned long long pn = 0;
+    const unsigned char *k;
+    sim_init();
+    peer_add(BSSID, 0);
+    set_key(1, 0, BSSID, TK);
+    run();
+    for (unsigned i = 0; i < 100; i++)
+        sta_txkey(0, &pn);
+    irq_watch = 1, irq_seen = 0;
+    set_key(1, 0, BSSID, TK2);
+    run();
+    irq_watch = 0;
+    CHECK(!irq_seen || (!memcmp(irq_tk, TK, 16) && irq_pn == 101) || (!memcmp(irq_tk, TK2, 16) && irq_pn == 1),
+          "the IRQ saw a half-done rekey: PN %llu under the %s key", irq_pn,
+          memcmp(irq_tk, TK2, 16) ? "old" : "new");
+    k = sta_txkey(0, &pn);
+    CHECK(k && !memcmp(k, TK2, 16) && pn == (irq_seen && !memcmp(irq_tk, TK2, 16) ? 2 : 1),
+          "the new key's PNs go on from its first frame (%llu)", pn);
+}
+
 int main(void)
 {
+    rekey_irq();
     soft_keys();
     unsigned long long pn = 0, *rxpn = 0;
     const unsigned char *k;

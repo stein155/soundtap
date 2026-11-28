@@ -117,8 +117,8 @@ static unsigned need(unsigned type)
     return 0;
 }
 
-unsigned sta_cmd(unsigned type, const unsigned char *payload, unsigned len, unsigned module,
-                 unsigned src)
+static unsigned station(unsigned type, const unsigned char *payload, unsigned len, unsigned module,
+                        unsigned src)
 {
     unsigned s;
     unsigned slot = 0, status = 0;   /* 4-byte so the event's payload word has no stack bytes */
@@ -203,4 +203,19 @@ unsigned sta_cmd(unsigned type, const unsigned char *payload, unsigned len, unsi
     }
     /* the remaining station commands (keys, ...) come with the crypto milestone */
     return 1;
+}
+
+/* A command runs with IRQs off: the IRQ's DMA completions encipher (tx_stage_done, sta_txkey) and
+ * decipher (rx_deliver, sta_rxkey) with these keys and look up these peers. A key install it
+ * interrupted between the new key and its PN reset sent one frame under the new key with the old
+ * key's next PN; the access point then took every frame after it, numbered from 1 again, as a
+ * replay until the PN caught up, for the life of the key. */
+unsigned sta_cmd(unsigned type, const unsigned char *payload, unsigned len, unsigned module,
+                 unsigned src)
+{
+    unsigned r;
+    irq_off();
+    r = station(type, payload, len, module, src);
+    irq_on();
+    return r;
 }

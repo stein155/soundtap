@@ -727,8 +727,74 @@ static void soft_frames(void)
     recycle(&d);
 }
 
+/* Only a frame to our own address is ACKed. A scan opens the address filter, so while one
+ * listens a frame to another station passes it too: another station's probe response (kept, it
+ * is a scan result) and, during a background scan of a joined station, another network's unicast
+ * data. Answering those put a second ACK on the air over their own receivers'. */
+static void foreign_not_acked(void)
+{
+    unsigned len;
+    setup(0);
+    joined = 1;
+    dwell_state = 6;                                /* an active scan listens */
+    len = mgmt_frame(0x50, OTHER, 12);
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
+    CHECK(rxq_in == 1 && !acked(), "another station's probe response kept, not ACKed");
+    len = mgmt_frame(0x50, OWN, 12);
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
+    CHECK(rxq_in == 2 && acked(), "ours kept and ACKed");
+    len = data_frame(OTHER, BSSID, 0, 0, 0, 20);
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
+    CHECK(!acked(), "another station's unicast data not ACKed");
+    len = data_frame(OTHER, BSSID, 0, 0, 0, 0);
+    fbuf[0] = 0x48;
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
+    CHECK(!acked(), "nor its null-data");
+    len = mgmt_frame(0xb0, OTHER, 6);
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
+    CHECK(!acked(), "nor its authentication");
+    len = data_frame(OWN, BSSID, 0, 0, 0, 20);
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
+    CHECK(acked(), "our own unicast data still ACKed");
+    dwell_state = 0, joined = 0;
+}
+
+/* A delivery DMA that fails is run again; a host buffer whose DMA keeps failing comes back empty
+ * (end 0: the app frees it unread) instead of being lost, and the next frame gets through. */
+static void dma_error(void)
+{
+    struct rxd d;
+    unsigned len;
+    int ok;
+    setup(0);
+    len = mgmt_frame(0xb0, OWN, 6);
+    dma_fail_local = (unsigned)(uintptr_t)rx_stage, dma_fail_n = 1;
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
+    ok = delivered(&d);
+    CHECK(ok && !dma_fail_n && d.end == 0x94 + 24 + len - 4 && !memcmp(d.buf + 0xac, fbuf, 24),
+          "delivered after a failed DMA");
+    if (ok)
+        recycle(&d);
+    dma_fail_n = DMA_TRIES;
+    air_rx(fbuf, len, ST_IN | ST_ADDR);
+    pump(DMA_TRIES);
+    ok = delivered(&d);
+    CHECK(ok && !dma_fail_n && d.end == 0, "a buffer whose DMA kept failing comes back empty");
+    if (ok)
+        recycle(&d);
+    for (unsigned i = 0; i < NRX + 1; i++) {
+        air_rx(fbuf, len, ST_IN | ST_ADDR);
+        ok = delivered(&d);
+        CHECK(ok && d.end == 0x94 + 24 + len - 4, "frame %u after it delivered", i);
+        if (ok)
+            recycle(&d);
+    }
+}
+
 int main(void)
 {
+    dma_error();
+    foreign_not_acked();
     soft_frames();
     rts_cts();
     station_qos();

@@ -441,7 +441,9 @@ How the core uses it (`bco/wild/fw/src/xport.c`, `bco/wild/fw/src/sta.c`):
    destination's peer slot has no pairwise key, the frame is dropped and its record goes back as
    failed; it is never sent in clear. A pairwise key belongs to its peer slot: PEER_DEL, dropping
    all peers, JOIN_DONE and a new MAC in the slot remove it, and an install for a MAC not in the
-   peer table installs nothing and answers failure.
+   peer table installs nothing and answers failure. Station commands run with IRQs off, so a
+   frame enciphered or deciphered in between sees a key install whole or not at all, never the new
+   key with the old key's PN.
 2. Every protected data frame it receives is deciphered on channel B (`mac_ccmp_rx`), with the
    transmitter's pairwise key or the group key its key id names (`sta_rxkey`). Header and body are
    first copied to the word-aligned RX staging buffer.
@@ -601,7 +603,9 @@ itself (`tx_kick`, `ACK_LATE`, `rate_cls` in `bco/wild/fw/src/xport.c`):
    its backoff slots (both with the 20 us long slot), plus 3 ms (`group_gap`).
 6. The core ACKs an OFDM frame at the highest basic rate at or below its own, or else at the
    highest mandatory rate (6, 12 or 24 Mb/s) at or below it (IEEE 802.11-2020 10.6.6.5.2;
-   `resp_classes` in `scan.c`).
+   `resp_classes` in `scan.c`). It ACKs only a frame whose A1 is its own address: a scan lets
+   other stations' frames through the address filter, and a background scan used to ACK other
+   networks' unicast data and other stations' probe responses.
 7. An RTS to the BCO's own address (the setup AP, or the station once joined) gets a CTS a SIFS
    later on the ACK's queue 8, to the RTS's TA, with the RTS's duration less the SIFS and the
    CTS's airtime (`send_resp` in `mac.c`). The NAV is not kept. Whether RTS frames reach the FIQ
@@ -636,6 +640,13 @@ them ([choosing the network](#choosing-the-network)). A BSS with 11b-only statio
 
 Porting stock's EDCA scheduler would mean reading stock TX code, which stays off-limits; queue 9
 with DCF backoff gives the same medium access for best-effort traffic.
+
+A copy between the app's SRAM and the core (the host DMA of `xport.c`: a frame staged for sending,
+a received frame to its host buffer, ring records) that ends with the engine's error status is run
+again from the core's main loop, up to four times (`DMA_TRIES`). Then a staged frame goes back as
+failed and a host buffer goes back empty (length 0, which the app frees unread). Before, the failed
+copy was dropped with what it carried: a staged frame held the one transmit slot until the app
+rebooted the core for a wedged transmitter, and each lost host buffer left one fewer for receiving.
 
 ## Measurements on the bench ST20
 

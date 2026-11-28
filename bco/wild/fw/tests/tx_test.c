@@ -362,6 +362,30 @@ static void record_guard(void)
     CHECK(tx_desc.l1 == sizeof tx_pkt - 0xc4, "whole body");
 }
 
+/* A staging DMA that fails is run again; one that keeps failing gives its record back as failed
+ * and frees the transmitter. (It used to hold the one TX slot for good.) */
+static void dma_error(void)
+{
+    unsigned char h[24];
+    unsigned buf, status;
+    setup(0);
+    data_hdr(h, BSSID, 0);
+    dma_fail_local = (unsigned)(uintptr_t)tx_pkt + 0x8c, dma_fail_n = 1;
+    CHECK(send(h, 100, 0), "a staging DMA that failed once is run again");
+    CHECK(!dma_fail_n && !memcmp(tx_pkt + 0xc4, body, 100), "body staged");
+    air_tx_done();
+    air_ack();
+    pump(3);
+    CHECK(host_tx_done(2, &buf, &status) && status == 0, "and delivered");
+    dma_fail_n = DMA_TRIES;
+    host_tx(2, 0, h, body, 100, 0, 0x11);
+    pump(DMA_TRIES + 2);
+    CHECK(!dma_fail_n && !mgmt_tx_pending && host_tx_done(2, &buf, &status) && status == 1,
+          "a staging DMA that keeps failing: record back as failed");
+    CHECK(!tx_busy, "transmitter free");
+    CHECK(send(h, 100, 0), "the next frame goes out");
+}
+
 static void ccmp(void)
 {
     unsigned char h[24];
@@ -617,6 +641,7 @@ int main(void)
     raw();
     unicast_ok();
     retries();
+    dma_error();
     ladder_floor();
     group_and_gap();
     beacon_gap();

@@ -429,6 +429,17 @@ start:
     tx_gap = tx_unicast ? 0 : group_gap(tx_desc.cls, tx_desc.len, tx_slots);
 }
 
+/* The record taken for staging goes back as failed without reaching the MAC (channels 1 -> 4):
+ * one that does not fit tx_pkt, or whose staging DMA kept failing (dma_done). */
+static void tx_refuse(void)
+{
+    ring_commit(&l_frm[tx_q], 1, 1);
+    ring_commit(&l_frm[tx_q], 2, 1);
+    tx_unicast = 0;
+    tx_done_q = 0x10 | tx_q;
+    tx_complete(1);
+}
+
 /* Stage one queued host frame into tx_pkt (host buf+0x94 -> tx_pkt+0x8c), then tx_stage_done. */
 static int frm_in_data(void)
 {
@@ -446,11 +457,7 @@ static int frm_in_data(void)
             /* A record whose length does not fit tx_pkt is refused, never staged: a negative
              * (e[2] >> 16) - 0x8c is a DMA of ~4 GB over the whole core. It goes back as failed. */
             if ((e[2] >> 16) < 0xc4 || (e[2] >> 16) > sizeof tx_pkt) {
-                ring_commit(&l_frm[q], 1, 1);
-                ring_commit(&l_frm[q], 2, 1);
-                tx_unicast = 0;
-                tx_done_q = 0x10 | q;
-                tx_complete(1);
+                tx_refuse();
                 return 0;
             }
             job.local = (unsigned)tx_pkt + 0x8c;
@@ -563,17 +570,34 @@ static void dma_go(void)
     REG(R_DMA_CTL) |= 2;
 }
 
+/* A failed transfer must not wedge the engine: our fw is always-on, so leaving dma_busy set (the
+ * stock one-shot behaviour) froze all ring service. Nor may it lose what the job carried: its ring
+ * slots are taken but not committed, a frame being staged held the one TX slot (tx_busy) for good
+ * and a received frame's host buffer never came back. So the main loop runs
+ * the same job again (xport_poll; every job is a plain copy, safe to repeat) up to DMA_TRIES
+ * times. Then a staged frame goes back as failed and a host buffer goes back empty (end 0, which
+ * the app frees unread); any other job's slots are dropped, as before. */
+#define DMA_TRIES 4
+static volatile unsigned dma_redo;  /* attempts of the job in hand that failed; xport_poll redoes it */
+
 static void dma_done(void)
 {
     rec[RC_DMADONE]++;
     if (REG(R_DMA_STATUS) & 2) {
-        /* A failed transfer must not wedge the engine: our fw is always-on, so leaving dma_busy
-         * set (the stock one-shot behaviour) freezes all ring service forever. ACK the error, drop
-         * this job's uncommitted slots, clear busy and let the next poll reschedule. */
         REG(R_DMA_ACK) = 2;
+        if (++dma_redo >= DMA_TRIES) {
+            dma_redo = 0;
+            if (job.done == tx_stage_done) {
+                tx_refuse();
+            } else if (job.done == rx_done) {
+                rx_end = 0;
+                rx_done();
+            }
+        }
         dma_busy = 0;
         return;
     }
+    dma_redo = 0;
     REG(R_DMA_ACK) = 1;
     irq_off();
     if (job.n) {
@@ -773,7 +797,7 @@ void xport_poll(void)
         }
     }
     rec[RC_PHASE] = 3;
-    if (!dma_busy && schedule()) {
+    if (!dma_busy && (dma_redo || schedule())) {
         dma_busy = 1;
         dma_go();
     }
