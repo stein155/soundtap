@@ -22,6 +22,6 @@ type spiOLED struct {
 	panelState
 }
 
-func openSPIOLED(string, string) (*spiOLED, error) { return nil, errNoSPI }
+func openSPIOLED(string, string, *lineTiming) (*spiOLED, error) { return nil, errNoSPI }
 
 func (o *spiOLED) draw([]byte, int) error { return errNoSPI }

@@ -57,6 +57,11 @@ kernel and rootfs, seconds rather than one).
   environment and autoboot. An earlier picture needs an SPL change (the frame in the SPL, or
   the BCO's second overlapping the USB ask), which rewrites `mtd0`-`mtd3`.
 - The frame is static: the bar starts to fill once soundtapd takes over, from the same pixels.
+- The boot frame is the evidence for soundtapd's line timing: U-Boot changes chip enable and D/C
+  with nothing but a register write between them and the bytes, and the panel shows the frame.
+  soundtapd waits 200 us around each line change, not the 10 ms it once did, which lets the
+  panel's animations run at the 20 frames a second they are drawn at
+  ([the hardware contract](../hardware/st20/hardware-contract.md#display), `app/oled/wire.go`).
 - A change to `bootFrame` needs `UPDATE_SPLASH=1 go test -run TestUbootSplash` in
   `app/internal/panel`, and reaches the speaker only with an install that changes the bootloader.
 
@@ -67,5 +72,6 @@ kernel and rootfs, seconds rather than one).
 - `app/internal/panel/boot.go:bootFrame` and `app/internal/panel/splash_internal_test.go`: the frame and the
   test that regenerates and checks the header.
 - `app/oled/spidev.go`: soundtapd's panel init sequence that U-Boot repeats, and how a lit panel
-  is taken over (`panelStart`); `app/oled/spidev_linux.go` opens it.
+  is taken over (`panelStart`); `app/oled/spidev_linux.go` opens it and `app/oled/wire.go`
+  times its lines.
 - `os/board/common/dts/ti/omap/am335x-soundtap-st20.dts`: GPIO2 kept out of ti-sysc's reset.

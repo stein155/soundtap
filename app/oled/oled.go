@@ -41,12 +41,17 @@ type Framebuffer struct {
 	backup  []byte
 	drawing bool
 	spi     *spiOLED
+	// timing outlives a reopen of the panel: a fallback to the slow line settling lasts for
+	// the run.
+	timing lineTiming
 }
 
 // NewFramebuffer targets /dev/fb0 or spidev:/dev/spidev1.0. SPI is not opened
 // until the first Draw.
 func NewFramebuffer(path string) *Framebuffer {
-	return &Framebuffer{path: path, mu: sync.Mutex{}, backup: nil, drawing: false, spi: nil}
+	return &Framebuffer{
+		path: path, mu: sync.Mutex{}, backup: nil, drawing: false, spi: nil, timing: lineTiming{slow: false},
+	}
 }
 
 // Available reports whether path is a readable framebuffer with the panel's
@@ -104,7 +109,7 @@ func (f *Framebuffer) DrawFaded(pix []byte, fade float64) error {
 
 	if spiPath, ok := parseSPIPath(f.path); ok {
 		if f.spi == nil {
-			spi, err := openSPIOLED(spiPath, f.path)
+			spi, err := openSPIOLED(spiPath, f.path, &f.timing)
 			if err != nil {
 				return err
 			}

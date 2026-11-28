@@ -13,8 +13,19 @@ points here and holds the BCO rules. Nothing here follows from the ST10: the ST1
 - A frame is 6400 bytes, packed two pixels a byte (the even pixel in the low nibble). Chip
   enable stays asserted for a whole transfer while it is split into writes of at most 4096
   bytes: a full frame is 4096 + 2304.
-- A full frame took about 207 ms on the speaker, most of it the 10 ms line settling around
-  each transfer. soundtapd sends only the rectangle that changed since the last frame: the
+- Chip enable (gpio2_24) and D/C (gpio1_27) are sysfs GPIOs whose value files stay open; the
+  McSPI's own chip select is not on a pad, so the kernel never orders chip enable, but a
+  spidev write returns only once its bytes are out. A frame's transfers (the window command,
+  the data, display on) share one chip-enable cycle and only D/C moves between them, with
+  200 us of settling around each line change (`app/oled/wire.go`): the controller's setup and
+  hold times are tens of nanoseconds, and U-Boot's bit-banged boot frame waits nothing
+  between its line changes. A full frame is then about 26 ms on the wire plus under 2 ms of
+  settling, inside the 50 ms paint tick (20 frames a second). It took about 207 ms on the
+  speaker with the earlier 10 ms around every line change of every transfer, which held the
+  panel to about 5 frames a second. After a failed transfer soundtapd logs
+  `oled: SPI transfer failed, the panel's lines settle 10 ms from now on` once and sends
+  every transfer that old way until it restarts. soundtapd sends only the rectangle that
+  changed since the last frame: the
   column window (`0x15`, first and last column in units of two pixels, so the window starts at
   an even pixel and ends at an odd one) and the row window (`0x75`, first and last row) in one
   command transfer, then that window's bytes row by row. The first frame after the init sends

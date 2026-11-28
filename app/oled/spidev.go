@@ -195,9 +195,10 @@ type panelState struct {
 
 // drawSteps are the transfers that take the panel from st to pix at contrast: the
 // contrast command when it changed, and the window of changed pixels with only their
-// data. A full frame took ~207 ms on the ST20 (6400 bytes at 2 MHz plus the line
-// settling); a station's dots or a progress bar are a few hundred bytes. The display is
-// switched on after the first frame, as stock does, and left on.
+// data. A full frame is 6400 bytes, 25.6 ms at 2 MHz plus the line settling (wire.go;
+// it took ~207 ms on the ST20 with the old 10 ms settling); a station's dots or a progress
+// bar are a few hundred bytes. The display is switched on after the first frame, as stock
+// does, and left on.
 func drawSteps(state *panelState, pix []byte, contrast int) []wireStep {
 	var cmds []byte
 

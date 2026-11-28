@@ -19,6 +19,24 @@ type spiOLED struct {
 	panelState
 
 	spi, ce, reset, dc *os.File
+	wire               *wire
+}
+
+// sysfsBus is the panel's wire on the speaker: spidev, and the D/C and chip enable value
+// files, kept open.
+type sysfsBus struct{ spi, ce, dc *os.File }
+
+func (b sysfsBus) setDC(level gpioLevel) error { return setGPIO(b.dc, level) }
+
+func (b sysfsBus) setCE(level gpioLevel) error { return setGPIO(b.ce, level) }
+
+func (b sysfsBus) write(buf []byte) (int, error) {
+	n, err := b.spi.Write(buf)
+	if err != nil {
+		return n, fmt.Errorf("spidev: %w", err)
+	}
+
+	return n, nil
 }
 
 // gpioBanks are the AM335x GPIO controllers' register addresses, bank 0 to 3.
@@ -38,33 +56,14 @@ const (
 	outLow  gpioDirection = "low"
 )
 
-// gpioLevel is what a sysfs GPIO's value attribute is set to.
-type gpioLevel string
-
-const (
-	gpioLow  gpioLevel = "0"
-	gpioHigh gpioLevel = "1"
-)
-
-// The data/command line's level: low for a command, high for frame data.
-const (
-	dcCommand = gpioLow
-	dcData    = gpioHigh
-)
-
 // Timing of the panel's lines.
 const (
 	// resetDelay is how long reset is held low, and then left high before the init.
 	resetDelay = 10 * time.Millisecond
-	// lineDelay is how long each line change settles around a transfer.
-	lineDelay = 10 * time.Millisecond
 	// gpioRetries and gpioRetryDelay bound the wait for an exported line's attributes.
 	gpioRetries    = 20
 	gpioRetryDelay = 5 * time.Millisecond
 )
-
-// spiChunk is the most bytes one write hands spidev (its default buffer size).
-const spiChunk = 4096
 
 // The SPI settings: mode 3, 8-bit words, 2 MHz, and the spidev ioctls that set them
 // (SPI_IOC_WR_MODE, SPI_IOC_WR_BITS_PER_WORD, SPI_IOC_WR_MAX_SPEED_HZ).
@@ -78,12 +77,9 @@ const (
 	spiIocWrMaxSpeedHz  = 0x40046b04
 )
 
-var (
-	errShortWrite         = errors.New("short write")
-	errControllerNotFound = errors.New("not found")
-)
+var errControllerNotFound = errors.New("not found")
 
-func openSPIOLED(path, panel string) (_ *spiOLED, err error) {
+func openSPIOLED(path, panel string, timing *lineTiming) (_ *spiOLED, err error) {
 	pins, err := parseSPIPins(panel)
 	if err != nil {
 		return nil, err
@@ -91,7 +87,7 @@ func openSPIOLED(path, panel string) (_ *spiOLED, err error) {
 
 	dev := &spiOLED{
 		panelState: panelState{latest: nil, contrast: FullContrast, on: false},
-		spi:        nil, ce: nil, reset: nil, dc: nil,
+		spi:        nil, ce: nil, reset: nil, dc: nil, wire: nil,
 	}
 
 	defer func() {
@@ -145,6 +141,8 @@ func openSPIOLED(path, panel string) (_ *spiOLED, err error) {
 		return nil, fmt.Errorf("oled: configure SPI: %w", err)
 	}
 
+	dev.wire = newWire(sysfsBus{spi: dev.spi, ce: dev.ce, dc: dev.dc}, timing)
+
 	pulse, init := panelStart(lit)
 	if pulse {
 		err = dev.pulseReset()
@@ -153,7 +151,7 @@ func openSPIOLED(path, panel string) (_ *spiOLED, err error) {
 		}
 	}
 
-	err = dev.transfer(dcCommand, init)
+	err = dev.wire.send([]wireStep{{data: false, buf: init}})
 	if err != nil {
 		return nil, fmt.Errorf("oled: init: %w", err)
 	}
@@ -201,67 +199,14 @@ func (o *spiOLED) close() {
 
 // draw shows pix at contrast, sending only what changed (drawSteps).
 func (o *spiOLED) draw(pix []byte, contrast int) error {
-	for _, step := range drawSteps(&o.panelState, pix, contrast) {
-		dc := dcCommand
-		if step.data {
-			dc = dcData
-		}
+	err := o.wire.send(drawSteps(&o.panelState, pix, contrast))
+	if err != nil {
+		o.latest = nil // the panel holds an unknown frame: the next draw sends all of it
 
-		err := o.transfer(dc, step.buf)
-		if err != nil {
-			o.latest = nil // the panel holds an unknown frame: the next draw sends all of it
-
-			return fmt.Errorf("oled: SPI transfer: %w", err)
-		}
+		return fmt.Errorf("oled: SPI transfer: %w", err)
 	}
 
 	o.drawn(pix, contrast)
-
-	return nil
-}
-
-func (o *spiOLED) transfer(dc gpioLevel, buf []byte) error {
-	err := setGPIO(o.dc, dc)
-	if err != nil {
-		return err
-	}
-
-	time.Sleep(lineDelay)
-
-	err = setGPIO(o.ce, gpioLow)
-	if err != nil {
-		return err
-	}
-
-	time.Sleep(lineDelay)
-
-	for len(buf) > 0 {
-		chunk := min(len(buf), spiChunk)
-
-		written, writeErr := o.spi.Write(buf[:chunk])
-		if writeErr != nil {
-			_ = setGPIO(o.ce, gpioHigh)
-
-			return fmt.Errorf("spi: %w", writeErr)
-		}
-
-		if written != chunk {
-			_ = setGPIO(o.ce, gpioHigh)
-
-			return fmt.Errorf("%w: %d of %d", errShortWrite, written, chunk)
-		}
-
-		buf = buf[chunk:]
-	}
-
-	time.Sleep(lineDelay)
-
-	err = setGPIO(o.ce, gpioHigh)
-	if err != nil {
-		return err
-	}
-
-	time.Sleep(lineDelay)
 
 	return nil
 }
@@ -368,13 +313,9 @@ func writeSysfs(path, value string) error {
 	return nil
 }
 
+// setGPIO drives an open sysfs value file to level: one pwrite at offset 0, no seek.
 func setGPIO(line *os.File, level gpioLevel) error {
-	_, err := line.Seek(0, 0)
-	if err != nil {
-		return fmt.Errorf("gpio: %w", err)
-	}
-
-	_, err = line.WriteString(string(level))
+	_, err := line.WriteAt([]byte(level), 0)
 	if err != nil {
 		return fmt.Errorf("gpio: %w", err)
 	}
