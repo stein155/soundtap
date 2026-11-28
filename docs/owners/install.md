@@ -25,7 +25,8 @@ this guide adds the detail and the troubleshooting.
 | [5. What happens next](#5-what-happens-next) | Leave it powered; it joins your Wi-Fi and you open `http://soundtap.local` |
 | [6. Going back to Bose](#6-going-back-to-bose) | Bose's own update file on the speaker's Updates page |
 
-A USB stick is the last resort when steps 3 and 4 both failed, and is untested: see [USB stick](#usb-stick).
+A USB stick is the last resort when steps 3 and 4 both failed. It has worked on one model only so
+far: see [USB stick](#usb-stick).
 
 Also in this guide: [Updating](#updating) · [Buttons that always work](#buttons-that-always-work) ·
 [SoundTouch 300](#soundtouch-300) · [USB stick](#usb-stick) ·
@@ -214,7 +215,8 @@ Then go on with [What happens next](#5-what-happens-next).
 <summary>The same over a USB cable</summary>
 
 If the setup network does not work for you, Bose's updater also listens on the speaker's USB
-service port.
+service port. This route is not in the install records yet: on the SoundTouch 10 the right
+port is still being confirmed, and nobody has tried it from Windows.
 
 | Model | Port to use |
 | --- | --- |
@@ -250,8 +252,8 @@ to six minutes to come back as SoundTap. A low progress number during the downlo
 reason to interrupt it.
 
 It writes SoundTap next to Bose's software, restarts, and comes up as SoundTap. **Do not pull
-the power while it is busy**, and do not send the package again. A SoundTouch 20 shows the
-SoundTap splash on its display a few seconds after it restarts, then updates its network chip
+the power while it is busy**, and do not send the package again. A SoundTouch 20 should show
+SoundTap on its display a few seconds after it restarts, then updates its network chip
 and restarts once more, so allow extra time; a SoundTouch 10 sweeps its lights from side to
 side while it starts.
 If it has not come back after ten minutes (twenty on a SoundTouch 20), keep it powered and see
@@ -266,12 +268,13 @@ speaker's name in your router's list of devices, or open `http://soundtap.local`
 
 <a id="4-put-the-speaker-on-your-wi-fi"></a>
 
-After the install the speaker tries to join the Wi-Fi Bose's software was on. That usually
-works, but not on every network. A SoundTouch 10 or Wireless Link takes over WPA, WEP or open
+After the install the speaker tries to join the Wi-Fi Bose's software was on. That has worked
+on all four models, but not on every network. A SoundTouch 10 or Wireless Link takes over WPA, WEP or open
 networks; a SoundTouch 20 joins 2.4 GHz networks that are open or use WEP, WPA or WPA2. Chosen on
 its setup page, a SoundTouch 20 also joins WPA3 networks; the other speakers join a network that
-mixes WPA2 and WPA3 over WPA2, and not one that is WPA3 only. If the speaker does not show up on
-your network, use its setup network:
+mixes WPA2 and WPA3 over WPA2, and not one that is WPA3 only. These kinds of network are
+built, but none has had its own test on a speaker yet. If the speaker does not show up on your
+network, use its setup network:
 
 **SoundTouch 10 and Wireless Link.** A speaker without Wi-Fi settings opens its own network,
 named after the speaker, for example **`SoundTap ST10 A1B2C3`** (on older builds:
@@ -283,7 +286,8 @@ named after the speaker, for example **`SoundTap ST10 A1B2C3`** (on older builds
 4. Pick your home network and type its password.
 
 On a SoundTouch 10 the light blinks white while it connects and stays dimly white once it is on
-your network. The setup network then disappears.
+your network. The setup network then disappears. This has been tried on the SoundTouch 10 and
+the Wireless Link.
 
 **SoundTouch 20.** The same as above. Bose's software keeps the network in a different
 place on this model, and SoundTap reads it from there on its first start: the speaker comes up
@@ -291,11 +295,14 @@ on the cable or on the network Bose's software used, and about two minutes later
 and joins your Wi-Fi by itself, as long as it is a 2.4 GHz network. Taking over the network can
 fail on this model;
 the speaker then opens its setup network, and you choose your Wi-Fi there once more. Its
-temporary setup network is open, as on the SoundTouch 10.
+temporary setup network is open, as on the SoundTouch 10. On the SoundTouch 20 this setup
+network has not yet been seen on a phone: if it does not show up, open an
+[install or recovery issue](https://github.com/stein155/soundtap/issues/new?template=install.yml).
 
 **What comes over from Bose's software.** The speaker keeps its name. Of the presets, only
-radio stations (TuneIn and Radio Browser) come over. Presets for Spotify, other music services,
-or music from your computer or a media server stay empty: store them again in SoundTap.
+radio stations (TuneIn and Radio Browser) are meant to come over; that has not yet been checked
+on a speaker. Presets for Spotify, other music services, or music from your computer or a media
+server stay empty: store them again in SoundTap.
 
 ### Start playing
 
@@ -342,14 +349,17 @@ What to know first:
 - **SoundTouch 300:** the soundbar's own processor keeps the firmware it has, so this is not a
   full soundbar restore either.
 - **With a USB stick, also when SoundTap does not start any more:** SoundTap's bootloader has
-  a USB stick route built in, but no install from a stick has run on any model yet, so do not
-  count on it. It is meant to work like this: put a file on the stick named `Update.stu`, then
-  hold **Volume − and Preset 4** (SoundTouch 10, 20) or **both buttons** (Wireless Link) while
+  a USB stick route built in: put a file on the stick named `Update.stu`, then hold
+  **Volume − and Preset 4** (SoundTouch 10, 20) or **both buttons** (Wireless Link) while
   powering on. A SoundTap release's `.stu` puts SoundTap back, any version of it. Bose's own
-  update file for your model puts Bose's software back, its bootloader included; on a
+  update file for your model is meant to put Bose's software back, its bootloader included; on a
   SoundTouch 20 Bose's software then updates the network module itself. Holding the keys is the
-  permission, so no `.sig` is needed. Only the gesture itself has been seen, on a SoundTouch 10
-  without a stick. The SoundTouch 300 has no proven rescue at all.
+  permission, so no `.sig` is needed. What has been tried so far, so do not count on it yet:
+  - SoundTouch 10: a SoundTap release from a stick worked. Bose's own file was refused, because
+    of a known fault that is still to be fixed; nothing was written.
+  - Wireless Link: the speaker did not take the stick and started normally; why is still open.
+  - SoundTouch 20: not tried yet.
+  - SoundTouch 300: not tried, and it has no proven rescue at all.
 - **When the speaker does not start at all:** that needs a developer's rescue over USB from a
   computer, and on a SoundTouch 20 opening the speaker. See the
   [developer recovery tools](../hardware/install-records.md#developer-recovery-tools).
@@ -367,7 +377,9 @@ SoundTap updates in two parts, each from the speaker's *Settings → Updates* pa
   half of the speaker's storage while the current one keeps running. The new version has to
   stay up for a minute before the speaker keeps it (a SoundTouch 20 also waits until its
   network chip runs SoundTap's app, longer when that app is new); if it does not, the
-  speaker goes back to the previous version after a few restarts. The check is designed not to
+  speaker goes back to the previous version after a few restarts. That return has worked on the
+  SoundTouch 10, 20 and Wireless Link with an earlier setting; the current one, and the
+  SoundTouch 300, are not tested yet. The check is designed not to
   need your network; that has not been tested on a speaker yet.
 - **SoundTap app** (`SoundTap-app-X.Y.Z-armv7.bin`): the player and this web page, without
   touching the system.
@@ -376,7 +388,9 @@ When a newer SoundTap Core or app is out, the Updates page says so and shows wha
 tap on *Update* is all it takes: the speaker downloads the signed release itself, with no button
 on the speaker, writes it into the other half and restarts into it by itself. A page over the
 app follows it until it is back. This takes several minutes; keep the speaker plugged in. If
-the install fails, the speaker does not restart and keeps running what it had.
+the install fails, the speaker does not restart and keeps running what it had. This one-tap
+update of SoundTap Core has not yet been tested on a speaker; uploading the file (below) has,
+on all four models.
 
 To install a file you downloaded, or to go back to an older version, upload it instead.
 Every upload waits for you to hold a button on the speaker, with or without its signature.
@@ -447,9 +461,10 @@ has run on it is in the [install records](../hardware/install-records.md#soundto
 <a id="route-3-usb-stick"></a>
 <a id="fallback-usb-stick"></a>
 
-Use this only when steps 3 and 4 both failed. No install from a stick has run on any model
-yet, as a first install or later; only the gesture itself has been seen, on a SoundTouch 10
-without a stick. On a SoundTouch 10 or 20:
+Use this only when steps 3 and 4 both failed. A first install from Bose's software with a
+stick has not been tried on any model. Once SoundTap runs, its own stick route has put a
+SoundTap release on a SoundTouch 10; on the other models it is not proven
+([Going back to Bose](#going-back-to-bose) says what has been tried). On a SoundTouch 10 or 20:
 
 1. Put the package on a FAT USB stick, named `Update.stu`. No `.sig` is needed: neither Bose's
    software nor SoundTap's own stick route asks for one (see
@@ -457,15 +472,20 @@ without a stick. On a SoundTouch 10 or 20:
 2. Plug the stick into the micro-B port through an OTG adapter.
 3. Hold **Volume − and Preset 4** while powering on.
 
-The speaker should then install the package and start it; this is untested. The Wireless
-Link's Bose software has no such gesture; once SoundTap runs, its bootloader is built to take
-**both buttons** instead, also untested.
+The speaker should then install the package and start it. On a SoundTouch 10 the Wi-Fi light
+blinks slowly while it writes, then stays on; three slow blinks mean the file was refused, ten
+fast blinks that the install failed. A SoundTouch 20 shows nothing while it writes. Under
+Bose's software this is untested on every model; under SoundTap it has worked on a
+SoundTouch 10 and not been tried on a SoundTouch 20. The
+Wireless Link's Bose software has no such gesture; once SoundTap runs, its bootloader is built
+to take **both buttons** instead, but in the one try so far the Wireless Link did not take the
+stick.
 
 On the SoundTouch 300 the stick starts from the remote, as Bose's own USB update does: put the
 stick in the bar's USB port, hold **SoundTouch** and **CC** on the remote while power comes back.
 With Bose's update file for the bar it goes back to Bose; with a SoundTap release it puts
-SoundTap back. This is untested on a bar, and if writing its bootloader fails the bar has no
-known way back: do not rely on it yet.
+SoundTap back. This has never been tried on a bar, and if writing its bootloader fails the bar
+has no proven way back: do not rely on it yet.
 
 ## When something goes wrong
 

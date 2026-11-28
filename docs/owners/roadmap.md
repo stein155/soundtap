@@ -105,9 +105,15 @@ preview becomes a supported model once an owner has run its hardware checklist.
 - [ ] **USB stick recovery** (Volume Down + Preset 4, or both buttons on the Wireless Link, at
       power-on) installs the stick's `Update.stu` with settings kept, on each model: a SoundTap
       package, and Bose's file back to stock with its bootloaders; no `.sig` (ADR 0130).
-      So far only the trigger is proven, without a stick: the ST10 on 2026-11-08
-      (`soundtap.recovery=-19`). The SoundTouch 300 has no proven trigger. An install from a stick, and the refusals, are still
-      to run on every model.
+      So far ([USB stick runs](../hardware/install-records.md#usb-stick-runs)): the trigger
+      without a stick on the ST10 (2026-11-08, `soundtap.recovery=-19`); on 2026-11-28 the ST10
+      installed a SoundTap package (0.1.0-alpha.7) from a stick and refused Bose's ST10 file with
+      nothing written (`-8`: U-Boot's board table maps rhino only to `binky`, Bose's package says
+      `rhino`; fix, then run again with a NAND backup). On the Wireless Link the stick was not
+      taken (started normally, nothing written; cause open, needs a run with the console). No run
+      on the ST20; the SoundTouch 300 has no proven trigger and no run. Still open: Bose's file on
+      every model, the SoundTap package on the ST20, the Wireless Link and the ST300, and all of
+      it from the candidate.
 - [ ] **Back to Bose's software and back again** on each model from the candidate.
       Done outside a candidate on every model: the Wireless Link and the ST20 on 2026-11-11,
       the SoundTouch 300 on 2026-11-15 and the ST10 on 2026-11-17 went to Bose 27.0.6 and
@@ -190,10 +196,15 @@ preview becomes a supported model once an owner has run its hardware checklist.
 - [x] Executed tests for the init script and the installer instead of text checks. The init
       script, the installer and the boot chain's checkers run against fakes; the
       [test map](../contributors/testing/README.md) says why each remaining text check stays one.
-- [ ] User docs claim no more than the hardware evidence shows. Owner docs checked against the
+- [x] User docs claim no more than the hardware evidence shows. Owner docs checked against the
       checklist and the install records on 2026-11-24 and reworded. Where the two disagreed
       (ST300 Spotify and Bluetooth playback, Wireless Link AUX), the owner's report of
-      2026-11-24 settled it in the checklist.
+      2026-11-24 settled it in the checklist. Checked again on 2026-11-28 (README, install
+      guide, FAQ, compatibility, installer page): the USB stick per model as the runs of that
+      day show, the one-tap Core update, rollback at the current boot limit, the ST20's setup
+      network, the presets taken over from Bose and the Wi-Fi kinds are marked untested where
+      no run exists. Every later run that changes what an owner is told updates these pages in
+      the same change.
 - [ ] **Multiroom sync** ([ADR 0013](../decisions/0013-multiroom-through-snapcast.md)): followers
       within about 20 ms of the leader across all three models, also after an underrun.
       Measured 2026-11-14: the modelled chain is the same whichever model leads, and

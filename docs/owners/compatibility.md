@@ -99,7 +99,7 @@ tracks the inputs and gaps behind the model notes.
 | Backup / restore / factory reset | Observed | Built | Built | Built |  | ST10: Missing run |
 | Local password on admin routes | No | No | No | No | The LAN is trusted: no password or household token (ADR 0055) | — |
 | Firmware update from the web UI | Observed | Observed | Built | Built | One universal STU through `/api/firmware`, written to the inactive slot and booted from it | ST10: Missing run; ST20: Missing run |
-| SoundTap USB-stick recovery | Built | Built | Built | Built | SoundTap's U-Boot path; stock ST20 chord evidence does not prove it. Exact-candidate recovery remains a separate gate (ADR 0009). | — |
+| SoundTap USB-stick recovery | Observed | Built | Built | Built | SoundTap's U-Boot path; stock ST20 chord evidence does not prove it. ST10: a SoundTap package installed from the stick; Bose's file was refused with nothing written, a known fault in the board table, so the way back to Bose by stick is not proven on any model. WLA: in its one run the stick was not taken and the speaker started normally, cause open. ST20: no run. ST300: never tried; its remote combo is unproven. Exact-candidate recovery remains a separate gate (ADR 0009). | ST10: [2026-11-28, 0.1.0-alpha.7](../hardware/install-records.md#usb-stick-runs) (SoundTap file installed; Bose's file refused); WLA: [same page](../hardware/install-records.md#usb-stick-runs) (not taken) |
 
 ## SoundTouch 300 only
 

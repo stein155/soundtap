@@ -157,12 +157,14 @@ The **SoundTouch 10** is small, cheap second-hand, and has the most hours on Sou
 
 SoundTap is designed to make that unlikely: updates go into the half of the storage that is
 not running, and the speaker keeps a new version only after it has stayed up for a minute;
-otherwise it returns to the previous one after a few restarts. SPL/U-Boot and the boot
+otherwise it returns to the previous one after a few restarts (seen on the SoundTouch 10, 20
+and Wireless Link with an earlier setting; not yet with the current one, nor on the
+SoundTouch 300). SPL/U-Boot and the boot
 environment are shared, however: a failed bootloader write is outside that A/B protection.
 Below all software, the chip can be started over USB from a computer. That is a developer's
-tool, not a proven rescue: a full restore that way has not run on any model yet, on the
-SoundTouch 20 it means opening the speaker, and on the SoundTouch 300 nobody knows how to reach
-it at all. **Alpha means: read the
+tool, not a proven rescue: a full restore that way has not run on any model yet, and on the
+SoundTouch 20 it means opening the speaker. A SoundTouch 300 has been seen answering over USB
+that way, but nothing has been restored on one. **Alpha means: read the
 [install guide](install.md) first, and do not start with your only speaker.**
 
 ### Can I go back to Bose's software?
@@ -173,8 +175,10 @@ for Bose's file. This way back has run on all four models, though not yet from t
 candidate. On a SoundTouch 20 Bose's software then puts its own app back on the network
 processor itself, when it finds another one there (seen by the owner). Bose then comes back
 without its Wi-Fi network (Bose kept that on the network processor), so you set up Wi-Fi again
-in the Bose app, and it may come back without its presets. A USB stick is built to take you back too, untested so far:
-Bose's own update file for your model on a stick as `Update.stu`, and the power-on gesture. See
+in the Bose app, and it may come back without its presets. A USB stick is built to take you
+back too, with Bose's own update file for your model on a stick as `Update.stu` and the
+power-on gesture, but it does not work yet: on the SoundTouch 10 a known fault refuses Bose's
+file, and it has not been tried on the other models. See
 [Going back to Bose](install.md#going-back-to-bose).
 
 ### Does the first install need a USB cable?
@@ -194,8 +198,8 @@ with Docker.
 
 ### What happens to my Bose presets?
 
-On the first SoundTap start, locally stored TuneIn presets are imported when there is no
-SoundTap preset file yet. Only TuneIn radio stations come over: presets for Spotify, other
+On the first SoundTap start, locally stored radio presets (TuneIn and Radio Browser) are
+imported when there is no SoundTap preset file yet. Only radio stations come over: presets for Spotify, other
 music services, or music from your computer or a media server stay empty. This needs the stock
 `Presets.xml` to still be on the speaker. This has not yet been checked on
 hardware. Existing SoundTap presets are kept, and a factory reset does not import stock presets
@@ -323,7 +327,8 @@ serves Snapcast on port 1704, so any Snapcast client (a Raspberry Pi, a laptop) 
 The stream is lossless FLAC, which Snapcast clients play as built upstream. Keep every speaker
 on the same SoundTap Core: one on an older Core stays silent when it follows an updated one.
 SoundTap speakers do not group with speakers that still run Bose's software. On hardware, the
-SoundTouch 10, SoundTouch 20 and Wireless Link have each led the other two (2026-11-14).
+SoundTouch 10, SoundTouch 20 and Wireless Link have each led the other two (2026-11-14), and the
+SoundTouch 300 has followed (2026-11-15); a SoundTouch 300 leading a group has not been tested yet.
 
 ### Does my remote work?
 
@@ -423,7 +428,8 @@ choose *Install firmware* and hold a button on the speaker to confirm. Every upl
 that press, so nobody else on the network can install one without it
 ([RELEASING.md](../../RELEASING.md#installing-your-own-builds),
 [ADR 0048](../decisions/0048-signed-updates.md)). The USB stick at power-on takes your build too,
-renamed `Update.stu`.
+renamed `Update.stu`; so far that has worked on the SoundTouch 10 only
+([USB stick](install.md#usb-stick)).
 
 ### Why does the speaker ask me to hold a button?
 
@@ -440,8 +446,8 @@ meanwhile, it replaces the first, and the first request's page says so. Everythi
 as volume, sources and presets, works without a hold.
 
 Updates the speaker fetches itself need no hold: *Update now*, *Update* on a newer app or
-SoundTap Core (it asks once, then the speaker updates and restarts by itself), and choosing a
-specific release (an older one included). Every file you upload asks for the hold, with or
+SoundTap Core (it asks once, then the speaker updates and restarts by itself; for SoundTap
+Core not yet tested on a speaker), and choosing a specific release (an older one included). Every file you upload asks for the hold, with or
 without its `.sig`: your own build, Bose's update file, or a release you downloaded. These are
 the production rules; on alpha images a device confirmation token can stand in for the hold.
 See [ADR 0055](../decisions/0055-household-token-and-windows.md) and

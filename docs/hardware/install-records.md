@@ -45,13 +45,17 @@ Back to the guide: [the three routes](../owners/install.md#route-1-the-installer
   cannot tell whether it is still installing, keep it powered and use the support route.
 - **The same over USB.** On the SoundTouch 10 the exact micro-USB service connector is still
   being confirmed. The route has not been tested on Windows yet; reports are welcome.
-- **USB stick.** Only the gesture itself has been seen working (SoundTouch 10, 2026-11-08,
-  without a stick); an install from a stick is unproven. This route has not yet been proven
-  as a first install from Bose's software.
+- **USB stick.** SoundTap's stick route has installed a SoundTap package on a SoundTouch 10
+  (2026-11-28); Bose's file on a stick was refused there by a known fault, and on the Wireless
+  Link the route did not take the stick, cause open. No run on the ST20 or the ST300. See
+  [USB stick runs](#usb-stick-runs). Bose's own stick gesture has not been proven as a first
+  install from Bose's software.
 - **Wi-Fi takeover.** A first install attempts to take over the saved Wi-Fi. Historical runs
   on [ST10, ST20 and Wireless Link](hardware-test.md#open-hardware-checks) recorded this
   working; they are not a guarantee for every firmware version or network. ST10/WLA can import
-  WPA or open profiles; the ST20's own BCO station supports WPA2-PSK only (2.4 GHz). The setup
+  WPA or open profiles; the ST20's own BCO station has run WPA2-PSK only (2.4 GHz), and the
+  other kinds of network of [ADR 0136](../decisions/0136-every-network-stock-joined-and-wpa3.md)
+  have not run on any model. The setup
   network is proven on the SoundTouch 10, 20 and Wireless Link (see the table above). The
   SoundTouch 20's restart onto your Wi-Fi was seen on 2026-11-14 after an install from Bose's
   software 27.0.6.
@@ -129,9 +133,11 @@ Back to the guide: [Going back to Bose](../owners/install.md#going-back-to-bose)
   contains any SoundTap module is refused before anything is written. This is not a complete
   factory NAND restore.
 - **ST20 additionally:** the return writes only the SCM, the main processor. The network
-  processor (BCO) keeps SoundTap's app: `/api/firmware` does not flash BCO payloads, and
-  whether Bose's software puts its own BCO app back by itself is unproven. The round
-  trip of 2026-11-11 (to Bose and back through the update feed) does not settle that.
+  processor (BCO) keeps SoundTap's app: `/api/firmware` does not flash BCO payloads. Bose's
+  software then puts its own BCO app back when it finds SoundTap's (seen by the owner, as
+  [ADR 0130](../decisions/0130-usb-stick-recovery.md) and
+  [ADR 0048](../decisions/0048-signed-updates.md) record; no dated run is recorded here). The
+  round trip of 2026-11-11 (to Bose and back through the update feed) does not show it either way.
   Restoring Bose's BCO app by hand is a development step with the `bcoflash` tool; see
   [Developer recovery tools](#developer-recovery-tools).
 - **ST300 additionally:** the installer accepts the stock package but skips its soundbar

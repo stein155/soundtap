@@ -38,6 +38,9 @@
 Your six presets and the buttons on the speaker, the remote, internet radio, Spotify Connect,
 the alarm and the sleep timer, the SoundTouch 20's clock, Bluetooth and AUX.
 
+Not every feature has been tested on every model yet, and Bluetooth and AUX are still being
+proven: the [compatibility page](docs/owners/compatibility.md) says what has run on which speaker.
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screens-dark.png">
