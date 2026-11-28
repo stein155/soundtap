@@ -241,11 +241,13 @@ Every hardware action keeps a way back. This is about the way back, not about ke
     [ST10 notes](docs/hardware/st10/usb-recovery-and-rom.md), [`tools/recovery/rom-usb-loader/`](tools/recovery/rom-usb-loader/README.md)).
   - ST20: the ROM boots NAND first; USB needs the busy pad held, inside the speaker. SoundTap's ST20 SPL
     asks the micro-B port first ([ST20 ROM-USB recovery](docs/hardware/st20/rom-usb-recovery.md)).
-  - ST300: how its ROM reaches USB is unknown. Installs and updates write its boot chain as on
+  - ST300: a plain cable from its micro-B port to a computer at power-on brings up the ROM as an
+    `AM335x` USB device, as on the ST10 (seen by the owner, 2026-11-28); the restore over it has
+    no run. Installs and updates write its boot chain as on
     the other models: proven on the owner's bar with the install from Bose, updates over the web
     UI and the way back to Bose and again to SoundTap
     ([install records](docs/hardware/install-records.md#soundtouch-300)). Other bootloader work,
-    a RAM-booted chain say, waits for a ROM-USB route.
+    a RAM-booted chain say, waits for a ROM-USB restore proven on a bar.
 - **Before bootloader work on a board** (anything that may write `mtd0`-`mtd4`, an install
   included): a full per-partition NAND backup of that board including OOB
   (`tools/recovery/nand-backup-ssh.sh`, which needs root SSH and so an alpha image), and that

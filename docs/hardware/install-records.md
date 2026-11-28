@@ -253,5 +253,7 @@ script itself is unproven.
 
 #### SoundTouch 300
 
-Takes the sm2 SPL like the ST10, but nobody has measured how its ROM reaches USB. Establish that,
-and a way back, before using the tool on a bar.
+Takes the sm2 SPL like the ST10. Its ROM takes USB first as well: with a plain cable from the
+bar's micro-B port to a computer, the bar came up as an `AM335x` USB device at power-on (seen by
+the owner, 2026-11-28; vendor and product ID not recorded). The restore over it has no run; prove
+it on a bar, with that bar's NAND backup, before relying on it.

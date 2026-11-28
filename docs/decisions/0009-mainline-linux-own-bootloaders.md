@@ -117,7 +117,8 @@ cycle, and on the ST20 a busy-pad hold, per range); a generic RAM U-Boot that so
 - A board with a bad block under the boot chain's data is refused by the ROM-USB tool rather than
   written around.
 - Hardware proof is in [`docs/hardware/hardware-test.md`](../hardware/hardware-test.md): the per-model ROM-USB
-  restore rows are open, and on the ST300 even the way into ROM USB is unknown. The SPL telling
+  restore rows are open; the ST300's ROM was seen on USB (an `AM335x` device, 2026-11-28), its
+  restore not. The SPL telling
   the two U-Boots apart, and a first install from stock interrupted between SoundTap's SPL and the first
   copy, have no hardware run.
 
