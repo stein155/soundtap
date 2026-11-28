@@ -42,6 +42,9 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
   group service was rewriting them.
 - **SoundTouch 300: the bar's audio mode, CEC mode and HDMI input button** are saved again
   after a save failed, instead of only after you change them.
+- **Going back to the original software from the Updates page survives a power cut** at the
+  moment the boot settings are rewritten: the speaker no longer comes back on boot settings
+  from before the update.
 
 ## [app-v0.1.0-alpha.7] - 2026-11-27
 

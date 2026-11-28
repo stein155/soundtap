@@ -362,6 +362,49 @@ func TestUseLegacyEnvKeepsEveryEntry(t *testing.T) {
 	}
 }
 
+// The copies differ, as after any write: the primary is the current one, the redundant one
+// still holds the write before it, here a selection of the slot an install has just erased.
+// At every step of the way back the copy U-Boot boots holds the current entries, never the
+// older ones that come back once the primary is the single copy.
+func TestUseLegacyEnvNeverBootsTheOlderCopy(t *testing.T) {
+	t.Parallel()
+
+	current := factoryEnv(t)
+	current.Set("bootcmd", bootcmdPong) // the running slot, held by HoldRunningSlot
+	older := current.Clone()
+	older.Set("bootcmd", bootcmdPing) // the slot being written
+
+	for cut := 1; ; cut++ {
+		fake := newRawNAND()
+
+		for _, place := range []struct {
+			env  *ubootenv.Env
+			flag byte
+			dev  string
+			off  int
+		}{{current, 3, "/dev/mtd5", 0}, {older, 2, "/dev/mtd4", ubootenv.RedundantOffset}} {
+			image, err := place.env.EncodeCopy(place.flag)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			copy(fake.nand[place.dev][place.off:], image)
+		}
+
+		fake.cutAfter = cut
+		flasher := fake.installer(true)
+
+		err := flasher.UseLegacyEnv(fake.read)
+		if got := fake.env(t); !got.Equal(current) {
+			t.Fatalf("a cut after %d commands boots bootcmd %q", cut, SelectedSlot(got))
+		}
+
+		if err == nil {
+			return
+		}
+	}
+}
+
 // An environment that does not fit Bose's 8 KiB is refused before anything is written.
 func TestUseLegacyEnvRefusesWhatDoesNotFit(t *testing.T) {
 	t.Parallel()

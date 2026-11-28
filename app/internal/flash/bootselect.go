@@ -527,6 +527,15 @@ func (in *Installer) UseLegacyEnv(read Reader) error {
 	if err != nil {
 		return fmt.Errorf("the environment does not fit the 8 KiB Bose's U-Boot reads: %w", err)
 	}
+	// The single copy goes over the primary, and from then until the redundant copy is
+	// erased our U-Boot boots the redundant one: it has to hold these entries too, not
+	// the ones of the write before (an older selection, a slot this install erased).
+	if lost != ubootenv.Redundant {
+		err = in.matchRedundantCopy(read, env)
+		if err != nil {
+			return err
+		}
+	}
 
 	err = in.writeEnvCopy(read, in.Target.EnvMTD, 0, image)
 	if err != nil {
@@ -543,6 +552,33 @@ func (in *Installer) UseLegacyEnv(read Reader) error {
 	in.Target.EnvRedundant = false
 
 	return nil
+}
+
+// matchRedundantCopy makes the redundant copy hold env, the environment the current copy
+// holds: left alone when it does, otherwise written with the next flag and read back, so it
+// is the copy U-Boot boots once the primary no longer checks out.
+func (in *Installer) matchRedundantCopy(read Reader, env *ubootenv.Env) error {
+	copies, _, err := in.readCopies(read)
+	if err != nil {
+		return err
+	}
+
+	_, _, flag, err := ubootenv.Current(copies[ubootenv.Primary], copies[ubootenv.Redundant])
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", envPart, err)
+	}
+
+	held, _, parseErr := ubootenv.ParseCopy(copies[ubootenv.Redundant])
+	if parseErr == nil && held.Equal(env) {
+		return nil
+	}
+
+	image, err := env.EncodeCopy(flag + 1)
+	if err != nil {
+		return fmt.Errorf("encoding the redundant copy: %w", err)
+	}
+
+	return in.writeEnvCopy(read, ubootMTD, ubootenv.RedundantOffset, image)
 }
 
 // dumpEnv reads size bytes at offset of mtd.

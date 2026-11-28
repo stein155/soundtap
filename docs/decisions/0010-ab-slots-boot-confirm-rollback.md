@@ -72,7 +72,9 @@ environment.
   the single copy at its next repair once the U-Boot says it reads the redundant one; under a
   U-Boot that does not, it erases a redundant copy that checks out. The way back to stock writes
   the single copy and erases the redundant one before Bose's first bootloader write, and refuses an
-  environment that no longer fits 8 KiB before anything is written.
+  environment that no longer fits 8 KiB before anything is written. A redundant copy that holds
+  other entries than the current one (the write before it) is first rewritten with them and the
+  next flag: from the moment the primary is erased that copy is the one U-Boot boots.
 - **soundtapd writes through libubootenv.** It reads with `fw_printenv -c <config>` and writes with
   `fw_setenv -c <config> -s <script>`; the config is written per call from the partition table, in
   the format the U-Boot on the board reads. An unchanged environment is not written, and every
