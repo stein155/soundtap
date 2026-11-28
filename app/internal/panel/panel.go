@@ -848,13 +848,14 @@ func linkSwitch(last *int, wired, online bool) string {
 	}
 }
 
-// linkScreen is the link the speaker switched to, its icon over its name.
+// linkScreen is the link the speaker switched to: Ethernet's icon over its name, Wi-Fi's
+// name alone, as the Wi-Fi lamp above the panel is its icon.
 func linkScreen(kind string) *screen.Frame {
 	if kind == linkEthernet {
 		return notice(screen.IconCable, Text(linkEthernet), "")
 	}
 
-	return notice(screen.IconWifi, Text(linkWifi), "")
+	return notice(screen.IconNone, Text(linkWifi), "")
 }
 
 // deviceChange is a Bluetooth device that came or went, and the icon that says which.

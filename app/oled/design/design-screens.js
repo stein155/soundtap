@@ -51,8 +51,6 @@ function icon(c, kind, cx, cy, level = 15) {
   c.save(); c.strokeStyle = G(level); c.fillStyle = G(level); c.lineWidth = 2; c.lineCap = 'round'; c.lineJoin = 'round';
   const L = (pts) => { c.beginPath(); pts.forEach(([x, y], i) => (i ? c.lineTo(cx + x, cy + y) : c.moveTo(cx + x, cy + y))); c.stroke(); };
   switch (kind) {
-    case 'wifi': for (const r of [13, 8]) { c.beginPath(); c.arc(cx, cy + 6, r, Math.PI * 1.25, Math.PI * 1.75); c.stroke(); } c.beginPath(); c.arc(cx, cy + 5, 2, 0, 7); c.fill(); break;
-    case 'wifi-off': icon(c, 'wifi', cx, cy, 6); L([[-10, -8], [10, 10]]); break;
     case 'cable': c.strokeRect(cx - 6.5, cy - 5.5, 13, 9); L([[-3, 4], [-3, 8]]); L([[3, 4], [3, 8]]); L([[0, -6], [0, -11]]); break;
     case 'bt-off': icon(c, 'bt', cx, cy, 6); L([[-9, -9], [9, 9]]); break;
     case 'bt': L([[-5, -5], [5, 5], [0, 10], [0, -10], [5, -5], [-5, 5]]); break;

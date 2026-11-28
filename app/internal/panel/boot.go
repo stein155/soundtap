@@ -384,16 +384,16 @@ func bootOverlay(state *bootState) ([]byte, float64, string) {
 		return nil, 0, ""
 	case state.link == hw.LinkConnecting || state.link == hw.LinkDown:
 		// As stock: joining says so; only a link that is not even trying is "no connection".
-		// Joining names the network it joins.
-		kind, title, network := screen.IconWifiOff, "No connection", "" //nolint:goconst // English, a key of Text
+		// Joining names the network it joins. No icon: the Wi-Fi lamp above the panel is one.
+		title, network := "No connection", "" //nolint:goconst // English, a key of Text
 		if state.link == hw.LinkConnecting {
-			kind, title, network = screen.IconWifi, "Connecting…", state.network //nolint:goconst // as above
+			title, network = "Connecting…", state.network //nolint:goconst // as above
 		}
 
 		dots := waitingDots(int(state.since / dotStep))
 		opt := screen.NoticeOpt{IconLevel: 0, Small: false, Dots: dots}
 
-		return screen.Notice(kind, Text(title), network, opt).Pix(fullLevel), 0,
+		return screen.Notice(screen.IconNone, Text(title), network, opt).Pix(fullLevel), 0,
 			"offline" + title + network + strconv.Itoa(dots)
 	default:
 		return nil, 0, ""

@@ -11,8 +11,6 @@ type Icon int
 // The icons, as design-screens.js's icon() draws them.
 const (
 	IconNone Icon = iota
-	IconWifi
-	IconWifiOff
 	IconCable
 	IconBluetooth
 	IconBluetoothOff
@@ -36,7 +34,7 @@ const (
 
 // Icon draws kind centred on (middleX, middleY) at level, 2 px strokes with round caps and joins.
 //
-//nolint:mnd,cyclop,funlen // the design's coordinates (design-screens.js icon()), one case an icon
+//nolint:mnd,cyclop // the design's coordinates (design-screens.js icon()), one case an icon
 func (f *Frame) Icon(kind Icon, middleX, middleY float64, level int) {
 	line := func(pts ...[2]float64) {
 		path := make([]Pt, len(pts))
@@ -48,15 +46,6 @@ func (f *Frame) Icon(kind Icon, middleX, middleY float64, level int) {
 	}
 
 	switch kind { //nolint:exhaustive // IconNone draws nothing: the default
-	case IconWifi:
-		for _, radius := range []float64{13, 8} {
-			f.Arc(middleX, middleY+6, radius, math.Pi*1.25, math.Pi*1.75, iconStroke, RoundCap, level)
-		}
-
-		f.Disk(middleX, middleY+5, 2, level)
-	case IconWifiOff:
-		f.Icon(IconWifi, middleX, middleY, offLevel)
-		line([2]float64{-10, -8}, [2]float64{10, 10})
 	case IconCable:
 		f.StrokeRect(middleX-6.5, middleY-5.5, 13, 9, iconStroke, true, level)
 		line([2]float64{-3, 4}, [2]float64{-3, 8})
