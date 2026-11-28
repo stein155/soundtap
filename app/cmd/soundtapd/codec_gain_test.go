@@ -218,7 +218,14 @@ func TestCodecVolumeWriteTriesAgainBeforeThePCM(t *testing.T) {
 func TestCodecWriteRunsNiced(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "nice")
 
-	script := `sleep 0.3; ps -o nice= -p $$ > "$0"; echo "$1" >> "$0"`
+	// The child is reniced after it starts: wait for that instead of sleeping a fixed
+	// time, which a loaded machine outran. A test run already below nice 10 (nice -n 19)
+	// cannot raise the child's priority, so the parent's own nice is the floor.
+	script := `parent=$(ps -o nice= -p $PPID); i=0
+		while [ "$(ps -o nice= -p $$)" -lt ` + strconv.Itoa(codecWriteNice) + ` ] && [ "$i" -lt 1000 ]; do
+			sleep 0.01; i=$((i+1))
+		done
+		echo $parent > "$0"; ps -o nice= -p $$ >> "$0"; echo "$1" >> "$0"`
 
 	err := writeCodecGain(t.Context(), []string{"sh", "-c", script, out}, 1)
 	if err != nil {
@@ -231,8 +238,18 @@ func TestCodecWriteRunsNiced(t *testing.T) {
 	}
 
 	fields := strings.Fields(string(b))
-	if len(fields) != 2 || fields[0] != strconv.Itoa(codecWriteNice) || fields[1] != codecGainHex(1) {
-		t.Errorf("the write ran as %q, want nice %d and gain %s", fields, codecWriteNice, codecGainHex(1))
+	if len(fields) != 3 {
+		t.Fatalf("the write wrote %q, want the parent's nice, its own and the gain", fields)
+	}
+
+	parent, err := strconv.Atoi(fields[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := max(codecWriteNice, parent)
+	if fields[1] != strconv.Itoa(want) || fields[2] != codecGainHex(1) {
+		t.Errorf("the write ran as %q, want nice %d and gain %s", fields[1:], want, codecGainHex(1))
 	}
 
 	err = writeCodecGain(t.Context(), []string{"sh", "-c", `echo no clock >&2; exit 3`}, 1)

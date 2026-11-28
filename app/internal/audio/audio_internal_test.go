@@ -148,6 +148,24 @@ func TestRampToward(t *testing.T) {
 	}
 }
 
+// waitClipQueued returns once the announcement's reader has queued its first block.
+func waitClipQueued(t *testing.T, mixer *Mixer) {
+	t.Helper()
+
+	queued := func() int {
+		mixer.mu.Lock()
+		defer mixer.mu.Unlock()
+
+		return len(mixer.ann)
+	}
+
+	for wait := time.Now().Add(5 * time.Second); queued() == 0; time.Sleep(time.Millisecond) {
+		if time.Now().After(wait) {
+			t.Fatal("the clip never reached the mixer")
+		}
+	}
+}
+
 // Full duck lifecycle through step(): full -> ducked while clip plays -> restored.
 func TestAnnounceDucksThenRestores(t *testing.T) {
 	t.Parallel()
@@ -203,6 +221,10 @@ func TestAnnounceMixesOverSource(t *testing.T) {
 
 	mixer := NewMixer(io.Discard, false)
 	mixer.Announce(bytes.NewReader(pcm(blockFrames*4, 8000)), 1.0)
+	// The clip is read on its own goroutine and the mixer waits only sourceWait for its
+	// first block, which a loaded machine outran: mix once that block is there.
+	waitClipQueued(t, mixer)
+
 	out := mixer.step(pcm(blockFrames, 10000))
 	// First block: gain = 1-step, source ~9000 + clip 8000 well above bare source.
 	if got := sampleAt(out, 0); got <= 10000 {

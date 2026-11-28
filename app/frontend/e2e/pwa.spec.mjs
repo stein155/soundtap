@@ -47,8 +47,9 @@ async function nowPlaying(page) {
 // A long press on a recently played station opens what can be done with it.
 async function recentActions(page) {
   await openHome(page);
-  const box = await button(page, 'NPO Radio 2 TuneIn').boundingBox();
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  // hover waits for the button to stand still: a point measured while the page still
+  // moved could press beside it.
+  await button(page, 'NPO Radio 2 TuneIn').hover();
   await page.mouse.down();
   await page.waitForTimeout(800);
   await page.mouse.up();

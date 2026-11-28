@@ -38,14 +38,15 @@ test('a volume slider sets the speaker’s volume', async ({ page, request }) =>
   await expect(slider).toHaveValue('34');
   await expect.poll(async () => (await demoState(request)).volumes.woonkamer).toBe(34);
 
-  // By pointer: a tap halfway along the track.
+  // By pointer: a tap halfway along the track. The locator's click waits for the track to
+  // stand still: the sheet slides in for 350 ms, and a point measured during that slide
+  // missed the track once the sheet had arrived, so the tap set nothing.
   const track = page
     .locator('.vol', { has: page.getByRole('slider', { name: 'Volume', exact: true }) })
     .filter({ visible: true })
     .first()
     .locator('.vtrack');
-  const box = await track.boundingBox();
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await track.click();
   await expect
     .poll(async () => (await demoState(request)).volumes.woonkamer)
     .toBeGreaterThanOrEqual(44);
