@@ -1034,16 +1034,18 @@ func TestSetupAPFailureIsAProblem(t *testing.T) {
 		t.Fatal("a failed AP left its interface or marker")
 	}
 
+	bench.sys.mu.Lock()
 	bench.sys.fail = map[string]bool{"udhcpd": true}
+	bench.sys.mu.Unlock()
 	bench.m.Restart()
-	bench.eventually("the udhcpd problem", func() bool {
-		return strings.Contains(bench.lastProblem(), "udhcpd failed")
-	})
 
+	// The failed AP is tried again, so its state comes and goes; what counts is that each
+	// failure clears it, which a check right after the problem appears raced with.
 	dnsd := filepath.Join(bench.p.Pid, "soundtap-dnsd.pid")
-	if bench.exists("setup-ap") || bench.exists("network-ready") || exists(dnsd) {
-		t.Fatal("a failed AP left its state")
-	}
+	bench.eventually("the udhcpd problem with the AP's state cleared", func() bool {
+		return strings.Contains(bench.lastProblem(), "udhcpd failed") &&
+			!bench.exists("setup-ap") && !bench.exists("network-ready") && !exists(dnsd)
+	})
 }
 
 // With nothing saved, a setup AP that fails to open is tried again until it opens.
