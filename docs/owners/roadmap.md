@@ -176,8 +176,17 @@ preview becomes a supported model once an owner has run its hardware checklist.
       SoundTouch 300 27.0.6 ([versions.json](../installer/versions.json)).
 - [ ] Tests that fail by timing under load. On 2026-11-24 the Go suite ran three times on one
       CPU at low priority: the only failures were four tests that kept process state between
-      runs (`bcoflash`, `multiroom`, `supervise`), now fixed. Still to do: the same run on the
-      CI runner, and the Python suite under load.
+      runs (`bcoflash`, `multiroom`, `supervise`), now fixed. On 2026-11-27 on a 10-core
+      build machine: the Go suite at nice 19 beside a busy loop on every core, three times
+      and three times under `-race`; the Python suite three times at normal priority beside
+      two busy loops per core (at nice 19 beside those it had not finished the boot tests
+      after 43 minutes and was stopped); and the end-to-end tests three times. Fixed from those runs: an announcement
+      test that mixed before its clip's reader had queued a block, and the codec write's
+      nice test, which slept a fixed time instead of waiting for the renice and could not
+      pass under `nice -n 19`. The volume slider's end-to-end test (failed once on CI)
+      measured the track while its sheet still slid in and tapped beside it; it now taps
+      the track once it stands still. After the fixes every run passed. Still to do: the
+      same runs on the CI runner.
 - [x] Executed tests for the init script and the installer instead of text checks. The init
       script, the installer and the boot chain's checkers run against fakes; the
       [test map](../contributors/testing/README.md) says why each remaining text check stays one.
@@ -186,7 +195,18 @@ preview becomes a supported model once an owner has run its hardware checklist.
       (ST300 Spotify and Bluetooth playback, Wireless Link AUX), the owner's report of
       2026-11-24 settled it in the checklist.
 - [ ] **Spotify presets** are slow to start. The timing logs from an earlier fix say where the time
-      goes; measure on the Wireless Link and fix.
+      goes; measure on the Wireless Link and fix. The code path was read on 2026-11-27: the key
+      press claims the amp at once and sends librespot one `/load` with no wait, retry or
+      sleep in front of it, and the claim when librespot's audio starts does no write. What
+      it did do was write the recent list at every reclaim by Spotify itself (each song
+      change and resume, while librespot's player waited for the answer); that is fixed.
+      Still to measure on the Wireless Link, from standby and from another source: the
+      `spotify preset loaded` line (`load=`, the `/load` round trip) against `spotify preset
+      started` (`after=`, press to librespot's first audio), with librespot run without `-q`
+      for that test so its own log shows activation, context resolution, the audio key and the
+      first chunk. A long `load=` is librespot's control API or its activation; a long
+      `after=` with a short `load=` is Spotify's servers or the audio key (patch 0006 retries
+      it up to three times at 1.5 s each).
 - [ ] **Multiroom sync** ([ADR 0013](../decisions/0013-multiroom-through-snapcast.md)): followers
       within about 20 ms of the leader across all three models, also after an underrun.
       Measured 2026-11-14: the modelled chain is the same whichever model leads, and
