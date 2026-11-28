@@ -315,7 +315,7 @@ func (p *Panel) Run(
 		p.showOverlay(disp, overlay)
 
 		if now.Sub(read) >= time.Second {
-			info, read = p.refresh(ctx, spk, &info, &wired), now
+			info, read = p.refresh(ctx, spk, &info, &wired, status.IP != ""), now
 		}
 
 		if status.Standby || info.np == nil || info.np.Source == sourceStandby {
@@ -465,9 +465,10 @@ func (p *Panel) wait(ctx context.Context, spk *speakerstate.Speaker, tick *time.
 }
 
 // refresh reads what plays again, and says on the panel when the cable or the Bluetooth
-// device changed. wired is the cable as last seen: -1 not yet, 0 out, 1 in.
-func (p *Panel) refresh(ctx context.Context, spk *speakerstate.Speaker, last *npInfo, wired *int) npInfo {
-	if kind := linkSwitch(wired, speakerstate.Wired()); kind != "" {
+// device changed. wired is the cable as last seen: -1 not yet, 0 out, 1 in; online says the
+// speaker has an address.
+func (p *Panel) refresh(ctx context.Context, spk *speakerstate.Speaker, last *npInfo, wired *int, online bool) npInfo {
+	if kind := linkSwitch(wired, speakerstate.Wired(), online); kind != "" {
 		p.Show(NoticeFor, func() *screen.Frame { return linkScreen(kind) })
 	}
 
@@ -819,9 +820,16 @@ const (
 
 // linkSwitch is what the panel says when the cable goes in or out, as stock says it
 // switches between Wi-Fi and Ethernet: linkEthernet or linkWifi; nothing on the first look.
+// A look while the speaker has no address (online false) is no look: after power-on the
+// panel runs before the ST20's network card is up, and the first lease on the cable would
+// otherwise read as the cable going in.
 //
-//nolint:revive // flag-parameter: wired is the cable's state, data to compare, not a mode
-func linkSwitch(last *int, wired bool) string {
+//nolint:revive // flag-parameter: wired and online are the link's state, data to compare, not modes
+func linkSwitch(last *int, wired, online bool) string {
+	if !online {
+		return ""
+	}
+
 	now := 0
 	if wired {
 		now = 1

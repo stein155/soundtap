@@ -350,12 +350,20 @@ func TestLinkSwitch(t *testing.T) {
 	t.Parallel()
 
 	last := -1
-	for i, c := range []struct {
-		wired bool
-		want  string
-	}{{true, ""}, {true, ""}, {false, linkWifi}, {true, linkEthernet}} {
-		if got := linkSwitch(&last, c.wired); got != c.want {
-			t.Errorf("step %d: %q, want %q", i, got, c.want)
+	for step, look := range []struct {
+		wired, online bool
+		want          string
+	}{
+		{false, false, ""},
+		{true, true, ""},
+		{true, true, ""},
+		{false, true, linkWifi},
+		{true, true, linkEthernet},
+		{false, false, ""},
+		{false, true, linkWifi},
+	} {
+		if got := linkSwitch(&last, look.wired, look.online); got != look.want {
+			t.Errorf("step %d: %q, want %q", step, got, look.want)
 		}
 	}
 
@@ -468,7 +476,7 @@ func quietBoot(link func(since time.Duration) hw.Link, span time.Duration) (map[
 	start := time.Unix(1_000_000, 0)
 	clock := bootClock{
 		started: start.Add(-time.Minute), served: time.Time{}, netcard: time.Time{}, held: 0.5,
-		markRun: 0, markLast: time.Time{}, markEnd: time.Time{},
+		markRun: 0, markLast: time.Time{}, markEnd: time.Time{}, online: false,
 	}
 
 	var told []bool
@@ -527,7 +535,7 @@ func TestConnectingShowsAfterTheGrace(t *testing.T) {
 	t.Parallel()
 
 	for _, link := range []hw.Link{hw.LinkConnecting, hw.LinkDown} {
-		shown, told := quietBoot(func(time.Duration) hw.Link { return link }, bootMarkFor+2*bootNetGrace)
+		shown, told := quietBoot(func(time.Duration) hw.Link { return link }, bootMarkFor+bootJoinGrace+bootNetGrace)
 
 		first := time.Duration(-1)
 
@@ -537,13 +545,87 @@ func TestConnectingShowsAfterTheGrace(t *testing.T) {
 			}
 		}
 
-		if first < bootMarkFor+bootNetGrace || first > bootMarkFor+bootNetGrace+2*frameStep {
+		if first < bootMarkFor+bootJoinGrace || first > bootMarkFor+bootJoinGrace+2*frameStep {
 			t.Errorf("link %d: the offline screen first showed %v after serving, want %v", link, first,
-				bootMarkFor+bootNetGrace)
+				bootMarkFor+bootJoinGrace)
 		}
 
 		if len(told) != 2 || !told[0] || told[1] {
 			t.Errorf("link %d: Quiet was told %v, want [true false]", link, told)
+		}
+	}
+}
+
+// After power-on the ST20's network card brings wlan0 up seconds after the speaker serves
+// (no link at all), wpa_supplicant then joins (connecting) and the join takes 10-50 s. Whenever
+// within bootJoinGrace of the mark the network comes up, before the mark ends or well after
+// bootNetGrace, neither "Connecting…" nor "No connection" is ever drawn (the owner's ST20 on
+// 0.1.0-alpha.8 showed "Connecting…" for about a second after the 6 s grace).
+func TestNoConnectingWhileTheFirstJoinRuns(t *testing.T) {
+	t.Parallel()
+
+	for _, after := range []time.Duration{
+		-time.Second, 500 * time.Millisecond, 3 * time.Second, bootNetGrace + time.Second,
+		20 * time.Second, 45 * time.Second, bootJoinGrace - frameStep,
+	} {
+		joins := bootMarkFor + after
+		wlan := bootMarkFor + min(after/2, 2*time.Second) // wpa_supplicant starts
+
+		shown, told := quietBoot(func(at time.Duration) hw.Link {
+			switch {
+			case at >= joins:
+				return hw.LinkUp
+			case at >= wlan:
+				return hw.LinkConnecting
+			default:
+				return hw.LinkDown
+			}
+		}, bootMarkFor+bootJoinGrace+2*bootNetGrace)
+
+		for key, at := range shown {
+			if strings.HasPrefix(key, "offline") {
+				t.Errorf("joined %v after the mark: %q showed %v after serving", after, key, at)
+			}
+		}
+
+		if len(told) != 2 || !told[0] || told[1] {
+			t.Errorf("joined %v after the mark: Quiet was told %v, want [true false]", after, told)
+		}
+	}
+}
+
+// Once the network has been up, the boot's join is over: a drop after bootNetGrace shows at
+// once, and one within it when bootNetGrace ends, as later in the uptime.
+func TestOutageAfterTheJoinShows(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name       string
+		up, down   time.Duration // after the mark
+		firstShown time.Duration // after the mark
+	}{
+		{"later", 2 * time.Second, 30 * time.Second, 30 * time.Second},
+		{"within the grace", time.Second, 2 * time.Second, bootNetGrace},
+	} {
+		shown, _ := quietBoot(func(at time.Duration) hw.Link {
+			if at >= bootMarkFor+test.up && at < bootMarkFor+test.down {
+				return hw.LinkUp
+			}
+
+			return hw.LinkConnecting
+		}, bootMarkFor+test.down+bootJoinGrace)
+
+		first, seen := time.Duration(0), false
+		for key, at := range shown {
+			if strings.HasPrefix(key, "offline") && (!seen || at < first) {
+				first, seen = at, true
+			}
+		}
+
+		want := bootMarkFor + test.firstShown
+		if !seen || first < want || first > want+2*frameStep {
+			t.Errorf("%s: the connecting screen first showed %v after serving (shown %t), want %v",
+				test.name, first, seen, want)
 		}
 	}
 }
@@ -712,7 +794,7 @@ func markRun(t *testing.T, step, stallAt, stall time.Duration) (time.Duration, t
 	start := time.Unix(1_000_000, 0)
 	clock := bootClock{
 		started: start.Add(-time.Minute), served: time.Time{}, netcard: time.Time{}, held: 0.5,
-		markRun: 0, markLast: time.Time{}, markEnd: time.Time{},
+		markRun: 0, markLast: time.Time{}, markEnd: time.Time{}, online: false,
 	}
 
 	var named time.Duration

@@ -32,8 +32,8 @@ type BootStatus struct {
 	// none.
 	Network func() string
 	// Quiet is told whether the boot screen keeps quiet about a network that is not up yet:
-	// from power-on through the mark and bootNetGrace after it, and again false when the
-	// screen stops. The Wi-Fi lamp follows it (hw.LampStatus.NetQuiet), so the lamp and the
+	// from power-on through the mark and the grace after it (bootClock.quietAt), and again
+	// false when the screen stops. The Wi-Fi lamp follows it (hw.LampStatus.NetQuiet), so the lamp and the
 	// panel agree. nil: nobody listens.
 	Quiet func(quiet bool)
 }
@@ -47,8 +47,9 @@ type BootStatus struct {
 //     fills, slides into the stem of the SoundTap note, the mark draws itself and the
 //     panel fades out (screen.BootMark).
 //   - offline: no network, retrying, with moving dots. Not during the boot, the mark and
-//     bootNetGrace after it: the network usually comes up within seconds of the mark, and
-//     "connecting" flashed between the mark and the home screen.
+//     the grace after it (bootClock.quietAt): bootNetGrace, or bootJoinGrace while the
+//     boot's first join is still under way. "Connecting" flashed between the mark and the
+//     home screen otherwise.
 //   - setup: hostapd is running, so the speaker has no Wi-Fi and is offering its
 //     own. Says which network to join and where to go once joined.
 func RunBootScreen(ctx context.Context, disp *display.Manager, status BootStatus, log *slog.Logger) {
@@ -67,7 +68,7 @@ func RunBootScreen(ctx context.Context, disp *display.Manager, status BootStatus
 
 	clock := bootClock{
 		started: time.Now(), served: time.Time{}, netcard: time.Time{}, held: 0,
-		markLast: time.Time{}, markRun: 0, markEnd: time.Time{},
+		markLast: time.Time{}, markRun: 0, markEnd: time.Time{}, online: false,
 	}
 	last := ""
 
@@ -127,7 +128,10 @@ type bootClock struct {
 	// last moved on: the mark's own clock (markAdvance).
 	markRun  time.Duration
 	markLast time.Time
-	markEnd  time.Time // the mark ended: bootNetGrace counts from here
+	markEnd  time.Time // the mark ended: bootNetGrace and bootJoinGrace count from here
+	// online: the network has been up since the boot screen came up. Until then the boot's
+	// first join is still under way, and bootJoinGrace applies instead of bootNetGrace.
+	online bool
 }
 
 // markStepMax is the most the mark moves on between two looks at it. At the panel's frame
@@ -156,6 +160,10 @@ func (c *bootClock) state(status *BootStatus, now time.Time) *bootState {
 	link := hw.LinkDown
 	if !booting {
 		link = status.Link()
+	}
+
+	if link == hw.LinkUp {
+		c.online = true
 	}
 
 	writing := status.NetCard != nil && status.NetCard()
@@ -198,13 +206,26 @@ func (c *bootClock) state(status *BootStatus, now time.Time) *bootState {
 		}
 	}
 
-	boot.quiet = c.markEnd.IsZero() || now.Sub(c.markEnd) < bootNetGrace
+	boot.quiet = c.quietAt(now)
 
 	if writing {
 		boot.netcard = now.Sub(c.netcard)
 	}
 
 	return boot
+}
+
+// quietAt says whether the boot screen keeps quiet at now about a network that is not up:
+// before the mark has ended; within bootNetGrace after it; and, while the boot's first join is
+// still under way (the network has not been up since power-on), within bootJoinGrace after it.
+func (c *bootClock) quietAt(now time.Time) bool {
+	if c.markEnd.IsZero() {
+		return true
+	}
+
+	since := now.Sub(c.markEnd)
+
+	return since < bootNetGrace || (!c.online && since < bootJoinGrace)
 }
 
 // bootSleep is how long the boot screen waits before it looks again. The boot bar, the mark
@@ -264,6 +285,14 @@ const (
 	// the mark and the home screen (the owner, 2026-11-28). A network still not up after it
 	// gets the connecting or no-connection screen as before.
 	bootNetGrace = 6 * time.Second
+	// bootJoinGrace is how long after the mark the boot's first join goes unmentioned, while
+	// the network has not been up once since power-on. bootNetGrace alone was too short for
+	// the ST20: its BCO network card brings wlan0 up seconds after soundtapd serves and the
+	// join then takes 10-50 s (wifi.DefaultTiming), so "connecting" still showed for about a
+	// second after the 6 s, between a dark panel and the home screen (the owner, 0.1.0-alpha.8,
+	// 2026-11-28). A first join that has not succeeded by then gets the connecting or
+	// no-connection screen; a join that fails opens the setup AP, whose screen is never held back.
+	bootJoinGrace = time.Minute
 )
 
 // readUptime is the time since power-on. ok is false where /proc/uptime cannot be read,
@@ -296,8 +325,8 @@ type bootState struct {
 	network string // the saved network's name, "" for none
 	// uptime is the time since power-on (readUptime; tests give their own).
 	uptime func() (time.Duration, bool)
-	// quiet: the boot, the mark or bootNetGrace after it, when a network that is not up yet
-	// goes unmentioned.
+	// quiet: the boot, the mark or the grace after it (bootClock.quietAt), when a network
+	// that is not up yet goes unmentioned.
 	quiet bool
 }
 

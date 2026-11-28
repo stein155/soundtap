@@ -10,6 +10,14 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
 
 ## [Unreleased]
 
+### Fixed
+
+- **SoundTouch 20: no more "Connecting…" flash after power-on.** While the speaker joins its
+  Wi-Fi for the first time after power-on, which can take up to a minute on the SoundTouch 20,
+  the display and the Wi-Fi lamp no longer say it is connecting. If it has not joined after a
+  minute they say so as before. A speaker on a cable no longer shows "Ethernet" when it gets
+  its first address after power-on.
+
 ## [app-v0.1.0-alpha.8] - 2026-11-28
 
 - The SoundTap app that SoundTap Core 0.1.0-alpha.8 carries; what it changes is listed under
