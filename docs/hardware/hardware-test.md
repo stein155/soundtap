@@ -175,6 +175,18 @@ line pointing at the bus config.
    alpha image; nothing is written to NAND). Then stop and restart the source three times and
    check by ear and with `GET /api/multiroom` that the followers stay in step with the leader:
    the encoder may carry up to one 24 ms block across a pause (ADR 0013).
+7. Sync to the ms ([ADR 0013](../decisions/0013-multiroom-through-snapcast.md#sync-from-each-speakers-measured-audio-chain)):
+   only with the owner's permission for this test and at the volume they agree. Each model
+   leads once with each other model following, on music with sharp attacks. The owner holds
+   a phone recorder at equal distance from leader and follower, 30 s after the follower
+   logs `multiroom follower in sync`, again after 10 minutes, and again after forcing one
+   follower underrun (pause the leader's network for a second). Read the offset between the
+   two copies of an attack in an audio editor: within 20 ms passes. Alongside, the leader's
+   client `latency` in `GET /api/multiroom` minus the follower's `GET
+   /api/multiroom/downstream` is the leader's trim: within ±30 ms, and it changes when the
+   leader logs `multiroom leader delay`. A steady offset the same on every pair points at
+   what the meter cannot see (the Mixer's block in hand while aplay's pipe is full); record
+   it here with the build, not as a constant.
 
 ### Multiroom measurements
 
@@ -435,6 +447,7 @@ Before a release, every cell must carry the release candidate's version and SHA-
 | Multiroom leader | 2026-11-13 | 2026-11-14 | 2026-11-14 | open |
 | Multiroom follower | 2026-11-14 | 2026-11-13 | 2026-11-14 | 2026-11-15 |
 | Multiroom on the FLAC stream (section D.6): leader CPU and follower dropouts against PCM, steady through source restarts | open | open | open | open |
+| Multiroom sync to the ms (section D.7): recorded offset within 20 ms with each model leading, after 10 minutes and after a follower underrun | open | open | open | open |
 | TuneIn | 2026-11-13 | 2026-10-21 | 2026-10-21 | 2026-11-13 |
 | Spotify | 2026-11-04 | 2026-10-21 | 2026-10-21 | 2026-11-24 (owner's report) |
 | AirPlay (via Music Assistant) | 2026-11-04 | open | open | open |

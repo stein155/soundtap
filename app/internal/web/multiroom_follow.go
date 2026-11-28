@@ -77,7 +77,7 @@ func (s *Server) groupEnv() multiroom.Env {
 		PeerTimeout: peerTimeout,
 		Snapcast:    s.multiroom, LocalID: s.snapclientID,
 		Active: s.multiroomActive, ActivePath: s.multiroomActivePath(),
-		Downstream: fetchDownstream, WantAnchor: s.wantAnchor,
+		Downstream: fetchDownstream, LeaderTrim: s.leaderTrim, WantAnchor: s.wantAnchor,
 		NowPlaying:      nil,
 		Nudge:           nil,
 		JoinLeaderGroup: nil,

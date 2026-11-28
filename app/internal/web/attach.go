@@ -24,9 +24,12 @@ type AudioHooks struct {
 	// producer's audio boundary.
 	Flush     func()
 	FlushWait func(context.Context) error
-	// Channel applies the stored channel; Downstream is the audio delay after the bus.
+	// Channel applies the stored channel; Downstream is the audio delay after the bus;
+	// LeaderTrim is, while this speaker leads, how much earlier its followers must play
+	// (multiroom.Env.LeaderTrim).
 	Channel    func(string)
 	Downstream func() time.Duration
+	LeaderTrim func() time.Duration
 	// MultiroomActive switches the Mixer's copy for Snapcast.
 	MultiroomActive func(bool)
 	// SelectSource picks the source the arbiter grants the card to, for the one case the
@@ -65,6 +68,7 @@ func (s *Server) AttachAudio(hooks AudioHooks) { //nolint:gocritic // hugeParam:
 	s.attached.Audio = hooks
 	s.sourceChanging, s.flushAudio, s.flushAudioWait = hooks.SourceChanging, hooks.Flush, hooks.FlushWait
 	s.channel, s.downstream, s.multiroomActive = hooks.Channel, hooks.Downstream, hooks.MultiroomActive
+	s.leaderTrim = hooks.LeaderTrim
 	s.selectSource, s.leaderLive = hooks.SelectSource, hooks.LeaderLive
 	s.leaderNow, s.selfAddress = hooks.LeaderNow, hooks.SelfAddress
 	s.restartSnapclient, s.wantAnchor = hooks.RestartSnapclient, hooks.WantAnchor

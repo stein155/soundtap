@@ -364,6 +364,7 @@ func wireAudioPath(ctx context.Context, wiring *audioWiring) audioTap {
 		FlushWait:       tap.FlushWait,
 		Channel:         applyChannel,
 		Downstream:      tap.Downstream,
+		LeaderTrim:      tap.LeaderTrim,
 		MultiroomActive: tap.SetMultiroom,
 		// Following another speaker is a setting plus a restart: runMediaDaemons builds
 		// snapclient's arguments from that setting at every start.

@@ -93,20 +93,29 @@ const (
 // snapclient writes PCM into the source bus at the moment it should be heard, but the bus,
 // the Mixer's jitter buffer, aplay's pipe and the DAC ring still lie ahead of it: 300 to
 // 450 ms, different per model and per start. Without this the followers trailed the
-// leader audibly. A follower that does not answer keeps the latency it has.
+// leader audibly. The leader's own delay residual (Env.LeaderTrim) goes on top, so the
+// followers meet the leader to the ms rather than to its 20 ms delay blocks. A follower
+// that does not answer keeps the latency it has.
 //
 //nolint:gocritic // exported; web passes Env by value
 func SyncLatencies(ctx context.Context, env Env, status snapcast.Status) {
+	var trim time.Duration
+	if env.LeaderTrim != nil {
+		trim = env.LeaderTrim()
+	}
+
 	for _, group := range status.Groups {
 		for _, client := range group.Clients {
 			if !client.Connected || client.ID == env.LocalID {
 				continue
 			}
 
-			latency, err := env.Downstream(ctx, client.Host.IP)
+			downstream, err := env.Downstream(ctx, client.Host.IP)
 			if err != nil {
 				continue
 			}
+
+			latency := FollowerLatency(downstream, trim)
 
 			if diff := latency - client.Config.Latency; diff > -LatencyStep && diff < LatencyStep {
 				continue
@@ -122,6 +131,14 @@ func SyncLatencies(ctx context.Context, env Env, status snapcast.Status) {
 			}
 		}
 	}
+}
+
+// FollowerLatency is the Snapcast latency, in ms, for a follower that reports a chain of
+// downstreamMS while the leader's delay misses its target by trim: positive trim means the
+// leader plays early, so the follower must play that much earlier too. Rounded to the
+// nearest ms and never negative, which snapclient would take as a longer buffer.
+func FollowerLatency(downstreamMS int, trim time.Duration) int {
+	return max(downstreamMS+int(trim.Round(time.Millisecond)/time.Millisecond), 0)
 }
 
 // Leads reports whether another speaker is connected to this one's snapserver. When that

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stein155/soundtap/app/internal/snapcast"
 )
@@ -95,6 +96,28 @@ func TestStreamingFromReadsTheConnectionTable(t *testing.T) {
 	} {
 		if got := streamingFrom(dir, host); got != want {
 			t.Errorf("streamingFrom(%s) = %v, want %v", host, got, want)
+		}
+	}
+}
+
+// The leader's residual goes on the follower's chain, rounded to the ms, and a latency
+// never goes below zero.
+func TestFollowerLatencyAddsTheLeadersTrim(t *testing.T) {
+	t.Parallel()
+
+	for _, step := range []struct {
+		downstream int
+		trim       time.Duration
+		want       int
+	}{
+		{downstream: 300, trim: 0, want: 300},
+		{downstream: 300, trim: 18400 * time.Microsecond, want: 318},
+		{downstream: 300, trim: 18600 * time.Microsecond, want: 319},
+		{downstream: 300, trim: -25 * time.Millisecond, want: 275},
+		{downstream: 10, trim: -40 * time.Millisecond, want: 0},
+	} {
+		if got := FollowerLatency(step.downstream, step.trim); got != step.want {
+			t.Errorf("FollowerLatency(%d, %v) = %d, want %d", step.downstream, step.trim, got, step.want)
 		}
 	}
 }

@@ -69,6 +69,10 @@ type Env struct {
 	ActivePath string
 	// Downstream asks the follower at ip how long its audio chain is, in ms (watch.go).
 	Downstream func(ctx context.Context, ip string) (int, error)
+	// LeaderTrim is how much earlier than its delay alone puts them the followers must
+	// play to sound with this speaker: the part of the leader's delay its 20 ms blocks
+	// cannot hold. nil counts as zero.
+	LeaderTrim func() time.Duration
 }
 
 // Group is this speaker's place in a multiroom group: whom it follows, and the one lock

@@ -4,6 +4,7 @@
 package main
 
 import (
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"testing"
@@ -142,5 +143,132 @@ func TestFollowerHoldWaitsForSettledChainAndLeaderRead(t *testing.T) {
 
 	if report.applied(now.Add(latencyApplied)) {
 		t.Fatal("35 ms off what the leader read is not set yet")
+	}
+}
+
+// A follower asks for its chain less what snapclient's file player already covers: half
+// of its 50 ms write, which the meter's mean counts but the write's first frame does not
+// wait for, and the 10 ms it plays early by itself.
+func TestFollowerLatencyLeavesOutSnapclientsOwnShare(t *testing.T) {
+	t.Parallel()
+
+	milli := time.Millisecond
+
+	if got := followerLatency(chainSample{sink: 300 * milli, upstream: 100 * milli, backlog: 0}); got != 365*milli {
+		t.Fatalf("followerLatency = %v, want 400 ms less 25 and 10", got)
+	}
+
+	if got := followerLatency(chainSample{sink: 0, upstream: 20 * milli, backlog: 0}); got != 0 {
+		t.Fatalf("an idle chain asks for no latency, got %v", got)
+	}
+}
+
+// The leader's residual is the exact target less the whole blocks it holds: positive when
+// it plays early. With it, leader and follower sound at the same moment to the ms.
+func TestLeaderTrimIsWhatTheBlocksMiss(t *testing.T) {
+	t.Parallel()
+
+	milli := time.Millisecond
+	sample := chainSample{sink: 585 * milli, upstream: 0, backlog: 268 * milli} // target 683 ms
+
+	have := leaderDelayBlocks(sample) // 34 blocks, 680 ms
+	if got := leaderTrim(sample, have); got != 3*milli {
+		t.Fatalf("leaderTrim = %v at %d blocks, want 3 ms", got, have)
+	}
+	// One block off is under leaderDelayStep, so a leader at 33 blocks does not move.
+	if got := leaderTrim(sample, 33); got != 23*milli {
+		t.Fatalf("leaderTrim = %v at 33 blocks, want 23 ms", got)
+	}
+
+	// A chunk snapserver reads at t sounds on the leader at t - backlog + delay + sink,
+	// and on a follower at t + buffer - latency + chain, where latency = chain + trim.
+	const chain = 400 * time.Millisecond
+
+	leader := -sample.backlog + 33*blockDuration + sample.sink
+	follower := snapcastBuffer - (chain + leaderTrim(sample, 33)) + chain
+
+	if leader != follower {
+		t.Fatalf("leader sounds at +%v, follower at +%v", leader, follower)
+	}
+}
+
+// Each look falls at a point in its own interval, the intervals follow on without
+// drifting, and a stall starts them over instead of looking several times at once.
+func TestSampleClockLooksOncePerInterval(t *testing.T) {
+	t.Parallel()
+
+	start := time.Unix(1000, 0)
+	offsets := []time.Duration{100 * time.Millisecond, 450 * time.Millisecond, 0}
+	i := 0
+	clock := newSampleClock(start, 500*time.Millisecond, func(time.Duration) time.Duration {
+		d := offsets[i%len(offsets)]
+		i++
+
+		return d
+	})
+
+	now := start
+	for _, want := range []time.Duration{100 * time.Millisecond, 850 * time.Millisecond, 50 * time.Millisecond} {
+		got := clock.next(now)
+		if got != want {
+			t.Fatalf("wait = %v, want %v", got, want)
+		}
+
+		now = now.Add(got)
+	}
+
+	// Two seconds late: the next look is in a fresh interval from now.
+	now = now.Add(2 * time.Second)
+	if got := clock.next(now); got != 100*time.Millisecond {
+		t.Fatalf("after a stall wait = %v, want 100 ms", got)
+	}
+
+	// A new pace starts its intervals at once.
+	clock.reset(now, chainHeldEvery)
+	clock.jitter = func(d time.Duration) time.Duration { return d / 2 }
+
+	if got := clock.next(now); got != chainHeldEvery/2 {
+		t.Fatalf("after reset wait = %v, want half of %v", got, chainHeldEvery)
+	}
+}
+
+// The beats runChainMeter measures (snapclient's 50 ms writes, the 20 ms blocks, the
+// DAC's 80 ms periods) fill a buffer at once and drain it evenly. Looked at on a fixed
+// 500 ms ticker, the mean depends on where in the beat the ticker happens to fall; with
+// sampleClock it is the true mean, half the beat.
+func TestSampleClockMeasuresTheTrueMeanOfABeat(t *testing.T) {
+	t.Parallel()
+
+	sawtooth := func(at, beat time.Duration) time.Duration { return beat - at%beat }
+
+	for _, every := range []time.Duration{chainEvery, chainHeldEvery} {
+		for _, beat := range []time.Duration{20 * time.Millisecond, 50 * time.Millisecond, 80 * time.Millisecond} {
+			rng := rand.New(rand.NewPCG(1, uint64(beat)))
+			clock := newSampleClock(time.Unix(0, 0), every, func(d time.Duration) time.Duration {
+				return time.Duration(rng.Int64N(int64(d)))
+			})
+
+			const samples = 4000
+
+			now, sum := time.Unix(0, 0), time.Duration(0)
+			for range samples {
+				now = now.Add(clock.next(now))
+				sum += sawtooth(time.Duration(now.UnixNano()), beat)
+			}
+
+			if mean := sum / samples; (mean - beat/2).Abs() > 2*time.Millisecond {
+				t.Errorf("every %v, beat %v: mean %v, want %v", every, beat, mean, beat/2)
+			}
+		}
+	}
+
+	// The fixed ticker it replaces: every look at the same point of a 50 ms beat.
+	var sum time.Duration
+	for k := range 10 {
+		sum += sawtooth(time.Duration(k)*chainEvery+7*time.Millisecond, 50*time.Millisecond)
+	}
+
+	if mean := sum / 10; mean != 43*time.Millisecond {
+		t.Fatalf("fixed ticker mean = %v, want 43 ms: 18 ms off the true 25", mean)
 	}
 }

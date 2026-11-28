@@ -135,6 +135,7 @@ func testEnv() Env {
 		PeerLeader: nil, PeerNow: nil, LeaderReachable: nil, FollowerPeers: nil,
 		StepPeerVolume: nil, ReleasePeer: nil, JoinLeaderGroup: nil, PeerTimeout: 0,
 		Snapcast: nil, LocalID: "", WantAnchor: nil, Active: nil, ActivePath: "", Downstream: nil,
+		LeaderTrim: nil,
 	}
 }
 

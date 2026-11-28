@@ -109,19 +109,31 @@ works and only gets the give-up.
 
 Snapcast puts a chunk on every client's output at the same moment, but a follower's output is
 the source bus, not the DAC, and the leader does not play through Snapcast at all. So every
-speaker measures its own chain twice a second and averages over 5 s:
+speaker measures its own chain twice a second and averages over 5 s, each look at a random
+point of its half second (`sampleClock`). The buffers measured fill and drain on fixed beats
+(snapclient's 50 ms writes, snapserver's 20 ms reads, the Mixer's 20 ms blocks, the DAC's
+80 ms periods); a fixed 500 ms ticker, a multiple of the first three, saw the same point of
+each beat on every look, and the mean came out up to a whole beat off, by a different amount
+at every start:
 
 - **sink**: aplay's stdin pipe (FIONREAD) plus the ALSA ring (`delay` in
   `/proc/asound/card0/pcm0p/sub0/status`, at the rate in `hw_params`);
 - **upstream**: the bus FIFO plus the Mixer's queued blocks;
 - **backlog** (leader only): the snapserver tap's FIFO.
 
-A follower reports `upstream + sink` at `GET /api/multiroom/downstream` (`{"ms": N}`, peer
-addresses only). The leader sets that as the client's Snapcast latency (10 ms steps) and delays
-its own output by `1000 ms (Snapcast buffer) + backlog − sink`, in 20 ms Mixer blocks, moving it
-only when the target is two blocks or more away, because each move drops or repeats PCM. The
-Snapcast buffer is 1000 ms, Snapcast's own default: what is left after a follower's latency is
-all its Wi-Fi headroom. A follower's source is already paced by snapclient, so its Mixer uses
+A follower reports `upstream + sink − 35 ms` at `GET /api/multiroom/downstream` (`{"ms": N}`,
+peer addresses only). The 35 ms is snapclient's file player's own (Snapcast 0.35,
+`client/player/file_player.cpp`): it writes 50 ms at once, so the first frame of a write
+waits half a write less than the bus's mean, and it asks for the PCM due 10 ms after the
+write, so it plays 10 ms early by itself. Reported whole, the chain put every follower 35 ms
+ahead of its leader, and the fixed ticker anywhere from 10 to 60 ms. The leader delays its
+own output by `1000 ms (Snapcast buffer) + backlog − sink`, in 20 ms Mixer blocks, moving it
+only when the target is two blocks or more away, because each move drops or repeats PCM. What
+those blocks miss, up to 30 ms either way, is the leader's trim: it sets each client's Snapcast
+latency to the report plus the trim, resent when it is 10 ms or more off, so a follower meets
+the leader to within that step rather than to the leader's blocks. The Snapcast buffer is
+1000 ms, Snapcast's own default: what is left after a follower's latency is all its Wi-Fi
+headroom. A follower's source is already paced by snapclient, so its Mixer uses
 the short refill target instead of the full prebuffer while the source is MULTIROOM.
 
 Alternatives that lost: AirPlay 2 multiroom only (Apple-only, and not for Spotify or TuneIn); a
@@ -160,9 +172,11 @@ against ADR 0012); a larger Snapcast buffer (every play and group change would s
 - Regrouping a leader under another speaker takes two steps: ungroup, then follow. A leader
   switched off for more than five minutes ends the group; its followers do not rejoin by
   themselves.
-- The group stays in step across models without per-model constants. Up to about 20 ms of
-  residual offset remains, and a follower chain longer than the 1000 ms buffer cannot be
-  corrected, so every follower-side buffer must stay well below it.
+- The group stays in step across models without per-model constants; the only fixed numbers
+  are snapclient's own, which change only with the Snapcast version in
+  `os/package/soundtap-snapcast`. Up to 10 ms of residual offset remains by design (the
+  latency step), on top of what the meter cannot see, and a follower chain longer than the
+  1000 ms buffer cannot be corrected, so every follower-side buffer must stay well below it.
 - Speakers expose a peer-only route, `/api/multiroom/downstream`, carrying one number and no
   audio.
 - A stereo pair is a group of two ([ADR 0107](0107-stereo-pair-acts-as-one-speaker.md)).
@@ -171,13 +185,16 @@ against ADR 0012); a larger Snapcast buffer (every play and group change would s
 
 - `app/internal/multiroom`: the group: `multiroom.Group` (`Join`, `LeaveFollow`, `CheckLeader`),
   the follow file (`multiroom.ReadFollow`, `multiroom.WriteFollow`), `multiroom.ErrChained`,
-  the anchor (`multiroom.AnchorHold`, `multiroom.AnchorDemand`) and `multiroom.SyncLatencies`.
+  the anchor (`multiroom.AnchorHold`, `multiroom.AnchorDemand`), `multiroom.SyncLatencies` and
+  `multiroom.FollowerLatency` (a follower's report plus the leader's trim).
 - `app/internal/web/multiroom_invite.go:postMultiroomInvite`,
   `app/internal/web/multiroom_follow.go:postMultiroomFollow` and
   `app/internal/web/multiroom_follow.go:followRefusal`: invite, follow and the one-hop rule.
 - `app/internal/web/multiroom_leader.go:WatchLeader`: the 30 s leader check.
 - `app/internal/web/multiroom_latency.go:getMultiroomDownstream`: the follower's chain report.
-- `app/cmd/soundtapd/latency.go`: `runChainMeter` and `leaderDelayBlocks`.
+- `app/cmd/soundtapd/latency.go`: `runChainMeter`, `sampleClock`, `followerLatency`
+  (snapclient's share, `snapclientFileChunk`, `snapclientFileDelay`), `leaderDelayBlocks` and
+  `leaderTrim`.
 - `app/cmd/soundtapd/procs.go:snapclientArgs`: follower and anchor command lines.
 - `app/internal/snapcast`: the snapserver control client.
 - `os/overlay/etc/snapserver.conf`: the FLAC stream (`codec=flac:1`), no mDNS announcement,

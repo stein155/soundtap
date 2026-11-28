@@ -116,6 +116,7 @@ type Server struct {
 	multiroomActive func(bool)
 	channel         func(string)
 	downstream      func() time.Duration
+	leaderTrim      func() time.Duration // nil off-device: SyncLatencies counts it as zero
 	// restartSnapclient kicks the supervised snapclient so it re-reads which server it
 	// follows. nil off-device, where nothing supervises anything.
 	restartSnapclient func()

@@ -872,6 +872,16 @@ func TestLeaderSyncsFollowerLatency(t *testing.T) {
 	if len(fake.latency) != 0 {
 		t.Fatalf("a follower 7 ms off was re-synced: %v", fake.latency)
 	}
+
+	// The leader's delay holds whole 20 ms blocks; what it misses goes on every
+	// follower's latency: 18 ms short of the target, so they play 18 ms earlier.
+	leader.leaderTrim = func() time.Duration { return 18 * time.Millisecond }
+
+	multiroom.SyncLatencies(context.Background(), leader.groupEnv(), status)
+
+	if fake.latency["st10"] != 430 {
+		t.Fatalf("latencies set = %v, want st10 at 412 + 18", fake.latency)
+	}
 }
 
 // A follower follows its leader into standby without leaving the group, and back out of

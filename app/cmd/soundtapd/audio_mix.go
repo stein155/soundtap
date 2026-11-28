@@ -77,8 +77,11 @@ type audioTap struct {
 	SetMultiroom func(bool)
 	SetChannel   func(audio.Channel)
 	FadeOut      func()
-	// Downstream is how long PCM takes from the source bus to the DAC (runChainMeter).
+	// Downstream is the Snapcast latency this speaker asks for as a follower, its chain
+	// from the source bus to the DAC (runChainMeter); LeaderTrim is, while it leads, what
+	// its own delay misses the target by (leaderTrim).
 	Downstream func() time.Duration
+	LeaderTrim func() time.Duration
 }
 
 // noopTap is the tap the daemon runs with when there is no arbiter — either
@@ -93,6 +96,7 @@ func noopTap() audioTap {
 		SetChannel:   func(audio.Channel) {},
 		FadeOut:      func() {},
 		Downstream:   func() time.Duration { return 0 },
+		LeaderTrim:   func() time.Duration { return 0 },
 	}
 }
 
@@ -183,6 +187,7 @@ func setupArbiter(
 		SetMultiroom: multiroomDelaySwitch(&tapOn, &delayBlocks),
 		SetChannel:   mix.SetChannel,
 		Downstream:   downstream.Read,
+		LeaderTrim:   downstream.Trim,
 	}
 }
 

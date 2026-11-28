@@ -211,7 +211,14 @@ preview becomes a supported model once an owner has run its hardware checklist.
       every follower reports in sync within a few windows; there is no capture path to measure
       the sound itself. By ear: with the ST20 leading, the ST10 trailed (2026-11-13); after the
       fixes to the leader's delay and the tap's pipe, the ST20 and the SoundTouch 300 play in
-      step (owner, 2026-11-22).
+      step (owner, 2026-11-22). Since then, from the code: a follower reported its chain 10 to
+      60 ms longer than snapclient's file player waits for (10 ms the player's own, the
+      rest wherever the meter's fixed 500 ms ticker fell in snapclient's 50 ms writes,
+      different at every start), and the leader's 20 ms delay blocks left up to 30 ms
+      either way, so a follower could sound from about 20 ms behind to 90 ms ahead. The
+      report now leaves snapclient's share out, the meter looks at random points, and the
+      followers' latency takes the leader's residual. To check by ear and by recording
+      (hardware test, section D.7).
 - [x] **Multiroom leader CPU**: measured again on 2026-11-14 (table below). The
       ST10 as leader is down from 76% to 67%; every model has headroom as leader, so any model
       can lead.

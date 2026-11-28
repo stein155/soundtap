@@ -382,8 +382,9 @@ snapclient decodes, and a follower on a Core without FLAC cannot follow.
 
 Snapcast lines up the clients' outputs; what comes after that differs per speaker. Each
 speaker measures its own chain (bus FIFO, Mixer queue, aplay's pipe, ALSA ring). A
-follower reports it at `GET /api/multiroom/downstream`, and the leader sets it as that
-client's Snapcast latency and delays its own output to match
+follower reports it, less the share snapclient's file player already plays early, at
+`GET /api/multiroom/downstream`; the leader delays its own output to match in 20 ms blocks
+and sets each client's Snapcast latency to that report plus what its blocks miss
 ([ADR 0013](../decisions/0013-multiroom-through-snapcast.md)).
 
 Anything that has to happen later or for the whole house runs on each speaker, not in
