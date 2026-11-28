@@ -138,23 +138,48 @@ Back to the guide: [Going back to Bose](../owners/install.md#going-back-to-bose)
   processor and bass-link payloads (an offline installer test covers that), so the processor
   keeps the firmware it has. The round trip ran on one bar (2026-11-15). Do not
   treat it as a full soundbar factory restore.
-- **When SoundTap does not start but its SPL/U-Boot still work:** SoundTap's bootloader implements
-  USB-stick recovery. Prove it on the exact model and candidate before relying on it. Put an
-  `Update.stu` (a SoundTap release, or Bose's file for that model; no `.sig`, ADR 0130) on a
-  FAT USB stick, plug it into the micro-B port through an OTG adapter, and
-  hold **Volume Down + Preset 4** (ST10, ST20) or **both buttons** (Wireless Link) while
-  powering on. ST300's remote-triggered code path has no completed recovery run and is not
-  an approved recovery guarantee. This route reads a compatible SoundTap package's
-  `soundtap-rootfs`, including its `/boot` files, into the other slot and selects it after
-  verification. It writes nothing unless the `.sig` verifies against a release key and names
-  the file's SHA-256 (ADR 0048), so it does not install a stock package, and it does not
-  replace SPL/U-Boot. Stock ST10/ST20 USB recovery is a different implementation; stock
-  Wireless Link has no USB-stick update gesture.
+- **When SoundTap does not start but its SPL/U-Boot still work:** SoundTap's bootloader has a
+  USB-stick route (ADR 0130). Put an `Update.stu` (a SoundTap release, or Bose's file for that
+  model; no `.sig`) on a FAT32 USB stick, plug it into the micro-B port through an OTG adapter,
+  and hold **Volume Down + Preset 4** (ST10, ST20) or **both buttons** (Wireless Link) while
+  powering on. A SoundTap package's `soundtap-rootfs`, with its `/boot` files, goes into the
+  other slot and is selected after verification; SPL and U-Boot stay as they are. Bose's file
+  for the model goes back to Bose, its bootloaders included. What has run is under
+  [USB stick runs](#usb-stick-runs); prove the route on the exact model and candidate before
+  relying on it. ST300's remote-triggered path has no run. Stock ST10/ST20 USB recovery is a
+  different implementation; stock Wireless Link has no USB-stick update gesture.
 - **Slot limits:** a normal update preserves the running kernel/rootfs, but bootloaders and
   environment are shared. After another update both slots may hold SoundTap. A/B rollback
   alone does not restore the stock boot chain or the ST20's stock BCO app.
 
 Proving each of these from the release candidate is part of the [road to 1.0](../owners/roadmap.md).
+
+### USB stick runs
+
+The first runs of ADR 0130's stick route, 2026-11-28. Lamps: a slow blink per MiB read while it
+writes, solid when done; refused is three slow blinks (about 3.6 s in all, easy to miss); no
+stick, no file, a CRC or read error is ten fast blinks.
+
+- **SoundTouch 10, SoundTap file: installed.** FAT32 stick through an OTG adapter, `/Update.stu` =
+  SoundTap-Core-0.1.0-alpha.7.stu (70,216,976 bytes, SHA-256 `dee3f367…5ff01`), no `.sig`, Volume
+  Down + Preset 4 at power-on, on alpha.7's bootloaders. The Wi-Fi lamp blinked slowly for
+  minutes, then stayed on; the speaker came up on the other slot (PONG to PING) and confirmed its
+  boot. The slot it ran before is read from the logs, not from that boot's command line. The time
+  from power-on to the new slot was not measured.
+- **SoundTouch 10, Bose's file: refused, nothing written.** `/Update.stu` = Bose's ST10 27.0.6
+  package (95,906,856 bytes, SHA-256 `c384719d…64fe96`): `soundtap.recovery=-8`, the old slot
+  booted with its bootloaders unchanged. Cause: U-Boot's board table maps the ST10 (rhino) only to
+  the stock variant `binky`, while Bose's own ST10 package tags its rootfs `@sm2/rhino` (27.0.1
+  and 27.0.6 alike). Bose's WLA/ST20 package (`@sm2/spotty+mojo+binky`), its SCM package and the
+  ST300's 27.0.6 package match their rows; the ST300's 27.0.1 package names its host firmware
+  `ginger_1.16.7.4378403.bos`, which the table's exact name does not match. Open: let rhino take
+  `rhino` as well as `binky`, then run it again with a NAND backup of the board.
+- **Wireless Link: a boot with both environment copies erased started PONG**, the slot U-Boot's
+  built-in boot command tries first, and soundtapd confirmed it (0.1.0-alpha.8 candidate U-Boot
+  with the lost-environment fix). The stick route itself was not taken in that run: with a
+  SoundTap `Update.stu` on the stick and both buttons held at power-on, the speaker started
+  normally and wrote nothing. Whether the gesture came too late, the stick was not seen, or the
+  Wireless Link's USB host mode does not come up is open; it needs a run with the console.
 
 ## Developer recovery tools
 
