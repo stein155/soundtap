@@ -667,6 +667,17 @@ static int rt_put(struct mtd_info *mtd, const struct rt_copy *c, const u8 *d, u3
 	ev("%s", copy_name(c));
 	return 0;
 }
+/* rt_slot_bootable runs UBI commands on NAND; here SLOTS_BOOTABLE lists the slots whose
+ * kernel and device tree the built-in bootcmd would load and check out (",Pong," say). */
+static int probed;
+static bool rt_slot_bootable(const char *slot)
+{
+	char key[16];
+
+	probed++;
+	snprintf(key, sizeof(key), ",%s,", slot);
+	return strstr(SLOTS_BOOTABLE, key) != NULL;
+}
 static int rt_keypad_scan(void)
 {
 	return held && (!strcmp(board, "st10") || !strcmp(board, "st20")) ? RT_KEYS_PRESERVE : 0;
@@ -722,6 +733,7 @@ int main(void)
 	printf("cmdline=%s|", board_fdt_chosen_bootargs(NULL));
 	printf("lamp=%s|", lamp);
 	printf("resets=%d|", resets);
+	printf("probed=%d|", probed);
 	printf("events=%s|", events);
 	printf("rt_v=%s|written=%s|saves=%d|bootcmd=%s|altbootcmd=%s|bootlimit=%s|bootcount=%lu|nand_boot=%s|nand_boot2=%s|args=%s|bootdelay=%s|upgrade_available=%s|env_bootcount=%s\n",
                show("rt_v"),
@@ -815,16 +827,25 @@ def cc(src: str, *extra: str, opt: str = "-O0") -> str:
 # runs (the first copy that is not torn), which U-Boot that SPL loads (ours prefers our spare
 # over a first copy that is not ours, ADR 0009; Bose's reads the first copy only), which
 # environment that U-Boot reads (ours: the newer valid redundant copy, else the 8 KiB copy,
-# CONFIG_ENV_REDUNDANT_UPGRADE, else its built-in bootcmd; Bose's: the 8 KiB copy only), and
-# whether the slot it selects is whole. The pairings nobody has proven, our SPL with Bose's
+# CONFIG_ENV_REDUNDANT_UPGRADE, else its built-in bootcmd, which tries Pong and then Ping and
+# boots the first that holds a SoundTap kernel; Bose's: the 8 KiB copy only), and whether the
+# slot it selects is whole. A half-written slot the built-in bootcmd tries counts as no boot:
+# its UBI may attach and its kernel check out over a rootfs that is not all there. The pairings nobody has proven, our SPL with Bose's
 # U-Boot and Bose's SPL with ours, and our U-Boot running Bose's nboot.e recipes, count as no boot.
 @dataclass(frozen=True)
 class Before:
-    """The board before the events: the slot booting, the newer redundant copy (P or R), the package."""
+    """The board before the events.
+
+    The slot booting, the newer redundant copy (P or R), the package, whether both environment
+    copies are lost (U-Boot on its built-in bootcmd), and what the other slot holds: "old", an
+    earlier SoundTap the built-in bootcmd boots too, or "empty", nothing it boots.
+    """
 
     booting: str = "Ping"
     current: str = "P"
     package: str = "bose"
+    env_lost: bool = False
+    other: str = "old"
 
 
 def _apply_events(done: list[list[str]], before: Before) -> tuple[list[str], dict, dict, dict]:
@@ -833,8 +854,9 @@ def _apply_events(done: list[list[str]], before: Before) -> tuple[list[str], dic
     other = {"Ping": "Pong", "Pong": "Ping"}[booting]
     spl, uboot = ["ours"] * 4, {"uboot": "ours", "spare": "ours"}
     serial = {"P": 2, "R": 1} if current == "P" else {"P": 1, "R": 2}
-    env = {c: {"type": "redundant", "serial": serial[c], "sel": booting, "kind": "ours"} for c in "PR"}
-    slots = {booting: {"kernel": "soundtap", "rootfs": "soundtap"}, other: {"kernel": "old", "rootfs": "old"}}
+    env = {c: None if before.env_lost else {"type": "redundant", "serial": serial[c], "sel": booting, "kind": "ours"}
+           for c in "PR"}
+    slots = {booting: {"kernel": "soundtap", "rootfs": "soundtap"}, other: {"kernel": before.other, "rootfs": before.other}}
     for e in done:
         cut_short = e[-1] == "torn"
         name = e[0]
@@ -874,14 +896,29 @@ def _loader(spl: list[str], uboot: dict[str, str]) -> tuple[str | None, str | No
     return "bose", None
 
 
-def _environment(loader: str, env: dict, booting: str) -> tuple[dict | None, str | None]:
+def _builtin_boot(slots: dict) -> str:
+    """Return what our U-Boot's built-in bootcmd boots: Pong, then Ping, the first with a SoundTap kernel.
+
+    The order is CONFIG_BOOTCOMMAND's (UsbRecoveryProbe.test_the_built_in_bootcmd_tries_pong_first).
+    A SoundTap rootfs carries its kernel; Bose's slot and an empty one hold none it loads.
+    """
+    for slot in ("Pong", "Ping"):
+        rootfs = slots[slot]["rootfs"]
+        if rootfs == "torn":
+            return f"the built-in bootcmd tries a half-written slot {slot}"
+        if rootfs in ("soundtap", "old"):
+            return f"ours:default:{slot}"
+    return "the built-in bootcmd finds no slot"
+
+
+def _environment(loader: str, env: dict, slots: dict) -> tuple[dict | None, str | None]:
     """Return the environment copy the running U-Boot boots by, or the outcome when it has none of ours."""
     redundant = [env[c] for c in "PR" if env[c] and env[c]["type"] == "redundant"]
     legacy = env["P"] if env["P"] and env["P"]["type"] == "legacy" else None
     if loader == "ours":
         e = max(redundant, key=lambda c: c["serial"]) if redundant else legacy
         if e is None:
-            return None, f"{loader}:default:{booting}"  # the built-in bootcmd boots the SoundTap slot
+            return None, _builtin_boot(slots)
         if e["kind"] == "stock":
             return None, "our U-Boot with Bose's recipes"
         return e, None
@@ -898,7 +935,7 @@ def simulate(events: list[str], cut: int, *, torn: bool, before: Before | None =
     loader, why = _loader(spl, uboot)
     if loader is None:
         return why
-    e, outcome = _environment(loader, env, before.booting)
+    e, outcome = _environment(loader, env, slots)
     if e is None:
         return outcome
     slot = e["sel"]
@@ -924,6 +961,7 @@ class ProbeOptions(TypedDict, total=False):
     same: tuple[str, ...]
     bose_vars: bool
     tag: str | None
+    bootable: tuple[str, ...]
 
 
 @unittest.skipUnless(shutil.which("cc"), "needs a C compiler")
@@ -947,6 +985,7 @@ class UsbRecoveryProbe(unittest.TestCase):
         bose_recipes, alt, limit = options.get("bose_recipes", False), options.get("alt"), options.get("limit")
         pkg, same = options.get("pkg", "soundtap"), options.get("same", ())
         bose_vars, tag = options.get("bose_vars", False), options.get("tag")
+        bootable = options.get("bootable", ())
         default = re.search(r'^CONFIG_BOOTCOMMAND=(".*")$', UBOOT_CONFIG, re.MULTILINE).group(1)
         spies = last_stage_spies() if spies is None else spies
         functions = "\n".join([
@@ -966,6 +1005,8 @@ class UsbRecoveryProbe(unittest.TestCase):
             patch_block(PATCH, "static const char *const rt_env_templates[] = {"),
             patch_function(PATCH, "static int rt_set_recipes(void)"),
             patch_function(PATCH, "static const char *rt_booting_cmd(void)"),
+            patch_function(PATCH, "static int rt_named_slot(const char *cmd)"),
+            patch_function(PATCH, "static bool rt_booting_pong(const char *booting, bool *unnamed)"),
             patch_block(PATCH, "static const char *const rt_stock_recipes[] = {"),
             patch_block(PATCH, "static const char *const rt_stock_vars[] = {"),
             patch_function(PATCH, "static void rt_strip_markers(const char *key)"),
@@ -992,6 +1033,7 @@ class UsbRecoveryProbe(unittest.TestCase):
                .replace("BOSE_VARS", str(int(bose_vars)))
                .replace("@TAG@", '"27.0.6.46330.5043500' + (tag if tag is not None else TAGS.get(pkg, "")) + '"')
                .replace("PKG", f'"{pkg}"').replace("SAME", '",' + ",".join(same) + ',"')
+               .replace("SLOTS_BOOTABLE", '",' + ",".join(bootable) + ',"')
                .replace("MFG_NAME", f'"{self.MFG[board] if mfg is None else mfg}"'))
         d = cc(src)
         try:
@@ -1038,19 +1080,104 @@ class UsbRecoveryProbe(unittest.TestCase):
         self.assertEqual(r["written"], "none")
 
     def test_gesture_installs_and_boots_with_an_erased_environment(self) -> None:
-        """On an erased environment the gesture installs, saves every recipe and boots the new slot."""
+        """On an erased environment the gesture installs, saves every recipe and boots the new slot.
+
+        Pong holds the SoundTap the built-in bootcmd boots, so the stick writes Ping, and
+        selects Pong with the recipes before it erases anything.
+        """
         for board, (raw, variant) in self.BOARDS.items():
             with self.subTest(board=board):
-                r = self.run_probe(board, raw, held=True)
+                r = self.run_probe(board, raw, held=True, bootable=("Pong",))
                 self.assertEqual(r["rt_v"], variant)
-                self.assertNotEqual(r["written"], "none", "the gesture was ignored")
-                # Saved, with every recipe the saved bootcmd names: the built-in
-                # environment had none of them.
-                self.assertEqual(r["saves"], "1")
+                self.assertEqual(r["written"], "Ping", "the gesture was ignored, or wrote the slot that boots")
+                self.assertEqual(r["events"], ["save:Pong:ours", "rootfs:Ping", "save:Ping:ours"])
                 self.assertEqual((r["bootcmd"], r["altbootcmd"], r["upgrade_available"]),
-                                 ("run nand_boot2;", "run nand_boot;", "1"))
+                                 ("run nand_boot;", "run nand_boot2;", "1"))
                 self.assertEqual(self.booted_slot(r), r["written"])
                 self.assertTrue(r["cmdline"].endswith(" soundtap.recovery=0"), r["cmdline"])
+
+    def test_the_built_in_bootcmd_tries_pong_first(self) -> None:
+        """The built-in bootcmd tries Pong, then Ping, and names no recipe: what rt_booting_pong assumes.
+
+        SlotBootableProbe holds rt_slot_bootable to the bootcmd's own steps for a slot.
+        """
+        default = re.search(r'^CONFIG_BOOTCOMMAND="(.*)"$', UBOOT_CONFIG, re.MULTILINE).group(1)
+        self.assertEqual(re.findall(r"ubi part NAND\.File-System-(\w+) 2048", default), ["Pong", "Ping"])
+        self.assertNotIn("nand_boot", default)  # rt_named_slot reads 0
+        self.assertIn('rt_slot_bootable("Pong")', patch_function(PATCH, "static bool rt_booting_pong("))
+
+    def test_the_stick_never_writes_the_slot_that_boots(self) -> None:
+        """The slot written is never the one the coming boot runs, with or without an environment.
+
+        A saved environment names the slot; a lost one leaves the built-in bootcmd, which boots
+        Pong when Pong holds a SoundTap kernel and Ping otherwise. Either way the other slot is
+        written, nothing names it while it is, and it is selected only once it checked out.
+        """
+        cases = [
+            # (saved bootcmd or None, slots the built-in bootcmd boots, slot booting, slot written, first events)
+            ("run nand_boot;", (), "Ping", "Pong", ["rootfs:Pong"]),
+            ("run nand_boot2;", (), "Pong", "Ping", ["rootfs:Ping"]),
+            (None, ("Pong",), "Pong", "Ping", ["save:Pong:ours", "rootfs:Ping"]),
+            (None, ("Ping", "Pong"), "Pong", "Ping", ["save:Pong:ours", "rootfs:Ping"]),
+            (None, ("Ping",), "Ping", "Pong", ["save:Ping:ours", "rootfs:Pong"]),
+            (None, (), "Ping", "Pong", ["save:Ping:ours", "rootfs:Pong"]),  # nothing boots: nothing to keep
+        ]
+        recipe = {"Ping": "run nand_boot;", "Pong": "run nand_boot2;"}
+        for installed, bootable, booting, written, first in cases:
+            with self.subTest(installed=installed, bootable=bootable):
+                r = self.run_probe("st10", "3630", held=True, installed=installed, variant="rhino", bootable=bootable)
+                self.assertEqual(r["written"], written)
+                self.assertEqual(r["events"], [*first, f"save:{written}:ours"])
+                # Only a boot command that names no slot is probed, and only Pong is.
+                self.assertEqual(r["probed"], "0" if installed else "1")
+                self.assertEqual((r["bootcmd"], r["altbootcmd"]), (recipe[written], recipe[booting]))
+
+    def test_a_failed_write_over_a_lost_environment_boots_the_old_slot(self) -> None:
+        """A write that fails over a lost environment leaves the slot that booted selected.
+
+        The selection saved before the erase names the slot that booted, with the recipes it
+        runs by, so the built-in bootcmd never gets to try the half-written slot.
+        """
+        for bootable, booting in ((("Pong",), "Pong"), (("Ping",), "Ping")):
+            with self.subTest(booting=booting):
+                r = self.run_probe("st10", "3630", held=True, variant="rhino", bootable=bootable, fail_at="rt_write")
+                other = {"Ping": "Pong", "Pong": "Ping"}[booting]
+                self.assertEqual(r["events"], [f"save:{booting}:ours", f"rootfs:{other}:torn"])
+                self.assertEqual(self.booted_slot(r), booting)
+                self.assertEqual(r["nand_boot"], "set")
+
+    def test_no_recipes_over_a_lost_environment_writes_nothing(self) -> None:
+        """Without the board's recipes nothing is selected over a lost environment, and nothing is written."""
+        r = self.run_probe("st10", "3630", held=True, bootable=("Pong",), spies=["rt_usb_recovery"])
+        self.assertEqual((r["written"], r["events"]), ("none", []))
+
+    def test_every_power_cut_over_a_lost_environment(self) -> None:
+        """Every power cut of a stick install over a lost environment leaves a bootable slot.
+
+        SoundTap's package and Bose's, from each slot the built-in bootcmd can be booting.
+        """
+        for bootable, booting, other in ((("Pong",), "Pong", "empty"), (("Ping", "Pong"), "Pong", "old"),
+                                         (("Ping",), "Ping", "empty")):
+            new = {"Ping": "Pong", "Pong": "Ping"}[booting]
+            for pkg in ("soundtap", "bose"):
+                if pkg == "soundtap":
+                    events = self.run_probe("st10", "3630", held=True, bootable=bootable)["events"]
+                    ok = (f"ours:soundtap:{booting}", f"ours:soundtap:{new}")
+                else:
+                    events = self.bose("st10", installed=None, bose_vars=False, bootable=bootable)["events"]
+                    ok = (f"ours:soundtap:{booting}", f"ours:bose:{new}", f"bose:bose:{new}")
+                before = Before(booting, package=pkg, env_lost=True, other=other)
+                # Until the first save lands the built-in bootcmd still boots the old slot.
+                ok = (f"ours:default:{booting}", *ok)
+                for cut in range(len(events) + 1):
+                    for torn in (False, True) if cut < len(events) else (False,):
+                        with self.subTest(bootable=bootable, pkg=pkg, cut=cut, torn=torn):
+                            got = simulate(events, cut, torn=torn, before=before)
+                            if pkg == "bose" and torn and events[cut] == f"mtd5:{new}:ours" and "redund:erased" in events[:cut]:
+                                # The last write, as test_every_power_cut_leaves_a_bootable_board has it.
+                                self.assertEqual(got, "Bose's U-Boot on its built-in environment")
+                                continue
+                            self.assertIn(got, ok, events[:cut + 1])
 
     def test_the_saved_environment_is_complete(self) -> None:
         """After a torn environment the save holds the board's full recipe set.
@@ -1517,6 +1644,82 @@ class UsbRecoveryProbe(unittest.TestCase):
                 r = self.run_probe(board, raw, held=True, installed="run nand_boot2;", mfg=mfg)
                 self.assertEqual((r["written"], r["bootcmd"]), ("Ping", "run nand_boot;"))
 
+
+
+# rt_slot_bootable compiled on the host with U-Boot's commands stubbed: each command it runs is
+# printed, FAIL_AT names the one that fails, and the uImage it loads checks out unless BAD names
+# the check that does not (magic, hcrc, dcrc, or size: data longer than the file it was loaded from).
+SLOT_PROBE = r"""
+#include <stdbool.h>
+#include <stdio.h>
+#include <string.h>
+typedef unsigned long ulong;
+struct legacy_img_hdr { int unused; };
+static struct legacy_img_hdr img;
+static const char *bad = BAD;
+static const char *env_get(const char *k) { return !strcmp(k, "rt_v") ? "rhino" : !strcmp(k, "rt_m") ? "sm2" : NULL; }
+static ulong env_get_hex(const char *k, ulong d) { return !strcmp(k, "filesize") ? 0x400040 : d; }
+static void *map_sysmem(ulong a, ulong l) { (void)a; (void)l; return &img; }
+static ulong image_get_header_size(void) { return 64; }
+static unsigned image_get_data_size(const struct legacy_img_hdr *h) { (void)h; return strcmp(bad, "size") ? 0x400000 : 0x400001; }
+static int image_check_magic(const struct legacy_img_hdr *h) { (void)h; return strcmp(bad, "magic"); }
+static int image_check_hcrc(const struct legacy_img_hdr *h) { (void)h; return strcmp(bad, "hcrc"); }
+static int image_check_dcrc(const struct legacy_img_hdr *h) { (void)h; return strcmp(bad, "dcrc"); }
+static int run_command(const char *cmd, int flag)
+{
+	(void)flag;
+	printf("cmd:%s\n", cmd);
+	return !strcmp(cmd, FAIL_AT);
+}
+FUNCTION
+int main(void)
+{
+	printf("ok=%d\n", rt_slot_bootable("Pong"));
+	return 0;
+}
+"""
+
+
+@unittest.skipUnless(shutil.which("cc"), "needs a C compiler")
+class SlotBootableProbe(unittest.TestCase):
+    """rt_slot_bootable takes a slot for bootable exactly when the built-in bootcmd boots it."""
+
+    def run_slot(self, fail_at: str = "", bad: str = "") -> tuple[list[str], bool]:
+        """Return the commands rt_slot_bootable ran on Pong and its answer."""
+        src = (SLOT_PROBE.replace("FUNCTION", patch_function(PATCH, "static bool rt_slot_bootable(const char *slot)"))
+               .replace("FAIL_AT", f'"{fail_at}"').replace("BAD", f'"{bad}"'))
+        d = cc(src)
+        try:
+            out = subprocess.run([f"{d}/probe"], check=True, capture_output=True, text=True).stdout
+        finally:
+            shutil.rmtree(d)
+        cmds = [line[4:] for line in out.splitlines() if line.startswith("cmd:")]
+        return cmds, "ok=1" in out
+
+    def test_the_built_in_bootcmds_steps(self) -> None:
+        """The steps are the built-in bootcmd's own for that slot, in its order, then UBI detached."""
+        default = re.search(r'^CONFIG_BOOTCOMMAND="(.*)"$', UBOOT_CONFIG, re.MULTILINE).group(1)
+        pong = default[:default.index("itest.l")].replace("${rt_v}", "rhino").replace("${rt_m}", "sm2")
+        steps = [c.strip() for c in re.split(r";|\bthen\b|\bif\b", pong) if c.strip()]
+        cmds, ok = self.run_slot()
+        self.assertTrue(ok)
+        self.assertEqual(cmds, [*steps, "ubi detach"])
+
+    def test_any_step_that_fails_is_not_bootable(self) -> None:
+        """A step that fails or a uImage that does not check out is no boot, and UBI is detached still."""
+        cmds, _ = self.run_slot()
+        for step in cmds[:-1]:
+            if step.startswith("mw.l"):
+                continue  # clears the magic; its result is not looked at, as in the bootcmd
+            with self.subTest(step=step):
+                got, ok = self.run_slot(fail_at=step)
+                self.assertFalse(ok)
+                self.assertEqual(got[-1], "ubi detach")
+        for check in ("magic", "hcrc", "dcrc", "size"):
+            with self.subTest(check=check):
+                got, ok = self.run_slot(bad=check)
+                self.assertFalse(ok)
+                self.assertEqual(got[-1], "ubi detach")
 
 
 # The package checks (rt_scan, rt_classify, rt_check, rt_kernel_ok, rt_boot_ok) compiled from the

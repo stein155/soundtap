@@ -225,8 +225,10 @@ USB-stick recovery with Vol- + Preset 4 (ST10/ST20) or both buttons (WLA). The S
 with its remote's combo, passed on by the soundbar processor. Holding the keys is the
 authorization: no signature is read ([ADR 0130](../decisions/0130-usb-stick-recovery.md)).
 `Update.stu` must check out CRC for CRC and is hashed before anything is erased and again
-while it is written. A SoundTap package writes the SoundTap rootfs, including `/boot`,
-without replacing bootloaders; Bose's own file for the board goes back to stock, its SPL and
+while it is written. It writes the slot that is not booting: the one the environment does not
+select, or with the environment lost, the one U-Boot's built-in `bootcmd` (Pong, then Ping)
+would not boot, after saving a selection of the booting slot (ADR 0010). A SoundTap package
+writes the SoundTap rootfs, including `/boot`, without replacing bootloaders; Bose's own file for the board goes back to stock, its SPL and
 U-Boot included. This implementation
 still needs exact-candidate, per-model recovery validation. Below a damaged boot chain,
 ROM-USB plus the board's verified NAND backup is the development restore route

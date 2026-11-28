@@ -2,7 +2,7 @@ diff --git a/board/ti/am335x/board.c b/board/ti/am335x/board.c
 index 40f3f73ce..468db0c20 100644
 --- a/board/ti/am335x/board.c
 +++ b/board/ti/am335x/board.c
-@@ -1382,3 +1382,1694 @@ static int rt_board_setup(void)
+@@ -1382,3 +1382,1770 @@ static int rt_board_setup(void)
  }
  EVENT_SPY_SIMPLE(EVT_LAST_STAGE_INIT, rt_board_setup);
  #endif
@@ -14,6 +14,7 @@ index 40f3f73ce..468db0c20 100644
 +#include <env_internal.h>
 +#include <event.h>
 +#include <fs.h>
++#include <image.h>
 +#include <nand.h>
 +#include <search.h>
 +#include <usb.h>
@@ -1039,6 +1040,70 @@ index 40f3f73ce..468db0c20 100644
 +	return bootcmd;
 +}
 +
++/* The slot a boot command runs by the first slot recipe it names: 1 Ping (nand_boot), 2 Pong
++ * (nand_boot2), 0 when it names none, as the built-in bootcmd does. */
++static int rt_named_slot(const char *cmd)
++{
++	const char *p = cmd ? strstr(cmd, "nand_boot") : NULL;
++
++	if (!p)
++		return 0;
++	return p[9] == '2' ? 2 : 1;
++}
++
++/*
++ * Whether the built-in bootcmd (CONFIG_BOOTCOMMAND) boots slot: the same steps in the same
++ * order -- the slot's UBI, its rootfs volume, /boot/${rt_v}_${rt_m}.dtb, /boot/uImage-${rt_v}
++ * with the uImage magic -- and the header and data CRCs bootm then checks. Attaching reads
++ * the slot as every boot of it does; UBI is detached again before anything is written.
++ */
++static bool rt_slot_bootable(const char *slot)
++{
++	static char cmd[128];
++	const char *v = env_get("rt_v"), *m = env_get("rt_m");
++	const struct legacy_img_hdr *hdr = map_sysmem(0x82000000, 0);
++	ulong size;
++	bool ok = false;
++
++	if (!v || !m)
++		return false;
++	snprintf(cmd, sizeof(cmd), "ubi part NAND.File-System-%s 2048", slot);
++	if (run_command(cmd, 0) || run_command("ubifsmount ubi0:rootfs", 0))
++		goto out;
++	snprintf(cmd, sizeof(cmd), "ubifsload 0x83000000 /boot/%s_%s.dtb", v, m);
++	if (run_command(cmd, 0))
++		goto out;
++	run_command("mw.l 0x82000000 0 1", 0);
++	snprintf(cmd, sizeof(cmd), "ubifsload 0x82000000 /boot/uImage-%s", v);
++	if (run_command(cmd, 0))
++		goto out;
++	size = env_get_hex("filesize", 0);
++	ok = image_check_magic(hdr) && image_check_hcrc(hdr) && size >= image_get_header_size() &&
++	     image_get_data_size(hdr) <= size - image_get_header_size() && image_check_dcrc(hdr);
++out:
++	run_command("ubi detach", 0);
++	printf("Update.stu: %s %s what the built-in bootcmd boots\n", slot, ok ? "holds" : "does not hold");
++	return ok;
++}
++
++/*
++ * The slot the coming boot runs, true for Pong, which the stick must not write (ADR 0010). A
++ * boot command that names a slot recipe says which. One that names none is the built-in
++ * bootcmd of a lost environment: it tries Pong, then Ping, so it runs Pong when Pong holds
++ * a kernel and device tree that load and check out, and Ping otherwise. *unnamed is set
++ * then: nothing saved selects that slot yet, and the built-in bootcmd would try the other
++ * one too, so the caller saves a selection before it erases anything.
++ */
++static bool rt_booting_pong(const char *booting, bool *unnamed)
++{
++	int n = rt_named_slot(booting);
++
++	*unnamed = !n;
++	if (n)
++		return n == 2;
++	return rt_slot_bootable("Pong");
++}
++
 +/*
 + * The environment as one 8 KiB copy, the format Bose's U-Boot reads (UseLegacyEnv in
 + * internal/flash): a CRC-32 and the entries, NUL separated, zero padded. margin keeps that
@@ -1356,16 +1421,9 @@ index 40f3f73ce..468db0c20 100644
 +
 +static int rt_usb_update(void)
 +{
-+	const char *booting = rt_booting_cmd();
-+	const char *bootcmd = env_get("bootcmd");
-+	const char *alt = env_get("altbootcmd");
-+	bool st20 = rt_st20();
-+	/* Install into the slot that is not booting. */
-+	bool pong = booting && strstr(booting, "nand_boot2");
-+	loff_t part = pong ? RT_PING_ROOTFS : RT_PONG_ROOTFS;
-+	loff_t kpart = pong ? RT_PING_KERNEL : RT_PONG_KERNEL;
-+	const char *next = pong ? "run nand_boot;" : "run nand_boot2;";
-+	const char *prev = pong ? "run nand_boot2;" : "run nand_boot;";
++	const char *bootcmd, *alt, *next, *prev;
++	bool st20 = rt_st20(), pong, unnamed;
++	loff_t part, kpart;
 +	struct mtd_info *mtd = get_nand_dev_by_index(0);
 +	static struct rt_pkg pkg;
 +	static u8 hdr[RT_STU_HEADER];
@@ -1436,12 +1494,30 @@ index 40f3f73ce..468db0c20 100644
 +		w[nw++] = pkg.uboot;
 +	}
 +	/*
++	 * Install into the slot that is not booting (rt_booting_pong), decided only now that
++	 * the package checked out, so a gesture without a good stick attaches no UBI.
++	 */
++	pong = rt_booting_pong(rt_booting_cmd(), &unnamed);
++	part = pong ? RT_PING_ROOTFS : RT_PONG_ROOTFS;
++	kpart = pong ? RT_PING_KERNEL : RT_PONG_KERNEL;
++	next = pong ? "run nand_boot;" : "run nand_boot2;";
++	prev = pong ? "run nand_boot2;" : "run nand_boot;";
++	bootcmd = env_get("bootcmd");
++	alt = env_get("altbootcmd");
++	/*
 +	 * Nothing may name the slot about to be erased while it is written (ADR 0010): a power
 +	 * cut would leave bootcmd or altbootcmd on a half-written slot. Point both at the slot
 +	 * that boots first, saved, and start its count over; if that save fails, nothing is
-+	 * erased.
++	 * erased. The built-in bootcmd of a lost environment tries both slots, Pong first, so
++	 * it always gets that selection, with the recipes it runs by (rt_set_recipes): left
++	 * in place, a cut while Pong is written would have it try a half-written Pong.
 +	 */
-+	if ((bootcmd && strstr(bootcmd, next)) || (alt && strstr(alt, next))) {
++	if (unnamed || (bootcmd && strstr(bootcmd, next)) || (alt && strstr(alt, next))) {
++		ret = unnamed ? rt_set_recipes() : 0;
++		if (ret) {
++			printf("Update.stu: no boot recipes for this board (%d); nothing written\n", ret);
++			goto out;
++		}
 +		env_set("bootcmd", prev);
 +		env_set("altbootcmd", prev);
 +		env_set("bootcount", "0");

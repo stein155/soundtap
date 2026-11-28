@@ -76,8 +76,15 @@ recovery at `EVT_LAST_STAGE_INIT`:
   rewrites it on its first start (seen by the owner).
 - **Which slot.** The slot that boots is `altbootcmd`'s once the coming boot passes `bootlimit`,
   `bootcmd`'s otherwise; the stick writes the other one, and points both commands at the booting
-  slot (saved) before it erases. A final save that fails resets the board, so it boots what was
-  saved.
+  slot (saved) before it erases. A lost environment leaves U-Boot's built-in `bootcmd`, which names
+  no slot recipe and tries Pong, then Ping: there the booting slot is Pong if Pong holds what that
+  `bootcmd` boots (its UBI, rootfs volume, device tree and kernel loaded with its own steps, the
+  uImage magic, header and data CRCs checking out), Ping otherwise, decided only once the package
+  checked out. The stick writes the other slot, and before it erases saves the board's recipes
+  with both commands on the booting slot, so a cut never leaves the built-in `bootcmd` trying the
+  half-written one ([ADR 0010](0010-ab-slots-boot-confirm-rollback.md)). A board whose recipes
+  cannot be set writes nothing. Both kinds of package take the slot this way. A final save that
+  fails resets the board, so it boots what was saved.
 - **The watchdog.** The SPL starts WDT1; the recovery reloads it between 1 MiB chunks, only while
   the module is clocked, so a hang anywhere else still resets the board.
 - **The boot always continues.** On success the new slot boots, on failure the old one. Linux gets
@@ -133,4 +140,6 @@ half stock, until a later Bose update).
   passes, the SoundTap and the Bose install, the save and `soundtap.recovery`.
 - `app/internal/hw/keypad.go`: the keypad scan the U-Boot one follows.
 - `os/tests/boot/test_uboot_usb_recovery.py`: the copied numbers match their sources, a stick that
-  does not check out selects nothing, and the Bose install writes in its order.
+  does not check out selects nothing, the slot written is never the one the coming boot runs (a
+  saved environment's or the built-in `bootcmd`'s, every power cut walked), and the Bose install
+  writes in its order.

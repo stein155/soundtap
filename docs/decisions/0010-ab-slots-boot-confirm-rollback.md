@@ -32,6 +32,12 @@ RAUC use it, and Buildroot packages it.
   `bootlimit` as well as the selection; an install may repair or update those.
 - Before erasing the inactive slot, an install points the environment back at the running slot if
   it selects the inactive one, with `altbootcmd` pointed away from the slot it is about to erase.
+- With no environment that checks out, U-Boot runs its built-in `bootcmd`, which tries Pong and
+  then Ping and names neither recipe, so it selects nothing for certain: the running slot is
+  Pong when Pong holds a SoundTap kernel and device tree that load and check out, Ping otherwise.
+  An install from U-Boot (the USB stick, [ADR 0130](0130-usb-stick-recovery.md)) writes the other
+  slot and first saves a selection of the running one, with the recipes it boots by, so a cut
+  while it writes never leaves the built-in `bootcmd` trying the half-written slot.
 - Order: make the candidate kernel unbootable, write and verify the rootfs, write the kernel last,
   then select the slot. An install also writes the bootloaders that differ from the package
   ([ADR 0008](0008-one-universal-stu.md)).
