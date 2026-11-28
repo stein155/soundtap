@@ -27,6 +27,8 @@ The ninth alpha of SoundTap Core 0.1.0, the candidate for 1.0.
 - **SoundTouch 20: the display shows something about a second sooner** after you plug it in.
 - **SoundTouch 20: the display's animations are smooth**, at about 20 frames a second instead of
   about 5.
+- **SoundTouch 20: no Wi-Fi symbol on the display.** The Wi-Fi lamp right above it already
+  shows the connection.
 
 ### Fixed
 
@@ -41,6 +43,19 @@ The ninth alpha of SoundTap Core 0.1.0, the candidate for 1.0.
   the display and the Wi-Fi lamp no longer say it is connecting. If it has not joined after a
   minute they say so as before. A speaker on a cable no longer shows "Ethernet" when it gets
   its first address after power-on.
+- **No more pops in Spotify at a track change or skip** (heard on the SoundTouch 20): Spotify
+  now gives way to the audio output the way radio already did.
+- **A speaker saved for a protected network never joins an open network of the same name.**
+- **SoundTouch 20: the Wi-Fi list shows new networks and WEP networks** while the speaker is
+  connected, instead of the same list as when it joined.
+- **You can forget the network a speaker fell back from**, and a speaker sent away by a
+  network after joining moves on to another saved network instead of opening its setup network.
+- **Wi-Fi stays fast after a reconnect**: power saving of the radio is switched off on every
+  join.
+- **A speaker joining a group keeps its volume**, and speakers that left a group long ago no
+  longer show up in it.
+- **The app answers faster on a busy speaker**, a volume outside 0-100 gets a clear error
+  instead of being changed silently, and an oversized upload gets a clear "too large" error.
 
 ## [app-v0.1.0-alpha.8] - 2026-11-28
 
