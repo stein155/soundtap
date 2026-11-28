@@ -65,7 +65,9 @@ itself keeps its press for a manual restart.
 On the Updates page, *Update* on a newer app or Core asks once in a short sheet (it takes a few
 minutes and the speaker restarts; Start or Cancel), as the Bose app asks, and then starts with
 no press. The page over the app then follows the speaker away and back, for the app and for
-Core.
+Core. The owner can close that page and use the rest of the app meanwhile, other speakers
+included: the update goes on, the speaker's controls wait for it, and a notice above the player
+(or the speaker's Updates page) opens the page again.
 
 The uploads `POST /api/firmware?install=1` and `POST /api/soundtapd` wait for the press for
 every package, signed or not: the `.sig` of a public release can be sent with another body,
@@ -114,4 +116,6 @@ behind its own press (a release should update after one question in the app); no
   `restartAfterInstall`, the restart after a Core update.
 - `app/frontend/src/hooks/useCoreUpdate.ts`, `useSelfUpdate.ts`: the updates the Updates page
   follows, started after its one question
-  (`components/organisms/settings/UpdateSettings/UpdateConfirm.tsx`).
+  (`components/organisms/settings/UpdateSettings/UpdateConfirm.tsx`); `hooks/updates.ts` holds
+  them for the whole page, and `UpdateSettings/UpdateScreen.tsx` is the page over the app and
+  the notice that brings it back.

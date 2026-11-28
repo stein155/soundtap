@@ -521,6 +521,7 @@ const pl: Messages = {
   updatingCheck: 'Sprawdzanie, czy wszystko działa',
   updatingPower: 'Nie odłączaj głośnika od zasilania.',
   updatingSt300: 'Na SoundTouch 300 ostatni krok może chwilę potrwać; nie wyłączaj głośnika.',
+  updatingShort: 'Aktualizowanie…',
   updatingFallback:
     'Jeśli coś się nie uda, głośnik po prostu będzie dalej działać na poprzedniej wersji.',
   volumeLevel: 'głośność {n}',

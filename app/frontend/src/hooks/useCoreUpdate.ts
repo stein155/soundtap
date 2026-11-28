@@ -1,20 +1,27 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useEffect, useRef, useState } from 'react';
 import { getVersion, startCoreUpdate } from '../lib/api';
 import { failureText } from '../lib/failure';
 import { useI18n } from '../lib/i18n';
-import type { UpdatePhase, UpdateStage } from './useSelfUpdate';
 import { UPDATE_MAX_POLLS, UPDATE_POLL_MS } from './useSelfUpdate';
-import { useUpdateProgress } from './useUpdateProgress';
+import {
+  isCurrentRun,
+  nextRun,
+  openUpdateScreen,
+  runOf,
+  schedule,
+  setRun,
+  shownProgress,
+  useUpdateRun,
+  type UpdatePhase,
+  type UpdateStage,
+} from './updates';
 
 // The speaker answers POST /api/core-update once the new slot is written and selected, and
 // restarts into it on its own a moment later (ADR 0048). It is away while it restarts and
 // answers again on the new Core.
 const FIRST_POLL_MS = 6000;
-// After a finished update this page still runs the old bundle; reload into the new one.
-const RELOAD_MS = 2200;
 
 export interface CoreUpdate {
   phase: UpdatePhase;
@@ -31,48 +38,28 @@ export interface CoreUpdate {
 // speaker downloads and writes the release, progress is how far it says it is.
 export function useCoreUpdate(speaker: string, target: string): CoreUpdate {
   const { t } = useI18n();
-  const [phase, setPhase] = useState<UpdatePhase>('idle');
-  const [stage, setStage] = useState<UpdateStage | null>(null);
-  const [text, setText] = useState('');
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const generation = useRef(0);
-
-  useEffect(
-    () => () => {
-      generation.current += 1;
-      clearTimeout(timer.current);
-    },
-    []
-  );
-
-  useEffect(() => {
-    if (phase !== 'updated') return undefined;
-    const id = setTimeout(() => window.location.reload(), RELOAD_MS);
-    return () => clearTimeout(id);
-  }, [phase]);
+  const run = useUpdateRun(speaker);
 
   const report = (next: UpdatePhase, message: string, nextStage: UpdateStage | null = null) => {
-    setPhase(next);
-    setText(message);
-    setStage(nextStage);
+    setRun(speaker, { phase: next, text: message, stage: nextStage });
   };
 
   // Done once the speaker answers on the new Core; one that came back on another version
-  // fell back to the one it had.
-  const waitForCore = (run: number) => {
+  // fell back to the one it had. The timers live with the update, not with this page.
+  const waitForCore = (attempt: number) => {
     let polls = 0;
     let away = false;
     const tick = async () => {
       polls += 1;
       const v = await getVersion(speaker);
-      if (run !== generation.current) return;
+      if (!isCurrentRun(speaker, attempt)) return;
       if (v?.os === target) {
         report('updated', `${t('updateDone')} ${target}`, 'check');
         return;
       }
       if (!v) {
         away = true;
-        setStage('restart');
+        setRun(speaker, { stage: 'restart' });
       } else if (away) {
         report('error', t('coreInstallFailed'));
         return;
@@ -81,35 +68,61 @@ export function useCoreUpdate(speaker: string, target: string): CoreUpdate {
         report('error', t('updateError'));
         return;
       }
-      timer.current = setTimeout(tick, UPDATE_POLL_MS);
+      schedule(speaker, tick, UPDATE_POLL_MS);
     };
-    timer.current = setTimeout(tick, FIRST_POLL_MS);
+    schedule(speaker, tick, FIRST_POLL_MS);
+  };
+
+  // How far the speaker says it is while the request stays open (it downloads and writes the
+  // release meanwhile): GET /api/version's updateProgress, null when it does not say.
+  const watchProgress = (attempt: number) => {
+    const watching = () => {
+      const now = runOf(speaker);
+      return isCurrentRun(speaker, attempt) && now.phase === 'busy' && now.stage === 'download';
+    };
+    const tick = async () => {
+      if (!watching()) return;
+      const v = await getVersion(speaker);
+      if (!watching()) return;
+      setRun(speaker, { progress: v?.updateProgress ?? null });
+      schedule(speaker, tick, UPDATE_POLL_MS);
+    };
+    schedule(speaker, tick, UPDATE_POLL_MS / 2);
   };
 
   const install = async () => {
+    const { phase } = runOf(speaker);
     if (phase === 'busy' || phase === 'updated') return;
-    generation.current += 1;
-    const run = generation.current;
+    const attempt = nextRun(speaker);
+    setRun(speaker, { progress: null });
     report('busy', '', 'download');
+    openUpdateScreen(speaker);
+    watchProgress(attempt);
     try {
       const res = await startCoreUpdate(speaker);
-      if (run !== generation.current) return;
+      if (!isCurrentRun(speaker, attempt)) return;
       if ('status' in res) {
         report('done', t('upLatest'));
         return;
       }
       if (res.installed === true && res.restarting === true) {
-        setStage('restart');
-        waitForCore(run);
+        setRun(speaker, { stage: 'restart' });
+        waitForCore(attempt);
         return;
       }
       // Installed but not restarting on its own, or refused: the speaker's own words.
       report(res.installed === true ? 'done' : 'error', res.reason || t('coreInstallFailed'));
     } catch (err) {
-      if (run === generation.current) report('error', failureText(err, t('coreInstallFailed'), t));
+      if (isCurrentRun(speaker, attempt))
+        report('error', failureText(err, t('coreInstallFailed'), t));
     }
   };
 
-  const progress = useUpdateProgress(speaker, phase === 'busy' && stage === 'download');
-  return { phase, stage, text, install, progress };
+  return {
+    phase: run.phase,
+    stage: run.stage,
+    text: run.text,
+    install,
+    progress: shownProgress(run),
+  };
 }

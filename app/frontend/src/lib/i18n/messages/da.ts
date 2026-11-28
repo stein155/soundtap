@@ -518,6 +518,7 @@ const da: Messages = {
   updatingCheck: 'Kontrollerer, at alt virker',
   updatingPower: 'Lad stikket sidde i.',
   updatingSt300: 'På SoundTouch 300 kan det sidste trin tage lidt tid; lad den være tændt.',
+  updatingShort: 'Opdaterer…',
   updatingFallback: 'Hvis det ikke lykkes, fortsætter højttaleren bare med den tidligere version.',
   volumeLevel: 'lydstyrke {n}',
   playingWhat: 'Spiller {name}',

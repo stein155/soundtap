@@ -524,6 +524,7 @@ const ro: Messages = {
   updatingCheck: 'Se verifică dacă totul funcționează',
   updatingPower: 'Lăsați-l în priză.',
   updatingSt300: 'Pe SoundTouch 300 ultimul pas poate dura ceva timp; lăsați-l pornit.',
+  updatingShort: 'Se actualizează…',
   updatingFallback: 'Dacă nu reușește, continuă pur și simplu cu versiunea anterioară.',
   volumeLevel: 'volum {n}',
   playingWhat: 'Se redă {name}',

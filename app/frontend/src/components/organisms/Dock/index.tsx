@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import type { ReactElement } from 'react';
+import type { ReactElement, ReactNode } from 'react';
 import { Spinner } from '../../atoms/Spinner';
 import { Button } from 'react-aria-components';
 import { Icon } from '../../atoms/Icon';
@@ -12,6 +12,7 @@ import { useI18n } from '../../../lib/i18n';
 import { artSrc, describePlayback, sourceLine } from '../../../lib/playback';
 import { groupName, roomOn } from '../../../lib/rooms';
 import { speakerArg, type Room } from '../../../hooks/useRooms';
+import { shownProgress, type UpdateRun } from '../../../hooks/updates';
 
 interface Props {
   readonly lead: Room;
@@ -19,6 +20,10 @@ interface Props {
   readonly starting: boolean;
   // The speaker stopped answering: what it last said it played is no longer known.
   readonly unreachable: boolean;
+  // The speaker's update while the page follows it: its controls wait meanwhile.
+  readonly update?: UpdateRun | null | undefined;
+  // Floats over the dock: the way back to an update screen that was closed.
+  readonly notice?: ReactNode;
   readonly onTransport: () => void;
   // The player, full screen.
   readonly onPlayer: () => void;
@@ -29,6 +34,14 @@ interface Props {
   readonly onVolume: () => void;
 }
 
+// "Updating… 42% done": a speaker's line while it updates.
+export function updatingLine(update: UpdateRun, t: ReturnType<typeof useI18n>['t']): string {
+  const progress = shownProgress(update);
+  return progress === null
+    ? t('updatingShort')
+    : `${t('updatingShort')} ${t('updatingProgress', { percent: progress })}`;
+}
+
 // What the selected room plays, as a bar (tap for the full player) with its transport
 // button, or an invitation to pick something; and under it the speaker bar.
 export function Dock({
@@ -36,6 +49,8 @@ export function Dock({
   members,
   starting,
   unreachable,
+  update = null,
+  notice,
   onTransport,
   onPlayer,
   onChoose,
@@ -48,8 +63,10 @@ export function Dock({
   let miniLine = sourceLine(view, t);
   if (starting) miniLine = t('connecting');
   if (unreachable) miniLine = t('offline');
+  if (update) miniLine = updatingLine(update, t);
   return (
     <footer className="dock">
+      {notice}
       {roomOn(lead) ? (
         <div className="minibar">
           <Blur src={artSrc(view)} />
@@ -73,7 +90,7 @@ export function Dock({
           {view.artwork.kind === 'station' && (
             <Button
               className="mini-ctl"
-              isDisabled={unreachable}
+              isDisabled={unreachable || !!update}
               onPress={onTransport}
               aria-label={`${t(view.transport)} · ${name}`}
             >
@@ -82,14 +99,20 @@ export function Dock({
           )}
         </div>
       ) : (
-        <Button className="idlebar" onPress={onChoose}>
+        <Button className="idlebar" onPress={onChoose} isDisabled={!!update}>
           <span className="idle-badge">
             <Icon.play />
           </span>
           {t('chooseSomething')}
         </Button>
       )}
-      <SpeakerBar lead={lead} members={members} onPress={onSpeaker} onVolume={onVolume} />
+      <SpeakerBar
+        lead={lead}
+        members={members}
+        update={update}
+        onPress={onSpeaker}
+        onVolume={onVolume}
+      />
     </footer>
   );
 }
@@ -99,11 +122,14 @@ export function Dock({
 export function SpeakerBar({
   lead,
   members,
+  update = null,
   onPress,
   onVolume,
 }: {
   readonly lead: Room;
   readonly members: Room[];
+  // The speaker's update while the page follows it: the line says so, the volume waits.
+  readonly update?: UpdateRun | null | undefined;
   readonly onPress: () => void;
   // Opens the volume panel from the icon; without it the icon only shows the state.
   readonly onVolume?: () => void;
@@ -120,6 +146,7 @@ export function SpeakerBar({
       ? `${view.status} · ${t('volumeLevel', { n: lead.volume })}`
       : t('playingWhat', { name: view.status });
   }
+  if (update) status = updatingLine(update, t);
   const icon = lead.volume === 0 ? <Icon.mute /> : <Icon.volume />;
   return (
     <div className="spkbar-wrap">
@@ -141,7 +168,12 @@ export function SpeakerBar({
         )}
       </Button>
       {onVolume && (
-        <Button className="spk-vol tap" aria-label={`${t('volume')} ${name}`} onPress={onVolume}>
+        <Button
+          className="spk-vol tap"
+          aria-label={`${t('volume')} ${name}`}
+          onPress={onVolume}
+          isDisabled={!!update}
+        >
           {icon}
         </Button>
       )}

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import type { ReactElement } from 'react';
+import { useEffect, type ReactElement } from 'react';
 import { Icon } from '../../../atoms/Icon';
 import { Button } from '../../../atoms/Button';
 import { Hint } from '../../../atoms/Hint';
@@ -13,10 +13,10 @@ import { FirmwareUpload } from '../FirmwareUpload';
 import { Accordion, useAccordionGroup } from '../../../molecules/Accordion';
 import { SetMenu } from '../../../molecules/SetMenu';
 import { useSelfUpdate, type UpdatePhase } from '../../../../hooks/useSelfUpdate';
+import { following, openUpdateScreen, runOf } from '../../../../hooks/updates';
 import { useI18n } from '../../../../lib/i18n';
 import { shortVersionLabel, versionLabel } from '../../../../lib/version';
 import type { VersionInfo } from '../../../../lib/types';
-import { Updating } from './Updating';
 import { VersionCard } from './VersionCard';
 import { useUpdateConfirm } from './UpdateConfirm';
 
@@ -34,16 +34,13 @@ function StatusIcon({ phase }: { readonly phase: UpdatePhase }) {
 // soundtapd replacing itself with the latest stable release. A newer one shows in the card
 // drawn for a new version, with its notes; otherwise the card is the version the speaker
 // runs, and the button asks it to look. Update on an offered release asks once first, as
-// stock does. Once the speaker takes an update on, a page over the app follows it through.
+// stock does. Once the speaker takes an update on, the update screen (UpdateScreen)
+// follows it through.
 function SelfUpdate({
   speaker,
-  name,
-  model,
   version,
 }: {
   readonly speaker: string;
-  readonly name: string;
-  readonly model: string;
   readonly version: VersionInfo;
 }) {
   const { t } = useI18n();
@@ -86,15 +83,6 @@ function SelfUpdate({
       </VersionCard>
       {confirm.sheet}
       <Hint>{t('updateVerified')}</Hint>
-      {update.stage && (update.phase === 'busy' || update.phase === 'updated') && (
-        <Updating
-          name={name}
-          model={model}
-          stage={update.stage}
-          done={update.phase === 'updated'}
-          progress={update.progress}
-        />
-      )}
     </>
   );
 }
@@ -153,38 +141,26 @@ function OtherWays({ speaker }: { readonly speaker: string }) {
 // card, every speaker at once, and the other ways (a file of your own, Bose's file to go
 // back). A newer SoundTap Core on offer is the card: Core carries the app, so the app's own
 // card waits until the speaker runs the newest Core. Otherwise the app's card offers a newer
-// app or shows the one it runs.
+// app or shows the one it runs. Coming back here while the speaker updates shows the update
+// screen again.
 export function UpdateSettings({
   speaker,
-  name,
-  model,
   version,
 }: {
   readonly speaker: string;
-  // The speaker's name, over the page that follows an update.
-  readonly name: string;
-  readonly model: string;
   readonly version: VersionInfo | null;
 }): ReactElement {
   const { t } = useI18n();
+  useEffect(() => {
+    if (following(runOf(speaker))) openUpdateScreen(speaker);
+  }, [speaker]);
   const firmware = version?.updateMode === 'firmware';
   const core = useCoreLatest(speaker, firmware);
   return (
     <>
       <Note>{t('updatesIntro')}</Note>
-      {core && (
-        <CoreUpdate
-          key={speaker}
-          speaker={speaker}
-          name={name}
-          model={model}
-          latest={core}
-          version={version}
-        />
-      )}
-      {!core && firmware && version.updatable && (
-        <SelfUpdate speaker={speaker} name={name} model={model} version={version} />
-      )}
+      {core && <CoreUpdate key={speaker} speaker={speaker} latest={core} version={version} />}
+      {!core && firmware && version.updatable && <SelfUpdate speaker={speaker} version={version} />}
       {!core && !(firmware && version.updatable) && (
         <VersionCard kicker={t('upFirmware')} title={versionLabel(version) || '—'} />
       )}

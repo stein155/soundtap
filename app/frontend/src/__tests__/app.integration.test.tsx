@@ -456,6 +456,14 @@ describe('App integration', () => {
       await screen.findByRole('alertdialog', { name: 'The speaker is updating itself' })
     ).toBeInTheDocument();
     expect(api.reboot).not.toHaveBeenCalled();
+    // The screen can be left while the update goes on; the notice on the dock brings it back.
+    await userEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(screen.getByRole('button', { name: /^Speaker: /u })).toHaveTextContent('Updating…');
+    await userEvent.click(screen.getByRole('button', { name: /^Update · /u }));
+    expect(
+      await screen.findByRole('alertdialog', { name: 'The speaker is updating itself' })
+    ).toBeInTheDocument();
   }, 30000);
 
   // The check sends the signature picked with the file, not the previous one.

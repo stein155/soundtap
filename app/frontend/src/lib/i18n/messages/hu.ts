@@ -523,6 +523,7 @@ const hu: Messages = {
   updatingCheck: 'Működés ellenőrzése',
   updatingPower: 'Hagyja bedugva.',
   updatingSt300: 'A SoundTouch 300-on az utolsó lépés eltarthat egy ideig; hagyja bekapcsolva.',
+  updatingShort: 'Frissítés…',
   updatingFallback: 'Ha nem sikerül, egyszerűen a korábbi verzióval megy tovább.',
   volumeLevel: 'hangerő {n}',
   playingWhat: 'Most szól: {name}',

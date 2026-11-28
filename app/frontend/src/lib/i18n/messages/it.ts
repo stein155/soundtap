@@ -525,6 +525,7 @@ const it: Messages = {
   updatingCheck: 'Verifica del funzionamento',
   updatingPower: 'Lascialo collegato alla corrente.',
   updatingSt300: 'Sul SoundTouch 300 l’ultimo passaggio può richiedere un po’; lascialo acceso.',
+  updatingShort: 'Aggiornamento…',
   updatingFallback: 'Se qualcosa non va, continua semplicemente con la versione precedente.',
   volumeLevel: 'volume {n}',
   playingWhat: 'In riproduzione: {name}',

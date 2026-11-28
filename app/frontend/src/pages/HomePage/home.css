@@ -230,7 +230,7 @@
 
 /* A failure that stopped what was asked: a sheet nearly as tall as the page. */
 .sheet.errpage {
-  height: calc(100dvh - max(12px, env(safe-area-inset-top) + 8px));
+  height: calc(var(--app-h) - max(12px, env(safe-area-inset-top) + 8px));
   border-radius: 14px 14px 0 0;
   background: var(--surface);
   box-shadow: 0 -10px 30px rgb(0 0 0 / 18%);
@@ -754,6 +754,14 @@
   opacity: 0.6;
 }
 
+/* A speaker that is updating: its controls wait until it is back. */
+.spk-vol.tap[data-disabled],
+.mini-ctl[data-disabled],
+.idlebar[data-disabled] {
+  opacity: 0.4;
+  cursor: default;
+}
+
 /* the volume panel from the speaker bar */
 .sheet.volpanel {
   height: auto;
@@ -1110,7 +1118,7 @@ button.h-row {
   max-width: var(--shell-max);
 
   /* Below the phone's status bar too, in a home-screen app that draws under it. */
-  height: calc(100dvh - max(56px, env(safe-area-inset-top) + 8px));
+  height: calc(var(--app-h) - max(56px, env(safe-area-inset-top) + 8px));
   background: var(--bg);
   border-radius: var(--radius) var(--radius) 0 0;
   overflow: hidden;
@@ -1118,7 +1126,7 @@ button.h-row {
 }
 
 .sheet.full {
-  height: 100dvh;
+  height: var(--app-h);
   border-radius: 0;
 }
 
@@ -1252,7 +1260,7 @@ button.h-row {
 
 /* presets: a sheet from the bottom, the presets and the favorite each under a grey bar */
 .sheet.psheet {
-  height: calc(100dvh - max(24px, env(safe-area-inset-top) + 8px));
+  height: calc(var(--app-h) - max(24px, env(safe-area-inset-top) + 8px));
   border-radius: 14px 14px 0 0;
   box-shadow: 0 -10px 30px rgb(0 0 0 / 18%);
 }
@@ -2870,7 +2878,7 @@ span.vol-ico {
   display: flex;
   flex-direction: column;
   height: auto;
-  max-height: calc(100dvh - max(56px, env(safe-area-inset-top) + 8px));
+  max-height: calc(var(--app-h) - max(56px, env(safe-area-inset-top) + 8px));
   border-radius: 14px 14px 0 0;
   box-shadow: 0 -10px 30px rgb(0 0 0 / 18%);
 }
@@ -3196,6 +3204,12 @@ span.vol-ico {
 .spks-power svg {
   width: 16px;
   height: 16px;
+}
+
+/* Waits while the speaker updates. */
+.spks-power[data-disabled] {
+  opacity: 0.4;
+  cursor: default;
 }
 
 /* The group sheet, as the design's "Groep". */

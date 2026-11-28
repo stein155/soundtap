@@ -515,6 +515,7 @@ const en = {
   updatingCheck: 'Checking that everything works',
   updatingPower: 'Keep it plugged in.',
   updatingSt300: 'On the SoundTouch 300 the last step can take a while; leave it on.',
+  updatingShort: 'Updating…',
   updatingFallback: 'If it does not work out, it simply carries on with the previous version.',
   volumeLevel: 'volume {n}',
   playingWhat: 'Playing {name}',

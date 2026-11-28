@@ -524,6 +524,7 @@ const af: Messages = {
   updatingCheck: 'Gaan na of alles werk',
   updatingPower: 'Hou die luidspreker ingeprop.',
   updatingSt300: 'Op die SoundTouch 300 kan die laaste stap ’n rukkie duur; laat dit aan.',
+  updatingShort: 'Dateer tans op…',
   updatingFallback:
     'As dit nie uitwerk nie, gaan die luidspreker eenvoudig voort met die vorige weergawe.',
   volumeLevel: 'volume {n}',

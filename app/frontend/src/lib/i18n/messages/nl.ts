@@ -526,6 +526,7 @@ const nl: Messages = {
   updatingCheck: 'Controleren of alles werkt',
   updatingPower: 'Laat de stekker erin.',
   updatingSt300: 'Op de SoundTouch 300 kan de laatste stap even duren; laat hem aan.',
+  updatingShort: 'Bezig met bijwerken…',
   updatingFallback: 'Lukt het niet, dan gaat hij gewoon verder met de vorige versie.',
   volumeLevel: 'volume {n}',
   playingWhat: 'Speelt {name}',

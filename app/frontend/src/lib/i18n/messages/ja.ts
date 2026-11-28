@@ -526,6 +526,7 @@ const ja: Messages = {
   updatingPower: '電源プラグは抜かないでください。',
   updatingSt300:
     'SoundTouch 300では最後のステップに時間がかかることがあります。電源は入れたままにしてください。',
+  updatingShort: '更新中…',
   updatingFallback: 'うまくいかなかった場合は、前のバージョンのまま動作します。',
   volumeLevel: '音量{n}',
   playingWhat: '再生中：{name}',

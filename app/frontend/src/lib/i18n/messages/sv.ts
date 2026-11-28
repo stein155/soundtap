@@ -518,6 +518,7 @@ const sv: Messages = {
   updatingCheck: 'Kontrollerar att allt fungerar',
   updatingPower: 'Låt kontakten sitta i.',
   updatingSt300: 'På SoundTouch 300 kan det sista steget ta en stund; låt den vara på.',
+  updatingShort: 'Uppdaterar …',
   updatingFallback:
     'Om det inte går vägen fortsätter högtalaren helt enkelt med den tidigare versionen.',
   volumeLevel: 'volym {n}',

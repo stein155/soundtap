@@ -536,6 +536,7 @@ const de: Messages = {
   updatingPower: 'Ziehen Sie nicht den Stecker.',
   updatingSt300:
     'Beim SoundTouch 300 kann der letzte Schritt etwas dauern; lassen Sie ihn eingeschaltet.',
+  updatingShort: 'Wird aktualisiert…',
   updatingFallback:
     'Klappt es nicht, läuft der Lautsprecher einfach mit der vorherigen Version weiter.',
   volumeLevel: 'Lautstärke {n}',

@@ -221,7 +221,6 @@ export function SpeakerGroup({
 export function SystemGroups({
   page,
   room,
-  model,
   network,
   section,
   crashReports,
@@ -229,7 +228,6 @@ export function SystemGroups({
 }: {
   readonly page: Page;
   readonly room: Room;
-  readonly model: string;
   readonly network: NetworkInfo | null;
   readonly section: Open;
   readonly crashReports: boolean;
@@ -255,7 +253,7 @@ export function SystemGroups({
         summary={newer ? undefined : versionLabel(page.version)}
         badge={newer ? t('updatesNewBadge') : undefined}
       >
-        <UpdateSettings speaker={speaker} name={room.name} model={model} version={page.version} />
+        <UpdateSettings speaker={speaker} version={page.version} />
       </Accordion>
       <Accordion {...section('support')} icon="help" title={t('helpSupport')}>
         <SupportSettings speaker={speaker} />

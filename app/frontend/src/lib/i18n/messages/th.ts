@@ -489,6 +489,7 @@ const th: Messages = {
   updatingCheck: 'กำลังตรวจสอบว่าทุกอย่างทำงานได้',
   updatingPower: 'เสียบปลั๊กไว้ตลอด',
   updatingSt300: 'สำหรับ SoundTouch 300 ขั้นตอนสุดท้ายอาจใช้เวลาสักครู่ เปิดเครื่องไว้ตลอด',
+  updatingShort: 'กำลังอัปเดต…',
   updatingFallback: 'หากไม่สำเร็จ ลำโพงจะใช้เวอร์ชันก่อนหน้าต่อไปตามเดิม',
   volumeLevel: 'ระดับเสียง {n}',
   playingWhat: 'กำลังเล่น {name}',

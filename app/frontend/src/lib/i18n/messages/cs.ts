@@ -518,6 +518,7 @@ const cs: Messages = {
   updatingCheck: 'Kontrola, zda vše funguje',
   updatingPower: 'Nechte reproduktor zapojený.',
   updatingSt300: 'U SoundTouch 300 může poslední krok chvíli trvat; nechte ho zapnutý.',
+  updatingShort: 'Probíhá aktualizace…',
   updatingFallback: 'Pokud se něco nepovede, reproduktor jednoduše pokračuje s předchozí verzí.',
   volumeLevel: 'hlasitost {n}',
   playingWhat: 'Hraje {name}',

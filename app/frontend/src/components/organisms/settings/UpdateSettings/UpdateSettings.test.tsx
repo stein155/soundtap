@@ -36,9 +36,7 @@ const releases = (stable: string | null): Releases => ({
 });
 
 const page = (version: VersionInfo = running) =>
-  renderWithI18n(
-    <UpdateSettings speaker="Kitchen" name="Kitchen" model="ST10" version={version} />
-  );
+  renderWithI18n(<UpdateSettings speaker="Kitchen" version={version} />);
 
 describe('UpdateSettings', () => {
   beforeEach(() => vi.clearAllMocks());

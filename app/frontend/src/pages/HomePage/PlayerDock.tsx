@@ -4,6 +4,8 @@
 import type { ReactElement } from 'react';
 import { Dock } from '../../components/organisms/Dock';
 import { VolumePanel } from '../../components/organisms/VolumePanel';
+import { UpdateNotice } from '../../components/organisms/settings/UpdateSettings/UpdateScreen';
+import { useRoomUpdate } from '../../hooks/updates';
 import { groupName } from '../../lib/rooms';
 import type { Room } from '../../hooks/useRooms';
 import type { useRoomVolume } from '../../hooks/useRoomVolume';
@@ -29,7 +31,8 @@ export function PlayerDock({
   volume,
   onMute,
 }: PlayerDockProps): ReactElement | null {
-  const { lead, members, live } = selected;
+  const { lead, members, live, rooms } = selected;
+  const update = useRoomUpdate(lead);
   if (!lead) return null;
   return (
     <>
@@ -38,6 +41,8 @@ export function PlayerDock({
         members={members}
         starting={starting}
         unreachable={live.unreachable}
+        update={update}
+        notice={<UpdateNotice rooms={rooms} />}
         onTransport={() => {
           void playback.transport();
         }}

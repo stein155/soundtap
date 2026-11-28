@@ -271,10 +271,14 @@ speaker's name in your router's list of devices, or open `http://soundtap.local`
 After the install the speaker tries to join the Wi-Fi Bose's software was on. That has worked
 on all four models, but not on every network. A SoundTouch 10 or Wireless Link takes over WPA, WEP or open
 networks; a SoundTouch 20 joins 2.4 GHz networks that are open or use WEP, WPA or WPA2. Chosen on
-its setup page, a SoundTouch 20 also joins WPA3 networks; the other speakers join a network that
-mixes WPA2 and WPA3 over WPA2, and not one that is WPA3 only. These kinds of network are
-built, but none has had its own test on a speaker yet. If the speaker does not show up on your
-network, use its setup network:
+its setup page, a SoundTouch 20 is also built to join WPA3 networks; the other speakers join a
+network that mixes WPA2 and WPA3 over WPA2, and not one that is WPA3 only. On a SoundTouch 20,
+WPA2, WPA, mixed WPA/WPA2 and WEP networks have been tested and joined, as well as one on
+channel 13 and one that requires protected management frames
+([the runs](../hardware/install-records.md#wi-fi-security-runs)). WPA3, a hidden network and an
+open network have not been tested on it yet, and none of these kinds of network has had its own
+test on the other speakers. If the speaker does
+not show up on your network, use its setup network:
 
 **SoundTouch 10 and Wireless Link.** A speaker without Wi-Fi settings opens its own network,
 named after the speaker, for example **`SoundTap ST10 A1B2C3`** (on older builds:
@@ -295,8 +299,10 @@ on the cable or on the network Bose's software used, and about two minutes later
 and joins your Wi-Fi by itself, as long as it is a 2.4 GHz network. Taking over the network can
 fail on this model;
 the speaker then opens its setup network, and you choose your Wi-Fi there once more. Its
-temporary setup network is open, as on the SoundTouch 10. On the SoundTouch 20 this setup
-network has not yet been seen on a phone: if it does not show up, open an
+temporary setup network is open and named after the speaker, as on the SoundTouch 10. A phone
+has joined it and got an address (2026-11-27); choosing your Wi-Fi
+on its setup page from a phone has not been tested on this model yet. If it does not show up or
+does not work, open an
 [install or recovery issue](https://github.com/stein155/soundtap/issues/new?template=install.yml).
 
 **What comes over from Bose's software.** The speaker keeps its name. Of the presets, only
@@ -387,10 +393,11 @@ SoundTap updates in two parts, each from the speaker's *Settings → Updates* pa
 When a newer SoundTap Core or app is out, the Updates page says so and shows what is new. One
 tap on *Update* is all it takes: the speaker downloads the signed release itself, with no button
 on the speaker, writes it into the other half and restarts into it by itself. A page over the
-app follows it until it is back. This takes several minutes; keep the speaker plugged in. If
-the install fails, the speaker does not restart and keeps running what it had. This one-tap
-update of SoundTap Core has not yet been tested on a speaker; uploading the file (below) has,
-on all four models.
+app follows it until it is back. This takes several minutes; keep the speaker plugged in. You
+can close that page and go on using the app, your other speakers too; a notice above the player
+shows how far the update is, and a tap on it opens the page again. If the install fails, the
+speaker does not restart and keeps running what it had. This one-tap update of SoundTap Core has
+not yet been tested on a speaker; uploading the file (below) has, on all four models.
 
 To install a file you downloaded, or to go back to an older version, upload it instead.
 Every upload waits for you to hold a button on the speaker, with or without its signature.

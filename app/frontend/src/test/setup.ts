@@ -24,6 +24,8 @@ Object.defineProperty(globalThis, 'localStorage', {
 afterEach(async () => {
   storage.clear();
   (await import('../hooks/speaker/store')).resetSpeakerResources();
+  // Nor an update the page was following.
+  (await import('../hooks/updates')).resetUpdates();
 });
 
 // jsdom doesn't implement these; several components touch them.

@@ -486,6 +486,7 @@ const zhHant: Messages = {
   updatingCheck: '正在檢查一切是否正常',
   updatingPower: '請保持通電。',
   updatingSt300: '在 SoundTouch 300 上，最後一步可能需要一些時間；請保持開機。',
+  updatingShort: '正在更新…',
   updatingFallback: '如果不成功，它會繼續使用之前的版本。',
   volumeLevel: '音量 {n}',
   playingWhat: '正在播放：{name}',

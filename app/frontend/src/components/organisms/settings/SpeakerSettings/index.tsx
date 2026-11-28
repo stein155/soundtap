@@ -149,7 +149,6 @@ export function SpeakerSettings({ room, rooms, onRenamed, onDirty }: Props): Rea
       <SystemGroups
         page={page}
         room={room}
-        model={model}
         network={settings.network ?? null}
         section={section}
         crashReports={crashOn ?? settings.crashReports}

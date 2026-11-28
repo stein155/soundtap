@@ -9,7 +9,7 @@ const turn = keyframes`
   to { transform: rotate(360deg); }
 `;
 
-// The whole app's place: nothing else can be done while the speaker updates itself.
+// Over the whole app while it is on show; Close leaves it for the app, the update goes on.
 export const Page = styled.div`
   position: fixed;
   inset: 0;
@@ -18,6 +18,10 @@ export const Page = styled.div`
   flex-direction: column;
   overflow-y: auto;
   background: var(--bg);
+
+  &:focus {
+    outline: none;
+  }
 `;
 
 export const Head = styled.div`
@@ -25,7 +29,9 @@ export const Head = styled.div`
   background: var(--surface);
 `;
 
-export const TopLine = styled.p`
+// The eyebrow centred in the bar, Close at its end as on the other full pages.
+export const TopLine = styled.div`
+  position: relative;
   display: grid;
   place-items: center;
   height: 56px;
@@ -36,6 +42,26 @@ export const TopLine = styled.p`
   letter-spacing: 0.5px;
   text-transform: uppercase;
   color: var(--ink-3);
+`;
+
+export const Close = styled.button`
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  cursor: pointer;
+
+  svg {
+    width: 22px;
+    height: 22px;
+  }
 `;
 
 // A line per step, filled up to the one under way.
@@ -217,5 +243,49 @@ export const Warn = styled.div`
     margin: 0;
     font-size: 13px;
     line-height: 1.45;
+  }
+
+  /* The way on to another speaker follows: it keeps the room below. */
+  &:has(+ *) {
+    margin-bottom: 0;
+  }
+`;
+
+// The way on to another speaker, under the warning.
+export const Other = styled.div`
+  display: flex;
+  justify-content: center;
+  padding: 16px 16px calc(24px + env(safe-area-inset-bottom));
+`;
+
+// The way back to a closed update screen, small over the dock: the speaker and how far it is.
+export const Pill = styled.button`
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  max-width: calc(100% - 32px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--ink);
+  color: var(--on-ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: var(--shadow-lg);
+  transform: translateX(-50%);
+  cursor: pointer;
+
+  span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  svg {
+    flex: none;
   }
 `;

@@ -523,6 +523,7 @@ const fi: Messages = {
   updatingCheck: 'Tarkistetaan, että kaikki toimii',
   updatingPower: 'Pidä virtajohto kiinni.',
   updatingSt300: 'SoundTouch 300:ssa viimeinen vaihe voi kestää hetken; jätä se päälle.',
+  updatingShort: 'Päivitetään…',
   updatingFallback: 'Jos jokin ei onnistu, kaiutin jatkaa yksinkertaisesti aiemmalla versiolla.',
   volumeLevel: 'äänenvoimakkuus {n}',
   playingWhat: 'Toistetaan: {name}',

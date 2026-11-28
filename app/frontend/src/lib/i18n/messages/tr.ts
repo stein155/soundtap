@@ -517,6 +517,7 @@ const tr: Messages = {
   updatingCheck: 'Her şeyin çalıştığı denetleniyor',
   updatingPower: 'Fişini çekmeyin.',
   updatingSt300: 'SoundTouch 300’de son adım biraz sürebilir; açık bırakın.',
+  updatingShort: 'Güncelleniyor…',
   updatingFallback: 'Bir sorun olursa hoparlör önceki sürümle çalışmaya devam eder.',
   volumeLevel: 'ses düzeyi {n}',
   playingWhat: 'Çalıyor: {name}',

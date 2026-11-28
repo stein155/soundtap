@@ -9,7 +9,9 @@ import { useLongLost } from './useLongLost';
 import { Toast } from '../../components/molecules/Toast';
 import { TopLayer } from '../../components/molecules/TopLayer';
 import { DrawerMenu, type DrawerPage } from '../../components/organisms/DrawerMenu';
+import { UpdateScreen } from '../../components/organisms/settings/UpdateSettings/UpdateScreen';
 import type { useErrorReporter } from '../../hooks/useErrorReporter';
+import { useRoomUpdate } from '../../hooks/updates';
 import type { SelectedRoom } from '../../hooks/useSelectedRoom';
 import { useI18n } from '../../lib/i18n';
 import type { Layers } from './useLayers';
@@ -23,7 +25,8 @@ interface HomeOverlaysProps {
 }
 
 // The banner when the speaker is out of reach, the full page once it stays away, and the
-// toast. The speakers sheet opened from that page covers it: the page waits behind.
+// toast. The speakers sheet opened from that page covers it: the page waits behind. A
+// speaker away while it updates is not lost: the update's notice on the dock says so.
 function Notices({
   lead,
   lost,
@@ -36,7 +39,8 @@ function Notices({
   readonly errors: ReturnType<typeof useErrorReporter>;
 }) {
   const { t } = useI18n();
-  const longLost = useLongLost(lost);
+  const updating = useRoomUpdate(lead) !== null;
+  const longLost = useLongLost(lost && !updating);
   // Closed by hand: the banner stands in until the speaker answers, and the next loss shows
   // the page again.
   const [dismissed, setDismissed] = useState(false);
@@ -52,7 +56,9 @@ function Notices({
         model={lead?.model}
         onOther={() => layers.show('speakers')}
       />
-      {lost && !fullPage && <ConnectionBanner message={t('connectionLost', { name })} />}
+      {lost && !updating && !fullPage && (
+        <ConnectionBanner message={t('connectionLost', { name })} />
+      )}
       {errors.message && (
         <Toast
           message={errors.message}
@@ -115,6 +121,7 @@ export function HomeOverlays({
         onSettings={() => showSettings(null)}
       />
       {children}
+      <UpdateScreen rooms={selected.rooms} onOther={() => layers.show('speakers')} />
     </>
   );
 }

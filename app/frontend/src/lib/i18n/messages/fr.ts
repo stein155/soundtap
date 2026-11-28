@@ -528,6 +528,7 @@ const fr: Messages = {
   updatingPower: 'Laissez-la branchée.',
   updatingSt300:
     'Sur la SoundTouch 300, la dernière étape peut prendre un moment ; laissez-la allumée.',
+  updatingShort: 'Mise à jour…',
   updatingFallback:
     'Si cela ne fonctionne pas, elle continue simplement avec la version précédente.',
   volumeLevel: 'volume {n}',

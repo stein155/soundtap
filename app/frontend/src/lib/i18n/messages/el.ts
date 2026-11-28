@@ -528,6 +528,7 @@ const el: Messages = {
   updatingCheck: 'Έλεγχος ότι όλα λειτουργούν',
   updatingPower: 'Αφήστε το στην πρίζα.',
   updatingSt300: 'Στο SoundTouch 300 το τελευταίο βήμα μπορεί να αργήσει λίγο· αφήστε το αναμμένο.',
+  updatingShort: 'Ενημέρωση…',
   updatingFallback: 'Αν κάτι δεν πάει καλά, συνεχίζει απλώς με την προηγούμενη έκδοση.',
   volumeLevel: 'ένταση {n}',
   playingWhat: 'Παίζει {name}',

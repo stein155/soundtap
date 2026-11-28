@@ -6,7 +6,9 @@ import { fireEvent, waitFor } from '@testing-library/react';
 import { renderWithI18n } from '../../../../test/render';
 import * as api from '../../../../lib/api';
 import type { VersionInfo } from '../../../../lib/types';
+import { room } from '../../../../hooks/testFixtures';
 import { CoreUpdate, useCoreLatest } from './CoreUpdate';
+import { UpdateScreen } from './UpdateScreen';
 
 vi.mock('../../../../lib/api', () => ({
   getReleases: vi.fn(),
@@ -50,12 +52,16 @@ const running: VersionInfo = {
   capabilities: [],
 };
 
-// The card shows where the Updates page shows it: once the speaker names a newer Core.
+// The card shows where the Updates page shows it: once the speaker names a newer Core. The
+// update screen is the app's, over every page.
 function Core({ speaker }: { readonly speaker: string }) {
   const latest = useCoreLatest(speaker);
-  return latest ? (
-    <CoreUpdate speaker={speaker} name="Kitchen" model="st10" latest={latest} version={running} />
-  ) : null;
+  return (
+    <>
+      {latest && <CoreUpdate speaker={speaker} latest={latest} version={running} />}
+      <UpdateScreen rooms={[room({ id: speaker, name: 'Kitchen', model: 'st10' })]} />
+    </>
+  );
 }
 
 describe('CoreUpdate', () => {
@@ -80,7 +86,7 @@ describe('CoreUpdate', () => {
   });
 
   // One question, as stock asks, and no press: the speaker restarts on its own and the
-  // page over the app follows it.
+  // update screen follows it.
   it('updates the newer Core after one confirmation and follows the speaker', async () => {
     vi.mocked(api.getReleases).mockResolvedValue(newer);
     vi.mocked(api.startCoreUpdate).mockResolvedValue(installed);

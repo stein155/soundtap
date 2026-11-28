@@ -523,6 +523,7 @@ const pt: Messages = {
   updatingCheck: 'Verificando se tudo funciona',
   updatingPower: 'Mantenha-o na tomada.',
   updatingSt300: 'No SoundTouch 300 a última etapa pode demorar um pouco; mantenha-o ligado.',
+  updatingShort: 'Atualizando…',
   updatingFallback: 'Se não der certo, ele simplesmente continua com a versão anterior.',
   volumeLevel: 'volume {n}',
   playingWhat: 'Tocando {name}',

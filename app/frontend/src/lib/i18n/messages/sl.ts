@@ -519,6 +519,7 @@ const sl: Messages = {
   updatingPower: 'Ne izklapljajte ga iz vtičnice.',
   updatingSt300:
     'Na zvočniku SoundTouch 300 lahko zadnji korak traja nekoliko dlje; pustite ga vklopljenega.',
+  updatingShort: 'Posodabljanje …',
   updatingFallback: 'Če ne uspe, preprosto nadaljuje s prejšnjo različico.',
   volumeLevel: 'glasnost {n}',
   playingWhat: 'Predvaja: {name}',

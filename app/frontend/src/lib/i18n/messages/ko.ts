@@ -512,6 +512,7 @@ const ko: Messages = {
   updatingPower: '전원을 뽑지 마십시오.',
   updatingSt300:
     'SoundTouch 300에서는 마지막 단계가 다소 오래 걸릴 수 있습니다. 전원을 켜 두십시오.',
+  updatingShort: '업데이트 중…',
   updatingFallback: '잘되지 않으면 이전 버전으로 그대로 작동합니다.',
   volumeLevel: '볼륨 {n}',
   playingWhat: '재생 중: {name}',

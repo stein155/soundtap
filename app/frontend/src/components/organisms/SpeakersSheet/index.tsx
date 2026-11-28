@@ -17,6 +17,8 @@ import { sourceOf, sourcesOf, type Source } from '../../../lib/rooms';
 import { speakerArg, type Room } from '../../../hooks/useRooms';
 import type { SelectedRoom } from '../../../hooks/useSelectedRoom';
 import type { usePlayback } from '../../../hooks/usePlayback';
+import { useRoomUpdate } from '../../../hooks/updates';
+import { updatingLine } from '../Dock';
 
 interface Props {
   readonly open: boolean;
@@ -26,8 +28,8 @@ interface Props {
   readonly onSettings: (room: Room) => void;
 }
 
-// One speaker: its drawing, its name, what it plays (or that it is offline), and a tick on
-// the one this page controls. A tap makes it the one.
+// One speaker: its drawing, its name, what it plays (or that it is offline, or how far its
+// update is), and a tick on the one this page controls. A tap makes it the one.
 function SpeakerRow({
   room,
   on,
@@ -39,6 +41,9 @@ function SpeakerRow({
 }) {
   const { t } = useI18n();
   const view = describePlayback(room.now, t, speakerArg(room));
+  const update = useRoomUpdate(room);
+  let status = room.online ? view.status : t('offline');
+  if (update) status = updatingLine(update, t);
   return (
     <button
       type="button"
@@ -54,8 +59,8 @@ function SpeakerRow({
       <span className="spks-text">
         <span className="spks-name">{room.name}</span>
         <span className="spks-now">
-          {room.online && view.live && <EqualizerBars size={9} />}
-          {room.online ? view.status : t('offline')}
+          {room.online && view.live && !update && <EqualizerBars size={9} />}
+          {status}
         </span>
       </span>
       {on && (
@@ -83,6 +88,8 @@ function Lead({
   const sources = sourcesOf(lead.sources);
   const current = sourceOf(lead.now);
   const on = !!lead.now && !lead.now.standby;
+  // Power waits while the speaker updates.
+  const updating = useRoomUpdate(lead) !== null;
   return (
     <>
       <SetMenu title={lead.name}>
@@ -113,6 +120,7 @@ function Lead({
       <div className="spks-actions">
         <Button
           className="spks-power"
+          isDisabled={updating}
           onPress={() => {
             void playback.power(!on);
           }}

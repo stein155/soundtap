@@ -9,7 +9,6 @@ import { getReleases } from '../../../../lib/api';
 import { useI18n } from '../../../../lib/i18n';
 import { shortVersionLabel } from '../../../../lib/version';
 import type { ReleaseRef, VersionInfo } from '../../../../lib/types';
-import { Updating } from './Updating';
 import { VersionCard } from './VersionCard';
 import { useUpdateConfirm } from './UpdateConfirm';
 
@@ -34,19 +33,15 @@ export function useCoreLatest(speaker: string, enabled = true): ReleaseRef | nul
 
 // A newer SoundTap Core than the speaker runs, in the card drawn for a new version. Update
 // asks once, as stock does, and then the speaker downloads it itself into its spare slot, without a press (a
-// signed release it fetches, ADR 0048), restarts into it on its own, and the page over the
-// app follows it away and back. The parent keys it by speaker, so a switch starts it afresh.
+// signed release it fetches, ADR 0048), restarts into it on its own, and the update screen
+// (UpdateScreen) follows it away and back. The parent keys it by speaker, so a switch
+// starts it afresh.
 export function CoreUpdate({
   speaker,
-  name,
-  model,
   latest,
   version,
 }: {
   readonly speaker: string;
-  // The speaker's name and model, over the page that follows the update.
-  readonly name: string;
-  readonly model: string;
   readonly latest: ReleaseRef;
   readonly version: VersionInfo | null;
 }): ReactElement {
@@ -85,15 +80,6 @@ export function CoreUpdate({
         )}
       </VersionCard>
       {confirm.sheet}
-      {following && update.stage && (
-        <Updating
-          name={name}
-          model={model}
-          stage={update.stage}
-          done={update.phase === 'updated'}
-          progress={update.progress}
-        />
-      )}
     </>
   );
 }

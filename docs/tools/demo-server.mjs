@@ -13,7 +13,10 @@
 //   POST /api/demo/away   the speaker goes away: every /api call fails, streams drop
 //   POST /api/demo/back   it answers again
 //   POST /api/demo/reset  back to the state it started in
-//   GET  /api/demo/state  what the page has sent: volumes, names, the Wi-Fi it joined
+//   POST /api/demo/offer-update  every speaker offers app 0.2.0; one asked to update then
+//                         downloads it for ever, 42% of the way (an update the page follows)
+//   GET  /api/demo/state  what the page has sent: volumes, names, the Wi-Fi it joined,
+//                         the speakers asked to update
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
@@ -260,6 +263,8 @@ let muted; // speaker id -> true while muted; its volume stays the level it retu
 let joined;
 let away;
 let leaders; // follower id -> the id of the speaker it plays along with
+let offer; // whether the speakers offer a newer app (/api/demo/offer-update)
+let updating; // speaker id -> true once asked to update
 function reset() {
   devices = DEVICES.map((d) => ({ ...d }));
   volumes = { ...VOLUMES };
@@ -267,6 +272,8 @@ function reset() {
   joined = null;
   away = false;
   leaders = {};
+  offer = false;
+  updating = {};
 }
 reset();
 const now = {
@@ -406,10 +413,22 @@ function api(path, dev, url) {
       ...(d.model === "ST300" && { soundbar: SOUNDBAR }),
     };
   }
-  if (path === "/api/version")
-    return { version: "0.1.0", os: "0.1.0", app: "0.1.0", updatable: false };
-  if (path === "/api/releases")
-    return { current: "0.1.0", updatable: false, stable: null, betas: [] };
+  if (path === "/api/version") {
+    const v = { version: "0.1.0", os: "0.1.0", app: "0.1.0", updatable: false };
+    if (!offer) return v;
+    return {
+      ...v,
+      updatable: true,
+      updateMode: "firmware",
+      ...(updating[dev] && { updateProgress: 42 }),
+    };
+  }
+  if (path === "/api/releases") {
+    const stable = offer
+      ? { tag: "app-v0.2.0", name: "", notes: "", publishedAt: "" }
+      : null;
+    return { current: "0.1.0", updatable: offer, stable, betas: [] };
+  }
   if (path === "/api/multiroom") return followers(dev);
   if (path === "/api/soundbar/tone") return dev === "tv" ? TONE : null;
   if (path === "/api/soundbar/lip-sync")
@@ -530,6 +549,7 @@ function demo(path, res) {
     away = true;
     dropStreams();
   } else if (path === "/api/demo/back") away = false;
+  else if (path === "/api/demo/offer-update") offer = true;
   else if (path === "/api/demo/reset") {
     dropStreams();
     reset();
@@ -539,6 +559,7 @@ function demo(path, res) {
     volumes,
     joined,
     names: Object.fromEntries(devices.map((d) => [d.id, d.name])),
+    updating,
   });
   return true;
 }
@@ -572,6 +593,15 @@ createServer(async (req, res) => {
     if (routed) path = routed[2];
     if (path === "/api/events") return stream(req, res, dev);
     if (path.includes("/events")) return send(404, "text/plain", "no stream");
+    // An offered update the speaker takes on: it answers before it downloads.
+    if (path === "/api/update" && req.method === "POST" && offer) {
+      updating[dev] = true;
+      return send(
+        202,
+        "application/json",
+        JSON.stringify({ status: "updating", to: "0.2.0" }),
+      );
+    }
     if (req.method !== "GET")
       return send(
         200,

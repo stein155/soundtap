@@ -1,18 +1,23 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import type { ReactElement } from 'react';
+import { useRef, type ReactElement } from 'react';
 import { Icon } from '../../../atoms/Icon';
 import { Button } from '../../../atoms/Button';
+import { TextButton } from '../../../atoms/TextButton';
 import { ModelArt, modelKey } from '../../../molecules/ModelArt';
-import type { UpdateStage } from '../../../../hooks/useSelfUpdate';
+import type { UpdateStage } from '../../../../hooks/updates';
+import { useDialogFocus } from '../../../../hooks/useDialogFocus';
+import { useEscape } from '../../../../hooks/useEscape';
 import { useI18n, type I18nKey } from '../../../../lib/i18n';
 import {
   Bars,
+  Close,
   Dot,
   Head,
   Hero,
   Intro,
+  Other,
   Page,
   Percent,
   Ring,
@@ -60,29 +65,67 @@ function Steps({ current }: { readonly current: number }) {
   );
 }
 
+// The bar: which speaker updates, and Close, as on the other full pages.
+function Bar({ name, onClose }: { readonly name: string; readonly onClose: () => void }) {
+  const { t } = useI18n();
+  return (
+    <TopLine>
+      <span>{t('updatingEyebrow', { name })}</span>
+      <Close type="button" aria-label={t('close')} onClick={onClose}>
+        <Icon.close />
+      </Close>
+    </TopLine>
+  );
+}
+
+// The way on to another speaker, to control it while this one updates.
+function OtherSpeaker({ onOther }: { readonly onOther: () => void }) {
+  const { t } = useI18n();
+  return (
+    <Other>
+      <TextButton onClick={onOther}>{t('offlineOther')}</TextButton>
+    </Other>
+  );
+}
+
 // The page over the app while a speaker updates itself: the speaker in a turning ring, how
 // far it is when the speaker can say (progress, null when it cannot: no number is made up),
 // what happens, the steps as far as they can be told, and to keep it on the power. Once the
 // new version answers it checks in and the page reloads into it (or now, on request).
+// The update goes on without it: Close (or Escape, or the phone's back) leaves the page for
+// the rest of the app, and Choose another speaker goes on to the speakers.
 export function Updating({
   name,
   model,
   stage,
   done,
   progress = null,
+  onClose,
+  onOther,
 }: {
   readonly name: string;
   readonly model: string;
   readonly stage: UpdateStage;
   readonly done: boolean;
   readonly progress?: number | null;
+  readonly onClose: () => void;
+  readonly onOther?: (() => void) | undefined;
 }): ReactElement {
   const { t } = useI18n();
+  const ref = useRef<HTMLDivElement>(null);
+  useDialogFocus(ref, true);
+  useEscape(true, onClose);
   const current = CURRENT[stage];
   return (
-    <Page role="alertdialog" aria-modal="true" aria-label={t('updatingTitle')}>
+    <Page
+      ref={ref}
+      tabIndex={-1}
+      role="alertdialog"
+      aria-modal="true"
+      aria-label={t('updatingTitle')}
+    >
       <Head>
-        <TopLine>{t('updatingEyebrow', { name })}</TopLine>
+        <Bar name={name} onClose={onClose} />
         <Bars aria-hidden="true">
           {STEPS.map((key, i) => (
             <span key={key} data-done={i <= current || undefined} />
@@ -121,6 +164,7 @@ export function Updating({
           <b>{t('updatingPower')}</b> {t('updatingFallback')}
         </p>
       </Warn>
+      {onOther && <OtherSpeaker onOther={onOther} />}
     </Page>
   );
 }

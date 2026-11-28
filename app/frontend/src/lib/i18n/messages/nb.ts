@@ -517,6 +517,7 @@ const nb: Messages = {
   updatingCheck: 'Sjekker at alt fungerer',
   updatingPower: 'La støpselet stå i.',
   updatingSt300: 'På SoundTouch 300 kan det siste trinnet ta litt tid; la den stå på.',
+  updatingShort: 'Oppdaterer …',
   updatingFallback: 'Hvis det ikke går, fortsetter høyttaleren bare med den forrige versjonen.',
   volumeLevel: 'volum {n}',
   playingWhat: 'Spiller {name}',

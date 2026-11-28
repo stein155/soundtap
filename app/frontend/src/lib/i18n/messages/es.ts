@@ -520,6 +520,7 @@ const es: Messages = {
   updatingCheck: 'Comprobando que todo funciona',
   updatingPower: 'Déjalo enchufado.',
   updatingSt300: 'En el SoundTouch 300 el último paso puede tardar un poco; déjalo encendido.',
+  updatingShort: 'Actualizando…',
   updatingFallback: 'Si no sale bien, simplemente sigue con la versión anterior.',
   volumeLevel: 'volumen {n}',
   playingWhat: 'Reproduciendo {name}',
