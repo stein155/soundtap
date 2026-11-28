@@ -10,8 +10,50 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
 
 ## [Unreleased]
 
+## [app-v0.1.0-alpha.8] - 2026-11-28
+
+- The SoundTap app that SoundTap Core 0.1.0-alpha.8 carries; what it changes is listed under
+  that release.
+
+## [os-v0.1.0-alpha.8] - 2026-11-28
+
+The eighth alpha of SoundTap Core 0.1.0.
+
+### Added
+
+- **SoundTouch 20: a new front display you can read across the room.** Large titles and one
+  small line, small labels in a crisp pixel font, icons where words used to be, and one thing
+  per screen. Radio takes turns between the station and the song playing now. After 30 seconds
+  without a key only the title stays, dimmed; the standby clock moves a few pixels now and
+  then, so nothing burns in.
+- **SoundTouch 20: an empty bar right at power-on** that fills while the speaker starts and
+  turns into the SoundTap note, with the name under it. While the speaker updates its network
+  chip at the end of the first install, the display says hello in every language.
+
+### Changed
+
+- **Now playing fits on one phone screen**: the song's progress is a thin line along the
+  bottom of the artwork, shuffle and repeat sit next to the play controls, and volume is the
+  only slider left.
+- **What's new in an update** on the Updates page reads as plain text, without the download
+  steps meant for the release page.
+- **SoundTouch 20: the Wi-Fi lamp stays dark** while the network chip is updated and while
+  the speaker starts, instead of blinking.
+
 ### Fixed
 
+- **A network you saved with a password can no longer be taken over by an open network of the
+  same name**: the speaker only joins a network with the security you saved it with.
+- **The setup network no longer opens while another saved network is in range**: when your
+  network refuses the speaker, it tries your other saved networks first.
+- **Saving a network again with other security takes**: the speaker uses what you saved last,
+  not an older profile of the same name.
+- **Speaker pages on a Mac open at once again** after the setup network was used: the speaker
+  kept announcing its IPv6 address, and a Mac waited 5 seconds for it on every look-up.
+- **The USB stick recovery never writes over the system the speaker starts from**, also when
+  the speaker's boot settings were lost.
+- **SoundTouch 20: holding a key combination shows its countdown steadily** instead of
+  flashing between the countdown and the playing screen.
 - **A Radio Browser preset whose name several stations share is taken over** on the first
   install, as JOE: the station from your speaker's country, and of several entries of that one
   station, the one listeners vote for most. Stations from different countries, or that cannot
