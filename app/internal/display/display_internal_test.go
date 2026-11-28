@@ -35,12 +35,15 @@ func newTestManager(t *testing.T, standby bool) (*Manager, string) {
 		mu:             sync.Mutex{},
 		standbyFrame:   nil,
 		npFrame:        nil,
+		npFade:         0,
 		overlayFrame:   nil,
+		overlayFade:    0,
 		transientFrame: nil,
 		transientUntil: time.Time{},
 		alertFrame:     nil,
 		alertUntil:     time.Time{},
 		shown:          nil,
+		shownFade:      0,
 		drawnAt:        time.Time{},
 		wake:           nil,
 		done:           nil,
@@ -63,7 +66,7 @@ func TestStandbyTickAndReturnToFast(t *testing.T) {
 		t.Fatalf("standby clock: tick %v, want 1s", got)
 	}
 
-	mgr.SetTransient(Content{Frame: bytes.Repeat([]byte{5}, oled.Width*oled.Height)}, time.Minute)
+	mgr.SetTransient(Content{Frame: bytes.Repeat([]byte{5}, oled.Width*oled.Height), Fade: 0}, time.Minute)
 
 	if got := mgr.tickEvery(ctx); got != paintTick {
 		t.Fatalf("transient in standby: tick %v, want %v", got, paintTick)
@@ -84,7 +87,7 @@ func TestNudgePaintsAtOnceInStandby(t *testing.T) {
 
 	mgr, path := newTestManager(t, true)
 	mgr.wake = make(chan struct{}, 1)
-	mgr.SetStandby(Content{Frame: bytes.Repeat([]byte{9}, oled.Width*oled.Height)})
+	mgr.SetStandby(Content{Frame: bytes.Repeat([]byte{9}, oled.Width*oled.Height), Fade: 0})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -97,7 +100,7 @@ func TestNudgePaintsAtOnceInStandby(t *testing.T) {
 	waitPainted(t, path, mgr.standbyFrame, 10*time.Second)
 
 	transient := bytes.Repeat([]byte{4}, oled.Width*oled.Height)
-	mgr.SetTransient(Content{Frame: transient}, time.Minute)
+	mgr.SetTransient(Content{Frame: transient, Fade: 0}, time.Minute)
 	waitPainted(t, path, transient, standbyPaintTick/2)
 }
 
@@ -128,8 +131,8 @@ func TestUnavailableIsNoop(t *testing.T) {
 		t.Fatal("missing fb reported available")
 	}
 
-	mgr.SetStandby(Content{Frame: nil})
-	mgr.SetNowPlaying(Content{Frame: nil})
+	mgr.SetStandby(Content{Frame: nil, Fade: 0})
+	mgr.SetNowPlaying(Content{Frame: nil, Fade: 0})
 	mgr.ClearNowPlaying()
 }
 
@@ -137,8 +140,8 @@ func TestTransientOutranksAndRestoresNativeScreen(t *testing.T) {
 	t.Parallel()
 
 	mgr, path := newTestManager(t, false)
-	mgr.SetNowPlaying(Content{Frame: bytes.Repeat([]byte{9}, oled.Width*oled.Height)})
-	mgr.SetTransient(Content{Frame: bytes.Repeat([]byte{11}, oled.Width*oled.Height)}, time.Hour)
+	mgr.SetNowPlaying(Content{Frame: bytes.Repeat([]byte{9}, oled.Width*oled.Height), Fade: 0})
+	mgr.SetTransient(Content{Frame: bytes.Repeat([]byte{11}, oled.Width*oled.Height), Fade: 0}, time.Hour)
 	mgr.step(context.Background())
 
 	got, _ := os.ReadFile(path)
@@ -164,9 +167,9 @@ func TestAlertOutranksTheOverlay(t *testing.T) {
 
 	frame := func(b byte) []byte { return bytes.Repeat([]byte{b}, oled.Width*oled.Height) }
 	mgr, path := newTestManager(t, true)
-	mgr.SetOverlay(Content{Frame: frame(5)})
-	mgr.SetTransient(Content{Frame: frame(6)}, time.Hour)
-	mgr.SetAlert(Content{Frame: frame(13)}, time.Hour)
+	mgr.SetOverlay(Content{Frame: frame(5), Fade: 0})
+	mgr.SetTransient(Content{Frame: frame(6), Fade: 0}, time.Hour)
+	mgr.SetAlert(Content{Frame: frame(13), Fade: 0}, time.Hour)
 	mgr.step(context.Background())
 
 	if got, _ := os.ReadFile(path); !bytes.Equal(got, frame(13)) {
@@ -192,8 +195,8 @@ func TestNativeScreens(t *testing.T) {
 
 	blank := bytes.Repeat([]byte{7}, oled.Width*oled.Height)
 	mgr, path := newTestManager(t, true)
-	mgr.SetStandby(Content{Frame: bytes.Repeat([]byte{9}, oled.Width*oled.Height)})
-	mgr.SetNowPlaying(Content{Frame: bytes.Repeat([]byte{5}, oled.Width*oled.Height)})
+	mgr.SetStandby(Content{Frame: bytes.Repeat([]byte{9}, oled.Width*oled.Height), Fade: 0})
+	mgr.SetNowPlaying(Content{Frame: bytes.Repeat([]byte{5}, oled.Width*oled.Height), Fade: 0})
 	mgr.step(context.Background())
 
 	got, _ := os.ReadFile(path)
@@ -224,7 +227,7 @@ func TestUnchangedFrameRepaintsOnlyAfterRepaintEvery(t *testing.T) {
 	t.Parallel()
 
 	mgr, path := newTestManager(t, true)
-	mgr.SetStandby(Content{Frame: bytes.Repeat([]byte{9}, oled.Width*oled.Height)})
+	mgr.SetStandby(Content{Frame: bytes.Repeat([]byte{9}, oled.Width*oled.Height), Fade: 0})
 	mgr.step(context.Background())
 
 	scribble := bytes.Repeat([]byte{3}, oled.Width*oled.Height)
@@ -256,10 +259,10 @@ func TestStandbyWithoutClockGoesDark(t *testing.T) {
 
 	mgr, path := newTestManager(t, true)
 	connecting := bytes.Repeat([]byte{3}, oled.Width*oled.Height)
-	mgr.SetOverlay(Content{Frame: connecting})
+	mgr.SetOverlay(Content{Frame: connecting, Fade: 0})
 	mgr.step(context.Background())
 	mgr.ClearOverlay()
-	mgr.SetNowPlaying(Content{Frame: bytes.Repeat([]byte{5}, oled.Width*oled.Height)})
+	mgr.SetNowPlaying(Content{Frame: bytes.Repeat([]byte{5}, oled.Width*oled.Height), Fade: 0})
 	mgr.standby = func(context.Context) bool { return false }
 	mgr.step(context.Background())
 
@@ -269,5 +272,23 @@ func TestStandbyWithoutClockGoesDark(t *testing.T) {
 	got, _ := os.ReadFile(path)
 	if !bytes.Equal(got, make([]byte, oled.Width*oled.Height)) {
 		t.Fatalf("standby without a clock left %v on the panel, want it dark", got[:4])
+	}
+}
+
+// A fade of the same frame is drawn: on the framebuffer the frame dims, on the ST20's
+// spidev only the contrast command goes out (oled.DrawFaded).
+func TestFadeOfTheSameFrameIsDrawn(t *testing.T) {
+	t.Parallel()
+
+	mgr, path := newTestManager(t, false)
+	mgr.SetNowPlaying(Content{Frame: bytes.Repeat([]byte{200}, oled.Width*oled.Height), Fade: 0})
+	mgr.step(context.Background())
+
+	mgr.SetNowPlaying(Content{Frame: bytes.Repeat([]byte{200}, oled.Width*oled.Height), Fade: 0.5})
+	mgr.step(context.Background())
+
+	got, _ := os.ReadFile(path)
+	if len(got) != oled.Width*oled.Height || got[0] != 100 {
+		t.Fatalf("faded frame starts with %d, want 100", got[0])
 	}
 }

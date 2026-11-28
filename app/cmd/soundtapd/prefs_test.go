@@ -21,7 +21,7 @@ func quietLog() *slog.Logger { return slog.New(slog.DiscardHandler) }
 func autoOffSnapshot(source, playStatus string, volume int) speakerstate.StatusSnapshot {
 	return speakerstate.StatusSnapshot{
 		Source: source, PlayStatus: playStatus, Standby: false, Volume: volume, Muted: false, Bass: 0,
-		Notification: false, EmptyPreset: false, TransportAck: false, IP: "",
+		Notification: false, EmptyPreset: false, EmptySlot: 0, TransportAck: false, IP: "",
 	}
 }
 

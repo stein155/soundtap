@@ -6,21 +6,28 @@ package panel
 import (
 	"bytes"
 	"testing"
+	"time"
 
 	"github.com/stein155/soundtap/app/oled"
 )
 
-// While music plays no clock is drawn: the frame is the same whatever the time.
+// While music plays no clock is drawn: the frame is the same whatever the time, within a
+// minute's orbit step.
 func TestPlayingScreenHasNoClock(t *testing.T) {
 	t.Parallel()
 
 	for _, source := range []string{"SPOTIFY", "TUNEIN", "BLUETOOTH", "AUX"} {
 		info := infoOf(playingNow(source, "NPO Radio 2", "Sun Goes Down", "Robin Schulz", "PLAY_STATE"), "Keuken")
+		corner := noCorner()
 
-		morning := playingScreen(&info, barAt("08:42"), 61000, 214000).Pix(fullLevel)
-		evening := playingScreen(&info, barAt("21:17"), 61000, 214000).Pix(fullLevel)
+		var memo playingMemo
 
-		if !bytes.Equal(morning, evening) {
+		morning := viewAt(time.Date(2026, 9, 25, 8, 42, 1, 0, time.UTC), time.Second, false)
+		evening := viewAt(time.Date(2026, 9, 25, 21, 17, 1, 0, time.UTC), time.Second, false)
+		evening.orbit, evening.dotStep = morning.orbit, morning.dotStep
+
+		first := append([]byte(nil), memo.playing(&info, &corner, 61000, 214000, &morning)...)
+		if !bytes.Equal(first, memo.playing(&info, &corner, 61000, 214000, &evening)) {
 			t.Errorf("%s: the playing screen changes with the clock", source)
 		}
 	}
@@ -32,7 +39,9 @@ func TestOrbitMovesThePlayingScreenOnePixel(t *testing.T) {
 	t.Parallel()
 
 	info := infoOf(playingNow("SPOTIFY", "", "Sun Goes Down", "Robin Schulz", "PLAY_STATE"), "Keuken")
-	pix := playingScreen(&info, barAt("08:42"), 61000, 214000).Pix(fullLevel)
+	moment := view{page: 0, dimmed: false, orbit: 0, drift: 0, dotStep: 0, fade: 0}
+	corner := noCorner()
+	pix := playingScreen(&info, &corner, 61000, 214000, &moment).Pix(fullLevel)
 	lit := func(frame []byte) int { return len(frame) - bytes.Count(frame, []byte{0}) }
 
 	if !bytes.Equal(orbitFrame(pix, 0), pix) || !bytes.Equal(orbitFrame(pix, len(orbitPath)), pix) {

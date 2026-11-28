@@ -31,6 +31,14 @@ type LampStatus interface {
 	Updating() bool
 	// HaveIP reports whether the speaker has an address on the LAN.
 	HaveIP() bool
+	// NetCard is true while the ST20's BCO app, its network card, is being written: the
+	// network is down on purpose, so the Wi-Fi lamp does not report it (wifiDark).
+	NetCard() bool
+	// NetQuiet is true while the ST20's boot screen keeps quiet about a network that is not
+	// up yet, through its mark and a few seconds after it: the Wi-Fi lamp keeps quiet too
+	// (wifiDark), so it does not blink "connecting" over a panel that does not say so. Always
+	// false on a model without a panel.
+	NetQuiet() bool
 }
 
 // playing is the play status of a source that is playing, as speakerstate reports it.
@@ -428,41 +436,65 @@ func RunLEDs(ctx context.Context, modelDir string, status LampStatus, log *slog.
 		blink = !blink
 		step++
 
-		switch {
-		case !status.Up():
-			// Still coming up: run the wave instead of the state pattern, which at this
-			// point would only be reporting a speaker that has not finished starting.
-			lamps.show(bootChase(step))
-		case status.Confirming():
-			// A request waits for a key press, or a held chord counts down: the
-			// source lamps blink together, a look no state of the speaker has.
-			lamps.show(ledState{
-				wifiWhite: false, wifiAmber: false, btWhite: blink, stWhite: blink,
-				stAmber: false, btBlue: false, auxWhite: blink, wifiDim: false,
-			})
-		case status.Updating():
-			// Firmware is writing to NAND: blink both ST lamps (amber solid, white
-			// blinking) so the panel is visibly "busy" and distinct from standby or
-			// a source state. Stock shows a similar cycling pattern during an update.
-			lamps.show(ledState{
-				wifiWhite: false, wifiAmber: false, btWhite: false, stWhite: blink,
-				stAmber: true, btBlue: false, auxWhite: false, wifiDim: false,
-			})
-		default:
-			// The link moves in seconds, the blink in 350 ms: sampling it every tick (a UDP
-			// socket plus two pidfiles) was most of soundtapd's standby CPU on the ST10.
-			if step%linkEveryTicks == 1 || !linkRead {
-				link, linkRead = ReadLink(status.HaveIP), true
-			}
+		// The link moves in seconds, the blink in 350 ms: sampling it every tick (a UDP
+		// socket plus two pidfiles) was most of soundtapd's standby CPU on the ST10.
+		if status.Up() && (step%linkEveryTicks == 1 || !linkRead) {
+			link, linkRead = ReadLink(status.HaveIP), true
+		}
 
-			snapshot := status.StatusSnapshot()
-			if next := ledPattern(&snapshot, link, blink); lamps.show(next) {
-				// Debug, not Info: every blink of every blinking pattern is a change,
-				// so at Info this alone writes a line every 350 ms forever.
-				log.Debug("leds", "state", next, "link", link)
-			}
+		if next := lampsNow(status, link, blink, step); lamps.show(next) {
+			// Debug, not Info: every blink of every blinking pattern is a change,
+			// so at Info this alone writes a line every 350 ms forever.
+			log.Debug("leds", "state", next, "link", link)
 		}
 	}
+}
+
+// lampsNow is what the lamps show at this tick of RunLEDs.
+func lampsNow(status LampStatus, link Link, blink bool, step int) ledState {
+	switch {
+	case !status.Up():
+		// Still coming up: run the wave instead of the state pattern, which at this
+		// point would only be reporting a speaker that has not finished starting.
+		return bootChase(step)
+	case status.Confirming():
+		// A request waits for a key press, or a held chord counts down: the
+		// source lamps blink together, a look no state of the speaker has.
+		return ledState{
+			wifiWhite: false, wifiAmber: false, btWhite: blink, stWhite: blink,
+			stAmber: false, btBlue: false, auxWhite: blink, wifiDim: false,
+		}
+	case status.Updating():
+		// Firmware is writing to NAND: blink both ST lamps (amber solid, white
+		// blinking) so the panel is visibly "busy" and distinct from standby or
+		// a source state. Stock shows a similar cycling pattern during an update.
+		return ledState{
+			wifiWhite: false, wifiAmber: false, btWhite: false, stWhite: blink,
+			stAmber: true, btBlue: false, auxWhite: false, wifiDim: false,
+		}
+	default:
+		snapshot := status.StatusSnapshot()
+		next := ledPattern(&snapshot, link, blink)
+
+		if status.NetCard() || (status.NetQuiet() && (link == LinkConnecting || link == LinkDown)) {
+			next = wifiDark(next)
+		}
+
+		return next
+	}
+}
+
+// wifiDark is lamps with the Wi-Fi lamp dark and steady: while the ST20's network card is
+// written, and while its boot screen keeps quiet about a network that is not up yet. The
+// write takes the network down for minutes on purpose, and the lamp blinking "connecting" or
+// "no network" over it read as a fault (the owner, 2026-11-28); dark is how the lamp is during
+// a firmware install too. The panel says what is going on. After a boot the lamp blinked
+// "connecting" while the panel still played its mark (the owner, 2026-11-28); it joins the
+// panel when that grace ends.
+func wifiDark(lamps ledState) ledState {
+	lamps.wifiWhite, lamps.wifiAmber, lamps.wifiDim = false, false, false
+
+	return lamps
 }
 
 // lampWriter writes a lamp state when it differs from the last one written.

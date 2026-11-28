@@ -272,7 +272,7 @@ func runDaemon(opt options, serial string, log *slog.Logger) {
 	})
 	wireWeb(webSrv, speakerState)
 	wireTransport(ctx, speakerState, webSrv, spot, disp, log)
-	startBootScreen(ctx, disp, set, log)
+	startBootScreen(ctx, disp, wifiConf, log)
 	startFirmwareLane(ctx, webSrv, upd, gate, opt.home, log)
 	// Before the Wi-Fi manager reads wifi.conf: on the first boot after an install from
 	// Bose's software it joins stock's network instead of opening the setup AP.
@@ -459,7 +459,7 @@ func firmwareOptions(life *lifecycle, disp *display.Manager, home string, quiet 
 		Progress: func(percent int) { firmwareProgress.Store(int64(percent)) },
 		// As stock, the panel says so when an install fails; the reason is in the web UI.
 		Failed: func() {
-			disp.SetTransient(display.Content{Frame: panel.Message(panel.Text("Update failed"))}, updateFailedFor)
+			disp.SetTransient(display.Content{Frame: panel.Say("Update failed"), Fade: 0}, updateFailedFor)
 		},
 	}
 	if onFirmware() {
@@ -475,7 +475,7 @@ func panelOptions(disp *display.Manager, log *slog.Logger) web.PanelOptions {
 	opts := web.PanelOptions{
 		DisplayAvailable: disp.Available,
 		Notice: func(en string) {
-			disp.SetTransient(display.Content{Frame: panel.Message(panel.Text(en))}, panel.NoticeFor)
+			disp.SetTransient(display.Content{Frame: panel.Say(en), Fade: 0}, panel.NoticeFor)
 		},
 		Confirm: nil, // a flashed speaker asks on its front, below
 	}
@@ -483,7 +483,7 @@ func panelOptions(disp *display.Manager, log *slog.Logger) web.PanelOptions {
 	if onFirmware() {
 		confirmer.log = log.With("comp", "confirm")
 		confirmer.show = func(text string, d time.Duration) {
-			disp.SetTransient(display.Content{Frame: panel.Message(panel.Text(text))}, d)
+			disp.SetTransient(display.Content{Frame: panel.Say(text), Fade: 0}, d)
 		}
 		confirmer.rotate()
 		opts.Confirm = confirmer.confirm

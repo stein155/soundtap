@@ -16,20 +16,9 @@ import (
 )
 
 type spiOLED struct {
-	spi, ce, reset, dc *os.File
-	latest             []byte
-}
+	panelState
 
-// oledInit is the panel controller's start-up command sequence.
-func oledInit() []byte {
-	return []byte{
-		0xae, 0x15, 0x00, 0x3f, 0x75, 0x00, 0x63, 0x81,
-		0x85, 0xa0, 0x53, 0xa2, 0x1c, 0xa1, 0x00, 0xa4,
-		0xa8, 0x63, 0xab, 0x01, 0xb1, 0x16, 0xb3, 0x90,
-		0xb6, 0x0f, 0xbc, 0x07, 0xbe, 0x00, 0xd5, 0x63,
-		0xb8, 0x03, 0x06, 0x08, 0x0b, 0x0e, 0x12, 0x16,
-		0x1b, 0x1f, 0x24, 0x29, 0x2e, 0x33, 0x39, 0x3f,
-	}
+	spi, ce, reset, dc *os.File
 }
 
 // gpioBanks are the AM335x GPIO controllers' register addresses, bank 0 to 3.
@@ -100,7 +89,10 @@ func openSPIOLED(path, panel string) (_ *spiOLED, err error) {
 		return nil, err
 	}
 
-	dev := &spiOLED{spi: nil, ce: nil, reset: nil, dc: nil, latest: nil}
+	dev := &spiOLED{
+		panelState: panelState{latest: nil, contrast: FullContrast, on: false},
+		spi:        nil, ce: nil, reset: nil, dc: nil,
+	}
 
 	defer func() {
 		if err != nil {
@@ -113,22 +105,38 @@ func openSPIOLED(path, panel string) (_ *spiOLED, err error) {
 		return nil, fmt.Errorf("oled: open SPI: %w", err)
 	}
 
+	// lit is whether the reset line was already an output driven high before this opened it:
+	// U-Boot's boot frame or an earlier soundtapd brought the panel up and it shows a frame.
+	var lit bool
+
 	for _, pin := range []struct {
 		name      string
 		line      gpioLine
 		direction gpioDirection
 		file      **os.File
-	}{{"CE", pins.ce, outHigh, &dev.ce}, {"reset", pins.reset, outHigh, &dev.reset}, {"DC", pins.dc, outLow, &dev.dc}} {
-		var num int
+		wasHigh   *bool
+	}{
+		{"CE", pins.ce, outHigh, &dev.ce, nil},
+		{"reset", pins.reset, outHigh, &dev.reset, &lit},
+		{"DC", pins.dc, outLow, &dev.dc, nil},
+	} {
+		var (
+			num  int
+			high bool
+		)
 
 		num, err = gpioNumber(pin.line)
 		if err != nil {
 			return nil, err
 		}
 
-		*pin.file, err = openGPIO(num, pin.direction)
+		*pin.file, high, err = openGPIO(num, pin.direction)
 		if err != nil {
 			return nil, fmt.Errorf("oled: open %s: %w", pin.name, err)
+		}
+
+		if pin.wasHigh != nil {
+			*pin.wasHigh = high
 		}
 	}
 
@@ -137,26 +145,40 @@ func openSPIOLED(path, panel string) (_ *spiOLED, err error) {
 		return nil, fmt.Errorf("oled: configure SPI: %w", err)
 	}
 
-	err = setGPIO(dev.reset, gpioLow)
-	if err != nil {
-		return nil, fmt.Errorf("oled: reset low: %w", err)
+	pulse, init := panelStart(lit)
+	if pulse {
+		err = dev.pulseReset()
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	time.Sleep(resetDelay)
-
-	err = setGPIO(dev.reset, gpioHigh)
-	if err != nil {
-		return nil, fmt.Errorf("oled: reset high: %w", err)
-	}
-
-	time.Sleep(resetDelay)
-
-	err = dev.transfer(dcCommand, oledInit())
+	err = dev.transfer(dcCommand, init)
 	if err != nil {
 		return nil, fmt.Errorf("oled: init: %w", err)
 	}
 
 	return dev, nil
+}
+
+// pulseReset holds the panel's reset low and lets it go: the controller starts afresh, with
+// its display off and its memory cleared.
+func (o *spiOLED) pulseReset() error {
+	err := setGPIO(o.reset, gpioLow)
+	if err != nil {
+		return fmt.Errorf("oled: reset low: %w", err)
+	}
+
+	time.Sleep(resetDelay)
+
+	err = setGPIO(o.reset, gpioHigh)
+	if err != nil {
+		return fmt.Errorf("oled: reset high: %w", err)
+	}
+
+	time.Sleep(resetDelay)
+
+	return nil
 }
 
 // gpioNumber is the sysfs number of a bank's line.
@@ -177,24 +199,23 @@ func (o *spiOLED) close() {
 	}
 }
 
-func (o *spiOLED) draw(pix []byte) error {
-	transfers := []struct {
-		dc  gpioLevel
-		buf []byte
-	}{
-		{dc: dcCommand, buf: []byte{0x15, 0x00, 0x3f}},
-		{dc: dcCommand, buf: []byte{0x75, 0x00, 0x63}},
-		{dc: dcData, buf: packFrame(pix)},
-		{dc: dcCommand, buf: []byte{0xaf}},
-	}
-	for _, transfer := range transfers {
-		err := o.transfer(transfer.dc, transfer.buf)
+// draw shows pix at contrast, sending only what changed (drawSteps).
+func (o *spiOLED) draw(pix []byte, contrast int) error {
+	for _, step := range drawSteps(&o.panelState, pix, contrast) {
+		dc := dcCommand
+		if step.data {
+			dc = dcData
+		}
+
+		err := o.transfer(dc, step.buf)
 		if err != nil {
+			o.latest = nil // the panel holds an unknown frame: the next draw sends all of it
+
 			return fmt.Errorf("oled: SPI transfer: %w", err)
 		}
 	}
 
-	o.latest = append(o.latest[:0], pix...)
+	o.drawn(pix, contrast)
 
 	return nil
 }
@@ -294,37 +315,42 @@ func gpioBase(address string) (int, error) {
 	return 0, fmt.Errorf("controller %s %w", address, errControllerNotFound)
 }
 
-func openGPIO(number int, direction gpioDirection) (*os.File, error) {
+// openGPIO exports a line, makes it an output in direction and opens its value. wasHigh is
+// whether it was an output driven high already, before this set it.
+func openGPIO(number int, direction gpioDirection) (*os.File, bool, error) {
 	if ExportGPIO != nil {
 		err := ExportGPIO(number)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 	} else {
 		err := writeSysfs("/sys/class/gpio/export", strconv.Itoa(number))
 		if err != nil && !errors.Is(err, syscall.EBUSY) {
-			return nil, err
+			return nil, false, err
 		}
 	}
 
 	dir := filepath.Join(gpioSysfs, "gpio"+strconv.Itoa(number))
 
 	var err error
+
 	for range gpioRetries {
+		wasHigh := drivenHigh(dir)
+
 		err = writeSysfs(filepath.Join(dir, "direction"), string(direction))
 		if err == nil {
 			value, openErr := os.OpenFile(filepath.Join(dir, "value"), os.O_WRONLY, 0)
 			if openErr != nil {
-				return nil, fmt.Errorf("gpio value: %w", openErr)
+				return nil, false, fmt.Errorf("gpio value: %w", openErr)
 			}
 
-			return value, nil
+			return value, wasHigh, nil
 		}
 
 		time.Sleep(gpioRetryDelay)
 	}
 
-	return nil, err
+	return nil, false, err
 }
 
 func writeSysfs(path, value string) error {

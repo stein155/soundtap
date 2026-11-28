@@ -1,23 +1,35 @@
 <!doctype html>
 <meta charset="utf-8">
-<!-- Renders the design's screens with the same font files the atlases come from and prints
+<!-- Renders the design's screens with the same font files the atlas comes from and prints
      each 128x100 frame as hex grey levels. Run by golden.sh in headless Chromium. -->
 <style>
-@font-face{font-family:'Plus Jakarta Sans';src:url(fonts/PlusJakartaSans.ttf);font-weight:200 800}
+@font-face{font-family:'Montserrat';src:url(fonts/Montserrat.ttf);font-weight:100 900}
+@font-face{font-family:'Manrope';src:url(fonts/Manrope.ttf);font-weight:200 800}
 @font-face{font-family:'Silkscreen';src:url(fonts/Silkscreen-Regular.ttf);font-weight:400}
+@font-face{font-family:'Noto Sans Thai';src:url(fonts/NotoSansThai.ttf);font-weight:100 900}
+@font-face{font-family:'Noto Sans JP';src:url(fonts/NotoSansJP.ttf);font-weight:100 900}
+@font-face{font-family:'Noto Sans KR';src:url(fonts/NotoSansKR.ttf);font-weight:100 900}
+@font-face{font-family:'Noto Sans SC';src:url(fonts/NotoSansSC.ttf);font-weight:100 900}
+@font-face{font-family:'Noto Sans TC';src:url(fonts/NotoSansTC.ttf);font-weight:100 900}
 </style>
 <pre id="out"></pre>
 <script src="design-screens.js"></script>
 <script src="golden-cases.js"></script>
 <script>
 (async () => {
-  for (const w of [500, 600, 700, 800]) await document.fonts.load(`${w} 10px 'Plus Jakarta Sans'`);
+  for (const w of [600, 700, 800]) {
+    await document.fonts.load(`${w} 10px 'Montserrat'`);
+    await document.fonts.load(`${w} 10px 'Manrope'`, 'Ε');
+    for (const f of ['Noto Sans Thai', 'Noto Sans JP', 'Noto Sans KR', 'Noto Sans SC', 'Noto Sans TC'])
+      await document.fonts.load(`${w} 10px '${f}'`, 'กあ한你您');
+  }
   await document.fonts.load("400 10px 'Silkscreen'");
   const out = [];
-  for (const [id, screen, t, st] of CASES) {
+  for (const [id, fn] of Object.entries(CASES)) {
     const c = document.createElement("canvas"); c.width = W; c.height = H;
-    draw(c, screen, t, st);
-    const a = c.getContext("2d").getImageData(0, 0, W, H).data;
+    const ctx = c.getContext("2d", { willReadFrequently: true });
+    fn(ctx);
+    const a = ctx.getImageData(0, 0, W, H).data;
     let hex = "";
     for (let i = 0; i < a.length; i += 4) hex += (a[i] / 17).toString(16);
     out.push(id + " " + hex);

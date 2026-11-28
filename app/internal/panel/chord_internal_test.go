@@ -11,7 +11,7 @@ import (
 	"github.com/stein155/soundtap/app/oled/screen"
 )
 
-// A held key combination shows what it does, the seconds left and a bar, above a preset key's
+// A held key combination shows what it does, the seconds left and a ring, above a preset key's
 // "storing" bar; it never shows a negative count, and it is gone once the combination ends.
 func TestChordCountShowsWhatItDoesAndTheSecondsLeft(t *testing.T) {
 	t.Parallel()
@@ -27,14 +27,14 @@ func TestChordCountShowsWhatItDoesAndTheSecondsLeft(t *testing.T) {
 		t.Fatal("no overlay while the combination is held")
 	}
 
-	want := screen.Holding(Text("Setup mode"), 7, 0.32).Pix(fullLevel)
+	want := screen.Countdown(7, 0.32, Text("Setup mode")).Pix(fullLevel)
 	if !bytes.Equal(overlay().Pix(fullLevel), want) {
-		t.Error("at 3.2 s: want \"Setup mode\", 7 and the bar at 32 %")
+		t.Error("at 3.2 s: want \"Setup mode\", 7 and the ring at 32 %")
 	}
 
 	late, _ := front.Current(start.Add(11 * time.Second))
-	if !bytes.Equal(late().Pix(fullLevel), screen.Holding(Text("Setup mode"), 0, 1.1).Pix(fullLevel)) {
-		t.Error("past the hold: want 0, a full bar")
+	if !bytes.Equal(late().Pix(fullLevel), screen.Countdown(0, 1.1, Text("Setup mode")).Pix(fullLevel)) {
+		t.Error("past the hold: want 0, a full ring")
 	}
 
 	front.ChordUp()

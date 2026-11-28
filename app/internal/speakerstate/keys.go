@@ -244,7 +244,7 @@ func (s *Speaker) presetKeyLocked(key string) func() {
 	if !exists {
 		// Empty slot: set a short window so the LED loop can blink amber
 		// as visual feedback, matching the stock speaker's behaviour.
-		s.emptyPresetUntil = time.Now().Add(emptyPresetWindow)
+		s.emptyPresetUntil, s.emptySlot = time.Now().Add(emptyPresetWindow), slot
 
 		return nil
 	}

@@ -43,15 +43,16 @@ install from stock soundtapd takes these over once
 
 ## SoundTap
 
-SoundTap's clock (`app/internal/panel/clock.go`) walks the same way over the free area of
-the panel, one pixel diagonally every 5 s, and like stock's it does not dim. Like
-stock it shows the time alone, with AM/PM under it on a 12-hour clock: no date and no
-weather, which would light more pixels for the whole of standby and leave the walk less room
-([ADR 0111](../../decisions/0111-st20-standby-clock.md)). Its digits are Plus Jakarta Sans 500,
-a lighter weight than the rest of the panel, nearer stock's thin clock.
+SoundTap's clock (`app/internal/panel/clock.go`) does not walk the panel as stock's does: it
+is dim, grey 7 of 15, and every minute moves to the next of nine places no more than 4 px from
+the middle (`driftPath` in `app/internal/panel/panel.go`). Like stock it shows the time alone,
+with AM/PM under it on a 12-hour clock: no date and no weather, which would light more pixels
+for the whole of standby ([ADR 0111](../../decisions/0111-st20-standby-clock.md)). Its digits are
+Montserrat 600, a lighter weight than the panel's titles, nearer stock's thin clock.
 
 While music plays the panel has no status bar: no clock, source or room is drawn, as those
-would stay lit in one place for as long as something plays. A pause or stop icon, a stereo
-pair's L or R and the Portable's battery are drawn only when they apply. The playing screen
-fills the panel and has no room to walk, so it orbits instead: every minute it moves one
-pixel around its place and back (`orbitFrame` in `app/internal/panel/panel.go`).
+would stay lit in one place for as long as something plays. A pause or stop icon, a preset's
+number, the radio's badge, a stereo pair's L or R and the Portable's battery are drawn only
+when they apply. The playing screen orbits: every minute it moves one pixel around its place
+and back (`orbitFrame`). Thirty seconds after the last key it keeps only its title, at grey 8,
+drifting as the clock does.

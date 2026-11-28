@@ -10,8 +10,22 @@ points here and holds the BCO rules. Nothing here follows from the ST10: the ST1
 
 - The OLED is driven from userspace through `/dev/spidev1.0`, SPI mode 3 at 2 MHz, as a
   128x100 grayscale panel (`app/oled/spidev_linux.go`).
-- A frame is 6400 bytes, packed. Chip enable stays asserted for the whole frame while it is
-  split into writes of at most 4096 bytes: 4096 + 2304.
+- A frame is 6400 bytes, packed two pixels a byte (the even pixel in the low nibble). Chip
+  enable stays asserted for a whole transfer while it is split into writes of at most 4096
+  bytes: a full frame is 4096 + 2304.
+- A full frame took about 207 ms on the speaker, most of it the 10 ms line settling around
+  each transfer. soundtapd sends only the rectangle that changed since the last frame: the
+  column window (`0x15`, first and last column in units of two pixels, so the window starts at
+  an even pixel and ends at an odd one) and the row window (`0x75`, first and last row) in one
+  command transfer, then that window's bytes row by row. The first frame after the init sends
+  the whole panel and is followed by display on (`0xaf`), which then stays on.
+- A fade of the whole panel is its contrast (`0x81`, one level byte; the init sets `0x85`,
+  full brightness), not a redraw (`app/oled/spidev.go`, `drawSteps`).
+- U-Boot paints the first boot frame, soundtapd's `bootFrame(0)` (the empty bar outline),
+  with the same init sequence ([ADR 0131](../../decisions/0131-st20-boot-frame.md)). The
+  panel's reset (gpio2_18) and chip enable (gpio2_24) sit on GPIO2, which the device tree keeps
+  out of ti-sysc's soft reset at boot (`ti,no-reset-on-init`): reset, the lines became inputs
+  about 0.7 s into boot and the panel went dark until soundtapd opened it.
 - Mainline ST20 has no `/dev/fb0`; the framebuffer experiments of the stock kernel are
   superseded.
 

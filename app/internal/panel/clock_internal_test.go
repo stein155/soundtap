@@ -6,7 +6,6 @@ package panel
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"image"
 	"log/slog"
 	"os"
@@ -20,6 +19,7 @@ import (
 	"github.com/stein155/soundtap/app/internal/display"
 	"github.com/stein155/soundtap/app/internal/settings"
 	"github.com/stein155/soundtap/app/oled"
+	"github.com/stein155/soundtap/app/oled/screen"
 )
 
 // Turning the clock off removes the frame it had put up.
@@ -95,54 +95,39 @@ func TestClockOffClearsStandbyFrame(t *testing.T) {
 	wait("the clock frame to go", func() bool { return !disp.HasStandby() })
 }
 
-// The standby clock walks as stock's does: one pixel diagonally per step, bouncing off
-// the edges, never onto the panel's outer pixels or its bottom two rows, and over a full
-// round every row and column of the free area is reached.
-func TestStandbyClockWalks(t *testing.T) {
+// The standby clock moves to the next place of driftPath every minute, never more than 4 px
+// from the middle, and the same moment always lands on the same place.
+func TestStandbyClockDrifts(t *testing.T) {
 	t.Parallel()
 
+	for _, at := range driftPath {
+		if abs(at[0]) > 4 || abs(at[1]) > 4 {
+			t.Errorf("drift %v is more than 4 px from the middle", at)
+		}
+	}
+
 	base := time.Date(2026, 9, 25, 23, 40, 0, 0, time.UTC)
-	firstDraw, _ := standbyFrame(base, false)
-	first := firstDraw()
+	places := map[[2]int]bool{}
 
-	var prevX, prevY int
+	for minute := range driftPath {
+		when := base.Add(time.Duration(minute)*time.Minute + 30*time.Second)
+		draw, key := standbyFrame(when, false)
+		driftX, driftY := driftAt(int(when.Unix() / 60))
 
-	cols, rows := map[int]bool{}, map[int]bool{}
-
-	for step := range 400 {
-		when := base.Add(time.Duration(step) * walkStep)
-		draw, _ := standbyFrame(when, false)
-
-		frame := draw()
-		if litPixels(frame) < 200 {
-			t.Fatalf("step %d: the clock is nearly blank", step)
+		if !bytes.Equal(draw(), screen.Standby(when.Format("15:04"), "", driftX, driftY).Pix(fullLevel)) {
+			t.Errorf("minute %d: the clock is not at drift (%d, %d)", minute, driftX, driftY)
 		}
 
-		box := litBox(frame)
-		left, top, right, bottom := box.Min.X, box.Min.Y, box.Max.X, box.Max.Y
-
-		inside := left >= walkMargin && top >= walkMargin &&
-			right <= oled.Width-1-walkMargin && bottom <= oled.Height-1-walkBottom
-		if !inside {
-			t.Fatalf("step %d: lit box (%d,%d)-(%d,%d) leaves the walk's area", step, left, top, right, bottom)
+		if again, againKey := standbyFrame(when.Add(-20*time.Second), false); againKey != key ||
+			!bytes.Equal(again(), draw()) {
+			t.Errorf("minute %d: the same minute drew a different place: a restart would jump", minute)
 		}
 
-		sameMinute := when.Minute() == when.Add(-walkStep).Minute()
-		if step > 0 && sameMinute && (abs(left-prevX) > 1 || abs(top-prevY) > 1) {
-			t.Fatalf("step %d: jumped from (%d,%d) to (%d,%d)", step, prevX, prevY, left, top)
-		}
-
-		prevX, prevY = left, top
-		cols[left], rows[top] = true, true
+		places[[2]int{driftX, driftY}] = true
 	}
 
-	if len(cols) < 10 || len(rows) < 20 {
-		t.Errorf("the walk reached %d columns and %d rows", len(cols), len(rows))
-	}
-
-	again, _ := standbyFrame(base, false)
-	if !bytes.Equal(again(), first) {
-		t.Error("the same moment drew a different place: a restart would jump")
+	if len(places) != len(driftPath) {
+		t.Errorf("the clock stood in %d places over %d minutes", len(places), len(driftPath))
 	}
 }
 
@@ -163,23 +148,6 @@ func TestStandbyIsTheTimeAlone(t *testing.T) {
 
 	if !strings.Contains(key12, "PM") || strings.Contains(key24, "PM") {
 		t.Errorf("keys: 24-hour %q, 12-hour %q", key24, key12)
-	}
-}
-
-func TestBounce(t *testing.T) {
-	t.Parallel()
-
-	got := make([]int, 0, 9)
-	for s := range 9 {
-		got = append(got, bounce(s, 3))
-	}
-
-	if fmt.Sprint(got) != "[0 1 2 3 2 1 0 1 2]" {
-		t.Errorf("bounce over 0..3: %v", got)
-	}
-
-	if bounce(7, 0) != 0 {
-		t.Error("no room still moves")
 	}
 }
 

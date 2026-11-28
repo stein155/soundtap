@@ -188,7 +188,7 @@ func TestShortPressDoesNotConfirm(t *testing.T) {
 			t.Fatalf("keys=%v stored=%v, want nothing while a request waits", keys, stored)
 		}
 
-		if got := shows.all(); len(got) != 2 || got[0] != "Hold a button for Wi-Fi" || got[1] != got[0] {
+		if got := shows.all(); len(got) != 2 || got[0] != "Change Wi-Fi?" || got[1] != got[0] {
 			t.Fatalf("panel = %q, want the prompt and then the prompt again", got)
 		}
 
@@ -551,7 +551,7 @@ func TestNewerRequestSupersedes(t *testing.T) {
 
 		handler.Handle(1, false, "PRESET_2")
 
-		want := []string{"Hold a button to reset", "Hold a button for Wi-Fi", "Confirmed"}
+		want := []string{"Reset?", "Change Wi-Fi?", "Confirmed"}
 		if got := shows.all(); strings.Join(got, "|") != strings.Join(want, "|") {
 			t.Fatalf("panel = %q, want %q", got, want)
 		}
@@ -738,20 +738,20 @@ func TestConfirmPrompt(t *testing.T) {
 	t.Parallel()
 
 	for what, want := range map[string]string{
-		"POST /api/factory-reset":   "Hold a button to reset",
-		"POST /api/restore":         "Hold a button to restore",
-		"POST /api/reboot":          "Hold a button to restart",
-		"POST /api/wifi":            "Hold a button for Wi-Fi",
-		"POST /api/setup":           "Hold a button for setup",
-		"POST /api/bluetooth/clear": "Hold a button to unpair",
-		"POST /api/firmware":        "Hold a button to install",
-		"POST /api/core-update":     "Hold a button to install",
-		"POST /api/soundtapd":       "Hold a button to install",
-		"DELETE /api/soundtapd":     "Hold a button to install",
-		"POST /api/update":          "Hold a button to install",
-		"GET /api/debug":            "Hold a button for logs",
-		"GET /api/debug/pprof/heap": "Hold a button for logs",
-		"POST /api/something-new":   "Hold a button",
+		"POST /api/factory-reset":   "Reset?",
+		"POST /api/restore":         "Restore?",
+		"POST /api/reboot":          "Restart?",
+		"POST /api/wifi":            "Change Wi-Fi?",
+		"POST /api/setup":           "Setup mode?",
+		"POST /api/bluetooth/clear": "Unpair?",
+		"POST /api/firmware":        "Install?",
+		"POST /api/core-update":     "Install?",
+		"POST /api/soundtapd":       "Install?",
+		"DELETE /api/soundtapd":     "Install?",
+		"POST /api/update":          "Install?",
+		"GET /api/debug":            "Share logs?",
+		"GET /api/debug/pprof/heap": "Share logs?",
+		"POST /api/something-new":   "Continue?",
 	} {
 		if got := confirmPrompt(what); got != want {
 			t.Errorf("%s: %q, want %q", what, got, want)

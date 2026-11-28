@@ -1,7 +1,7 @@
 diff --git a/board/ti/am335x/board.c b/board/ti/am335x/board.c
 --- a/board/ti/am335x/board.c
 +++ b/board/ti/am335x/board.c
-@@ -767,9 +767,148 @@ static void soundtap_early_lamp(void)
+@@ -767,9 +767,150 @@ static void soundtap_early_lamp(void)
  	clrbits_le32((void *)0x44e07134, 1 << 19);	/* GPIO0 OE: output */
  }
  
@@ -109,8 +109,10 @@ diff --git a/board/ti/am335x/board.c b/board/ti/am335x/board.c
 +
 +	if ((readl(0x44e10040) & 0x1f) != 0x12)
 +		return;
-+	if (rt_pmic_write(0x27, 0x05))		/* VDD3_REG: boost on, the value Linux leaves */
++	if (rt_pmic_write(0x27, 0x05)) {	/* VDD3_REG: boost on, the value Linux leaves */
++		printf("soundtap: TPS65910 VDD3 write failed, no boot frame\n");
 +		return;
++	}
 +	rt_clk(0x44e00408);			/* GPIO0 */
 +	rt_clk(0x44e000ac);			/* GPIO1 */
 +	rt_clk(0x44e000b0);			/* GPIO2 */

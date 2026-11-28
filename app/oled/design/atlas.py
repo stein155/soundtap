@@ -3,10 +3,10 @@
 
 """Bake the ST20 panel faces into one glyph atlas for app/oled/screen.
 
-The design draws text with Plus Jakarta Sans (500-800) and Silkscreen at fixed pixel
-sizes. The speaker has no font rasteriser, so every size the design uses is rendered
-here once, with FreeType's light hinting and unhinted advances, as Chromium on Linux
-renders canvas text; golden.sh checks the Go side against Chromium.
+The design draws text with Montserrat (600-800) and Silkscreen at fixed pixel sizes. The
+speaker has no font rasteriser, so every size the design uses is rendered here once, with
+FreeType's light hinting and unhinted advances, as Chromium on Linux renders canvas text;
+golden.sh checks the Go side against Chromium.
 
 usage: atlas.py <font dir> <out dir> [words file]   (writes st20-atlas.png and st20-atlas.txt.gz)
 
@@ -35,31 +35,25 @@ TEXT = [*range(0x20, 0x7F), *range(0xA0, 0x250), *range(0x384, 0x3CF), *range(0x
 DIGITS = [*map(ord, "0123456789:- "), 0x2013, 0x2014]  # en and em dash
 
 # name, file, weight, pixel size, runes. Names are what app/oled/screen asks for. A rune
-# the face's own font lacks comes from FALLBACK, as a browser falls back: Jakarta has
-# no Greek or Cyrillic, Silkscreen nothing past Latin-1.
+# the face's own font lacks comes from FALLBACK, as a browser falls back: Montserrat has
+# no Greek, Silkscreen nothing past Latin-1.
 # Han letters come from the first CJK font that has them (Japanese first): at these sizes
 # the regional forms do not differ visibly.
 ASIAN = ["NotoSansThai.ttf", "NotoSansJP.ttf", "NotoSansKR.ttf", "NotoSansSC.ttf", "NotoSansTC.ttf"]
-FALLBACK = {"PlusJakartaSans.ttf": ["Manrope.ttf", *ASIAN],
-            "Silkscreen-Regular.ttf": ["PlusJakartaSans.ttf", "Manrope.ttf", *ASIAN]}
+FALLBACK = {"Montserrat.ttf": ["Manrope.ttf", *ASIAN],
+            "Silkscreen-Regular.ttf": ["Montserrat.ttf", "Manrope.ttf", *ASIAN]}
+# The titles take the largest of these sizes that fits; the small lines are 600 at 11 px.
+TITLE_SIZES = [11, 12, 13, 14, 16, 18, 20]
 FACES = [
-    ("j500-7.5", "PlusJakartaSans.ttf", 500, 7.5, TEXT),
-    ("j500-8", "PlusJakartaSans.ttf", 500, 8, TEXT),
-    ("j600-7.5", "PlusJakartaSans.ttf", 600, 7.5, TEXT),
-    ("j600-8", "PlusJakartaSans.ttf", 600, 8, TEXT),
-    ("j600-9", "PlusJakartaSans.ttf", 600, 9, TEXT),
-    ("j700-9", "PlusJakartaSans.ttf", 700, 9, TEXT),
-    ("j700-10", "PlusJakartaSans.ttf", 700, 10, TEXT),
-    ("j500-32", "PlusJakartaSans.ttf", 500, 32, [*DIGITS, *map(ord, " AMP")]),
-    ("j800-8.5", "PlusJakartaSans.ttf", 800, 8.5, DIGITS),
-    ("j800-11", "PlusJakartaSans.ttf", 800, 11, TEXT),
-    ("j800-12", "PlusJakartaSans.ttf", 800, 12, TEXT),
-    ("j800-13", "PlusJakartaSans.ttf", 800, 13, TEXT),
-    ("j800-15", "PlusJakartaSans.ttf", 800, 15, TEXT),
-    ("j800-26", "PlusJakartaSans.ttf", 800, 26, [*range(0x20, 0x7F)]),
-    ("j800-34", "PlusJakartaSans.ttf", 800, 34, DIGITS),
-    ("j800-40", "PlusJakartaSans.ttf", 800, 40, DIGITS),
-    ("pix-7", "Silkscreen-Regular.ttf", 0, 7, TEXT),
+    *[(f"m700-{size}", "Montserrat.ttf", 700, size, TEXT) for size in TITLE_SIZES],
+    ("m600-11", "Montserrat.ttf", 600, 11, TEXT),
+    ("m600-30", "Montserrat.ttf", 600, 30, DIGITS),  # the standby clock
+    ("m800-17", "Montserrat.ttf", 800, 17, [*range(0x20, 0x7F)]),  # the setup network's address
+    ("m800-22", "Montserrat.ttf", 800, 22, [*DIGITS, ord("%")]),  # an install's percentage
+    ("m800-24", "Montserrat.ttf", 800, 24, DIGITS),  # the number in a ring
+    ("m800-40", "Montserrat.ttf", 800, 40, DIGITS),  # an empty preset's number
+    ("m800-44", "Montserrat.ttf", 800, 44, DIGITS),  # the volume
+    ("m800-46", "Montserrat.ttf", 800, 46, DIGITS),  # a preset's number
     ("pix-8", "Silkscreen-Regular.ttf", 0, 8, TEXT),
 ]
 WIDTH = 1024

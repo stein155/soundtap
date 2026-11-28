@@ -10,6 +10,7 @@ package oled
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"sync"
 )
@@ -66,7 +67,34 @@ func Available(path string) bool {
 
 // Draw writes a full frame (Width*Height bytes) to the panel, snapshotting
 // the previous contents on the first call since the last Restore.
-func (f *Framebuffer) Draw(pix []byte) error {
+func (f *Framebuffer) Draw(pix []byte) error { return f.DrawFaded(pix, 0) }
+
+// contrastFor is the panel contrast that shows a frame faded by fade, 0 (full brightness)
+// to 1 (dark).
+func contrastFor(fade float64) int {
+	return int(math.Round(FullContrast * (1 - math.Max(0, math.Min(1, fade)))))
+}
+
+// fadeFrame is pix as a framebuffer without a contrast command shows it faded by fade.
+func fadeFrame(pix []byte, fade float64) []byte {
+	if fade <= 0 {
+		return pix
+	}
+
+	keep := 1 - math.Min(1, fade)
+	out := make([]byte, len(pix))
+
+	for i, v := range pix {
+		out[i] = byte(math.Round(float64(v) * keep))
+	}
+
+	return out
+}
+
+// DrawFaded is Draw with the whole panel faded by fade, 0 (full brightness) to 1 (dark).
+// On spidev the fade is the panel's contrast, one command, and only the pixels that
+// changed since the last frame are sent: a fade costs no redraw.
+func (f *Framebuffer) DrawFaded(pix []byte, fade float64) error {
 	if len(pix) != Width*Height {
 		return frameSizeError{got: len(pix)}
 	}
@@ -90,8 +118,10 @@ func (f *Framebuffer) Draw(pix []byte) error {
 
 		f.drawing = true
 
-		return f.spi.draw(pix)
+		return f.spi.draw(pix, contrastFor(fade))
 	}
+
+	pix = fadeFrame(pix, fade)
 
 	if !f.drawing {
 		shown, err := os.ReadFile(f.path)
@@ -110,6 +140,18 @@ func (f *Framebuffer) Draw(pix []byte) error {
 	return nil
 }
 
+// Resend makes the next draw send the whole frame and the display-on command again, as if
+// the panel had just been opened: a controller that lost its RAM or display-on to a glitch
+// is healed by the next draw even though the pixels did not change.
+func (f *Framebuffer) Resend() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.spi != nil {
+		f.spi.latest, f.spi.on = nil, false
+	}
+}
+
 // Restore writes the snapshot taken by the first Draw back to the panel.
 // A no-op when nothing was drawn since the last Restore.
 func (f *Framebuffer) Restore() error {
@@ -123,7 +165,7 @@ func (f *Framebuffer) Restore() error {
 	f.backup = nil
 	if wasDrawing && len(saved) == Width*Height {
 		if f.spi != nil {
-			return f.spi.draw(saved)
+			return f.spi.draw(saved, FullContrast)
 		}
 
 		err := os.WriteFile(f.path, saved, framePerm)

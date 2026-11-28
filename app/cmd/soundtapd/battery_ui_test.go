@@ -64,7 +64,7 @@ func TestBatteryUIMessagesAndIdleOff(t *testing.T) {
 func tuneinSnapshot(playStatus string) speakerstate.StatusSnapshot {
 	return speakerstate.StatusSnapshot{
 		Source: "TUNEIN", PlayStatus: playStatus, Standby: false, Volume: 0, Muted: false, Bass: 0,
-		Notification: false, EmptyPreset: false, TransportAck: false, IP: "",
+		Notification: false, EmptyPreset: false, EmptySlot: 0, TransportAck: false, IP: "",
 	}
 }
 

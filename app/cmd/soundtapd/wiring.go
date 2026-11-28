@@ -440,7 +440,7 @@ const (
 // stays as long as the chord needs holding.
 func panelFeedback(disp *display.Manager) func(text string) {
 	return func(text string) {
-		disp.SetTransient(display.Content{Frame: panel.Message(panel.Text(text))}, panelFeedbackShown)
+		disp.SetTransient(display.Content{Frame: panel.Say(text), Fade: 0}, panelFeedbackShown)
 	}
 }
 
@@ -461,7 +461,7 @@ func panelChords(ctx context.Context, wiring *audioWiring, feedback func(string)
 
 	return recoveryChords(
 		exclusiveKept(&resetLock, refused, func() {
-			disp.SetTransient(display.Content{Frame: panel.Message(panel.Text("Resetting"))}, panelResettingShown)
+			disp.SetTransient(display.Content{Frame: panel.Say("Resetting"), Fade: 0}, panelResettingShown)
 			factoryReset(ctx, wiring.home, wifiConf, log.With("comp", "reset"), shutdown, stores...)
 		}),
 		exclusive(new(oplock.Lock), refused, func() {
@@ -472,7 +472,7 @@ func panelChords(ctx context.Context, wiring *audioWiring, feedback func(string)
 				done = "Setup mode off"
 			}
 
-			frontPanel.Show(panelSetupShown, func() *screen.Frame { return panel.MessageScreen(panel.Text(done)) })
+			frontPanel.Show(panelSetupShown, func() *screen.Frame { return panel.SayScreen(done) })
 
 			restart := func() error { return restartWifi(log) }
 			openAP := func() error { return openSetupAP(log) }
@@ -557,7 +557,7 @@ func startPanel(ctx context.Context, wiring *audioWiring) {
 		}
 	}
 
-	goSafe("display", func() { frontPanel.Run(ctx, speaker, disp, panel.Clock(set), log.With("comp", "oled")) })
+	goSafe("display", func() { frontPanel.Run(ctx, speaker, disp, log.With("comp", "oled")) })
 	goSafe("clockScreen", func() {
 		panel.RunClockScreen(ctx, disp, func() settings.Display { return set.Get().Display }, log.With("comp", "clock"))
 	})

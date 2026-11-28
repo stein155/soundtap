@@ -508,8 +508,8 @@ func TestEmptyPresetSetsSnapshotFlag(t *testing.T) {
 	// Slot 5 is empty by default.
 	spk.ApplyKey("PRESET_5")
 
-	if !spk.StatusSnapshot().EmptyPreset {
-		t.Fatal("pressing empty preset 5: EmptyPreset not set in snapshot")
+	if snap := spk.StatusSnapshot(); !snap.EmptyPreset || snap.EmptySlot != 5 {
+		t.Fatalf("pressing empty preset 5: EmptyPreset %v, slot %d in the snapshot", snap.EmptyPreset, snap.EmptySlot)
 	}
 	// A slot that IS filled must not set the flag.
 	_ = spk.StorePreset(bg(), 2, "TUNEIN", "stationurl", "/v1/playback/station/s1", "R1", "")

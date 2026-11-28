@@ -66,6 +66,7 @@ func snapshot(source, playStatus string, flags snapshotFlag) *speakerstate.Statu
 		Bass:         0,
 		Notification: flags&snapNotification != 0,
 		EmptyPreset:  flags&snapEmptyPreset != 0,
+		EmptySlot:    0,
 		TransportAck: flags&snapTransportAck != 0,
 		IP:           "",
 	}
@@ -483,6 +484,18 @@ func (testLamps) Up() bool         { return true }
 func (testLamps) Confirming() bool { return false }
 func (testLamps) Updating() bool   { return false }
 func (testLamps) HaveIP() bool     { return false }
+func (testLamps) NetCard() bool    { return false }
+func (testLamps) NetQuiet() bool   { return false }
+
+// writingLamps is testLamps while the network card is written.
+type writingLamps struct{ testLamps }
+
+func (writingLamps) NetCard() bool { return true }
+
+// quietLamps is testLamps while the ST20's boot screen keeps quiet about the network.
+type quietLamps struct{ testLamps }
+
+func (quietLamps) NetQuiet() bool { return true }
 
 func TestRunLEDsReturnsOnAModelWithoutLEDs(t *testing.T) {
 	t.Setenv("LEDS", "")
@@ -697,5 +710,61 @@ func TestFirmwareLEDPattern(t *testing.T) {
 	standbyPattern := ledPattern(snapshot("", "", snapStandby), LinkUp, false)
 	if standbyPattern == fwPattern {
 		t.Error("firmware pattern matches standby — they should be distinct")
+	}
+}
+
+// While the ST20's network card is written the network is down on purpose: the Wi-Fi lamp
+// stays dark on both blink phases instead of blinking "connecting" or "no network", and
+// is back to normal once the write is over.
+func TestWiFiLampSteadyWhileTheNetworkCardIsWritten(t *testing.T) {
+	t.Parallel()
+
+	writing := writingLamps{testLamps{speakerstate.New()}}
+
+	for _, link := range []Link{LinkDown, LinkConnecting, LinkSetupAP, LinkUp} {
+		lit, dark := lampsNow(writing, link, true, 1), lampsNow(writing, link, false, 2)
+		if lit != dark {
+			t.Errorf("link %d: the lamps change between blink phases: %+v, %+v", link, lit, dark)
+		}
+
+		if lit.wifiWhite || lit.wifiAmber || lit.wifiDim {
+			t.Errorf("link %d: the Wi-Fi lamp is lit while the network card is written: %+v", link, lit)
+		}
+	}
+
+	after := testLamps{writing.Speaker}
+	if lampsNow(after, LinkConnecting, true, 1) == lampsNow(after, LinkConnecting, false, 2) {
+		t.Error("after the write the Wi-Fi lamp no longer blinks while it connects")
+	}
+}
+
+// While the ST20's boot screen keeps quiet about a network that is not up yet (its mark and
+// the grace after it), the Wi-Fi lamp does too: dark and steady instead of blinking
+// "connecting" or "no network" over the mark. A network that is up, or the setup network,
+// still shows (in standby, as a fresh speaker is, dimmed); and a speaker without that quiet,
+// the ST10, blinks as before.
+func TestWiFiLampQuietWhileTheBootScreenIs(t *testing.T) {
+	t.Parallel()
+
+	quiet := quietLamps{testLamps{speakerstate.New()}}
+
+	for _, link := range []Link{LinkDown, LinkConnecting} {
+		lit, dark := lampsNow(quiet, link, true, 1), lampsNow(quiet, link, false, 2)
+		if lit != dark || lit.wifiWhite || lit.wifiAmber || lit.wifiDim {
+			t.Errorf("link %d: the Wi-Fi lamp is not dark and steady while quiet: %+v, %+v", link, lit, dark)
+		}
+	}
+
+	if up := lampsNow(quiet, LinkUp, false, 2); !up.wifiWhite && !up.wifiDim {
+		t.Errorf("a network that is up does not light the lamp while quiet: %+v", up)
+	}
+
+	if setup := lampsNow(quiet, LinkSetupAP, false, 2); !setup.wifiAmber {
+		t.Errorf("the setup network does not show while quiet: %+v", setup)
+	}
+
+	loud := quiet.testLamps
+	if lampsNow(loud, LinkConnecting, true, 1) == lampsNow(loud, LinkConnecting, false, 2) {
+		t.Error("without the quiet the Wi-Fi lamp no longer blinks while it connects")
 	}
 }

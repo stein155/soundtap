@@ -107,8 +107,8 @@ Also built into the image:
   `os/bootloader/uboot/tweetnacl.c` and `tweetnacl.h` as fetched from tweetnacl.cr.yp.to, with
   their hashes in [ADR 0124](docs/decisions/0124-third-party-code.md).
 - **Fonts.** The web UI and the browser installer use Montserrat (`@fontsource-variable/montserrat`; the installer's copy and its licence are in `docs/assets/fonts/`); the ST20's OLED
-  atlas is rendered from Plus Jakarta Sans, Silkscreen, Manrope, Noto Sans Thai and Source Han
-  Sans (Noto Sans CJK). All are under the SIL Open Font License 1.1; the atlas's notices are in
+  atlas is rendered from Montserrat, Silkscreen, Manrope, Noto Sans Thai and Source Han Sans
+  (Noto Sans CJK). All are under the SIL Open Font License 1.1; the atlas's notices are in
   `app/oled/screen/assets/OFL.txt`.
 - **The Go runtime and standard library**, compiled into soundtapd by Buildroot's Go
   toolchain (the version `SOUNDTAP_GO_VERSION` in the `Makefile` pins): BSD-3-Clause, the

@@ -15,13 +15,13 @@ import "errors"
 
 var errNoSPI = errors.New("oled: spidev transport requires Linux")
 
-// spiOLED carries only the field the portable code in oled.go reads. latest is
+// spiOLED carries only the state the portable code in oled.go reads. latest is
 // always nil here, so Draw's snapshot path falls through as it does before the
 // first successful frame on hardware.
 type spiOLED struct {
-	latest []byte
+	panelState
 }
 
 func openSPIOLED(string, string) (*spiOLED, error) { return nil, errNoSPI }
 
-func (o *spiOLED) draw([]byte) error { return errNoSPI }
+func (o *spiOLED) draw([]byte, int) error { return errNoSPI }

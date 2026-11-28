@@ -251,7 +251,7 @@ reason to interrupt it.
 
 It writes SoundTap next to Bose's software, restarts, and comes up as SoundTap. **Do not pull
 the power while it is busy**, and do not send the package again. A SoundTouch 20 shows the
-SoundTap splash on its display about a second after it restarts, then updates its network chip
+SoundTap splash on its display a few seconds after it restarts, then updates its network chip
 and restarts once more, so allow extra time; a SoundTouch 10 sweeps its lights from side to
 side while it starts.
 If it has not come back after ten minutes (twenty on a SoundTouch 20), keep it powered and see

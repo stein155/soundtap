@@ -118,7 +118,7 @@ func btReconnect(ctx context.Context, log *slog.Logger) {
 	case err == nil:
 	case exitCode(err) == btNoPhoneCame:
 		frontPanel.Show(panel.NoticeFor, func() *screen.Frame {
-			return panel.MessageScreen(panel.Text("Can't connect"))
+			return panel.SayScreen("Can't connect")
 		})
 	default:
 		log.Warn("bluetooth reconnect failed", "comp", "bt-pair", "err", err)

@@ -180,6 +180,9 @@ linters:
       # The word tables hold every language's translations, in every script.
       - path: internal/panel/words\.go
         linters: [gosmopolitan]
+      # The ST20 network card screen's greetings, in every language the panel speaks.
+      - path: oled/screen/hello\.go
+        linters: [gosmopolitan]
       # Tests feed non-Latin text on purpose to prove the multilingual paths.
       - path: _test\.go
         linters: [gosmopolitan]

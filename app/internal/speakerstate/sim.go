@@ -166,6 +166,8 @@ type Speaker struct {
 	// emptyPresetUntil is set for 2 s when a preset key fires on an empty slot, so
 	// the LED loop can blink amber briefly — the same visual feedback stock gives.
 	emptyPresetUntil time.Time
+	// emptySlot is the slot of that press, for the panel.
+	emptySlot int
 	// transportAckUntil is set for one blink when a transport key is handled.
 	transportAckUntil time.Time
 }
@@ -216,7 +218,7 @@ func New() *Speaker {
 		wakeVolumeMax: 0, wakeVolumeMin: 0, releasedAt: time.Time{}, wakeStation: nil, onVolume: nil,
 		volumeSeq: 0, volumeHookMu: sync.Mutex{}, volumeDelivered: 0, onStandby: nil, pendTrack: "",
 		pendArtist: "", pendArt: "", pendAlbum: "", zoneMaster: "", zoneSenders: "", zoneMembers: nil,
-		lastNotification: nil, notifyUntil: time.Time{}, onNotify: nil, emptyPresetUntil: time.Time{},
+		lastNotification: nil, notifyUntil: time.Time{}, onNotify: nil, emptyPresetUntil: time.Time{}, emptySlot: 0,
 		transportAckUntil: time.Time{},
 	}
 }
@@ -260,6 +262,8 @@ type StatusSnapshot struct {
 	// EmptyPreset is true for ~2 s after a preset key fires on an empty slot, so
 	// the LED loop can show the amber-blink feedback stock gives.
 	EmptyPreset bool
+	// EmptySlot is the empty slot's number while EmptyPreset holds, for the ST20 panel.
+	EmptySlot int
 	// TransportAck is true for one blink after a transport key. Stock acknowledges
 	// play, pause, stop, next, previous and mute with a single 250 ms blink and
 	// nothing else -- see docs/hardware/wla/led-behaviour.md -- so this is a window
@@ -294,6 +298,7 @@ func (s *Speaker) StatusSnapshot() StatusSnapshot {
 		Bass:         s.bassTarget,
 		Notification: time.Now().Before(s.notifyUntil),
 		EmptyPreset:  time.Now().Before(s.emptyPresetUntil),
+		EmptySlot:    s.emptySlot,
 		TransportAck: time.Now().Before(s.transportAckUntil),
 		IP:           s.IP,
 	}

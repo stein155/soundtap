@@ -42,12 +42,12 @@
  },
  {
   "origin": "generated",
-  "source": "app/oled/design/atlas.py, glyphs rasterised from Plus Jakarta Sans (https://github.com/tokotype/PlusJakartaSans), Silkscreen, Manrope and Noto Sans fonts",
+  "source": "app/oled/design/atlas.py, glyphs rasterised from Montserrat (https://github.com/JulietaUla/Montserrat), Silkscreen, Manrope and Noto Sans fonts",
   "version": "see app/oled/design/atlas.py",
   "license": "SIL OFL 1.1 (app/oled/screen/assets/OFL.txt)",
   "files": {
-   "app/oled/screen/assets/st20-atlas.png": "14683a0f09a3f2ba442e6c73e42b4e1f3c48425356980a986d4487595bf80d10",
-   "app/oled/screen/assets/st20-atlas.txt.gz": "a323610eaa51fd1e1002ac1f5062f6572a245c9a5cdd98535150056ef1522b54"
+   "app/oled/screen/assets/st20-atlas.png": "9448899faa7ea47cae4771f28a58c4a8bdfe695ee7f874314fce2e64a6b40830",
+   "app/oled/screen/assets/st20-atlas.txt.gz": "7ed5c449617f69373c2f495a0c2788a0bce994d1f5c3fb26df9cfa7934d57666"
   }
  },
  {

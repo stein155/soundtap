@@ -14,15 +14,32 @@ only by Linux. Without VDD3 the panel shows a faint, washed-out image.
 SoundTap's U-Boot ([ADR 0009](0009-mainline-linux-own-bootloaders.md)), on the ST20 only (SYSBOOT
 10010b), from `board_init`:
 
-1. switches VDD3 on: one polled I2C2 write of the value Linux leaves in the TPS65910;
+1. switches VDD3 on: one polled I2C2 write of the value Linux leaves in the TPS65910 (register
+   0x27, 0x05);
 2. runs soundtapd's panel reset and init sequence, bit-banged on the same pads as GPIO (SPI
    mode 3);
-3. paints one frame, soundtapd's `bootFrame(0)` ("SOUNDTAP", the progress track, "STARTING"),
-   run-length encoded in a generated header. A Go test regenerates and checks the header, so the
-   two cannot drift.
+3. paints one frame, soundtapd's `bootFrame(0)`: the empty rounded bar outline that soundtapd
+   then fills, so nothing moves when it takes over. It is run-length encoded in a generated
+   header; a Go test regenerates and checks the header, so the two cannot drift.
 
-All waits are bounded; a failed PMIC write skips the panel and the boot continues. Linux remuxes
-the pads to McSPI1 and redoes everything.
+All waits are bounded; a failed PMIC write prints one console line and skips the panel, and the
+boot continues. Linux remuxes the pads to McSPI1 and redoes everything.
+
+Stock initialises the panel before it switches VDD3 on, and runs the init twice. U-Boot switches
+VDD3 on first and inits once, so the controller starts on its full supply. Whether stock's order
+matters is open until the ST20 boot-frame row of the hardware checklist proves ours.
+
+The kernel keeps the frame: the ST20's device tree sets `ti,no-reset-on-init` on GPIO2's ti-sysc
+target module. Without it ti-sysc soft-reset the module about 0.7 s into boot, the panel's reset
+(gpio2_18) and chip enable (gpio2_24) became inputs, and the panel went dark until soundtapd
+opened it, about 13 s later.
+
+soundtapd takes the lit panel over without a blank: when it opens the panel and finds the reset
+line already an output driven high (U-Boot's frame, or an earlier soundtapd), it skips the reset
+pulse, which clears the controller's memory and switches the display off, and sends the init
+without its display-off; its first frame then replaces U-Boot's in place. A panel whose reset line
+was not left high, a dark one, gets the reset and the whole init as before. The ST20 went dark for
+a moment between U-Boot's bar and soundtapd's (the owner, 2026-11-28).
 
 Alternatives that lost: U-Boot's video and SPI drivers with a device-tree panel node (far more code
 and configuration for one static frame, and the shared U-Boot device tree is the WLA's); starting
@@ -31,8 +48,15 @@ kernel and rootfs, seconds rather than one).
 
 ## Consequences
 
-- A picture within about a second of power-on instead of after the userspace boot.
-- The frame is static: the progress sweep starts moving once soundtapd takes over.
+- A picture as soon as U-Boot runs instead of after the userspace boot. On the ST20 that is
+  about 4-5 s after power-on, estimated from the code, not yet measured: before U-Boot the SPL
+  restarts the BCO with its clock running (1 s, `spl_bco_restart`), asks the micro-B port for a
+  USB host first (3 s for the RNDIS connect timeout with nothing plugged in, about 11 s with a
+  host that does not answer BOOTP) and only then loads U-Boot from NAND. In U-Boot the frame is
+  already the first thing `board_init` does, right after relocation and before NAND, the
+  environment and autoboot. An earlier picture needs an SPL change (the frame in the SPL, or
+  the BCO's second overlapping the USB ask), which rewrites `mtd0`-`mtd3`.
+- The frame is static: the bar starts to fill once soundtapd takes over, from the same pixels.
 - A change to `bootFrame` needs `UPDATE_SPLASH=1 go test -run TestUbootSplash` in
   `app/internal/panel`, and reaches the speaker only with an install that changes the bootloader.
 
@@ -42,4 +66,6 @@ kernel and rootfs, seconds rather than one).
 - `os/bootloader/uboot/soundtap-splash.h`: the generated frame.
 - `app/internal/panel/boot.go:bootFrame` and `app/internal/panel/splash_internal_test.go`: the frame and the
   test that regenerates and checks the header.
-- `app/oled/spidev_linux.go`: soundtapd's panel init sequence that U-Boot repeats.
+- `app/oled/spidev.go`: soundtapd's panel init sequence that U-Boot repeats, and how a lit panel
+  is taken over (`panelStart`); `app/oled/spidev_linux.go` opens it.
+- `os/board/common/dts/ti/omap/am335x-soundtap-st20.dts`: GPIO2 kept out of ti-sysc's reset.

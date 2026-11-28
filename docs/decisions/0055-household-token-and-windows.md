@@ -59,7 +59,8 @@ That check prevents misrouting; it is not authentication. Signed updates are
   owner's newest request still gets the lane, so no rate limit is needed. After 60 s a request
   fails with 403 `not_confirmed`.
 - **The speaker shows what waits.** ST10 lamps blink white, the WLA blinks amber fast, the ST20
-  display names the action ("Hold a button to reset", "… to install", "… for Wi-Fi"). The UI says
+  display asks under CONFIRM what it confirms ("Reset?", "Install?", "Change Wi-Fi?") over "Hold a
+  button". The UI says
   "Hold a button on the speaker, not volume, for two seconds to confirm" and tells a browser
   whose request was replaced.
 - **Root skips the hold.** A one-shot token in `/run/soundtap/confirm-token` (mode 0600), sent as

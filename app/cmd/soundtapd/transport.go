@@ -120,8 +120,8 @@ func wireTransport(
 			return spot.Command(sctx, arg)
 		},
 	}, func() {
-		frame := panel.Message(panel.Text("Action unavailable"))
-		disp.SetTransient(display.Content{Frame: frame}, transportUnavailableShown)
+		frame := panel.Say("Action unavailable")
+		disp.SetTransient(display.Content{Frame: frame, Fade: 0}, transportUnavailableShown)
 	}, log.With("comp", "transport")))
 	speaker.OnForwardKey(func(key string) bool {
 		if !webSrv.ForwardsKey(key) {

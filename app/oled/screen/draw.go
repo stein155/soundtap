@@ -142,14 +142,33 @@ func (f *Frame) Line(pts []Pt, width float64, caps Cap, grey int) {
 	f.fillCached(key, bounds(pts, halfWidth+1), grey, byDistance(dist, halfWidth, round), inside)
 }
 
-// Arc strokes a circle arc from start to end radians (clockwise, as canvas), butt caps.
-func (f *Frame) Arc(centreX, centreY, radius, start, end, width float64, grey int) {
+// Arc strokes a circle arc from start to end radians (clockwise, as canvas) with the
+// given caps.
+func (f *Frame) Arc(centreX, centreY, radius, start, end, width float64, caps Cap, grey int) {
 	halfWidth := width * half
 	full := end-start >= fullTurn
+	round := caps == RoundCap && !full
+	capAt := func(angle float64) Pt {
+		return Pt{centreX + radius*math.Cos(angle), centreY + radius*math.Sin(angle)}
+	}
+	ends := [2]Pt{capAt(start), capAt(end)}
+	nearCap := func(sampleX, sampleY float64) float64 {
+		return math.Min(math.Hypot(sampleX-ends[0].X, sampleY-ends[0].Y),
+			math.Hypot(sampleX-ends[1].X, sampleY-ends[1].Y))
+	}
 	ring := func(sampleX, sampleY float64) float64 {
-		return math.Abs(math.Hypot(sampleX-centreX, sampleY-centreY) - radius)
+		d := math.Abs(math.Hypot(sampleX-centreX, sampleY-centreY) - radius)
+		if round {
+			d = math.Min(d, nearCap(sampleX, sampleY))
+		}
+
+		return d
 	}
 	inside := func(sampleX, sampleY float64) bool {
+		if round && nearCap(sampleX, sampleY) <= halfWidth {
+			return true
+		}
+
 		distSq := (sampleX-centreX)*(sampleX-centreX) + (sampleY-centreY)*(sampleY-centreY)
 		if distSq > (radius+halfWidth)*(radius+halfWidth) ||
 			(radius > halfWidth && distSq < (radius-halfWidth)*(radius-halfWidth)) {
@@ -173,8 +192,80 @@ func (f *Frame) Arc(centreX, centreY, radius, start, end, width float64, grey in
 		maxX: centreX + radius + halfWidth + 1,
 		maxY: centreY + radius + halfWidth + 1,
 	}
-	key := fmt.Sprint("A", centreX, centreY, radius, start, end, width)
+	key := fmt.Sprint("A", centreX, centreY, radius, start, end, width, round)
 	f.fillCached(key, area, grey, byDistance(ring, halfWidth, full), inside)
+}
+
+// Disk fills a circle: arc(x, y, r, 0, 2π) + fill.
+func (f *Frame) Disk(centreX, centreY, radius float64, grey int) {
+	inside := func(sampleX, sampleY float64) bool {
+		return (sampleX-centreX)*(sampleX-centreX)+(sampleY-centreY)*(sampleY-centreY) <= radius*radius
+	}
+	area := box{minX: centreX - radius, minY: centreY - radius, maxX: centreX + radius + 1, maxY: centreY + radius + 1}
+	f.fillCached(fmt.Sprint("D", centreX, centreY, radius), area, grey, convex(inside), inside)
+}
+
+// StrokeRect is strokeRect: the rectangle's outline, width wide and centred on its edges,
+// with round joins (as the icons draw it) or square ones (canvas's default miter).
+//
+//nolint:revive // flag-parameter: round is the stroke's join, part of what is drawn
+func (f *Frame) StrokeRect(left, top, width, height, lineWidth float64, round bool, grey int) {
+	halfWidth := lineWidth * half
+	edge := func(sampleX, sampleY float64) float64 {
+		outX := math.Max(math.Max(left-sampleX, sampleX-(left+width)), 0)
+		outY := math.Max(math.Max(top-sampleY, sampleY-(top+height)), 0)
+
+		if outX > 0 || outY > 0 {
+			if !round {
+				return math.Max(outX, outY)
+			}
+
+			return math.Hypot(outX, outY)
+		}
+
+		return math.Min(math.Min(sampleX-left, left+width-sampleX), math.Min(sampleY-top, top+height-sampleY))
+	}
+	inside := func(sampleX, sampleY float64) bool { return edge(sampleX, sampleY) <= halfWidth }
+	area := strokeBox(left, top, width, height, halfWidth)
+	f.fillCached(fmt.Sprint("S", left, top, width, height, lineWidth, round), area, grey, nil, inside)
+}
+
+// rounded is a rounded rectangle.
+type rounded struct{ left, top, width, height, radius float64 }
+
+// holds says the point is inside the rounded rectangle.
+func (r rounded) holds(sampleX, sampleY float64) bool {
+	if sampleX < r.left || sampleX >= r.left+r.width || sampleY < r.top || sampleY >= r.top+r.height {
+		return false
+	}
+
+	radius := math.Max(r.radius, 0)
+	nearX := math.Max(r.left+radius, math.Min(sampleX, r.left+r.width-radius))
+	nearY := math.Max(r.top+radius, math.Min(sampleY, r.top+r.height-radius))
+
+	return (sampleX-nearX)*(sampleX-nearX)+(sampleY-nearY)*(sampleY-nearY) <= radius*radius
+}
+
+// strokeBox is the area a rectangle's outline halfWidth either side of its edges covers.
+func strokeBox(left, top, width, height, halfWidth float64) box {
+	return box{
+		minX: left - halfWidth, minY: top - halfWidth,
+		maxX: left + width + halfWidth + 1, maxY: top + height + halfWidth + 1,
+	}
+}
+
+// StrokeRRect is roundRect + stroke: the band between the rounded rectangle grown and shrunk
+// by half the line width.
+func (f *Frame) StrokeRRect(left, top, width, height, radius, lineWidth float64, grey int) {
+	halfWidth := lineWidth * half
+	radius = math.Min(radius, math.Min(width, height)*half)
+	outer := rounded{left - halfWidth, top - halfWidth, width + lineWidth, height + lineWidth, radius + halfWidth}
+	inner := rounded{left + halfWidth, top + halfWidth, width - lineWidth, height - lineWidth, radius - halfWidth}
+	inside := func(sampleX, sampleY float64) bool {
+		return outer.holds(sampleX, sampleY) && !inner.holds(sampleX, sampleY)
+	}
+	area := strokeBox(left, top, width, height, halfWidth)
+	f.fillCached(fmt.Sprint("O", left, top, width, height, radius, lineWidth), area, grey, nil, inside)
 }
 
 // Pix is the frame as the panel shows it: 16 levels, each written as level*17. dim is
@@ -570,4 +661,12 @@ func faceOf(name string) face {
 	fontAtlas.once.Do(loadAtlas)
 
 	return fontAtlas.faces[name]
+}
+
+// LoadFonts decodes the font atlas now rather than at the first text drawn. On the ST20 that
+// takes seconds, and the first text of a power-on is the mark's "SoundTap": decoded there, it
+// stalled the boot screen past the whole name (2026-11-28). The boot screen calls it in the
+// background while the bar runs.
+func LoadFonts() {
+	fontAtlas.once.Do(loadAtlas)
 }

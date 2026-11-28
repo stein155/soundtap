@@ -121,3 +121,60 @@ func TestParseSPIPins(t *testing.T) {
 		}
 	}
 }
+
+// A dark panel is reset and gets the whole init. A panel already lit by U-Boot's boot frame
+// (its reset line left driven high) is taken over without a blank: no reset, which clears the
+// controller and switches the display off, and the init without its display-off.
+func TestPanelStartKeepsALitPanel(t *testing.T) {
+	t.Parallel()
+
+	pulse, init := panelStart(false)
+	if !pulse || len(init) == 0 || init[0] != cmdOff {
+		t.Fatalf("dark panel: reset %v, init starts %#x, want a reset and display-off first", pulse, init[0])
+	}
+
+	pulse, lit := panelStart(true)
+	if pulse {
+		t.Error("lit panel: reset pulsed, which blanks it")
+	}
+
+	for _, cmd := range lit {
+		if cmd == cmdOff {
+			t.Fatalf("lit panel: the init switches the display off: % x", lit)
+		}
+	}
+
+	if !bytes.Equal(lit, init[1:]) {
+		t.Errorf("lit panel: init % x, want the same settings % x", lit, init[1:])
+	}
+}
+
+// drivenHigh reads a sysfs GPIO: only an output at 1 counts as a panel brought up before.
+func TestDrivenHighReadsTheLine(t *testing.T) {
+	t.Parallel()
+
+	for _, line := range []struct {
+		direction, value string
+		want             bool
+	}{
+		{"out\n", "1\n", true},
+		{"out\n", "0\n", false},
+		{"in\n", "1\n", false},
+		{"", "", false},
+	} {
+		dir := t.TempDir()
+
+		if line.direction != "" {
+			for name, body := range map[string]string{"direction": line.direction, "value": line.value} {
+				err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+
+		if got := drivenHigh(dir); got != line.want {
+			t.Errorf("direction %q value %q: drivenHigh %v, want %v", line.direction, line.value, got, line.want)
+		}
+	}
+}

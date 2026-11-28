@@ -21,7 +21,7 @@ const bcoNoticeMax = 25 * time.Minute
 //nolint:gochecknoglobals // process-wide state: the BCO install sets it, the boot screen reads it
 var bcoNoticeUntil atomic.Int64
 
-// bcoUpdateNotice keeps the ST20 panel on "Updating · Network card · Do not unplug" for the
+// bcoUpdateNotice keeps the ST20 panel on its network card screen (screen.Netcard) for the
 // whole replacement of stock's BCO app, not only while bco.Flash holds the BCO: before the
 // flash soundtapd reads stock's Wi-Fi profile, and after it the speaker waits for the boot
 // confirmation and restarts, all without a network. Without it the panel says "Connecting…"

@@ -109,6 +109,13 @@ var firmwareActive atomic.Bool
 //nolint:gochecknoglobals // process-wide state: the install sets it, the panel reads it
 var firmwareProgress atomic.Int64
 
+// bootNetQuiet is set while the ST20's boot screen keeps quiet about a network that is not up
+// yet: through the boot, the mark and a few seconds after it (panel.BootStatus.Quiet). The
+// Wi-Fi lamp keeps quiet with it. Never set on a model without a panel.
+//
+//nolint:gochecknoglobals // process-wide state: the boot screen sets it, the lamps read it
+var bootNetQuiet atomic.Bool
+
 // lampStatus is what the lamps report: the speaker's state and the daemon's own.
 type lampStatus struct{ *speakerstate.Speaker }
 
@@ -116,6 +123,8 @@ func (lampStatus) Up() bool         { return daemonUp.Load() }
 func (lampStatus) Confirming() bool { return confirmPending.Load() || chordCounting.Load() }
 func (lampStatus) Updating() bool   { return firmwareActive.Load() }
 func (lampStatus) HaveIP() bool     { return outboundIP() != "" }
+func (lampStatus) NetCard() bool    { return bcoUpdating() }
+func (lampStatus) NetQuiet() bool   { return bootNetQuiet.Load() }
 
 // runLamps drives the front lamps of this model. The Wireless Link's panel is two
 // bi-colour lamps with a PWM channel, which the seven-lamp loop cannot describe: same

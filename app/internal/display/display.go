@@ -15,9 +15,12 @@ import (
 	"github.com/stein155/soundtap/app/oled"
 )
 
-// Content is a finished panel frame, oled.Width*oled.Height bytes.
+// Content is a finished panel frame, oled.Width*oled.Height bytes, and how far the whole
+// panel is faded: 0 is full brightness, 1 dark. A fade is the panel's contrast, so a
+// screen that fades in or out costs no redraw on the ST20 (oled.Framebuffer.DrawFaded).
 type Content struct {
 	Frame []byte
+	Fade  float64
 }
 
 // Manager arbitrates the native standby clock and now-playing screens.
@@ -30,12 +33,15 @@ type Manager struct {
 	mu             sync.Mutex
 	standbyFrame   []byte
 	npFrame        []byte
+	npFade         float64
 	overlayFrame   []byte
+	overlayFade    float64
 	transientFrame []byte
 	transientUntil time.Time
 	alertFrame     []byte
 	alertUntil     time.Time
 	shown          []byte
+	shownFade      float64
 	drawnAt        time.Time
 
 	// wake ends the slow standby tick at once when something new is set.
@@ -54,12 +60,15 @@ func New(ctx context.Context, fbPath string, standby func(context.Context) bool,
 		mu:             sync.Mutex{},
 		standbyFrame:   nil,
 		npFrame:        nil,
+		npFade:         0,
 		overlayFrame:   nil,
+		overlayFade:    0,
 		transientFrame: nil,
 		transientUntil: time.Time{},
 		alertFrame:     nil,
 		alertUntil:     time.Time{},
 		shown:          nil,
+		shownFade:      0,
 		drawnAt:        time.Time{},
 
 		wake: make(chan struct{}, 1),
@@ -130,7 +139,7 @@ func (m *Manager) SetNowPlaying(content Content) {
 	}
 
 	m.mu.Lock()
-	m.npFrame = content.Frame
+	m.npFrame, m.npFade = content.Frame, content.Fade
 	m.mu.Unlock()
 	m.nudge()
 }
@@ -156,7 +165,7 @@ func (m *Manager) SetOverlay(content Content) {
 	}
 
 	m.mu.Lock()
-	m.overlayFrame = content.Frame
+	m.overlayFrame, m.overlayFade = content.Frame, content.Fade
 	m.mu.Unlock()
 	m.nudge()
 }
@@ -202,14 +211,15 @@ func (m *Manager) SetAlert(content Content, lasting time.Duration) {
 	m.nudge()
 }
 
-// paintTick is how often the panel is looked at: the design's bars and dots move in
-// steps of a tenth of a second. An unchanged frame is written again only after
+// paintTick is how often the panel is looked at: the design's animations (the boot mark,
+// the radio's fade, the network card's note) run at 20 frames a second, each frame
+// changing little; only the changed pixels go to the panel. An unchanged frame is written again only after
 // repaintEvery: on the ST20 a frame is a 6 KB SPI transfer, and writing the standby
 // clock once a second cost CPU all night for a picture that changes once a minute.
 // In standby, with only the clock to show, the panel is looked at once a second; any
 // overlay or transient, or waking, brings the next tick back to paintTick.
 const (
-	paintTick        = 100 * time.Millisecond
+	paintTick        = 50 * time.Millisecond
 	standbyPaintTick = time.Second
 	repaintEvery     = time.Minute
 )
@@ -280,63 +290,79 @@ func (m *Manager) timed(now time.Time) ([]byte, []byte) {
 	return m.alertFrame, m.transientFrame
 }
 
+// shownContent is what should be on the panel now, and what was put there last.
+type shownContent struct {
+	want, shown         []byte
+	wantFade, shownFade float64
+}
+
 // wanted is the frame to show now: the alert, the overlay, a transient, then the standby or
 // now-playing screen; and the frame shown last.
-func (m *Manager) wanted(ctx context.Context) ([]byte, []byte) {
+func (m *Manager) wanted(ctx context.Context) shownContent {
 	m.mu.Lock()
 	alert, transient := m.timed(time.Now())
-	standbyFrame, npFrame, overlay, shown := m.standbyFrame, m.npFrame, m.overlayFrame, m.shown
+	standbyFrame, npFrame, overlay := m.standbyFrame, m.npFrame, m.overlayFrame
+	out := shownContent{want: nil, shown: m.shown, wantFade: 0, shownFade: m.shownFade}
+	npFade, overlayFade := m.npFade, m.overlayFade
 	m.mu.Unlock()
 
 	switch {
 	case alert != nil:
-		return alert, shown
+		out.want = alert
 	case overlay != nil:
-		return overlay, shown
+		out.want, out.wantFade = overlay, overlayFade
 	case transient != nil:
-		return transient, shown
+		out.want = transient
 	case m.standby != nil && m.standby(ctx):
-		return standbyFrame, shown
+		out.want = standbyFrame
 	default:
-		return npFrame, shown
+		out.want, out.wantFade = npFrame, npFade
 	}
+
+	return out
 }
 
 func (m *Manager) step(ctx context.Context) {
-	want, shown := m.wanted(ctx)
+	now := m.wanted(ctx)
 
-	if want == nil {
+	if now.want == nil {
 		// Nothing to show (standby with the clock off): a dark panel. There is no
 		// screen of anyone else's under ours to put back, and the framebuffer's
 		// snapshot is a frame of our own, such as the boot screen's "Connecting…".
-		if shown != nil {
+		if now.shown != nil {
 			err := m.fb.Draw(make([]byte, oled.Width*oled.Height))
 			if err == nil {
-				m.setShown(nil)
+				m.setShown(nil, 0)
 			}
 		}
 
 		return
 	}
 
-	if bytes.Equal(want, shown) && time.Since(m.drawnAt) < repaintEvery {
+	if bytes.Equal(now.want, now.shown) && now.wantFade == now.shownFade && time.Since(m.drawnAt) < repaintEvery {
 		return
+	}
+
+	if bytes.Equal(now.want, now.shown) && now.wantFade == now.shownFade {
+		// Nothing changed for repaintEvery: send it all again, which heals a panel that lost
+		// its frame; a partial draw of an unchanged frame would send nothing.
+		m.fb.Resend()
 	}
 
 	m.drawnAt = time.Now()
 
-	err := m.fb.Draw(want)
+	err := m.fb.DrawFaded(now.want, now.wantFade)
 	if err != nil {
 		m.log.Warn("display draw failed", "err", err)
 
 		return
 	}
 
-	m.setShown(want)
+	m.setShown(now.want, now.wantFade)
 }
 
-func (m *Manager) setShown(b []byte) {
+func (m *Manager) setShown(b []byte, fade float64) {
 	m.mu.Lock()
-	m.shown = b
+	m.shown, m.shownFade = b, fade
 	m.mu.Unlock()
 }

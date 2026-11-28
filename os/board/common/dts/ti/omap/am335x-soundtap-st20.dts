@@ -130,6 +130,16 @@
 };
 
 /*
+ * GPIO2 holds the panel's reset (gpio2_18) and chip enable (gpio2_24) as U-Boot's boot
+ * frame left them (ADR 0131). ti-sysc soft-reset the module ~0.7 s into boot, which turned
+ * both into inputs and blanked the panel until soundtapd opened it some 13 s later (a bench
+ * report). The target module has no label in am33xx-l4.dtsi, hence the path.
+ */
+&{/ocp/interconnect@48000000/segment@100000/target-module@ac000} {
+	ti,no-reset-on-init;
+};
+
+/*
  * Every group here goes through AM33XX_PADCONF(pa, conf, mux), which takes the
  * *absolute* pad-control address and subtracts the 0x800 pinmux base itself. Raw cells
  * holding absolute addresses are rejected by pinctrl-single ("mux offset out of range":

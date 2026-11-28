@@ -109,32 +109,33 @@ func (c *deviceConfirm) rotate() {
 	}
 }
 
-// confirmPrompt is what the ST20 panel says while a request waits, so whoever holds a key
-// sees what it confirms. what is the request's method and path.
+// confirmPrompt is what the ST20 panel asks while a request waits, so whoever holds a key
+// sees what it confirms: a question the panel shows under CONFIRM, over "Hold a button"
+// (panel.SayScreen). what is the request's method and path.
 func confirmPrompt(what string) string {
 	switch what {
 	case "POST /api/factory-reset":
-		return "Hold a button to reset"
+		return "Reset?"
 	case "POST /api/restore":
-		return "Hold a button to restore"
+		return "Restore?"
 	case "POST /api/reboot":
-		return "Hold a button to restart"
+		return "Restart?"
 	case "POST /api/wifi":
-		return "Hold a button for Wi-Fi"
+		return "Change Wi-Fi?"
 	case "POST /api/setup":
-		return "Hold a button for setup"
+		return "Setup mode?"
 	case "POST /api/bluetooth/clear", "POST /api/bluetooth/forget":
-		return "Hold a button to unpair"
+		return "Unpair?"
 	case "POST /api/firmware", "POST /api/core-update", "POST /api/soundtapd", "DELETE /api/soundtapd",
 		"POST /api/update":
-		return "Hold a button to install"
+		return "Install?"
 	}
 
 	if strings.HasPrefix(what, "GET /api/debug") {
-		return "Hold a button for logs"
+		return "Share logs?"
 	}
 
-	return "Hold a button"
+	return "Continue?"
 }
 
 func (c *deviceConfirm) confirm(ctx context.Context, what, token string) error {

@@ -14,8 +14,8 @@ const (
 	Right
 )
 
-// Font is a text style: Face names an atlas face such as "j800-15" (Jakarta, weight,
-// pixel size) or "pix-7" (Silkscreen).
+// Font is a text style: Face names an atlas face such as "m700-18" (Montserrat, weight,
+// pixel size) or "pix-8" (Silkscreen).
 type Font struct {
 	Face  string
 	Level int
