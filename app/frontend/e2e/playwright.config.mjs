@@ -5,7 +5,8 @@
 // (docs/tools/demo-server.mjs on :8080). `make test-e2e` runs them in the Makefile's pinned
 // Playwright image through e2e/in-container.sh, which starts the server. pwa.spec.mjs runs
 // as the home-screen app on phones instead: an iPhone in WebKit, an Android phone and the
-// narrowest screen in Chromium, each the size of its whole screen with its own insets.
+// narrowest screen in Chromium, each the size of its whole screen with its own insets; the
+// iPhones (ios) also with the short viewport units iOS gives a home-screen app.
 import { defineConfig, devices } from '@playwright/test';
 
 // A device as a home-screen app: no browser bar, so the page has the whole screen.
@@ -38,7 +39,7 @@ export default defineConfig({
       name: 'iphone',
       testMatch: 'pwa.spec.mjs',
       use: standalone('iPhone 15', 'webkit'),
-      metadata: { insets: { top: 59, bottom: 34, left: 0, right: 0 } },
+      metadata: { insets: { top: 59, bottom: 34, left: 0, right: 0 }, ios: true },
     },
     {
       // Status bar above, three-button navigation below.
@@ -52,7 +53,7 @@ export default defineConfig({
       name: 'narrow',
       testMatch: 'pwa.spec.mjs',
       use: standalone('iPhone SE', 'chromium'),
-      metadata: { insets: { top: 20, bottom: 0, left: 0, right: 0 } },
+      metadata: { insets: { top: 20, bottom: 0, left: 0, right: 0 }, ios: true },
     },
   ],
 });

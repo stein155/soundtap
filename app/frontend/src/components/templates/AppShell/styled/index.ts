@@ -16,7 +16,7 @@ export const Frame = styled.div`
   position: relative;
   width: 100%;
   max-width: var(--shell-max);
-  height: 100dvh;
+  height: var(--app-h);
   margin: 0 auto;
   display: flex;
   flex-direction: column;

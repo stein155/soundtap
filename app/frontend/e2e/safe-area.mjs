@@ -5,16 +5,31 @@
 // WebKit in Playwright report env(safe-area-inset-*) as 0, so every one in the page's CSS
 // (index.html, the stylesheet, styled-components' rules) is rewritten to a fixed value
 // before it applies. Then audit() reads what the page drew into those bands.
+//
+// The page also runs as the home-screen app: (display-mode: standalone) matches, which no
+// browser here does on its own. On an iPhone (ios) the dynamic and small viewport units are
+// as short as iOS makes them there, the screen less the top and bottom insets (WebKit bug
+// 254868), so a layout sized by them ends above the home indicator, as on the phone.
 /* global document, window, getComputedStyle, innerWidth, innerHeight, CSSStyleSheet, MutationObserver */
 
 const ENV =
   'env\\(\\s*safe-area-inset-(top|bottom|left|right)\\s*(?:,[^()]*(?:\\([^()]*\\)[^()]*)*)?\\)';
 
+// What a page's CSS becomes on the phone. Runs in Node and in the page: self-contained.
+function rewriteCss(css, { ins, env, ios }) {
+  if (typeof css !== 'string') return css;
+  let out = css.replace(new RegExp(env, 'gu'), (_, side) => `${ins[side] ?? 0}px`);
+  out = out.replace(/\(\s*display-mode\s*:\s*standalone\s*\)/gu, '(min-width: 0px)');
+  if (ios) {
+    const short = `calc(100vh - ${(ins.top ?? 0) + (ins.bottom ?? 0)}px)`;
+    out = out.replace(/\b100(?:dvh|svh)\b/gu, short);
+  }
+  return out;
+}
+
 // In the page, before its scripts: rules inserted later get the insets too.
-function patchStyles({ ins, src }) {
-  const re = new RegExp(src, 'gu');
-  const rw = (css) =>
-    typeof css === 'string' ? css.replace(re, (_, side) => `${ins[side] ?? 0}px`) : css;
+function patchStyles(cfg, rewrite) {
+  const rw = (css) => rewrite(css, cfg);
   const original = CSSStyleSheet.prototype.insertRule;
   CSSStyleSheet.prototype.insertRule = function insertRule(rule, i) {
     return original.call(this, rw(rule), i);
@@ -33,19 +48,19 @@ function patchStyles({ ins, src }) {
       if (m.target.nodeName === 'STYLE') m.target.childNodes.forEach(fix);
     }
   }).observe(document, { subtree: true, childList: true, characterData: true });
-  window.fakeSafeAreaInsets = ins;
+  window.fakeSafeAreaInsets = cfg.ins;
 }
 
-export async function fakeInsets(page, ins) {
-  const re = new RegExp(ENV, 'gu');
+// ios: the phone is an iPhone, whose home-screen app has short dvh and svh (above).
+export async function fakeInsets(page, ins, { ios = false } = {}) {
+  const cfg = { ins, env: ENV, ios };
   await page.route('**/*', async (route) => {
     const req = route.request();
     if (!['document', 'stylesheet'].includes(req.resourceType())) return route.fallback();
     const res = await route.fetch();
-    const body = (await res.text()).replace(re, (_, side) => `${ins[side] ?? 0}px`);
-    await route.fulfill({ response: res, body });
+    await route.fulfill({ response: res, body: rewriteCss(await res.text(), cfg) });
   });
-  await page.addInitScript(patchStyles, { ins, src: ENV });
+  await page.addInitScript({ content: `(${patchStyles})(${JSON.stringify(cfg)}, ${rewriteCss});` });
 }
 
 // The rules the rewrite missed: none may still ask env() for an inset.
@@ -173,7 +188,28 @@ function bars() {
     });
 }
 
-const IN_PAGE = [audit, targets, textBox, clip, onTopWithin, describe, sides, bars].map(String);
+// What is as tall as the screen reaches its bottom edge, so no strip of page shows under
+// the bottom bar or a sheet: the page itself, the dock, every sheet from the bottom, and
+// the top of a full-height one.
+function edges() {
+  const H = innerHeight;
+  const out = [];
+  const off = (a, b) => Math.abs(a - b) > 0.5;
+  const body = document.body.getBoundingClientRect();
+  if (off(body.bottom, H)) out.push(`the page ends ${Math.round(H - body.bottom)} px short`);
+  for (const el of document.querySelectorAll('.dock, .sheet:not(.dialog)')) {
+    if (!shown(el)) continue;
+    const r = el.getBoundingClientRect();
+    const name = `.${el.className.trim().split(/\s+/u).join('.')}`;
+    if (off(r.bottom, H)) out.push(`${name} ends ${Math.round(H - r.bottom)} px short`);
+    if (el.matches('.sheet.full') && off(r.top, 0)) out.push(`${name} starts at ${r.top}`);
+  }
+  return out;
+}
+
+const IN_PAGE = [audit, targets, textBox, clip, onTopWithin, describe, sides, bars, edges].map(
+  String
+);
 
 // Loads the audit into the page once per document.
 export async function installAudit(page) {
@@ -181,10 +217,11 @@ export async function installAudit(page) {
     content: `const CONTROLS = ${JSON.stringify(CONTROLS)};
 const shown = ${shown.toString()};
 ${IN_PAGE.join('\n')}
-window.safeAreaAudit = { audit, sides, bars };`,
+window.safeAreaAudit = { audit, sides, bars, edges };`,
   });
 }
 
 export const inBand = (page, band) => page.evaluate((b) => window.safeAreaAudit.audit(b), band);
 export const pastSides = (page) => page.evaluate(() => window.safeAreaAudit.sides());
 export const speakerBars = (page) => page.evaluate(() => window.safeAreaAudit.bars());
+export const shortOfBottom = (page) => page.evaluate(() => window.safeAreaAudit.edges());

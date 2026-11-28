@@ -156,6 +156,14 @@
       html[data-theme='dark'] body {
         background: #121212;
       }
+      /* A home-screen app: iOS reports dvh short by the safe-area insets there, 100vh is
+         the whole screen (--app-h in theme/GlobalStyle.ts). */
+      @media (display-mode: standalone), (display-mode: fullscreen) {
+        html,
+        body {
+          height: 100vh;
+        }
+      }
 
       /* Launch screen: the SoundTap mark and wordmark, the mark's grille holes dimming in
          turn while the app loads. It lies over #root until the app has drawn its first

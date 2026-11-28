@@ -65,6 +65,12 @@ export const GlobalStyle = createGlobalStyle`
     /* As wide as the widest phone (440 px): a phone's own screen is never framed by gutters;
        a wider window gets a column. */
     --shell-max: 440px;
+    /* The screen's height, for everything as tall as the screen. In a browser the dynamic
+       viewport, which follows the toolbars. A home-screen app has no toolbars, and there
+       iOS reports dvh and svh short by the status bar and home indicator insets (WebKit bug
+       254868), so the app ended above the home indicator with a strip of page under its
+       bottom bar: 100vh is the whole screen there. index.html sets the same for <html>. */
+    --app-h: 100dvh;
     --shadow-sm: 0 1px 2px rgba(31, 24, 20, 0.05), 0 0 0 1px rgba(31, 24, 20, 0.04);
     --shadow: 0 8px 24px -8px rgba(31, 24, 20, 0.14), 0 0 0 1px rgba(31, 24, 20, 0.04);
     --shadow-lg: 0 22px 50px -16px rgba(31, 24, 20, 0.2);
@@ -75,6 +81,12 @@ export const GlobalStyle = createGlobalStyle`
   @media ${desktop} {
     :root {
       --shell-max: 1024px;
+    }
+  }
+
+  @media (display-mode: standalone), (display-mode: fullscreen) {
+    :root {
+      --app-h: 100vh;
     }
   }
 
@@ -129,7 +141,7 @@ export const GlobalStyle = createGlobalStyle`
     font-family: 'Montserrat Variable', -apple-system, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    height: 100dvh;
+    height: var(--app-h);
     overflow: hidden;
     overscroll-behavior: none;
     /* pan-y alone also turns off pinch-zoom, which index.html promises to keep

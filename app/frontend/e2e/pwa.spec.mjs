@@ -3,7 +3,9 @@
 
 // The home-screen app on a phone: every main screen and sheet keeps its controls, headings
 // and text out of the status bar or notch above and the home indicator or navigation bar
-// below, the docked speaker bar pads only max(0, inset - 16px) under its content, a sheet's
+// below, the page, the dock and every sheet reach the screen's bottom edge, also with the
+// short viewport units iOS gives a home-screen app, the docked speaker bar pads only
+// max(0, inset - 16px) under its content, a sheet's
 // last row clears the bottom inset once scrolled to its end, and nothing reaches past the
 // sides. The insets are put into the CSS (safe-area.mjs); the projects in
 // playwright.config.mjs give each phone its own. An emulator approves no hardware.
@@ -15,6 +17,7 @@ import {
   installAudit,
   leftoverInsets,
   pastSides,
+  shortOfBottom,
   speakerBars,
 } from './safe-area.mjs';
 
@@ -126,8 +129,8 @@ const SCREENS = {
 for (const [name, open] of Object.entries(SCREENS)) {
   test(`${name} keeps clear of the phone's insets`, async ({ page, request }, info) => {
     test.setTimeout(60000);
-    const ins = info.project.metadata.insets;
-    await fakeInsets(page, ins);
+    const { insets: ins, ios } = info.project.metadata;
+    await fakeInsets(page, ins, { ios });
     await installAudit(page);
     await open(page, request);
     // Sheets slide in: once one has started, every animation that ends has ended (a
@@ -141,6 +144,9 @@ for (const [name, open] of Object.entries(SCREENS)) {
     // A slow runner can still be settling a layer that slides in: give it a moment.
     await expect.poll(() => leftoverInsets(page)).toEqual([]);
     await expect.poll(() => pastSides(page)).toEqual([]);
+    // The page, the dock and the sheets reach the bottom edge: no strip of page under the
+    // bottom bar, and the bar stays put as a sheet opens over it.
+    await expect.poll(() => shortOfBottom(page)).toEqual([]);
     await expect.poll(() => inBand(page, 'top')).toEqual([]);
     // Polled as the checks above: a bar inside a layer that just slid in can still be a
     // pixel or two from its place on a slow runner.

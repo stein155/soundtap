@@ -18,7 +18,7 @@ import { JoinForm } from './JoinForm';
 const FitSheet = createGlobalStyle`
   .sheet.wifi-join {
     height: auto;
-    max-height: calc(100dvh - max(56px, env(safe-area-inset-top) + 8px));
+    max-height: calc(var(--app-h) - max(56px, env(safe-area-inset-top) + 8px));
     overflow-y: auto;
     border-radius: 14px 14px 0 0;
     background: var(--surface);
