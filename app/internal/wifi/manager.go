@@ -758,11 +758,12 @@ func (m *Manager) cleanup(ctx context.Context) {
 	}
 
 	if exists(filepath.Join(m.cfg.Paths.SysNet, m.cfg.AP)) {
-		m.runLogged(ctx, "ip", "addr", "flush", "dev", m.cfg.AP)
+		m.runLogged(ctx, "ip", "addr", "flush", "dev", m.cfg.AP, "scope", "global")
 		m.runLogged(ctx, "iw", "dev", m.cfg.AP, "del")
 	}
 
-	m.runLogged(ctx, "ip", "addr", "flush", "dev", m.cfg.STA)
+	// Global addresses only, as in stationForAP: the fe80 address keeps the AAAA record.
+	m.runLogged(ctx, "ip", "addr", "flush", "dev", m.cfg.STA, "scope", "global")
 	// A killed udhcpc reports no deconfig, so its subnet leaves the filter here.
 	m.lanAllow(ctx, "del", m.cfg.AP)
 	m.lanAllow(ctx, "del", m.cfg.STA)

@@ -745,6 +745,33 @@ func TestNoWifiConfOpensTheSetupAPForGood(t *testing.T) {
 }
 
 //nolint:paralleltest // its rig points wpactrl.ClientDir, a package variable, at a directory of its own
+func TestTheSetupAPKeepsTheLinkLocalAddress(t *testing.T) {
+	// A plain flush also takes the fe80 address, which Linux brings back only on an interface
+	// down and up; without it avahi announces no AAAA record and a Mac waits 5 s per lookup.
+	bench := newRig(t, "rhino")
+	bench.start()
+	bench.eventually("the setup AP", func() bool { return bench.exists("setup-ap") && bench.exists("network-ready") })
+
+	flushes := 0
+
+	for _, call := range bench.sys.Calls() {
+		if !strings.HasPrefix(call, "ip addr flush") {
+			continue
+		}
+
+		flushes++
+
+		if !strings.HasSuffix(call, " scope global") {
+			t.Errorf("flush takes the link-local address too: %q", call)
+		}
+	}
+
+	if flushes == 0 {
+		t.Fatalf("no address flush; calls = %q", bench.sys.Calls())
+	}
+}
+
+//nolint:paralleltest // its rig points wpactrl.ClientDir, a package variable, at a directory of its own
 func TestSetupHoldIsBounded(t *testing.T) {
 	bench := newRig(t, "rhino")
 	touch(filepath.Join(bench.p.State, "setup-ap"))

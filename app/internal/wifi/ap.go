@@ -165,7 +165,9 @@ func (m *Manager) openAP(ctx context.Context, reason string) error {
 func (m *Manager) stationForAP(ctx context.Context) (string, error) {
 	m.stopPidfile(m.pid("wpa"))
 	m.stopPidfile(m.pid("udhcpc"))
-	m.runLogged(ctx, "ip", "addr", "flush", "dev", m.cfg.STA)
+	// Only global addresses: Linux brings an interface's fe80 address back only when the
+	// interface goes down and up, and without it avahi announces no AAAA record.
+	m.runLogged(ctx, "ip", "addr", "flush", "dev", m.cfg.STA, "scope", "global")
 	m.lanAllow(ctx, "del", m.cfg.STA)
 
 	_, err := m.runCmd(ctx, "iw", "dev", m.cfg.STA, "set", "type", "managed")

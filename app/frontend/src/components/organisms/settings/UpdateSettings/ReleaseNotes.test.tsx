@@ -19,7 +19,7 @@ const body = [
   '**Changes**',
   '',
   '- feat(st20): the network chip joins open networks',
-  '- fix: Bluetooth titles with `control` characters, see [the guide](../docs/x.md)',
+  '- fix: Bluetooth titles with `control` characters, see [the guide](https://example.org/guide)',
 ].join('\n');
 
 describe('ReleaseNotes', () => {
