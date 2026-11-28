@@ -607,6 +607,16 @@ itself (`tx_kick`, `ACK_LATE`, `rate_cls` in `bco/wild/fw/src/xport.c`):
    CTS's airtime (`send_resp` in `mac.c`). The NAV is not kept. Whether RTS frames reach the FIQ
    on hardware is not measured yet: `core_to_us_rts/...` in the setup AP's log shows it, and
    `rec[RC_CTS]` counts the CTS frames sent.
+8. The core numbers every frame it sends from one 12-bit counter (`next_seq` in `xport.c`): host
+   frames, the setup AP's beacons and probe responses, and the scan's probe requests. It sends no
+   QoS data, so there are no per-TID counters (IEEE 802.11-2020 10.3.2.14.2). A retry keeps its
+   frame's number. The number was the timer's low bits before, which could repeat or jump. A
+   unicast frame's Duration is a SIFS plus the ACK at the control-response rate of the frame's
+   rate (`resp_class`, item 6); the last tries at the basic rate get the basic rate's ACK. A group
+   frame carries 0. A protected frame is enciphered once, after its number is set; its retries
+   change only the Retry bit, which CCMP masks in its AAD, and the Duration, which is not in it.
+   The AAD masks the sequence number too; the engine passed the Annex M vector, whose sequence
+   number and Duration are not 0.
 
 The station receives 802.11b/g only, as far as the repository shows: the receive record's rate
 index has 16 values, all DSSS/CCK and OFDM rates (`rx_deliver` in `xport.c`), and nothing names an

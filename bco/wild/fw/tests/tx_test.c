@@ -9,7 +9,9 @@
  * response's single retry, a lost TX-done (a beacon's counted), the record-length guard, and CCMP transmit:
  * the CCMP header and packet number, the cipher engine's control block, the same PN on a retry,
  * and a frame without a key for its peer (also one queued when the peer table is reset) or that
- * the engine cannot encipher, which never goes out. The cipher engine itself is hardware: the test sets its completion word. */
+ * the engine cannot encipher, which never goes out; our sequence numbers and Duration fields, and
+ * a protected frame's retries changing only what CCMP leaves out of its AAD. The cipher engine
+ * itself is hardware: the test sets its completion word. */
 #include "core_sim.h"
 
 static const unsigned char TK[16] = {0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
@@ -64,9 +66,10 @@ static void unicast_ok(void)
     CHECK(qstate[9] == (unsigned)(uintptr_t)&tx_desc.len && mgmt_tx_pending == 0x12,
           "on queue 9 for ring 2");
     CHECK((REG(0x674) & 0x1820000) == 0x1820000 && slots_of_start() <= 31, "start after a backoff");
-    CHECK(tx_desc.hdr == tx_pkt + 0x18 && !memcmp(tx_pkt + 0x18, h, 22), "header staged");
-    CHECK(*(unsigned short *)(tx_pkt + 0x18 + 0x16) == (unsigned short)(0x1234 << 4),
-          "sequence control from the timer");
+    CHECK(tx_desc.hdr == tx_pkt + 0x18 && tx_pkt[0x18] == h[0] && tx_pkt[0x19] == h[1] &&
+              !memcmp(tx_pkt + 0x18 + 4, h + 4, 18),
+          "header staged (the core sets duration and sequence)");
+    CHECK(*(unsigned short *)(tx_pkt + 0x18 + 0x16) == 0, "the first frame's sequence number is 0");
     CHECK(tx_desc.p1 == tx_pkt + 0xc4 && tx_desc.l1 == 100 && !memcmp(tx_pkt + 0xc4, body, 100),
           "body staged");
     CHECK(tx_desc.len == 24 + 100 + 4 && tx_desc.hdrlen == 24 && tx_desc.l2 == 0,
@@ -462,6 +465,9 @@ static void raw(void)
     CHECK(send(h, 8 + 2 + 8, 6), "a protected management frame goes out");
     host_desc13 = 0;
     CHECK(tx_desc.l1 == 18 && tx_desc.cls == sta_mgmt_cls, "as staged, at the basic rate class");
+    CHECK(*(unsigned short *)(tx_pkt + 0x18 + 0x16) == 1 << 4 &&
+              (tx_pkt[0x18 + 2] | tx_pkt[0x18 + 3] << 8) == 10 + airtime(resp_class[sta_mgmt_cls], 14),
+          "the next sequence number and the basic rate's ACK Duration (outside the app's CCMP AAD)");
     air_tx_done();
     air_ack();
     pump(3);
@@ -511,6 +517,101 @@ static void peer_reset(void)
     }
 }
 
+/* Our own sequence numbers: one 12-bit counter across host frames and probe requests, a retry
+ * keeps its frame's, it wraps at 4096. The Duration field: SIFS + the ACK at the response rate
+ * of the frame's rate for a unicast frame, again for the last tries at the basic rate; 0 for a
+ * group frame. */
+static void seq_and_duration(void)
+{
+    unsigned char h[24];
+    unsigned buf, status;
+    setup(0);
+    data_hdr(h, BSSID, 0);
+    for (unsigned i = 0; i < 3; i++) {
+        CHECK(send(h, 64, 0), "frame %u sent", i);
+        CHECK(*(unsigned short *)(tx_pkt + 0x18 + 0x16) == i << 4, "frame %u: sequence %u", i, i);
+        unsigned d = tx_pkt[0x18 + 2] | tx_pkt[0x18 + 3] << 8;
+        CHECK(d == 10 + airtime(resp_class[12], 14) && d == 60, "unicast at 54 Mb/s: duration %u, the ACK at 6", d);
+        air_tx_done();
+        air_ack();
+        pump(3);
+        host_tx_done(2, &buf, &status);
+    }
+    /* a retried frame keeps its number; the last tries get the basic rate's ACK duration */
+    CHECK(send(h, 64, 0), "fourth frame");
+    for (unsigned round = 0; round < 10 && !host_tx_done(2, &buf, &status); round++) {
+        if (mgmt_tx_pending) {
+            unsigned d = tx_pkt[0x18 + 2] | tx_pkt[0x18 + 3] << 8;
+            CHECK(*(unsigned short *)(tx_pkt + 0x18 + 0x16) == 3 << 4, "a retry keeps sequence 3");
+            CHECK(d == 10 + airtime(resp_class[tx_desc.cls & 15], 14), "duration %u for class %u", d, tx_desc.cls);
+            air_tx_done();
+        }
+        REG(R_TIMER) += ACK_WAIT + 20 * 1024;
+        pump(1);
+    }
+    CHECK(tx_desc.cls == sta_mgmt_cls && (tx_pkt[0x18 + 2] | tx_pkt[0x18 + 3] << 8) == 10 + airtime(resp_class[4], 14),
+          "the basic rate's ACK at the end");
+    /* a group frame: duration 0, and the next number */
+    data_hdr(h, BCAST, 0);
+    CHECK(send(h, 40, 0) && !tx_pkt[0x18 + 2] && !tx_pkt[0x18 + 3] &&
+              *(unsigned short *)(tx_pkt + 0x18 + 0x16) == 4 << 4,
+          "group frame: duration 0, sequence 4");
+    air_tx_done();
+    pump(3);
+    host_tx_done(2, &buf, &status);
+    /* it wraps at 4096 */
+    tx_seq = 4095;
+    REG(R_TIMER) += tx_gap;
+    data_hdr(h, BSSID, 0);
+    CHECK(send(h, 64, 0) && *(unsigned short *)(tx_pkt + 0x18 + 0x16) == 4095 << 4, "sequence 4095");
+    air_tx_done();
+    air_ack();
+    pump(3);
+    host_tx_done(2, &buf, &status);
+    CHECK(send(h, 64, 0) && *(unsigned short *)(tx_pkt + 0x18 + 0x16) == 0, "then 0");
+}
+
+/* A protected frame is enciphered once, with its sequence number already in the header the
+ * engine reads. Its retries, the last ones at the basic rate included, change only the Retry bit
+ * and the Duration: CCMP masks the first out of its AAD and leaves the second out, so the frame
+ * the AP deciphers is the one the engine enciphered. Sequence number, PN, CCMP header, ciphertext
+ * and MIC stay as they were, and the engine never runs again for a retry. */
+static void ccmp_retry_header(void)
+{
+    unsigned char h[24], hdr0[24], ct0[8 + 100 + 8];
+    unsigned buf, status, attempts = 0, basic = 0;
+    setup(1);
+    tx_seq = 0x123;
+    data_hdr(h, BSSID, 1);
+    REG(0xb18) = 0x20;
+    CHECK(send(h, 100, 0), "protected frame sent");
+    CHECK(dma_a[4] == (unsigned)(uintptr_t)(tx_pkt + 0x18) &&
+              *(unsigned short *)(tx_pkt + 0x18 + 0x16) == 0x123 << 4,
+          "the engine reads a header that already holds sequence 0x123");
+    memcpy(hdr0, tx_pkt + 0x18, 24);
+    memcpy(ct0, tx_pkt + 0xbc, sizeof ct0);
+    dma_a[1] = 0;                                    /* the engine writes its length on each run */
+    for (unsigned round = 0; round < 10 && !host_tx_done(2, &buf, &status); round++) {
+        if (mgmt_tx_pending) {
+            const unsigned char *x = tx_pkt + 0x18;
+            attempts++;
+            basic += tx_desc.cls == sta_mgmt_cls;
+            CHECK(x[0] == hdr0[0] && (x[1] & ~0x08) == hdr0[1] && !memcmp(x + 4, hdr0 + 4, 20),
+                  "attempt %u: only Retry and Duration differ", attempts);
+            CHECK((x[2] | x[3] << 8) == 10 + airtime(resp_class[tx_desc.cls & 15], 14),
+                  "attempt %u: the Duration of its rate", attempts);
+            CHECK(!memcmp(tx_pkt + 0xbc, ct0, sizeof ct0), "attempt %u: CCMP header, ciphertext, MIC kept",
+                  attempts);
+            air_tx_done();
+        }
+        REG(R_TIMER) += ACK_WAIT + 20 * 1024;
+        pump(1);
+    }
+    CHECK(attempts == 1 + TX_RETRY && basic == 2, "%u attempts, %u at the basic rate", attempts, basic);
+    CHECK(dma_a[1] == 0, "no retry ran the engine again");
+    CHECK(tx_seq == 0x124, "the frame and its retries took one sequence number");
+}
+
 int main(void)
 {
     raw();
@@ -521,9 +622,11 @@ int main(void)
     beacon_gap();
     airtime_bounds();
     rate_cap();
+    seq_and_duration();
     probe_response_retries();
     record_guard();
     ccmp();
+    ccmp_retry_header();
     peer_reset();
     CHECK(irq_depth == 0, "critical sections balanced");
     return done("tx");

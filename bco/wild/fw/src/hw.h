@@ -139,6 +139,7 @@ void dwell_extend(void);
 extern unsigned short resp_class[16];
 unsigned rate_code(unsigned r, int long_pre);
 unsigned airtime(unsigned cls, unsigned len); /* xport.c: us on air of len bytes at rate code cls */
+unsigned next_seq(void);                       /* xport.c: the next 12-bit sequence number we send */
 const unsigned char *rx_peek(void);
 void rx_pop(void);
 void tx_mac_start(unsigned q, void *desc);  /* mac.c: hand a software descriptor to queue q */

@@ -75,7 +75,7 @@ static void sim_reset(void)
     tx_q = tx_rec = tx_t0 = 0, tx_busy = 0;
     rate_i = rate_ok = rate_bad = 0;
     tx_free_t = tx_unicast = tx_wait = 0, tx_tries = TX_RETRY;
-    tx_gap = tx_slots = 0;
+    tx_gap = tx_slots = tx_seq = 0;
     cmd_state = cmd_kind = cmd_len = cmd_skip = 0;
     memset((void *)rec, 0, sizeof rec);
     tunes = tune_band = tune_chan = delayed = 0;

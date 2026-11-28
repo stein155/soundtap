@@ -715,7 +715,8 @@ static int send_protected(unsigned fc, const unsigned char *body, unsigned n)
     hdr[0] = (unsigned char)fc, hdr[1] = 0x40;
     copy(hdr + 4, cur.bssid, 6), copy(hdr + 10, own, 6), copy(hdr + 16, cur.bssid, 6);
     copy(secbuf + WSEC_CCMP_HDR, body, n);
-    /* The core writes the sequence number from its timer after this; CCMP's AAD masks it. */
+    /* The core writes the sequence number and the Duration after this; CCMP masks the first out
+     * of its AAD and leaves the second out. */
     len = wsec_ccmp_protect(mgmt_tk, hdr, ++mgmt_pn, secbuf, n);
     if (wframe(b, TXFBUF, fc | 0x4000, cur.bssid, own, cur.bssid, rates, 0, secbuf, len) <= 0)
         return 0;

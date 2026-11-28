@@ -123,7 +123,9 @@ static void probe_req(const unsigned char *p)
     unsigned char *f = probe_frame, *ie = f + 24;
     unsigned ssid = p[6] > 32 ? 32 : p[6], n = p[0x28] > 12 ? 12 : p[0x28], k, r = n > 8 ? 8 : n;
 
-    f[0] = 0x40;                               /* probe request; duration, seq stay 0 */
+    f[0] = 0x40;                               /* probe request; duration 0 (to a group) */
+    k = next_seq() << 4;                       /* sequence control, the host frames' counter */
+    f[22] = (unsigned char)k, f[23] = (unsigned char)(k >> 8);
     for (k = 0; k < 6; k++)
         f[4 + k] = 0xff, f[10 + k] = own_mac[k], f[16 + k] = p[k];
     ie[0] = 0, ie[1] = ssid;

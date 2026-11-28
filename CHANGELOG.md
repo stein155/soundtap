@@ -10,6 +10,11 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
 
 ## [Unreleased]
 
+### Fixed
+
+- **SoundTouch 20: numbers everything it sends in order**, on your home network and on the
+  setup network, so a router or phone no longer takes a new message for a repeat.
+
 ## [app-v0.1.0-alpha.7] - 2026-11-27
 
 - The SoundTap app that SoundTap Core 0.1.0-alpha.7 carries; what it changes is listed under

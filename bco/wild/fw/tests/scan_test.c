@@ -180,6 +180,8 @@ static void probe_case(unsigned ssidlen, unsigned nrates, unsigned band)
     CHECK(tunes == 1 && tune_band == band && tune_chan == 11 && rx_chan == 11, "probe tunes ch 11");
     CHECK(qstate[9] == (unsigned)(uintptr_t)&probe_desc.len, "probe on the management queue");
     CHECK(f == probe_frame && probe_desc.hdrlen == 24 && f[0] == 0x40, "probe request header");
+    CHECK(!f[2] && !f[3] && (f[22] | f[23] << 8) == (unsigned)((tx_seq - 1) & 0xfff) << 4,
+          "duration 0, the next of our sequence numbers");
     CHECK(!memcmp(f + 4, BCAST, 6) && !memcmp(f + 10, OWN, 6) && !memcmp(f + 16, BSSID, 6),
           "probe addresses: broadcast, own, BSSID");
     CHECK(probe_desc.p1 == f + 24 && probe_desc.len == 24 + probe_desc.l1 + 4,

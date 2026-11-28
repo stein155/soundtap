@@ -320,6 +320,36 @@ static void tx_kick(void)
     mac_send_mgmt(&tx_desc.len, 0x20000 | slots);
 }
 
+/* The sequence number of the next frame we originate (12 bits): one counter for every frame,
+ * host frames (data, management, the setup AP's beacons and probe responses) and the scan's probe
+ * requests alike. The core sends no QoS data (every header is 24 bytes, the association asks for
+ * no WMM), so no per-TID counters: IEEE 802.11-2020 10.3.2.14.2 gives non-QoS data and
+ * management frames this single modulo-4096 counter. A retry keeps its frame's number. The
+ * timer's low bits it replaced repeated and jumped: a receiver drops a frame with Retry that
+ * repeats the last number from us as a duplicate. CCMP masks the number out of its AAD (wsec.c
+ * does the same for the app's frames), so it is set before the engine runs and stays. */
+static unsigned tx_seq;
+unsigned next_seq(void)
+{
+    unsigned s;
+    irq_off();
+    s = tx_seq++ & 0xfff;
+    irq_on();
+    return s;
+}
+
+/* The Duration field of the frame in flight: a unicast frame reserves the medium for its ACK
+ * (SIFS + the ACK at the control-response rate of the frame's rate, resp_class, as mac.c sends
+ * ours); a group frame gets no ACK and carries 0. CCMP leaves Duration out of its AAD (the Annex M
+ * vector the engine was checked against has one that is not 0), so the last tries at the basic
+ * rate change it on a frame already enciphered. */
+static void tx_duration(void)
+{
+    unsigned char *h = tx_pkt + 0x18;
+    unsigned d = h[4] & 1 ? 0 : 10 + airtime(resp_class[tx_desc.cls & 15] & 15, 14);
+    h[2] = (unsigned char)d, h[3] = (unsigned char)(d >> 8);
+}
+
 /* Staging DMA finished: assemble the packet and start the MAC (stock a14c + 0x113f0 + 0x1197c). */
 static void post_event(unsigned type, unsigned module, unsigned src, const void *payload,
                        unsigned len);
@@ -331,7 +361,7 @@ static void tx_stage_done(void)
     unsigned char *h = tx_pkt + 0x18;
     copy_bytes(tx_pkt, tx_pkt + 0x8c, 0x38);           /* descriptor to the packet head */
     ring_commit(&l_frm[tx_q], 1, 1);                   /* record: channel 1 -> 2 */
-    *(unsigned short *)(h + 0x16) = REG(R_TIMER) << 4; /* sequence control */
+    *(unsigned short *)(h + 0x16) = next_seq() << 4;   /* sequence control, fragment 0 */
     tx_desc.rate = 8;                                   /* management/EAPOL basic rate (ps0+0x24) */
     tx_desc.cls = sta_mgmt_cls;                         /* PHY rate-class: must match the (working) probe path, not 0 */
     /* Unicast data at the current rate, the first retries too. Group-addressed data (the
@@ -339,6 +369,7 @@ static void tx_stage_done(void)
      * nobody ACKs it, so the rate cannot follow any client, and every client must hear it. */
     if ((h[0] & 0x0c) == 0x08 && !(h[4] & 1))
         tx_desc.cls = data_cls(ap_mode ? tx_pkt[4] & 0x7f : 0u);
+    tx_duration();
     /* A probe response is worth one retry: the phone that asked moves to the next channel
      * within a few tens of ms, and each wasted retry holds every other frame back. */
     tx_tries = h[0] == 0x50 ? 1 : TX_RETRY;
@@ -709,8 +740,10 @@ void xport_poll(void)
             tx_complete(1);
         else {
             tx_pkt[0x18 + 1] |= 0x08;                  /* Retry */
-            if (tx_unicast > TX_RETRY - 1)
+            if (tx_unicast > TX_RETRY - 1) {
                 tx_desc.cls = sta_mgmt_cls;             /* last tries at the basic rate */
+                tx_duration();
+            }
             tx_done_q = 0;
             tx_kick();
         }
