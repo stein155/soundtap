@@ -83,7 +83,7 @@
   "next.noPower": "在它運作期間請勿拔掉電源，也不要再次傳送檔案。",
   "next.st20": "SoundTouch 20 重新啟動幾秒後，顯示幕上會出現 SoundTap 啟動畫面。接著它會更新網路晶片並再重新啟動一次，所以請多留一些時間。",
   "next.st10": "SoundTouch 10 啟動時，指示燈會從一側到另一側來回流動。",
-  "next.wifi": "之後揚聲器會連上 Bose 軟體先前使用的 Wi-Fi。如果沒有連上，它會開啟以揚聲器命名的設定網路（例如 <i>SoundTap ST10 A1B2C3</i>）：連上該網路後，即可在設定頁面選擇您的 Wi-Fi。SoundTouch 20 需要 2.4 GHz 的 WPA2 網路。在 SoundTouch 20 上，這個設定網路尚未經過測試。",
+  "next.wifi": "之後揚聲器會連上 Bose 軟體先前使用的 Wi-Fi。如果沒有連上，它會開啟以揚聲器命名的設定網路（例如 <i>SoundTap ST10 A1B2C3</i>）：連上該網路後，即可在設定頁面選擇您的 Wi-Fi。SoundTouch 20 需要 2.4 GHz 網路；WPA2、WPA 和 WEP 網路已在它上面測試過，WPA3 尚未測試。在 SoundTouch 20 上，已有手機連上這個設定網路，但在其中選擇您的 Wi-Fi 尚未經過測試。",
   "next.open": "接著在同一網路中的任何手機、平板電腦或電腦上開啟 <a>http://soundtap.local</a>。之後的更新會在揚聲器自己的頁面上進行。",
   "next.stuck": "十分鐘後還沒有恢復？請保持通電，並參閱<a>發生問題時</a>。",
   "s6.title": "回到 Bose",

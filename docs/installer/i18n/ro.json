@@ -83,7 +83,7 @@
   "next.noPower": "Nu îl scoateți din priză cât timp lucrează și nu trimiteți fișierul din nou.",
   "next.st20": "Un SoundTouch 20 arată pe afișaj ecranul de pornire SoundTap la câteva secunde după repornire. Apoi își actualizează cipul de rețea și repornește încă o dată, așa că lăsați-i mai mult timp.",
   "next.st10": "La un SoundTouch 10, luminile se aprind pe rând dintr-o parte în alta în timp ce pornește.",
-  "next.wifi": "După aceea, difuzorul se conectează la rețeaua Wi-Fi pe care o folosea cu software-ul Bose. Dacă nu reușește, își pornește propria rețea de configurare, care poartă numele difuzorului (de exemplu <i>SoundTap ST10 A1B2C3</i>): conectați-vă la ea, iar în pagina de configurare alegeți rețeaua Wi-Fi. Un SoundTouch 20 are nevoie de o rețea WPA2 de 2,4 GHz. Pe un SoundTouch 20 această rețea de configurare nu a fost încă testată.",
+  "next.wifi": "După aceea, difuzorul se conectează la rețeaua Wi-Fi pe care o folosea cu software-ul Bose. Dacă nu reușește, își pornește propria rețea de configurare, care poartă numele difuzorului (de exemplu <i>SoundTap ST10 A1B2C3</i>): conectați-vă la ea, iar în pagina de configurare alegeți rețeaua Wi-Fi. Un SoundTouch 20 are nevoie de o rețea de 2,4 GHz; rețelele WPA2, WPA și WEP au fost testate pe el, WPA3 încă nu. Pe un SoundTouch 20 un telefon s-a conectat deja la această rețea de configurare, dar alegerea rețelei Wi-Fi din ea nu a fost încă testată.",
   "next.open": "Apoi deschideți <a>http://soundtap.local</a> pe orice telefon, tabletă sau computer din aceeași rețea. Actualizările următoare se fac din pagina difuzorului.",
   "next.stuck": "Nu a revenit după zece minute? Lăsați-l în priză și consultați <a>Când ceva nu merge bine</a>.",
   "s6.title": "Întoarcerea la Bose",

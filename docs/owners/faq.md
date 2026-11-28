@@ -17,7 +17,8 @@
 [USB cable?](#does-the-first-install-need-a-usb-cable) ·
 [Do I need Linux?](#do-i-need-linux) ·
 [What happens to my presets?](#what-happens-to-my-bose-presets) ·
-[Does the Bose app keep working?](#does-the-bose-soundtouch-app-keep-working)
+[Does the Bose app keep working?](#does-the-bose-soundtouch-app-keep-working) ·
+[Which Wi-Fi?](#which-wi-fi-networks-does-it-join)
 
 **Everyday use:** [Internet](#does-it-need-the-internet) ·
 [Privacy](#does-it-phone-home) ·
@@ -211,6 +212,18 @@ playlist or album or a media-server item.
 On stock firmware, Bose's updated app still supports local setup, control and grouping
 ([Bose's announcement](https://www.bose.com/soundtouch-end-of-life-row)). After installing
 SoundTap, use the web page served by the speaker. Bose's app is not a supported SoundTap interface.
+
+### Which Wi-Fi networks does it join?
+
+The networks Bose's software joined: open, WEP, WPA and WPA2, and on the SoundTouch 20 only on
+2.4 GHz. The SoundTouch 20 is also built to join WPA3; the other speakers join a network that
+mixes WPA2 and WPA3 over WPA2, but not one that is WPA3 only. On a SoundTouch 20, WPA2, WPA,
+mixed WPA/WPA2 and WEP networks have been tested and joined, and one that requires protected
+management frames. WPA3, a hidden network and an open network have not been tested on it yet,
+and on the other speakers none of these kinds has had its own test. A phone has joined the
+SoundTouch 20's setup network and got an address; choosing your Wi-Fi on its setup page from a
+phone has not been tested on that model yet. See
+[Put the speaker on your Wi-Fi](install.md#put-the-speaker-on-your-wi-fi).
 
 ---
 

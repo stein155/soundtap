@@ -83,7 +83,7 @@
   "next.noPower": "Dokud pracuje, neodpojujte ho od napájení a neposílejte soubor znovu.",
   "next.st20": "SoundTouch 20 zobrazí několik sekund po restartu na displeji úvodní obrazovku SoundTap. Pak aktualizuje svůj síťový čip a restartuje se ještě jednou, počítejte tedy s delší dobou.",
   "next.st10": "U SoundTouch 10 při spouštění přebíhají kontrolky ze strany na stranu.",
-  "next.wifi": "Poté se reproduktor připojí k síti Wi-Fi, ve které byl se softwarem Bose. Pokud se nepřipojí, zapne vlastní síť pro nastavení pojmenovanou po reproduktoru (například <i>SoundTap ST10 A1B2C3</i>): připojte se k ní a na stránce nastavení vyberte svou síť Wi-Fi. SoundTouch 20 potřebuje síť WPA2 v pásmu 2,4 GHz. Na SoundTouch 20 tato síť pro nastavení zatím nebyla vyzkoušena.",
+  "next.wifi": "Poté se reproduktor připojí k síti Wi-Fi, ve které byl se softwarem Bose. Pokud se nepřipojí, zapne vlastní síť pro nastavení pojmenovanou po reproduktoru (například <i>SoundTap ST10 A1B2C3</i>): připojte se k ní a na stránce nastavení vyberte svou síť Wi-Fi. SoundTouch 20 potřebuje síť v pásmu 2,4 GHz; sítě WPA2, WPA a WEP na něm byly vyzkoušeny, WPA3 zatím ne. Na SoundTouch 20 se k této síti pro nastavení už připojil telefon, ale výběr vaší sítě Wi-Fi v ní zatím vyzkoušen nebyl.",
   "next.open": "Pak otevřete <a>http://soundtap.local</a> na libovolném telefonu, tabletu nebo počítači ve stejné síti. Pozdější aktualizace se instalují z vlastní stránky reproduktoru.",
   "next.stuck": "Ani po deseti minutách se neozval? Nechte ho zapojený a podívejte se na <a>Když se něco pokazí</a>.",
   "s6.title": "Cesta zpět k Bose",

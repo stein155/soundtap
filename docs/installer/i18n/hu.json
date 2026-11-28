@@ -83,7 +83,7 @@
   "next.noPower": "Ne húzza ki a tápkábelt, amíg a hangszóró dolgozik, és ne küldje el újra a fájlt.",
   "next.st20": "A SoundTouch 20 kijelzőjén néhány másodperccel az újraindulás után megjelenik a SoundTap nyitóképernyője. Ezután frissíti a hálózati chipjét, és még egyszer újraindul, ezért szánjon rá több időt.",
   "next.st10": "A SoundTouch 10 jelzőfényei indulás közben oldalról oldalra futnak.",
-  "next.wifi": "Ezután a hangszóró ahhoz a Wi-Fi-hálózathoz csatlakozik, amelyet a Bose szoftverével használt. Ha ez nem sikerül, elindítja a saját, róla elnevezett beállítási hálózatát (például <i>SoundTap ST10 A1B2C3</i>): csatlakozzon hozzá, és a beállítási oldalon kiválaszthatja a Wi-Fi-hálózatát. A SoundTouch 20-nak 2,4 GHz-es WPA2-hálózatra van szüksége. SoundTouch 20-on ezt a beállítási hálózatot még nem próbálták ki.",
+  "next.wifi": "Ezután a hangszóró ahhoz a Wi-Fi-hálózathoz csatlakozik, amelyet a Bose szoftverével használt. Ha ez nem sikerül, elindítja a saját, róla elnevezett beállítási hálózatát (például <i>SoundTap ST10 A1B2C3</i>): csatlakozzon hozzá, és a beállítási oldalon kiválaszthatja a Wi-Fi-hálózatát. A SoundTouch 20-nak 2,4 GHz-es hálózatra van szüksége; WPA2-, WPA- és WEP-hálózattal már kipróbálták, WPA3-mal még nem. SoundTouch 20 beállítási hálózatához már csatlakozott telefon, de a Wi-Fi-hálózat kiválasztását ott még nem próbálták ki.",
   "next.open": "Ezután nyissa meg a <a>http://soundtap.local</a> címet bármely telefonon, táblagépen vagy számítógépen, amely ugyanazon a hálózaton van. A későbbi frissítéseket a hangszóró saját oldaláról telepítheti.",
   "next.stuck": "Tíz perc elteltével sem érhető el? Hagyja áram alatt, és nézze meg a <a>Ha valami nem sikerül</a> részt.",
   "s6.title": "Vissza a Bose-hoz",

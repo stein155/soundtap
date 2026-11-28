@@ -83,7 +83,7 @@
   "next.noPower": "Nie odłączaj zasilania, gdy głośnik jest zajęty, i nie wysyłaj pliku ponownie.",
   "next.st20": "SoundTouch 20 pokazuje na wyświetlaczu ekran startowy SoundTap kilka sekund po ponownym uruchomieniu. Potem aktualizuje swój układ sieciowy i uruchamia się ponownie jeszcze raz, więc daj mu więcej czasu.",
   "next.st10": "W SoundTouch 10 podczas uruchamiania lampki przesuwają się z boku na bok.",
-  "next.wifi": "Potem głośnik łączy się z siecią Wi-Fi, z której korzystał z oprogramowaniem Bose. Jeśli się nie połączy, włącza własną sieć konfiguracyjną o nazwie głośnika (na przykład <i>SoundTap ST10 A1B2C3</i>): połącz się z nią, a na stronie konfiguracji wybierzesz swoją sieć Wi-Fi. SoundTouch 20 wymaga sieci WPA2 w paśmie 2,4 GHz. Na SoundTouch 20 ta sieć konfiguracyjna nie została jeszcze sprawdzona.",
+  "next.wifi": "Potem głośnik łączy się z siecią Wi-Fi, z której korzystał z oprogramowaniem Bose. Jeśli się nie połączy, włącza własną sieć konfiguracyjną o nazwie głośnika (na przykład <i>SoundTap ST10 A1B2C3</i>): połącz się z nią, a na stronie konfiguracji wybierzesz swoją sieć Wi-Fi. SoundTouch 20 wymaga sieci w paśmie 2,4 GHz; sieci WPA2, WPA i WEP zostały na nim sprawdzone, WPA3 jeszcze nie. Z siecią konfiguracyjną SoundTouch 20 połączył się już telefon, ale wybór Twojej sieci Wi-Fi w niej nie został jeszcze sprawdzony.",
   "next.open": "Następnie otwórz <a>http://soundtap.local</a> na dowolnym telefonie, tablecie lub komputerze w tej samej sieci. Późniejsze aktualizacje zainstalujesz ze strony samego głośnika.",
   "next.stuck": "Nie wrócił po dziesięciu minutach? Nie odłączaj go od zasilania i zajrzyj do sekcji <a>Gdy coś pójdzie nie tak</a>.",
   "s6.title": "Powrót do Bose",

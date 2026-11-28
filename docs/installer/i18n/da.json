@@ -83,7 +83,7 @@
   "next.noPower": "Træk ikke stikket ud, mens den arbejder, og send ikke filen igen.",
   "next.st20": "En SoundTouch 20 viser SoundTaps startskærm på displayet et par sekunder efter genstarten. Derefter opdaterer den sin netværkschip og genstarter én gang til, så regn med ekstra tid.",
   "next.st10": "På en SoundTouch 10 løber lysene fra side til side, mens den starter.",
-  "next.wifi": "Bagefter går højttaleren på det Wi-Fi, den brugte med Boses software. Gør den ikke det, tænder den sit eget opsætningsnetværk, opkaldt efter højttaleren (for eksempel <i>SoundTap ST10 A1B2C3</i>): opret forbindelse til det, så kan du vælge dit Wi-Fi på opsætningssiden. En SoundTouch 20 kræver et 2,4 GHz WPA2-netværk. På en SoundTouch 20 er dette opsætningsnetværk endnu ikke afprøvet.",
+  "next.wifi": "Bagefter går højttaleren på det Wi-Fi, den brugte med Boses software. Gør den ikke det, tænder den sit eget opsætningsnetværk, opkaldt efter højttaleren (for eksempel <i>SoundTap ST10 A1B2C3</i>): opret forbindelse til det, så kan du vælge dit Wi-Fi på opsætningssiden. En SoundTouch 20 kræver et 2,4 GHz-netværk; WPA2-, WPA- og WEP-netværk er afprøvet på den, WPA3 endnu ikke. På en SoundTouch 20 har en telefon oprettet forbindelse til dette opsætningsnetværk, men at vælge dit Wi-Fi der er endnu ikke afprøvet.",
   "next.open": "Åbn derefter <a>http://soundtap.local</a> på en telefon, tablet eller computer på samme netværk. Senere opdateringer foretager du fra højttalerens egen side.",
   "next.stuck": "Er den ikke tilbage efter ti minutter? Lad den blive i stikkontakten, og se <a>Når noget går galt</a>.",
   "s6.title": "Vejen tilbage til Bose",

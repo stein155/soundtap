@@ -83,7 +83,7 @@
   "next.noPower": "Haal de stekker er niet uit terwijl hij bezig is, en verstuur het bestand niet opnieuw.",
   "next.st20": "Een SoundTouch 20 laat een paar seconden na het opnieuw opstarten het startscherm van SoundTap op zijn display zien. Daarna werkt hij zijn netwerkchip bij en start hij nog een keer opnieuw op. Reken dus op wat extra tijd.",
   "next.st10": "Bij een SoundTouch 10 lopen de lampjes tijdens het opstarten heen en weer.",
-  "next.wifi": "Daarna maakt de luidspreker verbinding met het wifi-netwerk waar hij met de software van Bose op zat. Lukt dat niet, dan zet hij zijn eigen instelnetwerk aan, met de naam van de luidspreker (bijvoorbeeld <i>SoundTap ST10 A1B2C3</i>). Maak daar verbinding mee; op de instelpagina kies je dan je wifi. Een SoundTouch 20 heeft een WPA2-netwerk op 2,4 GHz nodig. Op een SoundTouch 20 is dit instelnetwerk nog niet getest.",
+  "next.wifi": "Daarna maakt de luidspreker verbinding met het wifi-netwerk waar hij met de software van Bose op zat. Lukt dat niet, dan zet hij zijn eigen instelnetwerk aan, met de naam van de luidspreker (bijvoorbeeld <i>SoundTap ST10 A1B2C3</i>). Maak daar verbinding mee; op de instelpagina kies je dan je wifi. Een SoundTouch 20 heeft een netwerk op 2,4 GHz nodig; WPA2-, WPA- en WEP-netwerken zijn erop getest, WPA3 nog niet. Op een SoundTouch 20 heeft een telefoon al verbinding gemaakt met dit instelnetwerk, maar je wifi daar kiezen is nog niet getest.",
   "next.open": "Open daarna <a>http://soundtap.local</a> op een telefoon, tablet of computer in hetzelfde netwerk. Latere updates krijg je via de pagina van de luidspreker zelf.",
   "next.stuck": "Na tien minuten nog niet terug? Laat de stekker erin en kijk bij <a>Als er iets misgaat</a>.",
   "s6.title": "Terug naar Bose",

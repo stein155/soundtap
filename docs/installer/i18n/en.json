@@ -83,7 +83,7 @@
   "next.noPower": "Do not pull the power while it is busy, and do not send the file again.",
   "next.st20": "A SoundTouch 20 shows the SoundTap splash on its display a few seconds after it restarts. It then updates its network chip and restarts once more, so allow extra time.",
   "next.st10": "A SoundTouch 10 sweeps its lights from side to side while it starts.",
-  "next.wifi": "Afterwards the speaker joins the Wi-Fi Bose's software was on. If it does not, it opens its own setup network, named after the speaker (for example <i>SoundTap ST10 A1B2C3</i>): join it, and the setup page lets you pick your Wi-Fi. A SoundTouch 20 needs a 2.4 GHz WPA2 network. On a SoundTouch 20 this setup network has not been tested yet.",
+  "next.wifi": "Afterwards the speaker joins the Wi-Fi Bose's software was on. If it does not, it opens its own setup network, named after the speaker (for example <i>SoundTap ST10 A1B2C3</i>): join it, and the setup page lets you pick your Wi-Fi. A SoundTouch 20 needs a 2.4 GHz network; WPA2, WPA and WEP networks have been tested on it, WPA3 not yet. On a SoundTouch 20 a phone has joined this setup network, but picking your Wi-Fi there has not been tested yet.",
   "next.open": "Then open <a>http://soundtap.local</a> on any phone, tablet or computer on the same network. Updates later come from the speaker's own page.",
   "next.stuck": "Not back after ten minutes? Keep it powered and see <a>When something goes wrong</a>.",
   "s6.title": "The way back to Bose",

@@ -152,7 +152,8 @@ and the BCO answers with the same `seq` and `type|0x80`, status first.
   driver puts the SSID of `wpa_supplicant`'s scan request (`scan_ssid=1`, which soundtapd writes
   for every network) into SCAN (ADR 0135), so the first join of a hidden network finds it by name;
   without a SCAN SSID the profile's is probed, as before. A first join of a hidden network on the
-  speaker is still open (the hardware checklist's hidden-network row).
+  speaker is still open (the hardware checklist's hidden-network row; a run on 2026-11-28 gave no
+  verdict, [Wi-Fi security runs](../install-records.md#wi-fi-security-runs)).
 - SET_PROFILE's tail names a BSSID: a fixed one is the only one joined, a hinted one is joined
   first when it was heard, else the strongest. `wpa_supplicant` sends a hint, not a fixed BSSID, to
   a driver that roams by itself (`WIPHY_FLAG_SUPPORTS_FW_ROAM`), unless the network names a
@@ -419,6 +420,10 @@ phone). Now:
   `/sys/class/net/bcolink0/bco/ap` and one field in soundtapd's log, and per client the ms
   between its last two null-data frames, those with the power-management bit set and clear, and
   the gaps of 700-730 ms (`null_gap_ms`, `null_pm1`, `null_pm0`, `null_gaps_700_730`).
+- Seen on air after 0.1.0-alpha.7's fixes (beacon timing, RTS/CTS, QoS data; 2026-11-27): a
+  phone joined the setup network and got an address ([Wi-Fi security runs](../install-records.md#wi-fi-security-runs)). Saving the home network
+  through the setup page from the phone was not recorded; the rest of the checklist's setup-AP row
+  stays open.
 
 ## CCMP on the core's cipher engine
 
@@ -498,7 +503,9 @@ in [the receive path](#ccmp-on-the-cores-cipher-engine). Facts only, as stock us
   starts from the key, `0x04` encipher, `0x02` last fragment.
 
 SoundTap has measured none of the WEP and TKIP modes on its own core (the CCMP modes were
-measured bit-exact against software, above). Running them blind would mean a network that fails
+measured bit-exact against software, above). The software path below has joined WEP (open system
+and shared key), WPA with TKIP, WPA2 with TKIP and WPA/WPA2 mixed networks on the bench ST20
+(2026-11-27/28, join and 5 minutes only; [Wi-Fi security runs](../install-records.md#wi-fi-security-runs)). Running them blind would mean a network that fails
 outright if one field is off: the TKIP key half, the source of Michael's addresses and priority,
 or the fragment state. So SoundTap runs WEP and TKIP in software in the BCO app, where the keys
 already are, and keeps the engine for CCMP data ([ADR 0136](../../decisions/0136-every-network-stock-joined-and-wpa3.md)):
@@ -576,6 +583,10 @@ messages and steps (`BCOLINK_CAP_WPA3`):
 6. The driver offers SAE (`NL80211_FEATURE_SAE`), authentication frames on the station, BIP and
    optional PMF only with the capability; the access point's interface keeps no management frame
    types, as before.
+
+On the bench ST20 (2026-11-28) a WPA2 network with PSK-SHA256 and PMF required joined, and one with
+PMF optional was on the network after 5 minutes; SAE, WPA3 only or in transition, has no verdict
+yet, since the test access point could not offer it ([Wi-Fi security runs](../install-records.md#wi-fi-security-runs)).
 
 ## Medium access and rate adaptation
 
@@ -674,6 +685,11 @@ case.
 | stock firmware | 4-5 s | 14-16 s |
 | app enciphers in software | 7-9 s | 11-16 s |
 | core's cipher engine | 5-8 s | 10-14 s |
+
+2026-11-28, the owner's ST20 on main between 0.1.0-alpha.7 and alpha.8: ~200 kB files came down
+by IP address at 0.85-1.3 MB/s, in line with the table. An earlier apparent 40 kB/s was a 5 s
+wait for an mDNS AAAA answer on a Mac, gone since the speaker keeps its IPv6 link-local address
+([Wi-Fi security runs](../install-records.md#wi-fi-security-runs)).
 
 ### Retries and the DCF backoff
 

@@ -53,9 +53,11 @@ Back to the guide: [the three routes](../owners/install.md#route-1-the-installer
 - **Wi-Fi takeover.** A first install attempts to take over the saved Wi-Fi. Historical runs
   on [ST10, ST20 and Wireless Link](hardware-test.md#open-hardware-checks) recorded this
   working; they are not a guarantee for every firmware version or network. ST10/WLA can import
-  WPA or open profiles; the ST20's own BCO station has run WPA2-PSK only (2.4 GHz), and the
-  other kinds of network of [ADR 0136](../decisions/0136-every-network-stock-joined-and-wpa3.md)
-  have not run on any model. The setup
+  WPA or open profiles. The ST20's own BCO station has joined WPA2, WPA/WPA2 mixed, WPA (TKIP),
+  WPA2 with TKIP, PMF-required and WEP networks on 2.4 GHz, saved through the API; WPA3 (SAE), a
+  hidden network and an open one have no verdict there, and the kinds of network of
+  [ADR 0136](../decisions/0136-every-network-stock-joined-and-wpa3.md) have not run on the other
+  models ([Wi-Fi security runs](#wi-fi-security-runs)). The setup
   network is proven on the SoundTouch 10, 20 and Wireless Link (see the table above). The
   SoundTouch 20's restart onto your Wi-Fi was seen on 2026-11-14 after an install from Bose's
   software 27.0.6.
@@ -80,6 +82,45 @@ Back to the guide: [the three routes](../owners/install.md#route-1-the-installer
   - Offline: Debian's libubootenv 0.3.5 against a copy of the WLA factory dump; a script set and
     deleted as intended, and a broken CRC made both tools exit 243 with the file untouched.
 - **Buttons.** Browser pairing and its old Preset 6 chord have been removed.
+
+### Wi-Fi security runs
+
+The owner's SoundTouch 20 ("Keuken"), on SoundTap main of 2026-11-27/28, between 0.1.0-alpha.7 and
+alpha.8 (a development build, no SHA-256 recorded). Release approval stays with the
+[hardware checklist](hardware-test.md#open-hardware-checks), whose ST20 rows keep what these runs did not
+check.
+
+- **Setup network, 2026-11-27.** After alpha.7's setup-AP fixes (beacon timing, RTS/CTS, QoS
+  data), a phone joined `SoundTap-ST20-…` and got an address. Saving the home network through
+  the setup page from the phone was not recorded.
+- **Security matrix, 2026-11-27/28.** A Raspberry Pi as test access point on 2.4 GHz; each profile
+  saved with `POST /api/wifi`. A pass is a DHCP lease, then after 5 minutes a ping and an answer to
+  `GET /api/info` on the test network, with no disconnect.
+
+  | Network | Result |
+  |---|---|
+  | WPA2-PSK, CCMP | pass (lease 16 s after the save) |
+  | WPA/WPA2 mixed, TKIP and CCMP | pass |
+  | WPA-PSK (WPA1), TKIP | pass |
+  | WPA2-PSK, TKIP only | pass |
+  | WPA2-PSK and PSK-SHA256, PMF required | pass |
+  | WPA2-PSK, PMF optional | probably a pass: on the test network after 5 minutes, ping and the API answered; the lease was not logged |
+  | WPA2-PSK, channel 13 | pass |
+  | WEP, open system | pass |
+  | WEP, shared key | pass |
+  | WPA3-SAE only; SAE transition | no verdict: the Pi's brcmfmac access point could not offer SAE properly |
+  | Hidden SSID | no verdict: the access point failed to start once, then no lease; which side failed is unclear |
+
+- **Found in that run and fixed on main since** (in 0.1.0-alpha.8; not yet run again on
+  a speaker): a saved WEP profile joined an open access point of the same SSID; the setup network
+  opened while another saved network was in range, when the saved access point associated and
+  then refused; saving an SSID again as WPA2 after WEP did not take.
+- After short outages of the network it had chosen, the ST20 moved to the other saved network and
+  stayed there. Noted, not counted as a failure.
+- **Throughput, 2026-11-28.** By IP address, ~200 kB files came down at 0.85-1.3 MB/s, in line with
+  [2026-10-22's 16 MB in 10-16 s](st20/bco-network-card.md#throughput-with-the-cipher-engine). An
+  earlier apparent 40 kB/s was a 5 s wait for an mDNS AAAA answer on a Mac, fixed since (the
+  speaker keeps its IPv6 link-local address).
 
 ## SoundTouch 300
 

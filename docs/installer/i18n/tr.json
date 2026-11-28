@@ -83,7 +83,7 @@
   "next.noPower": "Hoparlör çalışırken fişini çekmeyin ve dosyayı yeniden göndermeyin.",
   "next.st20": "Bir SoundTouch 20, yeniden başladıktan birkaç saniye sonra ekranında SoundTap açılış görüntüsünü gösterir. Ardından ağ çipini günceller ve bir kez daha yeniden başlar; bu yüzden biraz daha bekleyin.",
   "next.st10": "Bir SoundTouch 10 açılırken ışıkları bir uçtan diğerine gidip gelir.",
-  "next.wifi": "Ardından hoparlör, Bose yazılımıyla kullandığı Wi-Fi ağına bağlanır. Bağlanamazsa hoparlörün adını taşıyan kendi kurulum ağını açar (örneğin <i>SoundTap ST10 A1B2C3</i>): bu ağa bağlanın, kurulum sayfasında Wi-Fi ağınızı seçebilirsiniz. Bir SoundTouch 20 için 2,4 GHz WPA2 ağı gerekir. SoundTouch 20'de bu kurulum ağı henüz denenmedi.",
+  "next.wifi": "Ardından hoparlör, Bose yazılımıyla kullandığı Wi-Fi ağına bağlanır. Bağlanamazsa hoparlörün adını taşıyan kendi kurulum ağını açar (örneğin <i>SoundTap ST10 A1B2C3</i>): bu ağa bağlanın, kurulum sayfasında Wi-Fi ağınızı seçebilirsiniz. Bir SoundTouch 20 için 2,4 GHz ağ gerekir; WPA2, WPA ve WEP ağları denendi, WPA3 henüz denenmedi. SoundTouch 20'de bu kurulum ağına bir telefon bağlandı, ancak oradan Wi-Fi ağınızı seçmek henüz denenmedi.",
   "next.open": "Ardından aynı ağdaki herhangi bir telefon, tablet veya bilgisayarda <a>http://soundtap.local</a> adresini açın. Sonraki güncellemeleri hoparlörün kendi sayfasından yaparsınız.",
   "next.stuck": "On dakika sonra hâlâ açılmadı mı? Prizde bırakın ve <a>Bir şeyler ters giderse</a> bölümüne bakın.",
   "s6.title": "Bose’a geri dönüş",

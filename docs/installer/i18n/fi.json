@@ -83,7 +83,7 @@
   "next.noPower": "Älä irrota virtajohtoa, kun kaiuttimella on työ kesken, äläkä lähetä tiedostoa uudelleen.",
   "next.st20": "SoundTouch 20 näyttää SoundTapin aloitusnäytön muutaman sekunnin kuluttua uudelleenkäynnistyksestä. Sitten se päivittää verkkopiirinsä ja käynnistyy vielä kerran uudelleen, joten varaa lisäaikaa.",
   "next.st10": "SoundTouch 10:n valot liikkuvat puolelta toiselle sen käynnistyessä.",
-  "next.wifi": "Sen jälkeen kaiutin yhdistää siihen Wi-Fi-verkkoon, jossa se oli Bosen ohjelmistolla. Jos se ei onnistu, kaiutin käynnistää oman asetusverkkonsa, joka on nimetty kaiuttimen mukaan (esimerkiksi <i>SoundTap ST10 A1B2C3</i>): yhdistä siihen, niin voit valita Wi-Fi-verkkosi asetussivulla. SoundTouch 20 tarvitsee 2,4 GHz:n WPA2-verkon. SoundTouch 20:ssä tätä asetusverkkoa ei ole vielä kokeiltu.",
+  "next.wifi": "Sen jälkeen kaiutin yhdistää siihen Wi-Fi-verkkoon, jossa se oli Bosen ohjelmistolla. Jos se ei onnistu, kaiutin käynnistää oman asetusverkkonsa, joka on nimetty kaiuttimen mukaan (esimerkiksi <i>SoundTap ST10 A1B2C3</i>): yhdistä siihen, niin voit valita Wi-Fi-verkkosi asetussivulla. SoundTouch 20 tarvitsee 2,4 GHz:n verkon; WPA2-, WPA- ja WEP-verkkoja on kokeiltu sillä, WPA3:a ei vielä. SoundTouch 20:n asetusverkkoon on jo yhdistetty puhelimella, mutta Wi-Fi-verkon valitsemista siellä ei ole vielä kokeiltu.",
   "next.open": "Avaa sitten <a>http://soundtap.local</a> millä tahansa samassa verkossa olevalla puhelimella, tabletilla tai tietokoneella. Myöhemmät päivitykset tehdään kaiuttimen omalta sivulta.",
   "next.stuck": "Eikö kaiutin ole palannut kymmenessä minuutissa? Pidä se virrassa ja katso <a>Kun jokin menee vikaan</a>.",
   "s6.title": "Paluu Boseen",

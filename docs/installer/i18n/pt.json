@@ -83,7 +83,7 @@
   "next.noPower": "Não tire o alto-falante da tomada enquanto ele estiver ocupado e não envie o arquivo de novo.",
   "next.st20": "Um SoundTouch 20 mostra a tela inicial do SoundTap no visor alguns segundos depois de reiniciar. Depois ele atualiza o chip de rede e reinicia mais uma vez, então dê um pouco mais de tempo.",
   "next.st10": "Em um SoundTouch 10, as luzes correm de um lado para o outro enquanto ele inicia.",
-  "next.wifi": "Depois, o alto-falante se conecta ao Wi-Fi que usava com o software da Bose. Se não conseguir, ele abre a própria rede de configuração, com o nome do alto-falante (por exemplo <i>SoundTap ST10 A1B2C3</i>): conecte-se a ela e escolha seu Wi-Fi na página de configuração. Um SoundTouch 20 precisa de uma rede WPA2 de 2,4 GHz. Em um SoundTouch 20 essa rede de configuração ainda não foi testada.",
+  "next.wifi": "Depois, o alto-falante se conecta ao Wi-Fi que usava com o software da Bose. Se não conseguir, ele abre a própria rede de configuração, com o nome do alto-falante (por exemplo <i>SoundTap ST10 A1B2C3</i>): conecte-se a ela e escolha seu Wi-Fi na página de configuração. Um SoundTouch 20 precisa de uma rede de 2,4 GHz; redes WPA2, WPA e WEP já foram testadas nele, WPA3 ainda não. Em um SoundTouch 20 um celular já se conectou a essa rede de configuração, mas escolher seu Wi-Fi nela ainda não foi testado.",
   "next.open": "Depois abra <a>http://soundtap.local</a> em qualquer celular, tablet ou computador na mesma rede. As próximas atualizações são feitas pela página do próprio alto-falante.",
   "next.stuck": "Não voltou depois de dez minutos? Mantenha-o na tomada e veja <a>Quando algo dá errado</a>.",
   "s6.title": "Como voltar para a Bose",

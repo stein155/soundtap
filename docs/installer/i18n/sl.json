@@ -83,7 +83,7 @@
   "next.noPower": "Dokler dela, ga ne izklapljajte iz vtičnice in datoteke ne pošiljajte znova.",
   "next.st20": "SoundTouch 20 nekaj sekund po ponovnem zagonu na zaslonu pokaže zagonsko sliko SoundTap. Nato posodobi še svoj omrežni čip in se še enkrat znova zažene, zato računajte na nekaj dodatnega časa.",
   "next.st10": "Pri SoundTouch 10 lučke med zagonom potujejo z ene strani na drugo.",
-  "next.wifi": "Nato se zvočnik poveže z omrežjem Wi-Fi, ki ga je uporabljal s programsko opremo Bose. Če se ne poveže, vklopi svoje omrežje za nastavitev, poimenovano po zvočniku (na primer <i>SoundTap ST10 A1B2C3</i>): povežite se z njim in na strani za nastavitev izberite svoje omrežje Wi-Fi. SoundTouch 20 potrebuje omrežje WPA2 v pasu 2,4 GHz. Na SoundTouch 20 to omrežje za nastavitev še ni preizkušeno.",
+  "next.wifi": "Nato se zvočnik poveže z omrežjem Wi-Fi, ki ga je uporabljal s programsko opremo Bose. Če se ne poveže, vklopi svoje omrežje za nastavitev, poimenovano po zvočniku (na primer <i>SoundTap ST10 A1B2C3</i>): povežite se z njim in na strani za nastavitev izberite svoje omrežje Wi-Fi. SoundTouch 20 potrebuje omrežje v pasu 2,4 GHz; omrežja WPA2, WPA in WEP so na njem preizkušena, WPA3 še ne. Na omrežje za nastavitev zvočnika SoundTouch 20 se je že povezal telefon, izbira vašega omrežja Wi-Fi v njem pa še ni preizkušena.",
   "next.open": "Nato v katerem koli telefonu, tablici ali računalniku v istem omrežju odprite <a>http://soundtap.local</a>. Poznejše posodobitve namestite na strani samega zvočnika.",
   "next.stuck": "Zvočnika po desetih minutah še ni nazaj? Pustite ga priključenega na elektriko in si oglejte <a>Ko gre kaj narobe</a>.",
   "s6.title": "Vrnitev na Bose",
