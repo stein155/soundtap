@@ -197,9 +197,24 @@ func runLibrespot(ctx context.Context, name string, volume func() int, log *slog
 	// librespot creates them with the default mode.
 	// The volume is read at every start, crash restarts included: librespot reports
 	// --initial-volume to Spotify clients, and the boot-time level went stale.
-	supervise.Run(ctx, log, receivers, sourceSpotify, daemon(librespotBin, "sh", func() []string {
-		return append([]string{"-c", `umask 077; exec librespot "$@"`, "librespot"}, librespotArgs(name, volume())...)
+	supervise.Run(ctx, log, receivers, sourceSpotify, daemon(librespotBin, "nice", func() []string {
+		return librespotCommand(name, volume())
 	}))
+}
+
+// librespotCommand is nice's command line for librespot: at mediaNice, below the Mixer and
+// aplay, with umask 077. nice and sh both exec, so the process soundtapd stops is librespot
+// itself, and the event hook it runs (spotify-source.sh) inherits the niceness.
+//
+// librespot has the whole track, not a live stream: whenever the Mixer's jitter buffer has
+// room (the start, every track boundary, a skip, a seek) it decodes and resamples as fast as
+// the bus FIFO takes it, until that buffer holds seconds again. At full priority that burst
+// competed with aplay for the ST20's one CPU, whose ring holds a few hundred milliseconds:
+// the likeliest cause of the ST20's pops on Spotify (aplay underruns in /api/health), which
+// TuneIn, whose ffmpeg already ran at nice 5, did not have (2026-11-28).
+func librespotCommand(name string, volume int) []string {
+	return append([]string{"-n", mediaNice, "sh", "-c", `umask 077; exec librespot "$@"`, "librespot"},
+		librespotArgs(name, volume)...)
 }
 
 // snapclient is the Snapcast client binary and its supervised name.
@@ -256,10 +271,11 @@ func runMediaDaemons(ctx context.Context, home string, source func() string, log
 }
 
 // mediaNice is the niceness of the media daemons that feed the Mixer or the group but are
-// not on the path to the DAC: snapserver and the decoder. On the ST20's one CPU, a
-// multiroom leader at full priority let snapserver and ffmpeg take the CPU aplay needed,
-// and aplay ran dry ("underrun!!!", heard as a pop, 2026-11-24). Both keep seconds of
-// buffer behind them; aplay keeps a ring of a few hundred milliseconds.
+// not on the path to the DAC: snapserver, the decoder (player.DecoderNice) and librespot
+// (librespotCommand). On the ST20's one CPU, a multiroom leader at full priority let
+// snapserver and ffmpeg take the CPU aplay needed, and aplay ran dry ("underrun!!!", heard
+// as a pop, 2026-11-24). All keep seconds of buffer behind them; aplay keeps a ring of a
+// few hundred milliseconds.
 const mediaNice = "5"
 
 // snapserverArgs is nice's command line for snapserver.

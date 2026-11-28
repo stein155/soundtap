@@ -88,3 +88,14 @@ release approval for a candidate.
   radio went silent. On the reconnect, icecast sent its burst-on-connect (about 600 KB, roughly
   25 s of audio), which ffmpeg decoded from the start, so pieces already played were repeated.
   About 10 MB of RAM was free.
+- Spotify on 2026-11-28, 0.1.0-alpha.8, about 4 h: a few pops by ear, and `/api/health` counted
+  4 aplay underruns (`alsaUnderruns`: aplay's ring of 320 ms ran dry) and 2 Mixer underruns,
+  with no soundtapd restart. 30 minutes of TuneIn on the same speaker had none, and the pops
+  were there before the panel's redesign in alpha.8. The two paths differ in priority and in
+  how they fill: ffmpeg (TuneIn) runs at nice 5 since the pops of 2026-11-24 and receives a
+  live stream at its own pace, while librespot ran at nice 0, beside aplay and the Mixer, and
+  holds the whole track, so after every track boundary, skip and seek it decodes and resamples
+  (Spotify's 44.1 kHz to the bus's 48 kHz, in ALSA's plug) as fast as the bus FIFO takes it until
+  the Mixer's 6 s prebuffer is full again. librespot now runs at nice 5 as well
+  (`librespotCommand`, `app/cmd/soundtapd/procs.go`). That this was the cause is the likeliest
+  reading of the counts, not yet measured: the Spotify row of the hardware checklist proves it.
