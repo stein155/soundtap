@@ -1524,9 +1524,24 @@ func TestTapIsBeforeBass(t *testing.T) {
 	go func() { _ = mixer.Run(ctx, pr) }()
 	go func() { _, _ = pipeWriter.Write(pcm(blockFrames*sourceBufferBlocks*2, 6000)) }()
 
-	for deadline := time.Now().Add(5 * time.Second); sink.tap.Len() < 20*blockBytes; {
+	// Wait for the tone itself, not for an amount of audio: a loaded machine filled the
+	// tap with the prebuffer's silence before the first tone block (2026-11-28). Then wait
+	// for the DAC to have had as much, so it got the same blocks.
+	tone := pcm(blockFrames, 6000)
+
+	var tap []byte
+
+	for deadline := time.Now().Add(10 * time.Second); !bytes.Contains(tap, tone); tap = sink.tap.Bytes() {
 		if time.Now().After(deadline) {
-			t.Fatal("tap got too little audio")
+			t.Fatal("tap does not carry the unshelved tone")
+		}
+
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	for deadline := time.Now().Add(10 * time.Second); sink.Len() < len(tap); {
+		if time.Now().After(deadline) {
+			t.Fatalf("DAC got %d bytes, the tap %d", sink.Len(), len(tap))
 		}
 
 		time.Sleep(5 * time.Millisecond)
@@ -1534,12 +1549,7 @@ func TestTapIsBeforeBass(t *testing.T) {
 
 	cancel()
 
-	tap, dac := sink.tap.Bytes(), sink.Bytes()
-	if !bytes.Contains(tap, pcm(blockFrames, 6000)) {
-		t.Fatal("tap does not carry the unshelved tone")
-	}
-
-	if bytes.Contains(dac, pcm(blockFrames, 6000)) {
+	if dac := sink.Bytes(); bytes.Contains(dac, tone) {
 		t.Fatal("DAC got a block without the bass applied")
 	}
 }

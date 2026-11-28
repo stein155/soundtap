@@ -8,9 +8,11 @@ import (
 	"log/slog"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -132,9 +134,11 @@ func TestCodecGainHex(t *testing.T) {
 func TestCodecVolumeWritesAtMostEveryGap(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "writes")
 
-	ctx := t.Context()
+	ctx, cancel := context.WithCancel(t.Context())
 
 	volume := newCodecVolume(ctx, []string{"sh", "-c", `echo "$1" >> ` + out, "sh"}, nil, func() {}, slog.Default())
+	defer stopCodecVolume(t, cancel, volume)
+
 	lines := func() []string {
 		b, _ := os.ReadFile(out)
 
@@ -191,8 +195,11 @@ func TestCodecVolumeWriteTriesAgainBeforeThePCM(t *testing.T) {
 
 	failed := make(chan struct{}, codecWriteTries)
 	refused := filepath.Join(dir, "refused")
+
 	volume := newCodecVolume(ctx, []string{"sh", "-c", `echo "$1" >> ` + refused + `; exit 1`, "sh"}, nil,
 		func() { failed <- struct{}{} }, quiet)
+	defer stopCodecVolume(t, cancel, volume)
+
 	volume.SetGain(0.2)
 
 	select {
@@ -216,44 +223,130 @@ func TestCodecVolumeWriteTriesAgainBeforeThePCM(t *testing.T) {
 //
 //nolint:paralleltest // changes package-wide state other tests read: syscall.Setpriority
 func TestCodecWriteRunsNiced(t *testing.T) {
-	out := filepath.Join(t.TempDir(), "nice")
+	dir := t.TempDir()
+	pidFile, release, out := filepath.Join(dir, "pid"), filepath.Join(dir, "release"), filepath.Join(dir, "out")
 
-	// The child is reniced after it starts: wait for that instead of sleeping a fixed
-	// time, which a loaded machine outran. A test run already below nice 10 (nice -n 19)
-	// cannot raise the child's priority, so the parent's own nice is the floor.
-	script := `parent=$(ps -o nice= -p $PPID); i=0
-		while [ "$(ps -o nice= -p $$)" -lt ` + strconv.Itoa(codecWriteNice) + ` ] && [ "$i" -lt 1000 ]; do
-			sleep 0.01; i=$((i+1))
-		done
-		echo $parent > "$0"; ps -o nice= -p $$ >> "$0"; echo "$1" >> "$0"`
-
-	err := writeCodecGain(t.Context(), []string{"sh", "-c", script, out}, 1)
+	// The child is reniced after it starts and then runs at nice 10, which a loaded
+	// machine starves: a child that ran ps in a loop itself outlived the write's timeout
+	// (2026-11-28, two busy loops per core). It only says who it is and waits; the test
+	// reads its nice from outside, waiting for the renice, and then lets it finish.
+	err := syscall.Mkfifo(release, 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	b, err := os.ReadFile(out)
+	// Opened read-write so neither end blocks on the other; a line releases the child.
+	fifo, err := os.OpenFile(release, os.O_RDWR, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	fields := strings.Fields(string(b))
-	if len(fields) != 3 {
-		t.Fatalf("the write wrote %q, want the parent's nice, its own and the gain", fields)
+	defer fifo.Close()
+
+	// The gain is the last argument, $3.
+	script := `echo $$ > "$0.tmp" && mv "$0.tmp" "$0"; read go < "$1"; echo "$3" > "$2"`
+	done := make(chan error, 1)
+
+	go func() {
+		done <- writeCodecGain(t.Context(), []string{"sh", "-c", script, pidFile, release, out}, 1)
+	}()
+
+	pid := waitForChildPID(t, pidFile, done)
+
+	// A test run already below nice 10 (nice -n 19) cannot raise the child's priority,
+	// so the test's own nice is the floor.
+	want := max(codecWriteNice, processNice(t, os.Getpid()))
+	got := processNice(t, pid)
+
+	for deadline := time.Now().Add(codecWriteTimeout / 2); got != want && time.Now().Before(deadline); {
+		time.Sleep(10 * time.Millisecond)
+
+		got = processNice(t, pid)
 	}
 
-	parent, err := strconv.Atoi(fields[0])
+	_, err = fifo.WriteString("go\n")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	want := max(codecWriteNice, parent)
-	if fields[1] != strconv.Itoa(want) || fields[2] != codecGainHex(1) {
-		t.Errorf("the write ran as %q, want nice %d and gain %s", fields[1:], want, codecGainHex(1))
+	err = <-done
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gain, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got != want || strings.TrimSpace(string(gain)) != codecGainHex(1) {
+		t.Errorf("the write ran at nice %d with %q, want nice %d and gain %s", got, gain, want, codecGainHex(1))
 	}
 
 	err = writeCodecGain(t.Context(), []string{"sh", "-c", `echo no clock >&2; exit 3`}, 1)
 	if err == nil || !strings.Contains(err.Error(), "no clock") {
 		t.Errorf("failed write: %v, want its output", err)
+	}
+}
+
+// waitForChildPID returns the pid a codec write's child wrote to path, failing if the write
+// ends first or the child never gets that far.
+func waitForChildPID(t *testing.T, path string, done <-chan error) int {
+	t.Helper()
+
+	for deadline := time.Now().Add(codecWriteTimeout); time.Now().Before(deadline); {
+		select {
+		case err := <-done:
+			t.Fatalf("the write ended before its child started: %v", err)
+		case <-time.After(10 * time.Millisecond):
+		}
+
+		written, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+
+		pid, err := strconv.Atoi(strings.TrimSpace(string(written)))
+		if err != nil {
+			t.Fatalf("child pid %q: %v", written, err)
+		}
+
+		return pid
+	}
+
+	t.Fatal("the codec write's child never started")
+
+	return 0
+}
+
+// processNice is a process's nice value as ps reports it.
+func processNice(t *testing.T, pid int) int {
+	t.Helper()
+
+	out, err := exec.CommandContext(t.Context(), "ps", "-o", "nice=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		t.Fatalf("ps for %d: %v", pid, err)
+	}
+
+	nice, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		t.Fatalf("nice of %d: %q: %v", pid, out, err)
+	}
+
+	return nice
+}
+
+// stopCodecVolume cancels a codec volume's writer and waits for it to stop, so that it
+// cannot outlive its test and read a package variable the next test swaps: one still
+// retrying a write after its test ended raced on codecWriteRetry (2026-11-28, -race under
+// load).
+func stopCodecVolume(t *testing.T, cancel context.CancelFunc, volume *codecVolume) {
+	t.Helper()
+	cancel()
+
+	select {
+	case <-volume.done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the codec volume writer did not stop")
 	}
 }

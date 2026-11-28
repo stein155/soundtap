@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stein155/soundtap/app/internal/audio"
@@ -102,33 +103,37 @@ func TestLibrespotStartsAtSpeakerVolume(t *testing.T) {
 func TestWaitBusQuietWaitsForTheWriterToStop(t *testing.T) {
 	t.Parallel()
 
-	var calls atomic.Uint64
+	// A fake clock: sleeps overshot under load, so the writer looked stopped early and a
+	// busy bus held past its deadline (2026-11-28, two busy loops per core, -cpu 1).
+	synctest.Test(t, func(t *testing.T) {
+		var calls atomic.Uint64
 
-	stop := time.Now().Add(80 * time.Millisecond)
-	go func() {
-		for time.Now().Before(stop) {
-			calls.Add(1)
-			time.Sleep(2 * time.Millisecond)
+		stop := time.Now().Add(80 * time.Millisecond)
+		go func() {
+			for time.Now().Before(stop) {
+				calls.Add(1)
+				time.Sleep(2 * time.Millisecond)
+			}
+		}()
+
+		health := func() audio.Health { return audioHealthOf(calls.Load(), 0) }
+		start := time.Now()
+
+		waitBusQuiet(health, 40*time.Millisecond, time.Second)
+
+		if took := time.Since(start); took < 80*time.Millisecond || took > 500*time.Millisecond {
+			t.Fatalf("returned after %v; writer stopped at 80ms", took)
 		}
-	}()
 
-	health := func() audio.Health { return audioHealthOf(calls.Load(), 0) }
-	start := time.Now()
+		start = time.Now()
 
-	waitBusQuiet(health, 40*time.Millisecond, time.Second)
+		busy := func() audio.Health { return audioHealthOf(uint64(time.Now().UnixNano()), 0) }
+		waitBusQuiet(busy, 40*time.Millisecond, 60*time.Millisecond)
 
-	if took := time.Since(start); took < 80*time.Millisecond || took > 500*time.Millisecond {
-		t.Fatalf("returned after %v; writer stopped at 80ms", took)
-	}
-
-	start = time.Now()
-
-	busy := func() audio.Health { return audioHealthOf(uint64(time.Now().UnixNano()), 0) }
-	waitBusQuiet(busy, 40*time.Millisecond, 60*time.Millisecond)
-
-	if took := time.Since(start); took > 300*time.Millisecond {
-		t.Fatalf("busy bus held the yield for %v", took)
-	}
+		if took := time.Since(start); took > 300*time.Millisecond {
+			t.Fatalf("busy bus held the yield for %v", took)
+		}
+	})
 }
 
 // The AirPlay device ID is the speaker's device ID, not whatever MAC shairport-sync finds

@@ -191,8 +191,17 @@ preview becomes a supported model once an owner has run its hardware checklist.
       nice test, which slept a fixed time instead of waiting for the renice and could not
       pass under `nice -n 19`. The volume slider's end-to-end test (failed once on CI)
       measured the track while its sheet still slid in and tapped beside it; it now taps
-      the track once it stands still. After the fixes every run passed. Still to do: the
-      same runs on the CI runner.
+      the track once it stands still. After the fixes every run passed. On 2026-11-28 on
+      the same machine, beside two or three busy loops per core: the Go suite three times
+      under `-race`, with `-cpu 1,2` and `-cpu 1,4`, and at nice 19; the unit tests five
+      times and the end-to-end tests three times. Fixed from those runs: the codec write's
+      nice test again (its child ran `ps` in a loop at nice 10 and outlived the write's
+      timeout; the test now reads the child's nice from outside while the child waits), the
+      bus-quiet wait's test (its sleeps overshot; it runs on a fake clock now), the tap
+      test (the prebuffer's silence filled the tap before the tone; it waits for the tone),
+      and a codec volume writer that outlived its test and raced the next test's
+      `codecWriteRetry` (the tests now stop it and wait; a test-only race). Then the Go
+      suite passed three times under load. Still to do: the same runs on the CI runner.
 - [x] Executed tests for the init script and the installer instead of text checks. The init
       script, the installer and the boot chain's checkers run against fakes; the
       [test map](../contributors/testing/README.md) says why each remaining text check stays one.

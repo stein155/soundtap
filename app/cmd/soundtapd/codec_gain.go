@@ -233,16 +233,22 @@ func fileExists(path string) bool {
 // Like stock APServer (APAudioParameterControl, a 250 ms volume timer), a change lands at
 // once and the next one no sooner than codecVolumeGap later, holding only the newest
 // value: a drag or held key then costs a few coefficient flips, not one per step.
-type codecVolume struct{ want chan float64 }
+type codecVolume struct {
+	want chan float64
+	// done is closed when the writer has stopped.
+	done chan struct{}
+}
 
 const codecVolumeGap = 250 * time.Millisecond
 
 func newCodecVolume(
 	ctx context.Context, command []string, health audioHealth, failed func(), log *slog.Logger,
 ) *codecVolume {
-	volume := &codecVolume{want: make(chan float64, 1)}
+	volume := &codecVolume{want: make(chan float64, 1), done: make(chan struct{})}
 
 	go func() {
+		defer close(volume.done)
+
 		// The volume is reconciled every 50 ms; only a change costs a codec write.
 		last := -1.0
 		// The pump generation the last write ran under. It starts at the current one: the
