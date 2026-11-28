@@ -140,6 +140,9 @@ func (s *Handler) install(w http.ResponseWriter, r *http.Request, restart bool) 
 	if pkg.Native {
 		err := job.inst.VerifyRootfs(job.read, install.BootVariant(req.model))
 		if err != nil {
+			// Refused before checkStream held it to its signature: a native rootfs boots
+			// under a lost environment's built-in bootcmd, so it goes, as any refused one.
+			s.discardRootfs(job, pkg)
 			s.fail(w, "writing the root filesystem failed", err)
 
 			return false

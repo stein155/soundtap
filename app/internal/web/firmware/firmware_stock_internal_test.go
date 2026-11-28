@@ -367,6 +367,12 @@ func TestInstallRefusesARootfsThatDoesNotReadBack(t *testing.T) {
 	if got, _ := env.Get("bootcmd"); got != "run nand_boot2;" {
 		t.Errorf("bootcmd = %q, want the running slot still selected", got)
 	}
+	// Refused before the signature's digest was checked, the written rootfs is erased, as
+	// every refused native rootfs is: a lost environment's built-in bootcmd boots one.
+	written := strings.Index(joined, "ubiformat /dev/mtd8")
+	if !strings.Contains(joined[written:], "flash_erase /dev/mtd8 0 0") {
+		t.Errorf("the rootfs that failed its readback was left in the spare slot: %v", nand.cmds)
+	}
 }
 
 // soundtapEnv is the environment a SoundTap install leaves behind: PONG
