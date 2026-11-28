@@ -194,19 +194,6 @@ preview becomes a supported model once an owner has run its hardware checklist.
       checklist and the install records on 2026-11-24 and reworded. Where the two disagreed
       (ST300 Spotify and Bluetooth playback, Wireless Link AUX), the owner's report of
       2026-11-24 settled it in the checklist.
-- [ ] **Spotify presets** are slow to start. The timing logs from an earlier fix say where the time
-      goes; measure on the Wireless Link and fix. The code path was read on 2026-11-27: the key
-      press claims the amp at once and sends librespot one `/load` with no wait, retry or
-      sleep in front of it, and the claim when librespot's audio starts does no write. What
-      it did do was write the recent list at every reclaim by Spotify itself (each song
-      change and resume, while librespot's player waited for the answer); that is fixed.
-      Still to measure on the Wireless Link, from standby and from another source: the
-      `spotify preset loaded` line (`load=`, the `/load` round trip) against `spotify preset
-      started` (`after=`, press to librespot's first audio), with librespot run without `-q`
-      for that test so its own log shows activation, context resolution, the audio key and the
-      first chunk. A long `load=` is librespot's control API or its activation; a long
-      `after=` with a short `load=` is Spotify's servers or the audio key (patch 0006 retries
-      it up to three times at 1.5 s each).
 - [ ] **Multiroom sync** ([ADR 0013](../decisions/0013-multiroom-through-snapcast.md)): followers
       within about 20 ms of the leader across all three models, also after an underrun.
       Measured 2026-11-14: the modelled chain is the same whichever model leads, and
@@ -272,6 +259,8 @@ preview becomes a supported model once an owner has run its hardware checklist.
 
 ## Done
 
+- [x] **Spotify presets start fast enough**: the owner sees no slow start (2026-11-28); the write
+      of the recent list at every Spotify reclaim was the one delay found in the code, fixed.
 - [x] **AUX in** on the ST10 and the Wireless Link, captured through the mixer since the mixer
       capture landed. ST10, 2026-11-08: the Wireless Link's line out into the ST10's AUX in; AUX owned the
       output, 0 underruns. Wireless Link, 2026-11-09: a loopback cable played 30 minutes with no
