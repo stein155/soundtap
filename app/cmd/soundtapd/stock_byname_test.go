@@ -170,13 +170,26 @@ func rbStation(uuid, stream, country string, checkOK int) string {
 		`"lastcheckok":%d}`, uuid, stream, country, checkOK)
 }
 
+// rbJoe is one "Joe" of a Radio Browser list with its votes, clicks and bit rate.
+func rbJoe(uuid, stream, country string, votes, clicks, bitrate int) string {
+	return fmt.Sprintf(`{"stationuuid":%q,"name":"Joe","url_resolved":%q,"countrycode":%q,"lastcheckok":1,`+
+		`"votes":%d,"clickcount":%d,"bitrate":%d}`, uuid, stream, country, votes, clicks, bitrate)
+}
+
 // takeOver runs one round over one pending NPO Radio 2 preset in slot 2 and returns the
 // speaker's presets, whether it still waits, and the log.
 func takeOver(t *testing.T, dir *fakeDirectory, country string) ([]speaker.Preset, bool, string) {
 	t.Helper()
 
+	return takeOverNamed(t, dir, "NPO Radio 2", country)
+}
+
+// takeOverNamed is takeOver for a preset of another name.
+func takeOverNamed(t *testing.T, dir *fakeDirectory, name, country string) ([]speaker.Preset, bool, string) {
+	t.Helper()
+
 	path := filepath.Join(t.TempDir(), stockPendingName)
-	writePending(t, path, pending(2, uuidUnknown, "NPO Radio 2", testNow))
+	writePending(t, path, pending(2, uuidUnknown, name, testNow))
 
 	var buf bytes.Buffer
 
@@ -312,6 +325,66 @@ func TestStockLookupsUnknownUUIDNothingByName(t *testing.T) {
 	}
 }
 
+// Several stations share a name, as "JOE" does: one in Belgium and two entries of the Dutch
+// one with different streams. A Dutch speaker takes the Dutch entry with the most votes.
+// TuneIn has only longer names, so Radio Browser decides.
+func TestStockLookupsUnknownUUIDSharedNameByCountry(t *testing.T) {
+	t.Parallel()
+
+	dir := directory()
+	dir.tuneIn = tuneInStation("s307829", "JOE Nederland") + "," + tuneInStation("s25741", "JOE België")
+	dir.byName["JOE"] = "[" + strings.Join([]string{
+		rbJoe("55555555-5555-4555-8555-555555555555", "https://example.com/be.aac", "BE", 330, 270, 95),
+		rbJoe("66666666-6666-4666-8666-666666666666", "https://example.com/nl.aac", "NL", 9, 7, 96),
+		rbJoe(uuidNPO2New, "https://example.com/nl.mp3", "NL", 94, 17, 128),
+	}, ",") + "]"
+
+	presets, waits, out := takeOverNamed(t, dir, "JOE", "NL")
+	if waits || len(presets) != 1 || presets[0].Location != "https://example.com/nl.mp3" || presets[0].Name != "JOE" {
+		t.Fatalf("waits %v, presets %+v", waits, presets)
+	}
+
+	if !strings.Contains(out, `route=radio-browser-name station=`+uuidNPO2New) {
+		t.Errorf("the route is not logged:\n%s", out)
+	}
+}
+
+// Stations of that name in different countries and no country to go by: nothing is taken,
+// however many votes one has; the preset is given up as before.
+func TestStockLookupsUnknownUUIDSharedNameUnresolved(t *testing.T) {
+	t.Parallel()
+
+	list := "[" + rbJoe("55555555-5555-4555-8555-555555555555", "https://example.com/be.aac", "BE", 330, 270, 95) +
+		"," + rbJoe(uuidNPO2New, "https://example.com/nl.mp3", "NL", 94, 17, 128) + "]"
+
+	for _, country := range []string{"", "DE"} {
+		dir := directory()
+		dir.byName["JOE"] = list
+
+		presets, waits, out := takeOverNamed(t, dir, "JOE", country)
+		if waits || len(presets) != 0 {
+			t.Fatalf("country %q: waits %v, presets %+v", country, waits, presets)
+		}
+
+		if !strings.Contains(out, `tried=radio-browser-uuid,tunein-name,radio-browser-name`) {
+			t.Errorf("country %q: giving up is not logged:\n%s", country, out)
+		}
+	}
+}
+
+// A name search for a shared name that does not answer keeps the preset for the next round.
+func TestStockLookupsUnknownUUIDSharedNameNetworkDown(t *testing.T) {
+	t.Parallel()
+
+	dir := directory()
+	dir.tuneInDown, dir.nameDown = true, true
+
+	presets, waits, out := takeOverNamed(t, dir, "JOE", "NL")
+	if !waits || len(presets) != 0 || !strings.Contains(out, `msg="stock preset lookup failed; tried again later"`) {
+		t.Fatalf("waits %v, presets %+v:\n%s", waits, presets, out)
+	}
+}
+
 // A uuid lookup no server answers is tried again later, without searching by name; so is a
 // name search that did not answer and found nothing.
 func TestStockLookupsNetworkErrorsRetry(t *testing.T) {
@@ -376,37 +449,83 @@ func TestTuneInMatch(t *testing.T) {
 	}
 }
 
-// Radio Browser's match: of several, the speaker's country, then one last found playing;
-// the same stream entered twice is one station, two streams are none.
+// Radio Browser's match: of several, stock's logo, then the speaker's country, then one last
+// found playing; the same stream entered twice is one station. Different streams of one
+// country go to the most votes, then clicks, then bit rate; of different or unknown
+// countries, or tied on all three, they are none.
 func TestRadioBrowserMatch(t *testing.T) {
 	t.Parallel()
 
 	station := func(uuid, name, stream, country string, ok int) radiobrowser.Station {
 		return radiobrowser.Station{
 			UUID: uuid, Name: name, URL: "", URLResolved: stream, Favicon: "", CountryCode: country, LastCheckOK: ok,
+			Votes: 0, ClickCount: 0, Bitrate: 0,
 		}
+	}
+	ranked := func(s radiobrowser.Station, votes, clicks, bitrate int) radiobrowser.Station {
+		s.Votes, s.ClickCount, s.Bitrate = votes, clicks, bitrate
+
+		return s
+	}
+	withLogo := func(s radiobrowser.Station, logo string) radiobrowser.Station {
+		s.Favicon = logo
+
+		return s
 	}
 
 	de1, nl0 := station("a", "Radio 10", "http://x/a", "DE", 1), station("b", "radio 10", "http://x/b", "NL", 0)
 	nlA, nlB := station("a", "Radio 10", "http://x/a", "NL", 1), station("b", "Radio 10", "http://x/b", "NL", 1)
 	twin := station("b", "Radio 10", "http://x/a", "NL", 1)
+	noCountryA := station("a", "Radio 10", "http://x/a", "", 1)
+	noCountryB := station("b", "Radio 10", "http://x/b", "", 1)
+	nlC := station("c", "Radio 10", "http://x/c", "NL", 1)
+	gold := station("a", "Radio 10 Gold", "http://x/a", "NL", 1)
 
 	for name, test := range map[string]struct {
 		stations []radiobrowser.Station
+		logo     string
 		country  string
 		want     string
 	}{
-		"one":              {[]radiobrowser.Station{nl0}, "", "b"},
-		"country":          {[]radiobrowser.Station{de1, nl0}, "nl", "b"},
-		"no country match": {[]radiobrowser.Station{de1, nl0}, "BE", "a"},
-		"checked":          {[]radiobrowser.Station{nl0, nlA}, "NL", "a"},
-		"same stream":      {[]radiobrowser.Station{nlA, twin}, "NL", "a"},
-		"two streams":      {[]radiobrowser.Station{nlA, nlB}, "NL", ""},
-		"unknown country":  {[]radiobrowser.Station{de1, nlB}, "", ""},
-		"other name":       {[]radiobrowser.Station{station("a", "Radio 10 Gold", "http://x/a", "NL", 1)}, "NL", ""},
-		"bad stream":       {[]radiobrowser.Station{station("a", "Radio 10", "ftp://x/a", "NL", 1)}, "NL", ""},
+		"one":              {[]radiobrowser.Station{nl0}, "", "", "b"},
+		"country":          {[]radiobrowser.Station{de1, nl0}, "", "nl", "b"},
+		"no country match": {[]radiobrowser.Station{de1, nl0}, "", "BE", "a"},
+		"checked":          {[]radiobrowser.Station{nl0, nlA}, "", "NL", "a"},
+		"same stream":      {[]radiobrowser.Station{nlA, twin}, "", "NL", "a"},
+		"two streams":      {[]radiobrowser.Station{nlA, nlB}, "", "NL", ""},
+		"unknown country":  {[]radiobrowser.Station{de1, nlB}, "", "", ""},
+		"other name":       {[]radiobrowser.Station{gold}, "", "NL", ""},
+		"bad stream":       {[]radiobrowser.Station{station("a", "Radio 10", "ftp://x/a", "NL", 1)}, "", "NL", ""},
+		"votes":            {[]radiobrowser.Station{ranked(nlA, 9, 70, 96), ranked(nlB, 94, 17, 128)}, "", "NL", "b"},
+		"clicks":           {[]radiobrowser.Station{ranked(nlA, 5, 70, 96), ranked(nlB, 5, 17, 128)}, "", "NL", "a"},
+		"bitrate":          {[]radiobrowser.Station{ranked(nlA, 5, 7, 96), ranked(nlB, 5, 7, 128)}, "", "NL", "b"},
+		"full tie":         {[]radiobrowser.Station{ranked(nlA, 5, 7, 128), ranked(nlB, 5, 7, 128)}, "", "NL", ""},
+		"tie with a twin": {
+			[]radiobrowser.Station{ranked(nlA, 5, 7, 128), ranked(twin, 5, 7, 128), ranked(nlB, 1, 7, 128)},
+			"", "NL", "a",
+		},
+		"tie behind a twin": {
+			[]radiobrowser.Station{ranked(nlA, 5, 7, 128), ranked(twin, 5, 7, 128), ranked(nlC, 5, 7, 128)},
+			"", "NL", "",
+		},
+		"one country, no hint": {[]radiobrowser.Station{ranked(nlA, 1, 0, 0), ranked(nlB, 2, 0, 0)}, "", "", "b"},
+		"countries, no hint":   {[]radiobrowser.Station{ranked(de1, 900, 0, 0), ranked(nlB, 2, 0, 0)}, "", "", ""},
+		"countries left":       {[]radiobrowser.Station{ranked(de1, 900, 0, 0), ranked(nlB, 2, 0, 0)}, "", "BE", ""},
+		"no countries":         {[]radiobrowser.Station{ranked(noCountryA, 9, 0, 0), noCountryB}, "", "", ""},
+		"stock's logo": {
+			[]radiobrowser.Station{
+				withLogo(ranked(nlA, 90, 0, 0), "http://x/a.png"), withLogo(nlB, " http://x/b.png "),
+			},
+			"http://x/b.png", "NL", "b",
+		},
+		"stock's logo, other country": {
+			[]radiobrowser.Station{withLogo(de1, "http://x/de.png"), nlB}, "http://x/de.png", "NL", "a",
+		},
+		"stock's logo unknown": {
+			[]radiobrowser.Station{withLogo(ranked(nlA, 90, 0, 0), "http://x/a.png"), nlB}, "http://x/z.png", "NL", "a",
+		},
 	} {
-		got, ok := radioBrowserMatch(test.stations, "Radio 10", test.country)
+		got, ok := radioBrowserMatch(test.stations, "Radio 10", test.logo, test.country)
 		if ok != (test.want != "") || got.UUID != test.want {
 			t.Errorf("%s: %+v, %v; want %q", name, got, ok, test.want)
 		}

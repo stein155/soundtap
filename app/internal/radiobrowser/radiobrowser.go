@@ -56,6 +56,12 @@ type Station struct {
 	CountryCode string `json:"countrycode"`
 	// LastCheckOK is 1 when Radio Browser's last check of the stream found it playing.
 	LastCheckOK int `json:"lastcheckok"`
+	// Votes is how many listeners voted for the station on Radio Browser.
+	Votes int `json:"votes"`
+	// ClickCount is how often the station was started through Radio Browser lately.
+	ClickCount int `json:"clickcount"`
+	// Bitrate is the stream's bit rate in kbit/s, 0 when Radio Browser has none.
+	Bitrate int `json:"bitrate"`
 }
 
 // StreamURL is what plays the station: the resolved stream, or the address the station
@@ -108,9 +114,9 @@ func (c *Client) Station(ctx context.Context, uuid string) (Station, error) {
 		return none, err
 	}
 
-	for _, station := range stations {
-		if strings.EqualFold(station.UUID, uuid) {
-			return station, nil
+	for index := range stations {
+		if strings.EqualFold(stations[index].UUID, uuid) {
+			return stations[index], nil
 		}
 	}
 

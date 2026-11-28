@@ -4,6 +4,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"log/slog"
@@ -101,7 +102,7 @@ func (l *stockLookups) findByName(
 		return nameHit{route: "", station: "", location: "", logo: ""}, false, errors.Join(failed, err)
 	}
 
-	if station, ok := radioBrowserMatch(listed, preset.Name, l.country()); ok {
+	if station, ok := radioBrowserMatch(listed, preset.Name, preset.Logo, l.country()); ok {
 		return nameHit{
 			route: routeRadioBrowserBy, station: station.UUID, location: station.StreamURL(),
 			logo: strings.TrimSpace(station.Favicon),
@@ -117,7 +118,8 @@ func sameName(a, b string) bool {
 }
 
 // tuneInMatch is TuneIn's one station named name. TuneIn's search results name no country,
-// so several stations of that name are no match.
+// only a bit rate and a reliability, so several stations of that name are no match: ranking
+// them could pick another country's station.
 func tuneInMatch(stations []tunein.Station, name string) (tunein.Station, bool) {
 	var match tunein.Station
 
@@ -139,18 +141,32 @@ func tuneInMatch(stations []tunein.Station, name string) (tunein.Station, bool) 
 }
 
 // radioBrowserMatch is Radio Browser's one station named name with a stream a preset may
-// hold: of several, those of the speaker's country when there are any, then those Radio
-// Browser last found playing when there are any. Stations left that play different streams
-// are no match; the same station entered twice is.
-func radioBrowserMatch(stations []radiobrowser.Station, name, country string) (radiobrowser.Station, bool) {
+// hold. Of several, each step keeps those that pass it when there are any:
+//
+//  1. those whose logo is stock's own logo for the preset, logo (the entry stock stored);
+//  2. those of the speaker's country;
+//  3. those Radio Browser last found playing.
+//
+// Stations left that all play one stream are the same station entered twice: that one. Stations
+// left that play different streams are told apart only when they are all of one country, so
+// all the same broadcaster's entries: the one with the most votes, then clicks, then the
+// highest bit rate. Stations of different or unknown countries, or that tie on all three, are
+// no match.
+func radioBrowserMatch(stations []radiobrowser.Station, name, logo, country string) (radiobrowser.Station, bool) {
 	var none radiobrowser.Station
 
 	candidates := make([]radiobrowser.Station, 0, len(stations))
 
-	for _, station := range stations {
-		if sameName(station.Name, name) && web.ValidStreamURL(station.StreamURL()) {
-			candidates = append(candidates, station)
+	for index := range stations {
+		if sameName(stations[index].Name, name) && web.ValidStreamURL(stations[index].StreamURL()) {
+			candidates = append(candidates, stations[index])
 		}
+	}
+
+	if logo = strings.TrimSpace(logo); logo != "" {
+		candidates = preferred(candidates, func(s *radiobrowser.Station) bool {
+			return strings.TrimSpace(s.Favicon) == logo
+		})
 	}
 
 	if country != "" {
@@ -165,13 +181,65 @@ func radioBrowserMatch(stations []radiobrowser.Station, name, country string) (r
 		return none, false
 	}
 
-	for index := range candidates[1:] {
-		if candidates[index+1].StreamURL() != candidates[0].StreamURL() {
+	if oneStream(candidates) {
+		return candidates[0], true
+	}
+
+	if !oneCountry(candidates) {
+		return none, false
+	}
+
+	return mostListened(candidates)
+}
+
+// oneStream reports whether the stations all play the same stream.
+func oneStream(stations []radiobrowser.Station) bool {
+	for index := range stations[1:] {
+		if stations[index+1].StreamURL() != stations[0].StreamURL() {
+			return false
+		}
+	}
+
+	return true
+}
+
+// oneCountry reports whether the stations are all of one known country.
+func oneCountry(stations []radiobrowser.Station) bool {
+	for index := range stations {
+		if strings.TrimSpace(stations[index].CountryCode) == "" ||
+			!strings.EqualFold(stations[index].CountryCode, stations[0].CountryCode) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// mostListened is the station with the most votes, then clicks, then the highest bit rate;
+// none when another with a different stream ties with it on all three.
+func mostListened(stations []radiobrowser.Station) (radiobrowser.Station, bool) {
+	var none radiobrowser.Station
+
+	rank := func(a, b *radiobrowser.Station) int {
+		return cmp.Or(cmp.Compare(b.Votes, a.Votes), cmp.Compare(b.ClickCount, a.ClickCount),
+			cmp.Compare(b.Bitrate, a.Bitrate))
+	}
+
+	best := 0
+
+	for index := range stations {
+		if rank(&stations[index], &stations[best]) < 0 {
+			best = index
+		}
+	}
+
+	for index := range stations {
+		if rank(&stations[index], &stations[best]) == 0 && stations[index].StreamURL() != stations[best].StreamURL() {
 			return none, false
 		}
 	}
 
-	return candidates[0], true
+	return stations[best], true
 }
 
 // preferred is the stations that are ok, or all of them when none is.

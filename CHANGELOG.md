@@ -12,6 +12,10 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
 
 ### Fixed
 
+- **A Radio Browser preset whose name several stations share is taken over** on the first
+  install, as JOE: the station from your speaker's country, and of several entries of that one
+  station, the one listeners vote for most. Stations from different countries, or that cannot
+  be told apart, still leave the preset empty.
 - **SoundTouch 20: numbers everything it sends in order**, on your home network and on the
   setup network, so a router or phone no longer takes a new message for a repeat.
 

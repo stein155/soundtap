@@ -149,14 +149,16 @@ func TestByName(t *testing.T) {
 		}
 
 		_, _ = w.Write([]byte(`[{"stationuuid":"961e3b9a-0601-11e8-ae97-52543be04c81","name":"NPO Radio 2",` +
-			`"url_resolved":"http://example.com/npo2","countrycode":"NL","lastcheckok":1}]`))
+			`"url_resolved":"http://example.com/npo2","countrycode":"NL","lastcheckok":1,` +
+			`"votes":94,"clickcount":17,"bitrate":128}]`))
 	}))
 	t.Cleanup(srv.Close)
 
 	client := radiobrowser.NewWith(srv.Client(), "SoundTap/test", []string{srv.URL})
 
 	stations, err := client.ByName(t.Context(), " NPO Radio 2 ")
-	if err != nil || len(stations) != 1 || stations[0].CountryCode != "NL" || stations[0].LastCheckOK != 1 {
+	if err != nil || len(stations) != 1 || stations[0].CountryCode != "NL" || stations[0].LastCheckOK != 1 ||
+		stations[0].Votes != 94 || stations[0].ClickCount != 17 || stations[0].Bitrate != 128 {
 		t.Fatalf("stations = %+v, %v", stations, err)
 	}
 
@@ -191,7 +193,7 @@ func TestStreamURLFallsBackToTheEnteredAddress(t *testing.T) {
 
 	station := radiobrowser.Station{
 		UUID: stationUUID, Name: "X", URL: " http://example.com/x ", URLResolved: " ", Favicon: "",
-		CountryCode: "", LastCheckOK: 0,
+		CountryCode: "", LastCheckOK: 0, Votes: 0, ClickCount: 0, Bitrate: 0,
 	}
 	if got := station.StreamURL(); got != "http://example.com/x" {
 		t.Fatalf("StreamURL = %q", got)

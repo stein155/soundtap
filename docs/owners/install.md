@@ -294,8 +294,8 @@ the speaker then opens its setup network, and you choose your Wi-Fi there once m
 temporary setup network is open, as on the SoundTouch 10.
 
 **What comes over from Bose's software.** The speaker keeps its name. Of the presets, only
-TuneIn radio stations come over. Presets for Spotify, other music services, or music from your
-computer or a media server stay empty: store them again in SoundTap.
+radio stations (TuneIn and Radio Browser) come over. Presets for Spotify, other music services,
+or music from your computer or a media server stay empty: store them again in SoundTap.
 
 ### Start playing
 

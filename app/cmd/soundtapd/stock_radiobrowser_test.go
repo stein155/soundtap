@@ -570,7 +570,7 @@ func TestStockLookupsRunPaces(t *testing.T) {
 
 		return radiobrowser.Station{
 			UUID: uuidNPO2, Name: "", URL: "", URLResolved: "https://example.com/npo2.mp3", Favicon: "",
-			CountryCode: "", LastCheckOK: 0,
+			CountryCode: "", LastCheckOK: 0, Votes: 0, ClickCount: 0, Bitrate: 0,
 		}, nil
 	}
 

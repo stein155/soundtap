@@ -67,13 +67,21 @@ round), the preset is looked for by its name, stock's `itemName`:
    the name as the query). A station whose name equals the preset's, ignoring case and
    spacing, is taken when it is the only one; it becomes a TuneIn preset like one the owner
    stores (`/v1/playback/station/<guide id>`), so it plays and finds its stream as those do.
-   TuneIn's results name no country, so two stations of that name are none.
+   TuneIn's results name no country (only a bit rate and a reliability), so two stations of
+   that name are none: ranking those could pick another country's station.
 2. Else Radio Browser's `GET /json/stations/bynameexact/<name>`, on the same servers. Of the
    stations of that name with a usable stream address, those of the speaker's country (the
    country in its own Manufacturing-Data, read from NAND; none when it does not read) when
    there are any, then those Radio Browser last found playing (`lastcheckok`) when there are
-   any; the one station left, or several that all play the same stream (the same station
-   entered twice), becomes a preset with its own stream address as above.
+   any. Before the country, stations whose `favicon` is exactly stock's logo for the preset
+   (`containerArt`) are kept when there are any: stock's `Presets.xml` records no country or
+   language, and its logo is the one hint it holds of which entry it stored. The one station
+   left, or several that all play the same stream (the same station entered twice), becomes a
+   preset with its own stream address as above. Several left with different streams are told
+   apart only when they all name one country (`countrycode`), so entries of the same station
+   such as its MP3 and AAC streams ("JOE" in the Netherlands): the one with the most `votes`,
+   then `clickcount`, then `bitrate`. Stations of different or unknown countries, or tied on
+   all three, are none.
 3. Else the preset is dropped, with a log line naming the routes tried.
 
 A name search that did not answer and found nothing keeps the preset for the next round, under
@@ -129,7 +137,8 @@ bytes in git); the owner typing the password again after the install.
   contacts Radio Browser.
 - A Radio Browser preset appears some seconds to minutes after the first start, once the
   network answers, not at once. A station Radio Browser has dropped comes back when TuneIn or
-  Radio Browser has exactly one station of its name; otherwise its slot stays empty. A station
+  Radio Browser has one station of its name that can be told apart as above; otherwise its slot
+  stays empty. A station
   found by name is the station of that name today, which may be another than stock's when two
   stations share a name and only one is listed.
 - A preset found on TuneIn is a TuneIn preset: it shows and plays as one, and needs TuneIn as
