@@ -78,7 +78,7 @@ diff -Nru a/drivers/net/usb/Makefile b/drivers/net/usb/Makefile
 diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 --- a/drivers/net/usb/soundtap_bco.c	1970-01-01 01:00:00.000000000 +0100
 +++ b/drivers/net/usb/soundtap_bco.c	2026-10-06 18:06:43.454816079 +0200
-@@ -0,0 +1,2243 @@
+@@ -0,0 +1,2246 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * SoundTap BCO link: the SoundTouch 20's Wi-Fi and wired ports, which live on the BCO co-processor
@@ -1962,8 +1962,11 @@ diff -Nru a/drivers/net/usb/soundtap_bco.c b/drivers/net/usb/soundtap_bco.c
 +	return;
 +
 +fail_free:
-+	free_netdev(eth);
-+	free_netdev(wlan);
++	/* free_netdev takes no NULL: either allocation may be the one that failed */
++	if (eth)
++		free_netdev(eth);
++	if (wlan)
++		free_netdev(wlan);
 +	wiphy_unregister(wiphy);
 +fail:
 +	netdev_info(net, "no SoundTap BCO app on this link (%d)\n", err);

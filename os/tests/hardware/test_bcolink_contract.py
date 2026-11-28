@@ -292,6 +292,18 @@ class BcoLinkContract(unittest.TestCase):
         body = [line for line in lines[i + 2 : i + 2 + count + 1] if line.startswith("+")]
         self.assertEqual(count, len(body))
 
+    def test_setup_failure_frees_what_it_has(self) -> None:
+        """bco_setup_work's unwind frees only the ports it allocated.
+
+        free_netdev dereferences its argument: with wlan0 or eth0 not allocated (no memory), an
+        unguarded free on the way out oopsed the kernel.
+        """
+        funcs = dict(re.findall(r"\n\+static [^\n]*\b(\w+)\([^)]*\)\n\+\{(.*?)\n\+\}", self.patch, re.DOTALL))
+        unwind = funcs["bco_setup_work"].split("\n+fail_free:", 1)[1]
+        for dev in ("eth", "wlan"):
+            self.assertRegex(unwind, rf"\n\+\tif \({dev}\)\n\+\t\tfree_netdev\({dev}\);", dev)
+        self.assertNotRegex(unwind, r"\n\+\tfree_netdev\(")
+
     def test_eth_gets_carrier(self) -> None:
         """eth0's open (and the transport coming back) raises its carrier.
 
