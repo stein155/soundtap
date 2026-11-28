@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/stein155/soundtap/app/internal/atomicjson"
@@ -77,19 +78,19 @@ func New(home, version string) *Link {
 		values: map[string]uint8{
 			"direct": audioModeDirect, "normal": audioModeNormal, "dialog": audioModeDialog, "night": audioModeNight,
 		},
-		cur: atomic.Uint32{},
+		cur: atomic.Uint32{}, saveMu: sync.Mutex{}, saved: 0,
 	}
 	link.CECModes = &Choice{
 		link: link, what: "CEC mode", op: lpmCECModeSet, wide: false, file: "bar-cec-mode",
 		values: map[string]uint8{
 			"off": cecModeOff, "on": cecModeOn, "alternate": cecModeAlternate, "fine": cecModeFine,
 		},
-		cur: atomic.Uint32{},
+		cur: atomic.Uint32{}, saveMu: sync.Mutex{}, saved: 0,
 	}
 	link.HDMIInputs = &Choice{
 		link: link, what: "HDMI input button", op: lpmHDMIInputSet, wide: false, file: "bar-hdmi-input",
 		values: map[string]uint8{"none": hdmiButtonNone, "1": hdmiButton1, "2": hdmiButton2, "3": hdmiButton3},
-		cur:    atomic.Uint32{},
+		cur:    atomic.Uint32{}, saveMu: sync.Mutex{}, saved: 0,
 	}
 
 	return link
@@ -200,6 +201,10 @@ type Choice struct {
 	values map[string]uint8
 	file   string        // under the link's home: the last value, for a restart in standby
 	cur    atomic.Uint32 // value+1 as last reported or sent; 0 until then
+	// saveMu orders the saves; saved is value+1 as the file holds it, 0 when unknown or
+	// when its last save failed, so the next report of the value saves it again.
+	saveMu sync.Mutex
+	saved  uint32
 }
 
 // Keep makes the value called name current and saves it, as a report of the processor
@@ -219,6 +224,9 @@ func (c *Choice) Load() {
 
 	saved, err := strconv.ParseUint(strings.TrimSpace(string(raw)), 10, 32)
 	if err == nil {
+		c.saveMu.Lock()
+		c.saved = uint32(saved) + 1 // already on the NAND: no write back
+		c.saveMu.Unlock()
 		c.report(uint32(saved))
 	}
 }
@@ -269,18 +277,30 @@ func (c *Choice) report(v uint32) {
 	}
 }
 
-// setCurrent makes v current and saves it; only a change reaches the NAND.
-func (c *Choice) setCurrent(v uint32) {
-	if c.cur.Swap(v+1) == v+1 {
+// setCurrent makes v current and saves it; only a value the file does not hold yet
+// reaches the NAND. A failed save is tried again on the next report of the value, and
+// the saves run one at a time, so the file ends with the value set last.
+func (c *Choice) setCurrent(value uint32) {
+	c.saveMu.Lock()
+	defer c.saveMu.Unlock()
+
+	c.cur.Store(value + 1)
+
+	if c.saved == value+1 {
 		return
 	}
 
-	path, value := filepath.Join(c.link.choiceDir, c.file), []byte(strconv.Itoa(int(v))+"\n")
+	path, text := filepath.Join(c.link.choiceDir, c.file), []byte(strconv.Itoa(int(value))+"\n")
 
-	err := atomicjson.WriteFile(path, value, stateFileMode)
+	err := atomicjson.WriteFile(path, text, stateFileMode)
 	if err != nil {
+		c.saved = 0
 		slog.Warn("lpm save "+c.what, "comp", "lpm", "err", err)
+
+		return
 	}
+
+	c.saved = value + 1
 }
 
 // LipSyncMax is the most the app offers. A4VServer holds no range (the processor

@@ -57,6 +57,10 @@ func TestTuneInProxyRefusesDotDot(t *testing.T) {
 		"/api/tunein/a/%2e%2e/x",
 		"/api/tunein/%2E%2E",
 		"/api/tunein/.%2e/Browse.ashx",
+		// An encoded slash hides the ".." inside one segment from a split on "/".
+		"/api/tunein/a%2F..%2F..%2Fother",
+		"/api/tunein/a%2f%2e%2e",
+		"/api/tunein/a%5C..%5Cother",
 		"/api/tunein/",
 	} {
 		upstream := &urlRecorder{got: nil}

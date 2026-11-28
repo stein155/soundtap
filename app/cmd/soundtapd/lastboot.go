@@ -52,56 +52,91 @@ func keepLastBoot(home string) (string, bool, error) {
 	if err != nil {
 		return "", false, fmt.Errorf("read pstore: %w", err)
 	}
-
-	dir := filepath.Join(home, web.LastBootDir)
-
-	err = os.RemoveAll(dir)
-	if err != nil {
-		return "", false, fmt.Errorf("clear the last boot's records: %w", err)
-	}
-
-	err = os.MkdirAll(dir, lastBootDirMode)
-	if err != nil {
-		return "", false, fmt.Errorf("last boot's records: %w", err)
-	}
-
-	out, err := os.OpenRoot(dir)
-	if err != nil {
-		return "", false, fmt.Errorf("last boot's records: %w", err)
-	}
-	defer out.Close()
-
+	// Everything is read and kept before anything is removed from pstore: a move that
+	// failed half way, or a soundtapd killed during it, left the panic record neither in
+	// pstore nor in last-boot, which the next start cleared and called a power loss.
 	records := map[string][]byte{}
 
 	for _, entry := range entries {
-		src := filepath.Join(pstoreDir, entry.Name())
-
-		record, readErr := os.ReadFile(src)
+		record, readErr := os.ReadFile(filepath.Join(pstoreDir, entry.Name()))
 		if readErr != nil {
 			return "", false, fmt.Errorf("read a pstore record: %w", readErr)
 		}
 
-		err = out.WriteFile(entry.Name(), record, lastBootFileMode)
-		if err != nil {
-			return "", false, fmt.Errorf("keep a pstore record: %w", err)
-		}
-
 		records[entry.Name()] = record
-		// A panic record stays until removed and takes a slot from the next one. The
-		// console record is not: removing it would wipe this boot's console buffer, and
-		// the next boot replaces it anyway.
-		if !strings.HasPrefix(entry.Name(), "console-") {
-			_ = os.Remove(src) // copied above; a record left in pstore is read again next boot
-		}
 	}
 
 	how := bootEnd(records)
+	dir := filepath.Join(home, web.LastBootDir)
+
+	err = keepRecords(dir, records, how)
+	if err != nil {
+		return "", false, err
+	}
+
 	err = errors.Join(
-		os.WriteFile(filepath.Join(dir, "how"), []byte(how+"\n"), lastBootFileMode),
 		os.MkdirAll(filepath.Dir(lastBootDone), runDirMode),
 		os.WriteFile(lastBootDone, nil, lastBootFileMode))
+	if err != nil {
+		return how, true, err // the records stay in pstore: the next start moves them again
+	}
 
-	return how, true, err
+	for name := range records {
+		// A panic record stays until removed and takes a slot from the next one. The
+		// console record is not: removing it would wipe this boot's console buffer, and
+		// the next boot replaces it anyway.
+		if !strings.HasPrefix(name, "console-") {
+			_ = os.Remove(filepath.Join(pstoreDir, name)) // kept; a record left in pstore is read again next boot
+		}
+	}
+
+	return how, true, nil
+}
+
+// keepRecords writes records and how into a new directory and puts it in dir's place, so
+// dir holds either the previous boot's records or this one's, never a part.
+func keepRecords(dir string, records map[string][]byte, how string) error {
+	staging := dir + ".new"
+
+	err := os.RemoveAll(staging)
+	if err != nil {
+		return fmt.Errorf("last boot's records: %w", err)
+	}
+
+	err = os.MkdirAll(staging, lastBootDirMode)
+	if err != nil {
+		return fmt.Errorf("last boot's records: %w", err)
+	}
+
+	out, err := os.OpenRoot(staging)
+	if err != nil {
+		return fmt.Errorf("last boot's records: %w", err)
+	}
+	defer out.Close()
+
+	for name, record := range records {
+		err = out.WriteFile(name, record, lastBootFileMode)
+		if err != nil {
+			return fmt.Errorf("keep a pstore record: %w", err)
+		}
+	}
+
+	err = out.WriteFile("how", []byte(how+"\n"), lastBootFileMode)
+	if err != nil {
+		return fmt.Errorf("keep how the last boot ended: %w", err)
+	}
+
+	err = os.RemoveAll(dir)
+	if err != nil {
+		return fmt.Errorf("clear the last boot's records: %w", err)
+	}
+
+	err = os.Rename(staging, dir)
+	if err != nil {
+		return fmt.Errorf("last boot's records: %w", err)
+	}
+
+	return nil
 }
 
 // bootEnd reads how a boot ended from what pstore kept of it, as far as the hardware

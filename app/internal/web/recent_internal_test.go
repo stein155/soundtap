@@ -5,7 +5,18 @@ package web
 
 import (
 	"context"
+	"errors"
+	"io/fs"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/stein155/soundtap/app/internal/favorites"
+	"github.com/stein155/soundtap/app/internal/recent"
 )
 
 // Recent keeps what can be started again: TuneIn and a Spotify list started here, not a
@@ -126,5 +137,74 @@ func TestRecentSkipsBluetooth(t *testing.T) {
 
 	if got := srv.recentStore.All(); len(got) != 0 {
 		t.Fatalf("recent = %+v, want nothing", got)
+	}
+}
+
+// librespot reopens its sink on every pause, resume and track boundary and claims
+// SPOTIFY again each time, while its player thread waits for the answer. Such a reclaim
+// of the source that already owns the amp is no source change: it must not write the
+// recent list to flash, which held the next track's first audio back.
+func TestRecentNotWrittenWhenTheOwnerReclaims(t *testing.T) {
+	t.Parallel()
+
+	srv, spk, dir := radioServer(t)
+
+	ctx := context.Background()
+
+	err := spk.Select(ctx, "SPOTIFY", "", "spotify:playlist:37i9dQZF1DXcBWIGoYBM5M", "Road trip", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/source",
+		strings.NewReader(`{"source":"SPOTIFY"}`))
+	req.Host, req.RemoteAddr = "127.0.0.1:8000", "127.0.0.1:54321"
+	req.Header.Set("Content-Type", "application/json")
+
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reclaim = %d %s", rec.Code, rec.Body)
+	}
+
+	if got := srv.recentStore.All(); len(got) != 0 {
+		t.Errorf("recent = %+v after a reclaim, want nothing", got)
+	}
+
+	_, err = os.Stat(filepath.Join(dir, "recent.json"))
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("recent.json written on a reclaim: %v", err)
+	}
+}
+
+// A factory reset from the browser closes the recent list and the favorites before the
+// speaker removes their files: a save still in flight is refused, not written back.
+func TestFactoryResetClosesTheHistory(t *testing.T) {
+	t.Parallel()
+
+	srv, _, _ := radioServer(t)
+
+	var recentErr, favoriteErr error
+
+	srv.hardwareReset = func() error {
+		recentErr = srv.recentStore.Record(recent.Entry{
+			Source: "TUNEIN", Name: "Radio 1", Location: "s1", Art: "", StoppedAt: time.Now(),
+		})
+		favoriteErr = srv.favoritesStore.Add(favorites.Entry{
+			Source: "TUNEIN", Name: "Radio 1", Location: "s1", Art: "",
+		})
+
+		return nil
+	}
+
+	rec := radioDo(t, srv.Handler(), http.MethodPost, "/api/factory-reset", `{"confirm":true}`,
+		"Content-Type", "application/json")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reset = %d %s", rec.Code, rec.Body)
+	}
+
+	if !errors.Is(recentErr, recent.ErrClosed) || !errors.Is(favoriteErr, favorites.ErrClosed) {
+		t.Errorf("saves during the reset = %v, %v; want both refused as closed", recentErr, favoriteErr)
 	}
 }

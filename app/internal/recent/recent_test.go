@@ -4,6 +4,8 @@
 package recent_test
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -219,5 +221,49 @@ func record(t *testing.T, store *recent.Store, entry *recent.Entry) {
 	err := store.Record(*entry)
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A factory reset closes the list before it removes the file: a source change still in
+// flight must not write the previous owner's history back.
+func TestClosedStoreWritesNothing(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "recent.json")
+	store := recent.Open(path)
+
+	err := store.Record(recent.Entry{Source: "TUNEIN", Name: "Radio 1", Location: "s1", Art: "", StoppedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = store.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = os.Remove(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for name, write := range map[string]func() error{
+		"Record": func() error {
+			return store.Record(recent.Entry{
+				Source: "TUNEIN", Name: "Radio 2", Location: "s2", Art: "", StoppedAt: time.Now(),
+			})
+		},
+		"SetArt": func() error { return store.SetArt("TUNEIN", "s1", "http://192.0.2.1/a.png") },
+		"Remove": func() error { return store.Remove("TUNEIN", "s1") },
+	} {
+		err = write()
+		if !errors.Is(err, recent.ErrClosed) {
+			t.Errorf("%s after Close = %v, want ErrClosed", name, err)
+		}
+
+		_, err = os.Stat(path)
+		if !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("%s after Close wrote the file back: %v", name, err)
+		}
 	}
 }

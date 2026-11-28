@@ -403,6 +403,9 @@ func TestRedactSecretsCatchesJSONAndUnderscoredKeys(t *testing.T) {
 		`{"password":"hunter2"}`, `sae_password=hunter2`, `wpa_passphrase=hunter2`,
 		// A password with an @ in it goes whole, not only up to that @.
 		"play url=http://radio:pa@hunter2@stream.example/live",
+		// A plural or a suffix after the key, and a stream token in a query string.
+		"passwords=hunter2", "tokens: hunter2", "PASSWORD_FILE=hunter2",
+		"play url=https://s.example/live?key=hunter2&type=aac", "url=https://s.example/a?b=1&sig=hunter2",
 	} {
 		if got := redactSecrets(line); strings.Contains(got, "hunter2") {
 			t.Errorf("redactSecrets(%q) = %q", line, got)

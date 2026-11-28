@@ -25,6 +25,20 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
   running**, instead of staying on a weak one.
 - **SoundTouch 20: a forged Wi-Fi frame nearby can no longer corrupt its network chip's memory**
   while it joins a WEP network.
+- **Spotify no longer writes the recently played list at every song change and resume.**
+  Spotify waits for the speaker at those moments, and the write could hold back the next
+  song's first sound.
+- **Your own radio stream's login stays out of the speaker's log**: a stream address with a
+  user name and password, or a token in it, is logged without them, and the support bundle
+  also catches such a token and a password that contains quotes.
+- **A factory reset no longer brings back the recently played list or the favorite** when
+  something was being played or looked up at the moment of the reset.
+- **How the previous boot ended** (shown on the Debug page) is no longer lost when the speaker
+  could not move all of its records at the first try.
+- **Multiroom groups** survive a restart even when the speaker saved them at the moment the
+  group service was rewriting them.
+- **SoundTouch 300: the bar's audio mode, CEC mode and HDMI input button** are saved again
+  after a save failed, instead of only after you change them.
 
 ## [app-v0.1.0-alpha.7] - 2026-11-27
 

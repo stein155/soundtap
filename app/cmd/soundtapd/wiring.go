@@ -448,7 +448,10 @@ func panelFeedback(disp *display.Manager) func(text string) {
 // Front-panel escape hatches remain usable when the network is unreachable.
 func panelChords(ctx context.Context, wiring *audioWiring, feedback func(string)) []chord {
 	disp, shutdown, log := wiring.disp, wiring.shutdown, wiring.log
-	stores := []io.Closer{wiring.lookups, wiring.set, wiring.st} // the lookups first: they write presets
+	stores := []io.Closer{
+		wiring.lookups, wiring.set, wiring.st, // the lookups first: they write presets
+		closerFunc(wiring.web.CloseHistory), // the recent list and the favorites
+	}
 	wifiConf := filepath.Join(filepath.Dir(wiring.home), "wifi.conf")
 	// Both chords change the network, so an install or BCO flash refuses them as it does a key.
 	refused := func() {

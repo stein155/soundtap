@@ -6,6 +6,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -445,6 +446,11 @@ func (s *Server) factoryReset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.hardwareReset != nil {
+		// The reset removes the history files and restarts the daemon; a recent-list or
+		// favorites save still in flight (a source change, a picture found for an entry)
+		// must not write the previous owner's back.
+		_ = s.CloseHistory()
+
 		err := s.hardwareReset()
 		if err != nil {
 			s.fail(w, "factory reset failed", err)
@@ -456,6 +462,25 @@ func (s *Server) factoryReset(w http.ResponseWriter, r *http.Request) {
 	s.log.Warn("factory reset")
 	s.hub.nudge()
 	writeJSON(w, http.StatusOK, map[string]any{"status": "reset"})
+}
+
+// CloseHistory closes the recent list and the favorites, which a factory reset removes:
+// a write after it is refused instead of bringing their files back.
+func (s *Server) CloseHistory() error {
+	if s == nil {
+		return nil
+	}
+
+	var errs []error
+	if s.recentStore != nil {
+		errs = append(errs, s.recentStore.Close())
+	}
+
+	if s.favoritesStore != nil {
+		errs = append(errs, s.favoritesStore.Close())
+	}
+
+	return errors.Join(errs...)
 }
 
 // movePreset swaps two preset slots, which is all "reorder" needs on a six-slot

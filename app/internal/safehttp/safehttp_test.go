@@ -152,3 +152,23 @@ func TestLogURLDropsUserinfo(t *testing.T) {
 		t.Errorf("HTTPStatusError = %q", got)
 	}
 }
+
+// A query parameter that names a credential loses its value; the others stay, so the
+// log still says which stream it was.
+func TestLogURLDropsQueryCredentials(t *testing.T) {
+	t.Parallel()
+
+	for text, want := range map[string]string{
+		"https://s.example/live?key=abc123":                  "https://s.example/live?key=<redacted>",
+		"https://s.example/live?b=1&token=abc123&c=2":        "https://s.example/live?b=1&token=<redacted>&c=2",
+		"https://s.example/live?access_token=abc123#x":       "https://s.example/live?access_token=<redacted>#x",
+		"https://s.example/live?API_KEY=abc123":              "https://s.example/live?API_KEY=<redacted>",
+		"play https://s.example/a?pwd=abc123 then stop":      "play https://s.example/a?pwd=<redacted> then stop",
+		"http://u:p@s.example/a?sig=abc123":                  "http://s.example/a?sig=<redacted>",
+		"https://s.example/live?monkey=1&keyword=2&type=aac": "https://s.example/live?monkey=1&keyword=2&type=aac",
+	} {
+		if got := safehttp.LogURL(text); got != want {
+			t.Errorf("LogURL(%q) = %q, want %q", text, got, want)
+		}
+	}
+}

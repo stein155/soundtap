@@ -341,15 +341,32 @@ func prefixes(ss ...string) []netip.Prefix {
 // as a URL parser reads it, so a password with an @ in it goes whole.
 var userinfo = regexp.MustCompile(`(://)[^/?#\s]+@`)
 
+// secretQuery is a query parameter that names a credential, with its value: token=,
+// access_token=, key=, api_key=, pass=, password=, pwd=, secret=, sig=, auth=. A stream
+// service that does not take a login in the user puts it there. Other parameters stay.
+var secretQuery = regexp.MustCompile(`(?i)([?&;](?:[a-z0-9.]*[_-])?` +
+	`(?:token|key|apikey|pass|password|passwd|pwd|secret|sig|signature|auth)=)[^&#\s"']*`)
+
 // LogURL is text, a URL or a line that holds some, without the user:password@ part of
-// any URL in it. A custom stream may carry its credentials there, and some services put a
-// token in the user, so both go: credentials never reach the log (AGENTS.md).
+// any URL in it and without the values of query parameters that name a credential. A
+// custom stream may carry its credentials there, and some services put a token in the
+// user, so both go: credentials never reach the log (CONTRIBUTING.md).
 func LogURL(text string) string {
-	if !strings.Contains(text, "@") {
+	if strings.Contains(text, "@") {
+		text = userinfo.ReplaceAllString(text, "${1}")
+	}
+
+	return RedactQuery(text)
+}
+
+// RedactQuery is text with the value of every query parameter that names a credential
+// replaced by "<redacted>".
+func RedactQuery(text string) string {
+	if !strings.ContainsAny(text, "?&;") {
 		return text
 	}
 
-	return userinfo.ReplaceAllString(text, "${1}")
+	return secretQuery.ReplaceAllString(text, "${1}<redacted>")
 }
 
 // HTTPStatusError is returned when a fetch gets a non-200 response.

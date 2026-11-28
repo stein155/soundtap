@@ -98,6 +98,12 @@ func factoryReset(ctx context.Context, home, wifiConf string, log *slog.Logger, 
 	terminate()
 }
 
+// closerFunc is a close function as an io.Closer, for a factory reset's stores.
+type closerFunc func() error
+
+// Close calls f.
+func (f closerFunc) Close() error { return f() }
+
 // closeResetStores closes the stores before their files go.
 func closeResetStores(stores []io.Closer, log *slog.Logger) {
 	for _, store := range stores {

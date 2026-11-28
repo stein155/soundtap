@@ -21,6 +21,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/stein155/soundtap/app/internal/safehttp"
 )
 
 // Fields of a saved Wi-Fi line: SSID and key base64-encoded, then the key as typed.
@@ -58,9 +60,10 @@ func sysPath(p string) string { return filepath.Join(sysRoot, p) }
 //
 // No \b in front: "_" is a word character, so sae_password= slipped through. A quote
 // may close the key, as in JSON's "password":"x". wifi.conf's PSK_B64= and PSK_HEX= and
-// librespot's auth_data carry the key encoded.
+// librespot's auth_data carry the key encoded; a plural or an underscored suffix
+// (passwords=, PASSWORD_FILE=) is the same key.
 var secretLine = regexp.MustCompile(`(?i)(psk|password|passphrase|passwd|secret|token|authorization|` +
-	`api[_-]?key|auth[_-]?data)(_b64|_hex)?\b"?\s*[:=]\s*.*`)
+	`api[_-]?key|auth[_-]?data)(_[a-z0-9]+|s)?\b"?\s*[:=]\s*.*`)
 
 // urlUserinfo matches the user:password@ part of a URL: the authority up to its last @,
 // as a URL parser reads it, so a password with an @ in it goes whole. Custom streams may
@@ -105,6 +108,7 @@ func globalIPv6() netip.Prefix { return netip.MustParsePrefix("2000::/3") }
 // the pattern half of redactor.scrub, which every part of the bundle goes through.
 func redactSecrets(s string) string {
 	s = urlUserinfo.ReplaceAllString(s, "${1}<redacted>@")
+	s = safehttp.RedactQuery(s) // a stream's token in its query string
 
 	return secretLine.ReplaceAllStringFunc(s, func(m string) string {
 		i := strings.IndexAny(m, ":=")
@@ -176,6 +180,7 @@ func (s *Server) newRedactor(ctx context.Context) *redactor {
 
 // newRedactorFrom builds the matcher over the collected values.
 func newRedactorFrom(literals []secretLiteral) *redactor {
+	literals = withEscapedSpellings(literals)
 	slices.SortStableFunc(literals, func(a, b secretLiteral) int {
 		return cmp.Compare(len(b.value), len(a.value))
 	})
@@ -191,6 +196,39 @@ func newRedactorFrom(literals []secretLiteral) *redactor {
 	}
 
 	return red
+}
+
+// withEscapedSpellings adds, for each secret, the spellings it takes once escaped: JSON's
+// (health.json and version.json, "&" and "<" included) and a Go quoted string's (the
+// daemon's log quotes a value with a quote or a space in it). A password with a quote in
+// it went into the bundle whole, because only its raw bytes were looked for.
+func withEscapedSpellings(literals []secretLiteral) []secretLiteral {
+	out := slices.Clone(literals)
+	seen := map[string]bool{}
+
+	for _, lit := range literals {
+		seen[lit.value] = true
+	}
+
+	for _, lit := range literals {
+		var asJSON strings.Builder
+
+		err := json.NewEncoder(&asJSON).Encode(lit.value) // with a newline, which TrimSpace drops
+		if err != nil {
+			continue
+		}
+
+		for _, quoted := range []string{strings.TrimSpace(asJSON.String()), strconv.Quote(lit.value)} {
+			escaped := quoted[1 : len(quoted)-1]
+			if escaped != "" && !seen[escaped] {
+				seen[escaped] = true
+
+				out = append(out, secretLiteral{value: escaped, label: lit.label, word: lit.word})
+			}
+		}
+	}
+
+	return out
 }
 
 // scrub is the redaction every byte of a support bundle passes through: the known

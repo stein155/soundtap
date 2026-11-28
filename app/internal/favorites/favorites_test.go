@@ -4,6 +4,9 @@
 package favorites_test
 
 import (
+	"errors"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -69,5 +72,47 @@ func TestRemoveMatchesSourceAndLocation(t *testing.T) {
 	all := store.All()
 	if len(all) != 1 || all[0].Source != "TUNEIN" {
 		t.Fatalf("got %+v", all)
+	}
+}
+
+// A factory reset closes the list before it removes the file: a save still in flight
+// must not write the previous owner's favorite back.
+func TestClosedStoreWritesNothing(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "favorites.json")
+	store := favorites.Open(path)
+
+	err := store.Add(favorites.Entry{Source: "TUNEIN", Location: "s1", Name: "Radio 1", Art: ""})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = store.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = os.Remove(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for name, write := range map[string]func() error{
+		"Add": func() error {
+			return store.Add(favorites.Entry{Source: "TUNEIN", Location: "s2", Name: "Radio 2", Art: ""})
+		},
+		"Remove":  func() error { return store.Remove("TUNEIN", "s1") },
+		"Replace": func() error { return store.Replace(nil) },
+	} {
+		err = write()
+		if !errors.Is(err, favorites.ErrClosed) {
+			t.Errorf("%s after Close = %v, want ErrClosed", name, err)
+		}
+
+		_, err = os.Stat(path)
+		if !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("%s after Close wrote the file back: %v", name, err)
+		}
 	}
 }

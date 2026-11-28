@@ -177,14 +177,17 @@ func (s *Server) setSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.snapshotRecent(ctx)
+	// A restarted Spotify sink reclaims the SAME source before writing PCM, on every
+	// pause, resume and track boundary, and librespot's player waits for this answer.
+	// That is no source change: neither the recent list (a write to flash) nor the
+	// handoff runs for it. Its boundary already flushed synchronously; a second,
+	// asynchronous flush here would discard the new track's opening after the producer
+	// resumes.
+	np, err := s.backend.NowPlaying(ctx)
+	if err != nil || np.Source != body.Source {
+		s.snapshotRecent(ctx)
 
-	if s.sourceChanging != nil {
-		// A restarted Spotify sink reclaims the SAME source before writing PCM.
-		// Its boundary already flushed synchronously. A second, asynchronous flush
-		// here would discard the new track's opening after the producer resumes.
-		np, err := s.backend.NowPlaying(ctx)
-		if err != nil || np.Source != body.Source {
+		if s.sourceChanging != nil {
 			s.sourceChanging(body.Source)
 		}
 	}

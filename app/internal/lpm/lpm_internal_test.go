@@ -8,6 +8,8 @@ import (
 	"encoding/binary"
 	"log/slog"
 	"net"
+	"os"
+	"path/filepath"
 	"slices"
 	"sync/atomic"
 	"testing"
@@ -719,5 +721,31 @@ func TestCheckSilenceNeverRebootsTheBar(t *testing.T) {
 
 	if len(sent) != 4 {
 		t.Fatalf("sent %q, want the health message once per check", sent)
+	}
+}
+
+// A choice whose save failed is saved again by the next report of the same value: the
+// value in memory alone said it was kept, and the file stayed stale until the bar
+// changed it.
+func TestChoiceSaveRetriedAfterAFailedWrite(t *testing.T) {
+	t.Parallel()
+
+	home := filepath.Join(t.TempDir(), "home")
+	link := New(home, "test") // home does not exist yet: the first save fails
+
+	link.HDMIInputs.Keep("2")
+
+	err := os.Mkdir(home, 0o700)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	link.HDMIInputs.Keep("2")
+
+	restarted := New(home, "test")
+	restarted.HDMIInputs.Load()
+
+	if got := restarted.HDMIInputs.Get(); got != "2" {
+		t.Errorf("after a restart the HDMI input button is %q, want 2", got)
 	}
 }

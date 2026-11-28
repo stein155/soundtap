@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/stein155/soundtap/app/internal/safehttp"
 	"github.com/stein155/soundtap/app/internal/speaker"
 	"github.com/stein155/soundtap/app/internal/spotify"
 	"github.com/stein155/soundtap/app/internal/store"
@@ -153,7 +154,7 @@ func (s *Server) setPreset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.log.Info("store preset", "slot", slot, "station", preset.StationID, "name", preset.Name)
+	s.log.Info("store preset", "slot", slot, "station", safehttp.LogURL(preset.StationID), "name", preset.Name)
 	s.hub.nudge()
 	writeJSON(w, http.StatusOK, preset)
 }

@@ -3,7 +3,12 @@
 
 package web
 
-import "testing"
+import (
+	"encoding/json"
+	"strconv"
+	"strings"
+	"testing"
+)
 
 // What the redactor must leave alone: addresses that say nothing about where the owner
 // lives, and text that only looks like an address or a name.
@@ -37,6 +42,33 @@ func TestScrubKeepsWhatIsNotASecret(t *testing.T) {
 	} {
 		if got := red.scrub(line); got != want {
 			t.Errorf("scrub(%q) = %q, want %q", line, got, want)
+		}
+	}
+}
+
+// A secret with a quote, a backslash or an ampersand in it reaches the bundle escaped:
+// health.json and version.json are JSON, and the daemon's log quotes its values. The
+// escaped spelling goes as the plain one does.
+func TestScrubCatchesEscapedSecrets(t *testing.T) {
+	t.Parallel()
+
+	const secret = `p&ss"w0rd\x<y>`
+
+	red := newRedactorFrom([]secretLiteral{{value: secret, label: "<mqtt-password>", word: false}})
+
+	asJSON, err := json.Marshal(map[string]string{"note": "broker refused " + secret})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, text := range []string{
+		string(asJSON),
+		"level=WARN msg=mqtt err=" + strconv.Quote("auth "+secret),
+		"plain " + secret,
+	} {
+		got := red.scrub(text)
+		if strings.Contains(got, "w0rd") || !strings.Contains(got, "<mqtt-password>") {
+			t.Errorf("scrub(%q) = %q", text, got)
 		}
 	}
 }

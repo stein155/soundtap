@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -66,7 +67,7 @@ func (s *Server) tuneinProxy(w http.ResponseWriter, r *http.Request) {
 
 	for segment := range strings.SplitSeq(path, "/") {
 		decoded, err := url.PathUnescape(segment)
-		if err != nil || decoded == ".." {
+		if err != nil || dotDot(decoded) {
 			apiError(w, http.StatusBadRequest, "bad path")
 
 			return
@@ -79,6 +80,13 @@ func (s *Server) tuneinProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.relay(w, r, target, "application/json", tuneinAnswerLimit, "")
+}
+
+// dotDot reports whether a decoded path segment holds a ".." step. An encoded slash or
+// backslash ("a%2F..%2Fx") puts one inside a single segment, and a server that decodes
+// it walks up all the same.
+func dotDot(segment string) bool {
+	return slices.Contains(strings.FieldsFunc(segment, func(r rune) bool { return r == '/' || r == '\\' }), "..")
 }
 
 // logoProxy fetches a TuneIn/CDN logo image given ?u=<absolute url>. Only http/
@@ -242,7 +250,7 @@ func (s *Server) playStationID(w http.ResponseWriter, r *http.Request, stationID
 		return
 	}
 
-	s.log.Info("play", "station", stationID, "name", name)
+	s.log.Info("play", "station", safehttp.LogURL(stationID), "name", name)
 	s.hub.nudge() // push the new playback state to browsers at once
 	writeJSON(w, http.StatusOK, map[string]string{"status": statusPlaying, "station": stationID})
 }

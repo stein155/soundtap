@@ -40,9 +40,24 @@ type Store struct {
 	mu      sync.Mutex
 	entries []Entry // newest first
 	path    string
+	closed  bool
 	// loadErr is what Open found wrong with the file. When it wraps
 	// atomicjson.ErrUnreadable every write is refused with it.
 	loadErr error
+}
+
+// ErrClosed is returned by writes after Close.
+var ErrClosed = errors.New("recent list store closed")
+
+// Close stops all later writes, so a factory reset that deletes the file cannot have it
+// written back by a save still in flight.
+func (s *Store) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.closed = true
+
+	return nil
 }
 
 // Open loads an existing recent list from path. Only a missing file starts an empty
@@ -50,7 +65,7 @@ type Store struct {
 // that cannot be read leaves the list empty and read-only, so the next stop cannot
 // replace a history that may still be intact on disk.
 func Open(path string) *Store {
-	store := &Store{mu: sync.Mutex{}, entries: nil, path: path, loadErr: nil}
+	store := &Store{mu: sync.Mutex{}, entries: nil, path: path, closed: false, loadErr: nil}
 
 	var loaded []Entry
 
@@ -173,6 +188,10 @@ func (s *Store) All() []Entry {
 
 // write persists next and makes it the list. The caller holds mu.
 func (s *Store) write(next []Entry) error {
+	if s.closed {
+		return ErrClosed
+	}
+
 	if errors.Is(s.loadErr, atomicjson.ErrUnreadable) {
 		return s.loadErr
 	}

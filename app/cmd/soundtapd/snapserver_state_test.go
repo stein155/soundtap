@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bytes"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -84,5 +85,41 @@ func TestSnapserverStateKeptOnlyWhenMoreThanLastSeenChanges(t *testing.T) {
 	_, statErr := os.Stat(filepath.Join(run, snapserverState))
 	if !os.IsNotExist(statErr) {
 		t.Fatalf("live copy survived a reset: %v", statErr)
+	}
+}
+
+// snapserver rewrites server.json in place. A copy read half way through that rewrite
+// must not replace the good one on flash: the next boot would seed snapserver with it,
+// and the groups and clients would be gone.
+//
+//nolint:paralleltest // reads package-wide state another test changes: snapserverLastSeen
+func TestSnapserverStateHalfWrittenIsNotKept(t *testing.T) {
+	run, keep := t.TempDir(), t.TempDir()
+	good := []byte(`{"ConfigVersion":2,"Groups":[{"id":"g1","clients":[]}]}`)
+
+	err := os.WriteFile(filepath.Join(keep, snapserverState), good, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, partial := range []string{``, `{"ConfigVersion":2,"Groups":[{"id"`} {
+		err = os.WriteFile(filepath.Join(run, snapserverState), []byte(partial), 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		last, err := keepSnapserverOnce(run, keep, good)
+		if err == nil {
+			t.Errorf("%q kept without a word", partial)
+		}
+
+		if !bytes.Equal(last, good) {
+			t.Errorf("%q: last = %q, want the good copy's", partial, last)
+		}
+
+		kept, err := os.ReadFile(filepath.Join(keep, snapserverState))
+		if err != nil || !bytes.Equal(kept, good) {
+			t.Errorf("%q replaced the kept copy: %q %v", partial, kept, err)
+		}
 	}
 }

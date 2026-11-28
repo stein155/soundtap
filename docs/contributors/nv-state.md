@@ -59,7 +59,7 @@ later boots change nothing. Ownership is no format: no file changes.
 | `bco-image` | Machine (ST20) | `app/internal/bco` (`autoinstall.go`) | One line: the BCO image's SHA-256, then ` ok` once installed. A bare hash suppresses retries after an attempted install; ` ok` also checks that SoundTap's app still runs. Lost: the bundled image is attempted again, which may write BCO flash | none |
 | `snapserver/` | Other | snapserver | snapserver's clients and groups; snapserver writes /run/soundtap/snapserver, soundtapd copies it here when more than lastSeen changes | — |
 | `current-boot.log`, `previous-boot.log`, `previous-boot.1.log`, `previous-boot.2.log` | Log | The init script; the health page reads them | Text, 32 KiB each | — |
-| `panic.log`, `last-boot/` | Log | soundtapd | Text: the last crash, and how the last boot ended | — |
+| `panic.log`, `last-boot/`, `last-boot.new/` | Log | soundtapd | Text: the last crash, and how the last boot ended (`last-boot.new/` only while it is replaced) | — |
 
 Names nothing writes any more: `api-token`, `.sessions`, `plugins` (a factory reset removes
 them), `allow-unsigned` (it switched on unsigned uploads on an alpha image; every start removes

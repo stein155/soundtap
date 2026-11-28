@@ -6,6 +6,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -108,6 +109,9 @@ func keepSnapserverState(ctx context.Context, run, keep string, log *slog.Logger
 	}
 }
 
+// errSnapserverStatePartial is a server.json read while snapserver was rewriting it.
+var errSnapserverStatePartial = errors.New("snapserver state is not whole JSON yet; kept copy left as it is")
+
 // keepSnapserverOnce writes run's server.json to keep when it differs from last, the
 // kept copy without lastSeen, and returns the new last.
 func keepSnapserverOnce(run, keep string, last []byte) ([]byte, error) {
@@ -123,6 +127,12 @@ func keepSnapserverOnce(run, keep string, last []byte) ([]byte, error) {
 	now := snapserverLastSeen.ReplaceAll(data, nil)
 	if bytes.Equal(now, last) {
 		return last, nil
+	}
+	// snapserver rewrites the file in place: a read during that rewrite gets a part of
+	// it, which would replace the good copy and seed the next boot with nothing. The next
+	// tick reads it whole.
+	if !json.Valid(data) {
+		return last, errSnapserverStatePartial
 	}
 
 	err = os.MkdirAll(keep, snapserverDirMode)

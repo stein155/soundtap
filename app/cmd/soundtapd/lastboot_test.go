@@ -72,3 +72,47 @@ func TestKeepLastBootMovesOncePerBoot(t *testing.T) {
 		t.Errorf("kept record = %q %v", b, err)
 	}
 }
+
+// A move that fails half way leaves the panic record somewhere: the next start of
+// soundtapd in the same boot moves it again instead of clearing the copy it made and
+// reporting a power loss.
+//
+//nolint:paralleltest // swaps package variables other tests read: lastBootDone, pstoreDir
+func TestKeepLastBootFailedMoveKeepsThePanic(t *testing.T) {
+	home, run := t.TempDir(), t.TempDir()
+
+	pstoreDir, lastBootDone = t.TempDir(), filepath.Join(run, "moved")
+	defer func() { pstoreDir, lastBootDone = "/sys/fs/pstore", "/run/soundtap/last-boot-moved" }()
+
+	err := os.WriteFile(filepath.Join(pstoreDir, "dmesg-ramoops-0"), []byte("Panic#1 Part1\n"), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A directory sorts after the record and cannot be read as one.
+	unreadable := filepath.Join(pstoreDir, "zz")
+
+	err = os.Mkdir(unreadable, 0o700)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = keepLastBoot(home)
+	if err == nil {
+		t.Fatal("a record that cannot be read: no error")
+	}
+
+	err = os.Remove(unreadable)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	how, moved, err := keepLastBoot(home)
+	if err != nil || !moved || how != "panic" {
+		t.Fatalf("after a failed move = %q %v %v, want panic true nil", how, moved, err)
+	}
+
+	b, err := os.ReadFile(filepath.Join(home, "last-boot", "dmesg-ramoops-0"))
+	if err != nil || string(b) != "Panic#1 Part1\n" {
+		t.Errorf("kept record = %q %v", b, err)
+	}
+}

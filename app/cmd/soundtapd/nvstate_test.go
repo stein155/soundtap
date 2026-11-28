@@ -107,6 +107,7 @@ func nvFileReasons() map[string]string {
 		"soundtap/previous-boot.2.log": "log",
 		"soundtap/panic.log":           "log",
 		"soundtap/last-boot/":          "log",
+		"soundtap/last-boot.new/":      "log",
 		"soundtap-boot.log":            "log",
 		"soundtap-netfail.log":         "log",
 	}
