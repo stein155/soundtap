@@ -45,8 +45,13 @@ void wifi_poll(unsigned t);                  /* call from the main loop */
 
 unsigned wifi_state(void);
 /* start = 1 begins a scan when the radio is free. Returns -1 while one runs, else the number of
- * cached results (wifi_bss 0..n-1). Connected, the cache is returned without leaving the channel. */
+ * cached results (wifi_bss 0..n-1). Connected, start = 1 begins a sweep of every channel, one visit
+ * at a time between stays on the own channel (the link stays up), and -1 is returned until it is
+ * done; with the setup AP up, the scan made before it is returned. */
 int wifi_scan(int start);
+/* Whether the scan list shows result i: heard in the last scan, or the BSS joined. Older entries
+ * stay in the table for the join only. */
+int wifi_bss_heard(unsigned i);
 /* The SSID the next scan's directed pass probes for (a hidden network answers only a probe that
  * names it); n = 0 leaves it to the profile's SSID, as before. Set before wifi_scan(1). */
 void wifi_scan_ssid(const unsigned char *ssid, unsigned n);
@@ -69,7 +74,7 @@ void wifi_leave(void);
 /* Link events (ADR 0135): what happened to the link, queued for the SCM. type is WIFI_EV_*;
  * reason the 802.11 reason code of a deauthentication or disassociation, else 0. */
 enum { WIFI_EV_DEAUTH = 1, WIFI_EV_DISASSOC, WIFI_EV_BEACON_LOSS, WIFI_EV_TX_WEDGE, WIFI_EV_ROAMED,
-       WIFI_EV_ROAM_FAILED };
+       WIFI_EV_ROAM_FAILED, WIFI_EV_SECURITY };
 struct wifi_event {
     unsigned char type, bssid[6], chan;
     unsigned short reason;

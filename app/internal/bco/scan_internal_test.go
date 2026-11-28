@@ -29,8 +29,8 @@ WPAIE
 END OF SCAN RESULTS`
 
 	got := parseScanResults(out)
-	if len(got) != 2 || got[0] != (Network{SSID: "Guest", Quality: 80, Secure: false}) ||
-		got[1] != (Network{SSID: "Home", Quality: 70, Secure: true}) {
+	if len(got) != 2 || got[0] != (Network{SSID: "Guest", Quality: 80, Secure: false, WEP: false}) ||
+		got[1] != (Network{SSID: "Home", Quality: 70, Secure: true, WEP: false}) {
 		t.Fatalf("parseScanResults() = %#v", got)
 	}
 }
@@ -39,8 +39,32 @@ func TestParseAlternateScanResults(t *testing.T) {
 	t.Parallel()
 
 	got := parseScanResults("SSID = Cafe\nRSSIPercent = 55\nEncryption: WPA2-CCMP\nEND OF SCAN RESULTS")
-	if len(got) != 1 || got[0] != (Network{SSID: "Cafe", Quality: 55, Secure: true}) {
+	if len(got) != 1 || got[0] != (Network{SSID: "Cafe", Quality: 55, Secure: true, WEP: false}) {
 		t.Fatalf("parseScanResults() = %#v", got)
+	}
+}
+
+// A WEP network of stock's survey is secure and WEP; a WPA one and an open one are not WEP.
+func TestParseScanResultsTellsWEP(t *testing.T) {
+	t.Parallel()
+
+	got := parseScanResults("SSID = Old\nRSSIPercent = 40\nEncryption: WEP\n----\n" +
+		"SSID = Cafe\nRSSIPercent = 55\nEncryption: WPA2-CCMP\n----\n" +
+		"SSID = Bar\nRSSIPercent = 30\nEncryption: None\nEND OF SCAN RESULTS")
+
+	want := map[string]Network{
+		"Old":  {SSID: "Old", Quality: 40, Secure: true, WEP: true},
+		"Cafe": {SSID: "Cafe", Quality: 55, Secure: true, WEP: false},
+		"Bar":  {SSID: "Bar", Quality: 30, Secure: false, WEP: false},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("parseScanResults() = %#v", got)
+	}
+
+	for _, n := range got {
+		if n != want[n.SSID] {
+			t.Errorf("%s = %#v; want %#v", n.SSID, n, want[n.SSID])
+		}
 	}
 }
 
@@ -55,8 +79,8 @@ func TestParseScanResultsWithoutMarker(t *testing.T) {
 		"private -> public: target ARP request Ethernet address is not set to broadcast, fixing!\r\n"
 
 	got := parseScanResults(out)
-	if len(got) != 2 || got[0] != (Network{SSID: "Cafe", Quality: 55, Secure: false}) ||
-		got[1] != (Network{SSID: "Home", Quality: 43, Secure: true}) {
+	if len(got) != 2 || got[0] != (Network{SSID: "Cafe", Quality: 55, Secure: false, WEP: false}) ||
+		got[1] != (Network{SSID: "Home", Quality: 43, Secure: true, WEP: false}) {
 		t.Fatalf("parseScanResults() = %#v", got)
 	}
 }

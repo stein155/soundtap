@@ -88,7 +88,16 @@ static void associated(void)
     prof_sec = WIFI_SEC_PSK;
     copy(cur.bssid, AP, 6);
     state = WIFI_JOINING, jstep = J_ASSOC, rxassocok = 1, kicked = 0;
+    assoc_caps = 0x0011; /* ESS, Privacy: the answer of a protected network */
     now = 1000, deadline = now + 1500;
+}
+
+/* The table as a scan that just ended left it: SET_PROFILE joins at once only from such a BSS. */
+static void heard_now(void)
+{
+    scanned = 1, scan_end = now;
+    for (unsigned i = 0; i < nbss; i++)
+        bsstab[i].gen = (unsigned short)scan_gen;
 }
 
 /* Host-side TX frame buffers and the management frame ring (channel 0 is the host's). */
@@ -825,6 +834,7 @@ static void open_network(void)
     assert(wifi_join((const unsigned char *)"Cafe", 4, WIFI_SEC_OPEN, k, 32, seed0, 0, 0) == -1);
     assert(wifi_join((const unsigned char *)"Cafe", 4, WIFI_SEC_PSK, k, 0, seed0, 0, 0) == -1);
     state = WIFI_IDLE;
+    heard_now();
     assert(wifi_join((const unsigned char *)"Cafe", 4, WIFI_SEC_OPEN, 0, 0, seed0, 0, 0) == 0);
     assert(state == WIFI_JOINING && jstep == J_SETUP && same(cur.bssid, open_ap, 6));
     corebd = 1;
@@ -1095,6 +1105,7 @@ static void choose_security(void)
         bsstab[0].wgrp = v[t].wgrp, bsstab[0].wakm = BSS_PSK;
         memcpy(bsstab[0].ies, rates_ies, sizeof rates_ies), bsstab[0].ielen = sizeof rates_ies;
         state = WIFI_IDLE, now = 50000 + t * 1000;
+        heard_now();
         assert(wifi_join((const unsigned char *)"Home", 4, WIFI_SEC_PSK, k, 32, sn0, 0, 0) == 0);
         assert(state == WIFI_JOINING);
         if (cur.proto != v[t].proto || cur.pair != v[t].pair || cur.grp != v[t].group) {
@@ -1110,7 +1121,7 @@ static void choose_security(void)
         unsigned n = wpa_own_ie(ie, v[t].proto, v[t].group, v[t].pair, WPA_AKM_PSK, 0);
         const unsigned char *b = last_frame() + 8 + 0xc4;
         assert(b[0] == 0x11 && !memcmp(b + 4 + 6 + 10 + 6, ie, n)); /* Privacy; the IE after the rates */
-        rxassocok = 1;
+        rxassocok = 1, assoc_caps = 0x0011; /* accepted, Privacy set */
         join_step();
         assert(jstep == J_4WAY && sm.proto == v[t].proto && sm.pairwise == v[t].pair &&
                sm.ielen == n && !memcmp(sm.ie, ie, n));
@@ -1153,6 +1164,7 @@ static void wep_network(void)
         prof[0] = 4;
         assert(wifi_join((const unsigned char *)"Old", 3, WIFI_SEC_WEP, prof, 15, seed0, 0, 0) == -1); /* index */
         prof[0] = 1;
+        heard_now();
         assert(wifi_join((const unsigned char *)"Old", 3, WIFI_SEC_WEP, prof, 15, seed0, 0, 0) == 0);
         assert(state == WIFI_JOINING && same(cur.bssid, wap, 6) && wep_len == 13 && wep_idx == 1);
         corebd = 1;
@@ -1265,6 +1277,7 @@ static void wep_never_open(void)
     bsstab[0].ssidlen = 3, bsstab[0].chan = 1, bsstab[0].caps = 0x0011, bsstab[0].rssi = -60;
     memcpy(bsstab[0].ies, ies, sizeof ies), bsstab[0].ielen = sizeof ies;
     state = WIFI_IDLE, now = 80000;
+    heard_now();
     assert(wifi_join((const unsigned char *)"Lab", 3, WIFI_SEC_WEP, prof, sizeof prof, seed0, 0, 0) == 0);
     assert(state == WIFI_JOINING && same(cur.bssid, wap, 6));
     corebd = 1;
@@ -1301,6 +1314,151 @@ static void wep_never_open(void)
     wifi_leave();
     nbss = 0, state = WIFI_IDLE;
     printf("ok: a WEP profile never joins an open network, even one the table still held as WEP\n");
+}
+
+/* The access point's beacon (fc 0x80, to everyone) with capability caps, heard as rx_frames hears
+ * it: into the scan table, and as the joined access point's heartbeat. */
+static void beacon(const unsigned char *bssid, unsigned caps)
+{
+    static const unsigned char bc[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+    unsigned char body[12 + 5 + 6 + 3] = {0};
+    body[10] = (unsigned char)caps, body[11] = (unsigned char)(caps >> 8);
+    memcpy(body + 12, "\x00\x03Twn\x01\x04\x82\x84\x8b\x96\x03\x01\x01", 14);
+    unsigned n = rx_mgmt(0x80, bc, bssid, bssid, body, 12 + 14);
+    rxf[0xac + RXRSSI] = (unsigned char)-50;
+    bss_add(rxf + 0xac, n - 0xac, 1, -50);
+    cur_beacon(rxf, n);
+}
+
+/* No frame went out since tx_frames(): every transmit buffer is free. */
+static int nothing_sent(void)
+{
+    return txnfree == NTXFBUF;
+}
+
+/* A WEP or WPA profile never joins a BSS without the Privacy bit, nor an open one a BSS with it,
+ * whatever the table held: SET_PROFILE scans first unless the BSS was heard in a scan that just
+ * ended; a beacon heard on its channel during the join that disagrees ends the join before the
+ * authentication, or before the association once authenticated; the association response must
+ * agree as well. */
+static void privacy_twin(void)
+{
+    static const unsigned char twin[6] = {0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x2e};
+    static const unsigned char ies[] = {0, 3, 'T', 'w', 'n', 1, 4, 0x82, 0x84, 0x8b, 0x96, 3, 1, 1};
+    static const unsigned char wep[2 + 5] = {0, WIFI_WEP_OPEN, 'a', 'b', 'c', 'd', 'e'}, seed0[32] = {0},
+                               k[32] = {1};
+    unsigned char auth_ok[6] = {0, 0, 2, 0, 0, 0};
+    unsigned char assoc_open[6] = {0x01, 0x04, 0, 0, 1, 0xc0};    /* ESS, short slot; status 0 */
+    unsigned char assoc_privacy[6] = {0x11, 0x04, 0, 0, 1, 0xc0}; /* the same with Privacy */
+    struct {
+        unsigned sec;
+        const unsigned char *key;
+        unsigned klen;
+    } prof[2] = {{WIFI_SEC_WEP, wep, sizeof wep}, {WIFI_SEC_PSK, k, 32}};
+    unsigned gen0 = scan_gen; /* the scans begun here age the table: the tests after start where they did */
+
+    for (unsigned p = 0; p < 2; p++) {
+        /* the table still holds the twin as WEP or WPA2, but from older scans: scan first */
+        cmd_ring(63);
+        tx_frames();
+        nbss = 1;
+        memset(&bsstab[0], 0, sizeof bsstab[0]);
+        memcpy(bsstab[0].bssid, twin, 6), memcpy(bsstab[0].ssid, "Twn", 3);
+        bsstab[0].ssidlen = 3, bsstab[0].chan = 1, bsstab[0].caps = 0x0011, bsstab[0].rssi = -50;
+        bsstab[0].rsn = bsstab[0].rsnok = prof[p].sec == WIFI_SEC_PSK, bsstab[0].grp = 4;
+        bsstab[0].rpair = BSS_CCMP, bsstab[0].rakm = BSS_PSK;
+        memcpy(bsstab[0].ies, ies, sizeof ies), bsstab[0].ielen = sizeof ies;
+        state = WIFI_IDLE, now = 200000 + 100000 * p;
+        scanned = 1, scan_end = now - 1000, bsstab[0].gen = (unsigned short)(scan_gen - 1);
+        assert(wifi_join((const unsigned char *)"Twn", 3, prof[p].sec, prof[p].key, prof[p].klen, seed0, 0, 0) == 0);
+        assert(state == WIFI_SCANNING);
+        state = WIFI_IDLE, bsstab[0].gen = (unsigned short)scan_gen, scan_end = now - JOIN_FRESH_MS;
+        assert(wifi_join((const unsigned char *)"Twn", 3, prof[p].sec, prof[p].key, prof[p].klen, seed0, 0, 0) == 0);
+        assert(state == WIFI_SCANNING);
+
+        /* heard in the scan that just ended: the join starts; a beacon on its channel says open */
+        state = WIFI_IDLE;
+        heard_now();
+        assert(wifi_join((const unsigned char *)"Twn", 3, prof[p].sec, prof[p].key, prof[p].klen, seed0, 0, 0) == 0);
+        assert(state == WIFI_JOINING && jstep == J_SETUP);
+        tx_frames();
+        beacon(twin, 0x0001);
+        corebd = 1;
+        join_step();
+        assert(state == WIFI_FAILED && fail_step == WIFI_FAIL_SECURITY && nothing_sent()); /* no authentication */
+
+        /* authenticated, then the beacon turns open: no association request, a deauthentication */
+        beacon(twin, 0x0011);
+        bsstab[0].rsn = bsstab[0].rsnok = prof[p].sec == WIFI_SEC_PSK; /* the beacon had no RSN IE */
+        state = WIFI_IDLE;
+        heard_now();
+        assert(wifi_join((const unsigned char *)"Twn", 3, prof[p].sec, prof[p].key, prof[p].klen, seed0, 0, 0) == 0);
+        corebd = 1;
+        join_step();
+        assert(jstep == J_AUTH);
+        rx_station(rxf, rx_mgmt(0xb0, own, twin, twin, auth_ok, sizeof auth_ok));
+        assert(rxauthok);
+        tx_frames();
+        beacon(twin, 0x0001);
+        join_step();
+        assert(state == WIFI_FAILED && fail_step == WIFI_FAIL_SECURITY);
+        const unsigned char *d = last_frame() + 8;
+        assert(d[0x18] == 0xc0 && d[0xc4] == 3); /* deauthentication, leaving; no association */
+
+        /* the beacons ask for privacy, the association response does not: leave */
+        beacon(twin, 0x0011);
+        bsstab[0].rsn = bsstab[0].rsnok = prof[p].sec == WIFI_SEC_PSK;
+        state = WIFI_IDLE;
+        heard_now();
+        assert(wifi_join((const unsigned char *)"Twn", 3, prof[p].sec, prof[p].key, prof[p].klen, seed0, 0, 0) == 0);
+        corebd = 1;
+        join_step();
+        rx_station(rxf, rx_mgmt(0xb0, own, twin, twin, auth_ok, sizeof auth_ok));
+        join_step();
+        assert(jstep == J_ASSOC);
+        rx_station(rxf, rx_mgmt(0x10, own, twin, twin, assoc_open, sizeof assoc_open));
+        tx_frames();
+        cmd_ring(63);
+        join_step();
+        assert(state == WIFI_FAILED && fail_step == WIFI_FAIL_SECURITY && !keyed && !(bsstab[0].caps & 0x10));
+        d = last_frame() + 8;
+        assert(d[0x18] == 0xc0 && d[0xc4] == 3);
+        wifi_leave();
+    }
+
+    /* an open profile: an association response with the Privacy bit is not taken either */
+    cmd_ring(63);
+    tx_frames();
+    beacon(twin, 0x0001);
+    bsstab[0].rsn = bsstab[0].rsnok = 0;
+    state = WIFI_IDLE;
+    heard_now();
+    assert(wifi_join((const unsigned char *)"Twn", 3, WIFI_SEC_OPEN, 0, 0, seed0, 0, 0) == 0);
+    corebd = 1;
+    join_step();
+    rx_station(rxf, rx_mgmt(0xb0, own, twin, twin, auth_ok, sizeof auth_ok));
+    join_step();
+    assert(jstep == J_ASSOC);
+    rx_station(rxf, rx_mgmt(0x10, own, twin, twin, assoc_privacy, sizeof assoc_privacy));
+    join_step();
+    assert(state == WIFI_FAILED && fail_step == WIFI_FAIL_SECURITY);
+    /* and with the answer it expects it joins */
+    beacon(twin, 0x0001);
+    state = WIFI_IDLE;
+    heard_now();
+    assert(wifi_join((const unsigned char *)"Twn", 3, WIFI_SEC_OPEN, 0, 0, seed0, 0, 0) == 0);
+    corebd = 1;
+    join_step();
+    rx_station(rxf, rx_mgmt(0xb0, own, twin, twin, auth_ok, sizeof auth_ok));
+    join_step();
+    rx_station(rxf, rx_mgmt(0x10, own, twin, twin, assoc_open, sizeof assoc_open));
+    cmd_ring(63);
+    join_step();
+    assert(state == WIFI_UP);
+    wifi_leave();
+    nbss = 0, state = WIFI_IDLE, scan_gen = gen0;
+    printf("ok: no WEP or WPA profile joins a BSS without the Privacy bit: a stale table scans, a beacon or "
+           "the association response that disagrees ends the join\n");
 }
 
 /* A management frame from the AP to dst (us or everybody), as the core passes it up. */
@@ -1357,6 +1515,7 @@ static void wpa3_and_pmf(void)
     join_attempt();
     assert(state == WIFI_FAILED && fail_step == WIFI_FAIL_SECURITY);
     state = WIFI_IDLE;
+    heard_now();
     assert(wifi_join((const unsigned char *)"wp3", 3, WIFI_SEC_SAE, 0, 0, seed0, 0, 0) == 0);
     assert(state == WIFI_JOINING && cur.akm == WPA_AKM_SAE && cur.mfp);
     corebd = 1;
@@ -1390,7 +1549,7 @@ static void wpa3_and_pmf(void)
     unsigned char ie[WPA_IE_MAX];
     unsigned iel = wpa_own_ie(ie, WPA_PROTO_RSN, 4, 4, WPA_AKM_SAE, WPA_CAP_MFPC | WPA_CAP_MFPR);
     assert(d[0x18] == 0x00 && !memcmp(d + 0xc4 + 4 + 5 + 10 + 6, ie, iel));
-    rxassocok = 1;
+    rxassocok = 1, assoc_caps = 0x0011; /* accepted, Privacy set */
     join_step();
     assert(jstep == J_4WAY && sm.akm == WPA_AKM_SAE && sm.mfp && sm.ver == 0 && !memcmp(sm.pmk, spmk, 32));
     /* a refused SAE: the attempt fails with the status */
@@ -1528,6 +1687,7 @@ int main(void)
     wep_network();
     long_challenge();
     wep_never_open();
+    privacy_twin();
     wpa3_and_pmf();
     return 0;
 }

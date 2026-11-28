@@ -13,7 +13,10 @@
  * - roaming: below the threshold the station scans one channel per visit away from its own and
  *   goes back (0xbc) between visits, holds the SCM's frames while away, and roams only to an
  *   access point at least ROAM_DELTA stronger; the threshold has hysteresis; a fixed BSSID or a
- *   profile without the roam flag never leaves its channel.
+ *   profile without the roam flag never leaves its channel;
+ * - a SCAN while joined sweeps every channel with a wildcard probe the same way, the own one too,
+ *   and lists what it heard and the joined BSS, not what older scans left in the table;
+ * - a joined access point whose beacon changes the Privacy bit the profile needs is left.
  *
  * As in wifi_poll_test.c, the test links without PIE and maps the pages wifi.c reaches by
  * address. Nothing here talks to a speaker. */
@@ -316,6 +319,66 @@ int main(void)
         assert(state == WIFI_UP && bg_phase == BG_IDLE && cmds(c, 512) == 0);
     }
 
-    printf("ok: link events, regulatory channels, the SCAN's SSID, the profile's BSSID and roaming\n");
+    /* ---- a SCAN while joined (strong, no roam flag): every channel once, the own one too, with a
+     * wildcard probe, home to the access point after each; the link stays up; the list holds what
+     * this sweep heard (a network on the own channel too) and the joined BSS, not older entries ---- */
+    scan_gen = 40;
+    set_bss(0, "Lab", 1, 6, -50);
+    set_bss(1, "Old", 4, 3, -60);
+    bsstab[1].gen = (unsigned short)(scan_gen - 2); /* heard two scans ago, not since */
+    nbss = 2;
+    cmd_ring();
+    joined(0, -50, 500000);
+    wifi_scan_ssid(0, 0);
+    assert(wifi_scan(1) == -1 && bg_list);
+    for (t = 500001; t < 500000 + 20000 && bg_list; t++) {
+        wifi_poll(t);
+        if (bg_phase == BG_OFF && bg_chan == 6 && nbss == 2) { /* the test AP on the own channel answers */
+            set_bss(2, "New", 9, 6, -55);
+            nbss = 3;
+        }
+        assert(state == WIFI_UP && (!bg_list || wifi_scan(0) == -1));
+    }
+    assert(!bg_list && bg_phase == BG_IDLE && t - 500000 < 8000 && !roaming);
+    assert(wifi_scan(0) == 3 && wifi_bss_heard(0) && !wifi_bss_heard(1) && wifi_bss_heard(2));
+    n = cmds(c, 512);
+    unsigned seen_ch[14] = {0};
+    for (unsigned i = 0; i < n; i++)
+        if (c[i].type == 0xc2) {
+            assert(c[i].pl[6] == 0); /* wildcard: every network answers */
+            seen_ch[c[i].chan]++;
+            assert(i + 1 < n && c[i + 1].type == 0xbc && c[i + 1].chan == 6);
+        }
+    for (unsigned ch = 1; ch <= 13; ch++)
+        assert(seen_ch[ch] == 1);
+
+    /* ---- the joined access point drops the Privacy bit under the link: leave, the SCM hears it ---- */
+    static unsigned char rb[0xcc + 16];
+    memset(rb, 0, sizeof rb);
+    rb[0x94] = 0x18, rb[0xac] = 0x80;
+    set_bss(0, "Lab", 1, 6, -50);
+    nbss = 1;
+    cmd_ring();
+    joined(0, -50, 600000);
+    memcpy(rb + 0xac + 10, bsstab[0].bssid, 6), memcpy(rb + 0xac + 16, bsstab[0].bssid, 6);
+    rb[0xcc + 10] = 0x11; /* ESS, Privacy: as joined */
+    cur_beacon(rb, sizeof rb);
+    wifi_poll(600001);
+    assert(state == WIFI_UP && !wifi_event_next(&e));
+    rb[0xcc + 10] = 0x01; /* ESS alone: the network turned open */
+    cur_beacon(rb, sizeof rb);
+    wifi_poll(600002);
+    assert(state == WIFI_FAILED && fail_step == WIFI_FAIL_SECURITY && wifi_event_next(&e) &&
+           e.type == WIFI_EV_SECURITY && !memcmp(e.bssid, bsstab[0].bssid, 6));
+    /* an open profile on a network that turned protected leaves as well */
+    joined(0, -50, 700000);
+    prof_sec = WIFI_SEC_OPEN;
+    rb[0xcc + 10] = 0x11;
+    cur_beacon(rb, sizeof rb);
+    wifi_poll(700001);
+    assert(state == WIFI_FAILED && wifi_event_next(&e) && e.type == WIFI_EV_SECURITY);
+
+    printf("ok: link events, regulatory channels, the SCAN's SSID, the profile's BSSID, roaming, a SCAN while "
+           "joined and a network that changes its security under the link\n");
     return 0;
 }

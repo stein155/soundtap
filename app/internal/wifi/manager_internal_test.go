@@ -1254,6 +1254,40 @@ func TestARefusingNetworkGivesWayToAnotherSavedOneInRange(t *testing.T) {
 	}
 }
 
+// A network that associates and then sends the speaker away for its key management (not only a
+// wrong password) gives way to another saved network in range without the setup AP: on the
+// WL1835 models wpa_supplicant sees the deauthentication after ASSOCIATED, on the ST20 the BCO
+// reports it as a refused connect (status 1) or as security it cannot join (43).
+//
+//nolint:paralleltest // its rigs point wpactrl.ClientDir, a package variable, at a directory of their own
+func TestAssociatedThenRefusedGivesWayToAnotherSavedNetwork(t *testing.T) {
+	for _, run := range []struct{ variant, verdict string }{
+		{"binky", "kicked"}, {"rhino", "kicked"}, {"spotty", "kicked_bco"}, {"spotty", "refused"},
+	} {
+		t.Run(run.variant+"/"+run.verdict, func(t *testing.T) {
+			bench := newRig(t, run.variant)
+			lab, cafe := NewRecord("lab", "", "labpass12"), NewRecord("cafe", "", "cafepass1")
+			bench.write(bench.conf, lab)
+			bench.write(bench.conf+".known", lab, cafe)
+			bench.sys.where["lab"] = run.verdict
+			bench.sys.where["cafe"] = "ok"
+			bench.sys.keys["cafe"] = "cafepass1"
+			bench.sys.scan = []string{"lab", "cafe"}
+			bench.start()
+			bench.eventually("the join of the other network", func() bool { return bench.joinCount() == 1 })
+			bench.stop()
+
+			if bench.sys.called("hostapd") {
+				t.Error("the setup AP opened although another saved network was in range")
+			}
+
+			if got := bench.read(bench.conf); got != string(ConfBytes(cafe)) {
+				t.Errorf("wifi.conf = %q; want the network that joined", got)
+			}
+		})
+	}
+}
+
 // A saved WEP or WPA2 network never falls back to an older open profile of the same SSID: the
 // open access point of that name is not joined, wifi.conf keeps what was saved, and the setup AP
 // opens. Another saved network shown with other security than it was saved with is not tried

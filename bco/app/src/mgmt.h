@@ -47,6 +47,8 @@ void mgmt_flow_lost(void);
 #define MGMT_EV_TX_WEDGE 4u    /* the transmitter wedged; the core was rebooted */
 #define MGMT_EV_ROAMED 5u      /* now joined to another access point of the same network */
 #define MGMT_EV_ROAM_FAILED 6u /* a roam did not complete: the link is down */
+#define MGMT_EV_SECURITY 7u    /* the access point's beacon dropped (or set) the Privacy bit the
+                                * profile needs: the station left it */
 extern unsigned mgmt_events; /* events are on */
 /* The event due now, as a whole message in r (MGMT_HDR + MGMT_EVENT_LEN bytes), or 0.
  * mgmt_event_lost() after an event the link could not take, so the next call sends it again. */

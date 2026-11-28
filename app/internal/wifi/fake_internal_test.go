@@ -37,8 +37,9 @@ type fakeNet struct {
 }
 
 // supplicant is a fake wpa_supplicant behind the control socket. Where says, per SSID,
-// what the air does: "ok" joins, "wrong_key" fails the handshake, "refused" associates and is
-// sent away (status 43) again and again, holding wpa_supplicant on it as the ST20's bench showed
+// what the air does: "ok" joins, "wrong_key" fails the handshake, "kicked" associates and is then
+// deauthenticated for its key management ("kicked_bco" as the ST20 reports that), "refused"
+// associates and is sent away (status 43) again and again, holding wpa_supplicant on it as the ST20's bench showed
 // (no lower-priority network is tried meanwhile), anything else (or nothing) is not in range. A
 // network whose security is not the one the air has for its SSID (fakeSys.sec) is not in range
 // for it either, as wpa_supplicant skips a BSS whose security does not match. A join takes one
@@ -180,6 +181,19 @@ func (f *supplicant) step() {
 		case "refused":
 			f.state = "ASSOCIATING"
 			go f.srv.Event("CTRL-EVENT-ASSOC-REJECT bssid=aa:bb:cc:dd:ee:ff status_code=43")
+
+			return
+		case "kicked":
+			// associated, then deauthenticated for its key management (reason 20, invalid AKMP)
+			f.state = "ASSOCIATED"
+			go f.srv.Event("CTRL-EVENT-DISCONNECTED bssid=aa:bb:cc:dd:ee:ff reason=20")
+
+			return
+		case "kicked_bco":
+			// the same on the ST20: the BCO reports the deauthentication after its association as a
+			// refused connect (status 1, the driver's bco_join_result for a kicked join)
+			f.state = "ASSOCIATING"
+			go f.srv.Event("CTRL-EVENT-ASSOC-REJECT bssid=aa:bb:cc:dd:ee:ff status_code=1")
 
 			return
 		default:

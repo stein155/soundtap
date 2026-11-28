@@ -9,7 +9,8 @@
 
 _Static_assert(MGMT_EV_DEAUTH == WIFI_EV_DEAUTH && MGMT_EV_DISASSOC == WIFI_EV_DISASSOC &&
                MGMT_EV_BEACON_LOSS == WIFI_EV_BEACON_LOSS && MGMT_EV_TX_WEDGE == WIFI_EV_TX_WEDGE &&
-               MGMT_EV_ROAMED == WIFI_EV_ROAMED && MGMT_EV_ROAM_FAILED == WIFI_EV_ROAM_FAILED,
+               MGMT_EV_ROAMED == WIFI_EV_ROAMED && MGMT_EV_ROAM_FAILED == WIFI_EV_ROAM_FAILED &&
+               MGMT_EV_SECURITY == WIFI_EV_SECURITY,
                "the link's event numbers are the station's");
 _Static_assert(MGMT_EXT_AUTH_START == WIFI_SAE_START && MGMT_EXT_AUTH_ABORT == WIFI_SAE_ABORT &&
                MGMT_SAE_MAX == WIFI_SAE_MAX, "the link's SAE messages are the station's");
@@ -220,6 +221,8 @@ unsigned mgmt_handle(const unsigned char *p, unsigned n, unsigned char *r)
          * buffer (MGMT_MAX) takes: a beacon flood from anyone in range fills the table. The list
          * stops before the first entry that no longer fits; the count says how many went in. */
         for (int i = 0; i < found && *cnt < 255 && wifi_bss(i, &b) == 0; i++) {
+            if (!wifi_bss_heard(i)) /* kept for the join, not heard in this scan */
+                continue;
             if ((unsigned)(o - r) + 1u + b.ssid_len + 6 + 1 + 1 + 1 + (detail ? MGMT_SCAN_DETAIL_LEN : 0) >
                 MGMT_MAX)
                 break;

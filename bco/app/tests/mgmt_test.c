@@ -90,6 +90,14 @@ int main(void)
     assert(r[8] == 3 && !memcmp(r + 9, "ap0", 3) && r[12 + 5] == 0x10 && r[18] == 1 &&
            (signed char)r[19] == -40 && r[20] == 1);                   /* entry 0 */
     assert(r[21] == 3 && !memcmp(r + 22, "ap1", 3) && r[31] == 2);     /* entry 1 */
+    /* an entry the last scan did not hear (kept in the table for the join) is not listed */
+    {
+        extern unsigned fake_stale;
+        fake_nbss = 3, fake_stale = 1u << 1;
+        n = ask(2, 0, 0, r);
+        assert(r[7] == 2 && n == MGMT_HDR + 2 + 2 * 13 && !memcmp(r + 9, "ap0", 3) && !memcmp(r + 22, "ap2", 3));
+        fake_stale = 0;
+    }
     fake_nbss = 24;
     n = ask(2, 0, 0, r); assert(r[7] == 24 && n <= MGMT_MAX);
     /* a full table of 32-byte SSIDs (a beacon flood) is more than one reply holds: the list stops

@@ -35,6 +35,31 @@ shows wpa_supplicant each network as it is: WPA only, TKIP, the capabilities. An
 joins without a handshake and its frames go in the clear; the BCO joins only an access point
 whose security matches the profile.
 
+### A protected profile never joins a BSS without the Privacy bit
+
+A WEP, WPA or WPA3 profile joins only a BSS whose capability field has the Privacy bit, an open
+profile only one without it, on every model. On the WL1835 models (ST10, WLA, ST300)
+wpa_supplicant's own selection skips a BSS whose Privacy bit does not match the network block
+("privacy mismatch": a block with a WEP key or WPA key management needs it), mac80211 joins only
+the BSS selected, and every data frame of a WEP link is enciphered, so an open access point never
+carries one. On the ST20 the BCO joins on its own scan table, which keeps a BSS for five scans, so
+it checks the bit itself:
+
+- SET_PROFILE joins at once only from a BSS heard in a scan that ended at most 15 s ago; otherwise
+  it scans first. An entry heard while the access point still ran WEP is not joined from.
+- Every beacon and probe response heard from the target during the join updates its entry; the
+  join ends on security before the authentication, and before the association request once
+  authenticated (with a deauthentication), when the entry no longer matches the profile.
+- The association response must agree: a protected profile needs the Privacy bit in it, an open
+  profile needs it clear. An access point whose beacons and association response differ (a
+  FullMAC access point builds the response from its firmware's key state) is left with a
+  deauthentication.
+- Joined, a beacon from the access point whose Privacy bit no longer matches ends the link: the
+  BCO deauthenticates, fails on security and reports link event 7 (`MGMT_EV_SECURITY`), which
+  the driver reports to wpa_supplicant as a local disconnection; it scans again.
+- The driver refuses a connect whose BSS (cfg80211's entry for its BSSID or BSSID hint) has a
+  Privacy bit other than the profile needs, before SET_PROFILE.
+
 ### A PSK profile joins WPA and WPA2 with CCMP or TKIP, as wpa_supplicant picks
 
 With a PSK profile the BCO joins an access point whose RSN IE or, failing that, WPA IE (vendor
@@ -51,10 +76,9 @@ GTK; it comes in a group handshake, its key id in the key info.
 A WEP profile carries one static key (40 or 104 bits) and its index. The ST20's BCO joins an
 access point with the Privacy bit and no RSN or WPA IE, with open system or shared key
 authentication as the profile says, or open system first and shared key when the access point
-refuses it (status 13). WEP has no handshake that proves the access point holds the key, so an
-association answer without the Privacy bit (an access point that dropped WEP since the BCO last
-heard it) fails the join on security and is left with a deauthentication: an open network never
-takes a WEP profile. The driver passes cfg80211's connect key, its index and its
+refuses it (status 13). WEP has no handshake that proves the access point holds the key, so the
+Privacy bit is checked at every step (below): an open network never takes a WEP profile. The
+driver passes cfg80211's connect key, its index and its
 authentication type down, and keeps the static keys wpa_supplicant sets (`add_key`,
 `set_default_key`), which cfg80211 requires once a connect carries keys. soundtapd takes a
 `wep` security with a 5- or 13-character or 10- or 26-hex-digit key, stores it with
@@ -175,6 +199,8 @@ Alternatives that lost:
   `app/internal/speakerstate/backend_wifi.go` (`CheckWifi`), `app/cmd/soundtapd/stock_wifi.go`,
   `app/frontend/src/components/organisms/settings/NetworkSettings/useWifiJoin.ts` and
   `os/external.mk` (wpa_supplicant's `CONFIG_WEP`): WEP.
+- `bco/app/src/wifi.c` (`fresh`, `target_ok`, `refuse_security`, `cur_beacon`, the `J_ASSOC`
+  step) and the driver's `bco_connect`: the Privacy bit at every step of a join and of a link.
 - `bco/app/src/wscan.h` (`rsn_parse`, `wpa_parse`), `bco/app/src/wifi.c` (`choose`, `match`) and
   `bco/app/src/wpa.c` (`wpa_sm_config`, `wpa_own_ie`, descriptor 254 and version 1): which security a
   PSK profile joins, and its handshake.

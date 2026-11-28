@@ -25,12 +25,13 @@ import (
 // scanBusyWait is how long a survey waits for a scan already running, which takes about 4 s.
 const scanBusyWait = 6 * time.Second
 
-// iwScanWait bounds iw's own wait for the end of a survey. The ST20's link driver answers
-// in milliseconds from what the BCO heard, before iw listens for that answer, so iw would
-// wait for ever; the results are there all the same.
+// iwScanWait bounds iw's own wait for the end of a survey. The ST20's BCO surveys every channel
+// even while joined, one visit at a time between stays on its own channel, which takes about
+// 7 s; with the setup AP up the link driver answers at once, before iw listens for that answer,
+// so iw would wait for ever: past this, the results are read with "scan dump".
 //
 //nolint:gochecknoglobals // a test shortens it.
-var iwScanWait = 10 * time.Second
+var iwScanWait = 20 * time.Second
 
 // Waits: wpa_supplicant gets wpaTimeout to answer; a busy radio is asked again every
 // scanRetryStep.
@@ -70,7 +71,7 @@ func (*Speaker) ScanWifi(ctx context.Context) ([]speaker.WifiNetwork, error) {
 		result := make([]speaker.WifiNetwork, 0, len(networks))
 		for _, network := range networks {
 			result = append(result, speaker.WifiNetwork{
-				SSID: network.SSID, Signal: qualityToken(network.Quality), Secure: network.Secure, WEP: false,
+				SSID: network.SSID, Signal: qualityToken(network.Quality), Secure: network.Secure, WEP: network.WEP,
 			})
 		}
 

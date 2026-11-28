@@ -81,9 +81,16 @@ and the BCO answers with the same `seq` and `type|0x80`, status first.
   bytes after each entry's security byte, the RSN group cipher suite type, the RSN pairwise set (1
   CCMP, 2 TKIP), the RSN AKM set (1 PSK), the RSN capabilities' low byte, the WPA IE's group and its
   pairwise set. The driver builds each network's RSN and WPA IE from them for its scan cache. A scan is two passes over the channels the regulatory domain allows (1-13
-  until one is set), 200 ms per channel, probing on each but a passive one, where it only listens;
-  while connected the cached list is returned. The second pass probes for the SCAN's SSID, else the
-  profile's ([choosing the network](#choosing-the-network)).
+  until one is set), 200 ms per channel, probing on each but a passive one, where it only listens.
+  The second pass probes for the SCAN's SSID, else the profile's
+  ([choosing the network](#choosing-the-network)). While connected a SCAN that starts one runs the
+  background scan's visits ([roaming](#link-events-roaming-and-the-regulatory-domain)) over every
+  allowed channel, the own one too, with a wildcard probe (or the SCAN's SSID) and 300 ms home
+  between visits, about 7 s, and answers "still scanning" until it is done; the link stays up.
+  With the setup AP up the list from before it is returned. The list holds only what the last scan
+  heard, and the joined network: the table keeps older entries for the join, not for the list
+  (before, a joined ST20 returned the networks its join's scan had heard, however long ago, and
+  never a network that came up since).
 - `SET_PROFILE`: `ssid_len, ssid, security, key_len, key, 32 random bytes` from the SCM kernel for
   the SNonce, and with `BCOLINK_CAP_ROAM` a tail of `flags, bssid[6]` (1 this BSSID only, 2 this
   BSSID first, 4 roam within the SSID). Without the tail the app joins any BSSID and never roams.
@@ -147,7 +154,14 @@ and the BCO answers with the same `seq` and `type|0x80`, status first.
   profile one whose RSN or WPA IE offers PSK with pairwise CCMP, or pairwise TKIP with a TKIP group,
   joined over RSN before WPA and with CCMP before TKIP, ADR 0136): the highest level of its last beacon or probe response, and on a tie the one heard in the later
   scan. An access point heard without a level counts as the weakest. The scan table keeps a BSS
-  heard in any of the last five scans.
+  heard in any of the last five scans; SET_PROFILE joins at once only from one heard in a scan that
+  ended at most 15 s ago, and scans first otherwise.
+- The Privacy bit decides as the profile says at every step (ADR 0136): a beacon or probe response
+  heard from the target during the join that disagrees ends it on security before the
+  authentication, or before the association with a deauthentication; the association response
+  must agree (Privacy for WEP, WPA and WPA3, none for an open network); joined, a beacon that
+  disagrees ends the link with link event 7. The driver refuses a connect to a BSS whose cached
+  Privacy bit disagrees.
 - A hidden network leaves its SSID out of the beacon. The scan's second pass sends a probe request
   naming the profile's SSID (the core's probe from payload bytes 6 onward), the access point
   answers it with its name, and the scan table keeps that name: a later beacon without the SSID
@@ -265,7 +279,8 @@ has a capability bit and the driver uses it only when HELLO announces it.
   event, le16 reason, bssid[6], channel, rssi` the moment it drops the link: 1 deauthenticated
   and 2 disassociated (with the access point's reason code), 3 beacon loss (no beacon for 8 s,
   `WIFI_BEACON_LOSS_MS`), 4 the transmitter wedged and the core was rebooted, 5 roamed, 6 a roam
-  failed. The app keeps the newest four; a report the link cannot take is sent again. The driver
+  failed, 7 the access point's beacon changed its Privacy bit (the app deauthenticated and left it;
+  reported as locally generated). The app keeps the newest four; a report the link cannot take is sent again. The driver
   runs its STATUS poll at once and reports `cfg80211_disconnected` with the access point's reason
   (not locally generated) or, for beacon loss, `WLAN_REASON_DISASSOC_DUE_TO_INACTIVITY` (locally
   generated), and takes `wlan0`'s carrier down. Without events the 5 s poll still finds it.

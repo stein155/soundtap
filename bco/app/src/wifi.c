@@ -364,9 +364,17 @@ static unsigned assoc_caps; /* the capability field of the AP's accepting associ
 static unsigned fail_step, fail_code;
 #define JOIN_TRIES 5u /* auth/assoc attempts per join: a band-steering AP ignores the first few */
 static unsigned last_beacon, beacons_up;
+/* The joined access point's beacon or probe response no longer has the Privacy bit the profile
+ * needs (set for WEP, WPA and WPA3, clear for an open network): the BSS changed its security. */
+static unsigned sec_changed;
 
 /* scan: pass 0 passive (0xc1) channels 1..13, pass 1 wildcard probe (0xc2), then 0xe4 */
 static unsigned scan_pass, scan_chan, scan_next;
+/* When the last scan or background sweep ended (scanned: there was one). SET_PROFILE joins at once
+ * only from a BSS heard in a scan this recent; otherwise it scans first, so no join starts from a
+ * table entry heard before the access point changed its security (bsstab keeps BSS_KEEP scans). */
+static unsigned scan_end, scanned;
+#define JOIN_FRESH_MS 15000u
 #define DWELL_MS 200u   /* per-channel app budget; must exceed the core listen (~112 ms) + its tail */
 #define NCHAN 13u
 #define LISTEN_MS 110u  /* a passive listen per channel (units of 1024 ticks ~= ms), as a probe listens */
@@ -452,17 +460,21 @@ static void post(unsigned type, unsigned reason)
 #define BG_LONG_MS 300000u
 #define BG_DRAIN_MS 50u  /* at most this long for the transmit buffers to empty before leaving */
 #define BG_HOME_MS 500u  /* on the own channel between two visits */
+#define BG_LIST_HOME_MS 300u /* the same during a sweep the SCM's SCAN asked for */
 enum { BG_IDLE, BG_HOME, BG_DRAIN, BG_OFF };
 static unsigned prof_flags, roam_on, roaming, weak;
 static unsigned char prof_bssid[6], roam_bssid[6];
 static unsigned bg_phase, bg_chan, bg_until, bg_next, bg_last, bg_interval, bg_scanned, off_since;
+/* A SCAN while joined: the background scan visits every channel, the own one too, with a
+ * wildcard probe (bg_list); bg_list_restart starts it over when a roam scan was running. */
+static unsigned bg_list, bg_list_restart;
 
 /* The station is (again) joined: a fresh level average and no background scan yet. A roam that
  * got here is reported. */
 static void link_up(void)
 {
-    rssi_avg16 = 0, weak = 0;
-    bg_phase = BG_IDLE, tx_hold = TX_OPEN;
+    rssi_avg16 = 0, weak = 0, sec_changed = 0;
+    bg_phase = BG_IDLE, tx_hold = TX_OPEN, bg_list = bg_list_restart = 0;
     bg_interval = BG_SHORT_MS;
     if (roaming)
         post(WIFI_EV_ROAMED, 0);
@@ -1586,6 +1598,21 @@ static int ap_tx_eth(const unsigned char *f, unsigned n)
     return 0;
 }
 
+/* A beacon or probe response (record b, n bytes) from the access point joined or being joined: its
+ * heartbeat and level, and while joined its capability bit 4, Privacy, which must stay what the
+ * profile needs; otherwise the access point changed its security under the link (sec_changed). */
+static void cur_beacon(const volatile unsigned char *b, unsigned n)
+{
+    if (!have_cur || !same(b + 0xac + 16, cur.bssid, 6))
+        return;
+    last_beacon = now, beacons_up++;
+    if (state != WIFI_UP)
+        return;
+    rssi_track((signed char)b[0xac + RXRSSI]);
+    if (n > 0xac + RXBODY + 11 && !(b[0xac + RXBODY + 10] & 0x10) != (prof_sec == WIFI_SEC_OPEN))
+        sec_changed = 1;
+}
+
 static void rx_frames(void)
 {
     while (wr_avail(&sup, 3)) {
@@ -1629,11 +1656,7 @@ static void rx_frames(void)
                 }
 #endif
                 bss_add((const unsigned char *)b + 0xac, n - 0xac, scan_chan, (signed char)b[0xac + RXRSSI]);
-                if (have_cur && same(b + 0xac + 16, cur.bssid, 6)) {
-                    last_beacon = now, beacons_up++;
-                    if (state == WIFI_UP)
-                        rssi_track((signed char)b[0xac + RXRSSI]);
-                }
+                cur_beacon(b, n);
             } else if (state == WIFI_AP) {
                 rx_ap(b, n);
             } else {
@@ -1764,6 +1787,7 @@ static void scan_step(void)
     if (scan_pass == SCAN_PASSES) { /* 0xe4 was sent a dwell ago: done */
         state = WIFI_IDLE;
         scan_chan = 0;
+        scan_end = now, scanned = 1;
 #ifdef BCO_DEBUG_TRACE
         hex("scan sup3 ", dg_sup3);
         hex("scan frame ", dg_frame);
@@ -1853,6 +1877,21 @@ int wifi_scan(int start)
 #endif
     if (state == WIFI_AP)
         return (int)nbss; /* the radio stays on the AP channel: the scan made before it */
+    if (state == WIFI_UP) {
+        /* Joined: the background scan visits every channel, one at a time between stays on the
+         * own one (bg_step), so the list holds what is in range now and the link stays up. The
+         * table without it held only what the join's scan heard, however long ago. */
+        if (start && !bg_list) {
+            bg_list = 1;
+            if (bg_phase == BG_IDLE) {
+                age_table();
+                bg_chan = 0, bg_phase = BG_HOME, bg_until = now;
+            } else {
+                bg_list_restart = 1;
+            }
+        }
+        return bg_list ? -1 : (int)nbss;
+    }
     if (state == WIFI_SCANNING)
         return -1;
     if (start && (state == WIFI_IDLE || state == WIFI_FAILED) && !join_pending) {
@@ -1866,6 +1905,15 @@ int wifi_scan(int start)
 static unsigned bss_sec(const struct bss *b)
 {
     return b->rsn ? WIFI_BSS_RSN : b->wpa ? WIFI_BSS_WPA : (b->caps & 0x10) ? WIFI_BSS_WEP : WIFI_BSS_OPEN;
+}
+
+/* Whether SCAN lists bsstab[i]: a BSS heard in the last scan (its generation), or the one joined.
+ * The table keeps BSS_KEEP scans for the join decision; the list says what is in range now. */
+int wifi_bss_heard(unsigned i)
+{
+    if (i >= nbss)
+        return 0;
+    return bsstab[i].gen == scan_gen || (have_cur && state == WIFI_UP && same(bsstab[i].bssid, cur.bssid, 6));
 }
 
 int wifi_bss(unsigned i, struct wifi_bss *o)
@@ -1974,6 +2022,23 @@ static int pick(void)
     return !roaming && hint >= 0 ? hint : best;
 }
 
+/* The BSS being joined still lets the profile join it: its entry, which every beacon and probe
+ * response heard since keeps current (bss_add), still matches. A WEP or WPA profile never goes on
+ * to an access point whose frames dropped the Privacy bit, an open one never to one that set it. */
+static int target_ok(void)
+{
+    for (unsigned i = 0; i < nbss; i++)
+        if (same(bsstab[i].bssid, cur.bssid, 6))
+            return match(&bsstab[i]);
+    return 0;
+}
+
+/* A BSS heard in a scan that ended at most JOIN_FRESH_MS ago. */
+static int fresh(const struct bss *b)
+{
+    return b->gen == scan_gen && scanned && now - scan_end < JOIN_FRESH_MS;
+}
+
 /* Lowest rate the AP advertises: the one frame rate it is sure to decode. */
 static unsigned lowest_rate(const struct bss *b)
 {
@@ -2017,6 +2082,17 @@ static void fail(void)
     roaming = 0;
     state = WIFI_FAILED;
     join_pending = 0;
+}
+
+/* The join ends on security: the target no longer matches the profile (target_ok) or its
+ * association response disagrees on privacy. An access point that authenticated or associated us
+ * hears that we leave. */
+static void refuse_security(void)
+{
+    if (rxauthok)
+        send_deauth(3); /* leaving */
+    fail_step = WIFI_FAIL_SECURITY, fail_code = 0;
+    fail();
 }
 
 static void join_attempt(void)
@@ -2102,6 +2178,10 @@ static void join_step(void)
         unsigned char jd[6] = {prof_sec != WIFI_SEC_OPEN, 1, 0, 0, 0, 0}; /* privacy, open the AC queues */
         if (!corebd && !due(deadline))
             return;
+        if (!target_ok()) { /* a beacon heard on its channel since the scan says otherwise */
+            refuse_security();
+            return;
+        }
         if (!wr_cmd_checked(&tx, CMD_JOIN_DONE, 0x12, 11, jd, sizeof jd))
             return; /* ring full: still J_SETUP, the next poll tries again */
         DOORBELL();
@@ -2146,6 +2226,10 @@ static void join_step(void)
             return;
         }
         if (rxauthok) { /* associate at once: the AP ages the auth state out within ~1 s */
+            if (!target_ok()) {
+                refuse_security();
+                return;
+            }
             if (!send_assoc()) {
                 retry();
                 return;
@@ -2158,17 +2242,15 @@ static void join_step(void)
         }
         return;
     case J_ASSOC:
-        /* WEP has no handshake that proves the access point holds the key, so its answer must ask
-         * for privacy: one without the Privacy bit is an open network (the BSS dropped WEP since
-         * its last beacon here) and never takes a WEP profile. Leave it and fail on security; its
-         * entry learns the change, so the next attempt fails at once. */
-        if (rxassocok && prof_sec == WIFI_SEC_WEP && !(assoc_caps & 0x10)) {
-            send_deauth(3); /* leaving */
+        /* The answer must agree on privacy: a WEP, WPA or WPA3 profile needs the Privacy bit (WEP
+         * has no handshake that proves the access point holds the key, so this is its only proof
+         * the network is not open), an open profile needs it clear. Otherwise leave and fail on
+         * security; the entry learns the change, so the next attempt fails at once. */
+        if (rxassocok && !(assoc_caps & 0x10) != (prof_sec == WIFI_SEC_OPEN)) {
             for (unsigned i = 0; i < nbss; i++)
                 if (same(bsstab[i].bssid, cur.bssid, 6))
                     bsstab[i].caps = (unsigned short)assoc_caps;
-            fail_step = WIFI_FAIL_SECURITY, fail_code = 0;
-            fail();
+            refuse_security();
             return;
         }
         if (rxassocok) {
@@ -2378,7 +2460,10 @@ static void roam_to(int i)
 static void bg_finish(void)
 {
     int i = roam_candidate();
-    bg_phase = BG_IDLE, bg_last = now, bg_scanned = 1;
+    bg_phase = BG_IDLE, bg_last = now, bg_scanned = 1, bg_list = 0;
+    scan_end = now, scanned = 1;
+    if (!roam_on || !weak) /* a SCAN's sweep on a strong link: the list only */
+        return;
     if (i >= 0 && bsstab[i].rssi >= cur_rssi() + ROAM_DELTA) {
         roam_to(i);
         return;
@@ -2408,7 +2493,7 @@ static int go_home(void)
 static void bg_step(void)
 {
     int r = cur_rssi();
-    if (!roam_on)
+    if (!roam_on && !bg_list)
         return;
     if (!weak && r < ROAM_THRESHOLD) {
         weak = 1, bg_interval = BG_SHORT_MS;
@@ -2420,7 +2505,7 @@ static void bg_step(void)
     }
     switch (bg_phase) {
     case BG_IDLE:
-        if (weak && due(bg_next)) {
+        if (roam_on && weak && due(bg_next)) {
             age_table(); /* a new generation: what this scan hears */
             bg_chan = 0, bg_phase = BG_HOME, bg_until = now;
         }
@@ -2428,11 +2513,18 @@ static void bg_step(void)
     case BG_HOME:
         if (!due(bg_until))
             return;
-        if (!weak) { /* strong again: stop looking */
+        if (bg_list_restart) { /* a SCAN came during a roam scan: every channel from the first */
+            bg_list_restart = 0;
+            age_table();
+            bg_chan = 0;
+        }
+        if (!weak && !bg_list) { /* strong again: stop looking */
             bg_phase = BG_IDLE;
             return;
         }
-        if (!(bg_chan = next_visit(bg_chan))) {
+        /* a SCAN's sweep visits the own channel too: other networks there are not heard while
+         * the receive filter keeps to the access point */
+        if (!(bg_chan = bg_list ? next_chan(bg_chan) : next_visit(bg_chan))) {
             bg_finish();
             return;
         }
@@ -2442,7 +2534,9 @@ static void bg_step(void)
         tx_reclaim();
         if (txnfree < NTXFBUF && !due(bg_until))
             return;
-        if (chan_active(bg_chan))
+        if (chan_active(bg_chan) && bg_list)
+            probe_on(bg_chan, scan_ssid, scan_ssidlen); /* the SCAN's: a wildcard unless it named one */
+        else if (chan_active(bg_chan))
             probe_on(bg_chan, cur.ssid, cur.ssidlen); /* directed: only the SSID's access points answer */
         else
             listen_on(bg_chan);
@@ -2451,7 +2545,7 @@ static void bg_step(void)
         return;
     case BG_OFF:
         if (due(bg_until) && go_home())
-            bg_phase = BG_HOME, bg_until = now + BG_HOME_MS;
+            bg_phase = BG_HOME, bg_until = now + (bg_list ? BG_LIST_HOME_MS : BG_HOME_MS);
         return;
     }
 }
@@ -2489,7 +2583,8 @@ int wifi_join(const unsigned char *ssid, unsigned ssid_len, unsigned sec, const 
     fail_step = fail_code = 0;
     join_pending = 1, jstep = J_SCAN;
     if (state != WIFI_SCANNING) {
-        if (pick() >= 0) {
+        int i = pick();
+        if (i >= 0 && fresh(&bsstab[i])) {
             state = WIFI_JOINING, join_pending = 0;
             join_attempt();
         } else {
@@ -2764,7 +2859,18 @@ void wifi_poll(unsigned t)
          * not while a background scan has the radio on another channel). The SCM hears of it at
          * once (ADR 0135). */
         saq_check();
-        if (kicked || (beacons_up && bg_phase != BG_OFF && due(last_beacon + WIFI_BEACON_LOSS_MS))) {
+        if (sec_changed && !kicked) {
+            /* The access point's beacon no longer asks for the profile's privacy: a WEP or WPA
+             * profile stays on no network that turned open (nor an open one on one that turned
+             * protected). Leave; the SCM scans again and finds the change. */
+            hex("link lost security ", 0);
+            send_deauth(3);
+            post(WIFI_EV_SECURITY, 0);
+            fail_step = WIFI_FAIL_SECURITY, fail_code = 0;
+            drop_link();
+            state = WIFI_FAILED;
+            bg_phase = BG_IDLE, tx_hold = TX_OPEN, bg_list = bg_list_restart = 0;
+        } else if (kicked || (beacons_up && bg_phase != BG_OFF && due(last_beacon + WIFI_BEACON_LOSS_MS))) {
             hex("link lost kicked ", kicked);
             if (kicked)
                 post(kick_sub == 0xc0 ? WIFI_EV_DEAUTH : WIFI_EV_DISASSOC, kick_reason);

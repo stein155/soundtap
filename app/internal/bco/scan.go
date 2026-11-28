@@ -33,10 +33,13 @@ const (
 // errScanIncomplete means the survey ended without a marker or a record.
 var errScanIncomplete = errors.New("BCO Wi-Fi scan returned no complete result")
 
+// Network is one network of the survey: secure for WEP, WPA and WPA2, WEP for a secured one
+// without a WPA or RSN element whose encryption says WEP.
 type Network struct {
 	SSID    string
 	Quality int
 	Secure  bool
+	WEP     bool
 }
 
 // ScanNetworks runs BCO's passive site survey. It changes no CNE settings.
@@ -136,7 +139,7 @@ func parseScanResults(response string) []Network {
 		if line == "Scan Result:" || strings.HasPrefix(line, "SSID =") {
 			flush()
 
-			current, active = Network{SSID: "", Quality: 0, Secure: true}, true
+			current, active = Network{SSID: "", Quality: 0, Secure: true, WEP: false}, true
 		}
 
 		if active && scanField(&current, line) {
@@ -187,8 +190,13 @@ func scanField(current *Network, line string) bool {
 	case strings.HasPrefix(line, "RSSIPercent ="):
 		current.Quality, _ = strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(line, "RSSIPercent =")))
 	case strings.EqualFold(line, "Encryption: None"):
-		current.Secure = false
-	case line == "WPAIE" || line == "RSNIE" || strings.HasPrefix(line, "Encryption:"):
+		current.Secure, current.WEP = false, false
+	case line == "WPAIE" || line == "RSNIE":
+		current.Secure, current.WEP = true, false
+	case strings.HasPrefix(line, "Encryption:"):
+		// stock prints the cipher: WEP for a network without a WPA or RSN element
+		upper := strings.ToUpper(line)
+		current.WEP = strings.Contains(upper, "WEP") && !strings.Contains(upper, "WPA")
 		current.Secure = true
 	case line == scanEndMarker:
 		return true

@@ -32,8 +32,9 @@ asks, so an older app with a newer driver and the other way round work as before
 
 - **Link events** (`BCOLINK_CAP_EVENTS`). Switched on with `EVENTS`, the app sends an unasked
   control message the moment it drops the link: deauthenticated or disassociated (with the access
-  point's reason code), beacon loss (8 s without a beacon), a wedged transmitter, a roam and a
-  failed roam. The driver runs its STATUS poll at once and reports `cfg80211_disconnected` with the
+  point's reason code), beacon loss (8 s without a beacon), a wedged transmitter, a roam, a
+  failed roam, and an access point whose beacon changed the Privacy bit the profile needs (the app
+  left it, [ADR 0136](0136-every-network-stock-joined-and-wpa3.md)). The driver runs its STATUS poll at once and reports `cfg80211_disconnected` with the
   access point's reason, or beacon loss as locally generated, and takes the carrier down. The
   5 s poll stays as the fallback.
 - **Roaming within the SSID** (`BCOLINK_CAP_ROAM`). SET_PROFILE gets a tail with a BSSID and
@@ -43,7 +44,9 @@ asks, so an older app with a newer driver and the other way round work as before
   per visit, back on its own channel in between, and stops looking once it is 5 dB above that. It
   roams only to an access point of the same SSID and security at least 8 dB stronger; a scan that
   finds none doubles the time to the next, from 30 s up to 300 s. Above the threshold it never
-  leaves its channel. The driver keeps the connection while the app reassociates and reports
+  leaves its channel on its own. A SCAN while joined runs the same visits over every allowed
+  channel, its own too, with a wildcard probe and 300 ms home in between (about 7 s), so the scan
+  list holds what is in range now; it never roams on a strong link. The driver keeps the connection while the app reassociates and reports
   `cfg80211_roamed` and the open port. A fixed BSSID never roams.
 - **Regulatory domain** (`BCOLINK_CAP_REGDOM`). The driver's `reg_notifier` sends `SET_REGDOM`
   with the country, the channels cfg80211 left enabled, those it marked no-IR as passive, and the

@@ -208,7 +208,7 @@ func setupOptions(life *lifecycle, home, wifiConf string, log *slog.Logger, stor
 	return web.SetupOptions{
 		SetupMode:    func() error { return openSetupAP(log) },
 		WifiProfiles: func() ([]web.WifiProfile, error) { return savedWifiProfiles(wifiConf) },
-		ForgetWifi:   func(id string) error { return forgetWifiProfile(wifiConf, id) },
+		ForgetWifi:   func(id string) error { return forgetWifiProfile(wifiConf, id, joinedWifiSSID) },
 		// The dashboard's factory reset runs the same reset the front-panel chord does.
 		// It used to clear only Wi-Fi, so a reset from the browser left presets, accounts,
 		// Bluetooth pairings and the speaker's name in place — a "reset" that reset almost

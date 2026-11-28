@@ -29,6 +29,8 @@ int wifi_bss(unsigned i, struct wifi_bss *o)
     o->chan = 1 + i, o->rssi = -40 - (int)i, o->sec = 1;
     return 0;
 }
+unsigned fake_stale; /* bit i: result i was not heard in the last scan */
+int wifi_bss_heard(unsigned i) { return i < fake_nbss && !(fake_stale >> i & 1); }
 unsigned fake_join_flags;
 unsigned char fake_join_bssid[6];
 int wifi_join(const unsigned char *ssid, unsigned ssid_len, unsigned sec, const unsigned char *key,

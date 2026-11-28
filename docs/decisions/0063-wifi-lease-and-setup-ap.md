@@ -107,7 +107,18 @@ Before the setup AP opens after a failed join, the manager tries what else is sa
   management) holds wpa_supplicant on it for the whole join, so the networks below it never get a
   turn (ST20 bench, 2026-11-28). One pass then joins the other saved networks that the last scan
   shows with the security they were saved with, wifi.conf's left out; once per failure, so two
-  failing networks never cycle without the AP. One that joins becomes wifi.conf.
+  failing networks never cycle without the AP. One that joins becomes wifi.conf. That holds for a
+  network that associates and then sends the speaker away for its key management, not only for a
+  wrong password: wpa_supplicant's deauthentication after ASSOCIATED on the WL1835 models, the
+  BCO's refused connect (status 1 or 43) on the ST20.
+
+Forgetting a saved network (`POST /api/wifi/forget`) refuses only the network the speaker is
+joined to now, as wpa_supplicant's STATUS says; without a wpa_supplicant to ask, wifi.conf's
+network counts as in use. A network the speaker fell back from, or moved away from on its own
+during an outage, is still named in wifi.conf and can be forgotten: wifi.conf then names the
+network joined now, else the newest one left in `wifi.conf.known`, else none (the setup AP at the
+next join), and a `wifi.conf.good` that named the forgotten network follows it, so no fallback
+brings it back.
 
 ### Consequences
 
