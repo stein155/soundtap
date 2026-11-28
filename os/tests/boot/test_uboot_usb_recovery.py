@@ -107,12 +107,23 @@ BOSE_CHAINS = {
     "bose-triode-scm": [*_SCM, "ABL_Update", *_MID, "App_BD_DMP 3.x-3_8_0-9423_ER_NoAP.bcd", "MLO", "u-boot.img", "TRI_shelby_update.tri"],
     "bose-marconi-scm": [*_SCM, "MarconiUpdate", *_MID, "App_BD_DMP 3.x-3_8_0-9423_ER_NoAP.bcd", "MLO", "u-boot.img", "DEF_CON_02.21.00.r13184.bos"],
 }
-# The variant each board's stock ubi.img tag names it by (@<module>/<variants>): the Series III
-# under their own names, the sm2 adapter as lisa, the ST10 in the package it shares with the
-# Wireless Link (@sm2/spotty+mojo+binky).
-STOCK_NAMES = {"rhino": "binky", "spotty3": "spotty", "mojo3": "mojo", "lisa2": "lisa", "spotty": "spotty",
-               "mojo": "mojo", "taigan": "taigan", "lisa": "lisa", "burns": "burns", "binky": "binky",
-               "ginger": "ginger", "bardeen": "bardeen"}
+# The variants each board's stock ubi.img tag may name it by (@<module>/<variants>): the Series
+# III under their own names, the sm2 adapter as lisa, the ST10 by its own package (@sm2/rhino)
+# and by the one it shares with the Wireless Link (@sm2/spotty+mojo+binky).
+STOCK_NAMES = {"rhino": ("rhino", "binky"), "spotty3": ("spotty",), "mojo3": ("mojo",), "lisa2": ("lisa",),
+               "spotty": ("spotty",), "mojo": ("mojo",), "taigan": ("taigan",), "lisa": ("lisa",), "burns": ("burns",),
+               "binky": ("binky",), "ginger": ("ginger",), "bardeen": ("bardeen",)}
+# The chain names that stand for a host firmware name with Bose's build number in it ('*': digits).
+CHAIN_PATTERNS = {"ginger_1.16.7.*.bos", "bardeen_1.16.7.*.bos"}
+
+
+def chain_name_matches(name: str, want: str) -> bool:
+    """Return whether a module name is the one a chain names, as rt_chain_name decides."""
+    if "*" not in want:
+        return name == want
+    pre, post = want.split("*")
+    middle = name[len(pre):len(name) - len(post)]
+    return name.startswith(pre) and name.endswith(post) and len(name) > len(pre) + len(post) and middle.isdigit()
 
 
 def c_product(expr: str) -> int:
@@ -185,23 +196,31 @@ class UsbRecoveryContract(unittest.TestCase):
         Every stock family the stick takes Bose's firmware back from: profiles.go's three and
         the ones Bose's 27.0.6 packages for the SA-5, the adapters and the Lifestyle 650 use.
         """
-        self.assertEqual(sorted(map(tuple, patch_bose_chains())), sorted(map(tuple, BOSE_CHAINS.values())))
-        for chain in patch_bose_chains():
+        patched = patch_bose_chains()
+        self.assertEqual({n for chain in patched for n in chain if "*" in n}, CHAIN_PATTERNS)
+        self.assertEqual(len(patched), len(BOSE_CHAINS))
+        for name, want in BOSE_CHAINS.items():
+            with self.subTest(chain=name):
+                hits = [c for c in patched if len(c) == len(want) and all(map(chain_name_matches, want, c))]
+                self.assertEqual(len(hits), 1, want)
+        for chain in patched:
             for name in ("linuxPatched", "ubi.img", "MLO", "u-boot.img"):
                 self.assertEqual(chain.count(name), 1, chain)
             self.assertLessEqual(len(chain), define("RT_STU_MODULES"))
 
     def test_bose_boards(self) -> None:
-        """Every board our U-Boot knows maps to the stock variant its ubi.img tag names.
+        """Every board our U-Boot knows maps to the stock variants its ubi.img tag may name.
 
         Every board our U-Boot knows (rt_boards in the scm patch) takes Bose's firmware back,
         by the stock variant its ubi.img tag names. No board holds ubi.img to models.json's
         stock_rootfs_limit: that is Bose's timed streamer's, and the stick writes the slot.
         """
-        rows = dict(re.findall(r'^\+\t\{ "(\w+)", "(\w+)" \},$', PATCH, re.MULTILINE))
+        rows = {b: tuple(re.findall(r'"(\w+)"', v))
+                for b, v in re.findall(r'^\+\t\{ "(\w+)", \{ ((?:"\w+"(?:, )?)+) \} \},$', PATCH, re.MULTILINE)}
         scm = re.findall(r'^\+\t\{ "(\w+)", "\w+", "(sm2|scm)",', (ROOT / "os/bootloader/uboot/uboot-2026.07-scm-nand-wp.patch").read_text(), re.MULTILINE)
         self.assertEqual(set(rows), {b for b, _ in scm})
         self.assertEqual(rows, STOCK_NAMES)
+        self.assertLessEqual(max(map(len, rows.values())), define("RT_BOSE_VARIANTS"))
         self.assertNotIn("rootfs_max", PATCH)
         self.assertIn("pkg->rootfs->size > RT_SLOT_SIZE + RT_STU_OVERLAP", PATCH)
 
@@ -755,14 +774,19 @@ CHAINS = {
     "soundtap": go_list("ExpectedSoundTap"),
     **BOSE_CHAINS,
     "bose-unknown": [*BOSE_CHAINS["bose-sm2"][:4], "SomethingNew", *BOSE_CHAINS["bose-sm2"][4:]],
+    # The ST10's own package: the shared sm2 chain with ubi.img tagged @sm2/rhino.
+    "bose-st10": BOSE_CHAINS["bose-sm2"],
+    # The ST300's 27.0.1 package: its host firmware carries an older build number.
+    "bose-st300-27.0.1": [n.replace("5043495", "4378403") for n in BOSE_CHAINS["bose-st300"]],
     "notstu": [],
 }
-# The version tag each stock package's ubi.img carries (@<module>/<variants>); the ST20's and the
-# ST300's packages are not recorded here, theirs follow the same form.
+# The version tag each stock package's ubi.img carries (@<module>/<variants>); REAL_PACKAGES holds
+# the recorded headers.
 TAGS = {"bose-sm2": "@sm2/spotty+mojo+binky", "bose-st20": "@scm/spotty+mojo+taigan", "bose-st300": "@sm2/ginger",
         "bose-burns": "@sm2/burns", "bose-nelson-sm2": "@sm2/lisa", "bose-triode-sm2": "@sm2/lisa",
         "bose-marconi-sm2": "@sm2/lisa", "bose-bardeen": "@sm2/bardeen", "bose-wst-scm": "@scm/lisa",
-        "bose-triode-scm": "@scm/lisa", "bose-marconi-scm": "@scm/lisa", "bose-unknown": "@sm2/spotty+mojo+binky"}
+        "bose-triode-scm": "@scm/lisa", "bose-marconi-scm": "@scm/lisa", "bose-unknown": "@sm2/spotty+mojo+binky",
+        "bose-st10": "@sm2/rhino", "bose-st300-27.0.1": "@sm2/ginger"}
 
 
 def patch_function(patch: str, signature: str) -> str:
@@ -1000,6 +1024,7 @@ class UsbRecoveryProbe(unittest.TestCase):
             patch_block(PATCH, "static const char *const rt_bose_chains[][RT_STU_MODULES] = {"),
             patch_block(PATCH, "static const struct rt_bose {"),
             patch_function(PATCH, "static struct rt_module *rt_module_named(struct rt_pkg *pkg, const char *name)"),
+            patch_function(PATCH, "static bool rt_chain_name("),
             patch_function(PATCH, "static bool rt_tag_names("),
             patch_function(PATCH, "static int rt_classify(struct rt_pkg *pkg, u32 erasesize)"),
             patch_block(PATCH, "static const char *const rt_env_templates[] = {"),
@@ -1494,6 +1519,7 @@ class UsbRecoveryProbe(unittest.TestCase):
         """
         for board, raw, mfg, pkg, b in (
                 ("st10", "3630", None, "bose-sm2", "rhino"), ("wla", "2518", None, "bose-sm2", "binky"),
+                ("st10", "3630", None, "bose-st10", "rhino"), ("st300", "3669", None, "bose-st300-27.0.1", "ginger"),
                 ("st20", "", None, "bose-st20", "spotty"), ("st300", "3669", None, "bose-st300", "ginger"),
                 ("st10", "", "spotty", "bose-sm2", "spotty3"), ("st10", "", "mojo", "bose-sm2", "mojo3"),
                 ("st10", "", "burns", "bose-burns", "burns"), ("st10", "", "lisa", "bose-triode-sm2", "lisa2"),
@@ -1525,6 +1551,9 @@ class UsbRecoveryProbe(unittest.TestCase):
                 ("st10", "", "burns", "bose-sm2", None),                    # the shared one on the SA-5
                 ("wla", "2518", None, "bose-st300", None),                  # the ST300's on a Wireless Link
                 ("st300", "3669", None, "bose-sm2", None),                  # and the shared one on the ST300
+                ("wla", "2518", None, "bose-st10", None),                   # the ST10's own on a Wireless Link
+                ("st10", "", "spotty", "bose-st10", None),                  # and on the Series III
+                ("st300", "3669", None, "bose-st10", None),                 # and on the ST300
                 ("st10", "", "lisa", "bose-sm2", None),                     # no lisa in spotty+mojo+binky
                 ("st20", "3000", None, "bose-st20", "@scm/spotty+mojo"),    # no taigan in the tag
                 ("st10", "3630", None, "bose-sm2", "@scm/spotty+mojo+binky"),  # wrong module
@@ -1797,12 +1826,14 @@ int main(int argc, char **argv)
 """
 
 
-def stu_file(modules: list[tuple[str, bytes]], magic: bytes = b"BOSE", tag: str = "@sm2/spotty+mojo+binky") -> bytearray:
+def stu_file(modules: list[tuple[str, bytes]], magic: bytes = b"BOSE", tag: str = "@sm2/spotty+mojo+binky",
+             versions: dict[str, str] | None = None) -> bytearray:
     """Build an Update.stu as stock's packager lays one out (internal/stu).
 
     Each module's header
     starts 0x14 bytes before the end of the previous payload, which those bytes belong to, and
-    carries the version at 0xa8, ubi.img's naming the module and variants it is for.
+    carries the version at 0xa8, ubi.img's naming the module and variants it is for. versions,
+    when given, is each module's whole version field by name, as a recorded package has it.
     """
     data = bytearray()
     for i, (name, payload) in enumerate(modules):
@@ -1812,7 +1843,10 @@ def stu_file(modules: list[tuple[str, bytes]], magic: bytes = b"BOSE", tag: str 
         else:
             h[4:8] = magic
         h[0x18:0x18 + len(name)] = name.encode()
-        version = b"27.0.6.46330.5043500" + (tag.encode() if name == "ubi.img" else b"")
+        if versions is not None:
+            version = versions.get(name, "").encode()
+        else:
+            version = b"27.0.6.46330.5043500" + (tag.encode() if name == "ubi.img" else b"")
         h[0xa8:0xa8 + len(version)] = version
         h[0x98:0x9c] = len(payload).to_bytes(4, "big")
         h[0x12c:0x130] = zlib.crc32(payload).to_bytes(4, "big")
@@ -1859,6 +1893,72 @@ def bose_modules(chain: list[str], **override: bytes) -> list[tuple[str, bytes]]
     return [(name, payloads.get(name, name.encode() * 3)) for name in chain]
 
 
+# Bose's packages as their module headers have them: each module's name (0x18), declared size
+# (0x98) and version field (0xa8, 0x40 bytes), names and numbers only, no bytes. Read on
+# 2026-11-28 from the ST10 27.0.6 package (95,906,856 bytes), the ST20/WLA sm2 27.0.6 package
+# (99,445,800 bytes) and the SCM 27.0.6 package (105,879,988 bytes). The ST300's are not held
+# here: its chain is profiles.go's, its 27.0.6 tag @sm2/ginger and its 27.0.1 host firmware name
+# from docs/hardware/install-records.md ("USB stick runs"); the 27.0.1 build number in the
+# version field is not recorded, and the stick reads only what follows the '@'.
+_V = "27.0.6.46330.5043500"
+_UB = "U-Boot 2014.07-05722-g93f9891"
+_SM2_REAL = [("SoftwareUpdateInstaller", 0x1cc60c, ""), ("ARMUpdate", 0x15a80c, ""), ("UbootUpdate", 0x15b634, "")]
+_ST300_REAL = [*_SM2_REAL, ("STP_Update", 0x154a1c, ""), ("linuxPatched", 0x310000, _V),
+               ("ubi.img", 0x5220000, _V + "@sm2/ginger"), ("MLO", 0x7630, _UB), ("u-boot.img", 0x67e5c, _UB)]
+REAL_PACKAGES = {
+    "st10-27.0.6": [*_SM2_REAL, ("SCMReset_Update", 0x154a1c, ""), ("linuxPatched", 0x310000, _V),
+                    ("ubi.img", 0x5220000, _V + "@sm2/rhino"), ("MLO", 0x7630, _UB), ("u-boot.img", 0x67e5c, _UB)],
+    "sm2-27.0.6": [*_SM2_REAL, ("SCMReset_Update", 0x154a1c, ""), ("linuxPatched", 0x310000, _V),
+                   ("ubi.img", 0x5580000, _V + "@sm2/spotty+mojo+binky"), ("MLO", 0x7630, _UB),
+                   ("u-boot.img", 0x67e5c, _UB)],
+    "scm-27.0.6": [("SoftwareUpdateInstaller", 0x1cc60c, ""), ("ARMUpdate", 0x15a80c, ""), ("CC2540_Update", 0x18716c, ""),
+                   ("SMSC_Update", 0x2dae6c, ""), ("UbootUpdate", 0x15b634, ""), ("SCMReset_Update", 0x154a1c, ""),
+                   ("linuxPatched", 0x310000, _V), ("ubi.img", 0x5060000, _V + "@scm/spotty+mojo+taigan"),
+                   ("SCMBLC_CC2540_6.0.18.738.bin", 0x3d800, "6.0.18.738"),
+                   ("Bootloader_CE2_Release_8MB_3.x-3_8_0-9423_ER.bcd", 0x17ac00, "B201306111041"),
+                   ("App_BD_DMP 3.x-3_8_0-9423_ER.bcd", 0x528400, "I2014102015199423"),
+                   ("MLO", 0x7630, _UB), ("u-boot.img", 0x67e5c, _UB)],
+    "st300-27.0.6": [*_ST300_REAL, ("ginger_1.16.7.5043495.bos", 0x1000, "")],
+    "st300-27.0.1": [*((n, s, v.replace(_V, "27.0.1")) for n, s, v in _ST300_REAL), ("ginger_1.16.7.4378403.bos", 0x1000, "")],
+}
+# Which boards (rt_b) take each recorded package; every other board refuses it.
+REAL_TAKEN_BY = {"st10-27.0.6": {"rhino"}, "sm2-27.0.6": {"rhino", "binky", "spotty3", "mojo3"},
+                 "scm-27.0.6": {"spotty", "mojo", "taigan"}, "st300-27.0.6": {"ginger"}, "st300-27.0.1": {"ginger"}}
+
+
+def real_stu(package: str) -> bytearray:
+    """Build a recorded Bose package: its real names and version fields, small Bose-like payloads."""
+    rows = REAL_PACKAGES[package]
+    return stu_file(bose_modules([n for n, _, _ in rows]), versions={n: v for n, _, v in rows})
+
+
+def image_probe(patch: str) -> str:
+    """Compile the package checks from patch; return the directory holding `probe`."""
+    functions = "\n".join([
+        patch_block(patch, "static const char *const rt_bose_chains[][RT_STU_MODULES] = {"),
+        patch_block(patch, "static const struct rt_bose {"),
+        patch_function(patch, "static bool rt_chain_name("),
+        patch_function(patch, "static int rt_scan(u8 *hdr, loff_t file, struct rt_pkg *pkg)"),
+        patch_function(patch, "static struct rt_module *rt_module_named(struct rt_pkg *pkg, const char *name)"),
+        patch_function(patch, "static bool rt_tag_names("),
+        patch_function(patch, "static int rt_classify(struct rt_pkg *pkg, u32 erasesize)"),
+        patch_function(patch, "static int rt_check("),
+        patch_function(patch, "static int rt_kernel_ok("),
+        patch_function(patch, "static int rt_boot_ok("),
+    ])
+    src = IMG_PROBE.replace("DEFINES", patch_defines(patch)).replace("STRUCT", patch_structs()).replace("FUNCTIONS", functions)
+    return cc(src, opt="-O1")
+
+
+def run_image_probe(probe: str, data: bytes, board: str, erase: int = 0x20000) -> dict[str, str]:
+    """Run the package checks of probe on data as board would; return each result."""
+    path = Path(probe).with_name("Update.stu")
+    path.write_bytes(bytes(data))
+    module = UsbRecoveryImage.MODULE.get(board, "sm2")
+    out = subprocess.run([probe, str(path), board, hex(erase), module], check=True, capture_output=True, text=True).stdout
+    return dict(kv.split("=", 1) for kv in out.strip().splitlines()[-1].split("|"))
+
+
 @unittest.skipUnless(shutil.which("cc"), "needs a C compiler")
 class UsbRecoveryImage(unittest.TestCase):
     """The package checks refuse a damaged file or another board's.
@@ -1873,19 +1973,7 @@ class UsbRecoveryImage(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         """Compile the package checks from the patch once for the class."""
-        functions = "\n".join([
-            patch_block(PATCH, "static const char *const rt_bose_chains[][RT_STU_MODULES] = {"),
-            patch_block(PATCH, "static const struct rt_bose {"),
-            patch_function(PATCH, "static int rt_scan(u8 *hdr, loff_t file, struct rt_pkg *pkg)"),
-            patch_function(PATCH, "static struct rt_module *rt_module_named(struct rt_pkg *pkg, const char *name)"),
-            patch_function(PATCH, "static bool rt_tag_names("),
-            patch_function(PATCH, "static int rt_classify(struct rt_pkg *pkg, u32 erasesize)"),
-            patch_function(PATCH, "static int rt_check("),
-            patch_function(PATCH, "static int rt_kernel_ok("),
-            patch_function(PATCH, "static int rt_boot_ok("),
-        ])
-        src = IMG_PROBE.replace("DEFINES", patch_defines()).replace("STRUCT", patch_structs()).replace("FUNCTIONS", functions)
-        cls.dir = cc(src, opt="-O1")
+        cls.dir = image_probe(PATCH)
         cls.probe = f"{cls.dir}/probe"
 
     @classmethod
@@ -1897,11 +1985,7 @@ class UsbRecoveryImage(unittest.TestCase):
 
     def check(self, data: bytes, board: str = "rhino", erase: int = 0x20000) -> dict[str, str]:
         """Run the package checks on data as board would; return each result."""
-        path = Path(self.dir, "Update.stu")
-        path.write_bytes(bytes(data))
-        out = subprocess.run([self.probe, str(path), board, hex(erase), self.MODULE.get(board, "sm2")],
-                             check=True, capture_output=True, text=True).stdout
-        return dict(kv.split("=", 1) for kv in out.strip().splitlines()[-1].split("|"))
+        return run_image_probe(self.probe, data, board, erase)
 
     def test_bose_for_this_board(self) -> None:
         """Bose's chain and tag for the board pass every check."""
@@ -1930,6 +2014,68 @@ class UsbRecoveryImage(unittest.TestCase):
             with self.subTest(board=board, chain=chain, tag=tag):
                 r = self.check(stu_file(bose_modules(CHAINS[chain]), tag=tag if tag is not None else TAGS[chain]), board)
                 self.assertEqual(r["classify"], "-8", r)
+
+    def test_recorded_packages_on_every_board(self) -> None:
+        """Each recorded Bose package passes on exactly the boards whose row names its tag.
+
+        Real module names and version fields, so the ST10's own package (@sm2/rhino), the
+        package it shares with the Wireless Link and the ST300's 27.0.1 host firmware name are
+        checked against the table as Bose wrote them.
+        """
+        for package, rows in REAL_PACKAGES.items():
+            data = real_stu(package)
+            ubi = next(v for n, _, v in rows if n == "ubi.img")
+            for board in STOCK_NAMES:
+                with self.subTest(package=package, board=board):
+                    r = self.check(data, board)
+                    if board in REAL_TAKEN_BY[package]:
+                        self.assertEqual((r["scan"], r["classify"], r["check"], r["kernel"], r["boot"], r["bose"]),
+                                         ("0", "0", "0", "0", "0", "1"), r)
+                        self.assertEqual((int(r["modules"]), r["tag"]), (len(rows), ubi))
+                    else:
+                        self.assertEqual((r["scan"], r["classify"]), ("0", "-8"), r)
+
+    def test_recorded_sizes_fit(self) -> None:
+        """The recorded packages' kernel, rootfs, SPL and U-Boot fit what the stick holds them to."""
+        limit = {"ubi.img": define("RT_SLOT_SIZE") + define("RT_STU_OVERLAP"), "linuxPatched": define("RT_KERNEL_SIZE"),
+                 "MLO": define("RT_SPL_SIZE"), "u-boot.img": define("RT_UBOOT_MAX")}
+        for package, rows in REAL_PACKAGES.items():
+            for name, size, _ in rows:
+                if name in limit:
+                    with self.subTest(package=package, module=name):
+                        self.assertLessEqual(size, limit[name])
+
+    def test_host_firmware_build_number(self) -> None:
+        """The ST300's host firmware is taken with any build number, and nothing else around it."""
+        for name, ok in (("ginger_1.16.7.4378403.bos", True), ("ginger_1.16.7.5043495.bos", True),
+                         ("ginger_1.16.7.1.bos", True), ("ginger_1.16.7..bos", False), ("ginger_1.16.7.43x7.bos", False),
+                         ("ginger_1.16.7.4378403.bin", False), ("ginger_1.16.8.4378403.bos", False),
+                         ("ginger_1.16.7.4378403.bos.x", False), ("bardeen_1.16.7.4378403.bos", False),
+                         ("ginger_1.16.7.1.2.bos", False), ("ginger_1.16.7.*.bos", False)):
+            with self.subTest(name=name):
+                chain = [*CHAINS["bose-st300"][:-1], name]
+                r = self.check(stu_file(bose_modules(chain), tag="@sm2/ginger"), "ginger")
+                self.assertEqual(r["classify"], "0" if ok else "-8", r)
+
+    def test_the_old_table_refuses_bose_own_packages(self) -> None:
+        """The table before 2026-11-28 refuses the ST10's own package and the ST300's 27.0.1 one.
+
+        A mutation that puts the old rows back (rhino by binky alone, the ST300's host firmware
+        by one exact name) must be caught by test_recorded_packages_on_every_board.
+        """
+        old = PATCH.replace('{ "rhino", { "rhino", "binky" } },', '{ "rhino", { "binky" } },')
+        old = old.replace('"ginger_1.16.7.*.bos"', '"ginger_1.16.7.5043495.bos"')
+        old = old.replace('"bardeen_1.16.7.*.bos"', '"bardeen_1.16.7.5043495.bos"')
+        self.assertNotEqual(old, PATCH)
+        d = image_probe(old)
+        try:
+            probe = f"{d}/probe"
+            self.assertEqual(run_image_probe(probe, real_stu("st10-27.0.6"), "rhino")["classify"], "-8")
+            self.assertEqual(run_image_probe(probe, real_stu("st300-27.0.1"), "ginger")["classify"], "-8")
+            self.assertEqual(run_image_probe(probe, real_stu("sm2-27.0.6"), "rhino")["classify"], "0")
+            self.assertEqual(run_image_probe(probe, real_stu("st300-27.0.6"), "ginger")["classify"], "0")
+        finally:
+            shutil.rmtree(d)
 
     def test_a_soundtap_package_on_any_board(self) -> None:
         """A SoundTap package passes the checks on any board."""

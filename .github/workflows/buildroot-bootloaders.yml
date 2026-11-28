@@ -73,9 +73,9 @@ jobs:
           # Print the actual sums first, so a re-pin can be read off a failed run.
           sha256sum st20-spl/* wla-spl/MLO wla-uboot/u-boot.img
           sha256sum -c <<'SUMS'
-          ed3c65b77b3bad78bbd7ad3b3e0d649f5aa74929a119c600d2f3909bbce18feb  st20-spl/MLO
-          5f94d9581617d8692d23d1ae8bb3577de494121cb17f5b88883ffaae4ab79ee5  st20-spl/u-boot-spl.bin
-          ce258e7a0d3f4cbaebdbd39ad70fbd79a6f7dd5a4ebb01454f3f3607490cecf7  st20-spl/uImage-spl-sram
+          2ceb30ece146257095478c96c5c7b28e19eb3595b64a0e19fa6bdaba19952250  st20-spl/MLO
+          da01a31d5d8f49999726c4de598e2bb8871cfcd10a1ae7e67023f9ab9e82a376  st20-spl/u-boot-spl.bin
+          4a9ecccbba4b1d7c91a75c68ae8bfa416365aa6120129baa704615596893c07a  st20-spl/uImage-spl-sram
           41852b248c4fd8ffc0e031b9fac245015f9282e1225c8a944de6614711ecd216  wla-spl/MLO
           9aa97fee2dde2d3b3be0cc80e2a0d499c535b574c123c740cb6ca3975327d2d8  wla-uboot/u-boot.img
           SUMS

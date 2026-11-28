@@ -49,13 +49,24 @@ kernel and rootfs, seconds rather than one).
 ## Consequences
 
 - A picture as soon as U-Boot runs instead of after the userspace boot. On the ST20 that is
-  about 4-5 s after power-on, estimated from the code, not yet measured: before U-Boot the SPL
-  restarts the BCO with its clock running (1 s, `spl_bco_restart`), asks the micro-B port for a
-  USB host first (3 s for the RNDIS connect timeout with nothing plugged in, about 11 s with a
-  host that does not answer BOOTP) and only then loads U-Boot from NAND. In U-Boot the frame is
-  already the first thing `board_init` does, right after relocation and before NAND, the
-  environment and autoboot. An earlier picture needs an SPL change (the frame in the SPL, or
-  the BCO's second overlapping the USB ask), which rewrites `mtd0`-`mtd3`.
+  about 3.5-4 s after power-on, estimated from the code, not yet measured: before U-Boot the SPL
+  asks the micro-B port for a USB host first (3 s for the RNDIS connect timeout with nothing
+  plugged in, about 11 s with a host that does not answer BOOTP) and only then loads U-Boot from
+  NAND. In U-Boot the frame is already the first thing `board_init` does, right after relocation
+  and before NAND, the environment and autoboot.
+
+  | Before the frame (micro-B port empty) | Before | Now |
+  | --- | --- | --- |
+  | BCO restart: supply off for the stock loaders' 1 s, then on | 1 s, before the ask | 0 s: off in `s_init`, on after the ask, at least 1 s later |
+  | USB ask (RNDIS connect timeout) | 3 s | 3 s |
+  | ROM, SPL, DDR, NAND read of U-Boot, relocation | about 0.5-1 s | about 0.5-1 s |
+  | Power-on to frame | about 4.5-5 s | about 3.5-4 s |
+
+  The BCO's supply is now off for the length of the ask (3 s with nothing plugged in) instead
+  of exactly 1 s, and never less than 1 s (`spl_bco_on` waits out the rest when the ask returns
+  sooner); it is back on before the SPL reads NAND or starts an image from USB. An SPL built
+  without the USB ask still waits the second out in `s_init`. An earlier picture still needs the
+  frame in the SPL; any SPL change rewrites `mtd0`-`mtd3`.
 - The frame is static: the bar starts to fill once soundtapd takes over, from the same pixels.
 - The boot frame is the evidence for soundtapd's line timing: U-Boot changes chip enable and D/C
   with nothing but a register write between them and the bytes, and the panel shows the frame.

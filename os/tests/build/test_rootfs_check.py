@@ -131,11 +131,38 @@ class RootfsCheckTest(unittest.TestCase):
         # Linux muxes it seconds after power-on; the SPL has to do it right away.
         spl = (ROOT / "os/bootloader/uboot/uboot-2026.07-spl-board.patch").read_text()
         # A warm reset keeps the BCO powered but stops its clock; the SPL restarts it.
+        off = spl[spl.index("static void spl_bco_off(void)"):]
+        off = off[:off.index("\n+}")]
+        self.assertIn("+\twritel(0x3, 0x44e109b0);", off)
+        self.assertIn("SETDATAOUT: BCO off", off)
+        self.assertNotIn("BCO on", off)
         restart = spl[spl.index("static void spl_bco_restart(void)"):]
         restart = restart[:restart.index("\n+}")]
-        self.assertIn("+\twritel(0x3, 0x44e109b0);", restart)
-        self.assertLess(restart.index("SETDATAOUT: BCO off"), restart.index("CLEARDATAOUT: BCO on"))
+        self.assertIn("+\tspl_bco_off();", restart)
+        # An SPL without the USB ask still waits out the second before switching it on.
+        alone = restart[restart.index("+#if !defined(CONFIG_SPL_USB_ETHER)"):restart.index("+#endif")]
+        self.assertLess(alone.index("+\tmdelay(1000);"), alone.index("CLEARDATAOUT: BCO on"))
         self.assertIn("+\t\tspl_bco_restart();", spl[spl.index("+\tspl_clocks();\n \ttimer_init();"):])
+
+    def test_st20_bco_second_overlaps_the_usb_ask(self) -> None:
+        """The ST20's SPL keeps the BCO off at least 1 s, alongside the USB ask (ADR 0131).
+
+        The supply goes off in s_init and back on after the micro-B port's ask, before NAND or a
+        USB image is booted, and never before 1 s from a timestamp taken after the off.
+        """
+        spl = (ROOT / "os/bootloader/uboot/uboot-2026.07-spl-board.patch").read_text()
+        on = spl[spl.index("+void spl_bco_on(ulong since)"):]
+        on = on[:on.index("\n+}")]
+        self.assertLess(on.index("+\twhile (get_timer(since) < 1000)"), on.index("CLEARDATAOUT: BCO on"))
+        self.assertIn("+#if defined(CONFIG_SPL_USB_ETHER)\n+/*", spl[:spl.index("+void spl_bco_on(ulong since)")][-400:])
+        ask = spl[spl.index("+\tif (spl_board_is_st20()) {\n+\t\tstruct spl_boot_device bootdev"):]
+        ask = ask[:ask.index("+\t}\n")]
+        self.assertLess(ask.index("+\t\tulong bco_off = get_timer(0);"),
+                        ask.index("+\t\tret = spl_net_load_image_usb(&spl_image, &bootdev);"))
+        self.assertLess(ask.index("+\t\tret = spl_net_load_image_usb(&spl_image, &bootdev);"),
+                        ask.index("+\t\tspl_bco_on(bco_off);"))
+        # The USB connect timeout is U-Boot's own; the SPL does not shorten it.
+        self.assertNotIn("cdc_connect_timeout", spl)
 
     def test_spl_watchdog_runs_off_the_rc_oscillator(self) -> None:
         """The SPL's watchdog runs off the RC oscillator.

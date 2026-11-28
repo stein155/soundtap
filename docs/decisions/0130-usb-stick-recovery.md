@@ -50,9 +50,14 @@ recovery at `EVT_LAST_STAGE_INIT`:
   environment that lacks a recipe `bootcmd` names gets the whole set for the board's model.
 - **Bose's own file for this model: back to stock, bootloaders included, on every model.** A
   stock STU is taken when its module chain is one of Bose's known families (the ST10/WLA, ST20,
-  ST300 and Preview packages, name for name) and the version tag of its root filesystem
-  (`…@sm2/burns`, `…@scm/lisa`) names this board's module and stock variant; the ST10 takes the
-  package Bose ships it and the Wireless Link alike, as soundtapd decides. Kernel and rootfs must
+  ST300 and Preview packages, name for name; only the soundbars' host firmware, which carries
+  Bose's build number in its name, is matched with any digits in that place:
+  `ginger_1.16.7.4378403.bos` in the ST300's 27.0.1 package, `…5043495.bos` in its 27.0.6 one)
+  and the version tag of its root filesystem (`…@sm2/burns`, `…@scm/lisa`) names this board's
+  module and one of its stock variants. The ST10 takes both packages with the shared sm2 chain,
+  as soundtapd decides for that chain: the one Bose ships it (`…@sm2/rhino`, 27.0.1 and 27.0.6)
+  and the one it shares with the Wireless Link (`…@sm2/spotty+mojo+binky`); the Wireless Link
+  takes only the shared one. Kernel and rootfs must
   fit their partitions, the kernel must be Bose's and the SPL and U-Boot valid. Only the kernel,
   rootfs, environment and bootloaders are written; the BCO, CC2540, STM32, host-product and
   soundbar-processor firmware in the package are left to Bose's own software. The SoundTouch 300

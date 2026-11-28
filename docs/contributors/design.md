@@ -247,7 +247,7 @@ oscillator) before anything else. U-Boot does not feed it, so SPL, U-Boot and th
 share that one window until `omap_wdt` takes over, and a hang in any of them resets into
 U-Boot's boot count.
 
-On the ST20 SoundTap's U-Boot also switches on the OLED's VDD3 supply and paints soundtapd's first boot frame, the empty bar outline soundtapd then fills, so the panel shows a picture as soon as U-Boot runs, a few seconds after power-on (after the SPL's BCO restart and USB ask); the device tree keeps the panel's GPIO2 lines out of ti-sysc's reset so it stays lit through the kernel, and soundtapd takes the lit panel over without resetting it ([ADR 0131](../decisions/0131-st20-boot-frame.md)).
+On the ST20 SoundTap's U-Boot also switches on the OLED's VDD3 supply and paints soundtapd's first boot frame, the empty bar outline soundtapd then fills, so the panel shows a picture as soon as U-Boot runs, a few seconds after power-on (after the SPL's USB ask, which the BCO restart's second overlaps); the device tree keeps the panel's GPIO2 lines out of ti-sysc's reset so it stays lit through the kernel, and soundtapd takes the lit panel over without resetting it ([ADR 0131](../decisions/0131-st20-boot-frame.md)).
 
 Details: [ADR 0009](../decisions/0009-mainline-linux-own-bootloaders.md),
 [`st20/rom-usb-recovery.md`](../hardware/st20/rom-usb-recovery.md).

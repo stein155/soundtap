@@ -2,7 +2,7 @@ diff --git a/board/ti/am335x/board.c b/board/ti/am335x/board.c
 index 40f3f73ce..468db0c20 100644
 --- a/board/ti/am335x/board.c
 +++ b/board/ti/am335x/board.c
-@@ -1382,3 +1382,1770 @@ static int rt_board_setup(void)
+@@ -1382,3 +1382,1798 @@ static int rt_board_setup(void)
  }
  EVENT_SPY_SIMPLE(EVT_LAST_STAGE_INIT, rt_board_setup);
  #endif
@@ -389,7 +389,10 @@ index 40f3f73ce..468db0c20 100644
 + * adapters' (lisa on either module: WST, Cinemate, LS/VW host firmware last) and the
 + * Lifestyle 650's. The stick writes linuxPatched, ubi.img, MLO and u-boot.img from any of
 + * them and nothing else: BCO, CC2540, STM32, host, soundbar and console firmware stay for
-+ * Bose's own software, which updates them itself.
++ * Bose's own software, which updates them itself. The host firmware the soundbars' packages
++ * end with carries Bose's build number in its name (the ST300's 27.0.1 package
++ * ginger_1.16.7.4378403.bos, its 27.0.6 one ginger_1.16.7.5043495.bos): a '*' stands for
++ * that number alone, digits only (rt_chain_name). Every other name is matched exactly.
 + */
 +#define RT_SM2_HEAD	"SoftwareUpdateInstaller", "ARMUpdate", "UbootUpdate"
 +#define RT_SCM_HEAD	"SoftwareUpdateInstaller", "ARMUpdate", "CC2540_Update", "SMSC_Update", \
@@ -404,8 +407,8 @@ index 40f3f73ce..468db0c20 100644
 +	{ RT_SM2_HEAD, "ABL_Update", RT_SM2_TAIL, "SEN_FW_update.bos" },
 +	{ RT_SM2_HEAD, "ABL_Update", RT_SM2_TAIL, "TRI_shelby_update.tri" },
 +	{ RT_SM2_HEAD, "MarconiUpdate", RT_SM2_TAIL, "DEF_CON_02.21.00.r13184.bos" },
-+	{ RT_SM2_HEAD, "STP_Update", RT_SM2_TAIL, "ginger_1.16.7.5043495.bos" },
-+	{ RT_SM2_HEAD, "ASOCUpdate", "STP_Update", RT_SM2_TAIL, "bardeen_1.16.7.5043495.bos" },
++	{ RT_SM2_HEAD, "STP_Update", RT_SM2_TAIL, "ginger_1.16.7.*.bos" },
++	{ RT_SM2_HEAD, "ASOCUpdate", "STP_Update", RT_SM2_TAIL, "bardeen_1.16.7.*.bos" },
 +	{ RT_SCM_HEAD, "SCMReset_Update", RT_SCM_MID, "App_BD_DMP 3.x-3_8_0-9423_ER.bcd", "MLO",
 +	  "u-boot.img" },
 +	{ RT_SCM_HEAD, "ABL_Update", RT_SCM_MID, "App_BD_DMP 3.x-3_8_0-9423_ER.bcd", "MLO",
@@ -417,30 +420,53 @@ index 40f3f73ce..468db0c20 100644
 +};
 +
 +/*
-+ * Every board, by rt_b, with the variant Bose's ubi.img names it by. The Series III boards
-+ * run on the sm2 module under their own names, the adapter on the sm2 is lisa as on the scm.
-+ * The ST10 has no name in any tag: it takes the package Bose ships it and the Wireless Link
-+ * alike (@sm2/spotty+mojo+binky), and the board decides, as ModelRefusal does for that shared
-+ * chain. The Lifestyle 650 has no gesture in this U-Boot, so its row is never reached.
++ * Every board, by rt_b, with the variants Bose's ubi.img may name it by; the tag has to name
++ * one of them. The Series III boards run on the sm2 module under their own names, the adapter
++ * on the sm2 is lisa as on the scm. The ST10 takes two packages, both with the shared sm2
++ * chain: the one Bose ships it (27.0.1 and 27.0.6 tag ubi.img @sm2/rhino) and the one it
++ * shares with the Wireless Link (@sm2/spotty+mojo+binky), where the board decides, as
++ * soundtapd does for that shared chain (stu.Module.Installable). The Wireless Link takes only
++ * the shared one: @sm2/rhino is the ST10's alone. The Lifestyle 650 has no gesture in this
++ * U-Boot, so its row is never reached.
 + * stock_rootfs_limit (os/models.json) is not held here: it is the largest image Bose's timed
 + * streaming installer has written, which the stick does not use; ubi.img has to fit the slot.
 + */
++#define RT_BOSE_VARIANTS	2
 +static const struct rt_bose {
-+	const char *board, *stock;
++	const char *board, *stock[RT_BOSE_VARIANTS];
 +} rt_bose_boards[] = {
-+	{ "rhino", "binky" },
-+	{ "spotty3", "spotty" },
-+	{ "mojo3", "mojo" },
-+	{ "burns", "burns" },
-+	{ "lisa2", "lisa" },
-+	{ "spotty", "spotty" },
-+	{ "mojo", "mojo" },
-+	{ "taigan", "taigan" },
-+	{ "lisa", "lisa" },
-+	{ "binky", "binky" },
-+	{ "ginger", "ginger" },
-+	{ "bardeen", "bardeen" },
++	{ "rhino", { "rhino", "binky" } },
++	{ "spotty3", { "spotty" } },
++	{ "mojo3", { "mojo" } },
++	{ "burns", { "burns" } },
++	{ "lisa2", { "lisa" } },
++	{ "spotty", { "spotty" } },
++	{ "mojo", { "mojo" } },
++	{ "taigan", { "taigan" } },
++	{ "lisa", { "lisa" } },
++	{ "binky", { "binky" } },
++	{ "ginger", { "ginger" } },
++	{ "bardeen", { "bardeen" } },
 +};
++
++/* Whether a module's name is the one a chain names: the same, or for a name with a '*', the
++ * same text around it with one or more digits in its place (Bose's build number). */
++static bool rt_chain_name(const char *name, const char *want)
++{
++	const char *star = strchr(want, '*'), *p;
++	size_t n = strlen(name), pre, post;
++
++	if (!star)
++		return !strcmp(name, want);
++	pre = star - want;
++	post = strlen(star + 1);
++	if (n <= pre + post || strncmp(name, want, pre) || strcmp(name + n - post, star + 1))
++		return false;
++	for (p = name + pre; p < name + n - post; p++)
++		if (*p < '0' || *p > '9')
++			return false;
++	return true;
++}
 +
 +static struct rt_module *rt_module_named(struct rt_pkg *pkg, const char *name)
 +{
@@ -473,7 +499,7 @@ index 40f3f73ce..468db0c20 100644
 +/*
 + * What kind of package this is, and whether this board takes it: SoundTap's (it carries
 + * soundtap-rootfs) on any board with the gesture; Bose's when its chain is a stock family,
-+ * its ubi.img's version tag names this board's module (rt_m) and stock variant, and its
++ * its ubi.img's version tag names this board's module (rt_m) and a stock variant of it, and its
 + * payloads fit their partitions. -ENOEXEC: not for this speaker.
 + */
 +static int rt_classify(struct rt_pkg *pkg, u32 erasesize)
@@ -481,6 +507,7 @@ index 40f3f73ce..468db0c20 100644
 +	const char *b = env_get("rt_b"), *mod = env_get("rt_m");
 +	const struct rt_bose *bose = NULL;
 +	struct rt_module *m;
++	bool named = false;
 +	int i, j;
 +
 +	pkg->rootfs = rt_module_named(pkg, "soundtap-rootfs");
@@ -491,7 +518,7 @@ index 40f3f73ce..468db0c20 100644
 +				bose = &rt_bose_boards[i];
 +		for (i = 0; i < ARRAY_SIZE(rt_bose_chains); i++) {
 +			for (j = 0; j < pkg->n && rt_bose_chains[i][j]; j++)
-+				if (strcmp(pkg->m[j].name, rt_bose_chains[i][j]))
++				if (!rt_chain_name(pkg->m[j].name, rt_bose_chains[i][j]))
 +					break;
 +			if (j == pkg->n && (j == RT_STU_MODULES || !rt_bose_chains[i][j]))
 +				break;
@@ -500,9 +527,10 @@ index 40f3f73ce..468db0c20 100644
 +		pkg->kernel = rt_module_named(pkg, "linuxPatched");
 +		pkg->mlo = rt_module_named(pkg, "MLO");
 +		pkg->uboot = rt_module_named(pkg, "u-boot.img");
++		for (j = 0; bose && mod && pkg->rootfs && j < RT_BOSE_VARIANTS && bose->stock[j]; j++)
++			named = named || rt_tag_names(pkg->rootfs->tag, mod, bose->stock[j]);
 +		if (!bose || !mod || i == ARRAY_SIZE(rt_bose_chains) || !pkg->rootfs ||
-+		    !pkg->kernel || !pkg->mlo || !pkg->uboot ||
-+		    !rt_tag_names(pkg->rootfs->tag, mod, bose->stock)) {
++		    !pkg->kernel || !pkg->mlo || !pkg->uboot || !named) {
 +			printf("Update.stu: not a SoundTap package, nor Bose's firmware for this speaker "
 +			       "(%s/%s, ubi.img %s); nothing written\n", mod ? mod : "?", b ? b : "?",
 +			       pkg->rootfs ? pkg->rootfs->tag : "missing");
