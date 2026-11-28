@@ -291,6 +291,19 @@ int main(void)
     bg_step();
     assert(!weak);
 
+    /* weak again 25 days after the last background scan (the ms clock past its sign wrap): the
+     * next scan starts now, not some 24 days ahead */
+    bg_scanned = 1, bg_last = now = 400000, bg_phase = BG_IDLE;
+    now += 0x80000000u + 60000;
+    rssi_avg16 = 16 * -75;
+    bg_step();
+    assert(weak && bg_next == now && bg_phase == BG_HOME);
+    /* a scan 10 s back still holds the next one off for the rest of BG_SHORT_MS */
+    weak = 0, bg_phase = BG_IDLE, bg_last = now - 10000;
+    bg_step();
+    assert(weak && bg_next == bg_last + BG_SHORT_MS && bg_phase == BG_IDLE);
+    weak = 0, bg_scanned = 0;
+
     /* strong, a fixed BSSID or no roam flag: the radio never leaves its channel */
     static const struct {
         unsigned flags;

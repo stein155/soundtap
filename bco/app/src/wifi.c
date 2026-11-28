@@ -325,9 +325,10 @@ static struct swkey {
 /* A frame's body while the app enciphers or deciphers it: up to a TKIP header, LLC/SNAP and 1500
  * bytes, the Michael MIC and the ICV. */
 static unsigned char secbuf[WSEC_TKIP_HDR + 8 + 1500 + WSEC_MIC + WSEC_ICV];
-/* TKIP countermeasures (IEEE 802.11-2020 12.5.2.4): when a Michael MIC failed last, and until when
- * no TKIP network is joined after two failures within a minute. */
-static unsigned mic_fail_t, mic_fail_seen, cm_until, cm_on;
+/* TKIP countermeasures (IEEE 802.11-2020 12.5.2.4): when a Michael MIC failed last, and since when
+ * no TKIP network is joined after two failures within a minute (for CM_HOLD_MS). Both compare as
+ * elapsed ms (cm_expire), so they hold across the ms clock's sign wrap at 24.8 days of uptime. */
+static unsigned mic_fail_t, mic_fail_seen, cm_t, cm_on;
 #define CM_WINDOW_MS 60000u
 #define CM_HOLD_MS 60000u
 
@@ -946,7 +947,7 @@ static void mic_failure(int pairwise)
 {
     unsigned char out[WPA_EAPOL_MAX];
     size_t n = wpa_mic_failure(&sm, pairwise, out);
-    int second = mic_fail_seen && (int)(now - mic_fail_t) < (int)CM_WINDOW_MS;
+    int second = mic_fail_seen && now - mic_fail_t < CM_WINDOW_MS;
     hex("tkip mic failure ", (unsigned)pairwise << 8 | (unsigned)second);
     if (n)
         send_eapol(out, (unsigned)n);
@@ -955,11 +956,22 @@ static void mic_failure(int pairwise)
         return;
     send_deauth(REASON_MIC_FAILURE);
     drop_link();
-    cm_on = 1, cm_until = now + CM_HOLD_MS;
+    cm_on = 1, cm_t = now;
     kicked = 1, fail_step = WIFI_FAIL_KICKED, fail_code = REASON_MIC_FAILURE;
     if (state == WIFI_UP)
         post(WIFI_EV_DEAUTH, REASON_MIC_FAILURE);
     state = WIFI_FAILED, join_pending = 0;
+}
+
+/* The countermeasures' clocks run out, on every poll: a failure older than CM_WINDOW_MS no longer
+ * counts and the hold ends. Compared as signed ms, a failure or hold from 24.8 days back read as
+ * recent again: one Michael failure then dropped the link, and TKIP networks stayed shut out. */
+static void cm_expire(void)
+{
+    if (mic_fail_seen && now - mic_fail_t >= CM_WINDOW_MS)
+        mic_fail_seen = 0;
+    if (cm_on && now - cm_t >= CM_HOLD_MS)
+        cm_on = 0;
 }
 
 /* Open a data frame from the AP that came up under one of the app's keys (RX_SOFT): copy its body
@@ -1067,7 +1079,9 @@ static void rx_station(const volatile unsigned char *b, unsigned len)
             } else if (seq == 2 && auth_alg != AUTH_SHARED_KEY) {
                 rxauthok = 1;
             } else if (seq == 2 && len >= 0xcc + 8 && body[6] == 16 && body[7] &&
-                       len >= 0xcc + 8 + body[7]) {
+                       body[7] <= sizeof challenge && len >= 0xcc + 8 + body[7]) {
+                /* the Challenge Text element is 1-253 bytes (IEEE 802.11-2020 9.4.2.8): a
+                 * longer one, which only a forged frame carries, ran past the buffer */
                 challenge_len = body[7];
                 copy(challenge, body + 8, challenge_len);
                 challenge_due = 1;
@@ -1927,7 +1941,7 @@ static int match(const struct bss *b)
     /* SAE and PSK both take what choose takes: SAE a WPA3 or transition network, PSK its PSK side */
     if (!choose(b, &proto, &pair, &grp))
         return 0;
-    return !(cm_on && !due(cm_until) && (pair == WPA_CIPHER_TKIP || grp == WPA_CIPHER_TKIP));
+    return !(cm_on && now - cm_t < CM_HOLD_MS && (pair == WPA_CIPHER_TKIP || grp == WPA_CIPHER_TKIP));
 }
 
 /* The SSID is there, but only with security this station cannot join with the profile (WPA3
@@ -2384,7 +2398,9 @@ static void bg_step(void)
         return;
     if (!weak && r < ROAM_THRESHOLD) {
         weak = 1, bg_interval = BG_SHORT_MS;
-        bg_next = bg_scanned && !due(bg_last + BG_SHORT_MS) ? bg_last + BG_SHORT_MS : now;
+        /* elapsed ms since the last scan: a scan from 24.8 days back compared as signed ms put the
+         * next one weeks ahead, and the station stayed on a weak access point meanwhile */
+        bg_next = bg_scanned && now - bg_last < BG_SHORT_MS ? bg_last + BG_SHORT_MS : now;
     } else if (weak && r >= ROAM_THRESHOLD + ROAM_HYSTERESIS) {
         weak = 0;
     }
@@ -2681,6 +2697,7 @@ int wifi_current(struct wifi_bss *o)
 void wifi_poll(unsigned t)
 {
     now = t;
+    cm_expire();
 #ifdef BCO_DEBUG_TRACE
     {   /* one line per state change: [31:24]=state [23:16]=jstep [15:8]=sm.state
          * [2:0]=rxauthok|rxassocok|keyed. shows exactly how far an own-core join gets. */

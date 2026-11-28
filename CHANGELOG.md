@@ -18,6 +18,13 @@ a prerelease published before a release's hardware approval, `os-vX.Y.Z-alpha.N`
   be told apart, still leave the preset empty.
 - **SoundTouch 20: numbers everything it sends in order**, on your home network and on the
   setup network, so a router or phone no longer takes a new message for a repeat.
+- **SoundTouch 20: stays on older WPA (TKIP) Wi-Fi after weeks of running.** After about 25 days
+  a single Wi-Fi error could drop it off the network for a minute, and after such a drop it
+  could refuse to join that network again for weeks.
+- **SoundTouch 20: keeps moving to a stronger access point of your network after weeks of
+  running**, instead of staying on a weak one.
+- **SoundTouch 20: a forged Wi-Fi frame nearby can no longer corrupt its network chip's memory**
+  while it joins a WEP network.
 
 ## [app-v0.1.0-alpha.7] - 2026-11-27
 

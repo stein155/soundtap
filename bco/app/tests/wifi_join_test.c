@@ -1007,6 +1007,65 @@ static void tkip_frames(void)
     printf("ok: TKIP group and pairwise frames in the app, MIC failures and countermeasures\n");
 }
 
+/* The TKIP countermeasures' minute and hold count elapsed ms: 24.8 days after a Michael failure
+ * (the ms clock past its sign wrap) a single failure is a first one again, and a hold that ended
+ * weeks ago keeps no TKIP network out. */
+static void countermeasure_clock(void)
+{
+    cmd_ring(63);
+    tx_frames();
+    memset(&sm, 0, sizeof sm); /* no PTK: the failure report itself is not sent */
+    copy(cur.bssid, AP, 6), have_cur = 1, prof_sec = WIFI_SEC_PSK, keyed = 0;
+    cm_on = 0, mic_fail_seen = 0, state = WIFI_UP, now = 1000;
+    mic_failure(0);
+    assert(mic_fail_seen && state == WIFI_UP && !cm_on);
+    now += 0x80000000u + 5000;
+    mic_failure(0);
+    assert(state == WIFI_UP && !cm_on); /* weeks after the first: not a second within the minute */
+    now += 1000;
+    mic_failure(0);
+    assert(state == WIFI_FAILED && cm_on); /* a second within the minute */
+    nbss = 1;
+    memset(&bsstab[0], 0, sizeof bsstab[0]);
+    memcpy(bsstab[0].bssid, AP, 6), memcpy(bsstab[0].ssid, "Home", 4);
+    bsstab[0].ssidlen = 4, bsstab[0].chan = 6, bsstab[0].rsn = 1, bsstab[0].rsnok = 1, bsstab[0].grp = 2;
+    memcpy(cur.ssid, "Home", 4), cur.ssidlen = 4;
+    assert(!match(&bsstab[0]));
+    now += CM_HOLD_MS - 1;
+    assert(!match(&bsstab[0]));
+    now += 1;
+    assert(match(&bsstab[0]));
+    now += 0x80000000u;
+    assert(match(&bsstab[0])); /* 24.8 days after the hold: still over */
+    cm_expire();
+    assert(!cm_on && !mic_fail_seen);
+    nbss = 0, have_cur = 0, state = WIFI_IDLE;
+    printf("ok: the countermeasures' minute and hold hold across the ms clock's sign wrap\n");
+}
+
+/* A shared key challenge longer than the Challenge Text element allows (253 bytes) is a forged
+ * frame: it is not taken (it ran 2 bytes past the buffer); 253 bytes still are. */
+static void long_challenge(void)
+{
+    static const unsigned char wap[6] = {0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x0f};
+    static unsigned char rxc[0xcc + 8 + 255];
+    copy(cur.bssid, wap, 6), have_cur = 1, prof_sec = WIFI_SEC_WEP;
+    state = WIFI_JOINING, jstep = J_AUTH, auth_alg = AUTH_SHARED_KEY;
+    for (unsigned l = 255; l >= 253; l--) {
+        challenge_due = 0, challenge_len = 0;
+        memset(rxc, 0, sizeof rxc);
+        rxc[0x94] = 0x18, rxc[0x97] = 0xc4, rxc[0xac] = 0xb0;
+        memcpy(rxc + 0xac + 4, own, 6), memcpy(rxc + 0xac + 10, wap, 6), memcpy(rxc + 0xac + 16, wap, 6);
+        rxc[0xcc] = AUTH_SHARED_KEY, rxc[0xcc + 2] = 2; /* transaction 2, status 0 */
+        rxc[0xcc + 6] = 16, rxc[0xcc + 7] = (unsigned char)l;
+        memset(rxc + 0xcc + 8, 0x5a, l);
+        rx_station(rxc, 0xcc + 8 + l);
+        assert(challenge_due == (l == 253) && challenge_len == (l == 253 ? 253u : 0u));
+    }
+    challenge_due = 0, auth_alg = 0, have_cur = 0, state = WIFI_IDLE, prof_sec = WIFI_SEC_PSK;
+    printf("ok: a shared key challenge over 253 bytes is not taken\n");
+}
+
 /* Which security a PSK profile joins with (ADR 0136), as wpa_supplicant picks it: RSN over WPA, in
  * either pairwise CCMP over TKIP. The association request carries that IE, Message 2 repeats it,
  * and a TKIP PTK stays in the app. */
@@ -1405,8 +1464,10 @@ int main(void)
     rekey_msg4_old_key();
     open_network();
     tkip_frames();
+    countermeasure_clock();
     choose_security();
     wep_network();
+    long_challenge();
     wpa3_and_pmf();
     return 0;
 }
