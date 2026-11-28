@@ -2356,8 +2356,32 @@ span.vol-ico {
   flex-direction: column;
   padding: 18px 24px 12px;
   min-height: 0;
-  overflow-y: auto;
-  scrollbar-width: none;
+}
+
+/* One screen without scrolling: the artwork gives up its height first (.np-cover). Only a
+   screen too short for the controls alone (a phone on its side) scrolls. */
+@media (max-height: 500px) {
+  .np-body {
+    overflow-y: auto;
+    scrollbar-width: none;
+  }
+}
+
+/* The title, and Spotify's + beside it. */
+.np-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.np-titles {
+  flex: 1;
+  min-width: 0;
+}
+
+.np-head .np-mode {
+  flex: none;
+  margin: -4px -10px 0 0;
 }
 
 .np-title {
@@ -2402,6 +2426,20 @@ span.vol-ico {
 .np-ctl .skip svg {
   width: 28px;
   height: 28px;
+}
+
+/* With shuffle and repeat as the outer two, the row spreads over the width (up to a phone's)
+   and the skips narrow so five fit on the narrowest screen. */
+.np-ctl-modes {
+  justify-content: space-between;
+  gap: 0;
+  width: 100%;
+  max-width: 360px;
+  margin-inline: auto;
+}
+
+.np-ctl-modes .skip {
+  width: 52px;
 }
 
 .big {
@@ -2464,48 +2502,6 @@ span.vol-ico {
   margin-left: 12px;
 }
 
-.np-time {
-  display: flex;
-  align-items: center;
-  gap: 15px;
-  margin-bottom: 16px;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-
-.np-time .vol {
-  flex: 1;
-  min-width: 0;
-}
-
-.np-total {
-  opacity: 0.5;
-}
-
-.np-row {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 10px;
-}
-
-.np-left {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  min-width: 0;
-}
-
-.np-modes {
-  display: flex;
-  gap: 8px;
-  margin-left: -10px;
-}
-
 .np-mode {
   display: grid;
   place-items: center;
@@ -2541,33 +2537,67 @@ span.vol-ico {
 }
 
 /* The artwork large on top, as in the installer's design: square, as wide as the page
-   allows and only as tall as the controls under it leave room for. A short screen (a small
-   phone, a phone on its side) keeps the controls and shows the artwork small or not at all. */
-.np-art {
-  flex: none;
-  width: min(100%, 310px, calc(100dvh - 534px));
-  height: auto;
-  aspect-ratio: 1;
-  margin: 0 auto 22px;
+   allows (at most 310 px) and as tall as the controls under it leave room for, so the page
+   does not scroll. A short screen (a small phone) shows it smaller; one too short for a
+   picture worth seeing (a phone on its side) leaves it out. The row of times under it stays
+   free for a stream too, so radio and a track stand alike. */
+.np-cover {
+  --np-times-h: 22px;
+
+  container-type: size;
+  flex: 1 1 0;
+  min-height: 0;
+  max-height: calc(310px + var(--np-times-h));
+  margin-bottom: 16px;
+}
+
+.np-cover-in {
+  width: min(100cqw, 100cqh - var(--np-times-h), 310px);
+  margin: 0 auto;
+}
+
+@container (max-height: 96px) {
+  .np-cover-in {
+    display: none;
+  }
+}
+
+.np-frame {
+  position: relative;
+  overflow: hidden;
   border-radius: var(--radius);
   box-shadow: 0 22px 50px -16px rgb(0 0 0 / 60%);
 }
 
-@media (max-height: 680px) {
-  .np-art {
-    width: 96px;
-    margin: 0 0 14px;
-  }
-
-  .np-art .art-letters {
-    font-size: 22px;
-  }
+.np-art {
+  width: 100%;
+  height: auto;
 }
 
-@media (max-height: 480px) {
-  .np-art {
-    display: none;
-  }
+/* How far the track is: a line inside the artwork's bottom edge, only shown. */
+.np-progress {
+  position: absolute;
+  inset: auto 0 0;
+  height: 4px;
+  background: rgb(0 0 0 / 35%);
+}
+
+.np-progress-fill {
+  display: block;
+  height: 100%;
+  background: #fff;
+}
+
+.np-times {
+  display: flex;
+  justify-content: space-between;
+  height: var(--np-times-h);
+  padding-top: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
 }
 
 .np .spkbar {
@@ -2786,6 +2816,7 @@ span.vol-ico {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  margin-top: 10px;
 }
 
 .np .sleeprow.on-dark,

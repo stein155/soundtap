@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 SoundTap contributors
 
-import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
-import { Slider, SliderThumb, SliderTrack } from 'react-aria-components';
+import { useCallback, useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
+import { ProgressBar } from 'react-aria-components';
 import { useI18n } from '../../../lib/i18n';
-import { seekTrack, trackPosition, type TrackPosition } from '../../../lib/api/playback';
+import { trackPosition, type TrackPosition } from '../../../lib/api/playback';
 import { usePageVisible } from '../../../hooks/usePageVisible';
 
 const POLL_MS = 5000;
@@ -19,19 +19,14 @@ export function clock(ms: number): string {
   return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')}:${seconds}`;
 }
 
-interface Props {
-  readonly speaker?: string | undefined;
-  readonly playing: boolean;
-  // Changes with the track and the play status, to read the position again at once.
-  readonly nowKey: string;
-}
-
-// How far the track is, for what has an end: a stream shows nothing. The knob only shows
-// where the speaker can seek, as in Stockholm.
-export function TrackTime({ speaker, playing, nowKey }: Props): ReactElement | null {
-  const { t } = useI18n();
+// Where the speaker is in the track, read every few seconds and counted on in between while
+// it plays; null while it has not said, or for another track it has not said yet.
+function useTrackPosition(
+  speaker: string | undefined,
+  playing: boolean,
+  nowKey: string
+): TrackPosition | null {
   const [time, setTime] = useState<TrackPosition | null>(null);
-  const [dragged, setDragged] = useState<number | null>(null);
   // Another track: the last one's length and place no longer hold, so show nothing until
   // the speaker tells the new ones (a pause or play keeps them).
   const track = nowKey.split('|')[0];
@@ -39,24 +34,23 @@ export function TrackTime({ speaker, playing, nowKey }: Props): ReactElement | n
   if (track !== shownTrack) {
     setShownTrack(track);
     setTime(null);
-    setDragged(null);
   }
-  // A seek moves this on: an answer that left before it must not put the old place back.
-  const seeks = useRef(0);
+  // Moves on with every new read: an answer for the speaker or track before does not count.
+  const reads = useRef(0);
   // A hidden page does not ask; shown again, it reads the place at once.
   const visible = usePageVisible();
   const load = useCallback(() => {
-    const seeksThen = seeks.current;
+    const readsThen = reads.current;
     trackPosition(speaker).then(
       (p) => {
-        if (seeksThen === seeks.current) setTime(p);
+        if (readsThen === reads.current) setTime(p);
       },
       () => undefined
     );
   }, [speaker]);
   useEffect(() => {
     if (!visible) return undefined;
-    seeks.current += 1; // an answer for the speaker or track before does not count either
+    reads.current += 1;
     load();
     const id = setInterval(load, POLL_MS);
     return () => clearInterval(id);
@@ -68,39 +62,69 @@ export function TrackTime({ speaker, playing, nowKey }: Props): ReactElement | n
     }, TICK_MS);
     return () => clearInterval(id);
   }, [playing]);
-  // No track length (or none yet): nothing to show a position on.
-  if (time === null || time.durationMs === 0 || Number.isNaN(time.durationMs)) return null;
-  const seek = (positionMs: number) => {
-    seeks.current += 1;
-    setDragged(null);
-    setTime({ ...time, positionMs });
-    seekTrack(positionMs, speaker).then(load, load);
-  };
-  const shown = dragged ?? time.positionMs;
+  return time;
+}
+
+const hasEnd = (time: TrackPosition | null): time is TrackPosition =>
+  time !== null && time.durationMs > 0 && !Number.isNaN(time.durationMs);
+
+// The artwork as now playing shows it: a square that takes the height the controls leave
+// (home.css), with how far the track is as a thin line inside its bottom edge and the time
+// played and left under it. Only shown, not dragged.
+export function ArtFrame({
+  time,
+  children,
+}: {
+  readonly time?: TrackPosition | null | undefined;
+  readonly children: ReactNode;
+}): ReactElement {
+  const { t } = useI18n();
+  const read = time ?? null;
+  const timed = hasEnd(read) ? read : null;
+  const left = timed ? Math.max(0, timed.durationMs - timed.positionMs) : 0;
   return (
-    <div className="np-time">
-      <span className="np-clock">{clock(shown)}</span>
-      <Slider
-        className="vol on-dark"
-        value={shown}
-        minValue={0}
-        maxValue={time.durationMs}
-        step={1000}
-        aria-label={t('trackPosition')}
-        isDisabled={!time.seekable}
-        onChange={setDragged}
-        onChangeEnd={seek}
-      >
-        <SliderTrack className="vtrack">
-          {({ state }) => (
-            <>
-              <div className="vfill" style={{ width: `${state.getThumbPercent(0) * 100}%` }} />
-              {time.seekable && <SliderThumb className="vthumb" />}
-            </>
+    <div className="np-cover">
+      <div className="np-cover-in">
+        <div className="np-frame">
+          {children}
+          {timed && (
+            <ProgressBar
+              className="np-progress"
+              aria-label={t('trackPosition')}
+              value={timed.positionMs}
+              minValue={0}
+              maxValue={timed.durationMs}
+              valueLabel={`${clock(timed.positionMs)} / ${clock(timed.durationMs)}`}
+            >
+              {({ percentage }) => (
+                <span className="np-progress-fill" style={{ width: `${percentage ?? 0}%` }} />
+              )}
+            </ProgressBar>
           )}
-        </SliderTrack>
-      </Slider>
-      <span className="np-clock np-total">{clock(time.durationMs)}</span>
+        </div>
+        {timed && (
+          <div className="np-times" aria-hidden="true">
+            <span>{clock(timed.positionMs)}</span>
+            <span>{`−${clock(left)}`}</span>
+          </div>
+        )}
+      </div>
     </div>
   );
+}
+
+interface Props {
+  readonly speaker?: string | undefined;
+  readonly playing: boolean;
+  // Changes with the track and the play status, to read the position again at once.
+  readonly nowKey: string;
+  // The artwork the line runs under.
+  readonly children: ReactNode;
+}
+
+// The artwork with how far the track is, for what has an end: a stream shows the artwork
+// alone.
+export function TrackTime({ speaker, playing, nowKey, children }: Props): ReactElement {
+  const time = useTrackPosition(speaker, playing, nowKey);
+  return <ArtFrame time={time}>{children}</ArtFrame>;
 }

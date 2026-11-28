@@ -10,12 +10,12 @@ import { SleepMenu } from '../../molecules/SleepMenu';
 import { VolumeSlider } from '../../molecules/VolumeSlider';
 import { SpeakerBar } from '../Dock';
 import { useI18n } from '../../../lib/i18n';
-import { artSrc, describePlayback, detailLine } from '../../../lib/playback';
+import { artSrc, describePlayback, detailLine, type PlaybackView } from '../../../lib/playback';
 import { groupName, roomOn } from '../../../lib/rooms';
 import { speakerArg, type Room } from '../../../hooks/useRooms';
 import type { SleepTimer } from '../../../hooks/useSleepTimer';
-import { ModeButtonsFor, TopBar, TransportControls } from './parts';
-import { TrackTime } from './TrackTime';
+import { LikeButton, ModesFor, TopBar, TransportControls } from './parts';
+import { ArtFrame, TrackTime } from './TrackTime';
 
 const average = (rooms: Room[]) =>
   Math.round(rooms.reduce((sum, r) => sum + r.volume, 0) / rooms.length);
@@ -42,8 +42,9 @@ interface Props {
   readonly onGroup: () => void;
 }
 
-// Now playing, full screen: what plays over its own blurred picture, the transport, the
-// volume (a group's moves every speaker by the same step), the sleep timer and the
+// Now playing, full screen and without scrolling: what plays over its own blurred picture,
+// the artwork with how far the track is, the transport with shuffle and repeat outside it,
+// the volume (a group's moves every speaker by the same step), the sleep timer and the
 // speaker bar.
 // What plays, in words: a station that names its song shows the station small above, the
 // song as the title and the artist under it, as the design has it; anything else keeps its
@@ -76,29 +77,32 @@ function Titles({
   );
 }
 
-// Under the volume: Spotify's modes, then the sleep timer and the group as pills.
-function Extras({
-  modes,
-  sleep,
-  onGroup,
-}: {
-  readonly modes: ReactNode;
-  readonly sleep: ReactNode;
-  readonly onGroup: () => void;
-}) {
+// The artwork, with how far the track is for what plays from a service or station (an
+// input has no track).
+function Cover({ lead, view }: { readonly lead: Room; readonly view: PlaybackView }) {
+  const art = <PlayArt artwork={view.artwork} name={view.title} className="np-art" />;
+  if (view.artwork.kind !== 'station') return <ArtFrame>{art}</ArtFrame>;
+  return (
+    <TrackTime
+      speaker={speakerArg(lead)}
+      playing={lead.now?.playStatus === 'PLAY_STATE'}
+      nowKey={`${String(lead.now?.track)}|${String(lead.now?.playStatus)}`}
+    >
+      {art}
+    </TrackTime>
+  );
+}
+
+// Under the volume: the sleep timer and the group as pills.
+function Extras({ sleep, onGroup }: { readonly sleep: ReactNode; readonly onGroup: () => void }) {
   const { t } = useI18n();
   return (
-    <div className="np-row">
-      <div className="np-left">
-        {modes}
-        <div className="np-pills">
-          {sleep}
-          <Button className="np-pill" onPress={onGroup}>
-            <Icon.group aria-hidden="true" />
-            {t('group')}
-          </Button>
-        </div>
-      </div>
+    <div className="np-pills">
+      {sleep}
+      <Button className="np-pill" onPress={onGroup}>
+        <Icon.group aria-hidden="true" />
+        {t('group')}
+      </Button>
     </div>
   );
 }
@@ -135,28 +139,33 @@ export function NowPlayingSheet({
           <WashedBlur src={artSrc(view)} />
           <TopBar view={view} name={name} onClose={close} onPresets={cb.onPresets} />
           <div className="np-body">
-            {on && <PlayArt artwork={view.artwork} name={view.title} className="np-art" />}
-            <Titles
-              title={view.title}
-              track={starting ? '' : track}
-              artist={lead.now?.artist}
-              line={starting ? t('connecting') : detailLine(view, t)}
-            />
-            <TransportControls
-              action={action}
-              label={`${t(action)} · ${name}`}
-              canControl={canControl}
-              skips={skips}
-              onPress={on ? cb.onTransport : cb.onStart}
-              onSkip={cb.onSkip}
-            />
-            {on && view.artwork.kind === 'station' && (
-              <TrackTime
-                speaker={speakerArg(lead)}
-                playing={lead.now?.playStatus === 'PLAY_STATE'}
-                nowKey={`${String(lead.now?.track)}|${String(lead.now?.playStatus)}`}
-              />
-            )}
+            {on && <Cover lead={lead} view={view} />}
+            <div className="np-head">
+              <div className="np-titles">
+                <Titles
+                  title={view.title}
+                  track={starting ? '' : track}
+                  artist={lead.now?.artist}
+                  line={starting ? t('connecting') : detailLine(view, t)}
+                />
+              </div>
+              {on && lead.now?.source === 'SPOTIFY' && (
+                <LikeButton speaker={speakerArg(lead)} track={lead.now.track} />
+              )}
+            </div>
+            <ModesFor now={on ? lead.now : null} speaker={speakerArg(lead)}>
+              {(modes) => (
+                <TransportControls
+                  action={action}
+                  label={`${t(action)} · ${name}`}
+                  canControl={canControl}
+                  skips={skips}
+                  onPress={on ? cb.onTransport : cb.onStart}
+                  onSkip={cb.onSkip}
+                  modes={modes}
+                />
+              )}
+            </ModesFor>
             <VolumeSlider
               light
               showValue
@@ -166,7 +175,6 @@ export function NowPlayingSheet({
               onMute={cb.onMute}
             />
             <Extras
-              modes={on && <ModeButtonsFor now={lead.now} speaker={speakerArg(lead)} />}
               sleep={<SleepMenu light timer={sleepTimer} onChange={cb.onSleep} />}
               onGroup={cb.onGroup}
             />

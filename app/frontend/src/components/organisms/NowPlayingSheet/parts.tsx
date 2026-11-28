@@ -55,9 +55,12 @@ interface TransportProps {
   readonly skips: boolean;
   readonly onPress: () => void;
   readonly onSkip: (dir: 'previous' | 'next') => void;
+  // Shuffle and repeat of what has them, as the outer two buttons (ModesFor).
+  readonly modes?: TransportModes | null | undefined;
 }
 
-// The big play/stop with the skips beside it, on what can skip.
+// The big play/stop with the skips beside it, on what can skip, and shuffle and repeat on
+// the outside for what has them.
 export function TransportControls({
   action,
   label,
@@ -65,10 +68,12 @@ export function TransportControls({
   skips,
   onPress,
   onSkip,
+  modes,
 }: TransportProps): ReactElement {
   const { t } = useI18n();
   return (
-    <div className="np-ctl">
+    <div className={modes ? 'np-ctl np-ctl-modes' : 'np-ctl'}>
+      {modes?.shuffle}
       {skips && (
         <Button className="skip" aria-label={t('prevTrack')} onPress={() => onSkip('previous')}>
           <Icon.skipPrev />
@@ -84,6 +89,7 @@ export function TransportControls({
           <Icon.skipNext />
         </Button>
       )}
+      {modes?.repeat}
     </div>
   );
 }
@@ -97,14 +103,14 @@ const NEXT_REPEAT: Record<SpotifyRepeat, SpotifyRepeat> = {
 const MODES_POLL_MS = 5000;
 
 // The + of Stockholm: what plays goes in Liked Songs, a second tap takes it out again.
-// Hidden for what cannot be liked. A tap that fails goes back.
-function LikeButton({
+// Hidden for what cannot be liked. A tap that fails goes back. Beside the title.
+export function LikeButton({
   speaker,
   track,
 }: {
   readonly speaker?: string | undefined;
   readonly track?: string | undefined;
-}) {
+}): ReactElement | null {
   const { t } = useI18n();
   const [state, setState] = useState({ available: false, liked: false });
   // Read again for every track: whether it is liked is the track's.
@@ -148,55 +154,43 @@ const SPOTIFY_MODES: ModesApi = {
   shuffle: setSpotifyShuffle,
   repeat: setSpotifyRepeat,
 };
+// A media-server folder's shuffle and repeat, as stock's queue had them.
 const FOLDER_MODES: ModesApi = { read: upnpModes, shuffle: setUPnPShuffle, repeat: setUPnPRepeat };
 
-// Spotify's shuffle and repeat, with the + before them.
-export function SpotifyModeButtons({
-  speaker,
-  track,
-}: {
-  readonly speaker?: string | undefined;
-  readonly track?: string | undefined;
-}): ReactElement {
-  return (
-    <ModeButtons speaker={speaker} api={SPOTIFY_MODES}>
-      <LikeButton speaker={speaker} track={track} />
-    </ModeButtons>
-  );
+// Shuffle and repeat as two buttons, for the transport row to put on its outside.
+export interface TransportModes {
+  readonly shuffle: ReactElement;
+  readonly repeat: ReactElement;
 }
 
-// A media-server folder's shuffle and repeat, as stock's queue had them.
-export function FolderModeButtons({
-  speaker,
-}: {
-  readonly speaker?: string | undefined;
-}): ReactElement {
-  return <ModeButtons speaker={speaker} api={FOLDER_MODES} />;
-}
-
-// The shuffle and repeat of what plays: Spotify's, or a media-server folder's.
-export function ModeButtonsFor({
+// The shuffle and repeat of what plays, Spotify's or a media-server folder's, handed to
+// children to place; null for what has none (radio, an input).
+export function ModesFor({
   now,
   speaker,
+  children,
 }: {
-  readonly now?: NowPlaying | null;
+  readonly now?: NowPlaying | null | undefined;
   readonly speaker?: string | undefined;
-}): ReactElement | null {
-  if (now?.source === 'SPOTIFY') return <SpotifyModeButtons speaker={speaker} track={now.track} />;
-  if (now?.source === 'UPNP' && now.canSkip === true)
-    return <FolderModeButtons speaker={speaker} />;
-  return null;
+  readonly children: (modes: TransportModes | null) => ReactNode;
+}): ReactElement {
+  let api: ModesApi | null = null;
+  if (now?.source === 'SPOTIFY') api = SPOTIFY_MODES;
+  else if (now?.source === 'UPNP' && now.canSkip === true) api = FOLDER_MODES;
+  if (!api) return <>{children(null)}</>;
+  // Another source starts from its own state, not the last one's.
+  return <ModeButtons key={now?.source} speaker={speaker} api={api} render={children} />;
 }
 
 // Shuffle and repeat. Repeat steps through off, everything and this track.
 function ModeButtons({
   speaker,
   api,
-  children,
+  render,
 }: {
   readonly speaker?: string | undefined;
   readonly api: ModesApi;
-  readonly children?: ReactNode;
+  readonly render: (modes: TransportModes) => ReactNode;
 }) {
   const { t } = useI18n();
   const [modes, setModes] = useState<SpotifyModes>({ shuffle: false, repeat: 'off' });
@@ -236,9 +230,8 @@ function ModeButtons({
     api.repeat(mode, speaker).then(settled, settled);
   };
   const repeatsTrack = modes.repeat === 'track';
-  return (
-    <div className="np-modes">
-      {children}
+  const buttons: TransportModes = {
+    shuffle: (
       <ToggleButton
         className="np-mode"
         aria-label={t('shuffle')}
@@ -247,6 +240,8 @@ function ModeButtons({
       >
         <Icon.shuffle />
       </ToggleButton>
+    ),
+    repeat: (
       <ToggleButton
         className="np-mode"
         aria-label={repeatsTrack ? t('repeatTrack') : t('repeat')}
@@ -255,6 +250,7 @@ function ModeButtons({
       >
         {repeatsTrack ? <Icon.repeatTrack /> : <Icon.repeat />}
       </ToggleButton>
-    </div>
-  );
+    ),
+  };
+  return <>{render(buttons)}</>;
 }

@@ -5,7 +5,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { setUPnPRepeat, setUPnPShuffle, upnpModes } from '../../../lib/api/upnp';
-import { FolderModeButtons } from './parts';
+import { ModesFor } from './parts';
 import { must } from '../../../test/must';
 
 vi.mock('../../../lib/api/upnp', () => ({
@@ -14,10 +14,21 @@ vi.mock('../../../lib/api/upnp', () => ({
   setUPnPRepeat: vi.fn().mockResolvedValue(null),
 }));
 
-describe('FolderModeButtons', () => {
+describe('a media-server folder', () => {
   it("sets the played folder's shuffle and repeat on the speaker", async () => {
     vi.mocked(upnpModes).mockResolvedValue({ shuffle: false, repeat: 'off' });
-    render(<FolderModeButtons speaker="a" />);
+    render(
+      <ModesFor now={{ standby: false, source: 'UPNP', canSkip: true }} speaker="a">
+        {(m) =>
+          m && (
+            <>
+              {m.shuffle}
+              {m.repeat}
+            </>
+          )
+        }
+      </ModesFor>
+    );
     await waitFor(() => expect(upnpModes).toHaveBeenCalledWith('a'));
     const [shuffle, repeat] = screen.getAllByRole('button');
     expect(screen.getAllByRole('button')).toHaveLength(2); // no + for a folder
